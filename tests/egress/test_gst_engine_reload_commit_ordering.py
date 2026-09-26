@@ -5367,3 +5367,371 @@ def test_u41_a_reload_after_a_held_plan_eos_commits_on_readiness(
     assert observed[True] is True, observed
     assert observed[False] is False, observed
     capsys.readouterr()
+
+
+# --- (9) U44: the one video arrival the mux could only honour by freezing ------
+#
+# The live defect this section's guard fixes (government, 2026-09-26 06:02): a
+# deferred reload id=4 at running time 6900.968s committed cleanly -- rebase drain
+# waited 1.281s, the selector switched, the holds were released, the handoff was
+# confirmed, the old tail was released and detached, and the new leg's first video
+# AND audio buffers both reached the selector -- and then
+#
+#   CTRL stall: no video buffers for 10s (last reload id=4 stage=committed)
+#
+# took the channel off air 13s later. The video kept ARRIVING at the mux's sink
+# pad at its normal rate the whole time; what stopped was the mux EMITTING it.
+# That is why every counter on that path read healthy: the U30 sink-pad flow
+# ladder, the U30/U37 mux-src ladder and the aggregate (S9-5) stall watch all
+# count what comes IN or what comes OUT of the mux as a whole, and one starved
+# stream out of two looks exactly like a healthy channel to all three.
+#
+# The producer of the offending buffer is measured, and it is not the reload: each
+# video subchain ends in a ``videorate``, and ``videorate`` is FORCED to push one
+# closing-duplicate frame at its subchain boundary (gstvideorate.c:1063/1077,
+# "Pushed 1 buffers", on the ``count < 1`` branch that no property can switch
+# off). At that boundary the leg's ``concat`` handles the NEXT subchain's segment
+# first and updates its base (gstconcat.c:589) BEFORE forwarding that duplicate,
+# so the duplicate is clipped under the NEW segment and its running time lands
+# D seconds in the future -- D being the subchain's own duration. Measured on the
+# packaged runtime: 10.033s at an intra-leg boundary of a 10s subchain, 25.033s at
+# the 25s subchain of the reload that took government off air.
+#
+# ``gst_base_ts_mux_find_best_pad`` picks the pad to pop from on the queued heads'
+# timestamps and ``gst_aggregator_wait_and_check`` then sleeps until the clock
+# reaches the chosen head's running time, so a single such arrival starves the
+# muxed VIDEO for ~D seconds while audio plays on -- and the freeze lasts exactly
+# as long as the subchain, which is why a 10s subchain only grazes the 10s
+# per-stream judge (the reproduced clean-at-worker-level run still scored RED on
+# its output artifact) while the live 25s one blew straight through it.
+#
+# The guard below is the smallest fix that removes the freeze at its victim
+# instead of at its producer: a DROP, on the mux's VIDEO sink pads only, of an
+# arrival that this mux could only honour by waiting for it. It is deliberately
+# not a blanket "drop anything out of cadence": both bounds must be cleared, and
+# the numbers are measured (see ``_MUX_ARRIVAL_CADENCE_BOUND_NS``).
+
+_U44_BOUNDARY_PIPELINE_NS = 10_000_000_000
+
+# pad name -> running time, for the dbg2 boundary: the last real frame of the
+# ending subchain, the re-dated closing duplicate, and the next subchain's first
+# real frame. The duplicate's own value (20.000s) is the one dbg2's clip log
+# printed for it, i.e. what the mux's aggregator pad really computed.
+_U44_BOUNDARY_RUNNING_TIMES = {
+    10_091_666_666: 9_966_666_666,
+    10_125_000_000: 20_000_000_000,
+    125_000_000: 10_000_000_000,
+}
+
+# The same shape at a switch that is behaving: the outgoing leg's last frame, and
+# the incoming leg's first frame 1.753s later -- the measured legitimate step,
+# bounded by the drain deadline. The third entry is this test's positive control:
+# an anomaly of the same kind the fatal 25.033s jump belongs to (pts 25.125 ->
+# rt 70.053 is that jump's own clip-log pair), which the guard MUST drop. Without
+# it this test would pass on a guard that never drops anything.
+_U44_SWITCH_RUNNING_TIMES = {
+    8_425_000_000: 18_300_000_000,
+    125_000_000: 20_053_311_110,
+    25_125_000_000: 70_053_311_110,
+}
+
+
+def _u44_pad(
+    name: str,
+    recorder: _Recorder,
+    *,
+    caps: str | None,
+    running_times: dict[int, int] | None = None,
+) -> _FakeDiagnosticPad:
+    segment = (
+        None
+        if running_times is None
+        else _FakeSegment(base=_U44_BOUNDARY_PIPELINE_NS, running_time_for_pts=running_times)
+    )
+    return _FakeDiagnosticPad(
+        name,
+        recorder,
+        sticky=None if segment is None else _FakeStickyEvent(segment),
+        caps=caps,
+    )
+
+
+def _u44_arrival(engine_module: types.ModuleType, pad: _FakeDiagnosticPad, pts: int) -> Any:
+    """What every BUFFER probe on ``pad`` collectively decides for one arrival.
+
+    DROP wins: the real pad calls each probe in turn and acts on the first DROP,
+    so a test that read only its own probe's answer would miss a drop decided by
+    another one."""
+    info = _FakeProbeInfo(_FakeProbeBuffer(pts))
+    result = engine_module.Gst.PadProbeReturn.OK
+    for mask, callback in list(pad.probes):
+        if mask != engine_module.Gst.PadProbeType.BUFFER:
+            continue
+        if callback(pad, info) == engine_module.Gst.PadProbeReturn.DROP:
+            result = engine_module.Gst.PadProbeReturn.DROP
+    return result
+
+
+def _u44_engine_with_clock(
+    engine_module: types.ModuleType, clock_time_ns: int
+) -> tuple[Any, _Recorder]:
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.pipeline = _FakeClockPipeline(recorder, clock_time_ns=clock_time_ns)
+    return engine, recorder
+
+
+def test_u44_the_future_dated_closing_duplicate_is_dropped_at_the_mux(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The one arrival that freezes the mux is the one arrival that must go.
+
+    Numbers from the real runtime's own clip log for the clean dbg2 run: the video
+    pad's previous arrival at running time 9.967s, the re-dated closing duplicate
+    at 20.000s (D = the 10s subchain), and the next subchain's first real frame at
+    10.000s -- with the pipeline clock at 10.000s, which is how long the mux would
+    have had to wait for the duplicate, and longer than the 10s budget the live
+    channel died on.
+
+    The duplicate is DROPPED; the frame before it and the frame after it are not,
+    and both are load-bearing: dropping every arrival (or keeping the reference
+    pointing at the drop) would take the whole video stream off air, which is the
+    failure this guard exists to prevent, not a version of it."""
+    engine, _recorder = _u44_engine_with_clock(engine_module, _U44_BOUNDARY_PIPELINE_NS)
+    video_pad = _u44_pad(
+        "sink_65",
+        _Recorder(),
+        caps="video/x-h264, stream-format=byte-stream",
+        running_times=_U44_BOUNDARY_RUNNING_TIMES,
+    )
+    engine.mux = _FakeMux([video_pad])
+
+    engine._install_mux_input_counters()
+
+    ok = engine_module.Gst.PadProbeReturn.OK
+    assert _u44_arrival(engine_module, video_pad, 10_091_666_666) == ok
+    assert _u44_arrival(engine_module, video_pad, 10_125_000_000) == (
+        engine_module.Gst.PadProbeReturn.DROP
+    )
+    assert _u44_arrival(engine_module, video_pad, 125_000_000) == ok
+
+    # "It reached the mux" and "the mux aired it" are different facts, and the
+    # flow ladder must keep reporting the first one: its +0 is what names a stream
+    # that stopped ARRIVING, and a drop here is the opposite situation.
+    assert engine._mux_input_buffers == {"sink_65": 3}
+    assert engine._mux_pad_arrival_drops == {"sink_65": 1}
+
+    err = capsys.readouterr().err
+    assert (
+        "CTRL mux diagnostic: dropped future-dated video arrival pad=sink_65 "
+        "running_time=20.000 last_arrival=9.967 pipeline_running_time=10.000 "
+        "ahead=10.000 step=10.033 drops=1" in err
+    ), err
+
+
+def test_u44_a_legitimate_switch_step_is_not_dropped(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The measured legitimate forward step (1.753s) stays on air.
+
+    The incoming leg's first frame after a rebased switch arrives 1.753s past the
+    outgoing leg's last one -- the drain wait, measured, and bounded by
+    ``_REBASE_DRAIN_DEADLINE_S``. It is real media and dropping it would be pure
+    loss, so the cadence bound must clear it. The control is the same pad's next
+    discontinuity: the 25.125s frame that the live incident's clip log re-dated to
+    rt 70.053 (the jump that took the channel off air, one whole 25s subchain
+    ahead). Without the control this test would pass on a guard that never drops.
+    Its step here is read against the arrival the guard adopted -- the incoming
+    leg's first frame at 20.053 -- so it is 50.000s, not the recorded 25.033s
+    (whose predecessor in the live run was rt 45.020, the leg's last real frame)."""
+    engine, _recorder = _u44_engine_with_clock(engine_module, 20_053_311_110)
+    video_pad = _u44_pad(
+        "sink_65",
+        _Recorder(),
+        caps="video/x-h264, stream-format=byte-stream",
+        running_times=_U44_SWITCH_RUNNING_TIMES,
+    )
+    engine.mux = _FakeMux([video_pad])
+
+    engine._install_mux_input_counters()
+
+    ok = engine_module.Gst.PadProbeReturn.OK
+    assert _u44_arrival(engine_module, video_pad, 8_425_000_000) == ok
+    # the switch step itself: 1.753s past the outgoing leg's last frame, real
+    # media, and it must air.
+    assert _u44_arrival(engine_module, video_pad, 125_000_000) == ok
+    assert _u44_arrival(engine_module, video_pad, 25_125_000_000) == (
+        engine_module.Gst.PadProbeReturn.DROP
+    )
+
+    assert engine._mux_pad_arrival_drops == {"sink_65": 1}
+    err = capsys.readouterr().err
+    assert "step=50.000 drops=1" in err, err
+    assert "step=1.753" not in err, err
+
+
+def test_u44_a_hole_the_clock_has_already_passed_is_not_dropped(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A late-arriving frame the clock has already reached must air, not vanish.
+
+    Both arms exist to catch the same thing -- an arrival the mux could only
+    honour by WAITING for it -- and this is the arrival that proves the second arm
+    is not decoration: a 30.033s forward step is far past any cadence bound, but
+    the media it carries is already BEHIND the pipeline clock (the encoder or the
+    decoder ran late), so the mux airs it immediately and dropping it would punch
+    a hole in a channel that was never in danger. The control is the same pad
+    stepping 20s past the clock, which is dropped."""
+    engine, _recorder = _u44_engine_with_clock(engine_module, 45_000_000_000)
+    video_pad = _u44_pad(
+        "sink_65",
+        _Recorder(),
+        caps="video/x-h264, stream-format=byte-stream",
+        running_times={
+            10_091_666_666: 9_966_666_666,
+            30_000_000_000: 40_000_000_000,
+            60_000_000_000: 60_000_000_000,
+        },
+    )
+    engine.mux = _FakeMux([video_pad])
+
+    engine._install_mux_input_counters()
+
+    ok = engine_module.Gst.PadProbeReturn.OK
+    assert _u44_arrival(engine_module, video_pad, 10_091_666_666) == ok
+    assert _u44_arrival(engine_module, video_pad, 30_000_000_000) == ok
+    assert _u44_arrival(engine_module, video_pad, 60_000_000_000) == (
+        engine_module.Gst.PadProbeReturn.DROP
+    )
+
+    assert engine._mux_pad_arrival_drops == {"sink_65": 1}
+    capsys.readouterr()
+
+
+def test_u44_the_same_arrival_on_an_audio_pad_is_not_dropped(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Video only, and the reason is measured rather than assumed.
+
+    Production video subchains end in ``videorate`` -- the element that pushes the
+    re-dated duplicate -- while the audio tail has no ``audiorate``, and neither
+    instrumented run showed any |step| > 0.05s on the audio mux pad. The
+    alternative (dropping on both pads) is worse than not guarding at all: U37
+    measured a 1.024s hole in the aired audio from dropping legitimately-clipped
+    audio arrivals on this same path. So the identical arrival that is dropped on
+    the video pad must be kept on the audio pad."""
+    engine, _recorder = _u44_engine_with_clock(engine_module, _U44_BOUNDARY_PIPELINE_NS)
+    video_pad = _u44_pad(
+        "sink_65",
+        _Recorder(),
+        caps="video/x-h264, stream-format=byte-stream",
+        running_times=_U44_BOUNDARY_RUNNING_TIMES,
+    )
+    audio_pad = _u44_pad(
+        "sink_66",
+        _Recorder(),
+        caps="audio/mpeg, mpegversion=4",
+        running_times=_U44_BOUNDARY_RUNNING_TIMES,
+    )
+    engine.mux = _FakeMux([video_pad, audio_pad])
+
+    engine._install_mux_input_counters()
+
+    for pad in (video_pad, audio_pad):
+        assert _u44_arrival(engine_module, pad, 10_091_666_666) == (
+            engine_module.Gst.PadProbeReturn.OK
+        )
+    assert _u44_arrival(engine_module, audio_pad, 10_125_000_000) == (
+        engine_module.Gst.PadProbeReturn.OK
+    )
+    assert _u44_arrival(engine_module, video_pad, 10_125_000_000) == (
+        engine_module.Gst.PadProbeReturn.DROP
+    )
+
+    assert engine._mux_pad_arrival_drops == {"sink_65": 1}
+    err = capsys.readouterr().err
+    assert "pad=sink_65" in err, err
+    assert "pad=sink_66" not in err, err
+
+
+def test_u44_an_unmeasurable_arrival_is_never_dropped(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No clock, or no segment to date the buffer against: keep the buffer.
+
+    A guard that guesses when its own inputs are unreadable is worse than no guard
+    at all -- it would drop real frames on a channel that might be perfectly
+    healthy. Both inputs are therefore required, and this test's second half is
+    the control that says so: the SAME pad and the SAME arrival, with a clock,
+    is dropped."""
+    engine, _recorder = _u44_engine_with_clock(engine_module, _U44_BOUNDARY_PIPELINE_NS)
+    # A pad with no sticky segment: ``_measure_first_buffer`` cannot date it.
+    blind_pad = _u44_pad("sink_65", _Recorder(), caps="video/x-h264", running_times=None)
+    engine.mux = _FakeMux([blind_pad])
+    engine._install_mux_input_counters()
+
+    ok = engine_module.Gst.PadProbeReturn.OK
+    assert _u44_arrival(engine_module, blind_pad, 10_091_666_666) == ok
+    assert _u44_arrival(engine_module, blind_pad, 10_125_000_000) == ok
+    assert engine._mux_pad_arrival_drops == {}
+    capsys.readouterr()
+
+    # No clock on the pipeline at all (``_FakePipeline`` has only the recorder).
+    clockless = _bare_engine_for_commit(engine_module, _Recorder())
+    clockless_pad = _u44_pad(
+        "sink_65",
+        _Recorder(),
+        caps="video/x-h264",
+        running_times=_U44_BOUNDARY_RUNNING_TIMES,
+    )
+    clockless.mux = _FakeMux([clockless_pad])
+    clockless._install_mux_input_counters()
+
+    assert _u44_arrival(engine_module, clockless_pad, 10_091_666_666) == ok
+    assert _u44_arrival(engine_module, clockless_pad, 10_125_000_000) == ok
+    assert clockless._mux_pad_arrival_drops == {}
+    capsys.readouterr()
+
+    # Positive control: same numbers, with a clock.
+    control_pad = _u44_pad(
+        "sink_65",
+        _Recorder(),
+        caps="video/x-h264",
+        running_times=_U44_BOUNDARY_RUNNING_TIMES,
+    )
+    engine.mux = _FakeMux([control_pad])
+    engine._install_mux_input_counters()
+    assert _u44_arrival(engine_module, control_pad, 10_091_666_666) == ok
+    assert _u44_arrival(engine_module, control_pad, 10_125_000_000) == (
+        engine_module.Gst.PadProbeReturn.DROP
+    )
+    assert engine._mux_pad_arrival_drops == {"sink_65": 1}
+    capsys.readouterr()
+
+
+def test_u44_the_arrival_guard_is_installed_on_every_registered_sink_pad(
+    engine_module, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Armed beside the flow counter and the airing frontier, never instead.
+
+    The guard's pad set is the counter's pad set, and that is the point: the
+    channel that died was airing audio off ``sink_66`` while ``sink_65`` starved,
+    and the guard has to be on the pad the mux was ignoring. A pad that refused the
+    counter is not registered and so is not guarded -- the honest rendering of "we
+    cannot see this pad at all" is absence, not a silent guard over nothing."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._mux_input_buffers = {}
+    engine._mux_pad_arrival_drops = {}
+    video_pad = _u44_pad(
+        "sink_65", recorder, caps="video/x-h264", running_times=_U44_BOUNDARY_RUNNING_TIMES
+    )
+    audio_pad = _u44_pad("sink_66", recorder, caps="audio/mpeg, mpegversion=4", running_times=None)
+    engine.mux = _FakeMux([video_pad, audio_pad])
+
+    engine._install_mux_input_counters()
+
+    assert "add_probe:sink_65:1:_guard_mux_pad_arrival" in recorder.calls, recorder.calls
+    assert "add_probe:sink_66:1:_guard_mux_pad_arrival" in recorder.calls, recorder.calls
+    assert engine._mux_input_pads == {"sink_65": video_pad, "sink_66": audio_pad}
+    capsys.readouterr()
