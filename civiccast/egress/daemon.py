@@ -5591,10 +5591,7 @@ class EgressDaemon:
         # #151 fix applied to every reload). Any condition the seamless path can't
         # handle falls through to the terminate+restart reload below (which already
         # handles slate fallback, interruptible filler, and the graceful drain).
-        if (
-            state is not None
-            and getattr(self._encoder_strategy, "supports_content_reload", False)
-        ):
+        if state is not None and getattr(self._encoder_strategy, "supports_content_reload", False):
             if self._try_content_reload(
                 channel_id,
                 state,
