@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NamedTuple
 
 import pytest
 
@@ -4007,6 +4007,398 @@ def test_async_start_expiring_during_preparation_releases_once_then_prepares_fre
     finally:
         release_initial_prepare.set()
         daemon.shutdown_preparation()
+
+
+# --------------------------------------------------------------------------
+# U47: an ACTIVE channel is never dark while its program is being prepared.
+#
+# The live 2026-09-26 defect (evidence/public-exit1-1119): the daemon's
+# start/relaunch path resolved the scheduled program and then conformed it --
+# 20-133 s cold -- while NO encoder was running at all. The channel was black
+# for the whole preparation and the relay reported "live window has not
+# advanced". The rule: on any start/relaunch of an ACTIVE channel the worker
+# goes up IMMEDIATELY on the fallback slate, and the prepared program is handed
+# in afterwards through the reload machinery the daemon already owns.
+# --------------------------------------------------------------------------
+
+
+class _U47Context(NamedTuple):
+    """What was OBSERVABLE at the instant one preparation began.
+
+    ``worker_alive`` is the element that carries the unit's whole rule: it is
+    true only if an encoder had been started AND that process was still running
+    when the preparation started, i.e. something was on air. Reading the end
+    state alone cannot show that -- the hand-off ends with the program ON_AIR
+    whether or not the channel was dark for the conform in between.
+    """
+
+    label: str
+    started_labels: tuple[str, ...]
+    state: str | None
+    worker_alive: bool
+
+
+class _U47Observation:
+    """What the daemon was observed to do, in order, across the U47 tests.
+
+    One record for the whole run: the encoder starts, the labels those starts
+    were for, the labels handed to the preparer, and the context each
+    preparation began under.
+    """
+
+    def __init__(self) -> None:
+        self.started: list[_FakeProcess] = []
+        self.started_labels: list[str] = []
+        self.prepared_labels: list[str] = []
+        self.contexts: list[_U47Context] = []
+
+    def alive(self) -> bool:
+        """Whether the most recently started encoder is still running."""
+        return bool(self.started) and self.started[-1].poll() is None
+
+
+class _LabelCapturingStrategy(_FakeContentReloadStrategy):
+    """Content-reload-capable strategy that records the label of every plan an
+    encoder was actually STARTED with (not merely asked to reload to)."""
+
+    def __init__(self, processes: list[_FakeProcess], obs: _U47Observation) -> None:
+        super().__init__(processes, obs.started)
+        self._obs = obs
+
+    def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+        self._obs.started_labels.append(request.source_plan.segments[0].label)
+        return super().start(request)
+
+
+def _u47_prepare_observer(
+    tmp_path: Path,
+    counter: dict[str, int],
+    obs: _U47Observation,
+    store: InMemoryEgressStore,
+    *,
+    hold: Callable[[str], bool] | None = None,
+    entered: Event | None = None,
+    release: Event | None = None,
+    fail: Callable[[str], bool] | None = None,
+) -> Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport]:
+    """A ``source_preparer`` that records the OBSERVABLE condition each
+    preparation began under: the label being prepared, the labels of the
+    encoders already started at that instant, the channel's state row, and
+    whether the most recently started encoder was still alive.
+
+    That quartet is what makes "the slate was on air BEFORE the program was
+    prepared" assertable rather than inferred from the end state, and it is
+    what distinguishes U47's shape from the pre-U47 one (which prepared the
+    program first, with nothing started and the row still STARTING).
+
+    ``hold``/``fail`` are per-label hooks: ``hold`` blocks the call until
+    ``release`` (for driving a preparation that is deliberately slow), ``fail``
+    raises ``SourcePrepareError`` (for driving a preparation that cannot
+    complete). Both run AFTER the observation, so the context is recorded even
+    for a call that never returns a report.
+    """
+
+    def prepare(source_plan: EgressSourcePlan, config: EgressConfig) -> SourcePreparationReport:
+        label = source_plan.segments[0].label
+        row = store.read_state("gov")
+        obs.contexts.append(
+            _U47Context(
+                label,
+                tuple(obs.started_labels),
+                row.state if row is not None else None,
+                obs.alive(),
+            )
+        )
+        obs.prepared_labels.append(label)
+        if hold is not None and hold(label):
+            assert entered is not None and release is not None
+            entered.set()
+            assert release.wait(timeout=10.0)
+        if fail is not None and fail(label):
+            raise SourcePrepareError(f"U47 test: {label} is not playable yet")
+        counter["n"] += 1
+        plan_dir = tmp_path / f"u47-plan-{counter['n']}"
+        plan_dir.mkdir()
+        return SourcePreparationReport(source_plan=source_plan, records=(), plan_dir=plan_dir)
+
+    return prepare
+
+
+def _u47_daemon(
+    tmp_path: Path,
+    store: InMemoryEgressStore,
+    processes: list[_FakeProcess],
+    obs: _U47Observation,
+    prepare: Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport],
+) -> EgressDaemon:
+    return EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        encoder_strategy=_LabelCapturingStrategy(processes, obs),
+        source_preparer=prepare,
+    )
+
+
+def test_u47_a_crash_relaunch_airs_the_fallback_slate_before_the_program_is_prepared(
+    tmp_path: Path,
+) -> None:
+    """THE RULE, synchronous path: the slate is on air first, the program next.
+
+    An ON_AIR channel's worker exits non-zero (the switch-path video stall U44
+    fixes) and the daemon relaunches it. Pre-U47 the relaunch resolved and
+    conformed the scheduled program with no encoder running -- two program
+    preparations in a row, no slate anywhere. U47's relaunch prepares the
+    FALLBACK SLATE first, starts a worker on it, and only then prepares and
+    hands in the program.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    obs = _U47Observation()
+    counter = {"n": 0}
+
+    daemon = _u47_daemon(
+        tmp_path, store, processes, obs, _u47_prepare_observer(tmp_path, counter, obs, store)
+    )
+
+    daemon.process_once("gov")  # the operator's start: ON_AIR on the program
+    assert obs.started_labels == ["Council meeting"]
+    assert obs.prepared_labels == ["Council meeting"]
+
+    obs.started[0].returncode = 1  # the worker exits non-zero
+    daemon.process_once("gov")  # the relaunch
+
+    assert obs.prepared_labels == ["Council meeting", "Fallback slate", "Council meeting"], (
+        "the relaunch must prepare the FALLBACK SLATE first and hand the program in "
+        "afterwards; preparing the program first is exactly the preparation-window "
+        "darkness this unit fixes"
+    )
+    assert obs.contexts[-1] == _U47Context(
+        "Council meeting",
+        ("Council meeting", "Fallback slate"),
+        "FALLBACK_SLATE",
+        True,
+    ), (
+        "the program's own preparation must begin with the slate worker already started "
+        f"AND still alive, and the state row already reading FALLBACK_SLATE; observed "
+        f"{obs.contexts[-1]!r}"
+    )
+    # The F3(b) consequence, asserted rather than glossed: the hand-off out of a
+    # LIVE FALLBACK_SLATE does not swap the selector in place (that wedged a
+    # commit for 270 s on 2026-09-24), so it terminates the slate worker and
+    # leaves the restart this channel's next poll performs holding the plan the
+    # hand-off already conformed.
+    assert obs.started[1].terminated is True, (
+        "the slate worker must have been terminated by the F3(b) reused-plan restart"
+    )
+    assert daemon._pending_reloads == {"gov": ("FALLBACK_SLATE", "Fallback slate")}  # type: ignore[attr-defined]
+
+    daemon.process_once("gov")  # the reused plan's restart completes the hand-off
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Council meeting"
+    assert obs.started_labels == ["Council meeting", "Fallback slate", "Council meeting"]
+    assert obs.started[2].poll() is None
+
+
+def test_u47_a_relaunch_airs_the_slate_while_a_slow_program_preparation_is_in_flight(
+    tmp_path: Path,
+) -> None:
+    """The production (asynchronous) path, with the program preparation held open.
+
+    ``ChannelAutomationService.run_forever`` enables async preparation, so this
+    is the shape the station actually runs. The assertion the brief asks for --
+    "worker launched on slate at once, reload issued on completion" -- read as
+    wall-clock-free properties: while the program's preparation is still in
+    flight (blocked on an ``Event``) the slate worker is already started and
+    alive, the state row already reads FALLBACK_SLATE, and a preparation for
+    the channel is still registered; releasing it produces the reload that
+    lands the program.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    obs = _U47Observation()
+    counter = {"n": 0}
+    slow_program = [False]
+    entered = Event()
+    release = Event()
+
+    prepare = _u47_prepare_observer(
+        tmp_path,
+        counter,
+        obs,
+        store,
+        hold=lambda label: slow_program[0] and label == "Council meeting",
+        entered=entered,
+        release=release,
+    )
+    daemon = _u47_daemon(tmp_path, store, processes, obs, prepare)
+
+    daemon.process_once("gov")
+    assert obs.started_labels == ["Council meeting"]
+
+    daemon.enable_async_preparation()
+    try:
+        slow_program[0] = True
+        obs.started[0].returncode = 1
+        daemon.process_once("gov")  # relaunch: the slate preparation is queued
+        assert obs.started_labels == ["Council meeting"], (
+            "the async slate preparation is queued, not completed, in the relaunch tick"
+        )
+        assert "gov" in daemon._preparations  # type: ignore[attr-defined]
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+
+        daemon.process_once("gov")  # the slate airs; the hand-off's preparation starts
+        assert obs.started_labels == ["Council meeting", "Fallback slate"]
+        assert obs.started[1].poll() is None, (
+            "the channel must not be dark: the slate worker is up while the program is "
+            "still being prepared"
+        )
+        state = store.read_state("gov")
+        assert state is not None
+        assert state.state == "FALLBACK_SLATE"
+        assert "gov" in daemon._preparations  # type: ignore[attr-defined]
+
+        assert entered.wait(timeout=10.0), "the hand-off's program preparation never began"
+        assert obs.started[1].poll() is None, (
+            "the slate worker must still be alive for the whole preparation window"
+        )
+
+        release.set()
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        daemon.process_once("gov")  # the reuse restart replaces the slate worker
+        daemon.process_once("gov")  # ... and airs the program
+        assert obs.started_labels == ["Council meeting", "Fallback slate", "Council meeting"]
+        state = store.read_state("gov")
+        assert state is not None
+        assert state.state == "ON_AIR"
+        assert state.current_source_label == "Council meeting"
+        # The whole point, in one record: the relaunch's two preparations both
+        # began with the slate worker already up and airing, and neither the
+        # tick-1 program preparation nor the crashed worker's tick did.
+        assert obs.contexts == [
+            _U47Context("Council meeting", (), "STARTING", False),
+            # The relaunch's slate preparation: the only start on record is the
+            # crashed worker's own (its label is still there -- nothing is
+            # started for the slate until this preparation returns), and no
+            # worker is alive.
+            _U47Context("Fallback slate", ("Council meeting",), "FALLBACK_SLATE", False),
+            _U47Context(
+                "Council meeting", ("Council meeting", "Fallback slate"), "FALLBACK_SLATE", True
+            ),
+        ], f"unexpected preparation contexts: {obs.contexts!r}"
+    finally:
+        release.set()
+        daemon.shutdown_preparation()
+
+
+def test_u47_a_failed_hand_off_preparation_keeps_the_live_slate_on_air(
+    tmp_path: Path,
+) -> None:
+    """A preparation that cannot complete must leave the slate running.
+
+    The brief: "Preparation failure keeps the slate and retries per the existing
+    policy." The failing preparation is observed to begin with the slate worker
+    already started (which is what makes this red pre-U47: the base shape
+    prepares the program first, fails, and only then conforms the slate), and
+    the live slate worker is NOT terminated -- no restart is queued and the
+    channel stays FALLBACK_SLATE, airing, for the automation retry to pick up.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    obs = _U47Observation()
+    counter = {"n": 0}
+    fail_program = [False]
+
+    prepare = _u47_prepare_observer(
+        tmp_path,
+        counter,
+        obs,
+        store,
+        fail=lambda label: fail_program[0] and label == "Council meeting",
+    )
+    daemon = _u47_daemon(tmp_path, store, processes, obs, prepare)
+
+    daemon.process_once("gov")
+    assert obs.started_labels == ["Council meeting"]
+
+    fail_program[0] = True
+    obs.started[0].returncode = 1
+    daemon.process_once("gov")  # the relaunch: slate first, then a program that cannot prepare
+
+    assert obs.prepared_labels == ["Council meeting", "Fallback slate", "Council meeting"], (
+        "the slate must be prepared (and airing) BEFORE the program's preparation is "
+        "even attempted; the base shape attempts the program first"
+    )
+    assert obs.contexts[-1] == _U47Context(
+        "Council meeting",
+        ("Council meeting", "Fallback slate"),
+        "FALLBACK_SLATE",
+        True,
+    ), f"the failing preparation began at {obs.contexts[-1]!r}"
+    assert obs.started_labels == ["Council meeting", "Fallback slate"]
+    assert obs.started[1].poll() is None, (
+        "a failed hand-off must NOT terminate the live slate worker -- that would take a "
+        "channel that is on air and make it dark for a second preparation"
+    )
+    assert daemon._pending_reloads == {}  # type: ignore[attr-defined], no restart queued
+    assert daemon._prepared_restart_plans == {}  # type: ignore[attr-defined], nothing stashed
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+
+    daemon.process_once("gov")  # nothing further: the slate keeps airing
+    assert obs.started_labels == ["Council meeting", "Fallback slate"]
+    assert len(obs.started) == 2
+    assert obs.started[1].poll() is None
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    assert state.current_source_label == "Fallback slate"
+
+
+def test_u47_an_operator_start_of_a_stopped_channel_still_prepares_the_program_first(
+    tmp_path: Path,
+) -> None:
+    """Scope guard: the rule is about an ACTIVE channel, not a cold start.
+
+    An operator start of a channel with nothing on air has no slate to keep --
+    the channel is already dark, so the first thing it should air is the
+    program. This test pins that U47 does not change that shape (no slate
+    preparation, one encoder start, ON_AIR on the program).
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    obs = _U47Observation()
+    counter = {"n": 0}
+
+    daemon = _u47_daemon(
+        tmp_path, store, processes, obs, _u47_prepare_observer(tmp_path, counter, obs, store)
+    )
+
+    daemon.process_once("gov")
+
+    assert obs.prepared_labels == ["Council meeting"]
+    assert obs.started_labels == ["Council meeting"]
+    assert len(obs.started) == 1
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert state.current_source_label == "Council meeting"
 
 
 def test_unexpired_scheduled_start_still_launches_the_prepared_program(tmp_path: Path) -> None:
