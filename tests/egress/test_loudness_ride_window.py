@@ -31,7 +31,7 @@ from types import SimpleNamespace
 import pytest
 
 from civiccast.egress import loudness_ride as lr
-from civiccast.egress.models import CanonicalProfile
+from civiccast.egress.models import CanonicalProfile, EgressSourceSegment
 
 # ---------------------------------------------------------------------------
 # Canned ebur128 output.  The block line is the shape FFmpeg writes (and the
@@ -288,6 +288,39 @@ def test_the_peak_scan_args_decode_to_raw_float32() -> None:
     assert "-ac" in args and args[args.index("-ac") + 1] == "2"
     assert "-vn" in args
     assert args[-1] == "-"
+
+
+def test_the_program_mux_bounds_the_window_after_both_inputs() -> None:
+    """``-t`` is an OUTPUT option, so it has to follow the LAST ``-i``.
+
+    FFmpeg binds a ``-t`` sitting between two ``-i`` operands to the input that
+    follows it -- here the ride's own audio, which is already exactly the
+    window's length, so the bound became a no-op on the source.  Measured on a
+    real 4 s window of an 8 s asset: the built program carried 7 s of video
+    (the whole source tail past the in-point) against 3.97 s of audio, where
+    ``build_conform_source_args``'s single-input ``-t`` produced 4 s.  The
+    ``-ss`` stays before the FIRST ``-i``: that one is an input option on
+    purpose.
+    """
+    segment = EgressSourceSegment(
+        label="trimmed",
+        path="C:/in/asset.mp4",
+        duration_seconds=4.0,
+        inpoint_seconds=1.0,
+        outpoint_seconds=5.0,
+    )
+    args = lr.build_video_from_source_args(
+        source_path=Path("C:/in/asset.mp4"),
+        audio_path=Path("C:/in/program.ts.ride-audio.ts"),
+        output_path=Path("C:/out/program.ts"),
+        segment=segment,
+        profile=CanonicalProfile(),
+    )
+    inputs = [i for i, arg in enumerate(args) if arg == "-i"]
+    assert len(inputs) == 2, "the program mux reads the source and the ride's audio"
+    assert args.index("-ss") < inputs[0], "the seek belongs to the source input"
+    assert args.index("-t") > inputs[-1], "the window bound must be an output option"
+    assert args[args.index("-t") + 1] == "4"
 
 
 # ---------------------------------------------------------------------------

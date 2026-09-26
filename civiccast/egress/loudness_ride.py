@@ -979,14 +979,24 @@ def build_video_from_source_args(
     input-format options for an encoder that is not running, and FFmpeg treats
     them as a contradiction.  The stream's parameters were fixed by the ride's
     encode sink from the same profile.
+
+    ``-t`` is an output option and therefore has to follow the LAST ``-i``:
+    between the two ``-i`` operands FFmpeg binds it to the input that follows --
+    the ride's own audio, which is already exactly the window's length -- so the
+    bound silently stops applying to the source.  Measured on a 4 s window of an
+    8 s asset, that placement emitted 7 s of video against 3.97 s of audio,
+    where ``preparer.build_conform_source_args``'s single-input ``-t`` produced
+    4 s.  ``-ss`` stays ahead of the FIRST ``-i``, as it is in
+    ``preparer.build_conform_source_args``: that one is an input option on
+    purpose.
     """
     args = ["-hide_banner", "-loglevel", "warning"]
     if segment is not None and segment.inpoint_seconds is not None:
         args.extend(["-ss", f"{segment.inpoint_seconds:g}"])
     args.extend(["-i", str(source_path)])
+    args.extend(["-i", str(audio_path)])
     if segment is not None:
         args.extend(["-t", f"{segment.duration_seconds:g}"])
-    args.extend(["-i", str(audio_path)])
     args.extend(["-map", "0:v:0", "-map", "1:a:0", "-vf", canonical_video_filter(profile)])
     if threads is not None:
         args.extend(["-threads", str(threads)])
