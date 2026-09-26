@@ -2075,7 +2075,10 @@ class EgressDaemon:
                 # crashing it.
                 fallback_reason = _SLATE_FIRST_HANDOFF_REASON
                 self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
-                source_plan: EgressSourcePlan | None = self._fallback_source_provider(config)
+                # NOT annotated, unlike the B1 binding above: ``source_plan`` is one
+                # variable for the whole method, so a second annotation here is a
+                # mypy ``no-redef`` error rather than a second binding.
+                source_plan = self._fallback_source_provider(config)
                 using_fallback_slate = True
                 slate_first_handoff = True
             else:
