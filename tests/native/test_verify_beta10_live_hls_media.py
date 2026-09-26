@@ -486,6 +486,66 @@ def _emitted_channel(
     return root, names
 
 
+#: The keeper's own folder, named exactly as `bin\\segment_keeper.py` names it.
+_KEEP_DIR_NAME = "cc-caption-keep"
+
+
+def _rotated_channel(
+    tmp_path: Path,
+    *,
+    emitted: int = 40,
+    live_segments: int = 7,
+    seconds: float = 2.0,
+    first: int = 1000,
+) -> tuple[Path, Path, list[str]]:
+    """A channel whose ROTATED-AWAY segments survive only as keeper copies.
+
+    Observed live 2026-09-26 (U50): `live-hls\\public\\` held 50 `seg*.ts` but only
+    7 were live (~14 s at 2 s each) -- the relay DELETES each segment as it rotates
+    it out, so all the ~60 s window needs (everything older than the playlist tail)
+    was already gone when the verifier looked.  This fixture is that shape: the
+    newest `live_segments` live in the channel dir, every older segment exists only
+    as a copy under `<keep_root>/public/`, and both sets carry their true emission
+    times, so the two are contiguous across the rotation boundary and the union
+    spans the real history.  Returns ``(hls_root, keep_root, names_oldest_first)``.
+    """
+
+    root = tmp_path / "live-hls"
+    channel = root / "public"
+    channel.mkdir(parents=True)
+    names = [f"seg{first + index:09d}.ts" for index in range(emitted)]
+    _write_playlist(channel / "playlist.m3u8", media_sequence=first + emitted - 6, count=6)
+    live = set(names[-live_segments:])
+    keep_root = tmp_path / _KEEP_DIR_NAME
+    keep_channel = keep_root / "public"
+    keep_channel.mkdir(parents=True)
+    _touch_segments(channel, [name for name in names if name in live])
+    _touch_segments(keep_channel, [name for name in names if name not in live])
+    for index, name in enumerate(names):
+        stamp = _FIXTURE_EPOCH - (emitted - 1 - index) * seconds
+        target = channel / name if name in live else keep_channel / name
+        os.utime(target, (stamp, stamp))
+    return root, keep_root, names
+
+
+def _write_keep_heartbeat(keep_root: Path, *, age: float, now: float = _FIXTURE_EPOCH) -> Path:
+    """The keeper's liveness file, aged by `age` seconds.
+
+    The keeper rewrites it every loop (4 s), so `age` is the whole liveness
+    argument: a fresh line means a keeper was copying segments into this folder
+    seconds ago and its copies are the recent past, not a stopped run's leftovers.
+    """
+
+    path = keep_root / "heartbeat.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = now - age
+    path.write_text(
+        json.dumps({"updated_epoch": stamp, "loops": 12, "pid": 4321}), encoding="utf-8"
+    )
+    os.utime(path, (stamp, stamp))
+    return path
+
+
 def _write_worker_log(
     root: Path, channel: str, lines: list[str], *, age: float = 0.0, now: float = _FIXTURE_EPOCH
 ) -> Path:
@@ -526,12 +586,19 @@ def test_window_decodes_every_finished_segment(monkeypatch: pytest.MonkeyPatch, 
             "decoded_cue_count": 1,
         }
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(verify, "_decode_captions", recording_decode)
     _stub_all_av(monkeypatch)
 
     verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     # 40 emitted segments 2 s apart -> the newest 60 s is 30 of them; the newest
@@ -569,12 +636,19 @@ def test_window_sparse_captions_still_passes(monkeypatch: pytest.MonkeyPatch, tm
             "decoded_cue_count": 0,
         }
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(verify, "_decode_captions", fake_decode)
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert len(result["caption_decode_back"]["per_segment"]) == 30
@@ -585,7 +659,9 @@ def test_window_all_segments_captionless_fails(monkeypatch: pytest.MonkeyPatch, 
     """No cues anywhere in a CLEAN window -> caption FAIL (no weakening)."""
     root, _names = _emitted_channel(tmp_path)
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(
         verify,
         "_decode_captions",
@@ -601,7 +677,12 @@ def test_window_all_segments_captionless_fails(monkeypatch: pytest.MonkeyPatch, 
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.FAIL
@@ -625,12 +706,19 @@ def test_window_any_unverified_segment_forces_unverified(monkeypatch: pytest.Mon
             "decoded_cue_count": 1,
         }
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(verify, "_decode_captions", fake_decode)
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.UNVERIFIED
@@ -652,7 +740,12 @@ def test_decoder_absent_fails_closed_through_verify_channel(
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.NOT_PROVEN
@@ -707,6 +800,411 @@ def test_caption_window_never_reaches_a_fossil_from_a_previous_run(tmp_path: Pat
     assert window["older_excluded"] == 2
 
 
+# --- U50: the 60 s window needs the keeper's copies ------------------------
+#
+# Measured live 2026-09-26: `live-hls\public\` held 7 live segments (~14 s at 2 s
+# each) and the verifier reported `span_seconds` 10.0 on all three channels of
+# rung 8h-post-u47 -- the 60 s window existed only on paper, because the relay
+# had already deleted every segment it rotated out.  `bin\segment_keeper.py`
+# copies finished segments aside before that happens; the window is the live dir
+# UNION those copies.  The keeper's own liveness file is what makes them
+# trustworthy: a stopped keeper's copies are a fossil group like any other.
+
+
+def test_caption_window_fills_sixty_seconds_from_the_keeper_copies(tmp_path: Path) -> None:
+    """7 live segments cannot make 60 s; the keeper's copies of the rotated-away ones can."""
+    root, keep_root, names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+    heartbeat = _write_keep_heartbeat(keep_root, age=3.0)
+
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+    window = verify.caption_window(
+        root / "public",
+        segment_seconds=2.0,
+        keep_dir=keep.channel_dir("public"),
+        keep_heartbeat_age_seconds=keep.heartbeat_age_seconds,
+    )
+
+    assert heartbeat.is_file()
+    assert keep.usable is True
+    assert keep.heartbeat_age_seconds == 3.0
+    assert [item["segment"] for item in window["segments"]] == names[8:38]
+    assert window["span_seconds"] == 60.0
+    # 30 segments end at names[37]; the live dir only holds names[33:] ...
+    assert window["from_live"] == 5
+    # ... so 25 of the 30 could come from nowhere but the keeper's copies.
+    assert window["from_keep"] == 25
+    assert window["source"] == "keep"
+
+
+def test_caption_window_from_the_live_dir_alone_is_ten_seconds(tmp_path: Path) -> None:
+    """The U50 defect, pinned: 7 live segments, 2 excluded, 5 x 2 s = 10 s.
+
+    This is what every verify of rung 8h-post-u47 reported (`span_seconds` 10.0),
+    and it is still the honest answer when no keeper is running -- the point is
+    that the evidence must SAY which of the two it is.
+    """
+    root, _keep_root, _names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+
+    window = verify.caption_window(root / "public", segment_seconds=2.0)
+
+    assert window["span_seconds"] == 10.0
+    assert window["source"] == "live"
+    assert window["from_keep"] == 0
+    assert window["from_live"] == 5
+
+
+def test_caption_window_prefers_the_live_file_over_a_keeper_copy_of_the_same_segment(
+    tmp_path: Path,
+) -> None:
+    """A segment in BOTH places is one segment, read from the live dir.
+
+    This is the NORMAL case, not an edge: the keeper copies every finished
+    segment, and a finished segment stays in the live dir for another rotation or
+    two.  Counting it twice would inflate the span, and reading the copy when the
+    live file is still on air would report dead bytes as the stream.
+    """
+    root, keep_root, names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+    # The keeper's copy of a segment that is still live (its poll caught it while
+    # the relay had not yet rotated it away).  The keeper preserves the SOURCE
+    # mtime, so the two entries are identical in every field but their path -- the
+    # only thing that can tell them apart is the name, which is the point.
+    overlapped = names[35]
+    copy = keep_root / "public" / overlapped
+    copy.write_bytes(b"\x47" * 512)
+    os.utime(copy, (_FIXTURE_EPOCH - 8.0, _FIXTURE_EPOCH - 8.0))
+    assert copy.stat().st_mtime_ns == (root / "public" / overlapped).stat().st_mtime_ns
+    _write_keep_heartbeat(keep_root, age=1.0)
+
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+    window = verify.caption_window(
+        root / "public",
+        segment_seconds=2.0,
+        keep_dir=keep.channel_dir("public"),
+        keep_heartbeat_age_seconds=keep.heartbeat_age_seconds,
+    )
+
+    got = [item for item in window["segments"] if item["segment"] == overlapped]
+    assert len(got) == 1
+    assert got[0]["path"] == str(root / "public" / overlapped)
+    # names[35] is the 6th-newest of 40, so its true emission time is 8 s back.
+    assert got[0]["mtime_ns"] == int((_FIXTURE_EPOCH - 8.0) * 1_000_000_000)
+    # The window is unchanged by the overlap: still names[8:38] and 60 s.
+    assert [item["segment"] for item in window["segments"]] == names[8:38]
+    assert window["span_seconds"] == 60.0
+    assert window["from_live"] == 5
+
+
+def test_caption_window_with_a_stale_keeper_heartbeat_is_the_live_dir_alone(tmp_path: Path) -> None:
+    """A keeper that stopped 412 s ago is not evidence about the last 60 s."""
+    root, keep_root, _names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+    _write_keep_heartbeat(keep_root, age=verify.CAPTION_KEEP_HEARTBEAT_FRESH_SECONDS + 382.0)
+
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+    window = verify.caption_window(
+        root / "public",
+        segment_seconds=2.0,
+        keep_dir=keep.channel_dir("public"),
+        keep_heartbeat_age_seconds=keep.heartbeat_age_seconds,
+    )
+
+    assert keep.usable is False
+    # Not merely unused: a stale keeper's copies are refused outright, so no
+    # caller can be tempted to read them anyway.
+    assert keep.channel_dir("public") is None
+    assert "412" in keep.note and "30" in keep.note
+    assert str(keep_root) in keep.note
+    assert window["span_seconds"] == 10.0
+    assert window["source"] == "live"
+    assert window["keep_heartbeat_age_seconds"] == 412.0
+
+
+def test_caption_window_with_no_keeper_heartbeat_at_all_falls_back(tmp_path: Path) -> None:
+    """No heartbeat file: not a keeper folder, whatever is lying in it."""
+    root, keep_root, _names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+    window = verify.caption_window(
+        root / "public",
+        segment_seconds=2.0,
+        keep_dir=keep.channel_dir("public"),
+        keep_heartbeat_age_seconds=keep.heartbeat_age_seconds,
+    )
+
+    assert keep.usable is False
+    assert keep.heartbeat_age_seconds is None
+    assert "heartbeat" in keep.note
+    assert window["span_seconds"] == 10.0
+    assert window["source"] == "live"
+
+
+def test_caption_window_refuses_fossils_even_when_the_keeper_dir_is_the_only_source(
+    tmp_path: Path,
+) -> None:
+    """Both live segments are excluded as newest, so the keeper dir is all there is.
+
+    What lies there is a previous run's segment -- the fossil U50 was told to
+    expect.  A window that reached it would be reporting dead media as the
+    stream; the staleness rule must refuse it on the keep side too.
+    """
+    root, keep_root, _names = _rotated_channel(tmp_path, emitted=2, live_segments=2)
+    fossil = keep_root / "public" / "seg000018677.ts"
+    fossil.write_bytes(b"\x47" * 1024)
+    stamp = _FIXTURE_EPOCH - _FOSSIL_AGE_SECONDS
+    os.utime(fossil, (stamp, stamp))
+    _write_keep_heartbeat(keep_root, age=1.0)
+
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+    window = verify.caption_window(
+        root / "public",
+        segment_seconds=2.0,
+        keep_dir=keep.channel_dir("public"),
+        keep_heartbeat_age_seconds=keep.heartbeat_age_seconds,
+    )
+
+    assert keep.usable is True  # the keeper IS fresh; the fossil is refused anyway
+    assert window["segments"] == []
+    assert window["span_seconds"] == 0.0
+    assert window["older_excluded"] == 1
+
+
+def test_caption_window_stops_at_a_hole_in_the_kept_segments(tmp_path: Path) -> None:
+    """A window is only honest while it is CONTIGUOUS.
+
+    The keeper polls every 4 s and copies every finished segment it has not
+    copied yet, so it does not normally miss one -- but if it does (started late,
+    a poll lost), the copies are holed, and `count x segment_seconds` would then
+    claim a span the media does not cover.  The walk stops at the hole and says
+    where, instead of counting across it.
+    """
+    root, keep_root, names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+    (keep_root / "public" / names[20]).unlink()  # the poll that missed one
+    _write_keep_heartbeat(keep_root, age=1.0)
+
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+    window = verify.caption_window(
+        root / "public",
+        segment_seconds=2.0,
+        keep_dir=keep.channel_dir("public"),
+        keep_heartbeat_age_seconds=keep.heartbeat_age_seconds,
+    )
+
+    assert [item["segment"] for item in window["segments"]] == names[21:38]
+    assert window["span_seconds"] == 34.0
+    assert window["gap_stopped_at"] == names[19]
+    assert window["gap_seconds"] == 4.0
+
+
+def test_verify_channel_evidence_names_the_keep_dir_and_its_heartbeat_age(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The channel evidence must carry the union's provenance, not just its span."""
+    root, keep_root, _names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+    _write_keep_heartbeat(keep_root, age=1.5)
+    _write_worker_log(
+        root,
+        "public",
+        ["CTRL caption public: received=9 injected=9 replayed=0 rejected=0 in 60s"],
+        age=5.0,
+    )
+
+    def recording_decode(path):
+        # 25 of the 30 window segments exist ONLY as keeper copies: a decode-back
+        # that reached the live channel dir alone would come back UNVERIFIED.
+        return {
+            "status": verify.Verdict.PASS,
+            "detail": "ok",
+            "decoded_text_present": True,
+            "decoded_text_bytes": 5,
+            "decoded_text_sha256": "deadbeef",
+            "decoded_cue_count": 1,
+        }
+
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
+    monkeypatch.setattr(verify, "_decode_captions", recording_decode)
+    _stub_all_av(monkeypatch)
+
+    keep = verify.resolve_caption_keep(keep_root, requested=True)
+    result = verify.verify_channel(
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
+        caption_keep=keep,
+    )
+
+    block = result["caption_window"]
+    assert block["span_seconds"] == 60.0
+    assert block["segment_count"] == 30
+    assert block["source"] == "keep"
+    assert block["from_keep"] == 25
+    assert block["from_live"] == 5
+    assert block["keep_dir"] == str(keep_root)
+    assert block["keep_dir_used"] is True
+    assert block["keep_heartbeat_age_seconds"] == 1.5
+    assert block["emitted_first_utc"].startswith("2023")  # the fixture epoch's year
+    # Every one of the 30 decoded cleanly -- proof the keeper's copies were the
+    # bytes on the table, not a fallback the live dir happened to satisfy.
+    assert result["caption_decode_back"]["status"] == verify.Verdict.PASS
+    assert result["caption_decode_back"]["cue_count"] == 30
+    assert result["caption_decode_back"]["span_seconds"] == 60.0
+
+
+def test_verify_channel_without_a_keep_dir_says_so_in_the_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No keeper in play: the evidence states the window came from the live dir alone."""
+    root, _keep_root, names = _rotated_channel(tmp_path, emitted=40, live_segments=7)
+
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
+    monkeypatch.setattr(
+        verify,
+        "_decode_captions",
+        lambda *a, **k: {"status": verify.Verdict.PASS, "decoded_cue_count": 1},
+    )
+    _stub_all_av(monkeypatch)
+
+    result = verify.verify_channel(
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
+    )
+
+    block = result["caption_window"]
+    assert block["source"] == "live"
+    assert block["keep_dir_used"] is False
+    assert block["keep_dir"] is None
+    assert block["keep_heartbeat_age_seconds"] is None
+    assert block["span_seconds"] == 10.0
+    assert result["caption_decode_back"]["per_segment"] != []
+    assert names[-2:] == block["newest_excluded"]
+
+
+def test_verify_all_hands_the_keep_source_to_every_channel(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The CLI-resolved keeper must reach each channel's own verify_channel call."""
+    root, names = _emitted_channel(tmp_path, count=8, seconds=2.0)
+    monkeypatch.setattr(
+        verify,
+        "tool_versions",
+        lambda: {"ffprobe": {"path": None}, "ffmpeg": {"path": None}, "tsp": {"path": None}},
+    )
+    monkeypatch.setattr(
+        verify,
+        "snapshot_channels",
+        lambda *_a, **_k: {"channels": {"public": None}, "scratch": tmp_path / "scratch"},
+    )
+    seen: list[object] = []
+
+    def spy(channel_id, hls_root, **kwargs):
+        seen.append(kwargs.get("caption_keep"))
+        return {"status": verify.Verdict.PASS, "channel": channel_id, "segments": names}
+
+    monkeypatch.setattr(verify, "verify_channel", spy)
+    keep = verify.CaptionKeepSource(
+        root=tmp_path / _KEEP_DIR_NAME, usable=True, heartbeat_age_seconds=2.0, note="kept copies"
+    )
+
+    verify.verify_all(root, channel_ids=("public",), dwell_seconds=0.0, caption_keep=keep)
+
+    assert seen == [keep]
+
+
+def test_main_resolves_the_default_keep_dir_when_its_heartbeat_is_fresh(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The 8 h rung already running must benefit without a restart.
+
+    rung.ps1 loaded its own copy of the script at start, so it passes no
+    `--caption-keep-dir`: the CLI has to look in %TEMP%\\cc-caption-keep by
+    default, and to fall back cleanly when nothing is there.
+    """
+    root, _names = _emitted_channel(tmp_path, count=8, seconds=2.0)
+    keep_root = tmp_path / _KEEP_DIR_NAME
+    _write_keep_heartbeat(keep_root, age=2.0)
+    monkeypatch.setattr(verify, "default_caption_keep_dir", lambda: keep_root)
+    captured: dict[str, object] = {}
+
+    def spy(hls_root, **kwargs):
+        captured.update(kwargs)
+        return {"channels": {}, "verdict": verify.Verdict.FAIL}
+
+    monkeypatch.setattr(verify, "verify_all", spy)
+    out = tmp_path / "verify.json"
+
+    verify.main(["--hls-root", str(root), "--out", str(out)])
+
+    keep = captured["caption_keep"]
+    assert keep.usable is True
+    assert keep.heartbeat_age_seconds == 2.0
+    assert keep.channel_dir("public") == keep_root / "public"
+    # ... and the file the rung reads says so.
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["verdict"] == verify.Verdict.FAIL
+
+
+def test_main_falls_back_to_the_live_dir_when_the_default_keep_dir_is_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No keeper running: one line of evidence, no error, today's window."""
+    root, _names = _emitted_channel(tmp_path, count=8, seconds=2.0)
+    monkeypatch.setattr(verify, "default_caption_keep_dir", lambda: tmp_path / "never-created")
+    captured: dict[str, object] = {}
+
+    def spy(hls_root, **kwargs):
+        captured.update(kwargs)
+        return {"channels": {}, "verdict": verify.Verdict.FAIL}
+
+    monkeypatch.setattr(verify, "verify_all", spy)
+
+    verify.main(["--hls-root", str(root), "--out", str(tmp_path / "verify.json")])
+
+    keep = captured["caption_keep"]
+    assert keep.usable is False
+    assert keep.root == tmp_path / "never-created"
+    assert "never-created" in keep.note
+
+
+def test_main_honours_an_explicit_caption_keep_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`--caption-keep-dir` wins over the default, fresh or not."""
+    root, _names = _emitted_channel(tmp_path, count=8, seconds=2.0)
+    keep_root = tmp_path / "elsewhere"
+    _write_keep_heartbeat(keep_root, age=1.0)
+    monkeypatch.setattr(verify, "default_caption_keep_dir", lambda: tmp_path / _KEEP_DIR_NAME)
+    captured: dict[str, object] = {}
+
+    def spy(hls_root, **kwargs):
+        captured.update(kwargs)
+        return {"channels": {}, "verdict": verify.Verdict.FAIL}
+
+    monkeypatch.setattr(verify, "verify_all", spy)
+
+    verify.main(
+        [
+            "--hls-root",
+            str(root),
+            "--out",
+            str(tmp_path / "verify.json"),
+            "--caption-keep-dir",
+            str(keep_root),
+        ]
+    )
+
+    assert captured["caption_keep"].root == keep_root
+    assert captured["caption_keep"].usable is True
+
+
 def test_caption_window_records_span_cues_and_the_worker_receipt(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -740,12 +1238,19 @@ def test_caption_window_records_span_cues_and_the_worker_receipt(
             "decoded_cue_count": 0,
         }
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(verify, "_decode_captions", fake_decode)
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     block = result["caption_decode_back"]
@@ -766,7 +1271,9 @@ def test_caption_window_with_no_finished_segment_is_not_proven(
     """Two segments or fewer: both newest are excluded, nothing is decodable."""
     root, _names = _emitted_channel(tmp_path, count=2, seconds=2.0)
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(
         verify,
         "_decode_captions",
@@ -775,7 +1282,12 @@ def test_caption_window_with_no_finished_segment_is_not_proven(
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.NOT_PROVEN
@@ -1229,7 +1741,12 @@ def test_segment_deleted_after_capture_does_not_false_pass(
     monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"})
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     # Every analyzed path must be a PRIVATE verifier snapshot under a
@@ -1267,7 +1784,12 @@ def test_snapshot_hash_matches_live_source_hash(
     monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"})
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
     for rec in result["segment_identity"]:
         assert rec.get("snapshot_sha256") == live_hashes[rec["segment"]]

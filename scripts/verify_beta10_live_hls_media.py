@@ -64,6 +64,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -190,6 +191,37 @@ CAPTION_WINDOW_MAX_SEGMENTS: Final[int] = 40
 #: earlier runs -- public `seg000018677.ts` (Sep 19) beside `seg000001284.ts` --
 #: and a fossil's cues would be a false PASS, so the walk stops at this floor.
 CAPTION_WINDOW_STALENESS_SECONDS: Final[float] = 900.0
+
+# --- U50: the keeper's copies, without which the 60 s window is a fiction ---
+#
+# Measured live 2026-09-26: `live-hls\public\` held 7 live segments (14:36:04 -
+# 14:36:16, 2 s each) and 43 fossils; a verify therefore saw 7 fresh candidates,
+# excluded the newest 2 and reported `span_seconds` 10.0 on all three channels of
+# rung 8h-post-u47.  The relay deletes each segment as it rotates it out, so the
+# media a 60 s window needs is GONE by the time the verifier looks for it.
+# `bin\segment_keeper.py` copies finished segments aside before that happens and
+# rewrites a heartbeat file every loop; the window is the live dir UNION those
+# copies, and only while that heartbeat is fresh.
+
+#: The keeper's liveness file, inside the keep dir (one keep dir for all channels,
+#: which is why the channels live in subdirectories of it).
+CAPTION_KEEP_HEARTBEAT_NAME: Final[str] = "heartbeat.json"
+#: `%TEMP%\cc-caption-keep`: the folder `bin\segment_keeper.py` writes by default
+#: and the folder this verifier looks in by default, so the 8 h rung ALREADY
+#: RUNNING (which loaded its own copy of rung.ps1 at start, without the new
+#: option) benefits as soon as a keeper is started beside it.
+CAPTION_KEEP_DIR_NAME: Final[str] = "cc-caption-keep"
+#: The keeper rewrites its heartbeat every 4 s.  Older than this and the copies
+#: are a stopped run's leftovers, which is exactly the fossil group the window
+#: must never reach.
+CAPTION_KEEP_HEARTBEAT_FRESH_SECONDS: Final[float] = 30.0
+#: A window is only honest while it is CONTIGUOUS, and `count x segment_seconds`
+#: claims a span the media may not cover when the keeper missed a segment (it
+#: polls every 4 s and copies everything not yet copied, so this is rare, but a
+#: hole must shorten the window rather than hide inside it).  The walk stops when
+#: the step between adjacent candidates exceeds this multiple of the segment
+#: duration; every healthy fixture spaces segments at exactly 2.0 s.
+CAPTION_KEEP_GAP_TOLERANCE: Final[float] = 1.5
 
 #: The playout worker prints one ``CTRL caption <ch>: received=... in 60s`` line
 #: per 60 s window that carried caption activity, and one WARNING after ten
@@ -714,36 +746,187 @@ def _read_log_tail(path: Path, limit: int) -> tuple[str, int]:
     raise last
 
 
-def caption_window(channel_dir: Path, *, segment_seconds: float = HLS_TARGET_SEGMENT_SECONDS) -> dict[str, Any]:
-    """The newest ~60 s of FINISHED segments in a channel dir, oldest first.
+def caption_keep_heartbeat_age(root: Path, *, now: float | None = None) -> float | None:
+    """How long ago the keeper last wrote its heartbeat, or None if it never did.
+
+    The heartbeat is rewritten every loop (4 s), so its MTIME is the whole
+    liveness argument: a fresh one means segments were being copied into this
+    folder seconds ago and the copies are the recent past.  `updated_epoch` inside
+    the file says the same thing, but a file whose mtime is old is a stopped
+    keeper's leftovers whatever its contents claim.
+    """
+
+    moment = time.time() if now is None else now
+    try:
+        stat = (root / CAPTION_KEEP_HEARTBEAT_NAME).stat()
+    except OSError:
+        return None
+    return round(moment - stat.st_mtime, 3)
+
+
+@dataclass(frozen=True)
+class CaptionKeepSource:
+    """Where the keeper's copies live, and whether they may be used at all.
+
+    A folder of `seg*.ts` copies is not evidence by itself: a stopped keeper
+    leaves exactly the fossil group the window must never reach.  The heartbeat
+    age is what makes them usable, so when it is stale (or absent) this type is
+    inert -- `channel_dir` returns None for every channel, refusing the copies
+    outright rather than merely ignoring them, so no caller can read them anyway.
+    """
+
+    root: Path
+    usable: bool
+    heartbeat_age_seconds: float | None
+    note: str
+
+    def channel_dir(self, channel_id: str) -> Path | None:
+        return self.root / channel_id if self.usable else None
+
+
+#: The default when no keeper is in play.  Frozen and inert, and the default for
+#: `verify_channel` / `verify_all`, so a unit test can never silently pick up
+#: whatever a live keeper happens to have left in %TEMP%.
+NO_CAPTION_KEEP: Final[CaptionKeepSource] = CaptionKeepSource(
+    root=Path(), usable=False, heartbeat_age_seconds=None, note="no caption keep dir was requested"
+)
+
+
+def default_caption_keep_dir() -> Path:
+    """`%TEMP%\\cc-caption-keep`: where `bin\\segment_keeper.py` writes by default.
+
+    A rung that is ALREADY RUNNING loaded its own copy of `rung.ps1` at start and
+    therefore passes no `--caption-keep-dir`; looking here by default is what lets
+    a keeper started beside it take effect without restarting the rung.
+    """
+
+    return Path(tempfile.gettempdir()) / CAPTION_KEEP_DIR_NAME
+
+
+def resolve_caption_keep(
+    root: Path, *, requested: bool = False, now: float | None = None
+) -> CaptionKeepSource:
+    """Decide whether the keep dir may be used, and say why in the evidence.
+
+    `requested` only colours the wording (an explicit `--caption-keep-dir` versus
+    the CLI's default lookup); the rule is the same either way -- the copies are
+    usable exactly while the keeper's heartbeat is `CAPTION_KEEP_HEARTBEAT_FRESH_SECONDS`
+    old or newer.  Every outcome states which it is, so the verify file never has
+    to be read against the live station to learn whether the 60 s window was real.
+    """
+
+    origin = "the requested caption keep dir" if requested else "the default caption keep dir"
+    age = caption_keep_heartbeat_age(root, now=now)
+    if age is None:
+        return CaptionKeepSource(
+            root=root,
+            usable=False,
+            heartbeat_age_seconds=None,
+            note=(
+                f"{origin} {root} holds no {CAPTION_KEEP_HEARTBEAT_NAME}: no caption keeper is "
+                "running there, so the caption window is the live dir alone"
+            ),
+        )
+    if age > CAPTION_KEEP_HEARTBEAT_FRESH_SECONDS:
+        return CaptionKeepSource(
+            root=root,
+            usable=False,
+            heartbeat_age_seconds=age,
+            note=(
+                f"{origin} {root} last heartbeat was {age:g}s ago, older than "
+                f"{CAPTION_KEEP_HEARTBEAT_FRESH_SECONDS:g}s: the keeper is not running, so its "
+                "copies are a stopped run's leftovers and the caption window is the live dir alone"
+            ),
+        )
+    return CaptionKeepSource(
+        root=root,
+        usable=True,
+        heartbeat_age_seconds=age,
+        note=(
+            f"{origin} {root} heartbeat was {age:g}s ago: the keeper's copies of rotated-away "
+            "segments are part of the caption window"
+        ),
+    )
+
+
+def caption_window(
+    channel_dir: Path,
+    *,
+    segment_seconds: float = HLS_TARGET_SEGMENT_SECONDS,
+    keep_dir: Path | None = None,
+    keep_heartbeat_age_seconds: float | None = None,
+) -> dict[str, Any]:
+    """The newest ~60 s of FINISHED segments, oldest first.
 
     Selection is by EMISSION TIME (mtime), never by name or sequence number: a
     live channel dir also holds segments left by PREVIOUS runs whose sequence
-    numbers are far higher than the current run's newest, and a name-ordered
-    window would decode those fossils instead of the stream.  The newest
-    `CAPTION_WINDOW_EXCLUDE_NEWEST` segments are never touched -- the relay may
-    still be writing them -- and the walk stops at `CAPTION_WINDOW_STALENESS_SECONDS`
-    behind the newest candidate so it can never walk back into a previous run.
+    numbers are far higher than the current run's newest -- observed live
+    2026-09-26, public `seg000018677.ts` (Sep 19) beside the running
+    `seg000001284.ts` -- and a name-ordered window would decode those fossils
+    instead of the stream.  The newest `CAPTION_WINDOW_EXCLUDE_NEWEST` segments
+    are never touched -- the relay may still be writing them -- and the walk stops
+    at `CAPTION_WINDOW_STALENESS_SECONDS` behind the newest candidate so it can
+    never walk back into a previous run.
+
+    `keep_dir` (U50) adds the keeper's plain copies of segments the relay has
+    already DELETED, without which this window is 10 s on the live station and not
+    60 s: the relay keeps only ~7 segments and rotates the rest away before the
+    verifier can look.  The copies are UNIONED with the live dir, deduped by name
+    with the LIVE file winning (a kept copy is only ever a stand-in for a segment
+    that is gone, never a substitute for one still on air), and they are subject to
+    the same staleness rule as anything else.  A window is also only honest while
+    it is CONTIGUOUS: `count x segment_seconds` would otherwise claim a span the
+    media does not cover, so the walk stops at the first step wider than
+    `CAPTION_KEEP_GAP_TOLERANCE` segment durations and reports where.
+
+    The result says where the window came from (`source`, `from_keep`, `from_live`,
+    the heartbeat age), and each segment carries the `path` it was actually read
+    from, so a consumer decodes the copy rather than the live name.
     """
 
-    candidates: list[tuple[int, int, str]] = []
+    stale_ns = int(CAPTION_WINDOW_STALENESS_SECONDS * 1_000_000_000)
+
+    def _empty() -> dict[str, Any]:
+        return {
+            "segments": [],
+            "span_seconds": 0.0,
+            "newest_excluded": [],
+            "older_excluded": 0,
+            "source": "live",
+            "from_keep": 0,
+            "from_live": 0,
+            "keep_heartbeat_age_seconds": keep_heartbeat_age_seconds,
+            "gap_stopped_at": None,
+            "gap_seconds": None,
+        }
+
+    # (mtime_ns, sequence, name, path, from_keep); the live dir is collected FIRST
+    # so a name present in both resolves to the live file.
+    candidates: list[tuple[int, int, str, Path, bool]] = []
+    live_names: set[str] = set()
     try:
         entries = list(channel_dir.glob("seg*.ts"))
     except OSError:  # pragma: no cover - an unreadable dir is reported upstream
-        return {"segments": [], "span_seconds": 0.0, "newest_excluded": [], "older_excluded": 0}
-    for path in entries:
+        return _empty()
+    for path, from_keep in [(entry, False) for entry in entries] + [
+        (entry, True) for entry in (list(keep_dir.glob("seg*.ts")) if keep_dir is not None else [])
+    ]:
         sequence = _sequence_number(path.name)
         if sequence is None:
             continue
+        if from_keep and path.name in live_names:
+            continue  # the live file is the one on air; the copy is a stand-in
         try:
             stat = path.stat()
         except OSError:
-            # A segment the relay rotated away mid-enumeration is simply not
-            # part of the window; it is not evidence of anything.
+            # A segment rotated away mid-enumeration is simply not part of the
+            # window; it is not evidence of anything.
             continue
-        candidates.append((stat.st_mtime_ns, sequence, path.name))
+        if not from_keep:
+            live_names.add(path.name)
+        candidates.append((stat.st_mtime_ns, sequence, path.name, path, from_keep))
     if not candidates:
-        return {"segments": [], "span_seconds": 0.0, "newest_excluded": [], "older_excluded": 0}
+        return _empty()
     candidates.sort(key=lambda item: (item[0], item[1], item[2]))
 
     if CAPTION_WINDOW_EXCLUDE_NEWEST > 0:
@@ -752,13 +935,20 @@ def caption_window(channel_dir: Path, *, segment_seconds: float = HLS_TARGET_SEG
     else:  # pragma: no cover - the shipped floor is 2, and 0 is not a window
         finished, newest_excluded = candidates, []
     newest_ns = candidates[-1][0]
-    stale_ns = int(CAPTION_WINDOW_STALENESS_SECONDS * 1_000_000_000)
+    gap_ns = int(segment_seconds * CAPTION_KEEP_GAP_TOLERANCE * 1_000_000_000)
 
-    chosen: list[tuple[int, int, str]] = []
+    chosen: list[tuple[int, int, str, Path, bool]] = []
     span = 0.0
+    gap_stopped_at: str | None = None
+    gap_seconds: float | None = None
     for item in reversed(finished):
         if newest_ns - item[0] > stale_ns:
             break  # this and everything older belongs to a previous run
+        if chosen and chosen[-1][0] - item[0] > gap_ns:
+            # The keeper missed this segment (or the relay outran it): counting
+            # across the hole would claim a span the media does not cover.
+            gap_stopped_at, gap_seconds = item[2], round((chosen[-1][0] - item[0]) / 1e9, 3)
+            break
         if chosen and span + segment_seconds > CAPTION_WINDOW_SECONDS:
             break
         chosen.append(item)
@@ -767,19 +957,26 @@ def caption_window(channel_dir: Path, *, segment_seconds: float = HLS_TARGET_SEG
             break
     chosen.reverse()
 
-    chosen_names = [item[2] for item in chosen]
+    from_keep = sum(1 for item in chosen if item[4])
     return {
         "segments": [
             {
                 "segment": name,
+                "path": str(path),
                 "mtime_ns": mtime_ns,
                 "emitted_utc": datetime.fromtimestamp(mtime_ns / 1e9, tz=UTC).isoformat(),
             }
-            for mtime_ns, _sequence, name in chosen
+            for mtime_ns, _sequence, name, path, _kept in chosen
         ],
         "span_seconds": round(span, 3),
         "newest_excluded": newest_excluded,
-        "older_excluded": len(finished) - len(chosen_names),
+        "older_excluded": len(finished) - len(chosen),
+        "source": "keep" if from_keep else "live",
+        "from_keep": from_keep,
+        "from_live": len(chosen) - from_keep,
+        "keep_heartbeat_age_seconds": keep_heartbeat_age_seconds,
+        "gap_stopped_at": gap_stopped_at,
+        "gap_seconds": gap_seconds,
     }
 
 
@@ -1507,6 +1704,7 @@ def verify_channel(
     first_playlist: Playlist | None = None,
     first_mtimes: dict[str, float] | None = None,
     presnapshot: dict[str, Any] | None = None,
+    caption_keep: CaptionKeepSource = NO_CAPTION_KEEP,
 ) -> dict[str, Any]:
     max_segments = validate_max_segments(max_segments)
     validate_channel_ids((channel_id,))
@@ -1573,6 +1771,7 @@ def verify_channel(
             ffmpeg=ffmpeg,
             tsp=tsp,
             max_segments=max_segments,
+            caption_keep=caption_keep,
         )
     finally:
         _safe_rmtree(scratch)
@@ -1591,6 +1790,7 @@ def _verify_channel_body(
     ffmpeg: Path | None,
     tsp: Path | None,
     max_segments: int,
+    caption_keep: CaptionKeepSource = NO_CAPTION_KEEP,
 ) -> dict[str, Any]:
     snapshot_dir = scratch / "segments"
     snapshot_dir.mkdir(parents=True, exist_ok=True)
@@ -1713,9 +1913,19 @@ def _verify_channel_body(
 
     # The caption window is the newest ~60 s of FINISHED segments, chosen by
     # emission time (U48 follow-on: 4 segments / ~8 s failed on any speech pause).
+    # U50: the relay keeps only ~7 live segments and DELETES each one as it rotates
+    # it out, so the live dir alone yields 10 s, never 60.  The keeper's copies of
+    # the rotated-away segments (used only while its heartbeat is fresh) are what
+    # make the 60 s window real; the evidence says which of the two this is.
     durations = [d for d in playlist.segment_infos if d and d > 0]
     caption_seconds = sorted(durations)[len(durations) // 2] if durations else HLS_TARGET_SEGMENT_SECONDS
-    window = caption_window(channel_dir, segment_seconds=caption_seconds)
+    keep_channel_dir = caption_keep.channel_dir(channel_id)
+    window = caption_window(
+        channel_dir,
+        segment_seconds=caption_seconds,
+        keep_dir=keep_channel_dir,
+        keep_heartbeat_age_seconds=caption_keep.heartbeat_age_seconds,
+    )
     window_names = [item["segment"] for item in window["segments"]]
     evidence["caption_window"] = {
         "span_seconds": window["span_seconds"],
@@ -1724,6 +1934,18 @@ def _verify_channel_body(
         "emitted_last_utc": window["segments"][-1]["emitted_utc"] if window["segments"] else None,
         "newest_excluded": window["newest_excluded"],
         "older_excluded": window["older_excluded"],
+        # U50 provenance: a 60 s span means something different when 25 of its
+        # segments are keeper copies rather than bytes still on air, and a 10 s
+        # span means something different when no keeper was running at all.
+        "source": window["source"],
+        "from_keep": window["from_keep"],
+        "from_live": window["from_live"],
+        "keep_dir": str(caption_keep.root) if caption_keep is not NO_CAPTION_KEEP else None,
+        "keep_dir_used": keep_channel_dir is not None,
+        "keep_heartbeat_age_seconds": window["keep_heartbeat_age_seconds"],
+        "keep_note": caption_keep.note,
+        "gap_stopped_at": window["gap_stopped_at"],
+        "gap_seconds": window["gap_seconds"],
     }
     per_segment_captions: list[dict[str, Any]] = []
     if not decoder["available"]:
@@ -1755,7 +1977,9 @@ def _verify_channel_body(
         caption_dir = scratch / "caption"
         caption_dir.mkdir(parents=True, exist_ok=True)
         for item in window["segments"]:
-            snapshot, _digest = _snapshot_segment(channel_dir / item["segment"], caption_dir)
+            # The path the window actually chose: a live segment, or the keeper's
+            # copy of one the relay has already deleted (U50).
+            snapshot, _digest = _snapshot_segment(Path(item["path"]), caption_dir)
             if snapshot is None:
                 per_segment_captions.append(
                     {
@@ -1831,6 +2055,7 @@ def verify_all(
     channel_ids: tuple[str, ...] = REQUIRED_CHANNELS,
     max_segments: int = DEFAULT_MAX_SEGMENTS,
     dwell_seconds: float = 5.0,
+    caption_keep: CaptionKeepSource = NO_CAPTION_KEEP,
 ) -> dict[str, Any]:
     """Verify all channels; bounded dwell measures real playlist advancement."""
 
@@ -1871,6 +2096,7 @@ def verify_all(
                 first_playlist=first_snapshots[channel_id],
                 first_mtimes=first_mtime_snapshots[channel_id],
                 presnapshot=pre_channels.get(channel_id),
+                caption_keep=caption_keep,
             )
     finally:
         _safe_rmtree(shot["scratch"])
@@ -1924,12 +2150,20 @@ def verify_all(
             "caption_window_seconds": CAPTION_WINDOW_SECONDS,
             "caption_window_exclude_newest": CAPTION_WINDOW_EXCLUDE_NEWEST,
             "caption_receipt_fresh_seconds": CAPTION_RECEIPT_FRESH_SECONDS,
+            "caption_keep_heartbeat_fresh_seconds": CAPTION_KEEP_HEARTBEAT_FRESH_SECONDS,
+            "caption_keep_gap_tolerance": CAPTION_KEEP_GAP_TOLERANCE,
             "source": (
                 "civiccast.stream.loudness / civiccast.egress.compliance / "
                 "civiccast.egress.preparer / civiccast.egress.sinks.HlsSink"
             ),
         },
         "channels": channels,
+        "caption_keep": {
+            "root": str(caption_keep.root) if caption_keep is not NO_CAPTION_KEEP else None,
+            "usable": caption_keep.usable,
+            "heartbeat_age_seconds": caption_keep.heartbeat_age_seconds,
+            "note": caption_keep.note,
+        },
         "verdict": overall,
     }
 
@@ -1945,16 +2179,35 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--channels", nargs="+", default=list(REQUIRED_CHANNELS))
     parser.add_argument("--max-segments", type=int, default=DEFAULT_MAX_SEGMENTS)
     parser.add_argument("--dwell-seconds", type=float, default=5.0)
+    parser.add_argument(
+        "--caption-keep-dir",
+        type=Path,
+        default=None,
+        help=(
+            "folder of plain copies of finished segments kept by "
+            r"bin\segment_keeper.py (default: %TEMP%\cc-caption-keep when its heartbeat is fresh)"
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    # An explicit `--caption-keep-dir` is used as given; otherwise look in the
+    # keeper's default folder, so a rung ALREADY RUNNING (which passes no option)
+    # benefits from a keeper started beside it without a restart.  Either way the
+    # heartbeat decides whether the copies may be used, and the evidence says
+    # which of the two it was -- a stale or absent keeper is today's behaviour.
+    requested = args.caption_keep_dir is not None
+    caption_keep = resolve_caption_keep(
+        args.caption_keep_dir if requested else default_caption_keep_dir(), requested=requested
+    )
     report = verify_all(
         args.hls_root,
         channel_ids=tuple(args.channels),
         max_segments=args.max_segments,
         dwell_seconds=args.dwell_seconds,
+        caption_keep=caption_keep,
     )
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
