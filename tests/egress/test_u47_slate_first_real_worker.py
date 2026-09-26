@@ -121,9 +121,10 @@ _SLATE_RENDER_S = 90
 _SLATE_FILL_S = 90
 
 # The brief's budget: "slate output within 5 s of start". MEASURED AND MISSED on this
-# seat (5.42 / 5.48 / 5.84 s over three runs; the excess is worker process bring-up, not
-# the daemon path). It is recorded and printed, not asserted -- see questions/U47.md --
-# because a permanently red suite hides the miss rather than reporting it.
+# seat (5.42 / 5.48 / 5.62 / 5.84 / 5.84 / 6.06 / 6.22 s over seven runs; the excess is
+# worker process bring-up, not the daemon path). It is recorded and printed, not asserted
+# -- see questions/U47.md -- because a permanently red suite hides the miss rather than
+# reporting it.
 _SLATE_BUDGET_S = 5.0
 # The bound that IS asserted: a regression ceiling at the measured figure. It catches the
 # failure this test exists for (a daemon that waits for the program preparation, which
