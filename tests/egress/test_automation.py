@@ -205,10 +205,130 @@ def test_single_item_rollover_prepares_next_boundary_with_bounded_lead() -> None
     service.run_once(now=_NOW)
     service.run_once(now=end - timedelta(seconds=691))
     assert _pending_actions(store, "public") == []
-    assert sampled == []
-    service.run_once(now=end - timedelta(seconds=690))
+    # U53 item 3: the boundary is resolved HERE, one second before the flat
+    # trigger, because the lead is now adaptive (an item that costs more to
+    # conform than the timeout bound allows has to be known about before the
+    # trigger it moves, not at it). The 300s target keeps the lead at 690s, so
+    # nothing is dispatched -- and the probe is remembered for this boundary,
+    # which is why the dispatch tick below adds no second resolution.
     assert sampled == [end]
+    service.run_once(now=end - timedelta(seconds=690))
+    # The dispatch resolves its OWN plan rather than reusing the probe: the
+    # probe only sizes the lead, and a schedule edited between the two calls
+    # must still be honoured at the boundary (that liveness is the property
+    # U26/U41 built the boundary resolution around).
+    assert sampled == [end, end]
     assert _pending_actions(store, "public") == ["reload"]
+
+
+def test_u53_the_lead_covers_the_item_that_must_be_prepared(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U53 item 3 (coordinator's engineering call): the lead is ADAPTIVE.
+
+    ``_rollover_lead_seconds`` was sized entirely from the configured
+    preparation TIMEOUT (2 * 300 + 30 + 60 = 690s), which is a bound on what
+    one ffmpeg pass may take, not on what the item coming up actually costs.
+    Measured 2026-09-25 (``preparer.py``'s module docstring): a 9020.8s asset
+    conforms at 16.3x realtime uncontended on one below-normal-priority
+    thread -- 555s alone, 866s worst observed under load. A 9020.8s item
+    therefore needs 871.7s of lead (9020.8 / 12 + 120, the coordinator's
+    deliberately conservative 12x factor plus the 120s margin), and at the
+    690s floor its dispatch was issued ~182s too late.
+
+    The floor is a FLOOR, not a replacement: an item that conforms faster
+    than the timeout bound allows keeps today's 690s (300s here -> 690s), so
+    no existing behaviour moves. RED before the change: the dispatch at
+    ``end - 872`` fires under the flat 690s lead.
+
+    The asset duration is the item the boundary provider actually resolves at
+    ``plan_end_at`` -- the same instant the dispatch resolves at, so the lead is
+    measured against the plan that will really be prepared rather than a guess.
+    It is resolved on the tick BEFORE the trigger (``_probe_rollover_asset``,
+    once per boundary and then cached) and not reused by the dispatch, which
+    resolves its own plan so a schedule edited in between is still honoured.
+    """
+
+    recorded: list[tuple[datetime, str | None, float | None]] = []
+
+    class _RecordingDaemon(_HorizonAwareDaemon):
+        def record_rollover_plan_end(
+            self,
+            _channel_id: str,
+            plan_end_at: datetime,
+            *,
+            command_id: str | None,
+            force_fallback: bool = False,
+            min_plan_seconds: float | None = None,
+        ) -> None:
+            recorded.append((plan_end_at, command_id, min_plan_seconds))
+
+    monkeypatch.delenv(automation_module.ROLLOVER_LEAD_ENV, raising=False)
+    monkeypatch.setenv(preparer_module.PREPARATION_TIMEOUT_ENV, "300")
+    store = InMemoryEgressStore()
+    store.upsert_config(_config("public"))
+    store.write_state(
+        EgressStateRow(
+            channel_id="public",
+            state="ON_AIR",
+            current_source_label="Council Meeting",
+            current_proof_event_id="ev-1",
+            updated_at=_NOW,
+            pid=123,
+        )
+    )
+    daemon = _RecordingDaemon(live_channels={"public"})
+    daemon.dispatched["public"] = ("ev-1", (3600.0,), False)
+    sampled: list[datetime] = []
+
+    def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+        sampled.append(boundary)
+        return _plan_with_duration(channel_id, 9020.8, source_ref="next-programme")
+
+    service = ChannelAutomationService(
+        store,
+        daemon,
+        lambda channel: _plan_with_duration(channel, 3600.0),
+        settings=ChannelAutomationSettings(),
+        boundary_source_plan_provider=next_plan,
+    )
+    end = _NOW + timedelta(seconds=3600)
+
+    # The arithmetic, pinned: 2*300 + 30 + 60 = 690s is the floor, and an item
+    # that needs longer than that wins.
+    assert service._rollover_lead_seconds() == 690.0
+    assert service._rollover_lead_seconds(9020.8) == pytest.approx(871.7333, abs=0.001)
+    assert service._rollover_lead_seconds(300.0) == 690.0
+
+    service.run_once(now=_NOW)  # establish the 3600s horizon
+    service.run_once(now=end - timedelta(seconds=872))
+    assert _pending_actions(store, "public") == [], (
+        "a 9020.8s item needs 9020.8/12 + 120 = 871.7s of lead, so 872s out is not yet the trigger"
+    )
+    assert sampled == [end], (
+        "the probe ran here, before the flat 690s trigger (end-690), because an "
+        "adaptive lead can only move the dispatch EARLIER and is useless if its "
+        "input only arrives at the trigger it computes"
+    )
+
+    with caplog.at_level(logging.INFO, logger="civiccast.egress.automation"):
+        service.run_once(now=end - timedelta(seconds=871))
+    assert _pending_actions(store, "public") == ["reload"]
+    assert sampled == [end, end], (
+        "the boundary is sampled twice: once by the adaptive probe (which sizes "
+        "the lead and must run before the trigger it moves -- it ran on the "
+        "previous tick, at end-872, and is cached for this boundary) and once by "
+        "the dispatch itself, which never reuses the probe"
+    )
+    assert len(recorded) == 1
+    assert recorded[0][2] == pytest.approx(871.7333, abs=0.001), (
+        "the widened lead is the horizon the deferred rollover's plan is "
+        f"measured from; observed {recorded[0][2]!r}"
+    )
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("lead=872s for Program (9021s at 12x + 120s)" in message for message in messages), (
+        f"the computed lead must be reported on every rollover; captured {messages}"
+    )
 
 
 def test_a_plan_shorter_than_the_lead_arms_at_its_own_start() -> None:
@@ -389,11 +509,15 @@ class TestGstRolloverLeadCoversPreparationTimeout:
 
         service.run_once(now=_NOW)
         service.run_once(now=end - timedelta(seconds=691))
-        assert boundaries == []
+        # U53 item 3: the boundary is probed one second before the flat
+        # trigger -- the probe sizes the lead, so it has to run while the
+        # trigger it may move is still in the future. This 1800s target keeps
+        # the lead at the 690s floor, so the tick dispatches nothing.
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=end - timedelta(seconds=690))
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
     def test_the_env_override_restores_a_shorter_lead(
@@ -408,11 +532,14 @@ class TestGstRolloverLeadCoversPreparationTimeout:
 
         service.run_once(now=_NOW)
         service.run_once(now=end - timedelta(seconds=91))
-        assert boundaries == []
+        # U53 item 3: probed one second before the 90s override's trigger (the
+        # override replaces the computed lead, so the probe's answer cannot
+        # change this trigger -- it is still resolved, and cached).
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=end - timedelta(seconds=90))
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
     @pytest.mark.parametrize("bad", ["abc", "-5", "0"])
@@ -427,12 +554,14 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
             service.run_once(now=_NOW)
             service.run_once(now=end - timedelta(seconds=691))
-            assert boundaries == []
+            # U53 item 3: the boundary probe runs one tick before the trigger
+            # the computed 690s lead fires at.
+            assert boundaries == [end]
             assert _pending_actions(store, "public") == []
 
             service.run_once(now=end - timedelta(seconds=690))
 
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
         assert any(self._LEAD_ENV in record.getMessage() for record in caplog.records)
 
@@ -457,15 +586,19 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         service.run_once(now=_NOW)  # establish: last segment begins at +1700
         # Past the lead (_NOW+1110) but before the last segment begins.
         service.run_once(now=end - timedelta(seconds=690))
-        assert boundaries == []
+        # U53 item 3: the boundary (a 100s tail segment) is probed here, on the
+        # first tick past the flat trigger's reach -- the tick at +1110 is
+        # still short of the clamp at +1700, so the dispatch stays held by the
+        # clamp (below) while the probe sizes the lead.
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
         # Past the OLD flat lead too (_NOW+1680); still before +1700.
         service.run_once(now=end - timedelta(seconds=120))
-        assert boundaries == []
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=last_segment_start)
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
     def test_a_plan_shorter_than_the_lead_dispatches_as_soon_as_it_settles(
