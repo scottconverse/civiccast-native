@@ -4503,9 +4503,18 @@ def test_u47_a_crash_relaunch_airs_the_fallback_slate_before_the_program_is_prep
     An ON_AIR channel's worker exits non-zero (the switch-path video stall U44
     fixes) and the daemon relaunches it. Pre-U47 the relaunch resolved and
     conformed the scheduled program with no encoder running -- two program
-    preparations in a row, no slate anywhere. U47's relaunch prepares the
-    FALLBACK SLATE first, starts a worker on it, and only then prepares and
-    hands in the program.
+    preparations in a row, no slate anywhere. U47's relaunch starts a worker on
+    the FALLBACK SLATE in the relaunch tick itself and only then hands the
+    program in for preparation.
+
+    The slate is NOT a preparation (coordinator decision on Part III.4, option
+    A). Its plan is already an airing artifact -- the filler provider returns
+    plans whose segments are rendered MPEG-TS files -- so submitting it to the
+    preparer put the slate that exists to COVER the conform behind that very
+    conform: on the station (C2, 2026-09-26) the channel read FALLBACK_SLATE
+    with ``pid=-`` and no worker for 3 m 02 s. The contract pinned here is
+    therefore: the slate's WORKER is started in the same ``process_once`` (so
+    nothing is ever dark), and the slate is never submitted to the preparer.
 
     ``enable_async_preparation`` is what the station's automation turns on
     (automation.py) and is the scoped trigger for this branch: on the synchronous
@@ -4534,16 +4543,27 @@ def test_u47_a_crash_relaunch_airs_the_fallback_slate_before_the_program_is_prep
         assert obs.prepared_labels == ["Council meeting"]
 
         obs.started[0].returncode = 1  # the worker exits non-zero
-        daemon.process_once("gov")  # the relaunch: the SLATE's preparation is queued
-        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
-        daemon.process_once("gov")  # the slate airs; the hand-off queues the program's preparation
+        daemon.process_once("gov")  # the relaunch: the slate's WORKER airs in this same tick
+
+        assert obs.started_labels == ["Council meeting", "Fallback slate"], (
+            "the relaunch must put the slate's WORKER on air inside the relaunch tick "
+            "itself. Pre-fix that tick queued the slate's OWN conform instead, so no worker "
+            f"existed until it returned -- the channel was dark for it; observed "
+            f"{obs.started_labels}"
+        )
+        assert obs.started[1].poll() is None, (
+            "the channel must not be dark: the relaunch's slate worker is already up"
+        )
+        assert "Fallback slate" not in obs.prepared_labels, (
+            "the slate is an already-rendered airing artifact and must never be submitted to "
+            "the preparer; pre-fix the hand-off waited on exactly that conform (station C2, "
+            f"2026-09-26: FALLBACK_SLATE with pid=- for 3 m 02 s); observed {obs.prepared_labels}"
+        )
+        assert "gov" in daemon._preparations, (  # type: ignore[attr-defined]
+            "the preparation that is in flight after the relaunch tick is the PROGRAM's"
+        )
         daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
 
-        assert obs.prepared_labels == ["Council meeting", "Fallback slate", "Council meeting"], (
-            "the relaunch must prepare the FALLBACK SLATE first and hand the program in "
-            "afterwards; preparing the program first is exactly the preparation-window "
-            "darkness this unit fixes"
-        )
         assert obs.contexts[-1] == _U47Context(
             "Council meeting",
             ("Council meeting", "Fallback slate"),
@@ -4555,7 +4575,7 @@ def test_u47_a_crash_relaunch_airs_the_fallback_slate_before_the_program_is_prep
             f"{obs.contexts[-1]!r}"
         )
 
-        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        daemon.process_once("gov")  # the hand-off's program settles: the reused-plan restart
         daemon.process_once("gov")  # the reused plan's restart completes the hand-off
         daemon.process_once("gov")  # ... and the program is on air again
         state = store.read_state("gov")
@@ -4581,13 +4601,14 @@ def test_u47_a_relaunch_airs_the_slate_while_a_slow_program_preparation_is_in_fl
     """The production (asynchronous) path, with the program preparation held open.
 
     ``ChannelAutomationService.run_forever`` enables async preparation, so this
-    is the shape the station actually runs. The assertion the brief asks for --
-    "worker launched on slate at once, reload issued on completion" -- read as
-    wall-clock-free properties: while the program's preparation is still in
-    flight (blocked on an ``Event``) the slate worker is already started and
-    alive, the state row already reads FALLBACK_SLATE, and a preparation for
-    the channel is still registered; releasing it produces the reload that
-    lands the program.
+    is the shape the station actually runs. The slate is NOT a preparation
+    (coordinator decision on Part III.4, option A): the relaunch tick starts the
+    slate's WORKER itself, so nothing is ever dark, and the program's
+    preparation is handed in afterwards. Read as wall-clock-free properties:
+    while the program's preparation is still in flight (blocked on an
+    ``Event``) the slate worker is already started and alive, the state row
+    already reads FALLBACK_SLATE, and a preparation for the channel is still
+    registered; releasing it produces the reload that lands the program.
     """
 
     store = InMemoryEgressStore()
@@ -4618,23 +4639,28 @@ def test_u47_a_relaunch_airs_the_slate_while_a_slow_program_preparation_is_in_fl
     try:
         slow_program[0] = True
         obs.started[0].returncode = 1
-        daemon.process_once("gov")  # relaunch: the slate preparation is queued
-        assert obs.started_labels == ["Council meeting"], (
-            "the async slate preparation is queued, not completed, in the relaunch tick"
-        )
-        assert "gov" in daemon._preparations  # type: ignore[attr-defined]
-        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        daemon.process_once("gov")  # relaunch: the slate's WORKER airs in this same tick
 
-        daemon.process_once("gov")  # the slate airs; the hand-off's preparation starts
-        assert obs.started_labels == ["Council meeting", "Fallback slate"]
+        assert obs.started_labels == ["Council meeting", "Fallback slate"], (
+            "the relaunch tick must put the slate's WORKER on air itself, before the "
+            "program's preparation is even queued. Pre-fix that tick queued the SLATE's "
+            "own preparation instead, so nothing was airing while it ran -- the channel "
+            f"was dark for it; observed {obs.started_labels}"
+        )
         assert obs.started[1].poll() is None, (
             "the channel must not be dark: the slate worker is up while the program is "
             "still being prepared"
         )
+        assert "Fallback slate" not in obs.prepared_labels, (
+            "the slate is an already-rendered airing artifact and must never be submitted "
+            f"to the preparer; observed {obs.prepared_labels}"
+        )
         state = store.read_state("gov")
         assert state is not None
         assert state.state == "FALLBACK_SLATE"
-        assert "gov" in daemon._preparations  # type: ignore[attr-defined]
+        assert "gov" in daemon._preparations, (  # type: ignore[attr-defined]
+            "the preparation in flight is the PROGRAM's"
+        )
 
         assert entered.wait(timeout=10.0), "the hand-off's program preparation never began"
         assert obs.started[1].poll() is None, (
@@ -4650,16 +4676,13 @@ def test_u47_a_relaunch_airs_the_slate_while_a_slow_program_preparation_is_in_fl
         assert state is not None
         assert state.state == "ON_AIR"
         assert state.current_source_label == "Council meeting"
-        # The whole point, in one record: the relaunch's two preparations both
-        # began with the slate worker already up and airing, and neither the
-        # tick-1 program preparation nor the crashed worker's tick did.
+        # The whole point, in one record: exactly two preparations run, and the
+        # second -- the PROGRAM's, handed in after the relaunch -- begins with
+        # the slate worker already up and airing. Pre-fix there was a third
+        # context here: the slate's own preparation, which began with no worker
+        # alive at all (the dark channel).
         assert obs.contexts == [
             _U47Context("Council meeting", (), "STARTING", False),
-            # The relaunch's slate preparation: the only start on record is the
-            # crashed worker's own (its label is still there -- nothing is
-            # started for the slate until this preparation returns), and no
-            # worker is alive.
-            _U47Context("Fallback slate", ("Council meeting",), "FALLBACK_SLATE", False),
             _U47Context(
                 "Council meeting", ("Council meeting", "Fallback slate"), "FALLBACK_SLATE", True
             ),
@@ -4675,12 +4698,13 @@ def test_u47_a_failed_hand_off_preparation_keeps_the_live_slate_on_air(
     """A preparation that cannot complete must leave the slate running.
 
     The brief: "Preparation failure keeps the slate and retries per the existing
-    policy." The failing preparation is observed to begin with the slate worker
-    already started (which is what makes this red pre-U47: the base shape
-    prepares the program first, fails, and only then conforms the slate), and
-    the live slate worker is NOT terminated -- no restart is queued and the
-    channel stays FALLBACK_SLATE, airing, for the automation retry to pick up.
-    Driven on the asynchronous (station) path, like its sibling test A.
+    policy." The failing preparation is the PROGRAM's, handed in after the
+    relaunch has already put the slate's worker on air (which is what makes this
+    red pre-U47: the base shape prepares the program first, fails, and only then
+    conforms the slate). The live slate worker is NOT terminated -- no restart
+    is queued and the channel stays FALLBACK_SLATE, airing, for the automation
+    retry to pick up. Driven on the asynchronous (station) path, like its
+    sibling test A.
     """
 
     store = InMemoryEgressStore()
@@ -4708,18 +4732,24 @@ def test_u47_a_failed_hand_off_preparation_keeps_the_live_slate_on_air(
 
         fail_program[0] = True
         obs.started[0].returncode = 1
-        daemon.process_once("gov")  # the relaunch: the SLATE's preparation is queued
-        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
-        daemon.process_once("gov")  # the slate airs; the hand-off prepares the program
-        # The hand-off's preparation is the one under test and it FAILS by
+        daemon.process_once("gov")  # the relaunch: the slate's WORKER airs in this same tick
+        assert obs.started_labels == ["Council meeting", "Fallback slate"], (
+            "the relaunch tick must air the slate's WORKER itself. Pre-fix that tick queued "
+            "the SLATE's own preparation instead, so nothing was airing while it ran and the "
+            f"channel was dark for it; observed {obs.started_labels}"
+        )
+        assert obs.started[1].poll() is None, "the channel must not be dark"
+        # The preparation now in flight is the PROGRAM's, and it FAILS by
         # construction; the daemon's handling of that failure is the assertion,
         # so the exception is taken off the future here rather than propagating.
         with contextlib.suppress(SourcePrepareError):
             daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        daemon.process_once("gov")  # the daemon handles the failed hand-off
 
-        assert obs.prepared_labels == ["Council meeting", "Fallback slate", "Council meeting"], (
-            "the slate must be prepared (and airing) BEFORE the program's preparation is "
-            "even attempted; the base shape attempts the program first"
+        assert obs.prepared_labels == ["Council meeting", "Council meeting"], (
+            "the only preparations on record are the PROGRAM's two -- the first start's and "
+            "the failing hand-off's. The slate is an already-rendered airing artifact and is "
+            f"never submitted to the preparer; observed {obs.prepared_labels}"
         )
         assert obs.contexts[-1] == _U47Context(
             "Council meeting",
@@ -4978,10 +5008,13 @@ def test_u53_a_restart_recovery_start_airs_the_slate_before_the_program_is_prepa
     immediately and hand the scheduled program in afterwards -- instead of
     resolving and conforming the program with nothing on air at all.
 
-    RED before the change: the recovery start carries no ``previous_state``, so
-    U47's branch cannot fire and ``prepared_labels`` begins ``["Council
-    meeting"]``. The channel is dark for the whole conform, which is the
-    measured outage.
+    The slate is NOT a preparation (coordinator decision on Part III.4, option
+    A): the recovery tick starts the slate's WORKER itself, so the channel is up
+    the moment the sweep's start is processed.
+
+    RED before the change: that tick queued a preparation with no worker on air,
+    and the first (and, on the station, only) one was the scheduled program's --
+    the channel was dark for the whole conform, which is the measured outage.
     """
 
     store = InMemoryEgressStore()
@@ -5009,24 +5042,25 @@ def test_u53_a_restart_recovery_start_airs_the_slate_before_the_program_is_prepa
             f"the startup sweep must recover a pid-less ON_AIR claim; recovered {recovered}"
         )
 
-        daemon.process_once("gov")  # the recovery start: its preparation is queued
-        assert "gov" in daemon._preparations  # type: ignore[attr-defined]
-        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
-        assert obs.prepared_labels == ["Fallback slate"], (
-            "a restart-recovery start of a channel that WAS on air must prepare the "
-            "FALLBACK SLATE first, exactly like the crash relaunch; preparing the "
-            f"scheduled program first leaves the channel dark for the conform -- "
-            f"observed {obs.prepared_labels}"
+        daemon.process_once("gov")  # the recovery start: the slate's WORKER airs in this tick
+        assert obs.started_labels == ["Fallback slate"], (
+            "a restart-recovery start of a channel that WAS on air must put the FALLBACK "
+            "SLATE's WORKER on air inside the recovery tick itself. Pre-fix that tick "
+            "queued the scheduled program's conform with nothing airing, so the channel "
+            "was dark for it -- measurably (station C2, 2026-09-26: FALLBACK_SLATE with "
+            f"pid=- for 3 m 02 s); observed {obs.started_labels}"
         )
-        assert obs.contexts[0].worker_alive is False, (
-            "the channel really was dark at that instant -- nothing had been started yet"
+        assert obs.started[0].poll() is None, "the channel must not be dark"
+        assert "Fallback slate" not in obs.prepared_labels, (
+            "the slate is an already-rendered airing artifact and must never be submitted "
+            f"to the preparer; pre-fix it conformed the slate first; observed "
+            f"{obs.prepared_labels}"
         )
+        state = store.read_state("gov")
+        assert state is not None
+        assert state.state == "FALLBACK_SLATE"
 
-        daemon.process_once("gov")  # the slate airs; the hand-off queues the program
         daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
-        assert obs.prepared_labels == ["Fallback slate", "Council meeting"], (
-            f"the program must follow the slate, observed {obs.prepared_labels}"
-        )
         assert obs.contexts[-1] == _U47Context(
             "Council meeting",
             ("Fallback slate",),
@@ -5036,8 +5070,11 @@ def test_u53_a_restart_recovery_start_airs_the_slate_before_the_program_is_prepa
             "the program's own preparation must begin with the slate worker already "
             f"started AND still alive; observed {obs.contexts[-1]!r}"
         )
+        assert obs.prepared_labels == ["Council meeting"], (
+            "the only asset ever handed to the preparer is the scheduled program; "
+            f"observed {obs.prepared_labels}"
+        )
 
-        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
         daemon.process_once("gov")  # the reused plan's restart completes the hand-off
         daemon.process_once("gov")  # ... and the program is on air
         state = store.read_state("gov")
@@ -5064,9 +5101,11 @@ def test_u53_a_stale_starting_claim_also_airs_the_slate_before_the_program(
     coordinator's call (U53 item 4) is that the gate must cover the same set the
     sweep does.
 
-    RED before the change: ``"STARTING" in _SLATE_FIRST_ACTIVE_STATES`` is
-    False, so this branch falls through to the schedule and the first
-    preparation is the program (``["Council meeting"]``), not the slate.
+    RED before the change: ``"STARTING" in _SLATE_FIRST_ACTIVE_STATES`` was
+    False, so this branch fell through to the schedule and the recovery tick
+    queued a preparation with nothing on air -- and now, with option A, the
+    contract pinned here is that the slate's WORKER goes up in the recovery tick
+    itself and only the program is ever handed to the preparer.
     """
 
     store = InMemoryEgressStore()
@@ -5094,23 +5133,25 @@ def test_u53_a_stale_starting_claim_also_airs_the_slate_before_the_program(
             f"a pid-less STARTING claim is recoverable; recovered {recovered}"
         )
 
-        daemon.process_once("gov")  # the recovery start: its preparation is queued
-        assert "gov" in daemon._preparations  # type: ignore[attr-defined]
-        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
-        assert obs.prepared_labels == ["Fallback slate"], (
-            "a restart-recovery start from a stale STARTING claim is still the "
-            "start of a channel that WAS on air; the slate must go up first, "
-            f"observed {obs.prepared_labels}"
+        daemon.process_once("gov")  # the recovery start: the slate's WORKER airs in this tick
+        assert obs.started_labels == ["Fallback slate"], (
+            "a restart-recovery start from a stale STARTING claim is still the start of a "
+            "channel that WAS on air; the FALLBACK SLATE's WORKER must be on air inside the "
+            "recovery tick itself. Pre-fix that tick queued a preparation with nothing "
+            "airing -- the channel was dark for it; observed "
+            f"{obs.started_labels}"
         )
-        assert obs.contexts[0].worker_alive is False, (
-            "the channel really was dark at that instant -- nothing had been started yet"
+        assert obs.started[0].poll() is None, "the channel must not be dark"
+        assert "Fallback slate" not in obs.prepared_labels, (
+            "the slate is an already-rendered airing artifact and must never be submitted "
+            f"to the preparer; pre-fix it conformed the slate first; observed "
+            f"{obs.prepared_labels}"
         )
+        state = store.read_state("gov")
+        assert state is not None
+        assert state.state == "FALLBACK_SLATE"
 
-        daemon.process_once("gov")  # the slate airs; the hand-off queues the program
         daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
-        assert obs.prepared_labels == ["Fallback slate", "Council meeting"], (
-            f"the program must follow the slate, observed {obs.prepared_labels}"
-        )
         assert obs.contexts[-1] == _U47Context(
             "Council meeting",
             ("Fallback slate",),
@@ -5120,8 +5161,11 @@ def test_u53_a_stale_starting_claim_also_airs_the_slate_before_the_program(
             "the program's own preparation must begin with the slate worker already "
             f"started AND still alive; observed {obs.contexts[-1]!r}"
         )
+        assert obs.prepared_labels == ["Council meeting"], (
+            "the only asset ever handed to the preparer is the scheduled program; "
+            f"observed {obs.prepared_labels}"
+        )
 
-        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
         daemon.process_once("gov")  # the reused plan's restart completes the hand-off
         daemon.process_once("gov")  # ... and the program is on air
         state = store.read_state("gov")
@@ -9074,7 +9118,18 @@ def test_held_prepared_restart_plan_is_released_when_the_exit_takes_no_pending_r
 ) -> None:
     """A worker exit that does NOT take the pending-reload restart (here: it
     crashes instead of being the deliberate reload kill) can never air the held
-    plan, so it must be released -- and nothing may restart onto it later."""
+    plan, so it must be released -- and nothing may restart onto it later.
+
+    PREMISE CHANGE (U53 round 4). This test used to end ``started_labels ==
+    []`` -- "nothing may restart at all". That premise is removed by
+    ``_begin_relaunch``'s ``self._start(..., slate_first=True)`` (daemon.py:4280,
+    the U47 relaunch of a channel that was on air) together with the no-yield
+    slate-first arm (daemon.py:2381-2405): the crashing exit relaunches the
+    channel out of FALLBACK_SLATE, so by design a FRESH fallback-slate worker
+    goes up in this tick. That is not the held plan restarting onto itself. The
+    guarantee this test pins survives intact and is asserted below: the released
+    plan is never aired, and no held plan remains.
+    """
     run = _hold_fallback_slate_restart_plan(tmp_path)
     # The exit arrives as a crash with no pending reload: drop both pieces of
     # bookkeeping the deliberate-kill path had set.
@@ -9086,8 +9141,16 @@ def test_held_prepared_restart_plan_is_released_when_the_exit_takes_no_pending_r
 
     assert run.released == [tmp_path / "plan-1"]
     assert run.daemon._prepared_restart_plans == {}
-    assert run.strategy.started_labels == []
-    assert run.started == []
+    assert "Due program" not in run.strategy.started_labels, (
+        "the released plan must never be aired: nothing may restart onto it. The relaunch "
+        f"that this tick performs airs the fallback slate instead; observed "
+        f"{run.strategy.started_labels}"
+    )
+    assert run.strategy.started_labels == ["Fallback slate"], (
+        "the crash relaunch of a channel that was on air puts the fallback slate's worker "
+        f"up (option A); observed {run.strategy.started_labels}"
+    )
+    assert run.started == [run.new_process]
 
 
 def test_held_prepared_restart_plan_is_released_when_a_newer_one_supersedes_it(
