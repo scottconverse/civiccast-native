@@ -17,6 +17,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -31,8 +32,13 @@ from civiccast.egress.models import (
     EgressSourceSegment,
     EgressStateRow,
 )
-from civiccast.egress.source_plan import SourcePrepareError
+from civiccast.egress.source_plan import (
+    SCHEDULE_GAP_ABSORB_SECONDS,
+    ScheduleSourcePlanProvider,
+    SourcePrepareError,
+)
 from civiccast.egress.store import InMemoryEgressStore
+from civiccast.schedule.models import ScheduleItemResponse, StaffAssetRow
 
 _NOW = datetime(2026, 6, 12, 6, 0, tzinfo=UTC)
 
@@ -1087,6 +1093,112 @@ class TestPlanRollover:
 
         assert _pending_actions(store, "public") == ["reload"]
         assert daemon.force_fallback == [True]
+
+    def test_a_boundary_inside_the_next_items_slot_rolls_to_that_program_not_filler(
+        self, tmp_path: Path
+    ) -> None:
+        """U52 item 1: the live 2026-09-26 education boundary, through automation.
+
+        Automation's rollover asks the REAL planner at the plan's recorded end
+        (18:06:45.2). The live rows OVERLAP -- the next program's published
+        start (18:06:41) is a few seconds before that end -- so the ask lands
+        inside the next item's own slot with the closing item's media already
+        gone. The one-sided absorb answered None there, and ``force_fallback``
+        turned that into a FILLER reload: the channel left for slate and waited
+        out the program's whole 224.5s preparation, then took F3(b)'s
+        exit-and-restart. With the two-sided window the boundary resolves to
+        the program itself and the rollover dispatches an ordinary deferred
+        reload for it.
+        """
+
+        media = tmp_path / "program.ts"
+        media.write_text("fake", encoding="utf-8")
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+
+        class _RolloverDaemon(_HorizonAwareDaemon):
+            def __init__(self) -> None:
+                super().__init__(live_channels={"public"})
+                # The closing item's recorded plan end: 40s of live plan left,
+                # and the next program's published start 4s before that end.
+                self.dispatched["public"] = ("ev-1", (40.0,), False)
+                self.force_fallback: list[bool] = []
+
+            def record_rollover_plan_end(
+                self,
+                _channel_id: str,
+                _plan_end_at: datetime,
+                *,
+                command_id: str | None,
+                force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
+            ) -> None:
+                assert command_id is not None
+                self.force_fallback.append(force_fallback)
+
+        daemon = _RolloverDaemon()
+        boundary = _NOW + timedelta(seconds=40)
+        items = [
+            ScheduleItemResponse(
+                id=uuid4(),
+                asset_id="parks",
+                asset_title="Parks & Recreation Advisory Board",
+                channel_id="public",
+                mode="premiere",
+                state="published",
+                scheduled_at=boundary - timedelta(seconds=340),
+                duration_seconds=344,
+                notes=None,
+                created_at=_NOW - timedelta(days=1),
+            ),
+            ScheduleItemResponse(
+                id=uuid4(),
+                asset_id="ncar",
+                asset_title="NSF NCAR Explorer Series",
+                channel_id="public",
+                mode="premiere",
+                state="published",
+                scheduled_at=boundary - timedelta(seconds=4),
+                duration_seconds=1800,
+                notes=None,
+                created_at=_NOW - timedelta(days=1),
+            ),
+        ]
+        media_seconds = {"parks": 340.0, "ncar": 1800.0}
+        assets = {
+            item.asset_id: StaffAssetRow(
+                asset_id=item.asset_id,
+                title=item.asset_title or item.asset_id,
+                state="validated",
+                file_path=str(media),
+                duration_seconds=media_seconds[item.asset_id],
+                trim_in_seconds=None,
+                trim_out_seconds=media_seconds[item.asset_id],
+            )
+            for item in items
+        }
+        provider = ScheduleSourcePlanProvider(
+            schedule_items_provider=lambda _channel_id: items,
+            asset_resolver=assets.get,
+            # The production wiring with the GStreamer engine selected
+            # (automation.py's build), including its gap-absorb window.
+            max_segments=1,
+            gap_absorb_seconds=SCHEDULE_GAP_ABSORB_SECONDS,
+        )
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda cid: _plan_with_duration(cid, 40.0),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=provider.plan_at,
+        )
+
+        service.run_once(now=_NOW)  # establish the horizon: plan ends at boundary
+        service.run_once(now=_NOW + timedelta(seconds=1))  # inside the lead
+
+        assert _pending_actions(store, "public") == ["reload"]
+        assert daemon.force_fallback == [False]
 
     def test_rollover_re_establishes_horizon_once_the_reload_lands(self) -> None:
         store = InMemoryEgressStore()

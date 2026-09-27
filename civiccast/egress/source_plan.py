@@ -435,8 +435,9 @@ class ScheduleSourcePlanProvider:
         and therefore retain wall-clock join-in-progress behavior.
 
         With ``gap_absorb_seconds`` set (U26), a boundary that lands in a small
-        gap between two items resolves to the item due within that window
-        rather than to None/filler -- see ``build_source_plan_from_schedule``.
+        gap between two items -- or a few seconds inside the next item's slot,
+        when the published rows overlap (U52) -- resolves to that item rather
+        than to None/filler: see ``build_source_plan_from_schedule``.
 
         ``min_plan_seconds`` (U41) overrides the provider's own horizon for this
         call only. A deferred rollover is prepared at dispatch but takes air at
@@ -507,17 +508,23 @@ def build_source_plan_from_schedule(
     ``gap_absorb_seconds`` (U26, 2026-09-25; off by default) absorbs a small
     schedule gap. When the instant this plan is built for has NOTHING to air --
     it falls between two items, or the item covering it has already aired all
-    of its media -- and the next item is due within this many seconds, the plan
-    is built from that next item instead: the caller starts it at this instant,
-    early by at most the gap. It exists because automation's own rollover
-    resolves a boundary in such a gap to ``None``, rolls the channel onto
-    filler, and must then take F3(b)'s exit-and-restart detour to get back to a
-    program; absorbing the gap keeps the channel on its program and makes the
-    switch an ordinary deferred in-worker reload. A gap LARGER than this window
-    still returns None (filler is the honest answer there), and a plan that has
-    anything to air is never replaced: a join-in-progress resume of a live item
-    is content, not a stub, so it is never cut short to start the next item
-    early. ``SCHEDULE_GAP_ABSORB_SECONDS`` is the value the station wires in.
+    of its media -- and the next item is due within this many seconds of it, the
+    plan is built from that next item instead: the caller starts it at this
+    instant, early by at most the gap. It exists because automation's own
+    rollover resolves a boundary in such a gap to ``None``, rolls the channel
+    onto filler, and must then take F3(b)'s exit-and-restart detour to get back
+    to a program; absorbing the gap keeps the channel on its program and makes
+    the switch an ordinary deferred in-worker reload. The window is two-sided
+    (U52, 2026-09-26): published rows can OVERLAP, so the boundary taken at the
+    closing item's plan end lands a few seconds INSIDE the next item's slot, and
+    that just-started item is the boundary's program -- the one-sided form
+    answered filler there and produced 3m48s of slate before an exit-and-restart
+    (reports/U52.md item 1). A gap LARGER than this window still returns None
+    (filler is the honest answer there), a started item whose own slot has
+    closed is never resurrected, and a plan that has anything to air is never
+    replaced: a join-in-progress resume of a live item is content, not a stub,
+    so it is never cut short to start the next item early.
+    ``SCHEDULE_GAP_ABSORB_SECONDS`` is the value the station wires in.
 
     ``max_segment_seconds`` is an optional preparation horizon.  The
     GStreamer path uses it because that engine must pre-conform a source that
@@ -699,12 +706,16 @@ def build_source_plan_from_schedule(
     # U26 gap absorb: when there is nothing to air at this instant -- it falls
     # in the gap between two scheduled items, or the item covering it has
     # already aired all of its media -- and the next item is due within
-    # ``gap_absorb_seconds``, take that item now instead of going to slate for
-    # the gap. The caller starts it at this instant, early by at most the gap;
-    # automation's rollover then prepares a PROGRAM for the boundary rather
-    # than filler, so the channel never leaves its program and its deferred
-    # switch stays an ordinary in-worker reload. A real gap (beyond the window)
-    # still returns None: filler is the honest answer there.
+    # ``gap_absorb_seconds`` of this instant, take that item now instead of
+    # going to slate for the gap. The caller starts it at this instant, early
+    # by at most the gap; automation's rollover then prepares a PROGRAM for the
+    # boundary rather than filler, so the channel never leaves its program and
+    # its deferred switch stays an ordinary in-worker reload. The window is
+    # two-sided (U52): overlapping published rows mean the boundary can land a
+    # few seconds INSIDE the next item's slot, and the item that just started
+    # is the boundary's program -- see ``_gap_absorb_candidate_index``. A real
+    # gap (beyond the window) still returns None: filler is the honest answer
+    # there.
     absorb_index = _gap_absorb_candidate_index(
         playable_items,
         current_time,
@@ -728,17 +739,34 @@ def _gap_absorb_candidate_index(
     current_index: int | None,
     gap_absorb_seconds: float,
 ) -> int | None:
-    """Return the index of the next item due within the absorb window.
+    """Return the index of the item this instant's boundary belongs to.
 
     ``items`` is the sorted (and, when looping, repeated) playable list;
     ``current_index`` is ``_current_item_index``'s answer for ``current_time``,
     or None when that instant falls in a gap between two items.
 
-    None is returned when the absorb is disabled, when the instant is BEFORE
-    the published log begins (a station that came up early waits for its
-    schedule's first item rather than airing it early -- there is no ending
-    item whose end it is at), or when the next item is further out than
-    ``gap_absorb_seconds``.
+    The candidate is the first item at or after ``current_index`` that is due
+    within ``gap_absorb_seconds`` of ``current_time`` -- on EITHER side of it:
+
+    * due slightly AHEAD (the bare-gap case): the caller starts it early by at
+      most the window, so automation's rollover prepares a program for the
+      boundary instead of filler;
+    * started slightly BEHIND, while its own slot is still open (the live
+      2026-09-26 education shape, reports/U52.md item 1): published rows
+      OVERLAP, so the boundary taken at the closing item's plan end lands a few
+      seconds inside the next item's slot. That item IS the boundary's program;
+      it is taken whole from its beginning, late by at most the window. The
+      one-sided form this replaces skipped exactly that item and answered
+      filler for the program's whole preparation window -- 3m48s of slate, then
+      the F3(b) exit-and-restart.
+
+    A started item whose own slot has ALREADY closed is never resurrected --
+    it should have finished, and airing it now would be a late replay rather
+    than the boundary's program. None is also returned when the absorb is
+    disabled, when the instant is BEFORE the published log begins (a station
+    that came up early waits for its schedule's first item rather than airing
+    it early -- there is no ending item whose end it is at), and when the next
+    item is further out than ``gap_absorb_seconds``.
     """
 
     if gap_absorb_seconds <= 0.0:
@@ -747,14 +775,23 @@ def _gap_absorb_candidate_index(
         return None
     start_index = 0 if current_index is None else current_index + 1
     for index in range(start_index, len(items)):
-        starts_at = _as_utc(items[index].scheduled_at)
-        if starts_at < current_time:
+        item = items[index]
+        starts_at = _as_utc(item.scheduled_at)
+        delta = (starts_at - current_time).total_seconds()
+        if delta > gap_absorb_seconds:
+            # Sorted by start time: the first item still ahead of
+            # ``current_time`` is the next one due, and it is already too far
+            # out.
+            return None
+        if delta < -gap_absorb_seconds:
+            # Started longer ago than the window: not this boundary's item.
             continue
-        if (starts_at - current_time).total_seconds() <= gap_absorb_seconds:
-            return index
-        # Sorted by start time: the first item still ahead of ``current_time``
-        # is the next one due, and it is already too far out.
-        return None
+        if delta < 0.0:
+            ends_at = starts_at + timedelta(seconds=item.duration_seconds or 0)
+            if ends_at <= current_time:
+                # Its own slot is closed too: a late replay, not a program.
+                continue
+        return index
     return None
 
 

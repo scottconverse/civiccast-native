@@ -1558,6 +1558,78 @@ def test_a_boundary_at_a_closing_slot_whose_media_is_gone_resolves_the_next_item
     assert plan.segments[0].inpoint_seconds is None
 
 
+def test_a_boundary_a_few_seconds_inside_the_next_item_resolves_that_item(
+    tmp_path: Path,
+) -> None:
+    """The live 2026-09-26 education shape (reports/U52.md item 1).
+
+    The published rows OVERLAP: the closing item's slot runs a few seconds past
+    the next item's published start, and by the time automation asks at the
+    closing item's recorded plan end that item's media is already gone. The ask
+    therefore lands a few seconds INSIDE the next item's own slot -- the instant
+    has an ending item (exhausted media) and the program due at it is the one
+    that has just started. The one-sided absorb skipped exactly that item
+    (``starts_at < current_time``) and resolved to None, which put the channel
+    on filler for the program's whole preparation window: 3m48s of slate at
+    18:06:41, then the F3(b) exit-and-restart at 18:10:32. An ask inside the
+    item's own slot must resolve to that item, played from its beginning.
+    """
+
+    start = datetime(2026, 9, 26, 18, 6, 45, tzinfo=UTC)
+    items = [
+        _schedule_item(
+            asset_id="parks",
+            scheduled_at=start - timedelta(seconds=300),
+            duration_seconds=304,
+        ).model_copy(update={"asset_title": "Parks & Recreation Advisory Board"}),
+        _schedule_item(
+            asset_id="ncar",
+            scheduled_at=start - timedelta(seconds=4),
+            duration_seconds=1800,
+        ).model_copy(update={"asset_title": "NSF NCAR Explorer Series"}),
+    ]
+    provider = _gap_absorb_provider(tmp_path, items, {"parks": 300.0, "ncar": 1800.0})
+
+    plan = provider.plan_at("gov", start)
+
+    assert plan is not None
+    assert [segment.label for segment in plan.segments] == ["NSF NCAR Explorer Series"]
+    # Taken whole from its beginning: the caller starts it a few seconds late
+    # (the overlap), it does not skip into it.
+    assert plan.segments[0].duration_seconds == pytest.approx(1800.0)
+    assert plan.segments[0].inpoint_seconds is None
+
+
+def test_a_boundary_past_a_closed_short_slot_never_airs_that_item_late(
+    tmp_path: Path,
+) -> None:
+    """The bound on the late side: an item whose own slot already closed is not aired.
+
+    The window that lets an ask land inside the next item's slot must not also
+    let it resurrect an item that should already have finished -- a 20s bulletin
+    scheduled 29s ago (inside the window) whose slot closed 9s ago is gone, not
+    a late start. Nothing else is due for ten minutes, so this instant is a real
+    gap and filler is the honest answer.
+    """
+
+    start = datetime(2026, 9, 26, 18, 30, tzinfo=UTC)
+    items = [
+        _schedule_item(
+            asset_id="bulletin",
+            scheduled_at=start - timedelta(seconds=29),
+            duration_seconds=20,
+        ).model_copy(update={"asset_title": "Community Bulletin"}),
+        _schedule_item(
+            asset_id="ncar",
+            scheduled_at=start + timedelta(seconds=600),
+            duration_seconds=1800,
+        ).model_copy(update={"asset_title": "NSF NCAR Explorer Series"}),
+    ]
+    provider = _gap_absorb_provider(tmp_path, items, {"bulletin": 20.0, "ncar": 1800.0})
+
+    assert provider.plan_at("gov", start) is None
+
+
 def test_a_boundary_inside_the_gap_resolves_the_next_item(tmp_path: Path) -> None:
     """The bare-gap form: the instant is between two items, nothing covers it."""
 
