@@ -2263,18 +2263,20 @@ def test_evict_cache_over_budget_reaps_orphaned_tmp_and_meta(tmp_path: Path) -> 
     cache_dir = tmp_path / "work" / "conform-cache"
     cache_dir.mkdir(parents=True)
 
-    old_tmp = cache_dir / "orphan1.ts.tmp"
+    # Real cache-dir names, so the entry/sidecar classification U53 added is
+    # the thing under test -- not an accident of the fixture's spelling.
+    old_tmp = cache_dir / f"{'a' * 32}.ts.tmp"
     old_tmp.write_text("stale", encoding="utf-8")
-    young_tmp = cache_dir / "orphan2.ts.tmp"
+    young_tmp = cache_dir / f"{'b' * 32}.ts.tmp"
     young_tmp.write_text("still writing", encoding="utf-8")
-    orphan_meta = cache_dir / "orphan3.json"
+    orphan_meta = cache_dir / f"{'c' * 32}.json"
     orphan_meta.write_text("{}", encoding="utf-8")
-    paired_meta = cache_dir / "orphan4.json"
+    paired_meta = cache_dir / f"{'d' * 32}.json"
     paired_meta.write_text("{}", encoding="utf-8")
-    paired_ts = cache_dir / "orphan4.ts"
+    paired_ts = cache_dir / f"{'d' * 32}.ts"
     paired_ts.write_text("real cache entry", encoding="utf-8")
 
-    old_tmp_time = time.time() - preparer_module._ORPHAN_CACHE_TMP_MAX_AGE_S - 60
+    old_tmp_time = time.time() - preparer_module._ORPHAN_CACHE_SCRATCH_MAX_AGE_S - 60
     os.utime(old_tmp, (old_tmp_time, old_tmp_time))
     old_meta_time = time.time() - preparer_module._ORPHAN_CACHE_META_MAX_AGE_S - 60
     os.utime(orphan_meta, (old_meta_time, old_meta_time))
@@ -2303,9 +2305,9 @@ def test_evict_cache_over_budget_counts_live_tmp_bytes_toward_budget(
     )
     cache_dir = tmp_path / "work" / "conform-cache"
     cache_dir.mkdir(parents=True)
-    ts_entry = cache_dir / "aaaa.ts"
+    ts_entry = cache_dir / f"{'a' * 32}.ts"
     ts_entry.write_text("x" * 60, encoding="utf-8")
-    live_tmp = cache_dir / "bbbb.ts.tmp"
+    live_tmp = cache_dir / f"{'b' * 32}.ts.tmp"
     live_tmp.write_text("y" * 60, encoding="utf-8")  # young -- not orphaned
 
     preparer._evict_cache_over_budget()
@@ -2315,6 +2317,112 @@ def test_evict_cache_over_budget_counts_live_tmp_bytes_toward_budget(
     # total back down; the live .tmp itself is left alone.
     assert not ts_entry.exists()
     assert live_tmp.exists()
+
+
+def test_evict_cache_over_budget_reaps_abandoned_ride_scratch(tmp_path: Path) -> None:
+    """U53 item 2: the loudness ride keeps its own intermediates in this same
+    directory -- ``{key}.ts.tmp.ride-audio.ts`` (its muxed intermediate,
+    ``loudness_ride``'s ``_ride_audio_path``) and ``civiccast-ride-*.pcm``
+    (its PCM tee).  The first ENDS in ``.ts``, so the old ``*.ts`` entry glob
+    counted it as a real cache entry -- and could evict it as if it were one;
+    the second matched no glob at all.  Neither was ever reaped, so the
+    station's cache dir held 483 MB of ride intermediate (18:39) and 1.9 GB
+    of ride PCM (13:25) on top of its 15.9 GB of real entries.  Both are
+    scratch, and an abandoned one is reaped by the same age floor as a
+    ``.ts.tmp`` -- a real entry beside them is untouched."""
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    cache_dir = tmp_path / "work" / "conform-cache"
+    cache_dir.mkdir(parents=True)
+
+    warm = cache_dir / f"{'a' * 32}.ts"
+    warm.write_text("real cache entry", encoding="utf-8")
+    ride_audio = cache_dir / f"{'b' * 32}.ts.tmp.ride-audio.ts"
+    ride_audio.write_text("ride intermediate", encoding="utf-8")
+    ride_pcm = cache_dir / "civiccast-ride-61o307ms.pcm"
+    ride_pcm.write_text("ride pcm tee", encoding="utf-8")
+
+    abandoned = time.time() - preparer_module._ORPHAN_CACHE_SCRATCH_MAX_AGE_S - 60
+    os.utime(ride_audio, (abandoned, abandoned))
+    os.utime(ride_pcm, (abandoned, abandoned))
+
+    preparer._evict_cache_over_budget()
+
+    assert not ride_audio.exists()  # reaped: abandoned ride intermediate
+    assert not ride_pcm.exists()  # reaped: abandoned ride PCM tee
+    assert warm.exists()  # untouched: a real entry inside the budget
+
+
+def test_evict_cache_over_budget_does_not_count_a_dead_writers_partial(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U53 item 2: a partial whose writer is gone must stop counting toward
+    the budget the moment it stops growing, not an hour later.
+
+    The station restarted at 18:53 and left a 9.0 GB ``{key}.ts.tmp`` behind.
+    Under the old rule that file counted as in-flight for the full
+    ``_ORPHAN_CACHE_SCRATCH_MAX_AGE_S`` (1h), so the counted total was 24.9 GB
+    against the 20 GB
+    budget -- and the next conform promotion evicted warm entries to get back
+    under it.  Those warm entries are exactly what makes a preparation cost
+    6 s instead of the 100-500 s measured through that window.  A file whose
+    mtime has not moved for ``_SCRATCH_LIVENESS_S`` has no writer to make room
+    for: it is not counted (the 1h floor still governs its deletion)."""
+    monkeypatch.setenv("CIVICCAST_CONFORM_CACHE_GB", "0.0000001")  # 100 bytes
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    cache_dir = tmp_path / "work" / "conform-cache"
+    cache_dir.mkdir(parents=True)
+    warm = cache_dir / f"{'c' * 32}.ts"
+    warm.write_text("x" * 60, encoding="utf-8")
+    dead_tmp = cache_dir / f"{'d' * 32}.ts.tmp"
+    dead_tmp.write_text("y" * 60, encoding="utf-8")
+    dead = time.time() - 300.0  # five minutes: no writer, but young enough to keep
+    os.utime(dead_tmp, (dead, dead))
+
+    preparer._evict_cache_over_budget()
+
+    assert warm.exists()  # 60 bytes, alone under the 100-byte budget
+    assert dead_tmp.exists()  # kept: younger than the 1h abandoned-scratch floor
+
+
+def test_evict_cache_over_budget_never_evicts_a_live_ride_intermediate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U53 item 2: because ``{key}.ts.tmp.ride-audio.ts`` ends in ``.ts`` the
+    old eviction loop sorted it in with the real entries and unlinked the
+    oldest first -- so a ride still writing its intermediate could have that
+    intermediate deleted underneath it, in preference to a real cache entry.
+    A scratch file that is still being written to is kept and only counted;
+    the real entry is the one that goes."""
+    monkeypatch.setenv("CIVICCAST_CONFORM_CACHE_GB", "0.0000001")  # 100 bytes
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner([]),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda job: None,
+    )
+    cache_dir = tmp_path / "work" / "conform-cache"
+    cache_dir.mkdir(parents=True)
+    ride_audio = cache_dir / f"{'e' * 32}.ts.tmp.ride-audio.ts"
+    ride_audio.write_text("z" * 60, encoding="utf-8")
+    warm = cache_dir / f"{'f' * 32}.ts"
+    warm.write_text("x" * 60, encoding="utf-8")
+    alive_but_oldest = time.time() - 30.0  # last written 30s ago: still in flight
+    os.utime(ride_audio, (alive_but_oldest, alive_but_oldest))
+
+    preparer._evict_cache_over_budget()
+
+    assert not warm.exists()  # 60 + 60 bytes over a 100-byte budget: the entry goes
+    assert ride_audio.exists()  # never unlinked while a ride may still be writing it
 
 
 def test_write_cache_meta_is_atomic_tmp_replace(tmp_path: Path) -> None:

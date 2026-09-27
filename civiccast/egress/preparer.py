@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -127,14 +128,40 @@ _PREPARED_PLAN_DIR_BUDGET_GB = 5.0
 _PREPARED_PLAN_DIR_MAX_AGE_S = 24.0 * 3600.0
 
 #: Item 66 round-3 (Opus review): _evict_cache_over_budget's orphan reap.
-#: A ``.ts.tmp`` this old was abandoned mid-write (a crash, a killed
-#: process) -- any legitimate in-flight conform or promotion finishes in
-#: seconds to low minutes even for an hour-long asset. A ``.json`` with no
+#: Any cache-dir intermediate this old was abandoned mid-write (a crash, a
+#: killed process) -- any legitimate in-flight conform or promotion finishes
+#: in seconds to low minutes even for an hour-long asset. A ``.json`` with no
 #: sibling ``.ts`` this old is a loudness-only probe (see
 #: ``_write_cache_meta``) whose conform never landed (every attempt failed,
 #: or the process was killed between the two writes).
-_ORPHAN_CACHE_TMP_MAX_AGE_S = 3600.0
+_ORPHAN_CACHE_SCRATCH_MAX_AGE_S = 3600.0
 _ORPHAN_CACHE_META_MAX_AGE_S = 24.0 * 3600.0
+
+#: The only two names this module ever creates for a REAL cache entry:
+#: ``{key}.ts`` (the conformed media) and ``{key}.json`` (its sidecar meta),
+#: where ``key`` is ``sha256(...).hexdigest()[:32]`` -- see ``_cache_key``.
+#: Everything else in the directory is scratch written by a conform, a
+#: promotion, or the loudness ride: a ``{key}.ts.tmp``, a ``{key}.json.tmp``,
+#: the ride's ``{key}.ts.tmp.ride-audio.ts`` muxed intermediate and its
+#: ``civiccast-ride-*.pcm`` PCM tee (``civiccast.egress.loudness_ride``).
+#: BETA.10 U53: classifying by name instead of by a ``*.ts`` glob is what
+#: keeps the ride's two artifacts out of the ENTRY set -- ``.ride-audio.ts``
+#: ends in ``.ts``, so the old glob fed it to oldest-first eviction, which
+#: could unlink a ride's live intermediate as if it were a stale entry, and
+#: neither artifact was ever reaped by the ``*.ts.tmp`` orphan sweep.
+_CACHE_ENTRY_TS_RE = re.compile(r"\A[0-9a-f]{32}\.ts\Z")
+_CACHE_ENTRY_META_RE = re.compile(r"\A[0-9a-f]{32}\.json\Z")
+
+#: BETA.10 U53: how recently an intermediate must have been written to count
+#: as in-flight. Every writer here (an ffmpeg conform, a promotion copy, the
+#: ride) writes continuously, so an mtime this old means the writer is gone
+#: or wedged and nothing is waiting on the space. Such a file stops counting
+#: toward the budget immediately (the 1h floor above still decides when it is
+#: deleted). Without this, one abandoned 9.0 GB partial left by a restart
+#: counted for a full hour, and the next conform promotion evicted warm
+#: entries -- the entries that make a preparation take 6 s instead of the
+#: 100-500 s measured on the station through 17:59-18:40.
+_SCRATCH_LIVENESS_S = 60.0
 
 #: Item 66 round-3 (Opus review, point 7): an untrimmed loudness probe no
 #: longer decodes the whole asset -- it samples a window instead. This is
@@ -1584,13 +1611,15 @@ class SourcePreparer:
         Item 66 round-3 (Opus review) also reaps two kinds of orphaned
         cache-dir detritus that no other code path here ever cleans up:
 
-        * an abandoned ``{key}.ts.tmp`` (a conform or promotion interrupted
-          mid-write, e.g. by a crash or a killed process) older than
-          ``_ORPHAN_CACHE_TMP_MAX_AGE_S`` (1h) is deleted outright; a
-          younger one is assumed still in-flight and its bytes are counted
-          toward the budget below so a burst of concurrent warms/promotions
-          can't blow past the configured budget before any of them finish
-          and become real ``.ts`` entries;
+        * an abandoned intermediate -- any file that is neither a
+          ``{key}.ts`` entry nor a ``{key}.json`` sidecar, see
+          ``_CACHE_ENTRY_TS_RE`` -- older than
+          ``_ORPHAN_CACHE_SCRATCH_MAX_AGE_S`` (1h) is deleted outright; a
+          younger one that is still being written to (mtime within
+          ``_SCRATCH_LIVENESS_S``) is assumed in-flight and its bytes are
+          counted toward the budget below so a burst of concurrent
+          warms/promotions can't blow past the configured budget before any
+          of them finish and become real ``.ts`` entries;
         * a ``{key}.json`` with no sibling ``{key}.ts`` (a loudness-only
           probe meta -- see ``_write_cache_meta`` -- whose conform never
           followed) older than ``_ORPHAN_CACHE_META_MAX_AGE_S`` (24h) is
@@ -1600,23 +1629,29 @@ class SourcePreparer:
         cache_dir = self._cache_dir()
         now = time.time()
         try:
-            ts_entries = sorted(cache_dir.glob("*.ts"), key=lambda p: p.stat().st_mtime)
+            names = sorted(cache_dir.iterdir())
         except OSError:
             return
 
+        ts_entries: list[tuple[float, Path]] = []
         tmp_bytes = 0
-        with contextlib.suppress(OSError):
-            for tmp in cache_dir.glob("*.ts.tmp"):
-                try:
-                    age = now - tmp.stat().st_mtime
-                except OSError:
-                    continue
-                if age > _ORPHAN_CACHE_TMP_MAX_AGE_S:
-                    with contextlib.suppress(OSError):
-                        tmp.unlink()
-                    continue
+        for path in names:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if _CACHE_ENTRY_TS_RE.match(path.name):
+                ts_entries.append((stat.st_mtime, path))
+                continue
+            if _CACHE_ENTRY_META_RE.match(path.name):
+                continue  # a sidecar -- handled by the meta sweep below
+            age = now - stat.st_mtime
+            if age > _ORPHAN_CACHE_SCRATCH_MAX_AGE_S:
                 with contextlib.suppress(OSError):
-                    tmp_bytes += tmp.stat().st_size
+                    path.unlink()
+                continue
+            if age <= _SCRATCH_LIVENESS_S:
+                tmp_bytes += stat.st_size
 
         with contextlib.suppress(OSError):
             for meta_path in cache_dir.glob("*.json"):
@@ -1630,11 +1665,12 @@ class SourcePreparer:
                     with contextlib.suppress(OSError):
                         meta_path.unlink()
 
+        ts_entries.sort()  # oldest first: by mtime, then by path for a stable tie-break
         total = tmp_bytes
-        for p in ts_entries:
+        for _mtime_s, p in ts_entries:
             with contextlib.suppress(OSError):
                 total += p.stat().st_size
-        for oldest in ts_entries:
+        for _mtime_s, oldest in ts_entries:
             if total <= budget:
                 break
             try:
