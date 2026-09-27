@@ -51,6 +51,7 @@ the station's own pipe.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import threading
 import time
@@ -125,6 +126,71 @@ def _tick_until(
             raise AssertionError(f"{label}: not satisfied within {timeout:.1f}s")
         daemon.process_once(_CHANNEL)
         time.sleep(0.05)
+
+
+def _parked_accept_threads() -> list[str]:
+    """Pipe-accept threads still waiting for a worker that never connected.
+
+    ``_WindowsPipeChannel.start`` (``strategy.py:467``) creates the pipe and then
+    accepts the worker's connection on a daemon thread named
+    ``civiccast-pipe-accept-<channel>`` (``strategy.py:485``). Closing the channel
+    from the main thread (``_WindowsPipeChannel.close``, ``strategy.py:589`` ->
+    ``WindowsWorkerPipeServer.close``, ``strategy.py:407``) closes that same
+    handle, and Win32 blocks ``CloseHandle`` behind another thread's pending
+    ``ConnectNamedPipe`` on it. A channel whose worker never connected therefore
+    parks teardown forever: every assertion in this module can have PASSED and
+    pytest still never prints a verdict -- which is exactly how a run of this
+    test burned its whole 600 s batch cap after reaching its last line (py-spy
+    caught MainThread in ``CloseHandle`` at ``strategy.py:412`` under
+    ``strategy.py:590`` under ``shutdown``).
+    """
+
+    return sorted(
+        thread.name
+        for thread in threading.enumerate()
+        if thread.name.startswith("civiccast-pipe-accept-")
+    )
+
+
+def _unblock_pipe_accepts(harness: _Harness) -> list[str]:
+    """Complete every parked accept with a throwaway client so teardown can run.
+
+    A channel whose worker is genuinely connected answers ``ERROR_PIPE_BUSY``
+    (its pipe is exactly one instance, ``strategy.py:351``) and is left alone;
+    only the parked ones take the connection. The names are returned so the
+    transcript records which channels leaked instead of the leak costing another
+    hang. Every step is best-effort by design: this runs in a ``finally``, and a
+    teardown that raised would replace the test's own verdict with its own. A
+    silent no-op here is still visible -- the transcript prints the parked thread
+    names next to ``freed=none``, which is the shape to investigate.
+    """
+
+    import win32file
+
+    connected: list[str] = []
+    for channel in harness.channels:
+        # The pipe name belongs to the SERVER (``WindowsWorkerPipeServer.__init__``),
+        # not to the channel that wraps it.
+        pipe_name = getattr(getattr(channel, "server", None), "pipe_name", None)
+        if pipe_name is None:
+            continue
+        try:
+            handle = win32file.CreateFile(
+                pipe_name,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0,
+                None,
+                win32file.OPEN_EXISTING,
+                0,
+                None,
+            )
+        except Exception:
+            continue
+        connected.append(pipe_name.rsplit("\\", 1)[-1])
+        with contextlib.suppress(Exception):
+            win32file.CloseHandle(handle)
+    return connected
+
 
 pytestmark = pytest.mark.skipif(
     shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
@@ -438,14 +504,23 @@ def test_u53b_a_recovery_start_airs_the_slate_before_the_program_is_prepared(
         # growth-driven tick would return immediately and then fail the very
         # assertion it exists to support. Measuring the hold first and the slate's
         # growth across it second is the order that makes both statements true.
-        held_s = _tick_until(
+        #
+        # The tick's own return value is deliberately discarded: it is how long THIS
+        # tick waited, and the tick only begins after step 2 -- the slate's ~5 s of air
+        # time is already behind ``hold_started_at`` by then, so that figure is short by
+        # exactly that much and is not the quantity the brief bounds. (It was asserted
+        # here first, and read 25.19 s against a 30 s bar while the hold was in fact
+        # 30.0 s old: a clock defect in this test, not a short preparation.) The hold's
+        # own age, measured next, is both asserted and reported.
+        _tick_until(
             daemon,
             lambda: time.monotonic() - hold_started_at >= _PROGRAM_PREP_HOLD_S,
             timeout=_STEP_WAIT_S,
             label=f"the program preparation held for >= {_PROGRAM_PREP_HOLD_S:g}s",
         )
-        assert held_s >= _PROGRAM_PREP_HOLD_S, (
-            f"the program preparation was released after {held_s:.2f}s, under the brief's "
+        hold_age_s = time.monotonic() - hold_started_at
+        assert hold_age_s >= _PROGRAM_PREP_HOLD_S, (
+            f"the program preparation was released after {hold_age_s:.2f}s, under the brief's "
             f"{_PROGRAM_PREP_HOLD_S:g}s 'takes >= 30 s to prepare' shape"
         )
         assert not preparer.release.is_set(), "the hold released itself; it is not a real hold"
@@ -453,7 +528,7 @@ def test_u53b_a_recovery_start_airs_the_slate_before_the_program_is_prepared(
         # when the hold began, and the channel is still reporting the slate.
         assert _size(slate_ts) > slate_size_at_hold, (
             f"the slate stopped growing while the program was held: {slate_size_at_hold} B "
-            f"-> {_size(slate_ts)} B over {held_s:.2f}s"
+            f"-> {_size(slate_ts)} B over {hold_age_s:.2f}s"
         )
         still = store.read_state(_CHANNEL)
         assert still is not None and still.state == "FALLBACK_SLATE", (
@@ -500,10 +575,19 @@ def test_u53b_a_recovery_start_airs_the_slate_before_the_program_is_prepared(
             f"recovery -> slate output: {slate_elapsed:.2f}s "
             f"(budget {_SLATE_BUDGET_S:g}s; {slate_spawn_s:.2f}s to spawn + "
             f"{slate_elapsed - slate_spawn_s:.2f}s worker startup); "
-            f"program prepared for {held_s:.2f}s while the slate aired "
+            f"program prepared for {hold_age_s:.2f}s while the slate aired "
             f"({slate_size_at_hold} B -> {_size(slate_ts)} B); "
             f"preparations={preparer.kinds}; spawns={labels}"
         )
     finally:
+        # Measured and reported BEFORE teardown, because a parked accept hangs
+        # ``harness.shutdown()`` in product code and takes the verdict with it.
+        parked = _parked_accept_threads()
+        freed = _unblock_pipe_accepts(harness)
+        print(
+            f"[u53b] teardown: parked-accepts={parked or 'none'} "
+            f"channels={len(harness.channels)} freed={freed or 'none'}",
+            flush=True,
+        )
         harness.shutdown()
         monkey.undo()
