@@ -187,6 +187,31 @@ def _slate_plan(tmp_path: Path) -> EgressSourcePlan:
     )
 
 
+def _slate_fill_plan(tmp_path: Path, *, declared_seconds: float = 3600.0) -> EgressSourcePlan:
+    """The PRODUCTION slate filler's shape (U53 item 1): ONE ``slate`` segment
+    declaring its whole slot -- ``source_plan.SlateSourceGenerator`` renders a
+    single ``slate-fill-<key>.ts`` and declares ``repeats * 30`` seconds of it
+    (3600s by default), deliberately far longer than any gap it fills. That
+    "declares more than the gap" property is what the rollover chain trims
+    against, so a test that wants the trim path must start from this shape, not
+    from ``_slate_plan``'s one-second stub."""
+
+    source = tmp_path / "slate-fill.ts"
+    source.write_text("slate", encoding="utf-8")
+    return EgressSourcePlan(
+        channel_id="gov",
+        segments=[
+            EgressSourceSegment(
+                label="CivicCast slate",
+                path=str(source),
+                duration_seconds=declared_seconds,
+                kind="slate",
+                source_ref="civiccast-slate",
+            )
+        ],
+    )
+
+
 def _command(action: str = "start") -> EgressCommand:
     return EgressCommand(
         channel_id="gov",
@@ -286,7 +311,9 @@ def test_failed_caption_reset_does_not_read_stale_sidecar(tmp_path: Path) -> Non
     assert "captions disabled" in (store.read_state("gov").last_error or "")
 
 
-def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_session(tmp_path: Path) -> None:
+def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_session(
+    tmp_path: Path,
+) -> None:
     """A distinct second START is delivered as a no-op, not a session reset.
 
     The store dedupes repeated command ids.  A genuinely distinct second START
@@ -2047,6 +2074,332 @@ def test_failed_rollover_filler_keeps_current_worker_on_air(tmp_path: Path) -> N
     assert len(started) == 1
     assert started[0].terminated is False
     assert store.read_state("gov").state == "ON_AIR"  # type: ignore[union-attr]
+
+
+def _filler_gap_schedule(
+    tmp_path: Path, *, switch_at: datetime, gap_seconds: float
+) -> tuple[list[ScheduleItemResponse], dict[str, StaffAssetRow]]:
+    """U53 item 1's 17:57-18:07 education shape as schedule rows: a 554-second
+    outgoing programme that ends exactly at ``switch_at``, NOTHING due at that
+    boundary (so the rollover's target is filler), and the next programme due
+    ``gap_seconds`` later -- the instant that filler's slot ends.
+
+    The D42 media-shorter-than-slot stop never applies: every row's media
+    covers its slot."""
+
+    media = tmp_path / "education-program.ts"
+    media.write_text("fake", encoding="utf-8")
+    items = [
+        ScheduleItemResponse(
+            id=uuid.uuid4(),
+            asset_id="outgoing",
+            asset_title="Outgoing programme",
+            channel_id="gov",
+            mode="premiere",
+            state="published",
+            scheduled_at=switch_at - timedelta(seconds=gap_seconds),
+            duration_seconds=int(gap_seconds),
+            notes=None,
+            created_at=switch_at - timedelta(days=1),
+        ),
+        ScheduleItemResponse(
+            id=uuid.uuid4(),
+            asset_id="education-program",
+            asset_title="Education programme",
+            channel_id="gov",
+            mode="premiere",
+            state="published",
+            scheduled_at=switch_at + timedelta(seconds=gap_seconds),
+            duration_seconds=900,
+            notes=None,
+            created_at=switch_at - timedelta(days=1),
+        ),
+    ]
+    assets = {
+        item.asset_id: StaffAssetRow(
+            asset_id=item.asset_id,
+            title=item.asset_title,
+            state="validated",
+            file_path=str(media),
+            duration_seconds=item.duration_seconds,
+            trim_in_seconds=0,
+            trim_out_seconds=float(item.duration_seconds or 0),
+        )
+        for item in items
+    }
+    return items, assets
+
+
+def test_filler_rollover_chains_the_next_program_into_the_same_plan(
+    tmp_path: Path,
+) -> None:
+    """U53 item 1: a rollover whose target is filler must carry the next
+    scheduled programme TOO, prepared in the same dispatch.
+
+    Today the rollover prepares the filler alone, so the programme due when
+    that filler's slot ends is only discovered by automation's slate-replan
+    once its due instant has already arrived -- and the cold conform it then
+    needs (485.8s measured live on a 9020.8s asset, 224.5s on the education
+    incident) lands minutes after the programme was due. That is the observed
+    "wrong programme, late" shape.
+
+    The fix is sequencing, not a new mechanism: ONE plan for the channel, with
+    the filler TRIMMED to the gap followed by the programme itself, so the
+    engine's own EOS hands over at the programme's due instant with nothing
+    left to prepare. The one-plan-per-channel invariant is untouched --
+    ``_record_dispatched_plan`` sums the chained plan's durations, so
+    automation's next rollover fires at the CHAINED plan's end.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    requests: list[EncoderStartRequest] = []
+
+    class _RecordingStrategy(_FakeContentReloadStrategy):
+        def reload_content(self, channel_id, work_dir, request, *, command_id=None):
+            requests.append(request)
+            return super().reload_content(channel_id, work_dir, request, command_id=command_id)
+
+    switch_at = datetime.now(UTC) + timedelta(minutes=2)
+    gap_seconds = 554.0
+    items, assets = _filler_gap_schedule(tmp_path, switch_at=switch_at, gap_seconds=gap_seconds)
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        # The station's shape with the GStreamer engine selected: one item per
+        # plan (the chain is what supplies the second).
+        max_segments=1,
+    )
+    strategy = _RecordingStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Outgoing programme"),
+        boundary_source_plan_provider=provider.plan_at,
+        next_program_start_provider=provider.next_item_start_at,
+        fallback_source_provider=lambda _config: _slate_fill_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")  # initial start -> ON_AIR
+    daemon.record_rollover_plan_end("gov", switch_at, command_id="cmd-reload", force_fallback=True)
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    # The rollover still defers (ON_AIR, no override): the filler takes air at
+    # the outgoing programme's own end, and the gap is measured from there.
+    assert strategy.switch_at_end_of_current_calls == [True]
+    assert len(requests) == 1, (
+        "the filler and the programme due at its end must be prepared in ONE dispatch"
+    )
+    planned = requests[0].source_plan
+    assert [segment.source_ref for segment in planned.segments] == [
+        "civiccast-slate",
+        "education-program",
+    ]
+    filler = planned.segments[0]
+    assert filler.kind == "slate"
+    assert filler.duration_seconds == gap_seconds, (
+        "the filler must be trimmed to the gap, or the programme airs late by the "
+        "difference between the filler's declared 3600s and the real gap"
+    )
+    program = planned.segments[1]
+    assert program.label == "Education programme"
+    assert program.duration_seconds == 900
+    # The switch defers to the outgoing leg's own EOS, so the settle has not
+    # happened yet: the row is still the outgoing programme, ON_AIR, with the
+    # PREVIOUS process pid. That pending settle is itself what keeps
+    # automation's slate-replan quiet in this window.
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "ON_AIR"
+    assert daemon.has_pending_reload_settlement("gov") is True
+    # No chained end published yet -- it is recorded at settlement, not at
+    # dispatch, so nothing can suppress a replan for a plan that never landed.
+    assert daemon.chained_slate_program_end("gov") is None
+
+    # One more tick: the fake wrote "applied" at arming, so this is the tick
+    # that observes it and commits the settle.
+    daemon.process_once("gov")
+
+    # The leg genuinely BEGINS on the slate, so the row reads FALLBACK_SLATE
+    # at settlement -- segments[0] is the filler.
+    state = store.read_state("gov")
+    assert state is not None
+    assert state.state == "FALLBACK_SLATE"
+    # And the daemon now publishes when that chained programme is projected to
+    # end, so automation's slate-replan can tell "the row still reads
+    # FALLBACK_SLATE because a chained programme is airing" from "this channel
+    # is genuinely on the slate and its programme is due".
+    assert daemon.chained_slate_program_end("gov") == switch_at + timedelta(
+        seconds=gap_seconds + 900
+    )
+
+
+def test_filler_rollover_without_a_next_program_keeps_the_filler_alone(
+    tmp_path: Path,
+) -> None:
+    """U53 item 1's fail-open guard: no next scheduled programme (the provider
+    answers None, or is not wired at all) means no chain -- exactly today's
+    filler-only behavior, with the filler's own declared duration intact."""
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    requests: list[EncoderStartRequest] = []
+
+    class _RecordingStrategy(_FakeContentReloadStrategy):
+        def reload_content(self, channel_id, work_dir, request, *, command_id=None):
+            requests.append(request)
+            return super().reload_content(channel_id, work_dir, request, command_id=command_id)
+
+    strategy = _RecordingStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Terminal program"),
+        next_program_start_provider=lambda _channel_id, _after: None,
+        fallback_source_provider=lambda _config: _slate_fill_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")
+    daemon.record_rollover_plan_end(
+        "gov",
+        datetime.now(UTC) + timedelta(minutes=5),
+        command_id="cmd-reload",
+        force_fallback=True,
+    )
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert len(requests) == 1
+    planned = requests[0].source_plan
+    assert [segment.source_ref for segment in planned.segments] == ["civiccast-slate"]
+    assert planned.segments[0].duration_seconds == 3600.0  # untouched, as declared
+    assert daemon.chained_slate_program_end("gov") is None
+
+
+def test_filler_rollover_fails_open_when_the_next_program_lookup_explodes(
+    tmp_path: Path,
+) -> None:
+    """U53 item 1 is a HINT, never a dependency: a schedule lookup that raises
+    must leave the filler-only rollover exactly as it was. The chain exists to
+    remove lateness, so it may never introduce a new way to fail."""
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    requests: list[EncoderStartRequest] = []
+
+    class _RecordingStrategy(_FakeContentReloadStrategy):
+        def reload_content(self, channel_id, work_dir, request, *, command_id=None):
+            requests.append(request)
+            return super().reload_content(channel_id, work_dir, request, command_id=command_id)
+
+    def exploding_lookup(_channel_id: str, _after: datetime) -> datetime | None:
+        raise RuntimeError("schedule store is unavailable")
+
+    strategy = _RecordingStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Terminal program"),
+        next_program_start_provider=exploding_lookup,
+        fallback_source_provider=lambda _config: _slate_fill_plan(tmp_path),
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")
+    daemon.record_rollover_plan_end(
+        "gov",
+        datetime.now(UTC) + timedelta(minutes=5),
+        command_id="cmd-reload",
+        force_fallback=True,
+    )
+    store.enqueue_command(_command("reload"))
+    daemon.process_once("gov")
+
+    assert len(requests) == 1
+    planned = requests[0].source_plan
+    assert [segment.source_ref for segment in planned.segments] == ["civiccast-slate"]
+    assert planned.segments[0].duration_seconds == 3600.0  # untouched, as declared
+    assert daemon.chained_slate_program_end("gov") is None
+
+
+def test_filler_rollover_with_no_filler_at_all_falls_back_without_chaining(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """U53 item 1 pins the ``source_plan is not None`` narrowing at the chain call
+    site. A force-fallback rollover whose filler provider answers None has no plan
+    to trim, so there is nothing to chain onto -- the method must reach its own
+    ``return False`` (caller falls back to terminate+restart).
+
+    The schedule providers here are the real ones and DO resolve a next programme
+    with a positive gap, so without the narrowing guard the chain really does walk
+    ``None.segments``. The failure mode is not a crash: ``_process_command`` wraps
+    the reload and swallows the ``AttributeError``, logging
+
+        "Egress command cmd-reload (reload) failed for channel gov; it will NOT be
+        retried"
+
+    and consuming the command -- the rollover is silently dropped and reported as
+    a command failure. That logged line, not an exception, is what this test
+    discriminates on; the tick's own dispatch is identical either way
+    (``requests == []``, no restart yet), which is exactly why the defect was
+    invisible."""
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222)]
+    started: list[_FakeProcess] = []
+    requests: list[EncoderStartRequest] = []
+
+    class _RecordingStrategy(_FakeContentReloadStrategy):
+        def reload_content(self, channel_id, work_dir, request, *, command_id=None):
+            requests.append(request)
+            return super().reload_content(channel_id, work_dir, request, command_id=command_id)
+
+    switch_at = datetime.now(UTC) + timedelta(minutes=2)
+    items, assets = _filler_gap_schedule(tmp_path, switch_at=switch_at, gap_seconds=554.0)
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        max_segments=1,
+    )
+    strategy = _RecordingStrategy(processes, started)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _cid: _source_plan_with_label(tmp_path, "Terminal program"),
+        boundary_source_plan_provider=provider.plan_at,
+        next_program_start_provider=provider.next_item_start_at,
+        fallback_source_provider=lambda _config: None,
+        encoder_strategy=strategy,
+    )
+
+    daemon.process_once("gov")
+    daemon.record_rollover_plan_end("gov", switch_at, command_id="cmd-reload", force_fallback=True)
+    store.enqueue_command(_command("reload"))
+    with caplog.at_level(logging.ERROR, logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")  # must not raise
+
+    assert requests == []  # no plan to reload with, so no seamless reload issued
+    assert daemon.chained_slate_program_end("gov") is None
+    dropped = [record for record in caplog.records if "will NOT be retried" in record.getMessage()]
+    assert dropped == [], (
+        "a no-filler rollover must be refused by the reload steps, not fail as a command: "
+        f"{[record.getMessage() for record in dropped]}"
+    )
 
 
 def test_content_reload_cuts_immediately_when_the_recorded_rollover_horizon_has_already_passed(

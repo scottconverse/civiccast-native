@@ -1057,6 +1057,86 @@ class TestSlateReplan:
         service._check_slate_replan("public", now=_NOW)
         assert _pending_actions(store, "public") == ["reload"]
 
+    def test_due_program_waits_while_a_chained_filler_is_still_airing(self) -> None:
+        """U53 item 1: a chained filler makes the row read FALLBACK_SLATE while
+        a real programme airs behind the slate.
+
+        The rollover for a filler target now prepares "slate trimmed to the gap
+        + the programme due when that gap closes" as ONE plan. ``target_state``
+        is still ``FALLBACK_SLATE`` and ``segments[0]`` is still the slate, so
+        the state row reads FALLBACK_SLATE for the whole chained leg -- and
+        this pass, seeing that, would queue a ``reload`` for a programme that
+        is already on air, cutting the chained leg off and conforming it a
+        second time. The daemon publishes the chained programme's projected end
+        for exactly this: while ``now`` is still before it, this is not a slate
+        gap.
+
+        Same contract as the two gates above it: waiting consumes neither the
+        latch nor the cooldown, and the gate expires on its own -- once the
+        chained programme's projected end has passed, a channel that really is
+        stuck on the slate is replanned exactly as before.
+        """
+
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        provider_calls = 0
+        chained_end = _NOW + timedelta(seconds=554 + 900)
+
+        class _ChainedDaemon(_FakeDaemon):
+            def chained_slate_program_end(self, _channel_id: str) -> datetime:
+                return chained_end
+
+        daemon = _ChainedDaemon(live_channels={"public"})
+
+        def provider(channel_id: str) -> EgressSourcePlan:
+            nonlocal provider_calls
+            provider_calls += 1
+            return _plan(channel_id)
+
+        service = ChannelAutomationService(
+            store, daemon, provider, settings=ChannelAutomationSettings()
+        )
+
+        service._check_slate_replan("public", now=_NOW)
+        assert provider_calls == 0, "the chained programme is already on air"
+        assert _pending_actions(store, "public") == []
+        assert "public" not in service._reload_issued
+        assert "public" not in service._replan_retry_at
+
+        # One second before the chained programme's own projected end: still
+        # nothing to replan.
+        service._check_slate_replan("public", now=chained_end - timedelta(seconds=1))
+        assert provider_calls == 0
+        assert _pending_actions(store, "public") == []
+
+        # The chained programme's projected end has arrived and the row STILL
+        # reads FALLBACK_SLATE -- that is a real slate gap again.
+        service._check_slate_replan("public", now=chained_end)
+        assert provider_calls == 1
+        assert _pending_actions(store, "public") == ["reload"]
+        assert "public" in service._reload_issued
+        assert "public" in service._replan_retry_at
+
+    def test_a_daemon_without_the_chained_program_reader_is_unaffected(self) -> None:
+        """U53 item 1 optional-capability contract: absence means "not
+        chained". ``chained_slate_program_end`` is probed via ``getattr`` like
+        its siblings, so a daemon double that predates it (``_FakeDaemon``)
+        keeps its existing behavior -- which is what every other test in this
+        class exercises against exactly that double."""
+
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._slate_state(store, "public")
+        daemon = _FakeDaemon(live_channels={"public"})
+        service = ChannelAutomationService(
+            store, daemon, lambda cid: _plan(cid), settings=ChannelAutomationSettings()
+        )
+
+        assert service._daemon_chained_slate_program_end("public") is None
+        service._check_slate_replan("public", now=_NOW)
+        assert _pending_actions(store, "public") == ["reload"]
+
     def test_no_plan_or_unplayable_plan_stays_on_slate(self) -> None:
         store = InMemoryEgressStore()
         store.upsert_config(_config("public"))

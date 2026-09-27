@@ -73,6 +73,7 @@ from civiccast.egress.hls_relay import (
     _segment_first_packet_pts,
 )
 from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
     RESTART_RECOVERY_COMMAND_PREFIX,
     CaptionStatus,
     EgressCommand,
@@ -80,6 +81,7 @@ from civiccast.egress.models import (
     EgressHealthSample,
     EgressProofEvent,
     EgressSourcePlan,
+    EgressSourceSegment,
     EgressState,
     EgressStateRow,
     redact_source_uri,
@@ -100,6 +102,12 @@ from civiccast.stream._ffmpeg import FfmpegNotFoundError
 
 SourcePlanProvider = Callable[[str], EgressSourcePlan | None]
 BoundarySourcePlanProvider = Callable[[str, datetime], EgressSourcePlan | None]
+#: U53 item 1: ``(channel_id, after)`` -> the start instant of the next
+#: playable scheduled item strictly after ``after``, or None when nothing
+#: further is scheduled. Supplied by ``ScheduleSourcePlanProvider
+#: .next_item_start_at`` in production; a filler rollover uses it to trim the
+#: filler to the gap and chain the programme due at its end into the same plan.
+NextProgramStartProvider = Callable[[str, datetime], datetime | None]
 FallbackSourceProvider = Callable[[EgressConfig], EgressSourcePlan]
 SourcePreparerFunc = Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport]
 BrandingPlanProvider = Callable[[str], EgressBrandingPlan | None]
@@ -375,9 +383,7 @@ _SLATE_FIRST_HANDOFF_REASON = (
 #: of this set that recovery start passed ``slate_first=True`` and then failed
 #: this gate, so it conformed its program with nothing on air: the same dead
 #: air the ON_AIR shape had, reached through the other recovered state.
-_SLATE_FIRST_ACTIVE_STATES = frozenset(
-    {"ON_AIR", "STARTING", "FALLBACK_SLATE", "TRANSITIONING"}
-)
+_SLATE_FIRST_ACTIVE_STATES = frozenset({"ON_AIR", "STARTING", "FALLBACK_SLATE", "TRANSITIONING"})
 
 # BETA.10 U16 item B: the OUTPUT A/V sync guard.
 #
@@ -490,6 +496,13 @@ class _PendingReloadSettlement(NamedTuple):
     #: the SAME boundary (``_retry_aborted_boundary_reload``) and key its bounded
     #: retry budget on it.
     rollover_plan_end_at: datetime | None = None
+    #: U53 item 1: the projected end of the next scheduled programme when this
+    #: reload's plan is a filler with that programme chained behind it, else
+    #: ``None``. Carried into ``_commit_reload_settlement``'s
+    #: ``_record_dispatched_plan`` call, which is what makes
+    #: ``chained_slate_program_end`` -- and so channel automation's
+    #: slate-replan suppression -- describe THIS plan and no other.
+    chained_program_end_at: datetime | None = None
 
 
 class _TailFloorOutcome(NamedTuple):
@@ -703,6 +716,13 @@ class EgressDaemon:
         work_dir: Path,
         source_plan_provider: SourcePlanProvider,
         boundary_source_plan_provider: BoundarySourcePlanProvider | None = None,
+        # U53 item 1: used only when a rollover's target is filler -- it answers
+        # "when is the next scheduled programme due?" so the filler can be
+        # trimmed to exactly that gap and the programme chained behind it in the
+        # same plan (one plan per channel, kept). None (every caller that does
+        # not wire it, plus the ffmpeg-concat engine) means the filler airs
+        # whole, exactly as before.
+        next_program_start_provider: NextProgramStartProvider | None = None,
         fallback_source_provider: FallbackSourceProvider | None = None,
         source_preparer: SourcePreparerFunc | None = None,
         async_source_preparer: AsyncSourcePreparerFunc | None = None,
@@ -767,6 +787,7 @@ class EgressDaemon:
         self._work_dir = work_dir
         self._source_plan_provider = source_plan_provider
         self._boundary_source_plan_provider = boundary_source_plan_provider
+        self._next_program_start_provider = next_program_start_provider
         self._fallback_source_provider = fallback_source_provider
         self._source_preparer = source_preparer
         self._async_source_preparer = async_source_preparer
@@ -831,6 +852,15 @@ class EgressDaemon:
         # Per channel: the horizon of the source plan actually DISPATCHED to the
         # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
         self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
+        # Per channel (U53 item 1): when the dispatched plan is a filler whose tail
+        # is the next scheduled programme chained behind it, the projected end of
+        # that chained programme -- ``(proof_event_id, end_at)``. Set and cleared
+        # only by ``_record_dispatched_plan`` (the single dispatch choke point),
+        # keyed by the same proof event as the horizon record, so a stale chain can
+        # never outlive the plan it described. Read by
+        # ``chained_slate_program_end`` -> channel automation's slate-replan
+        # suppression. Empty means "the dispatched plan is not a chained filler".
+        self._chained_slate_program: dict[str, tuple[str | None, datetime]] = {}
         # Item 78 fix 3: the automation-known projected end of the LIVE plan a
         # rollover reload is extending, recorded by ChannelAutomationService
         # (record_rollover_plan_end) immediately before it enqueues the reload
@@ -1646,6 +1676,33 @@ class EgressDaemon:
 
         return self._dispatched_plan_horizon.get(channel_id)
 
+    def chained_slate_program_end(self, channel_id: str) -> datetime | None:
+        """The projected end of the programme chained behind the filler in the plan
+        this daemon most recently dispatched for ``channel_id``, or None.
+
+        U53 item 1: a filler rollover plan may carry ``[filler..., programme...]``
+        in one plan, in which case the state row legitimately stays
+        ``FALLBACK_SLATE`` for the whole of that programme. Channel automation's
+        slate-replan pass reads this so it does not cut the already-airing chained
+        programme back to its own start.
+
+        Returns None once a DIFFERENT plan has been dispatched (the chain is
+        cleared at the same choke point that writes the horizon, and the record is
+        validated against the horizon's proof event before it is believed), so a
+        leg that failed and was relaunched can never leave a stale suppression
+        behind."""
+
+        record = self._chained_slate_program.get(channel_id)
+        if record is None:
+            return None
+        proof_event_id, end_at = record
+        horizon = self._dispatched_plan_horizon.get(channel_id)
+        if horizon is None or horizon[0] != proof_event_id:
+            # The horizon moved on (or was never written): the chain is stale.
+            del self._chained_slate_program[channel_id]
+            return None
+        return end_at
+
     def _record_dispatched_plan(
         self,
         channel_id: str,
@@ -1653,16 +1710,26 @@ class EgressDaemon:
         proof_event_id: str | None,
         source_plan: EgressSourcePlan,
         switch_deferred: bool,
+        chained_program_end_at: datetime | None = None,
     ) -> None:
         """Remember the plan just dispatched, keyed by the proof event written with
         it (so a consumer can tell "this is the plan now on air" from "this is a
-        stale record"). See ``dispatched_plan_horizon``."""
+        stale record"). See ``dispatched_plan_horizon``.
+
+        ``chained_program_end_at`` (U53 item 1) is the projected end of the next
+        scheduled programme when ``source_plan`` is a filler with that programme
+        chained behind it; it is recorded -- or cleared -- here, together with the
+        horizon, so the two can never disagree about which plan is on air."""
 
         self._dispatched_plan_horizon[channel_id] = (
             proof_event_id,
             tuple(float(segment.duration_seconds) for segment in source_plan.segments),
             switch_deferred,
         )
+        if chained_program_end_at is None:
+            self._chained_slate_program.pop(channel_id, None)
+        else:
+            self._chained_slate_program[channel_id] = (proof_event_id, chained_program_end_at)
 
     def send_caption_cue(
         self,
@@ -4803,6 +4870,148 @@ class EgressDaemon:
         )
         return _TailFloorOutcome(next_plan, False)
 
+    def _chain_next_program(
+        self,
+        channel_id: str,
+        filler_plan: EgressSourcePlan,
+        *,
+        boundary_at: datetime | None,
+    ) -> tuple[EgressSourcePlan, datetime | None]:
+        """U53 item 1: trim a rollover filler to the gap and chain the programme due
+        at its end into the SAME plan.
+
+        Returns ``(plan, chained_program_end_at)``. ``plan`` is ``filler_plan``
+        unchanged -- and the end is ``None`` -- for every case this cannot do
+        honestly: no ``next_program_start_provider`` wired, no boundary to measure
+        the gap from, no next programme due, nothing but filler (no boundary plan
+        provider), a programme that would arrive before the filler ends, or a chain
+        that would exceed ``MAX_PLAYLIST_SUBCHAINS`` (the bridge raises
+        ``PlaylistCapBypassedError`` for an oversize non-slate/cg plan, and failing
+        that check closed would take a channel off air).
+
+        Why this is a plan shape and not a second plan: the daemon and the engine
+        are one-plan-per-channel (``_record_dispatched_plan`` /
+        ``GstPlayoutEngine.reload_program`` replace the whole program leg), so the
+        only way filler and programme can be dispatched together -- the programme
+        prepared at the same moment, with the filler's own lead -- is for them to BE
+        that one plan. The filler's declared durations are what the preparer writes
+        to each per-plan file (``preparer.py``'s ``-t segment.duration_seconds`` on
+        the bounded conform and on the GStreamer engine's cache-hit copy-out), and
+        the bridge builds one decoder sub-chain per segment that runs to that file's
+        EOS, so trimming the filler's LAST segment to the remaining gap is what
+        makes the hand-off land on the programme's scheduled start.
+
+        Measured on this station (U53 Part I): the 17:57-18:07 education rollover
+        had a 554s plan on air, a filler target, and the next programme due 554s
+        later; the filler aired whole and the programme followed it instead. The
+        failure this avoids is the one item 3's adaptive lead only partly covers --
+        the lead decides WHEN to start preparing, not what to air while the
+        programme prepares."""
+
+        if self._next_program_start_provider is None or boundary_at is None:
+            return filler_plan, None
+        if self._boundary_source_plan_provider is None:
+            # Without a boundary provider there is no honest way to resolve the
+            # programme due at the gap: the only other provider answers "what is
+            # active NOW", which in this gap is the filler itself.
+            return filler_plan, None
+        try:
+            next_start = self._next_program_start_provider(channel_id, boundary_at)
+        except Exception:
+            _LOG.warning(
+                "Could not resolve the next scheduled programme after %s for %s; "
+                "airing the filler whole.",
+                boundary_at.isoformat(),
+                channel_id,
+                exc_info=True,
+            )
+            return filler_plan, None
+        if next_start is None:
+            return filler_plan, None
+        gap_seconds = (next_start - boundary_at).total_seconds()
+        if gap_seconds <= 0.0:
+            # The programme is already due at the boundary: this rollover is not
+            # filling a gap, so there is nothing to trim and nothing to chain.
+            return filler_plan, None
+        trimmed: list[EgressSourceSegment] = []
+        remaining = gap_seconds
+        for segment in filler_plan.segments:
+            duration = float(segment.duration_seconds)
+            if remaining > duration:
+                trimmed.append(segment)
+                remaining -= duration
+                continue
+            # The gap lands inside this segment: keep it, truncated, and drop the
+            # rest of the filler -- the programme starts where the gap ends.
+            #
+            # ``model_validate`` rather than ``model_copy(update=...)``: a copy
+            # skips validation, and ``duration_seconds`` is constrained ``gt=0``.
+            # The arithmetic above guarantees ``remaining`` is positive here, and
+            # validating proves it rather than assuming it.
+            trimmed.append(
+                EgressSourceSegment.model_validate(
+                    {**segment.model_dump(), "duration_seconds": remaining}
+                )
+            )
+            remaining = 0.0
+            break
+        if remaining > 0.0:
+            # The filler's own declared run is SHORTER than the gap. Chaining the
+            # programme now would put it on air before it is due -- strictly worse
+            # than airing the filler whole, which the next rollover then handles.
+            _LOG.info(
+                "Rollover filler for %s declares %.1fs but the next programme is due in "
+                "%.1fs; airing the filler whole (it will be re-evaluated at its own end).",
+                channel_id,
+                sum(float(segment.duration_seconds) for segment in filler_plan.segments),
+                gap_seconds,
+            )
+            return filler_plan, None
+        try:
+            program_plan = self._boundary_source_plan_provider(channel_id, next_start)
+        except Exception:
+            _LOG.warning(
+                "Could not resolve the programme due at %s for %s; airing the filler whole.",
+                next_start.isoformat(),
+                channel_id,
+                exc_info=True,
+            )
+            return filler_plan, None
+        if (
+            program_plan is None
+            or program_plan.channel_id != channel_id
+            or not program_plan.segments
+        ):
+            return filler_plan, None
+        if len(trimmed) + len(program_plan.segments) > MAX_PLAYLIST_SUBCHAINS:
+            _LOG.warning(
+                "Not chaining the programme due at %s behind the filler for %s: %d filler + "
+                "%d programme segments exceeds the %d-subchain playlist cap; airing the "
+                "filler whole.",
+                next_start.isoformat(),
+                channel_id,
+                len(trimmed),
+                len(program_plan.segments),
+                MAX_PLAYLIST_SUBCHAINS,
+            )
+            return filler_plan, None
+        program_seconds = sum(float(segment.duration_seconds) for segment in program_plan.segments)
+        chained_end_at = next_start + timedelta(seconds=program_seconds)
+        chained_plan = filler_plan.model_copy(
+            update={"segments": [*trimmed, *program_plan.segments]}
+        )
+        _LOG.info(
+            "Rollover filler for %s trimmed to the %.1fs gap and chained with the programme "
+            "due at %s (%d filler + %d programme segment(s), %.1fs of programme).",
+            channel_id,
+            gap_seconds,
+            next_start.isoformat(),
+            len(trimmed),
+            len(program_plan.segments),
+            program_seconds,
+        )
+        return chained_plan, chained_end_at
+
     def _avoid_schedule_tail_plan(
         self, channel_id: str, source_plan: EgressSourcePlan
     ) -> EgressSourcePlan:
@@ -4982,6 +5191,31 @@ class EgressDaemon:
                     )
                     return True
                 target_state = "FALLBACK_SLATE"
+        # U53 item 1: this is a filler rollover -- if the schedule has a programme
+        # due when the filler's gap closes, trim the filler to that gap and chain
+        # the programme into the same plan, so the programme is prepared now (with
+        # this reload's own lead) and airs at its scheduled instant instead of
+        # after however long the filler ran. Computed BEFORE the preparation
+        # request below, because the chained shape is what has to be prepared.
+        # A no-op (identical plan, None) whenever the chain cannot be built; see
+        # ``_chain_next_program``.
+        #
+        # Scoped to the force-fallback filler arm on purpose. The OTHER place
+        # this method can arm a slate -- ``_resolve_schedule_tail``'s
+        # ``slate_when_no_next`` outcome below -- already resolves the plan due
+        # where the tail ends, and widening the chain to cover it would change
+        # what that resolver is allowed to choose without any evidence for it;
+        # that is a separate decision, not this one.
+        chained_program_end_at: datetime | None = None
+        if force_fallback and target_state == "FALLBACK_SLATE" and source_plan is not None:
+            # (``source_plan is not None`` is a narrowing guard, not a behavior
+            # change: a None plan still falls through to the ``return False``
+            # immediately below, exactly as it did before this chain existed.)
+            source_plan, chained_program_end_at = self._chain_next_program(
+                channel_id,
+                source_plan,
+                boundary_at=rollover_plan_end_at,
+            )
         if source_plan is None or source_plan.channel_id != channel_id:
             return False
         if not force_fallback:
@@ -5244,6 +5478,7 @@ class EgressDaemon:
             target_state=target_state,
             plan_dir=prepared_plan_dir,
             rollover_plan_end_at=rollover_plan_end_at,
+            chained_program_end_at=chained_program_end_at,
         )
         _LOG.info(
             "Seamless content-reload accepted for %s (reload_id=%s, switch_at_end_of_current=%s); "
@@ -5304,6 +5539,7 @@ class EgressDaemon:
             proof_event_id=proof_event.event_id,
             source_plan=source_plan,
             switch_deferred=pending.switch_at_end_of_current,
+            chained_program_end_at=pending.chained_program_end_at,
         )
         self._append_health(
             channel_id,

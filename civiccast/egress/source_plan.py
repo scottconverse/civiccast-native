@@ -464,6 +464,81 @@ class ScheduleSourcePlanProvider:
             media_duration_resolver=self._media_duration_resolver,
         )
 
+    def next_item_start_at(self, channel_id: str, after: datetime) -> datetime | None:
+        """Start instant of the next playable item strictly after ``after``.
+
+        U53 item 1: a rollover whose target is filler needs to know how far
+        ahead the next scheduled programme is due, so the filler can be trimmed
+        to exactly that gap and the programme chained behind it in the same
+        plan. ``plan_at`` cannot answer this -- it answers "what is active at
+        this instant", which is None for the whole gap. This is the same
+        playable-item set ``plan_at`` plans from, so the two can never
+        disagree about which item comes next.
+        """
+
+        return next_playable_item_start(
+            channel_id=channel_id,
+            schedule_items=self._schedule_items_provider(channel_id),
+            after=after,
+            loop_schedule=self._loop_schedule,
+        )
+
+
+def _playable_items(
+    channel_id: str,
+    schedule_items: Sequence[ScheduleItemResponse],
+    *,
+    loop_schedule: bool = False,
+    now: datetime | None = None,
+) -> list[ScheduleItemResponse]:
+    """The channel's airable items, sorted by (start, id) -- and, when looping,
+    shifted into the cycle containing ``now``.
+
+    ONE definition of "playable", shared by ``build_source_plan_from_schedule``
+    and ``next_playable_item_start``: a plan may never be built from a
+    different item set than the "next item" lookup walks (U53 item 1)."""
+
+    items = [
+        item
+        for item in schedule_items
+        if item.channel_id == channel_id
+        # Commit-to-Air gate: only ``published`` items are airable -- a
+        # ``scheduled`` premiere has not been approved to air yet (via
+        # commit, or auto-approval by autoschedule).
+        and item.state == SCHEDULE_STATE_PUBLISHED
+        and item.mode == SCHEDULE_MODE_PREMIERE
+        and item.duration_seconds is not None
+    ]
+    items.sort(key=lambda item: (item.scheduled_at, str(item.id)))
+    if loop_schedule and items:
+        items = _repeat_schedule_cycle(items, _as_utc(now or datetime.now(UTC)))
+    return items
+
+
+def next_playable_item_start(
+    *,
+    channel_id: str,
+    schedule_items: Sequence[ScheduleItemResponse],
+    after: datetime,
+    loop_schedule: bool = False,
+) -> datetime | None:
+    """The start instant of the first playable item due strictly after ``after``.
+
+    None means "nothing further is scheduled" (or, under ``loop_schedule``, that
+    ``after`` falls past the end of the cycle the loop could shift forward):
+    the caller must then keep whatever it would have done without a next item.
+    """
+
+    after_utc = _as_utc(after)
+    for item in _playable_items(
+        channel_id, schedule_items, loop_schedule=loop_schedule, now=after_utc
+    ):
+        starts_at = _as_utc(item.scheduled_at)
+        if starts_at > after_utc:
+            # Sorted by start: the first one still ahead is the next due.
+            return starts_at
+    return None
+
 
 def build_source_plan_from_schedule(
     *,
@@ -606,20 +681,9 @@ def build_source_plan_from_schedule(
         )
         segment_cap = MAX_PLAYLIST_SUBCHAINS
     current_time = _as_utc(now or datetime.now(UTC))
-    playable_items = [
-        item
-        for item in schedule_items
-        if item.channel_id == channel_id
-        # Commit-to-Air gate: only ``published`` items are airable — a
-        # ``scheduled`` premiere has not been approved to air yet (via
-        # commit, or auto-approval by autoschedule).
-        and item.state == SCHEDULE_STATE_PUBLISHED
-        and item.mode == SCHEDULE_MODE_PREMIERE
-        and item.duration_seconds is not None
-    ]
-    playable_items.sort(key=lambda item: (item.scheduled_at, str(item.id)))
-    if loop_schedule and playable_items:
-        playable_items = _repeat_schedule_cycle(playable_items, current_time)
+    playable_items = _playable_items(
+        channel_id, schedule_items, loop_schedule=loop_schedule, now=current_time
+    )
 
     def _plan_from(start_index: int, start_elapsed: float) -> list[EgressSourceSegment]:
         """Build the contiguous plan starting at ``start_index``.

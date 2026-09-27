@@ -1487,6 +1487,27 @@ class ChannelAutomationService:
             # FAILS, the channel stays FALLBACK_SLATE with no preparation
             # registered and the next tick issues the reload exactly as before.
             return
+        chained_program_end = self._daemon_chained_slate_program_end(channel_id)
+        if chained_program_end is not None and now < chained_program_end:
+            # U53 item 1: this row does not mean "the channel is on the slate
+            # with its programme still due". The plan on air is a chained
+            # filler: the slate covers only the gap up to the programme's own
+            # due instant, and that programme follows it in the same plan. So
+            # the reload this pass would queue is for a programme that is
+            # ALREADY on air (or about to be, with nothing left to prepare),
+            # and issuing it would cut the chained leg off at the reload
+            # boundary and conform the same programme a second time.
+            #
+            # Same contract as the two gates above: waiting consumes neither
+            # the latch nor the cooldown. The record is cleared by the next
+            # dispatch that is not a chain (``_record_dispatched_plan`` writes
+            # it set-or-clear) and validated against the proof event of the
+            # plan it describes, so a chain that never actually landed cannot
+            # suppress anything; and once ``now`` reaches the chained
+            # programme's own projected end this gate stops applying on its
+            # own, so a channel that really is stuck on the slate after it is
+            # replanned exactly as before.
+            return
         if channel_id in self._reload_issued:
             return
         # Audit ENG-002: when the due item persistently fails PREPARATION,
@@ -2584,6 +2605,28 @@ class ChannelAutomationService:
             return False
         return bool(reader(channel_id))
 
+    def _daemon_chained_slate_program_end(self, channel_id: str) -> datetime | None:
+        """U53 item 1: when the plan on air is a CHAINED filler -- a slate
+        trimmed to the gap it fills, followed in the SAME plan by the programme
+        due when that gap closes -- the projected end of that programme; else
+        None.
+
+        Same optional-capability shape as the three probes above: a daemon that
+        predates the reader answers None, which is exactly this gate's
+        "nothing chained here" case.
+
+        Needed because a chained leg makes the state row lie in the one
+        direction this pass acts on: ``target_state`` is FALLBACK_SLATE and
+        ``segments[0]`` is the slate, so the row reads FALLBACK_SLATE for the
+        whole leg -- while a real programme is airing behind the filler. See
+        ``_check_slate_replan``'s gate for what is done with it."""
+
+        reader = getattr(self._daemon, "chained_slate_program_end", None)
+        if not callable(reader):
+            return None
+        value = reader(channel_id)
+        return value if isinstance(value, datetime) else None
+
     def _daemon_worker_initial_control_connection_observed(self, channel_id: str) -> bool:
         """Read the optional initial worker-control connection observation.
 
@@ -2891,6 +2934,15 @@ def build_channel_automation(
         source_plan_provider=source_plan_provider,
         boundary_source_plan_provider=(
             source_plan_provider.plan_at if gstreamer_engine_selected() else None
+        ),
+        # U53 item 1: a filler rollover trims the filler to the gap and chains
+        # the programme due when it closes. Wired only where the shape it
+        # depends on holds -- the GStreamer engine, whose preparer writes each
+        # per-plan file at the segment's declared duration (the same reason
+        # boundary_source_plan_provider above is gated the same way). The
+        # ffmpeg-concat engine stays exactly as it was: filler airs whole.
+        next_program_start_provider=(
+            source_plan_provider.next_item_start_at if gstreamer_engine_selected() else None
         ),
         lookahead_source_plan_provider=None,
         takeover_audit_store=PostgresTakeoverAuditStore(session_factory),
