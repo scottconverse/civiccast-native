@@ -1605,6 +1605,24 @@ class ChannelAutomationService:
         self._warn_if_rollover_lead_nears_the_defer_watchdog(computed, source="computed default")
         return computed
 
+    def _cached_rollover_asset(
+        self, channel_id: str, plan_end_at: datetime
+    ) -> tuple[float | None, str | None] | None:
+        """The duration this boundary ALREADY resolved, without resolving it again.
+
+        U53b item 8: ``_probe_rollover_asset`` caches per boundary -- including its
+        failures -- so its answer is available to any later tick of the same plan,
+        notably the dispatch tick, which by construction never enters the probe
+        window and must not pay for a provider call the dispatch body is about to
+        make anyway. ``None`` (no answer) means this boundary has not been resolved
+        at all; ``(None, None)`` means it WAS resolved and resolved to nothing.
+        """
+
+        cached = self._rollover_asset_probe.get(channel_id)
+        if cached is not None and cached[0] == plan_end_at:
+            return cached[1], cached[2]
+        return None
+
     def _probe_rollover_asset(
         self, channel_id: str, plan_end_at: datetime
     ) -> tuple[float | None, str | None]:
@@ -1626,11 +1644,14 @@ class ChannelAutomationService:
         leaves the timeout-derived floor standing, which is exactly the
         pre-U53 behaviour. The dispatch site keeps its own error handling and
         retry cooldown untouched.
+
+        Callers outside this window read the same cache through
+        ``_cached_rollover_asset`` rather than calling this.
         """
 
-        cached = self._rollover_asset_probe.get(channel_id)
-        if cached is not None and cached[0] == plan_end_at:
-            return cached[1], cached[2]
+        cached_asset = self._cached_rollover_asset(channel_id, plan_end_at)
+        if cached_asset is not None:
+            return cached_asset
         assert self._boundary_source_plan_provider is not None  # caller-gated
         try:
             plan = self._boundary_source_plan_provider(channel_id, plan_end_at)
@@ -2138,6 +2159,19 @@ class ChannelAutomationService:
             # trigger earlier; see ``_probe_rollover_asset``.
             if now < flat_trigger_at:
                 asset_seconds, asset_label = self._probe_rollover_asset(channel_id, plan_end_at)
+            else:
+                # U53b item 8: this tick is at or past the flat trigger, so it does
+                # not probe -- but the boundary's own duration was resolved a few
+                # ticks earlier, inside this plan's window, and cached per boundary.
+                # Reading that answer is free, and it is the difference between the
+                # lead line saying the floor stands for a 300s item and saying "no
+                # asset duration available for the boundary". The second is what the
+                # station logged for EVERY floor-fired dispatch after C2 (8/8), and
+                # it reads as a boundary that could not be resolved when it was in
+                # fact resolved fine -- the floor simply outran it.
+                cached_asset = self._cached_rollover_asset(channel_id, plan_end_at)
+                if cached_asset is not None:
+                    asset_seconds, asset_label = cached_asset
             lead_seconds = self._rollover_lead_seconds(asset_seconds)
             trigger_at = max(
                 last_segment_start_at,

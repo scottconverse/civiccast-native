@@ -221,6 +221,52 @@ def test_single_item_rollover_prepares_next_boundary_with_bounded_lead() -> None
     assert _pending_actions(store, "public") == ["reload"]
 
 
+def test_u53b_a_floor_fired_dispatch_reports_the_duration_it_resolved(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """U53b item 8: the lead line must report what the boundary RESOLVED, even
+    when it is the floor that fires the dispatch.
+
+    ``asset_seconds`` was a local assigned only inside the adaptive probe's
+    window (``if now < flat_trigger_at``), and a dispatch that fires at the flat
+    trigger is by construction AT or past that instant -- so every floor-fired
+    dispatch logged "no asset duration available for the boundary" regardless of
+    what the probe had resolved a few ticks earlier. That is the line the live
+    station printed for all 8 education/government/public rollovers after C2
+    (21:36:55 onward), and it reads as "this boundary could not be resolved"
+    when what it means is "the timeout-derived floor stands". The probe's answer
+    is cached per boundary, so the dispatch tick can report it without a second
+    resolution -- and the resolution the dispatch makes for the reload itself is
+    untouched (a schedule edited between the two calls is still honoured).
+    """
+
+    service, store, sampled = _single_item_rollover_service(3600.0)
+    end = _NOW + timedelta(seconds=3600)
+    service.run_once(now=_NOW)
+    # The probe's window: the boundary resolves to a 300s item, whose conform
+    # cost (300/12 + 120 = 145s) is inside the 690s floor, so the lead does not
+    # move and nothing dispatches on this tick.
+    service.run_once(now=end - timedelta(seconds=691))
+    assert sampled == [end]
+    with caplog.at_level(logging.INFO, logger="civiccast.egress.automation"):
+        service.run_once(now=end - timedelta(seconds=690))
+    assert _pending_actions(store, "public") == ["reload"]
+    assert sampled == [end, end], (
+        "the dispatch still resolves its OWN plan for the reload; the probe is "
+        "read for the answer it already cached, never re-called"
+    )
+    messages = [record.getMessage() for record in caplog.records]
+    lead = [message for message in messages if "rollover lead" in message]
+    assert len(lead) == 1, f"expected exactly one lead line; captured {messages}"
+    assert "no asset duration available" not in lead[0], (
+        "this boundary resolved to a 300s item one tick earlier -- the floor "
+        f"standing is not the same thing as an unresolvable boundary; captured {lead[0]!r}"
+    )
+    assert "lead=690s for Program (300s at 12x + 120s)" in lead[0], (
+        f"the lead line must name the item the boundary resolved; captured {lead[0]!r}"
+    )
+
+
 def test_u53_the_lead_covers_the_item_that_must_be_prepared(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
