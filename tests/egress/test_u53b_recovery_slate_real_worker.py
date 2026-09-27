@@ -38,6 +38,12 @@ The timeline, in one test:
 4. The hold is released and the channel ends ON AIR on its program -- the slate
    airing was a bridge, not a destination.
 
+The recovery start is not the hand-off's only caller: ``_begin_relaunch``
+(``daemon.py:4280``) passes ``slate_first=True`` too, so the crash-relaunch path
+the station runs after an encoder dies is the same code and had the same defect.
+The second test below is that route -- a real worker airing a real program is
+killed mid-air and the relaunch is measured against the same 15 s budget.
+
 Runtime root: this runs the installed GStreamer closure, so it needs
 ``CIVICAST_GSTREAMER_RUNTIME_ROOT`` pointed at the install's ``runtime``
 directory. Two C's after ``CIVI``: the one-C spelling is a different, never-set
@@ -67,6 +73,7 @@ from civiccast.egress.gst import strategy as strategy_mod
 from civiccast.egress.gst.strategy import GstPlayoutStrategy
 from civiccast.egress.models import (
     CanonicalProfile,
+    EgressCommand,
     EgressConfig,
     EgressSinkSpec,
     EgressSourcePlan,
@@ -582,6 +589,243 @@ def test_u53b_a_recovery_start_airs_the_slate_before_the_program_is_prepared(
     finally:
         # Measured and reported BEFORE teardown, because a parked accept hangs
         # ``harness.shutdown()`` in product code and takes the verdict with it.
+        parked = _parked_accept_threads()
+        freed = _unblock_pipe_accepts(harness)
+        print(
+            f"[u53b] teardown: parked-accepts={parked or 'none'} "
+            f"channels={len(harness.channels)} freed={freed or 'none'}",
+            flush=True,
+        )
+        harness.shutdown()
+        monkey.undo()
+
+
+def test_u53b_a_crash_relaunch_airs_the_slate_before_the_program_is_prepared(
+    tmp_path: Path,
+) -> None:
+    """Item 7: the crash route into the same hand-off, on real workers.
+
+    The recovery start above is not the hand-off's only caller:
+    ``_begin_relaunch`` (``daemon.py:4280``) passes ``slate_first=True`` too, so
+    a channel whose encoder dies mid-program takes the same code -- and it took
+    the same defect. This is that route with real processes: a real worker
+    airing a real program is killed, and the relaunch is measured against the
+    same 15 s budget.
+
+    The observer's hold lands on the relaunch's FIRST preparation here for the
+    same reason it does in the recovery test (``_EveryPreparationObserver``
+    holds whatever comes first): under the fix that is the program's, and under
+    the pre-fix bytes it is the SLATE's own conform -- the window in which the
+    station went dark.
+
+    No stale state is planted. This channel starts normally and is on air when
+    its worker dies, so the only thing that makes the relaunch slate-first is
+    the exit itself. A real ``kill()`` is used rather than the control pipe's
+    ``stop`` because the two exit codes take different branches in
+    ``_poll_process``: a clean exit goes through the pending-reload/crash route
+    (``daemon.py:3813``) while a non-zero exit discards any pending reload and
+    reaches the immediate relaunch (``daemon.py:3860``), and the station's
+    encoder deaths are the non-zero kind.
+    """
+
+    if not _LIVE_WORKER_AVAILABLE:
+        pytest.skip("no packaged GStreamer runtime reachable from this interpreter")
+
+    harness = _Harness(tmp_path)
+    monkey = pytest.MonkeyPatch()
+    monkey.delenv("CIVICAST_CAPTION_TAP_DIR", raising=False)
+    monkey.setattr(strategy_mod, "graph_from_config", harness.build_graph)
+    monkey.setattr(strategy_mod, "subprocess", harness.recorder)
+
+    media = u36._real_asset(tmp_path, name="program.mp4", seconds=_PROGRAM_MEDIA_S)
+    item = _item(_PROGRAM_LABEL)
+    assets = {
+        _PROGRAM_ASSET_ID: u36._row(
+            media,
+            asset_id=_PROGRAM_ASSET_ID,
+            title=_PROGRAM_LABEL,
+            recorded_seconds=_PROGRAM_MEDIA_S,
+        )
+    }
+    provider = _provider(item, assets)
+
+    store = InMemoryEgressStore()
+    config = _config()
+    store.upsert_config(config)
+    # No stale claim and no recovery sweep: the state this channel crashes FROM
+    # is one it earned by airing (see the docstring).
+
+    preparer = _EveryPreparationObserver(u36._sliver_preparer(tmp_path))
+    harness.observer = preparer
+    slate = SlateSourceGenerator(
+        work_dir=tmp_path / "slate",
+        duration_seconds=_SLATE_RENDER_S,
+        target_fill_seconds=_SLATE_FILL_S,
+        ffmpeg_runner=run_ffmpeg,
+    )
+    strategy = GstPlayoutStrategy(
+        worker_launcher=harness.worker_launcher,
+        pipe_channel_factory=harness.pipe_channel,
+        is_windows=True,
+        embed_captions=False,
+        supports_content_reload=True,
+    )
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "daemon-work",
+        source_plan_provider=provider,
+        fallback_source_provider=slate,
+        source_preparer=preparer,
+        async_source_preparer=preparer,
+        encoder_strategy=strategy,
+    )
+    harness.daemon = daemon
+    daemon.enable_async_preparation()
+
+    slate_ts = tmp_path / _SLATE_TS
+    program_ts = tmp_path / _PROGRAM_TS
+
+    def on_program() -> bool:
+        current = store.read_state(_CHANNEL)
+        return (
+            current is not None
+            and current.state == "ON_AIR"
+            and current.current_source_label == _PROGRAM_LABEL
+        )
+
+    try:
+        # ---- 1. the channel goes on air on the program (the state to crash) ---
+        store.enqueue_command(
+            EgressCommand(
+                channel_id=_CHANNEL,
+                action="start",
+                issued_at=datetime.now(UTC),
+                issued_by="u53b-crash-test",
+                command_id=f"u53b-crash-{uuid4().hex}",
+            )
+        )
+        _tick_until(
+            daemon,
+            lambda: on_program() and _size(program_ts) > 0,
+            timeout=_STEP_WAIT_S,
+            label="the initial program airing (cold start)",
+        )
+
+        # The slate is a CACHED asset, warmed before the stopwatch exactly as in
+        # the recovery test: this figure measures the LAUNCH, not a one-off render.
+        warm_started = time.monotonic()
+        slate_plan = slate(config)
+        warm_render_s = time.monotonic() - warm_started
+        assert slate_plan.segments[0].kind == "slate", slate_plan
+        assert Path(slate_plan.segments[0].path).exists(), slate_plan
+
+        # ---- 2. arm, then kill the live worker (a real non-zero exit) ---------
+        preparer.arm()
+        crash_started = time.monotonic()
+        harness.recorder.spawns[0].process.kill()
+
+        # ---- 3. THE CLAIM: slate on air, and writing, while the program conforms
+        try:
+            slate_elapsed = _tick_until(
+                daemon,
+                lambda: _size(slate_ts) > 0,
+                timeout=_SLATE_BUDGET_S,
+                label="slate output after the crash relaunch",
+            )
+        except AssertionError as exc:
+            row = store.read_state(_CHANNEL)
+            raise AssertionError(
+                f"{exc} -- the crash relaunch produced no slate output within "
+                f"{_SLATE_BUDGET_S:g}s of the worker being killed. Preparations the relaunch "
+                f"asked for: {preparer.kinds}; preparation entered: {preparer.entered.is_set()}; "
+                f"channel state: {row.state if row is not None else None} (pid="
+                f"{row.pid if row is not None else None}); worker spawns: "
+                f"{[spawn.plan_kind for spawn in harness.recorder.spawns]}. A relaunch that "
+                f"waits for the slate's own conform is the C2 defect this unit fixes."
+            ) from exc
+
+        assert preparer.entered.is_set(), (
+            "no preparation was entered at all -- the elapsed figure above would not be "
+            "measuring the dark window it is meant to measure"
+        )
+        assert not preparer.release.is_set(), "the hold was already released"
+        # The program is what must be conforming while the slate airs. On the
+        # installed bytes this reads ["slate"]: the relaunch put the SLATE through
+        # the conform path it exists to cover.
+        assert preparer.kinds[0] == "program", (
+            f"the first preparation of the crash relaunch was {preparer.kinds[0]!r}, not "
+            f"'program' -- the slate (or something else) was put on the relaunch path "
+            f"instead of airing. All preparations: {preparer.kinds}"
+        )
+        slate_spawns = [spawn for spawn in harness.recorder.spawns if spawn.plan_kind == "slate"]
+        assert len(slate_spawns) == 1, (
+            f"expected exactly one slate worker after the crash; saw "
+            f"{[spawn.plan_kind for spawn in harness.recorder.spawns]}"
+        )
+        slate_spawn_s = slate_spawns[0].at - crash_started
+        assert slate_spawn_s <= _SLATE_BUDGET_S, slate_spawn_s
+        row = store.read_state(_CHANNEL)
+        assert row is not None and row.state == "FALLBACK_SLATE", row
+        assert row.current_source_label == _SLATE_LABEL, row
+        assert row.pid is not None, (
+            f"FALLBACK_SLATE with no encoder pid -- exactly the state-only slate the C2 "
+            f"restart shipped: {row}"
+        )
+
+        slate_size_at_hold = _size(slate_ts)
+        grown_s = _tick_until(
+            daemon,
+            # A filesink can create its file before the first buffer lands; growth
+            # is the difference between "the encoder is up" and "the slate is
+            # really airing" -- and it happens with the program's preparation
+            # still on the observer's hold, which is what makes the hold a fact.
+            lambda: _size(slate_ts) > slate_size_at_hold,
+            timeout=_SLATE_BUDGET_S,
+            label="slate output still growing while the program is held",
+        )
+        assert not preparer.release.is_set(), (
+            "the program hold released itself; it is not a real hold"
+        )
+        still = store.read_state(_CHANNEL)
+        assert still is not None and still.state == "FALLBACK_SLATE", (
+            f"the channel left the slate while its program was still being prepared: {still}"
+        )
+
+        # ---- 4. release: the program is handed in and airs --------------------
+        # Stale by construction: the worker that wrote it is the one this test
+        # killed, and the route that follows spawns a NEW worker.
+        program_ts.unlink(missing_ok=True)
+        preparer.release.set()
+        _tick_until(
+            daemon,
+            on_program,
+            timeout=_STEP_WAIT_S,
+            label="the program handed in and airing after the release",
+        )
+
+        # ---- 5. what the real spawn log says ---------------------------------
+        labels = [spawn.plan_kind for spawn in harness.recorder.spawns]
+        assert labels == ["program", "slate", "program"], (
+            f"expected the initial program, then the relaunch's slate, then the hand-off's "
+            f"program; saw {labels} (an extra spawn would mean a crash and its relaunch)"
+        )
+        for spawn in harness.recorder.spawns:
+            assert spawn.persistent == "1", (
+                f"worker spawned without {native.reloadpolicy.WORKER_PERSISTENT_ENV}=1 "
+                f"({spawn.plan_kind})"
+            )
+        assert harness.recorder.spawns[0].process.poll() is not None, (
+            "the killed worker is still running -- the crash this test measures did not happen"
+        )
+
+        print(
+            f"[u53b] crash relaunch: slate render (warm, one-off): {warm_render_s:.2f}s; "
+            f"kill -> slate output: {slate_elapsed:.2f}s (budget {_SLATE_BUDGET_S:g}s; "
+            f"{slate_spawn_s:.2f}s to spawn + {slate_elapsed - slate_spawn_s:.2f}s worker "
+            f"startup); slate grew for {grown_s:.2f}s while the program was held; "
+            f"preparations={preparer.kinds}; spawns={labels}"
+        )
+    finally:
         parked = _parked_accept_threads()
         freed = _unblock_pipe_accepts(harness)
         print(
