@@ -614,9 +614,17 @@ def test_u53b_a_crash_relaunch_airs_the_slate_before_the_program_is_prepared(
 
     The observer's hold lands on the relaunch's FIRST preparation here for the
     same reason it does in the recovery test (``_EveryPreparationObserver``
-    holds whatever comes first): under the fix that is the program's, and under
-    the pre-fix bytes it is the SLATE's own conform -- the window in which the
-    station went dark.
+    holds whatever comes first). Unlike the recovery test, this channel was
+    already airing, so a program preparation is in flight too, and the first
+    preparation the relaunch asks for is the program's on BOTH trees. What
+    differs is what happens behind it: on the candidate the slate never reaches
+    the preparer at all (``preparer.kinds == ['program', 'program']``), while on
+    the pre-fix bytes the relaunch ALSO submits the slate
+    (``['program', 'slate']``) and, with the first preparation held, its conform
+    never completes inside the window -- no encoder exists, and ``spawns`` stays
+    at the initial program. That is the dark channel, measured rather than
+    argued: the assertion message below prints the kinds, the spawns and the
+    ``pid``-less ``FALLBACK_SLATE`` row.
 
     No stale state is planted. This channel starts normally and is on air when
     its worker dies, so the only thing that makes the relaunch slate-first is
@@ -750,8 +758,9 @@ def test_u53b_a_crash_relaunch_airs_the_slate_before_the_program_is_prepared(
         )
         assert not preparer.release.is_set(), "the hold was already released"
         # The program is what must be conforming while the slate airs. On the
-        # installed bytes this reads ["slate"]: the relaunch put the SLATE through
-        # the conform path it exists to cover.
+        # pre-fix bytes this same list carries a trailing "slate" (the relaunch
+        # submitted the slate to the conform path it exists to cover) -- but the
+        # run never gets this far: the tick above times out first.
         assert preparer.kinds[0] == "program", (
             f"the first preparation of the crash relaunch was {preparer.kinds[0]!r}, not "
             f"'program' -- the slate (or something else) was put on the relaunch path "
