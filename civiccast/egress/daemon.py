@@ -2378,6 +2378,31 @@ class EgressDaemon:
                     prepared_plan_dir,
                     prepared_reload.target_state,
                 )
+            elif slate_first_handoff:
+                # The restart-recovery hand-off's fallback plan is ALREADY an airing
+                # artifact: a filler provider hands back a plan whose segments are
+                # MPEG-TS files its own generator rendered (`bulletin_filler.py` ->
+                # `SlateSourceGenerator._render_fill` / `_render_rotation`). Sending
+                # that plan through `_PreparationRequest` is what made this hand-off
+                # state-only: the request is the SLATE's OWN conform -- loudness probe
+                # included -- so no worker was launched until it returned, and the
+                # slate that exists to COVER the conform was waiting on it. On the
+                # station (C2, 2026-09-26) that read `FALLBACK_SLATE` with `pid=-` and
+                # three channels dark for 3 m 02 s.
+                #
+                # Skipping the yield lets this generator complete on its first
+                # `next()`: `_drive_preparation` turns that `StopIteration` into a
+                # normal return, so the slate worker is launched in the SAME
+                # `process_once`, and the `SLATE_FIRST` result below hands the program
+                # over to the async reload path -- which is where the program's conform
+                # belongs.
+                #
+                # `prepared_plan_dir` stays None, so the reload path has no directory of
+                # ours to release out from under the airing slate, and the loudness
+                # cache is popped exactly as the `else` arm below pops it: nothing was
+                # prepared here, so a stale pre-restart program loudness must not be
+                # reported as this slate's.
+                self._last_loudness_lufs.pop(channel_id, None)
             elif self._source_preparer is not None:
                 try:
                     preparation_report = yield _PreparationRequest(source_plan, config)
