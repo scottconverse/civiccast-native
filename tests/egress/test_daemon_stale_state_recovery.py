@@ -30,11 +30,14 @@ import pytest
 from civiccast.egress.automation import ChannelAutomationService, ChannelAutomationSettings
 from civiccast.egress.daemon import EgressDaemon, OrphanInfo
 from civiccast.egress.models import (
+    RESTART_RECOVERY_COMMAND_PREFIX,
     EgressCommand,
+    EgressCommandAction,
     EgressConfig,
     EgressSinkSpec,
     EgressState,
     EgressStateRow,
+    restart_recovery_previous_state,
 )
 from civiccast.egress.store import InMemoryEgressStore
 
@@ -1104,3 +1107,165 @@ def test_later_tick_leaves_a_pidless_claim_alone(tmp_path: Path) -> None:
         "the per-pass sweep must not clear a pid-less claim -- the crash-relaunch "
         "back-off owns that row"
     )
+
+
+# --- U53: the recovery start must remember the state it recovered FROM --------
+#
+# OBSERVED live (control_plane-app.log, 2026-09-26, after the 18:53 C1 install):
+# 18:53:58 the service restarted; 18:54:20.913 "channel government: start source
+# preparation queued" (a restart-recovery start), 19:01:15.301 "starting
+# GStreamer worker", first segment 19:01:23, playlist published 19:02:01. Between
+# 18:54:20 and 19:01:15 government had NO output at all -- no slate. The channel
+# had been ON AIR when the service went down, so it owed the same rule every
+# other start of an active channel owes (U47: air the slate first, switch when
+# the program is prepared). It could not take that rule, because the sweep
+# DISCARDS the state it read -- ``recover_stale_state`` writes STOPPED over the
+# row in the same transaction that queues the start -- and the start is drained a
+# poll later with the row already reading STOPPED. So the cleared state rides on
+# the command id (the repo's own no-new-column idiom; see
+# ``SLATE_RESTART_COMMAND_PREFIX``) and ``_process_command`` hands it to
+# ``_start``.
+#
+# These tests pin the CARRIER, from both ends: what the sweep writes must parse
+# back to the state it cleared, and the dispatch must hand that value (plus the
+# slate-first flag) to ``_start``. The slate-first BEHAVIOUR itself is pinned in
+# ``test_daemon.py::test_u53_a_restart_recovery_start_airs_the_slate_before_the_program_is_prepared``
+# on the real preparation rail; here it is a recording daemon, so nothing spawns.
+
+#: Every state the sweeps may clear (``EgressDaemon._STALE_RECONCILE_STATES``).
+_RECONCILABLE_STATES: tuple[EgressState, ...] = ("ON_AIR", "STARTING", "TRANSITIONING")
+
+
+class _KwargRecordingDaemon(_RecordingDaemon):
+    """``_RecordingDaemon`` that also keeps the kwargs ``_start`` was called with.
+
+    U53's hint rides as a keyword argument through ``_process_command``, so the
+    recording has to happen at ``_start``: asserting on ``starts`` alone cannot
+    tell a state-carrying start from a bare one.
+    """
+
+    def __init__(self, store: InMemoryEgressStore, *, work_dir: Path) -> None:
+        super().__init__(store, work_dir=work_dir)
+        self.start_kwargs: list[dict[str, object]] = []
+
+    def _start(self, channel_id: str, **kwargs: object) -> None:
+        super()._start(channel_id, **kwargs)
+        self.start_kwargs.append(kwargs)
+
+
+def _command(command_id: str, action: EgressCommandAction = "start") -> EgressCommand:
+    return EgressCommand(
+        channel_id="gov",
+        action=action,
+        issued_at=datetime.now(UTC),
+        issued_by="automation",
+        command_id=command_id,
+    )
+
+
+@pytest.mark.parametrize("state", _RECONCILABLE_STATES)
+def test_u53_the_queued_recovery_command_carries_the_state_it_cleared(
+    tmp_path: Path, state: EgressState
+) -> None:
+    """RED: the sweep's command id must parse back to the state it cleared.
+
+    Without the carrier the dispatch sees only "a start on a STOPPED row", which
+    is indistinguishable from an operator start of a channel that was off air --
+    and the live consequence of that confusion was 6 m 55 s of dead air.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_row(state, pid=111111, age_seconds=3600))
+    daemon = _RecordingDaemon(store, work_dir=tmp_path)
+
+    assert daemon.reconcile_stale_state() == ["gov"]
+
+    queued = store.peek_pending_commands("gov")
+    assert [c.action for c in queued] == ["start"], f"expected one start, got {queued}"
+    command = queued[0]
+    assert command.command_id.startswith(RESTART_RECOVERY_COMMAND_PREFIX), (
+        f"a recovery start must be identifiable as one: {command.command_id!r}"
+    )
+    assert len(command.command_id) <= 120, "the ids column is String(120)"
+    assert restart_recovery_previous_state(command) == state, (
+        "the sweep read this state to DECIDE to recover and then wrote STOPPED "
+        "over it in the same transaction, so the command id is the only place it "
+        "survives to dispatch time"
+    )
+
+
+def test_u53_a_recovery_start_hands_the_cleared_state_to_start(tmp_path: Path) -> None:
+    """RED: dispatching the queued command must pass the hint on to ``_start``.
+
+    Parsing the id is not enough -- U47's slate-first branch is gated on
+    ``previous_state``, so a value that stops at the parser leaves the channel
+    exactly as dark as before.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    store.write_state(_row("ON_AIR", pid=111111, age_seconds=3600))
+    daemon = _KwargRecordingDaemon(store, work_dir=tmp_path)
+
+    assert daemon.reconcile_stale_state() == ["gov"]
+    assert daemon.process_once("gov") == 1, "the recovery start is the one pending command"
+
+    assert daemon.starts == ["gov"], "the start must still happen"
+    assert daemon.start_kwargs == [{"previous_state": "ON_AIR", "slate_first": True}], (
+        "the recovery dispatch must hand the cleared state to _start and ask for "
+        "the slate-first branch -- the exact call shape a bare "
+        "_start(channel_id) cannot produce"
+    )
+
+
+def test_u53_a_non_recovery_start_is_dispatched_with_no_previous_state(tmp_path: Path) -> None:
+    """The other side of the gate: an ordinary operator start stays ordinary.
+
+    Every id shape another part of this module or the daemon already mints must
+    decline the hint, or an unrelated start would begin airing the slate first.
+    """
+    store = InMemoryEgressStore()
+    store.upsert_config(_config(auto_start=False))
+    daemon = _KwargRecordingDaemon(store, work_dir=tmp_path)
+
+    store.enqueue_commands([_command("cmd-start")])
+    assert daemon.process_once("gov") == 1
+
+    assert daemon.start_kwargs == [{"previous_state": None, "slate_first": False}], (
+        "an operator start has no recovered state and must not take the slate-first branch"
+    )
+
+
+#: Id shapes that must NOT be read as a carrier: the ordinary operator id, the
+#: hand-written ids other tests in this module write, a foreign prefix, and a
+#: state-looking token that is not a state.
+_NOT_A_CARRIER: tuple[str, ...] = (
+    "cmd-start",
+    "restart-recovery-dup",
+    "restart-recovery-fixed-id",
+    "restart-recovery-collide",
+    "restart-recovery-parity",
+    "restart-recovery-",
+    "restart-recovery-ON_AIR-",
+    "restart-recovery-FALLBACK_SLATE-0123456789abcdef",
+    "restart-recovery-ON_AIR-0123456789abcdef",
+    "headend-profile-restart-start-1",
+)
+
+
+@pytest.mark.parametrize("command_id", _NOT_A_CARRIER)
+def test_u53_only_a_well_formed_recovery_id_yields_a_state(command_id: str) -> None:
+    """The carrier declines anything it cannot vouch for.
+
+    Declining is the safe direction: a command that is not one this daemon wrote
+    still RUNS, only without the hint (the ``None`` path above), so a malformed
+    id can cost the slate-first optimisation but never the start itself.
+    """
+    expected = "ON_AIR" if command_id == "restart-recovery-ON_AIR-0123456789abcdef" else None
+    assert restart_recovery_previous_state(_command(command_id)) == expected
+
+
+@pytest.mark.parametrize("state", _RECONCILABLE_STATES)
+def test_u53_a_well_formed_recovery_id_yields_its_state(state: str) -> None:
+    """The positive half of the carrier contract, directly on the parser."""
+    parsed = restart_recovery_previous_state(_command(f"restart-recovery-{state}-0123456789abcdef"))
+    assert parsed == state

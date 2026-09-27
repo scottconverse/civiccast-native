@@ -4595,6 +4595,106 @@ def test_superseding_a_pending_reload_releases_its_previous_plan_dir(tmp_path: P
     assert released == [tmp_path / "plan-2"]
 
 
+# --------------------------------------------------------------------------
+# U53 (Addendum 19:03): the RESTART-RECOVERY start is an ACTIVE-channel start
+# too, so it owes the same slate-first rule the crash relaunch owes.
+#
+# OBSERVED live, 2026-09-26 18:53:58 - 19:02:01 (control_plane-app.log): the C1
+# install restarted the service; the startup sweep cleared government's stale
+# `ON_AIR` claim ("referenced dead encoder pid 38256") and atomically queued a
+# `restart-recovery` start; the daemon then dispatched a plain
+# `self._start(channel_id)`. U47's slate-first branch requires
+# ``previous_state in {"ON_AIR", "FALLBACK_SLATE", "TRANSITIONING"}``, so with no
+# previous_state at all it can never fire -- and it did not: government had NO
+# output from 18:54:20 ("start source preparation queued") to 19:01:23 (first
+# segment), 6 m 55 s, with no slate. The sweep already KNOWS the state it
+# cleared -- it reads ``state.state`` to decide to recover, then writes STOPPED
+# over it -- so the start it queues can carry that state forward.
+# --------------------------------------------------------------------------
+
+
+def test_u53_a_restart_recovery_start_airs_the_slate_before_the_program_is_prepared(
+    tmp_path: Path,
+) -> None:
+    """The Addendum's rule, on the exact path the 18:53 restart ran.
+
+    A persisted ``ON_AIR`` row with no live encoder is what
+    ``reconcile_stale_state`` recovers: it clears the claim and queues a
+    ``restart-recovery`` start in ONE store transaction. That queued start must
+    behave like every other start of an ACTIVE channel -- air the fallback slate
+    immediately and hand the scheduled program in afterwards -- instead of
+    resolving and conforming the program with nothing on air at all.
+
+    RED before the change: the recovery start carries no ``previous_state``, so
+    U47's branch cannot fire and ``prepared_labels`` begins ``["Council
+    meeting"]``. The channel is dark for the whole conform, which is the
+    measured outage.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="ON_AIR",
+            current_source_label="Council meeting",
+            updated_at=datetime(2026, 9, 26, 18, 53, tzinfo=UTC),
+            pid=None,
+        )
+    )
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    obs = _U47Observation()
+    counter = {"n": 0}
+
+    daemon = _u47_daemon(
+        tmp_path, store, processes, obs, _u47_prepare_observer(tmp_path, counter, obs, store)
+    )
+    daemon.enable_async_preparation()
+    try:
+        recovered = daemon.reconcile_stale_state()
+        assert recovered == ["gov"], (
+            f"the startup sweep must recover a pid-less ON_AIR claim; recovered {recovered}"
+        )
+
+        daemon.process_once("gov")  # the recovery start: its preparation is queued
+        assert "gov" in daemon._preparations  # type: ignore[attr-defined]
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        assert obs.prepared_labels == ["Fallback slate"], (
+            "a restart-recovery start of a channel that WAS on air must prepare the "
+            "FALLBACK SLATE first, exactly like the crash relaunch; preparing the "
+            f"scheduled program first leaves the channel dark for the conform -- "
+            f"observed {obs.prepared_labels}"
+        )
+        assert obs.contexts[0].worker_alive is False, (
+            "the channel really was dark at that instant -- nothing had been started yet"
+        )
+
+        daemon.process_once("gov")  # the slate airs; the hand-off queues the program
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        assert obs.prepared_labels == ["Fallback slate", "Council meeting"], (
+            f"the program must follow the slate, observed {obs.prepared_labels}"
+        )
+        assert obs.contexts[-1] == _U47Context(
+            "Council meeting",
+            ("Fallback slate",),
+            "FALLBACK_SLATE",
+            True,
+        ), (
+            "the program's own preparation must begin with the slate worker already "
+            f"started AND still alive; observed {obs.contexts[-1]!r}"
+        )
+
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        daemon.process_once("gov")  # the reused plan's restart completes the hand-off
+        daemon.process_once("gov")  # ... and the program is on air
+        state = store.read_state("gov")
+        assert state is not None
+        assert state.state == "ON_AIR"
+        assert state.current_source_label == "Council meeting"
+    finally:
+        daemon.shutdown_preparation()
+
+
 def test_stop_releases_both_the_pending_reload_and_the_active_plan_dir(tmp_path: Path) -> None:
     """Hostile-review follow-up (third pass): a direct (non-draining) operator
     stop must route through BOTH shared discard helpers -- an armed-but-

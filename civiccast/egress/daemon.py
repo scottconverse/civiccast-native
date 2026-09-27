@@ -73,6 +73,7 @@ from civiccast.egress.hls_relay import (
     _segment_first_packet_pts,
 )
 from civiccast.egress.models import (
+    RESTART_RECOVERY_COMMAND_PREFIX,
     CaptionStatus,
     EgressCommand,
     EgressConfig,
@@ -83,6 +84,7 @@ from civiccast.egress.models import (
     EgressStateRow,
     redact_source_uri,
     redact_uris_in_text,
+    restart_recovery_previous_state,
     slate_restart_guard_state,
 )
 from civiccast.egress.pacing import UniformPacingLatch
@@ -1514,7 +1516,15 @@ class EgressDaemon:
                 # command_id forever, so a constant id would make a second
                 # restart queue nothing (permanently dark). uuid4().hex is 32
                 # chars; the prefix keeps it well under the 120-char cap.
-                command_id=f"restart-recovery-{uuid.uuid4().hex}",
+                #
+                # U53: the id also CARRIES the state this sweep is clearing.
+                # The row read above is the only place that state exists -- the
+                # transaction below writes STOPPED over it, and the start is
+                # drained a poll later -- but the dispatch needs it, because a
+                # channel that WAS on air must air the slate before it conforms
+                # a program (see ``restart_recovery_previous_state``). Read back
+                # by ``_process_command``.
+                command_id=f"{RESTART_RECOVERY_COMMAND_PREFIX}{state.state}-{uuid.uuid4().hex}",
             )
             self._store.recover_stale_state(
                 EgressStateRow(
@@ -1716,7 +1726,20 @@ class EgressDaemon:
             # An operator start is a fresh intent: the slate-EOS relaunch cap
             # (see _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE) starts over for it.
             self._slate_eos_relaunches.pop(command.channel_id, None)
-            self._start(command.channel_id)
+            # U53: a recovery start relaunches a channel the sweeps found
+            # claiming to be ON AIR, and the command id carries the state the
+            # sweep cleared (``restart_recovery_previous_state``). Handing it
+            # to ``_start`` is what lets U47's slate-first branch fire here --
+            # that branch is gated on ``previous_state`` being an active state,
+            # so a plain ``_start(channel_id)`` could never take it, and the
+            # channel stayed dark for the whole conform (6 m 55 s, measured).
+            # A non-recovery start parses to ``None`` and is unchanged.
+            recovered_state = restart_recovery_previous_state(command)
+            self._start(
+                command.channel_id,
+                previous_state=recovered_state,
+                slate_first=recovered_state is not None,
+            )
             return
         if command.action == "stop":
             self._stop(command.channel_id, draining=False)
