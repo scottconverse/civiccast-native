@@ -402,6 +402,51 @@ def _drop_everything_probe(_pad: object, _info: object) -> object:
     return Gst.PadProbeReturn.DROP
 
 
+def _drop_past_switch_point_probe(
+    pad: Gst.Pad, info: Gst.PadProbeInfo, pending: dict[str, Any]
+) -> Gst.PadProbeReturn:
+    """U56: the retiring leg's fence at a seamless change, bounded by VALUE.
+
+    ``_arm_old_selector_cutoff`` installs this on both outgoing pads. It used to
+    install the unbounded ``_drop_everything_probe`` above, so the retiring leg's
+    output stopped dead at the instant the probe was armed. The rebase reference
+    that same commit is built from is ``max(observed outgoing ends)`` -- the
+    LATER of the two streams, because the new leg may never start EARLIER than
+    where either stream stopped. On the live station the outgoing video's
+    delivery point trails the outgoing audio's by ~0.64 s (285
+    ``rebase-reference`` samples, all three channels: median +0.643 s, 98.2%
+    within +0.5..+0.9 s), so an unbounded fence threw away the video that should
+    have carried the picture from the video end up to the switch point. Audio
+    playout continued and the mux got no video for ~0.64 s; the emitted HLS
+    reported it as ``segment 60 PTS delta 171000 ticks != expected 108000``.
+
+    Bounding the fence by the switch point passes exactly the outgoing tail the
+    rebase reference already accounts for, and still drops everything past it --
+    so the new leg's offset is unchanged: nothing beyond the bound can ever
+    cross, which keeps ``max(observed)`` the bound it was computed as.
+
+    Everything that is not a single BUFFER -- an event, a buffer list -- is
+    still dropped whole. That is not incidental: the retiring leg's EOS crossing
+    the selector is the U30 defect this probe also exists to close. A buffer the
+    segment cannot place is dropped too: an unmeasurable buffer is an unbounded
+    one, and the pre-U56 all-drop answer is the safe one.
+    """
+    state = pending.get("outgoing_end", {}).get(pad)
+    cutoff = pending.get("old_tail_cutoff_ns")
+    if state is None or cutoff is None:
+        return Gst.PadProbeReturn.DROP
+    if not info.type & Gst.PadProbeType.BUFFER:
+        return Gst.PadProbeReturn.DROP
+    buffer = info.get_buffer()
+    if buffer is None:
+        return Gst.PadProbeReturn.DROP
+    computed = GstPlayoutEngine._buffer_end_running_time(pad, buffer, state["segment"])
+    if computed is None:
+        return Gst.PadProbeReturn.DROP
+    end, _segment = computed
+    return Gst.PadProbeReturn.OK if end <= cutoff else Gst.PadProbeReturn.DROP
+
+
 # U16: the two streams a playout leg carries, in the order a leg declares them --
 # ``new_src_pads`` is built as ``(out_pad, audio_out_pad)`` and ``selector_sink_pads``
 # is likewise video-first, so the index of a pad in either list IS its stream label.
@@ -4834,13 +4879,25 @@ class GstPlayoutEngine:
             # timestamp observer; every later buffer is dropped before it can enter
             # input-selector. This prevents the old leg advancing after the rebase
             # snapshot without recreating the coupled A/V quiescence deadlock.
+            #
+            # U56: the fence is BOUND to the snapshot read below, not left
+            # unbounded. Until ``old_tail_cutoff_ns`` is written (a few statements
+            # away) it drops everything; from then on it drops only what the
+            # retiring leg produces PAST the switch point, so the outgoing tail
+            # the offset already accounts for is aired instead of discarded.
             self._arm_old_selector_cutoff(pending)
             # Rebase the held leg onto the outgoing leg's end BEFORE anything of it
             # crosses the selector (mechanism 3 in reload_program's docstring).
             # ONE offset for both streams -- the max of the two outgoing ends -- so
             # neither video nor audio can start EARLIER than where its own stream
-            # stopped: a backwards step is what breaks PCR/CC, whereas a sub-frame
-            # forward step is absorbed by the mux.
+            # stopped: a backwards step is what breaks PCR/CC.
+            #
+            # U56: the forward step that same choice creates is NOT sub-frame. On
+            # the live station the two outgoing streams are ~0.64 s apart at this
+            # snapshot (median over 285 samples), so taking the max leaves a real
+            # gap on the SHORTER stream's own timeline -- which is exactly why the
+            # fence above has to be value-bounded rather than instantaneous. The
+            # gap the emitted output sees is the part no outgoing buffer covers.
             observed = [
                 state["end"]
                 for state in pending["outgoing_end"].values()
@@ -4857,9 +4914,15 @@ class GstPlayoutEngine:
                 # No buffer was ever observed on the outgoing pads (a leg that
                 # EOS'd immediately, or a forced switch before any buffer): fall
                 # back to the pipeline's own running time. Never 0 -- that would
-                # rewind the output timeline by the whole uptime.
+                # rewind the output timeline by the whole uptime. With no
+                # per-stream bound to read, the fence stays unbounded.
                 pipeline_running_time_ms = self._pipeline_running_time_ms()
                 switch_running_time = pipeline_running_time_ms * int(Gst.MSECOND)
+            # U56: Publish the bound the fence reads. This is the SAME value the
+            # offsets below are set to, from the SAME snapshot -- one number, so
+            # the retiring leg can never air content the new leg's offset does
+            # not account for, and never loses content it does.
+            pending["old_tail_cutoff_ns"] = switch_running_time if observed else None
             for pad in pending["new_src_pads"]:
                 # NB: the leg's OWN tail src pad, not the selector's sink pad --
                 # set_offset there marks the leg's sticky SEGMENT for re-send, so
@@ -5284,6 +5347,14 @@ class GstPlayoutEngine:
         represented in that snapshot or is dropped before reaching the selector.
         A partial installation raises; the caller removes every recorded fence while
         the original programme is still selected.
+
+        U56: the fence drops by VALUE (``_drop_past_switch_point_probe``), not by
+        the instant it was armed. The bound it enforces is
+        ``pending["old_tail_cutoff_ns"]``, written by ``_begin_reload_commit``
+        immediately after it reads the very snapshot this ordering protects -- so
+        the fence and the new leg's rebase offset are provably one number. Until
+        that key is written the probe drops everything, which is the pre-U56
+        behaviour for the sub-millisecond window between these two statements.
         """
         for stream, selector_pad in (
             ("video", pending["old_video_pad"]),
@@ -5296,7 +5367,8 @@ class GstPlayoutEngine:
                     Gst.PadProbeType.BUFFER
                     | Gst.PadProbeType.BUFFER_LIST
                     | Gst.PadProbeType.EVENT_DOWNSTREAM,
-                    _drop_everything_probe,
+                    _drop_past_switch_point_probe,
+                    pending,
                 )
                 pending["old_tail_drop_probes"].append((selector_pad, probe_id))
             except Exception as exc:

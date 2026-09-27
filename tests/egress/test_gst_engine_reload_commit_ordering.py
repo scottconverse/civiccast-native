@@ -268,6 +268,14 @@ class _FakeOldPad:
     def get_name(self) -> str:
         return self.name
 
+    def get_sticky_event(self, event_type: Any, idx: int) -> Any:
+        """The pad carried no such event -- the cold-cache fallback in
+        ``_buffer_end_running_time``. Returning ``None`` is the live pad's own
+        answer for an event it never saw, which is what makes a pad whose cached
+        segment is cold genuinely unmeasurable rather than merely untested."""
+        self.recorder.calls.append(f"get_sticky_event:{self.name}:{event_type}:{idx}")
+        return None
+
     def add_probe(self, mask: Any, callback: Any, *_args: Any) -> str:
         self.recorder.calls.append(f"add_probe:{self.name}:{mask}:{callback.__name__}")
         probe_id = f"{self.name}-probe-{mask}"
@@ -356,8 +364,12 @@ class _FakeProbeBuffer:
 
 
 class _FakeProbeInfo:
-    def __init__(self, buffer: Any) -> None:
+    def __init__(self, buffer: Any, probe_type: Any = _FakePadProbeType.BUFFER) -> None:
         self._buffer = buffer
+        # U56: a probe that can be installed for several probe TYPES has to be
+        # able to tell which one it is answering. The production code reads
+        # ``info.type`` for exactly that.
+        self.type = probe_type
 
     def get_buffer(self) -> Any:
         return self._buffer
@@ -1067,8 +1079,8 @@ def test_finite_commit_closes_old_selector_pads_before_rebase_snapshot(engine_mo
     engine._begin_reload_commit(pending)
 
     calls = recorder.calls
-    video_cutoff = _index_of(calls, "add_probe:old-video:7:_drop_everything_probe")
-    audio_cutoff = _index_of(calls, "add_probe:old-audio:7:_drop_everything_probe")
+    video_cutoff = _index_of(calls, "add_probe:old-video:7:_drop_past_switch_point_probe")
+    audio_cutoff = _index_of(calls, "add_probe:old-audio:7:_drop_past_switch_point_probe")
     snapshot = _index_of(calls, "outgoing-end-snapshot")
     video_offset = _index_of(calls, "set_offset:new-video-src:1100")
     audio_offset = _index_of(calls, "set_offset:new-audio-src:1100")
@@ -5006,3 +5018,296 @@ def test_u37_observer_window_close_reports_what_it_counted(
     # Already disarmed: a second tick is silent.
     assert engine._on_rebase_observer_deadline(pending) is False
     assert capsys.readouterr().err == ""
+
+
+# ---------------------------------------------------------------------------
+# U56 -- the retiring leg's tail is cut at the SWITCH POINT, not the instant the
+#        fence was armed.
+# ---------------------------------------------------------------------------
+#
+# Live evidence (rung-8h-post-c2, education, 22:40:37 local): the emitted HLS
+# failed continuity with "segment 60 PTS delta 171000 ticks != expected 108000"
+# -- 1.900 s of programme between two segment heads where the previous segment
+# held 1.200 s of video. That 0.7 s is a VIDEO hole: audio plays on, no picture.
+#
+# Mechanism, from 285 ``rebase-reference`` samples across all three channels:
+# every seamless changeover logs ends=[video=X,audio=X+delta] with delta at a
+# median of +0.643 s (98.2% inside +0.5..+0.9 s), and the rebase reference is
+# ``switch_running_time = max(observed)`` = the AUDIO end.  ``_begin_reload_commit``
+# then gives BOTH new-leg streams that one offset, so the incoming video can never
+# start earlier than the audio end -- correctly -- while ``_arm_old_selector_cutoff``
+# installs a fence that drops EVERYTHING the retiring legs produce from that
+# instant on.  So the outgoing video's own in-flight buffers -- the ones that
+# would have carried the picture from the video end up to the audio end -- are
+# discarded, and the mux gets 0.64 s of audio with no video.
+#
+# The fix is to bound the fence by VALUE instead of by time: drop what the
+# retiring leg produces PAST the switch point, and let everything at or before it
+# through.  Nothing past the switch point can ever pass, so
+# ``max(observed outgoing ends)`` -- taken before the fence is armed -- is still
+# the bound, and the new leg's offset is still the number the fence enforces.
+
+
+def _u56_fence_probe(
+    pad: _FakeOldPad, engine_module: types.ModuleType, pending: dict[str, Any]
+) -> Any:
+    """The value-bounded fence ``_arm_old_selector_cutoff`` installed on ``pad``.
+
+    Returned ready to fire the way the streaming thread would: the probe is armed
+    with ``pending`` as its user data, so ``GStreamer`` would call it as
+    ``callback(pad, info, pending)``. Asserting that binding here keeps the test
+    honest about the plumbing the production install actually uses.
+    """
+    expected = engine_module._drop_past_switch_point_probe.__name__
+    matches = [
+        (callback, args)
+        for _pid, _mask, callback, args in pad.probes
+        if callback.__name__ == expected
+    ]
+    assert len(matches) == 1, [c.__name__ for _i, _m, c, _a in pad.probes]
+    callback, args = matches[0]
+    assert args == (pending,), args
+
+    def fire(pad_arg: Any, info_arg: Any) -> Any:
+        return callback(pad_arg, info_arg, *args)
+
+    return fire
+
+
+def _u56_armed_pending(
+    engine_module: types.ModuleType,
+    recorder: _Recorder,
+    *,
+    video_end: int = 1_050_000_000,
+    video_running: int = 1_040_000_000,
+) -> tuple[dict[str, Any], _FakeOldPad, _FakeOldPad]:
+    """A committed reload whose OUTGOING VIDEO END sits BEHIND the switch point.
+
+    ``_u16_pending`` already models the live disparity: the outgoing video ends at
+    1.000 s and the outgoing audio at 1.100 s, so the switch point -- the max --
+    is 1.100 s.  Live, that disparity is the ~0.64 s the two streaming threads
+    were apart when the fence was armed.
+    """
+    pending, _new_video_src, _new_audio_src = _u16_pending(recorder)
+    old_video_pad = pending["old_video_pad"]
+    # The video leg's delivery point, with the segment the arrival probe caches.
+    pending["outgoing_end"][old_video_pad] = {
+        "end": video_end,
+        "segment": _FakeSegment(
+            base=1_000_000_000,
+            running_time_for_pts={5_000_000_000: video_running},
+        ),
+    }
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine._pending_reload = pending
+    engine._prepare_reload_handoff(pending)
+    engine._begin_reload_commit(pending)
+    return pending, old_video_pad, pending["old_audio_pad"]
+
+
+def test_u56_a_bound_is_published_that_matches_the_switch_point(engine_module) -> None:
+    """The fence and the rebase offset are ONE number, taken from one snapshot."""
+    recorder = _Recorder()
+    pending, _old_video, _old_audio = _u56_armed_pending(engine_module, recorder)
+
+    assert pending["old_tail_cutoff_ns"] == 1_100_000_000
+    offsets = {call for call in recorder.calls if call.startswith("set_offset:new-")}
+    assert offsets == {
+        "set_offset:new-video-src:1100000000",
+        "set_offset:new-audio-src:1100000000",
+    }, recorder.calls
+
+
+def test_u56_outgoing_tail_below_the_switch_point_still_airs(engine_module) -> None:
+    """THE HOLE. A buffer the retiring leg produced at or before the switch point
+    is legitimate outgoing tail: dropping it is what leaves audio without video.
+
+    Live shape: the switch point is the audio end (1.100 s here); the outgoing
+    video's next buffer ends at 1.040 s -- 60 ms short of it. It must PASS."""
+    recorder = _Recorder()
+    pending, old_video_pad, _old_audio = _u56_armed_pending(engine_module, recorder)
+    fence = _u56_fence_probe(old_video_pad, engine_module, pending)
+
+    result = fence(old_video_pad, _FakeProbeInfo(_FakeProbeBuffer(pts=5_000_000_000)))
+
+    assert result == engine_module.Gst.PadProbeReturn.OK, result
+    assert pending["old_tail_drop_probes"], "the fence must stay installed"
+
+
+def test_u56_outgoing_tail_past_the_switch_point_is_still_dropped(engine_module) -> None:
+    """The other half of the bound: the new leg owns everything after the switch
+    point, so nothing the retiring leg produces past it may reach the selector."""
+    recorder = _Recorder()
+    pending, _old_video, old_audio_pad = _u56_armed_pending(engine_module, recorder)
+    fence = _u56_fence_probe(old_audio_pad, engine_module, pending)
+
+    # to_running_time(5.000) == 1.060 s, duration 80 ms -> end 1.140 s: past the
+    # 1.100 s switch point.
+    result = fence(
+        old_audio_pad,
+        _FakeProbeInfo(_FakeProbeBuffer(pts=5_000_000_000, duration=80_000_000)),
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.DROP, result
+
+
+def test_u56_the_bound_is_inclusive_at_the_switch_point(engine_module) -> None:
+    """Exactly at the switch point is the LAST buffer the old leg owns: passing it
+    leaves no gap, dropping it leaves one frame's worth. It passes."""
+    recorder = _Recorder()
+    pending, _old_video, old_audio_pad = _u56_armed_pending(engine_module, recorder)
+    fence = _u56_fence_probe(old_audio_pad, engine_module, pending)
+
+    # to_running_time(5.000) == 1.060 s, duration 40 ms -> end exactly 1.100 s.
+    pending["outgoing_end"][old_audio_pad] = {
+        "end": 1_100_000_000,
+        "segment": _FakeSegment(
+            base=1_000_000_000,
+            running_time_for_pts={5_000_000_000: 1_060_000_000},
+        ),
+    }
+
+    result = fence(
+        old_audio_pad,
+        _FakeProbeInfo(_FakeProbeBuffer(pts=5_000_000_000, duration=40_000_000)),
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.OK, result
+
+
+def test_u56_the_bound_drops_what_it_cannot_measure(engine_module) -> None:
+    """An unmeasurable buffer is an UNBOUNDED buffer: the old all-drop behaviour is
+    the safe answer, and the buffer still never reaches the selector."""
+    recorder = _Recorder()
+    pending, old_video_pad, _old_audio = _u56_armed_pending(engine_module, recorder)
+    fence = _u56_fence_probe(old_video_pad, engine_module, pending)
+
+    # No segment cached on the pad's state and no sticky SEGMENT to fall back to:
+    # this pad cannot measure anything (``_FakeOldPad`` has no ``get_sticky_event``).
+    pending["outgoing_end"][old_video_pad] = {"end": 1_050_000_000, "segment": None}
+    assert (
+        fence(old_video_pad, _FakeProbeInfo(_FakeProbeBuffer(pts=5_000_000_000)))
+        == engine_module.Gst.PadProbeReturn.DROP
+    )
+
+    # A PTS the segment cannot place is the same answer.
+    pending["outgoing_end"][old_video_pad] = {
+        "end": 1_050_000_000,
+        "segment": _FakeSegment(base=0, running_time_for_pts={}),
+    }
+    assert (
+        fence(old_video_pad, _FakeProbeInfo(_FakeProbeBuffer(pts=5_000_000_000)))
+        == engine_module.Gst.PadProbeReturn.DROP
+    )
+
+
+def test_u56_the_bound_drops_events_and_buffer_lists_whole(engine_module) -> None:
+    """The fence still swallows everything that is not a single buffer.
+
+    That is not incidental: the retiring leg's EOS crossing the selector is the
+    U30 defect this probe was installed to close in the first place."""
+    recorder = _Recorder()
+    pending, old_video_pad, _old_audio = _u56_armed_pending(engine_module, recorder)
+    fence = _u56_fence_probe(old_video_pad, engine_module, pending)
+
+    for probe_type, label in (
+        (engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM, "event"),
+        (engine_module.Gst.PadProbeType.BUFFER_LIST, "buffer-list"),
+    ):
+        result = fence(
+            old_video_pad,
+            _FakeProbeInfo(_FakeProbeBuffer(pts=5_000_000_000), probe_type),
+        )
+        assert result == engine_module.Gst.PadProbeReturn.DROP, label
+
+
+class _U56Clock:
+    def __init__(self, now_ns: int) -> None:
+        self._now_ns = now_ns
+
+    def get_time(self) -> int:
+        return self._now_ns
+
+
+class _U56ClockPipeline(_FakePipeline):
+    """``_FakePipeline`` plus the running-time surface the rebase fallback reads.
+
+    ``_pipeline_running_time_ms`` needs ``get_clock()`` and ``get_base_time()``.
+    Only the no-observed-end branch reads them, so the fake grows them only where
+    that branch is exercised -- every other commit test stays clock-free.
+    """
+
+    def get_clock(self) -> Any:
+        return _U56Clock(1_799_412_000_000)
+
+    def get_base_time(self) -> int:
+        return 0
+
+
+def test_u56_with_no_observed_end_the_fence_drops_everything(engine_module) -> None:
+    """The fallback source: when nothing was observed there is no per-stream bound
+    to enforce, so the fence must not guess -- it keeps the pre-U56 all-drop
+    answer. The offset still comes from the pipeline clock: this is a real
+    second source, not a disabled branch."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.pipeline = _U56ClockPipeline(recorder)
+    pending, _new_video_src, _new_audio_src = _u16_pending(recorder, txn_id=9)
+    pending["outgoing_end"] = {
+        pad: {"end": None, "segment": None}
+        for pad in (pending["old_video_pad"], pending["old_audio_pad"])
+    }
+    engine._pending_reload = pending
+    engine._prepare_reload_handoff(pending)
+
+    engine._begin_reload_commit(pending)
+
+    assert "set_offset:new-video-src:1799412000000" in recorder.calls
+    assert pending["old_tail_cutoff_ns"] is None
+    fence = _u56_fence_probe(pending["old_video_pad"], engine_module, pending)
+    assert (
+        fence(pending["old_video_pad"], _FakeProbeInfo(_FakeProbeBuffer(pts=5_000_000_000)))
+        == engine_module.Gst.PadProbeReturn.DROP
+    )
+
+
+def test_u56_the_fence_is_installed_before_the_snapshot_it_is_bound_to(
+    engine_module,
+) -> None:
+    """Ordering is the invariant, not an accident: a buffer is either already
+    represented in the snapshot ``max()`` reads, or it is behind the fence.
+
+    Sampling FIRST and arming after would let a buffer through that the switch
+    point does not account for -- content the new leg would then overlay."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _new_video_src, _new_audio_src = _u16_pending(recorder)
+    engine._pending_reload = pending
+    engine._prepare_reload_handoff(pending)
+
+    engine._begin_reload_commit(pending)
+
+    calls = recorder.calls
+    fence_video = _index_of(calls, "add_probe:old-video:7:_drop_past_switch_point_probe")
+    fence_audio = _index_of(calls, "add_probe:old-audio:7:_drop_past_switch_point_probe")
+    offsets = [
+        _index_of(calls, "set_offset:new-video-src:1100000000"),
+        _index_of(calls, "set_offset:new-audio-src:1100000000"),
+    ]
+    assert max(fence_video, fence_audio) < min(offsets), calls
+
+
+def test_u56_the_fence_leaves_the_abort_path_drop_everything_probe_alone(
+    engine_module,
+) -> None:
+    """U56 narrows ONE fence. The abort path's fences at the leg's OWN src pads
+    must keep dropping everything: an aborted leg's data never belongs on air."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pads = [_FakeHoldPad("new-video", recorder), _FakeHoldPad("new-audio", recorder)]
+    pending = _abort_pending(recorder, pads, [_FakeOldElement("aborted", recorder)])
+
+    engine._detach_leg_from_selectors(pending)
+
+    installed = [call for call in recorder.calls if call.startswith("add_probe:")]
+    assert installed and all("_drop_everything_probe" in call for call in installed), recorder.calls
