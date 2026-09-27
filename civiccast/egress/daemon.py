@@ -970,6 +970,11 @@ class EgressDaemon:
         # Issue #157: channels whose encoder WE terminated for a filler
         # reload - their non-zero exit still honors the pending reload.
         self._reload_kills: set[str] = set()
+        # U52 item 2: WHY each of those kills happened, carried to the
+        # ``worker exited`` line. A deliberate kill exits non-zero on real
+        # ffmpeg, so without this the log line for a 3m48s-slate-recovery
+        # restart is byte-identical in shape to an encoder crash.
+        self._reload_kill_reasons: dict[str, str] = {}
         # Issue #161: a server restart leaves the previous server's encoder
         # children streaming to the sink ports; before starting fresh, the
         # daemon reaps any still-running ffmpeg pid from the durable state
@@ -3370,6 +3375,28 @@ class EgressDaemon:
         )
         _process_terminate_bounded(process)
 
+    def _note_deliberate_kill(self, channel_id: str, reason: str) -> None:
+        """Record and announce a deliberate worker kill (U52 item 2).
+
+        Every site that terminates a worker on purpose records it in
+        ``_reload_kills`` so ``_poll_process`` honors the pending reload
+        instead of treating the non-zero exit as a crash. That bookkeeping
+        was silent: the live 2026-09-26 education boundary left a bare
+        ``worker exited (exit_code=1 ... pending_reload=True)`` in the log,
+        which is the same shape an encoder crash produces. Say it out loud
+        here, and carry ``reason`` to the exit line, so one line of log is
+        enough to tell the two apart.
+        """
+
+        self._reload_kill_reasons[channel_id] = reason
+        self._reload_kills.add(channel_id)
+        _LOG.warning(
+            "channel %s: terminating the worker deliberately for a reload (%s); its non-zero "
+            "exit is this kill, not a crash.",
+            channel_id,
+            reason,
+        )
+
     def _poll_process(self, channel_id: str) -> None:
         process = self._processes.get(channel_id)
         if process is None:
@@ -3460,19 +3487,34 @@ class EgressDaemon:
         # ffmpeg; it still flows into the pending reload, not crash relaunch.
         deliberate_kill = channel_id in self._reload_kills
         self._reload_kills.discard(channel_id)
+        deliberate_kill_reason = self._reload_kill_reasons.pop(channel_id, None)
         queued_terminal_command = any(
             command.action in {"stop", "drain"}
             for command in self._store.peek_pending_commands(channel_id)
         )
         exited_state = self._store.read_state(channel_id)
+        # U52 item 2: name the difference between a deliberate kill and a
+        # crash ON this line. The live 2026-09-26 education boundary logged
+        # ``exit_code=1 ... pending_reload=True`` and nothing else -- the
+        # exact shape of an encoder crash -- while the daemon knew perfectly
+        # well it had terminated the worker itself.
         _LOG.info(
-            "channel %s: worker exited (exit_code=%s, state=%s, desired=%s, pending_reload=%s)",
+            "channel %s: worker exited (exit_code=%s, state=%s, desired=%s, pending_reload=%s, "
+            "deliberate_kill=%s)",
             channel_id,
             returncode,
             exited_state.state if exited_state is not None else "UNKNOWN",
             "STOPPED" if was_draining or queued_terminal_command else "ACTIVE",
             channel_id in self._pending_reloads,
+            deliberate_kill,
         )
+        if deliberate_kill:
+            _LOG.info(
+                "channel %s: that non-zero exit was a deliberate kill -- %s -- not an encoder "
+                "crash; the pending reload is honored.",
+                channel_id,
+                deliberate_kill_reason or "no reason was recorded at the kill site",
+            )
         pending_reload = self._pending_reloads.pop(channel_id, None)
         if (returncode != 0 and not deliberate_kill) or was_draining or queued_terminal_command:
             pending_reload = None
@@ -4934,7 +4976,11 @@ class EgressDaemon:
                 # setting it here first closes the window; that later call
                 # harmlessly re-sets the same value.
                 self._pending_reloads[channel_id] = (state.state, state.current_source_label)
-                self._reload_kills.add(channel_id)
+                self._note_deliberate_kill(
+                    channel_id,
+                    "reload ack timed out on a live pid: the worker is wedged on a "
+                    "synchronous GStreamer call and will never answer another command",
+                )
                 _process_terminate_bounded(process)
             return False
         # Item 3 fix: a still-pending PREVIOUS reload for this channel (this
@@ -5325,7 +5371,12 @@ class EgressDaemon:
             # design - a due program must not wait out the fill-target plan
             # (after #154 that wait is up to an hour of slate). Programs
             # keep the graceful drain above.
-            self._reload_kills.add(channel_id)
+            self._note_deliberate_kill(
+                channel_id,
+                "reload out of fallback slate: filler is interruptible by design "
+                "(issue #157), so the due program is not made to wait out the "
+                "fill-target plan; the restart carries the prepared plan",
+            )
             _process_terminate(process)
 
     def _request_reload(self, channel_id: str, *, command_id: str | None = None) -> None:
@@ -5458,6 +5509,7 @@ class EgressDaemon:
         # drain never restarts onto a held plan, so it must release it.
         self._discard_prepared_restart_plan(channel_id, reason="channel draining to off air")
         self._reload_kills.discard(channel_id)  # drain cancels a pending kill
+        self._reload_kill_reasons.pop(channel_id, None)
         self._write_state(
             channel_id,
             "DRAINING",
@@ -5495,6 +5547,7 @@ class EgressDaemon:
         # Audit ENG-005: a leaked reload-kill flag would later misclassify a
         # genuine crash as a clean reload handoff.
         self._reload_kills.discard(channel_id)
+        self._reload_kill_reasons.pop(channel_id, None)
         # F1/F3 fix: an armed-but-unsettled reload is moot once the channel is
         # stopped (nothing will ever read reload-status.json for it again) --
         # release it immediately instead of waiting for GC. Hostile-review

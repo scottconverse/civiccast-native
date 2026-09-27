@@ -4912,6 +4912,58 @@ def test_reload_interrupts_filler_instead_of_draining_the_fill_target(
     assert "exited fallback slate" in proof_events[0].machine_summary
 
 
+def test_a_deliberate_filler_kill_says_so_on_the_exit_line(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """U52 item 2: ``exit_code=1 ... pending_reload=True`` is not self-explaining.
+
+    The live 2026-09-26 education boundary wrote exactly ``worker exited
+    (exit_code=1, state=TRANSITIONING, desired=ACTIVE, pending_reload=True)``
+    with no error line anywhere in worker stderr, stdout or the control plane
+    -- the same shape an encoder crash produces -- while the daemon itself had
+    terminated the worker for the fallback-slate reload. The daemon knows the
+    difference (``_reload_kills``); the log must now say it, both at the kill
+    and on the exit line, so the next reader does not have to reconstruct a
+    deliberate kill from an absence of evidence.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.enqueue_command(_command())
+    source_available = False
+    processes: list[_FakeProcess] = [
+        _KilledNonZeroProcess(pid=111),
+        _FakeProcess(pid=222),
+    ]
+    started: list[_FakeProcess] = []
+
+    def source_provider(_channel_id: str) -> EgressSourcePlan | None:
+        return _source_plan(tmp_path) if source_available else None
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=source_provider,
+        fallback_source_provider=lambda _config: _slate_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _start_fake_process(processes, started),
+    )
+
+    daemon.process_once("gov")
+    assert store.read_state("gov").state == "FALLBACK_SLATE"  # type: ignore[union-attr]
+
+    source_available = True
+    store.enqueue_command(_command("reload"))
+    with caplog.at_level("INFO", logger="civiccast.egress.daemon"):
+        daemon.process_once("gov")  # kills the filler
+        daemon.process_once("gov")  # observes its non-zero exit, restarts
+
+    assert "terminating the worker deliberately for a reload" in caplog.text
+    assert "reload out of fallback slate" in caplog.text
+    assert "deliberate_kill=True" in caplog.text
+    assert "that non-zero exit was a deliberate kill" in caplog.text
+    assert "not an encoder crash" in caplog.text
+
+
 def test_reload_still_drains_programs_gracefully(tmp_path: Path) -> None:
     """Issue #157 boundary: ON_AIR programming is never cut for a reload."""
 
