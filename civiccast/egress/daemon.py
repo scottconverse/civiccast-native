@@ -365,7 +365,19 @@ _SLATE_FIRST_HANDOFF_REASON = (
 #: slate that is being restarted for some other reason. A STOPPED/ERROR channel --
 #: an operator start of a dark channel -- is deliberately NOT here: there is no
 #: slate to keep, so the first thing that channel should air is the program.
-_SLATE_FIRST_ACTIVE_STATES = frozenset({"ON_AIR", "FALLBACK_SLATE", "TRANSITIONING"})
+#:
+#: U53 item 4: STARTING is here too. ``_start_steps`` publishes STARTING before
+#: its worker exists, so a predecessor that died mid-start leaves that row
+#: behind, and the restart-recovery sweep -- whose own reconcile set
+#: (``_STALE_RECONCILE_STATES``, mirrored by ``_STALE_CLAIM_STATES`` in
+#: models.py) is ``{"ON_AIR", "STARTING", "TRANSITIONING"}`` -- reads it to
+#: DECIDE to recover and carries it onto the queued command. With STARTING out
+#: of this set that recovery start passed ``slate_first=True`` and then failed
+#: this gate, so it conformed its program with nothing on air: the same dead
+#: air the ON_AIR shape had, reached through the other recovered state.
+_SLATE_FIRST_ACTIVE_STATES = frozenset(
+    {"ON_AIR", "STARTING", "FALLBACK_SLATE", "TRANSITIONING"}
+)
 
 # BETA.10 U16 item B: the OUTPUT A/V sync guard.
 #

@@ -4695,6 +4695,90 @@ def test_u53_a_restart_recovery_start_airs_the_slate_before_the_program_is_prepa
         daemon.shutdown_preparation()
 
 
+def test_u53_a_stale_starting_claim_also_airs_the_slate_before_the_program(
+    tmp_path: Path,
+) -> None:
+    """The ``STARTING`` residual in U47's gate, on the same recovery path.
+
+    ``_SLATE_FIRST_ACTIVE_STATES`` is the second half of the slate-first gate.
+    The sweep recovers ANY of ``{"ON_AIR", "STARTING", "TRANSITIONING"}``
+    (``EgressDaemon._STALE_RECONCILE_STATES``, mirrored by
+    ``_STALE_CLAIM_STATES`` in models.py), so a predecessor that died mid-start
+    leaves ``STARTING`` behind -- ``_start_steps`` publishes ``STARTING`` before
+    the worker exists -- and the recovery start it queues carries
+    ``previous_state="STARTING"``. The gate then refused it, and the channel was
+    dark for the whole conform exactly as it was for the ``ON_AIR`` shape. The
+    coordinator's call (U53 item 4) is that the gate must cover the same set the
+    sweep does.
+
+    RED before the change: ``"STARTING" in _SLATE_FIRST_ACTIVE_STATES`` is
+    False, so this branch falls through to the schedule and the first
+    preparation is the program (``["Council meeting"]``), not the slate.
+    """
+
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    store.write_state(
+        EgressStateRow(
+            channel_id="gov",
+            state="STARTING",
+            current_source_label="Council meeting",
+            updated_at=datetime(2026, 9, 26, 18, 53, tzinfo=UTC),
+            pid=None,
+        )
+    )
+    processes = [_FakeProcess(pid=111), _FakeProcess(pid=222), _FakeProcess(pid=333)]
+    obs = _U47Observation()
+    counter = {"n": 0}
+
+    daemon = _u47_daemon(
+        tmp_path, store, processes, obs, _u47_prepare_observer(tmp_path, counter, obs, store)
+    )
+    daemon.enable_async_preparation()
+    try:
+        recovered = daemon.reconcile_stale_state()
+        assert recovered == ["gov"], (
+            f"a pid-less STARTING claim is recoverable; recovered {recovered}"
+        )
+
+        daemon.process_once("gov")  # the recovery start: its preparation is queued
+        assert "gov" in daemon._preparations  # type: ignore[attr-defined]
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        assert obs.prepared_labels == ["Fallback slate"], (
+            "a restart-recovery start from a stale STARTING claim is still the "
+            "start of a channel that WAS on air; the slate must go up first, "
+            f"observed {obs.prepared_labels}"
+        )
+        assert obs.contexts[0].worker_alive is False, (
+            "the channel really was dark at that instant -- nothing had been started yet"
+        )
+
+        daemon.process_once("gov")  # the slate airs; the hand-off queues the program
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        assert obs.prepared_labels == ["Fallback slate", "Council meeting"], (
+            f"the program must follow the slate, observed {obs.prepared_labels}"
+        )
+        assert obs.contexts[-1] == _U47Context(
+            "Council meeting",
+            ("Fallback slate",),
+            "FALLBACK_SLATE",
+            True,
+        ), (
+            "the program's own preparation must begin with the slate worker already "
+            f"started AND still alive; observed {obs.contexts[-1]!r}"
+        )
+
+        daemon._preparations["gov"].future.result(timeout=2)  # type: ignore[attr-defined]
+        daemon.process_once("gov")  # the reused plan's restart completes the hand-off
+        daemon.process_once("gov")  # ... and the program is on air
+        state = store.read_state("gov")
+        assert state is not None
+        assert state.state == "ON_AIR"
+        assert state.current_source_label == "Council meeting"
+    finally:
+        daemon.shutdown_preparation()
+
+
 def test_stop_releases_both_the_pending_reload_and_the_active_plan_dir(tmp_path: Path) -> None:
     """Hostile-review follow-up (third pass): a direct (non-draining) operator
     stop must route through BOTH shared discard helpers -- an armed-but-
