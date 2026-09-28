@@ -55,7 +55,12 @@ from civiccast.egress.daemon import AlertEvaluatorHook, EgressDaemon
 from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.gst.reload_policy import rollover_trigger_at
-from civiccast.egress.models import ChannelAutomationRollup, EgressCommand, EgressProofEvent
+from civiccast.egress.models import (
+    ChannelAutomationRollup,
+    EgressCommand,
+    EgressProofEvent,
+    EgressSourcePlan,
+)
 from civiccast.egress.preparer import preparation_timeout_seconds_from_env
 from civiccast.egress.store import EgressStore
 from civiccast.native.station_runtime import EGRESS_DEGRADED_REASON_ENV
@@ -2415,6 +2420,110 @@ class ChannelAutomationService:
                 (plan_end_at - last_segment_start_at).total_seconds(),
                 lead_seconds,
             )
+        if not force_fallback and inside_lead_recovery and lead_seconds is not None:
+            # BETA.10 U60: the recovery dispatch above is already as early as
+            # it can possibly be -- the plan on air is shorter than the lead,
+            # so its own start WAS the trigger. What CAN still be moved is the
+            # work: the boundary this dispatch targets is not the only one
+            # ahead, and a later one may still have a full lead of runway to
+            # its own dispatch. Warm that one now, off the air path, so the
+            # cache entry its reload will need is resident before its
+            # preparation asks for it. Runs strictly AFTER the enqueue above --
+            # a latency optimisation must never sit between the dispatch and
+            # the command that carries it.
+            self._warm_upcoming_plan(
+                channel_id,
+                now=now,
+                lead_seconds=lead_seconds,
+                fresh_start=fresh_start,
+                fresh_end=fresh_end,
+            )
+
+    #: How many boundaries the U60 look-ahead will step over before giving up.
+    #: Deliberately a STEP cap and not a time horizon: a boundary beyond any
+    #: fixed horizon is *more* savable than one inside it, not less (its
+    #: dispatch, ``max(previous_start, its_end - lead)``, is further out), so a
+    #: "too far away, stop" test would abandon the search one step before the
+    #: first plan it should have warmed.
+    _ROLLOVER_LOOKAHEAD_MAX_STEPS = 8
+
+    def _warm_upcoming_plan(
+        self,
+        channel_id: str,
+        *,
+        now: datetime,
+        lead_seconds: float,
+        fresh_start: datetime,
+        fresh_end: datetime,
+    ) -> None:
+        """Ask the daemon to pre-conform the first boundary a full lead away.
+
+        Walks the boundaries after ``fresh_end`` -- the plan just dispatched --
+        and stops at the first whose own dispatch is at least ``now +
+        lead_seconds`` out. That is the earliest boundary a fresh whole-asset
+        conform could still finish before, and asking for any NEARER one would
+        be actively harmful: it would start a second whole-asset encode racing
+        the reload's own synchronous cold conform for the very same asset.
+
+        The dispatch model is ``dispatch(B) = max(previous_boundary,
+        B - lead)`` (``_check_plan_rollover``'s own ``trigger_at``), so the
+        walk reproduces it exactly rather than estimating. Best-effort
+        throughout: every fault, every unresolvable boundary and every missing
+        daemon capability ends the walk quietly. The dispatch it follows has
+        already been enqueued.
+        """
+
+        try:
+            warmer = getattr(self._daemon, "warm_source_plan", None)
+            if not callable(warmer):
+                # An older/bare daemon, or one built without a source
+                # preparer: nothing to warm with. Behaviour is unchanged.
+                return
+            lead = timedelta(seconds=lead_seconds)
+            savable_at = now + lead
+            boundary = fresh_end
+            previous_start = fresh_start
+            for _ in range(self._ROLLOVER_LOOKAHEAD_MAX_STEPS):
+                dispatch_at = max(previous_start, boundary - lead)
+                plan = self._resolve_boundary_plan_at(channel_id, boundary)
+                if plan is None or not plan.segments:
+                    return
+                if dispatch_at >= savable_at:
+                    warmer(channel_id, plan)
+                    return
+                advanced = sum(segment.duration_seconds for segment in plan.segments)
+                if advanced <= 0:
+                    return
+                previous_start = boundary
+                boundary = boundary + timedelta(seconds=advanced)
+        except Exception:
+            # A look-ahead that cannot be computed is a missed optimisation,
+            # never a failed rollover. The dispatch is already enqueued.
+            _LOG.debug(
+                "Channel automation plan look-ahead for %s did not complete; "
+                "the dispatched rollover is unaffected.",
+                channel_id,
+                exc_info=True,
+            )
+
+    def _resolve_boundary_plan_at(
+        self, channel_id: str, boundary: datetime
+    ) -> EgressSourcePlan | None:
+        """The schedule plan airing at ``boundary``, or None if there is none.
+
+        The same provider call ``_check_plan_rollover`` itself makes, with the
+        same "past the last published item" meaning: ``SourcePrepareError`` is
+        the documented way the provider says so, and for a look-ahead that is
+        simply the end of the walk.
+        """
+
+        provider = self._boundary_source_plan_provider
+        if provider is None:
+            return None
+        try:
+            return provider(channel_id, boundary)
+        except SourcePrepareError:
+            return None
 
     def _reestablish_plan_horizon(
         self,
@@ -3004,6 +3113,13 @@ def build_channel_automation(
             )
         ),
         prepared_plan_release=source_preparer_instance.release,
+        # U60: when the plan on air is shorter than the rollover lead, the
+        # next boundary's preparation has less runway than its own whole-asset
+        # conform needs. This lets the automation warm a later boundary's
+        # assets while the current short leg is still airing. Ungated by
+        # engine: it is a cache warm, and the ffmpeg-concat path benefits the
+        # same way.
+        source_plan_warmer=source_preparer_instance.warm_plan,
         resolve_secret=lambda ref: os.environ.get(ref),
         # S15: the GStreamer engine (default) or ffmpeg-concat (legacy), per
         # CIVICCAST_EGRESS_ENGINE.

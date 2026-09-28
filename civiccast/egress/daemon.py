@@ -636,6 +636,12 @@ _PreparationSteps = Generator[
 AsyncSourcePreparerFunc = Callable[
     [EgressSourcePlan, EgressConfig, Event, frozenset[Path]], SourcePreparationReport
 ]
+#: U60: the off-air whole-asset pre-conform the automation's rollover
+#: look-ahead asks for -- ``SourcePreparer.warm_plan``. Returns nothing and
+#: must be total (it queues work; it never prepares anything itself), so the
+#: automation's dispatch tick can call it without a latency or failure
+#: contract on the caller.
+SourcePlanWarmerFunc = Callable[[EgressConfig, EgressSourcePlan], None]
 
 
 @dataclass
@@ -769,6 +775,14 @@ class EgressDaemon:
         # directories -- never a correctness issue, just slower cleanup.
         prepared_plan_release: Callable[[Path | None], None] | None = None,
         channel_start_hook: Callable[[str], None] | None = None,
+        # U60: ``SourcePreparer.warm_plan``, called by the automation's
+        # rollover look-ahead to pre-conform an upcoming boundary's assets
+        # while the plan on air is still shorter than the rollover lead.
+        # None (the default, and every caller that doesn't construct a real
+        # ``SourcePreparer``) makes ``warm_source_plan`` a no-op -- the
+        # automation probes for that method and skips the walk, so an old or
+        # bare daemon behaves exactly as it did before U60.
+        source_plan_warmer: SourcePlanWarmerFunc | None = None,
     ) -> None:
         self._store = store
         # Single injectable monotonic clock for all crash-relaunch timing (the
@@ -781,6 +795,7 @@ class EgressDaemon:
         self._hls_relay = hls_relay_supervisor
         self._command_failure_hook = command_failure_hook
         self._channel_start_hook = channel_start_hook
+        self._source_plan_warmer = source_plan_warmer
         # Cleared only by a successful real launch reset, never by an in-place
         # content reload or duplicate Start against the current worker.
         self._caption_reset_failed: set[str] = set()
@@ -1680,6 +1695,49 @@ class EgressDaemon:
         OUTGOING plan's end, not from the dispatch instant."""
 
         return self._dispatched_plan_horizon.get(channel_id)
+
+    def warm_source_plan(self, channel_id: str, plan: EgressSourcePlan) -> None:
+        """Pre-conform every asset ``plan`` will air, off the air path (U60).
+
+        Called by channel-automation's rollover look-ahead while the plan on
+        air is still SHORTER than the rollover lead -- the one regime where the
+        incoming boundary's synchronous preparation has less runway than its
+        own whole-asset conform needs. Queues background work on the source
+        preparer's warm worker and returns immediately; nothing here blocks a
+        dispatch tick and nothing here can fail it.
+
+        The config is read from the STORE, not from any cached/built config:
+        the conform cache key is config-dependent (canonical profile, target
+        and tolerance LUFS), so warming against a config the air path will not
+        use would populate an entry nobody reads. A channel with no config, or
+        a disabled one, is skipped -- there is no air path to warm for.
+        """
+
+        warmer = self._source_plan_warmer
+        if warmer is None:
+            return
+        try:
+            config = self._store.get_config(channel_id)
+        except Exception:
+            _LOG.exception(
+                "U60 plan look-ahead warm could not read the config for %s; "
+                "skipping the warm (the air path is unaffected).",
+                channel_id,
+            )
+            return
+        if config is None or not config.enabled:
+            return
+        try:
+            warmer(config, plan)
+        except Exception:
+            # ``warm_plan`` is meant to be total; this is belt-and-braces so a
+            # future warmer implementation cannot surface a fault on the
+            # automation thread that dispatched the rollover.
+            _LOG.exception(
+                "U60 plan look-ahead warm failed for %s; the air path is "
+                "unaffected and will prepare this plan synchronously.",
+                channel_id,
+            )
 
     def chained_slate_program_end(self, channel_id: str) -> datetime | None:
         """The projected end of the programme chained behind the filler in the plan

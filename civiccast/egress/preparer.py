@@ -1984,6 +1984,183 @@ class SourcePreparer:
                 self._warming.discard(key)
             _LOG.exception("Failed to queue conform-cache warm; next airing re-warms.")
 
+    def warm_plan(self, config: EgressConfig, plan: EgressSourcePlan) -> None:
+        """U60: pre-conform every asset an UPCOMING plan will air, off the air.
+
+        Live C10, 2026-09-27 21:17:42. The station rolls one scheduled item per
+        plan, and an item shorter than the rollover lead collapses the
+        next dispatch onto the current plan's own start -- so the incoming
+        plan's cold whole-asset conform has the length of the OUTGOING plan as
+        its entire runway (measured: a 290s government item, a 383.6s
+        first-time conform, ~100s of slate). The automation cannot dispatch any
+        earlier; what it CAN do is start the encode long before it dispatches.
+        This is the entry point for that: the automation hands the daemon a
+        boundary's plan while its own dispatch is still a full lead away, and
+        the cache entry the air path will need is resident by the time the
+        reload's synchronous prepare asks for it.
+
+        It deliberately does NOT reimplement conforming. Each segment is handed
+        to :meth:`_prepare_segment` as a synthetic UNTRIMMED whole-asset
+        segment -- the real source path, no in/out points, and the probed media
+        duration as its length -- so every derivation the live air path makes
+        (the cache key, the loudnorm probe window, the conform arguments, the
+        whole-asset promotion gate) runs unchanged and this can never populate
+        the cache with an artifact the air path would not have produced itself.
+        The jobs are queued on the same single-worker warm FIFO
+        ``_schedule_warm`` uses, at lowered priority and on a duration-scaled
+        budget, and they share its per-key dedupe and failure backoff: a warm
+        already running for an asset makes a later one a no-op, and one that
+        fails does not become an immediately-retried loop.
+
+        Best-effort by construction. This is called from the automation's
+        dispatch tick; it must never raise into it, so every per-segment
+        decision is defensive and the whole body is bounded by the queue's own
+        behavior.
+        """
+
+        for segment in plan.segments:
+            try:
+                self._schedule_plan_warm(config, segment)
+            except Exception:
+                # The walk is a latency optimisation, not a correctness
+                # requirement: the reload this precedes will still prepare
+                # synchronously and still air. Never let a look-ahead fault
+                # reach the caller's tick.
+                _LOG.exception(
+                    "U60 plan look-ahead warm could not be queued for %r; the "
+                    "air path is unaffected and will prepare normally.",
+                    segment.label,
+                )
+
+    def _schedule_plan_warm(self, config: EgressConfig, segment: EgressSourceSegment) -> None:
+        """Queue one whole-asset warm for one plan segment. See :meth:`warm_plan`."""
+
+        source_path = Path(segment.path).expanduser()
+        # The file may not be finalized yet (a recording still being written)
+        # or may already be gone; either way there is nothing to warm and the
+        # air path will report it in its own terms.
+        if not source_path.is_file():
+            _LOG.debug(
+                "U60 plan look-ahead warm skipped for %r: %s is not a file.",
+                segment.label,
+                source_path,
+            )
+            return
+        key = self._cache_key(source_path, config)
+        if key is None:
+            return
+
+        # Exactly ``_schedule_warm``'s admission control, and deliberately the
+        # SAME two structures: registering here means the air path's own
+        # ``_schedule_warm`` for this asset sees the key as already warming and
+        # declines -- which is the point, since a second whole-asset encode
+        # racing the first is the one outcome worse than a cold cache.
+        with self._warming_guard:
+            if key in self._warming:
+                return
+            backoff_until = self._warm_backoff_until.get(key)
+            if backoff_until is not None:
+                if backoff_until > time.monotonic():
+                    return
+                del self._warm_backoff_until[key]
+            self._warming.add(key)
+
+        def _job() -> None:
+            # Both names bound before any work so the failure branch below can
+            # always print a coherent bound, even when the probe is what raised
+            # -- same discipline (and same helper) as ``_schedule_warm``'s job.
+            warm_duration_seconds: float | None = None
+            warm_timeout_seconds = self._preparation_timeout_seconds
+            scratch = self._work_dir / config.channel_id / "warm" / uuid.uuid4().hex[:12]
+            try:
+                cached_ts = self._cache_dir() / f"{key}.ts"
+                cached_meta = self._read_cache_meta(key)
+                if (
+                    cached_ts.is_file()
+                    and cached_meta is not None
+                    and cached_meta.get("full_asset_conform") is True
+                ):
+                    return
+                # Probed HERE, on the warm worker -- never on the automation
+                # thread that queued this. An unprobeable asset is skipped
+                # rather than warmed on a guess: without a duration the
+                # synthetic segment could not claim to be the whole asset, and
+                # the promotion gate would (correctly) refuse to cache it.
+                warm_duration_seconds = probe_media_duration_seconds(source_path)
+                if warm_duration_seconds is None or warm_duration_seconds <= 0:
+                    _LOG.debug(
+                        "U60 plan look-ahead warm skipped for %r: no probeable "
+                        "media duration, so a whole-asset conform cannot be "
+                        "claimed for it.",
+                        source_path.name,
+                    )
+                    return
+                warm_timeout_seconds = warm_preparation_timeout_seconds(
+                    warm_duration_seconds, self._preparation_timeout_seconds
+                )
+                scratch.mkdir(parents=True, exist_ok=True)
+                # The synthetic whole-asset segment: the REAL source path (so
+                # the cache key is the air path's own), no in/out points, and
+                # the probed duration as its length -- the two properties the
+                # whole-asset promotion gate reads. ``kind``/``source_ref`` are
+                # carried through only so any log or record this produces names
+                # the item it belongs to.
+                synthetic = EgressSourceSegment(
+                    label=segment.label,
+                    path=str(source_path),
+                    duration_seconds=warm_duration_seconds,
+                    kind=segment.kind,
+                    source_ref=segment.source_ref,
+                )
+                # The scratch output is thrown away -- the value of this call
+                # is its SIDE EFFECT, the promoted ``conform-cache/{key}.ts``.
+                self._prepare_segment(
+                    synthetic,
+                    config=config,
+                    output_path=scratch / "warm.ts",
+                    lower_priority=True,
+                    timeout_seconds=warm_timeout_seconds,
+                )
+            except SourcePreparationCancelledError:
+                # A shutdown/pause is not a property of the asset: no warning,
+                # no backoff window -- the same rule ``_schedule_warm`` states.
+                pass
+            except Exception as exc:
+                with self._warming_guard:
+                    self._warm_backoff_until[key] = time.monotonic() + _WARM_FAILURE_BACKOFF_SECONDS
+                duration_text = (
+                    "unknown duration"
+                    if warm_duration_seconds is None
+                    else f"{warm_duration_seconds:g}s of media"
+                )
+                reason = f"{type(exc).__name__}: {exc}"
+                if len(reason) > 300:
+                    reason = f"{type(exc).__name__} (details in the ffmpeg log)"
+                _LOG.warning(
+                    "U60 plan look-ahead warm failed for %r (%s, allowed %gs to "
+                    "conform, reason: %s); not retrying it for 6h. The air path "
+                    "is unaffected and will prepare this asset synchronously if "
+                    "it reaches it.",
+                    source_path.name,
+                    duration_text,
+                    warm_timeout_seconds,
+                    reason,
+                )
+            finally:
+                shutil.rmtree(scratch, ignore_errors=True)
+                with self._warming_guard:
+                    self._warming.discard(key)
+
+        try:
+            self._warm_scheduler(_job)
+        except Exception:
+            with self._warming_guard:
+                self._warming.discard(key)
+            _LOG.exception(
+                "Failed to queue the U60 plan look-ahead warm; the air path "
+                "will prepare this asset synchronously if it reaches it."
+            )
+
     def release(self, plan_dir: Path | None) -> None:
         """F3 fix: immediately reclaim ONE specific per-plan directory the caller
         independently knows is safe to remove -- e.g. the daemon calls this for
@@ -2444,7 +2621,22 @@ class SourcePreparer:
         config: EgressConfig,
         output_path: Path,
         cancel_event: threading.Event | None = None,
+        lower_priority: bool = False,
+        timeout_seconds: float | None = None,
     ) -> tuple[EgressSourceSegment, PreparedSegmentRecord]:
+        """Conform ``segment``'s source into ``output_path`` and record it.
+
+        BETA.10 U60 adds the same two warm-only knobs ``_run_ffmpeg`` and
+        ``_conform_full_asset_into_cache`` already carry (U29):
+        ``lower_priority`` and ``timeout_seconds``. They exist so
+        :meth:`warm_plan` -- an unattended, off-air whole-asset conform --
+        can run this exact code path at a lowered process priority and on a
+        duration-scaled budget instead of the flat foreground bound. The
+        defaults leave every existing caller on exactly the previous
+        behavior, and ``lower_priority`` additionally pins the conform's
+        ffmpeg thread count to 1 (see ``conform_threads`` below): a warm must
+        never claim half the box from the live encoders it is warming for.
+        """
         self._raise_if_cancelled(cancel_event)
         source_path = Path(segment.path).expanduser()
         if not source_path.exists() or not source_path.is_file():
@@ -2453,6 +2645,13 @@ class SourcePreparer:
             )
         key = self._cache_key(source_path, config)
         trimmed = segment.inpoint_seconds is not None or segment.outpoint_seconds is not None
+        # U60: one local, read by every stage this call runs, so "this is a
+        # lowered-priority warm" is a single decision rather than six
+        # independently-drifting ones. See ``_foreground_thread_cap`` for why
+        # the foreground path is capped at all; a warm is one step further
+        # down (a single thread) because it is the only whole-asset encode
+        # that is allowed to run for many minutes beside a live channel.
+        conform_threads = 1 if lower_priority else _foreground_thread_cap()
 
         # Cache HIT: the full-asset conform already exists — no re-encode, no
         # probing (#156: an aired-before program starts within seconds). Trim is
@@ -2698,7 +2897,7 @@ class SourcePreparer:
                 tolerance_lufs=config.loudness_tolerance_lufs,
                 probe_start_seconds=probe_start_seconds,
                 probe_duration_seconds=probe_duration_seconds,
-                threads=_foreground_thread_cap(),
+                threads=conform_threads,
             )
             if (
                 single_sample_is_conclusive
@@ -2782,7 +2981,7 @@ class SourcePreparer:
                         tolerance_lufs=config.loudness_tolerance_lufs,
                         probe_start_seconds=second_probe_start,
                         probe_duration_seconds=_UNTRIMMED_LOUDNESS_PROBE_CAP_S,
-                        threads=_foreground_thread_cap(),
+                        threads=conform_threads,
                     )
                     if second_loudness.measured_lufs is not None:
                         # Item 66 round-6 (point 4): only replace the first
@@ -2835,9 +3034,11 @@ class SourcePreparer:
                 config,
                 loudness,
                 normalized,
-                threads=_foreground_thread_cap(),
+                threads=conform_threads,
                 media_duration_seconds=media_duration,
                 cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
+                lower_priority=lower_priority,
             )
             if full_asset_cached_ts is not None:
                 return self._emit_prepared_from_cache(
@@ -2917,16 +3118,20 @@ class SourcePreparer:
                 tmp_path=tmp_output_path,
                 config=config,
                 segment=segment,
-                threads=_foreground_thread_cap(),
+                threads=conform_threads,
                 cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
+                lower_priority=lower_priority,
             )
             if loudness_method != _LOUDNESS_METHOD_RIDE:
                 measured_loudness, loudness_method = self._measure_loudnorm_metadata(
                     source_path=source_path,
                     segment=segment,
                     loudness_target_lufs=config.loudness_target_lufs,
-                    threads=_foreground_thread_cap(),
+                    threads=conform_threads,
                     cancel_event=cancel_event,
+                    timeout_seconds=timeout_seconds,
+                    lower_priority=lower_priority,
                 )
 
         if loudness_method != _LOUDNESS_METHOD_RIDE:
@@ -2936,11 +3141,16 @@ class SourcePreparer:
                 segment=segment,
                 profile=config.canonical_profile,
                 loudness_target_lufs=config.loudness_target_lufs if normalized else None,
-                threads=_foreground_thread_cap(),
+                threads=conform_threads,
                 measured_loudness=measured_loudness,
             )
             try:
-                result = self._run_ffmpeg(args, cancel_event)
+                result = self._run_ffmpeg(
+                    args,
+                    cancel_event,
+                    timeout_seconds=timeout_seconds,
+                    lower_priority=lower_priority,
+                )
             except SourcePreparationCancelledError:
                 tmp_output_path.unlink(missing_ok=True)
                 raise
