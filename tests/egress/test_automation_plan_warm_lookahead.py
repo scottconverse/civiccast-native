@@ -17,14 +17,27 @@ for a government item whose first-time conform took 383.6s. The plan ran to EOS
 with no reload in flight, the worker held the slate for ~100s, and the next
 dispatch inherited the delay: a latched lateness cascade.
 
-The fix is an off-air LOOK-AHEAD warm. On the recovery dispatch (the only
-regime where a leg is shorter than the lead), the automation walks the
-boundaries ahead and asks the daemon to warm the first one whose own dispatch
-is still a full lead away -- so the cache entry the air path will need is
-already resident when the reload's synchronous prepare runs. A boundary whose
-dispatch is nearer than ``now + lead`` is deliberately NOT warmed: it cannot
-finish in time, and warming it would run a second whole-asset conform
+The fix is an off-air LOOK-AHEAD warm. On EVERY dispatch, the automation walks
+the boundaries ahead and asks the daemon to warm the first one whose own
+dispatch is still a full lead away -- so the cache entry the air path will need
+is already resident when the reload's synchronous prepare runs. A boundary
+whose dispatch is nearer than ``now + lead`` is deliberately NOT warmed: it
+cannot finish in time, and warming it would run a second whole-asset conform
 concurrently with the reload's own cold conform.
+
+BETA.10 U61 (2026-09-27): the look-ahead was first gated to the recovery regime
+alone -- a leg SHORTER than the lead -- and that excluded the ordinary cadence
+case, which is where a long title needs it most. Live: government aired a 9020s
+meeting (Sustainability Advisory Board - April 2026) as 1800s slices. 1800s of
+plan against a 690s lead is NOT ``inside_lead_recovery``, so the look-ahead
+never ran once -- zero look-ahead lines in any station log, no ``warm/`` scratch
+under any channel -- and every slice paid its own cold bounded conform (383.6s /
+406.0s / 458.5s / 293.6s / 267.0s). The whole-asset conform that would have made
+every slice after the first a stream-copy HIT is exactly what the walk asks for,
+and in this regime the walk never ran at all. The gate is now
+``lead_seconds is not None`` alone,
+and the walk's own ``dispatch_at >= now + lead`` test is what keeps a racing
+boundary out, in this regime exactly as in the recovery one.
 
 This test drives ``ChannelAutomationService`` directly, mirroring
 ``tests/egress/test_automation_rollover_retry_log_cadence.py``'s harness. No
@@ -235,11 +248,17 @@ def test_short_leg_lookahead_warms_the_first_boundary_a_full_lead_away() -> None
     assert schedule.calls == [_at(290), _at(580), _at(870), _at(1160)]
 
 
-def test_lookahead_is_skipped_when_the_plan_on_air_covers_the_lead() -> None:
-    """A 1800s item gives its successor's preparation a full lead of runway.
+def test_lookahead_warms_the_next_boundary_in_ordinary_cadence() -> None:
+    """A 1800s plan under a 690s lead is NOT recovery -- and must still warm.
 
-    ``inside_lead_recovery`` is False, so this is ordinary cadence -- the
-    look-ahead must not spend a whole-asset conform on it.
+    U61: ``inside_lead_recovery`` is False here (an 1800s plan exceeds the 690s
+    lead), which is exactly the regime the look-ahead used to skip. It is also
+    the regime a long title aired as repeated 1800s slices lives in, and there
+    the difference is WHEN the warm starts: queued here, at the dispatch tick,
+    it gets the whole runway, while the air path's own request for the same key
+    only leaves ``_prepare_segment`` at the end of that slice's conform -- a
+    measured 267-458s later on 2026-09-27. A warm asked for late enough to lose
+    the race leaves the next slice cold, which is what the station aired.
     """
 
     clock = {"t": 0.0}
@@ -247,12 +266,93 @@ def test_lookahead_is_skipped_when_the_plan_on_air_covers_the_lead() -> None:
     daemon = _WarmFakeDaemon(live_channels={"public"})
     store, service = _armed_service(daemon=daemon, schedule=schedule, clock=clock)
 
-    # The boundary-aligned trigger for a 1800s plan under a 690s lead.
+    # The boundary-aligned trigger for an 1800s plan under a 690s lead.
     service.run_once(now=_at(1120))
 
     assert _pending_actions(store, "public") == ["reload"]
-    assert daemon.warmed == []
-    assert schedule.calls == [_at(1800)]
+    assert len(daemon.warmed) == 1, daemon.warmed
+    channel_id, warmed_plan = daemon.warmed[0]
+    assert channel_id == "public"
+    # NOT item-2: that is the plan this very dispatch is about to reload, and
+    # warming it would put a second whole-asset conform alongside the reload's
+    # own. The walk steps to the boundary after it.
+    assert [seg.source_ref for seg in warmed_plan.segments] == ["item-3"]
+    # The dispatch's own boundary, then the boundary the walk warmed.
+    assert schedule.calls == [_at(1800), _at(3600)]
+
+
+def test_the_ordinary_cadence_warm_gets_more_runway_than_the_asset_costs() -> None:
+    """U61's whole claim: the warm must finish before the boundary it serves.
+
+    Two bounds, both about the largest whole-asset conform this box has staged
+    (public's 15949.199933s City Council, ``757519c3...``):
+
+    * ``_CONFORM_SECONDS_AT_BENCH_RATE`` -- that asset divided by the standalone
+      16.3x realtime recorded at ``preparer.py:96``: 978s.
+    * ``_CONFORM_SECONDS_LIVE_LARGEST_MEASURED`` -- the same conform's ACTUAL
+      duration on the station, which is the number the deployed station pays and
+      the tighter of the two.
+
+    The live number is readable off the filesystem and nowhere else, because the
+    warm path logs nothing on success. It works because
+    ``_promote_conform_into_cache`` does ``tmp.replace(final)`` -- a RENAME into
+    the cache, not a copy (``preparer.py:1240``, whose docstring calls itself
+    "the SOLE place a ``.ts`` is ever renamed into the persistent cache"). A
+    within-volume rename preserves NTFS creation time, so a cache ``.ts`` is
+    born when the conform's OUTPUT was created and its sidecar ``.json`` is born
+    when the meta is written straight after the rename: the birth-to-birth gap
+    IS the whole-asset conform, and a hit's ``os.utime`` refresh shows up as a
+    LATER ``.ts`` mtime than ``.json`` birth. Read that way, the box measured:
+
+    * City Council Aug 11 ``757519c3``: 21:47:44.434 -> 22:04:47.236 over
+      15949.199933s = 1022.8s = 15.6x
+    * Sustainability ``8564fe6c``: 23:01:45.660 -> 23:10:37.863 over
+      9020.834s = 532.2s = 17.0x
+    * NSF Day After Tomorrow ``e6b580bf``: 22:15:31.457 -> 22:22:18.293 over
+      5334.814s = 406.8s = 13.1x
+
+    So the live whole-asset rate is 13.1-17.0x -- essentially the bench rate, not
+    slower -- and the largest whole-asset conform this box has ever been measured
+    staging is 1022.8s, against the 16.3x prediction of 978s for the same asset.
+    (The only larger gap on the box, ``80cdcd4c``'s 110.6s, is a probe-only
+    sidecar -- ``full_asset_conform: false``, ``media_duration_seconds: null`` --
+    and is not a whole-asset conform at all.)
+
+    The runway from this dispatch to the warmed boundary's OWN dispatch has to
+    cover that. The air-path warm is the SAME job asked for later: it leaves
+    ``_prepare_segment`` only once that slice's own conform has finished, so its
+    window is this runway minus one slice conform (measured 267-458s tonight),
+    and on a single starved FIFO it was still racing when the next slice's cold
+    conform took the box.
+
+    What this does NOT prove: that the warm is always SCHEDULED early enough to
+    spend this runway. The runway itself covers the conform with room to spare
+    (1790s against 1023s measured; the break-even is an asset of roughly 8h,
+    longer than anything that has aired here). What ate the runway live was the
+    SCHEDULING -- the gate never fired (no warm was ever asked for at a dispatch
+    tick) and the one global FIFO plus a daemon restart delayed the entry by
+    ~100 minutes. That part is the next lever and is not fixed here; see
+    ``reports/U61.md``.
+    """
+
+    _CONFORM_SECONDS_AT_BENCH_RATE = 15949.199933 / 16.3  # preparer.py:96
+    _CONFORM_SECONDS_LIVE_LARGEST_MEASURED = 1022.8  # 757519c3, live
+    _LEAD_SECONDS = 690.0  # the deployed lead for an 1800s item
+
+    clock = {"t": 0.0}
+    schedule = _Schedule("public", count=4, seconds=1800.0)
+    daemon = _WarmFakeDaemon(live_channels={"public"})
+    _store, service = _armed_service(daemon=daemon, schedule=schedule, clock=clock)
+
+    service.run_once(now=_at(1120))  # the dispatch; the warm is queued here
+
+    _channel_id, warmed_plan = daemon.warmed[0]
+    assert [seg.source_ref for seg in warmed_plan.segments] == ["item-3"]
+    # item-3 airs at _at(3600); its own dispatch fires one lead before that.
+    warmed_dispatch_at = _at(3600) - timedelta(seconds=_LEAD_SECONDS)
+    runway = (warmed_dispatch_at - _at(1120)).total_seconds()
+    assert runway >= _CONFORM_SECONDS_AT_BENCH_RATE
+    assert runway >= _CONFORM_SECONDS_LIVE_LARGEST_MEASURED
 
 
 def test_lookahead_gives_up_when_no_boundary_is_a_full_lead_away() -> None:

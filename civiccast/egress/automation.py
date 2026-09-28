@@ -2420,17 +2420,50 @@ class ChannelAutomationService:
                 (plan_end_at - last_segment_start_at).total_seconds(),
                 lead_seconds,
             )
-        if not force_fallback and inside_lead_recovery and lead_seconds is not None:
-            # BETA.10 U60: the recovery dispatch above is already as early as
-            # it can possibly be -- the plan on air is shorter than the lead,
-            # so its own start WAS the trigger. What CAN still be moved is the
-            # work: the boundary this dispatch targets is not the only one
-            # ahead, and a later one may still have a full lead of runway to
-            # its own dispatch. Warm that one now, off the air path, so the
-            # cache entry its reload will need is resident before its
-            # preparation asks for it. Runs strictly AFTER the enqueue above --
-            # a latency optimisation must never sit between the dispatch and
-            # the command that carries it.
+        if not force_fallback and lead_seconds is not None:
+            # BETA.10 U60: the work of the boundary ahead can be started before
+            # its own dispatch -- warm the first one whose dispatch is still a
+            # full lead away, off the air path, so the cache entry its reload
+            # will need is resident before its preparation asks for it. The
+            # walk inside ``_warm_upcoming_plan`` enforces that invariant.
+            #
+            # BETA.10 U61: this used to run ONLY when ``inside_lead_recovery``
+            # -- the short-leg case U60 was written for, where the plan on air
+            # is shorter than the lead and its own start WAS the trigger. That
+            # gate excluded the ordinary cadence case, and ordinary cadence is
+            # where a long title needs it most. Live, 2026-09-27: government
+            # aired a 9020s meeting (Sustainability Advisory Board - April 2026)
+            # as 1800s slices, one scheduled item per plan. 1800s of plan
+            # against the deployed 690s lead is NOT ``inside_lead_recovery``, so
+            # the look-ahead never ran once: zero look-ahead lines in any
+            # station log, no ``warm/`` scratch under any channel, and the
+            # title's only cache artifact was the probe-only sidecar
+            # (``full_asset_conform: false``, no ``.ts``) its first slice left
+            # behind. Every slice therefore paid its own cold bounded conform --
+            # 383.6s, 406.0s, 458.5s, 293.6s, 267.0s, a fifth of each 1800s
+            # slice's wall clock spent re-encoding an asset the station had
+            # already conformed once, and the worst of them eating the 690s lead
+            # down to ~230s of margin. The whole-asset conform that makes every
+            # slice after the first a stream-copy HIT is exactly what this
+            # look-ahead is for, and in this regime it never ran at all.
+            #
+            # Nothing in the walk below weakens for the wider gate: it still
+            # stops at the first boundary at least ``now + lead`` out, so it
+            # never races the reload's own synchronous conform, and a boundary
+            # nearer than that is still deliberately left alone. In this regime
+            # the very first step already qualifies (a full-length plan's next
+            # boundary dispatches a whole plan length plus a lead from now),
+            # which is what gives a repeat slice ~30 minutes of runway on the
+            # single warm worker. The air path asks for the SAME warm, but it
+            # asks from inside ``_prepare_segment`` and only once that slice's
+            # own conform has returned -- a measured 267-458s later -- so its
+            # window is what is left of the slice minus whatever else the one
+            # worker is already holding. This gate is a head start, not a
+            # guarantee: a title long enough to outrun the runway still needs
+            # the queue fixes that follow.
+            # Runs strictly AFTER the enqueue above -- a latency optimisation
+            # must never sit between the dispatch and the command that carries
+            # it.
             self._warm_upcoming_plan(
                 channel_id,
                 now=now,
