@@ -4643,6 +4643,10 @@ class _FakeDrainPad:
         self.level = level
         self.recorder = recorder
         self.probes: list[tuple[str, Any, Any]] = []
+        # The extra arguments a probe callback is bound with (the fence probes
+        # take ``pending``); kept beside ``probes`` so the existing
+        # ``(probe_id, mask, callback)`` unpacking in this file is unchanged.
+        self.probe_args: list[tuple[Any, ...]] = []
         self.removed: list[Any] = []
         self._next_probe = 0
 
@@ -4656,10 +4660,11 @@ class _FakeDrainPad:
         assert key == "current-level-buffers", key
         return self.level
 
-    def add_probe(self, mask: Any, callback: Any) -> str:
+    def add_probe(self, mask: Any, callback: Any, *args: Any) -> str:
         self._next_probe += 1
         probe_id = f"{self.name}-probe-{self._next_probe}"
         self.probes.append((probe_id, mask, callback))
+        self.probe_args.append(args)
         return probe_id
 
     def remove_probe(self, probe_id: Any) -> None:
@@ -5259,3 +5264,180 @@ def test_u62_a_new_leg_pad_without_set_offset_is_skipped_not_fatal(
         f"streams=audio was={_U62_ARM_NS} now=186808000000 "
         "pads=sink_65,sink_66 reload_id=47"
     ) in capsys.readouterr().err
+
+
+# --- U62 round 2: the fallback's mux fence had no bound, so it never held -----
+#
+# Round 1 (above) cut the published slate->program gap from 3.008 s to 0.085 s on
+# C13. The residue is one mechanism, measured on the fixture
+# (``fixtures/C13-public-0831``, segs 100-118 + the relay's stderr): the retiring
+# slate leg's audio tail crossed the switch point at the mux, so the mux's own
+# clock stood ahead of the new leg's first buffers when they arrived; the relay
+# then reported seven ``Invalid timestamps`` and repaired each one, and that
+# repair is what re-dates the new leg's first video frames onto the outgoing
+# frontier (221.835944 / .835956, three frames inside 12 ms).
+#
+# The engine's own evidence for WHY the tail crossed is in the worker log of the
+# same C13 event: ``stage=mux-tail-armed pads=sink_66 target=None``. A fence armed
+# with no target is vacuous -- ``_mux_tail_arrived`` returns True for an empty
+# target map -- so ``_defer_mux_tail_release`` disarmed it at the first selector
+# mutation (neither ``stage=mux-tail-wait`` nor ``stage=mux-tail-released``
+# appears in that window), and the retiring audio's post-bound arrivals were never
+# dropped. The fallback is exactly the case with no measured per-stream end to
+# seed a target from: its outgoing leg is an endless slate that never EOSes.
+#
+# The switch point IS the bound the retiring leg is cut at, so it is also the
+# value its tail must reach before the fence may come off -- the same number the
+# selector-side fence and the new leg's rebase offsets already share, read by one
+# more reader. These tests pin that, and pin that the measured path still targets
+# its OWN measured end.
+
+_U62B_MEASURED_AUDIO_END_NS = 1_100_000_000
+
+
+def _u62b_armed_fallback_fence(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    txn_id: int = 61,
+) -> tuple[Any, dict[str, Any], _FakeDrainPad, _FakeDrainPad]:
+    """Drive a fallback commit through the real path and hand back the fence.
+
+    The pads' aired frontiers are left exactly ON the arm-time bound, so the
+    round-1 reclamp has nothing to correct and the switch point this test reads
+    is the unmodified one -- the C13 shape.
+    """
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.pipeline = _FakeClockPipeline(recorder, clock_time_ns=_U62_ARM_NS)
+    pending, video_pad, audio_pad = _u62_fallback_pending(recorder, txn_id=txn_id)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._mux_pad_airing_rt = {"sink_65": _U62_ARM_NS, "sink_66": _U62_ARM_NS}
+    engine._pending_reload = pending
+
+    _u62_deferred_commit(engine, engine_module, pending, monkeypatch)
+    return engine, pending, video_pad, audio_pad
+
+
+def test_u62b_the_fallback_fence_targets_the_switch_point(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """RED at the C13 base: ``target=None`` -- a fence armed with no bound at all.
+
+    Without one there is nothing for the fence to wait for, which is why the
+    live window shows no wait and no release."""
+    engine, pending, _video_pad, audio_pad = _u62b_armed_fallback_fence(engine_module, monkeypatch)
+    err = capsys.readouterr().err
+
+    assert "fallback_switch_reclamped_ns" not in pending
+    assert pending["old_tail_cutoff_ns"] == _U62_ARM_NS, pending["old_tail_cutoff_ns"]
+    assert pending.get("mux_tail_target") == {"sink_66": pending["old_tail_cutoff_ns"]}, (
+        pending.get("mux_tail_target")
+    )
+    assert (
+        f"CTRL reload diagnostic: stage=mux-tail-armed pads=sink_66 "
+        f"target={{'sink_66': {pending['old_tail_cutoff_ns']}}} "
+        f"cutoff={pending['old_tail_cutoff_ns']} reload_id=61"
+    ) in err
+    # The fence is still on the AUDIO pad only (U56 round 5's measurement: a
+    # video fence here drops the incoming leg's own first picture). The later
+    # ``_observe_rebase_arrivals`` on the same pad is U37's drain observer, not
+    # this fence -- hence the prefix read, not an equality.
+    assert [callback.__name__ for _id, _mask, callback in audio_pad.probes][:2] == [
+        "_mux_tail_cutoff_probe",
+        "_mux_tail_segment_probe",
+    ], audio_pad.probes
+    assert not [
+        callback.__name__
+        for _id, _mask, callback in engine._mux_input_pads["sink_65"].probes
+        if callback.__name__.startswith("_mux_tail")
+    ], engine._mux_input_pads["sink_65"].probes
+
+
+def test_u62b_the_fallback_fence_holds_instead_of_releasing_at_the_mutation(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """RED at the C13 base: the fence came off at the first selector mutation.
+
+    That is the whole residue in one assertion -- ``_defer_mux_tail_release``
+    found an empty target map, ``_mux_tail_arrived`` said yes, and the retiring
+    audio's arrivals past the bound were never dropped."""
+    engine, pending, _video_pad, _audio_pad = _u62b_armed_fallback_fence(
+        engine_module, monkeypatch, txn_id=62
+    )
+    err = capsys.readouterr().err
+
+    assert pending.get("mux_tail_released") is not True, "the fence must still hold"
+    assert (
+        "CTRL reload diagnostic: stage=mux-tail-wait "
+        f"seen=None target={{'sink_66': {pending['old_tail_cutoff_ns']}}} reload_id=62"
+    ) in err
+    assert "stage=mux-tail-released" not in err
+    # Held by a bounded poller, not by blocking the main loop.
+    assert engine._pending_reload is pending
+
+
+def test_u62b_the_fallback_fence_still_releases_on_the_measure(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The new bound is reachable: it comes off on the retiring tail's arrival.
+
+    A guard on both revisions -- the empty-target fence released immediately,
+    so it passed the same assertion for the wrong reason. It is here to prove
+    the target added above can actually be satisfied, i.e. that the fence is a
+    wait and not a permanent hold."""
+    engine, pending, _video_pad, _audio_pad = _u62b_armed_fallback_fence(
+        engine_module, monkeypatch, txn_id=63
+    )
+    capsys.readouterr()
+    pending["mux_tail_seen"] = {"sink_66": int(pending["old_tail_cutoff_ns"])}
+    pending["mux_last_arrival_t"] = time.monotonic() - 1.0
+
+    engine._defer_mux_tail_release(pending)
+    err = capsys.readouterr().err
+
+    assert pending["mux_tail_released"] is True
+    assert "stage=mux-tail-wait" not in err
+    # And the poller that was armed agrees, rather than waiting for the deadline.
+    assert engine._poll_mux_tail_release(pending) is False
+    released = capsys.readouterr().err
+    assert "stage=mux-tail-released waited=" in released, released
+    assert "arrived=True" in released, released
+
+
+def test_u62b_the_measured_path_still_targets_its_own_measured_end(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No change to the seamless path: a real per-stream end still wins.
+
+    The switch point is the fallback's bound only because the fallback has no
+    measured end to offer. Where one exists the fence keeps using it -- here a
+    cutoff deliberately far from (and later than) the measured audio end must
+    not displace it."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _video_src, _audio_src = _u16_pending(recorder, txn_id=64)
+    video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+    audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._mux_pad_airing_rt = {"sink_65": 9_000_000_000, "sink_66": 9_000_000_000}
+    engine._pending_reload = pending
+    _u37_timeout_adds(monkeypatch, engine_module)
+
+    engine._prepare_reload_handoff(pending)
+    engine._begin_reload_commit(pending)
+    err = capsys.readouterr().err
+
+    assert pending["old_tail_cutoff_ns"] != _U62B_MEASURED_AUDIO_END_NS
+    assert pending.get("mux_tail_target") == {"sink_66": _U62B_MEASURED_AUDIO_END_NS}, pending.get(
+        "mux_tail_target"
+    )
+    assert f"target={{'sink_66': {_U62B_MEASURED_AUDIO_END_NS}}}" in err, err
