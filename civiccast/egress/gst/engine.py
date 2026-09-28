@@ -641,6 +641,38 @@ def _seconds_or_none(value_ns: int | None) -> str:
 # watchdog kill 10s later).
 _OUTPUT_PROGRESS_INTERVAL_S = 5.0
 
+# U59 round 4: the changeover leg-rate diagnostic. Live, 2026-09-27 (the
+# reload_id=6 government changeover) the AIRING video collapsed to ~23.00 fps
+# across the retiring leg's last ~21s while the audio never moved at all. Round
+# 3 established the media is clean at every offset and that ordinary 8x-1080p
+# contention dips BOTH streams together (measured ~0.92 nominal each), which is
+# a different shape from that one. The mechanism is still unknown, so this is an
+# INSTRUMENT, not a guard: it changes nothing about what the pipeline does, and
+# prints one WARN line per episode carrying the evidence the next occurrence
+# needs. Floors are the brief's: video below 0.9x nominal for 2 consecutive CTRL
+# output polls WHILE audio stays at or above 0.97x, i.e. one stream starving
+# against a healthy other, never a box-wide stall (which the U34 per-stream
+# watchdog already owns).
+_U59_RATE_ENV_VAR = "CIVICAST_GST_LEG_RATE_DIAG"
+# Nominal rates are DERIVED from the leg's own capsfilters at fire time (the
+# video framerate and the audio sample rate the leg was built against); these are
+# only the fallback for a leg whose caps are not negotiable at the read.
+_U59_RATE_NOMINAL_VIDEO_PER_S = 30.0
+_U59_RATE_NOMINAL_AUDIO_PER_S = 48000.0 / 1024.0  # AAC: 1024 samples per buffer
+_U59_RATE_VIDEO_FLOOR = 0.9
+_U59_RATE_AUDIO_FLOOR = 0.97
+_U59_RATE_STREAK_POLLS = 2
+_U59_RATE_WARN_INTERVAL_S = 10.0
+_U59_RATE_RECENT_FIRE_S = 60.0
+# The rung the rate is judged on, in preference order: ``sel`` (what the channel
+# is AIRING) first -- see the diagnostic block for why ``in`` is the wrong
+# witness. Both streams are read from the SAME rung, so the video/audio
+# comparison is like-for-like.
+_U59_RATE_RUNG_PREFERENCE = ("sel", "queue", "in")
+_U59_QOS_WINDOW_S = 30.0
+_U59_QOS_HISTORY = 64
+_U59_RATE_KEEP_LEGS = 3
+
 
 def _resolve_first_output_timeout_s(explicit: float | None) -> float:
     """Resolve the time-to-FIRST-output bound: an explicit constructor value
@@ -1070,6 +1102,12 @@ class GstPlayoutEngine:
         # ``now - self._last_output_progress_print_t`` comparison is a plain
         # float subtraction with no None-guard needed.
         self._last_output_progress_print_t = 0.0
+        # U59 round 4: per-worker state for the changeover leg-rate diagnostic
+        # (see the block comment above ``_U59_RATE_ENV_VAR``). Allocated here
+        # rather than left to the class-level defaults so two engines in one
+        # process can never share an episode latch; the defaults stay immutable
+        # for the ``object.__new__`` shapes (the U16 real-runtime emitter).
+        self._u59_init_diagnostics()
         # U30: one BUFFER counter per mux SINK pad -- the always-on answer to
         # "which stream is still feeding the mux?". The counter above reads the
         # mux SRC, so it keeps advancing (at the audio-only rate, measured 234
@@ -2149,6 +2187,16 @@ class GstPlayoutEngine:
             self._announce_pipeline_eos(message.src)
             if self._loop is not None:
                 self._loop.quit()
+        else:
+            # U59 round 4: observe-only. QoS is the one message class this engine
+            # has never handled, and it is the decoder's own account of exactly
+            # the shape this round is chasing -- a video branch being told to
+            # slow down while audio is untouched. Read via getattr because the
+            # fake-Gst harnesses in this repo's tests build a MessageType without
+            # a QOS member; a diagnostic must not be the reason one fails.
+            qos_type = getattr(Gst.MessageType, "QOS", None)
+            if qos_type is not None and message.type == qos_type:
+                self._u59_record_qos(message)
         return True
 
     def _announce_pipeline_eos(self, src: Any) -> None:
@@ -3104,6 +3152,14 @@ class GstPlayoutEngine:
         self._output_buffers_at_arm = self._output_buffers
         self._first_output_seen = False
         self._last_output_progress_print_t = self._stall_last_advance_t
+        # U59 round 4: the rate diagnostic's first interval starts at arm time --
+        # the same moment the ladder below takes its baseline -- and its episode
+        # latch starts clean (a worker that just armed has no episode in flight).
+        # The last-fire stamp is deliberately NOT reset: the bound-exceeded
+        # WARN's 60s "delivery fell short" window must survive an arm.
+        self._u59_rate_interval_t = self._stall_last_advance_t
+        self._u59_rate_streak = 0
+        self._u59_rate_in_episode = False
         # U30: the per-stream counters' baseline must start here too -- the
         # progress line's ``[mux-in ...]`` / ``[chain-in ...]`` deltas are
         # measured from arm time (and from each later print), never from a
@@ -3176,8 +3232,575 @@ class GstPlayoutEngine:
             file=sys.stderr,
             flush=True,
         )
+        # U59 round 4: judged BEFORE this poll's snapshot, so the deltas it reads
+        # are this interval's -- the ladder's baseline is still the previous
+        # print's (the same baseline the line above just rendered).
+        self._u59_judge_leg_rate(now)
         self._snapshot_mux_input(now)
         self._snapshot_chain_input()
+
+    # -- U59 round 4: the changeover leg-rate diagnostic ------------------------
+    #
+    # Judged on rung ``sel`` -- the selector's src pad, i.e. the stream the
+    # channel is actually AIRING -- which is armed for both streams for the whole
+    # worker lifetime. Rung ``in`` is the wrong witness: it names the leg selected
+    # NOW, which during a deferral is the INCOMING leg (held, so it reads ~0 on
+    # both streams and the audio guard would swallow the fire), while the U59
+    # evidence puts the collapse on the RETIRING leg's last ~21s -- exactly the
+    # leg rung ``in`` stops naming once the switch commits.
+    #
+    # Disclosed limits. (a) It judges the leg on air at each poll, so a collapse
+    # that never reaches ``sel`` is invisible. (b) It cannot see inside
+    # ``decodebin``: a decodebin's internal queues are reachable only by iterating
+    # a live bin, which a diagnostic must never do to a channel that is on air, so
+    # the queue column can read ``queues=none`` on a leg whose stall is
+    # decoder-internal -- an honest gap, not a measurement of zero. (c) Per-piece
+    # position is read from the video concat's sink-pad PTS, which is the piece's
+    # own media timeline: exact within a piece, and "the leg's running time" is
+    # the sum of the completed pieces plus the position in the active one.
+
+    _u59_legs: ClassVar[tuple[dict[str, Any], ...]] = ()
+    _u59_qos: ClassVar[tuple[dict[str, Any], ...]] = ()
+    _u59_rate_streak: ClassVar[int] = 0
+    _u59_rate_in_episode: ClassVar[bool] = False
+    _u59_fired_t: ClassVar[float | None] = None
+    _u59_rate_interval_t: ClassVar[float] = 0.0
+
+    def _u59_init_diagnostics(self) -> None:
+        """This worker's own diagnostic state.
+
+        The class-level defaults are immutable tuples for the shapes that never
+        run ``__init__`` (``object.__new__(GstPlayoutEngine)`` -- the U16
+        real-runtime emitter and several tests): they read empty containers
+        instead of mutating a class attribute shared with every other instance.
+        """
+        self._u59_legs = ()
+        self._u59_qos = ()
+        self._u59_rate_streak = 0
+        self._u59_rate_in_episode = False
+        self._u59_fired_t = None
+        self._u59_rate_interval_t = 0.0
+
+    @staticmethod
+    def _u59_enabled() -> bool:
+        """The one kill switch: ``CIVICAST_GST_LEG_RATE_DIAG=0`` (or ``off`` /
+        ``false`` / ``no``) silences the line. Unset and empty mean ON -- this
+        round exists to catch an occurrence nothing else in the log explains, so
+        it is armed by default and only an explicit refusal turns it off."""
+        raw = os.environ.get(_U59_RATE_ENV_VAR)
+        if raw is None or not raw.strip():
+            return True
+        return raw.strip().lower() not in ("0", "off", "false", "no")
+
+    @staticmethod
+    def _u59_factory_name(element: Any) -> str:
+        """The element's factory name, or ``""`` -- never raises."""
+        with contextlib.suppress(Exception):
+            return str(element.get_factory().get_name())
+        return ""
+
+    @staticmethod
+    def _u59_element_name(element: Any) -> str:
+        with contextlib.suppress(Exception):
+            return str(element.get_name() or "")
+        return ""
+
+    @staticmethod
+    def _u59_pad_index(pad: Any) -> int:
+        """A concat request pad's ``sink_<n>`` index, for ordering pieces.
+
+        ``sinkpads`` is returned in an unspecified order; the request order is the
+        build order, which is the playlist order, so sorting by the name's numeric
+        suffix reconstructs it. A pad whose name carries no index sorts last."""
+        name = ""
+        with contextlib.suppress(Exception):
+            name = str(pad.get_name() or "")
+        match = re.search(r"_(\d+)$", name)
+        return int(match.group(1)) if match else 1 << 30
+
+    def _u59_record_qos(self, message: Any) -> None:
+        """Remember one QOS message for the diagnostic's 30s window.
+
+        Bounded and append-only on the GLib loop (``_on_bus`` is a bus-sync
+        handler), read on the same loop, so no lock is needed or wanted."""
+        with contextlib.suppress(Exception):
+            entry: dict[str, Any] = {"t": time.monotonic(), "src": "unknown"}
+            with contextlib.suppress(Exception):
+                entry["src"] = str(message.src.get_name())
+            with contextlib.suppress(Exception):
+                structure = message.get_structure()
+                if structure is not None:
+                    for key in ("jitter", "proportion", "quality"):
+                        if structure.has_field(key):
+                            with contextlib.suppress(Exception):
+                                entry[key] = float(structure.get_value(key))
+                    for key in ("dropped", "processed"):
+                        if structure.has_field(key):
+                            with contextlib.suppress(Exception):
+                                entry[key] = int(structure.get_value(key))
+            history = list(self._u59_qos) + [entry]
+            self._u59_qos = tuple(history[-_U59_QOS_HISTORY:])
+
+    def _u59_record_leg(self, pending: dict[str, Any]) -> None:
+        """Remember the leg just built, for the rate diagnostic.
+
+        Called from ``_install_new_leg_inbound_counters`` -- the same moment rung
+        ``in`` is re-armed, i.e. "this leg is the selected one now". Guarded end to
+        end: this runs inside the reload path, and a diagnostic must never be the
+        reason a changeover fails."""
+        if not self._u59_enabled():
+            return
+        try:
+            record = self._u59_leg_record(pending)
+        except Exception:
+            return
+        if record is None:
+            return
+        legs = [leg for leg in self._u59_legs if leg.get("txn_id") != record["txn_id"]]
+        legs.append(record)
+        self._u59_legs = tuple(legs[-_U59_RATE_KEEP_LEGS:])
+
+    def _u59_leg_record(self, pending: dict[str, Any]) -> dict[str, Any] | None:
+        """The diagnostic's view of one leg, from the elements the build returned.
+
+        ``pending['new_elements']`` is the build's collection list in ``_make``
+        order, so a ``filesrc`` starts a new piece and the pieces come out in
+        playlist order -- which is also the video concat's request-pad order and
+        therefore the index a ``sink_<n>`` name carries. No new key is added to
+        ``pending``: that dict is the reload's own contract, and a diagnostic has
+        no business extending it."""
+        elements = list(pending.get("new_elements") or ())
+        if not elements:
+            return None
+        label = _DIAGNOSTIC_NONE
+        concat: Any = None
+        pieces: list[dict[str, Any]] = []
+        queues: list[Any] = []
+        decoders: list[Any] = []
+        capsfilters: list[Any] = []
+        for element in elements:
+            factory = self._u59_factory_name(element)
+            name = self._u59_element_name(element)
+            if factory == "filesrc":
+                path: Any = None
+                with contextlib.suppress(Exception):
+                    path = element.get_property("location")
+                pieces.append(
+                    {
+                        "filesrc": element,
+                        "path": path,
+                        "count": 0,
+                        "first_pts": None,
+                        "last_pts": None,
+                        "last_t": 0.0,
+                    }
+                )
+            elif factory == "concat" and name.startswith("vconcat_") and concat is None:
+                concat = element
+                match = re.match(r"^vconcat_(.+)_\d+$", name)
+                if match:
+                    label = match.group(1)
+            elif factory in ("queue", "multiqueue"):
+                queues.append(element)
+            elif factory in getattr(self, "_DECODERS", ()):
+                decoders.append(element)
+            elif factory == "capsfilter":
+                capsfilters.append(element)
+        concat_pads: list[Any] = []
+        if concat is not None:
+            with contextlib.suppress(Exception):
+                concat_pads = sorted(getattr(concat, "sinkpads", None) or [], key=self._u59_pad_index)
+        for index, piece in enumerate(pieces):
+            if index >= len(concat_pads):
+                break
+            pad = concat_pads[index]
+            piece["pad"] = pad
+            if not hasattr(pad, "add_probe"):
+                continue
+            with contextlib.suppress(Exception):
+                pad.add_probe(Gst.PadProbeType.BUFFER, self._u59_make_piece_probe(piece))
+        return {
+            "txn_id": pending.get("txn_id"),
+            "label": label,
+            "video_pad": pending.get("new_video_pad"),
+            "pieces": pieces,
+            "queues": queues,
+            "decoders": decoders,
+            "capsfilters": capsfilters,
+            "recorded_t": time.monotonic(),
+        }
+
+    @staticmethod
+    def _u59_make_piece_probe(entry: dict[str, Any]) -> Callable[..., Any]:
+        """An observe-only BUFFER probe on one piece's video concat sink pad.
+
+        Two readings, no mutation: the pad's buffer count and its PTS window.
+        ``concat`` does not rewrite PTS on its SINK pads, so ``last_pts -
+        first_pts`` on a piece's pad is that piece's own media span -- which is
+        what "position in its piece" means here. Single writer (that pad's
+        streaming thread), read on the GLib loop: the same lock-free contract as
+        every other counter in this module."""
+
+        def _u59_piece_probe(_pad: Any, info: Any) -> Any:
+            try:
+                entry["count"] = int(entry.get("count") or 0) + 1
+                entry["last_t"] = time.monotonic()
+                get_buffer = getattr(info, "get_buffer", None)
+                buffer = get_buffer() if callable(get_buffer) else None
+                if buffer is not None:
+                    pts = int(getattr(buffer, "pts", -1))
+                    # CLOCK_TIME_NONE (and a negative) is "no timestamp", not a
+                    # position: recording it would render a leg 584 years long.
+                    if 0 <= pts < (1 << 62):
+                        if entry.get("first_pts") is None:
+                            entry["first_pts"] = pts
+                        entry["last_pts"] = pts
+            except Exception:
+                pass
+            return Gst.PadProbeReturn.OK
+
+        return _u59_piece_probe
+
+    def _u59_airing_leg(self) -> dict[str, Any] | None:
+        """Which recorded leg is on air, by pad IDENTITY first.
+
+        The selector's ``active-pad`` compared against each record's
+        ``new_video_pad`` is exact -- the same identity comparison
+        ``_confirm_reload_selector_handoff`` reads back. Only when that read is
+        unavailable (no selector, or a pad we never recorded) does it fall back to
+        the leg with the most recent per-piece activity, then to the newest
+        record: during a deferral the incoming leg is HELD and silent, so activity
+        picks the retiring leg that is still airing. A per-piece TIE (no leg has
+        strictly newer activity) deliberately keeps the FIRST active leg -- the
+        older, retiring one -- which is the same answer that read would give."""
+        legs = self._u59_legs
+        if not legs:
+            return None
+        active: Any = None
+        with contextlib.suppress(Exception):
+            selector = getattr(self, "selector", None)
+            if selector is not None:
+                active = selector.get_property("active-pad")
+        if active is not None:
+            for leg in reversed(legs):
+                if leg.get("video_pad") is active:
+                    return leg
+        best: dict[str, Any] | None = None
+        best_t = 0.0
+        for leg in legs:
+            for piece in leg.get("pieces") or ():
+                last_t = float(piece.get("last_t") or 0.0)
+                if last_t > best_t:
+                    best_t = last_t
+                    best = leg
+        return best if best is not None else legs[-1]
+
+    @staticmethod
+    def _u59_piece_span(piece: dict[str, Any] | None) -> float | None:
+        """A piece's media span in seconds, or ``None`` when it never reported a
+        timestamp. ``None`` is not ``0.0``: an un-timestamped piece is unknown,
+        and rendering it as zero would claim the leg had not advanced."""
+        if not piece:
+            return None
+        first = piece.get("first_pts")
+        last = piece.get("last_pts")
+        if first is None or last is None:
+            return None
+        return (int(last) - int(first)) / Gst.SECOND
+
+    @staticmethod
+    def _u59_caps_text(element: Any) -> str:
+        with contextlib.suppress(Exception):
+            pad = element.get_static_pad("src")
+            if pad is not None:
+                caps = pad.get_current_caps()
+                if caps is not None:
+                    return str(caps.to_string())
+        return ""
+
+    def _u59_nominal_rates(self, leg: dict[str, Any] | None) -> tuple[float, float]:
+        """The leg's OWN nominal rates, from its capsfilters' negotiated caps.
+
+        The floor is only meaningful against the rate this leg was actually built
+        for, so the framerate and sample rate are read rather than assumed. The
+        module constants stand in when the caps are not readable -- the comparison
+        must never run against an invented zero."""
+        video = _U59_RATE_NOMINAL_VIDEO_PER_S
+        audio = _U59_RATE_NOMINAL_AUDIO_PER_S
+        if not leg:
+            return video, audio
+        for element in leg.get("capsfilters") or ():
+            text = self._u59_caps_text(element)
+            if text.startswith("video/"):
+                match = re.search(r"framerate=\(fraction\)(\d+)/(\d+)", text)
+                if match and int(match.group(2)):
+                    video = int(match.group(1)) / int(match.group(2))
+            elif text.startswith("audio/"):
+                match = re.search(r"rate=\(int\)(\d+)", text)
+                if match and int(match.group(1)):
+                    audio = int(match.group(1)) / 1024.0
+        return video, audio
+
+    def _u59_rate_rung(self) -> str | None:
+        """The rung both streams are read from -- see the block comment for why
+        ``sel`` leads. Both streams must be present: a video reading compared
+        against an absent audio one is not a comparison."""
+        pads = getattr(self, "_chain_input_pads", None) or {}
+        for rung in _U59_RATE_RUNG_PREFERENCE:
+            if all((rung, stream) in pads for stream in self._CHAIN_INPUT_STREAMS):
+                return rung
+        return None
+
+    def _u59_rates(self, rung: str, interval: float) -> tuple[float, float] | None:
+        """``(video, audio)`` buffers per second over the poll's interval.
+
+        The baseline is ``_chain_input_snapshot`` -- the value the last progress
+        print left behind, since the judge runs BEFORE this poll's snapshot. A
+        rung/stream registered after that snapshot has no baseline yet and is
+        treated exactly as ``_chain_input_delta_suffix`` treats it (delta 0 from
+        the current count), so the first interval after a switch cannot report a
+        delta we never measured."""
+        pads = getattr(self, "_chain_input_pads", None) or {}
+        counters = getattr(self, "_chain_input_buffers", None) or {}
+        snapshot = getattr(self, "_chain_input_snapshot", None) or {}
+        if interval <= 0.0:
+            return None
+        deltas: list[float] = []
+        for stream in self._CHAIN_INPUT_STREAMS:
+            key = (rung, stream)
+            if key not in pads or key not in counters:
+                return None
+            current = counters[key]
+            deltas.append((current - snapshot.get(key, current)) / interval)
+        return deltas[0], deltas[1]
+
+    def _u59_judge_leg_rate(self, now: float) -> None:
+        """Fire the diagnostic's one WARN line for a video-starved leg.
+
+        Runs on the CTRL output poll, before that poll's snapshot, so the delta it
+        reads is this interval's. An episode is the run of consecutive polls with
+        video below the floor WHILE audio stays above its own: the audio guard is
+        what separates this shape from the box-wide contention dips that take both
+        streams down together (measured ~0.92 nominal each on 2026-09-27), which
+        are not this defect and must not be logged as one. One line per episode,
+        and at most one line per ``_U59_RATE_WARN_INTERVAL_S``; an episode
+        suppressed by the interval is not latched, so it fires as soon as the
+        interval allows while it is still running."""
+        try:
+            interval = now - float(self._u59_rate_interval_t or 0.0)
+            self._u59_rate_interval_t = now
+            if not self._u59_enabled():
+                return
+            if interval <= 0.0:
+                return
+            rung = self._u59_rate_rung()
+            if rung is None:
+                return
+            rates = self._u59_rates(rung, interval)
+            if rates is None:
+                return
+            video_rate, audio_rate = rates
+            leg = self._u59_airing_leg()
+            video_nominal, audio_nominal = self._u59_nominal_rates(leg)
+            starving = video_rate < _U59_RATE_VIDEO_FLOOR * video_nominal
+            audio_healthy = audio_rate >= _U59_RATE_AUDIO_FLOOR * audio_nominal
+            if not (starving and audio_healthy):
+                self._u59_rate_streak = 0
+                self._u59_rate_in_episode = False
+                return
+            self._u59_rate_streak = int(self._u59_rate_streak or 0) + 1
+            if self._u59_rate_in_episode:
+                return
+            if self._u59_rate_streak < _U59_RATE_STREAK_POLLS:
+                return
+            fired_t = self._u59_fired_t
+            if fired_t is not None and now - float(fired_t) < _U59_RATE_WARN_INTERVAL_S:
+                return
+            self._u59_rate_in_episode = True
+            self._u59_fired_t = now
+            print(
+                self._u59_warn_line(
+                    now=now,
+                    leg=leg,
+                    rung=rung,
+                    video_rate=video_rate,
+                    audio_rate=audio_rate,
+                    video_nominal=video_nominal,
+                    audio_nominal=audio_nominal,
+                    interval=interval,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            # A diagnostic is never allowed to take a channel off air.
+            return
+
+    def _u59_warn_line(
+        self,
+        *,
+        now: float,
+        leg: dict[str, Any] | None,
+        rung: str,
+        video_rate: float,
+        audio_rate: float,
+        video_nominal: float,
+        audio_nominal: float,
+        interval: float,
+    ) -> str:
+        """The one line an episode prints: which leg, how far into it, which piece
+        of its playlist and how far into that, its source path, the queue levels
+        and decoders on its branch, and any QOS from the last 30s."""
+        pieces = list((leg or {}).get("pieces") or ())
+        txn_id = (leg or {}).get("txn_id")
+        active_index: int | None = None
+        best_t = 0.0
+        for index, piece in enumerate(pieces):
+            last_t = float(piece.get("last_t") or 0.0)
+            # ``last_t`` is a monotonic stamp, so a piece that never streamed has
+            # none and must not be selected -- its position is unknown, which is
+            # exactly what ``pos=none`` says. Two pieces CAN carry the same stamp
+            # (the clock is coarser than a 30fps probe), and on that tie the LATER
+            # piece wins: pieces stream in playlist order, so the later index is
+            # the one still streaming when the stamps agree.
+            if last_t <= 0.0:
+                continue
+            if last_t >= best_t:
+                best_t = last_t
+                active_index = index
+        if active_index is None:
+            piece_field = f"piece={_DIAGNOSTIC_NONE}"
+            pos_field = f"pos={_DIAGNOSTIC_NONE}"
+            leg_rt_field = f"leg_rt={_DIAGNOSTIC_NONE}"
+            path_field = _DIAGNOSTIC_NONE
+        else:
+            active = pieces[active_index]
+            span = self._u59_piece_span(active)
+            completed = 0.0
+            for piece in pieces[:active_index]:
+                piece_span = self._u59_piece_span(piece)
+                if piece_span is not None:
+                    completed += piece_span
+            piece_field = f"piece={active_index + 1}/{len(pieces)}"
+            pos_field = (
+                f"pos={_DIAGNOSTIC_NONE}" if span is None else f"pos={span:.3f}s"
+            )
+            leg_rt_field = (
+                f"leg_rt={_DIAGNOSTIC_NONE}"
+                if span is None and completed <= 0.0
+                else f"leg_rt={completed + (span or 0.0):.3f}s"
+            )
+            path_field = str(active.get("path") or _DIAGNOSTIC_NONE)
+        return (
+            f"WARN: leg chain-in video below floor "
+            f"reload_id={_DIAGNOSTIC_NONE if txn_id is None else txn_id} "
+            f"rung={rung} "
+            f"video={video_rate:.1f}/s ({video_rate / video_nominal:.2f}x nominal {video_nominal:.1f}) "
+            f"audio={audio_rate:.1f}/s ({audio_rate / audio_nominal:.2f}x nominal {audio_nominal:.1f}) "
+            f"window={interval:.1f}s polls={_U59_RATE_STREAK_POLLS} "
+            f"leg={(leg or {}).get('label') or _DIAGNOSTIC_NONE} "
+            f"{piece_field} {pos_field} {leg_rt_field} path={path_field} "
+            f"queues={self._u59_queue_field(leg)} "
+            f"decoders={self._u59_decoder_field(leg)} {self._u59_qos_field(now)}"
+        )
+
+    @staticmethod
+    def _u59_queue_field(leg: dict[str, Any] | None) -> str:
+        """``current-level-buffers``/``current-level-time`` for every queue-like
+        element in the leg. ``none`` when the leg has no top-level queue -- true of
+        a playlist leg, whose sub-chains carry no queue at all -- and that is an
+        honest "not addressable here", never a measured zero (see the block
+        comment's limit (b))."""
+        rendered: list[str] = []
+        for element in (leg or {}).get("queues") or ():
+            name = _DIAGNOSTIC_NONE
+            with contextlib.suppress(Exception):
+                name = str(element.get_name() or _DIAGNOSTIC_NONE)
+            buffers = _DIAGNOSTIC_NONE
+            with contextlib.suppress(Exception):
+                current = element.get_property("current-level-buffers")
+                if current is not None:
+                    buffers = str(int(current))
+            seconds = _DIAGNOSTIC_NONE
+            with contextlib.suppress(Exception):
+                current_time = element.get_property("current-level-time")
+                if current_time is not None:
+                    seconds = f"{int(current_time) / Gst.SECOND:.3f}s"
+            rendered.append(f"{name}={buffers}buf/{seconds}")
+        return ",".join(rendered) if rendered else _DIAGNOSTIC_NONE
+
+    @staticmethod
+    def _u59_decoder_field(leg: dict[str, Any] | None) -> str:
+        names: list[str] = []
+        for element in (leg or {}).get("decoders") or ():
+            with contextlib.suppress(Exception):
+                name = str(element.get_name() or "")
+                if name:
+                    names.append(name)
+        return ",".join(names) if names else _DIAGNOSTIC_NONE
+
+    def _u59_qos_field(self, now: float) -> str:
+        """QOS messages seen in the last ``_U59_QOS_WINDOW_S``, newest three
+        rendered. ``qos=0 in 30s`` when the window is empty, so the line always
+        carries the answer rather than omitting the question."""
+        cutoff = now - _U59_QOS_WINDOW_S
+        recent = [entry for entry in self._u59_qos if float(entry.get("t") or 0.0) >= cutoff]
+        if not recent:
+            return f"qos=0 in {int(_U59_QOS_WINDOW_S)}s"
+        rendered: list[str] = []
+        for entry in recent[-3:]:
+            fields = [str(entry.get("src") or "unknown")]
+            for key, label in (
+                ("jitter", "jit"),
+                ("proportion", "prop"),
+                ("quality", "qual"),
+                ("dropped", "drop"),
+                ("processed", "proc"),
+            ):
+                if key in entry:
+                    value = entry[key]
+                    fields.append(
+                        f"{label}={value:.4f}" if isinstance(value, float) else f"{label}={value}"
+                    )
+            rendered.append(",".join(fields))
+        return f"qos={len(recent)} in {int(_U59_QOS_WINDOW_S)}s [{'; '.join(rendered)}]"
+
+    def _bound_exceeded_warn_line(
+        self,
+        pending: dict[str, Any],
+        measured_ends: Sequence[tuple[str, int | None]],
+        spread_ns: int,
+        now: float | None = None,
+    ) -> str:
+        """U59 round 4 item 2: the bound-exceeded line states what was MEASURED.
+
+        The pre-round-4 text ended "... keeping the longer-leg end (no trim) -- a
+        truly broken asset must stay visible", which asserts a cause -- an asset
+        whose streams merely differ in length. Live 2026-09-27 showed the other
+        cause: an asset that is not broken at all, whose video DELIVERY fell short
+        at the end of the leg. The line therefore names the two measured ends, and
+        says delivery fell short when the leg-rate diagnostic fired inside the
+        last ``_U59_RATE_RECENT_FIRE_S``. The WARN prefix and the first clause are
+        unchanged, so an existing grep for
+        ``reload switch-at-shorter-leg bound exceeded`` still matches."""
+        ends = {label: end for label, end in measured_ends}
+        parts = [
+            "WARN: reload switch-at-shorter-leg bound exceeded",
+            f"reload_id={pending.get('txn_id')}",
+            f"spread={spread_ns / Gst.SECOND:.3f}s",
+            f"> {_SWITCH_SHORTER_LEG_MAX_TRIM_S:.3f}s;",
+            "keeping the longer-leg end (no trim)",
+            f"video_end={_seconds_or_none(ends.get('video'))}",
+            f"audio_end={_seconds_or_none(ends.get('audio'))}",
+        ]
+        moment = time.monotonic() if now is None else now
+        fired_t = getattr(self, "_u59_fired_t", None)
+        if fired_t is not None and 0.0 <= moment - float(fired_t) <= _U59_RATE_RECENT_FIRE_S:
+            parts.append(
+                "video delivery fell short at the end of the leg "
+                f"(leg chain-in video below floor {moment - float(fired_t):.1f}s ago)"
+            )
+        return " ".join(parts)
 
     def _check_stall(self) -> bool:
         """Quit the run loop on either of two DISTINCT budgets, measured from
@@ -4889,6 +5512,10 @@ class GstPlayoutEngine:
         # ladder's ``in`` rung for why the first buffer alone cannot say whether
         # the producer KEPT pushing after the switch.
         self._install_new_leg_inbound_counters(pending)
+        # U59 round 4: the same moment is "this leg is the selected one now", so
+        # it is also where the rate diagnostic learns which leg to attribute a
+        # video starvation to. Guarded inside -- see ``_u59_record_leg``.
+        self._u59_record_leg(pending)
 
     @staticmethod
     def _mux_pad_stream_label(pad: Any) -> str:
@@ -5463,13 +6090,11 @@ class GstPlayoutEngine:
                 pending["fallback_switch_running_time_ns"] = switch_running_time
             # U56 round 4: over the bound the max stands and the spread is named,
             # so a boundary that was NOT trimmed never looks like one that was.
+            # U59 round 4 item 2: the line names the two MEASURED ends and no
+            # longer asserts a broken asset -- see ``_bound_exceeded_warn_line``.
             if switch_trim_bound_exceeded:
                 print(
-                    f"WARN: reload switch-at-shorter-leg bound exceeded "
-                    f"reload_id={pending['txn_id']} "
-                    f"spread={switch_spread_ns / Gst.SECOND:.3f}s "
-                    f"> {_SWITCH_SHORTER_LEG_MAX_TRIM_S:.3f}s; keeping the longer-leg end "
-                    "(no trim) -- a truly broken asset must stay visible",
+                    self._bound_exceeded_warn_line(pending, measured_ends, switch_spread_ns),
                     file=sys.stderr,
                     flush=True,
                 )
