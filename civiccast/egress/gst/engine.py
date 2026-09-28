@@ -673,6 +673,36 @@ _U59_QOS_WINDOW_S = 30.0
 _U59_QOS_HISTORY = 64
 _U59_RATE_KEEP_LEGS = 3
 
+# U59 round 4b: the delivery-LAG judge, the second instrument for the same
+# defect. Round 4 judges the on-air leg's INSTANTANEOUS rate against a 0.9x
+# floor, which a sustained-but-mild shortfall never crosses -- live 2026-09-28
+# 06:24 (public, reload_id=16) drained video at ~0.967x nominal for ~60s and
+# emitted a 2.000s picture hole, while its per-poll rate sat just AT the floor.
+# A shortfall that mild cannot be caught by any rate floor that is also quiet on
+# healthy legs; what it does move, without bound, is the ACCUMULATED difference
+# between the seconds of audio and the seconds of video the leg has delivered.
+# This judge measures exactly that: the growth of that lag across a rolling
+# window, which is drift-immune (a 29.97fps leg's 0.1% mismatch moves it 0.06s
+# per 60s window, 16x under the bound) and, because both streams are counted in
+# their OWN nominal seconds, blind by construction to a box-wide contention dip
+# (both streams at 0.92 nominal give a lag growth of exactly 0).
+#
+# Measured on the real excerpts (see reports/U59.md round 5): across ~6000s of
+# C9 polling and 418s of C11, a healthy leg's 60s-window growth never exceeded
+# 0.32s; the two occurrences measured +4.57s (C9) and +2.36s (C11). The bound
+# sits between them with ~3x margin on both sides.
+_U59_LAG_WINDOW_S = 60.0
+_U59_LAG_BOUND_S = 1.0
+_U59_LAG_STREAK_POLLS = 2
+# How many (time, lag) samples the window is reconstructed from. Samples are
+# pruned by TIME first (see ``_u59_prune_lag_samples``): everything inside the
+# window, plus the one sample before it that is the window's baseline, so the
+# growth is computable at ANY poll cadence rather than only at the 5s
+# ``_OUTPUT_PROGRESS_INTERVAL_S``. This count is then only the memory guard for a
+# caller driving the judge far faster than the progress interval -- a 5s cadence
+# needs 13 samples for a 60s window, and 128 covers it down to a 0.47s cadence.
+_U59_LAG_SAMPLES = 128
+
 
 def _resolve_first_output_timeout_s(explicit: float | None) -> float:
     """Resolve the time-to-FIRST-output bound: an explicit constructor value
@@ -3236,6 +3266,13 @@ class GstPlayoutEngine:
         # are this interval's -- the ladder's baseline is still the previous
         # print's (the same baseline the line above just rendered).
         self._u59_judge_leg_rate(now)
+        # U59 round 4b: the same poll feeds the accumulated-delivery judge, and on
+        # the same terms -- before the snapshot, so it reads this interval's
+        # deltas. It is a second instrument, not a replacement: the rate floor
+        # catches a leg that is COLLAPSING, this catches one that is quietly
+        # running short (0.967x nominal on 2026-09-28 06:24) and accumulating the
+        # seconds that become the changeover's hole.
+        self._u59_judge_leg_lag(now)
         self._snapshot_mux_input(now)
         self._snapshot_chain_input()
 
@@ -3265,6 +3302,13 @@ class GstPlayoutEngine:
     _u59_rate_in_episode: ClassVar[bool] = False
     _u59_fired_t: ClassVar[float | None] = None
     _u59_rate_interval_t: ClassVar[float] = 0.0
+    _u59_lag_samples: ClassVar[tuple[tuple[float, float], ...]] = ()
+    _u59_lag_total: ClassVar[float] = 0.0
+    _u59_lag_txn: ClassVar[Any] = None
+    _u59_lag_streak: ClassVar[int] = 0
+    _u59_lag_in_episode: ClassVar[bool] = False
+    _u59_lag_fired_t: ClassVar[float | None] = None
+    _u59_lag_interval_t: ClassVar[float] = 0.0
 
     def _u59_init_diagnostics(self) -> None:
         """This worker's own diagnostic state.
@@ -3280,6 +3324,13 @@ class GstPlayoutEngine:
         self._u59_rate_in_episode = False
         self._u59_fired_t = None
         self._u59_rate_interval_t = 0.0
+        self._u59_lag_samples = ()
+        self._u59_lag_total = 0.0
+        self._u59_lag_txn = None
+        self._u59_lag_streak = 0
+        self._u59_lag_in_episode = False
+        self._u59_lag_fired_t = None
+        self._u59_lag_interval_t = 0.0
 
     @staticmethod
     def _u59_enabled() -> bool:
@@ -3651,8 +3702,25 @@ class GstPlayoutEngine:
         """The one line an episode prints: which leg, how far into it, which piece
         of its playlist and how far into that, its source path, the queue levels
         and decoders on its branch, and any QOS from the last 30s."""
-        pieces = list((leg or {}).get("pieces") or ())
         txn_id = (leg or {}).get("txn_id")
+        return (
+            f"WARN: leg chain-in video below floor "
+            f"reload_id={_DIAGNOSTIC_NONE if txn_id is None else txn_id} "
+            f"rung={rung} "
+            f"video={video_rate:.1f}/s ({video_rate / video_nominal:.2f}x nominal {video_nominal:.1f}) "
+            f"audio={audio_rate:.1f}/s ({audio_rate / audio_nominal:.2f}x nominal {audio_nominal:.1f}) "
+            f"window={interval:.1f}s polls={_U59_RATE_STREAK_POLLS} "
+            f"{self._u59_leg_suffix(now, leg)}"
+        )
+
+    def _u59_leg_suffix(self, now: float, leg: dict[str, Any] | None) -> str:
+        """The per-leg half of a U59 WARN line, shared by both instruments.
+
+        Factored out in round 4b so the delivery-lag line names the same leg with
+        the same fields as the rate line -- one description of the leg, two
+        measurements of it. The text is byte-identical to what the rate line
+        built inline before this round."""
+        pieces = list((leg or {}).get("pieces") or [])
         active_index: int | None = None
         best_t = 0.0
         for index, piece in enumerate(pieces):
@@ -3692,17 +3760,201 @@ class GstPlayoutEngine:
             )
             path_field = str(active.get("path") or _DIAGNOSTIC_NONE)
         return (
-            f"WARN: leg chain-in video below floor "
-            f"reload_id={_DIAGNOSTIC_NONE if txn_id is None else txn_id} "
-            f"rung={rung} "
-            f"video={video_rate:.1f}/s ({video_rate / video_nominal:.2f}x nominal {video_nominal:.1f}) "
-            f"audio={audio_rate:.1f}/s ({audio_rate / audio_nominal:.2f}x nominal {audio_nominal:.1f}) "
-            f"window={interval:.1f}s polls={_U59_RATE_STREAK_POLLS} "
             f"leg={(leg or {}).get('label') or _DIAGNOSTIC_NONE} "
             f"{piece_field} {pos_field} {leg_rt_field} path={path_field} "
             f"queues={self._u59_queue_field(leg)} "
             f"decoders={self._u59_decoder_field(leg)} {self._u59_qos_field(now)}"
         )
+
+    def _u59_judge_leg_lag(self, now: float) -> None:
+        """Round 4b: fire one WARN line when the on-air leg stops DELIVERING video
+        as fast as it delivers audio, measured as accumulated lag.
+
+        The quantity is ``audio_seconds - video_seconds`` delivered by this leg,
+        each counted in its own negotiated nominal, and the test is its GROWTH
+        across a fully covered ``_U59_LAG_WINDOW_S`` window -- not its absolute
+        value, because an absolute bound would accumulate a small nominal
+        mismatch over a 2000s leg. The window's own baseline is a sample taken at
+        least a window ago, so the growth over it is drift-immune.
+
+        Why a second instrument: the round-4 rate floor must stay quiet on
+        healthy legs, and a shortfall mild enough to stay above a quiet floor
+        (0.967x nominal, live 2026-09-28 06:24) still accumulates seconds -- it
+        became a 2.000s picture hole. This measures the accumulation itself, and
+        the number it prints is the number the switch then measures as the
+        ``video_end``/``audio_end`` spread.
+
+        Disclosed limits. (a) It is armed only once the window is fully covered,
+        i.e. after the first ``_U59_LAG_WINDOW_S`` of a leg, because a growth over
+        a partly covered window is not the bound it is compared against. (b) The
+        accumulator resets when the leg on air changes identity, so a deficit is
+        never inherited across a changeover. (c) Like the rate judge it watches
+        rung ``sel``, so a collapse that never reaches the selector is invisible
+        to it. (d) It is one-sided: a leg CATCHING UP (a post-switch burst, video
+        above nominal) grows the lag negatively and is not this defect.
+        """
+        try:
+            interval = now - float(self._u59_lag_interval_t or 0.0)
+            self._u59_lag_interval_t = now
+            if not self._u59_enabled():
+                return
+            if interval <= 0.0:
+                return
+            rung = self._u59_rate_rung()
+            if rung is None:
+                return
+            rates = self._u59_rates(rung, interval)
+            if rates is None:
+                return
+            video_rate, audio_rate = rates
+            leg = self._u59_airing_leg()
+            video_nominal, audio_nominal = self._u59_nominal_rates(leg)
+            self._u59_accumulate_leg_lag(now, leg, video_rate, audio_rate,
+                                        video_nominal, audio_nominal, interval)
+            growth = self._u59_lag_growth(now)
+            if growth is None or growth < _U59_LAG_BOUND_S:
+                self._u59_lag_streak = 0
+                self._u59_lag_in_episode = False
+                return
+            self._u59_lag_streak = int(self._u59_lag_streak or 0) + 1
+            if self._u59_lag_in_episode:
+                return
+            if self._u59_lag_streak < _U59_LAG_STREAK_POLLS:
+                return
+            fired_t = self._u59_lag_fired_t
+            if fired_t is not None and now - float(fired_t) < _U59_RATE_WARN_INTERVAL_S:
+                return
+            self._u59_lag_in_episode = True
+            self._u59_lag_fired_t = now
+            print(
+                self._u59_lag_line(
+                    now=now,
+                    leg=leg,
+                    rung=rung,
+                    growth=growth,
+                    video_rate=video_rate,
+                    audio_rate=audio_rate,
+                    interval=interval,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            # A diagnostic is never allowed to take a channel off air.
+            return
+
+    def _u59_accumulate_leg_lag(
+        self,
+        now: float,
+        leg: dict[str, Any] | None,
+        video_rate: float,
+        audio_rate: float,
+        video_nominal: float,
+        audio_nominal: float,
+        interval: float,
+    ) -> None:
+        """Add this poll's delivery to the on-air leg's lag, resetting on a change
+        of leg. The sample list is pruned by time and capped, so the memory cost
+        is a constant however long a leg runs."""
+        txn_id = (leg or {}).get("txn_id")
+        if not self._u59_lag_samples or txn_id != self._u59_lag_txn:
+            self._u59_lag_samples = ()
+            self._u59_lag_total = 0.0
+            self._u59_lag_txn = txn_id
+            self._u59_lag_streak = 0
+            self._u59_lag_in_episode = False
+        video_seconds = video_rate * interval / video_nominal
+        audio_seconds = audio_rate * interval / audio_nominal
+        self._u59_lag_total = float(self._u59_lag_total or 0.0) + (
+            audio_seconds - video_seconds
+        )
+        samples = list(self._u59_lag_samples) + [(now, self._u59_lag_total)]
+        self._u59_lag_samples = tuple(self._u59_prune_lag_samples(samples, now))
+
+    @staticmethod
+    def _u59_prune_lag_samples(
+        samples: list[tuple[float, float]], now: float
+    ) -> list[tuple[float, float]]:
+        """Keep every sample inside the window, plus the newest one BEFORE it.
+
+        That older sample is the window's baseline: without it the growth is
+        uncomputable, so it is dropped last -- the count cap trims the oldest
+        IN-window sample, never the baseline. Pruning by time rather than by
+        count is what keeps a full window available whatever the poll cadence."""
+        cutoff = now - _U59_LAG_WINDOW_S
+        inside = [sample for sample in samples if sample[0] > cutoff]
+        before = [sample for sample in samples if sample[0] <= cutoff]
+        keep = ([before[-1]] if before else []) + inside[-(_U59_LAG_SAMPLES - 1):]
+        return keep
+
+    def _u59_lag_growth(self, now: float) -> float | None:
+        """The lag's growth across the window ending now, or ``None`` while the
+        window is not yet fully covered -- an uncovered window has no baseline and
+        must not be judged as if it were zero."""
+        cutoff = now - _U59_LAG_WINDOW_S
+        baseline: float | None = None
+        for sample_t, sample_total in self._u59_lag_samples:
+            if sample_t > cutoff:
+                break
+            baseline = sample_total
+        if baseline is None:
+            return None
+        return float(self._u59_lag_total or 0.0) - baseline
+
+    def _u59_lag_line(
+        self,
+        *,
+        now: float,
+        leg: dict[str, Any] | None,
+        rung: str,
+        growth: float,
+        video_rate: float,
+        audio_rate: float,
+        interval: float,
+    ) -> str:
+        """The lag episode's one line. It names the accumulated deficit in
+        seconds and the window it grew across, which is the quantity the
+        changeover will measure as its ``video_end``/``audio_end`` spread -- then
+        the same leg description the rate line carries."""
+        txn_id = (leg or {}).get("txn_id")
+        return (
+            f"WARN: leg delivery lag "
+            f"reload_id={_DIAGNOSTIC_NONE if txn_id is None else txn_id} "
+            f"rung={rung} "
+            f"lag=+{growth:.3f}s over {_U59_LAG_WINDOW_S:.1f}s "
+            f"(bound {_U59_LAG_BOUND_S:.1f}s, polls={_U59_LAG_STREAK_POLLS}) "
+            f"video={video_rate:.1f}/s audio={audio_rate:.1f}/s window={interval:.1f}s "
+            f"{self._u59_leg_suffix(now, leg)}"
+        )
+
+    def _u59_leg_delivery_clause(self, moment: float) -> str:
+        """The bound-exceeded line's delivery clause, naming whichever instrument
+        measured the shortfall that became this spread.
+
+        Prefers the LAG witness: it measures the deficit in seconds -- the same
+        quantity the spread is -- whereas the rate witness only reports that the
+        instantaneous rate was low at some point. Round 4 could only see the rate
+        witness; live 2026-09-28 06:24 is the case where the lag witness fired and
+        the rate one did not."""
+        lag_t = getattr(self, "_u59_lag_fired_t", None)
+        if (
+            lag_t is not None
+            and 0.0 <= moment - float(lag_t) <= _U59_RATE_RECENT_FIRE_S
+        ):
+            return (
+                "video delivery fell short at the end of the leg "
+                f"(leg delivery lag fired {moment - float(lag_t):.1f}s ago)"
+            )
+        rate_t = getattr(self, "_u59_fired_t", None)
+        if (
+            rate_t is not None
+            and 0.0 <= moment - float(rate_t) <= _U59_RATE_RECENT_FIRE_S
+        ):
+            return (
+                "video delivery fell short at the end of the leg "
+                f"(leg chain-in video below floor {moment - float(rate_t):.1f}s ago)"
+            )
+        return ""
 
     @staticmethod
     def _u59_queue_field(leg: dict[str, Any] | None) -> str:
@@ -3779,10 +4031,15 @@ class GstPlayoutEngine:
         whose streams merely differ in length. Live 2026-09-27 showed the other
         cause: an asset that is not broken at all, whose video DELIVERY fell short
         at the end of the leg. The line therefore names the two measured ends, and
-        says delivery fell short when the leg-rate diagnostic fired inside the
-        last ``_U59_RATE_RECENT_FIRE_S``. The WARN prefix and the first clause are
+        says delivery fell short when either U59 instrument fired inside the last
+        ``_U59_RATE_RECENT_FIRE_S``. The WARN prefix and the first clause are
         unchanged, so an existing grep for
-        ``reload switch-at-shorter-leg bound exceeded`` still matches."""
+        ``reload switch-at-shorter-leg bound exceeded`` still matches.
+
+        Round 4b: the clause is now chosen by ``_u59_leg_delivery_clause``, which
+        prefers the LAG witness (it measures the deficit in seconds -- the same
+        quantity as the spread) and falls back to the round-4 rate witness. When
+        neither fired the line is byte-identical to round 4's."""
         ends = {label: end for label, end in measured_ends}
         parts = [
             "WARN: reload switch-at-shorter-leg bound exceeded",
@@ -3794,12 +4051,9 @@ class GstPlayoutEngine:
             f"audio_end={_seconds_or_none(ends.get('audio'))}",
         ]
         moment = time.monotonic() if now is None else now
-        fired_t = getattr(self, "_u59_fired_t", None)
-        if fired_t is not None and 0.0 <= moment - float(fired_t) <= _U59_RATE_RECENT_FIRE_S:
-            parts.append(
-                "video delivery fell short at the end of the leg "
-                f"(leg chain-in video below floor {moment - float(fired_t):.1f}s ago)"
-            )
+        clause = self._u59_leg_delivery_clause(moment)
+        if clause:
+            parts.append(clause)
         return " ".join(parts)
 
     def _check_stall(self) -> bool:
