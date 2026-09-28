@@ -125,7 +125,13 @@ def _parser_for(encoder: str) -> str | None:
 
 
 def encoder_chain(profile: EncodeProfile) -> str:
-    """The conform→encode→parse chain feeding the muxer (base/CPU tier default)."""
+    """The conform→encode→parse chain feeding the muxer (base/CPU tier default).
+
+    Mirrors ``graph.encode_chain_specs`` and, like it, carries NO ``videorate``:
+    each source subchain conforms its own stream to the target framerate before
+    the selector, so a second one at this hop would only be the element that
+    carries its output grid frontier across a changeover (U56 round 7).
+    """
     caps = _VIDEO_CAPS.format(w=profile.width, h=profile.height, fps=profile.fps)
     if profile.encoder == "x264enc":
         enc = (
@@ -135,7 +141,7 @@ def encoder_chain(profile: EncodeProfile) -> str:
     else:
         # hardware/alt encoders share the kbps ``bitrate`` property name
         enc = f"{profile.encoder} bitrate={profile.video_bitrate_kbps}"
-    chain = f"videoconvert ! videoscale ! videorate ! {caps} ! {enc}"
+    chain = f"videoconvert ! videoscale ! {caps} ! {enc}"
     parser = _parser_for(profile.encoder)
     if parser is not None:
         # config-interval=-1 → codec config before every IDR, so a set-top tuning

@@ -56,6 +56,24 @@ from datetime import datetime, timedelta
 DEFERRED_SWITCH_SUFFIX = ".defer-eos.json"
 IMMEDIATE_SWITCH_SUFFIX = ".immediate.json"
 
+#: Environment variable the DAEMON's worker launcher sets to mark its child as a
+#: PERSISTENT live channel: ``strategy._default_worker_launcher``
+#: (civiccast/egress/gst/strategy.py), the one place a worker's environment is
+#: built, on the path ``GstPlayoutStrategy.start()`` takes for every channel the
+#: daemon launches. It is the ONLY signal that can reach the worker: preparation
+#: runs in the daemon and the control vocabulary (``swap``/``reload``/``caption``/
+#: ``stop``) has no "you are on air" token, so nothing else distinguishes an ON_AIR
+#: channel from a finite run (a smoke ``SWAPS`` run, a test harness, the beta.5
+#: baseline pin) inside the worker process. ``worker.main()`` reads it and arms the
+#: engine's plan-EOS slate hold only for the exact value ``"1"``; unset, ``0`` and
+#: anything else keep exit-at-plan-EOS.
+#:
+#: Defined here, not in ``strategy.py``, so the writer (strategy) and the reader
+#: (worker) share ONE name without the worker importing the strategy -- that import
+#: would drag the daemon's import graph into the worker process, which the worker's
+#: module docstring forbids. Both already import this gi-free module.
+WORKER_PERSISTENT_ENV = "CIVICAST_WORKER_PERSISTENT"
+
 
 def reload_sidecar_suffix(*, switch_at_end_of_current: bool) -> str:
     """The filename suffix ``reload_content`` appends, encoding the switch mode."""

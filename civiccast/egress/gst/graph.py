@@ -371,12 +371,23 @@ def encode_chain_specs(
     ``cbr=True`` adds HRD constant-bitrate rate control when the explicit optional
     ``x264enc`` encoder is selected; the bundled public-beta runtime defaults to
     ``openh264enc`` and does not ship GPL x264.
+
+    No ``videorate`` here, deliberately. Every source subchain already conforms
+    its own stream to the target framerate before it reaches the selector
+    (``bridge`` builds each leg as ``... ! videorate ! capsfilter``), so a second
+    one at this hop re-times a stream that is already at the target rate. It is
+    not merely redundant: it is the only element in the video path that sees
+    more than one leg, so it CARRIES its output grid frontier across an
+    input-selector changeover -- ``next_output_ts`` survives the switch and is
+    re-anchored to the new segment's base, and the incoming leg's first picture
+    is then emitted at ``max(start_new, frontier - base_new)`` instead of at the
+    switch point. MEASURED on the LIVE C7 bytes (U56 round 7, ``tree_fix13``):
+    a 0.733 s video hole at the changeover, 22 frames at 30 fps.
     """
     caps = f"video/x-raw,width={width},height={height},framerate={fps}/1"
     specs = [
         ElementSpec("videoconvert"),
         ElementSpec("videoscale"),
-        ElementSpec("videorate"),
         ElementSpec("capsfilter", props={"caps": caps}),
     ]
     if encoder == "x264enc":

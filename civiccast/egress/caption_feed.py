@@ -30,7 +30,10 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from civiccast.captions.models import CaptionCue
-from civiccast.egress.caption_embed import load_caption_cues_from_timed_text
+from civiccast.egress.caption_embed import (
+    count_caption_timing_windows,
+    load_caption_cues_from_timed_text,
+)
 
 _LOG = logging.getLogger(__name__)
 
@@ -258,15 +261,38 @@ def build_caption_feed_worker(
                 channels.append(config.channel_id)
         return channels
 
+    # U46 (2026-09-26): a sidecar the parser cannot read is the one caption fault
+    # this feed used to swallow whole. Public's sidecar grew normally while its
+    # emitted stream carried no captions for hours: the feed parsed 0 cues, sent 0
+    # commands, and the daemon/strategy/engine legs below it never saw a single
+    # command, so every warning they own stayed silent too. Announced once per
+    # channel per broken spell, never once per 2 s scan.
+    unreadable_announced: set[str] = set()
+
     def _cues(channel_id: str) -> list[CaptionCue]:
         sidecar = (
             caption_sidecar_for(channel_id)
             if caption_sidecar_for is not None
             else resolved_work_dir / channel_id / "captions" / "active.vtt"
         )
-        if sidecar.exists():
-            return load_caption_cues_from_timed_text(sidecar, source_id=channel_id)
-        return []
+        if not sidecar.exists():
+            return []
+        cues = load_caption_cues_from_timed_text(sidecar, source_id=channel_id)
+        if cues:
+            unreadable_announced.discard(channel_id)
+            return cues
+        windows = count_caption_timing_windows(sidecar)
+        if windows and channel_id not in unreadable_announced:
+            unreadable_announced.add(channel_id)
+            _LOG.warning(
+                "Caption sidecar for channel %s holds %d timing windows but the parser "
+                "read 0 cues from it (%s): this channel is emitting a caption-free "
+                "stream while its sidecar keeps growing.",
+                channel_id,
+                windows,
+                sidecar,
+            )
+        return cues
 
     return CaptionFeedWorker(
         work_dir=resolved_work_dir,

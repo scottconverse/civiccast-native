@@ -348,10 +348,165 @@ def _windows_pipe_write_line(handle: Any, write_lock: threading.Lock, text: str)
             return True
 
 
+#: U46: how often the worker states its caption receipt, and how many silent
+#: intervals pass before it says so out loud. One minute is short enough that an
+#: operator watching a live channel sees the leg stop within a couple of minutes;
+#: ten minutes of silence after captions HAD been flowing is long past any normal
+#: pause in a meeting's speech.
+_CAPTION_RECEIPT_INTERVAL_S = 60.0
+_CAPTION_RECEIPT_SILENT_WINDOWS = 10
+
+
+def _caption_receipt_label(pipe_name: str) -> str:
+    """``\\\\.\\pipe\\civiccast-worker-<channel_id>`` -> ``<channel_id>``.
+
+    The pipe name is the only channel identity this worker process is handed
+    (``strategy._WORKER_PIPE_NAME_PREFIX`` builds it); the graph JSON carries no
+    channel id. A name without the prefix is reported as-is rather than guessed at.
+    """
+
+    prefix = "civiccast-worker-"
+    return pipe_name.rsplit(prefix, 1)[-1] if prefix in pipe_name else pipe_name
+
+
+class _CaptionReceiptCounter:
+    """Per-channel caption-leg receipt: one ``CTRL caption`` line per interval (U46).
+
+    Why this exists: the caption leg had no positive evidence anywhere. A worker
+    whose engine took every caption cue logged exactly what a worker receiving
+    nothing logged -- nothing -- so on 2026-09-26 the public channel emitted a
+    caption-free stream for hours with every caption-path log line silent
+    (``grep "Caption feed"``/``"lost-ack"`` in the control-plane log: no hits).
+    Failure warnings exist for the daemon, strategy and engine legs; nothing
+    reported the successful case or its absence at the worker.
+
+    Counts, per interval: RECEIVED caption control commands dispatched,
+    INJECTED (the engine's ``push_caption_cue`` returned ``"applied"``),
+    REPLAYED (a redelivered command id -- the ack was lost, the effect was not,
+    so it is deliberately not a second receipt), and REJECTED (``"error"``, e.g.
+    "no live caption source").
+
+    Emission is time-driven, not command-driven: a channel that receives NOTHING
+    is exactly the case this must report, so a receipt that only printed on
+    traffic would stay silent through the fault it exists to catch. A channel
+    that has never received a caption command stays silent forever (live captions
+    switched off, or a channel that has not started them) -- the warning fires
+    only on the transition from flowing to stopped.
+    """
+
+    def __init__(
+        self,
+        label: str,
+        *,
+        interval_s: float = _CAPTION_RECEIPT_INTERVAL_S,
+        silent_windows: int = _CAPTION_RECEIPT_SILENT_WINDOWS,
+        clock: Any = time.monotonic,
+        emit: Any = None,
+    ) -> None:
+        self._label = label
+        self._interval_s = interval_s
+        self._silent_windows = silent_windows
+        self._clock = clock
+        self._emit = emit if emit is not None else _print_caption_receipt
+        self._lock = threading.Lock()
+        self._received = 0
+        self._injected = 0
+        self._replayed = 0
+        self._rejected = 0
+        self._last_active: float | None = None
+        self._silent_announced = False
+        self._window_start: float = self._clock()
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    def record_from_dispatch(self, parsed: Any, ack_result: str, *, replayed: bool = False) -> None:
+        """Count one dispatch outcome. Only the ``caption`` verb is counted."""
+
+        if not parsed or parsed[0] != "caption":
+            return
+        with self._lock:
+            if replayed:
+                self._replayed += 1
+                return
+            self._received += 1
+            if ack_result == "applied":
+                self._injected += 1
+            else:
+                self._rejected += 1
+
+    def receipt_line(self, now: float | None = None) -> str | None:
+        """The line this window owes the log, or ``None`` for a quiet window.
+
+        A window only closes on its own boundary: the counts it reports are a
+        full interval's, so the ``in Ns`` it prints is the interval it actually
+        measured rather than however long it happens to have been since the last
+        command arrived.
+        """
+
+        moment = self._clock() if now is None else now
+        with self._lock:
+            window_s = moment - self._window_start
+            if window_s < self._interval_s:
+                return None  # this window has not closed yet
+            self._window_start = moment
+            received, injected = self._received, self._injected
+            replayed, rejected = self._replayed, self._rejected
+            had_activity = bool(received or injected or replayed or rejected)
+            if had_activity:
+                self._received = self._injected = self._replayed = self._rejected = 0
+                self._last_active = moment
+                self._silent_announced = False
+                return (
+                    f"CTRL caption {self._label}: received={received} injected={injected} "
+                    f"replayed={replayed} rejected={rejected} in {window_s:.0f}s"
+                )
+            if self._last_active is None:
+                return None  # captions have never arrived on this pipe: stay quiet
+            silent_s = moment - self._last_active
+            if silent_s >= self._interval_s * self._silent_windows and not self._silent_announced:
+                self._silent_announced = True
+                return (
+                    f"CTRL caption {self._label}: WARNING no caption command received for "
+                    f"{silent_s:.0f}s since the last receipt; this channel's emitted stream is "
+                    f"carrying no new captions"
+                )
+            return None
+
+    def start(self) -> None:
+        """Start the interval thread (idempotent)."""
+
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(
+            target=self._run,
+            name="civiccast-worker-caption-receipt",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self._interval_s):
+            line = self.receipt_line()
+            if line is not None:
+                self._emit(line)
+
+
+def _print_caption_receipt(line: str) -> None:
+    """Default receipt sink: the worker's own stdout (``gst-worker.stdout.log``),
+    matching every other ``CTRL`` receipt this process emits."""
+
+    print(line, flush=True)
+
+
 def _windows_pipe_reader_loop(
     pipe_name: str,
     engine_instance: Any,
     stop_event: threading.Event,
+    *,
+    receipt: _CaptionReceiptCounter | None = None,
 ) -> None:
     """D2 Windows worker-pipe reader THREAD (design.md sec4): blocks on pipe
     reads and marshals each NEW command onto the GLib main loop via
@@ -366,6 +521,12 @@ def _windows_pipe_reader_loop(
     applied = _AppliedIdCache()
     write_lock = threading.Lock()
     stop_requested = threading.Event()
+    caption_receipt = (
+        receipt
+        if receipt is not None
+        else _CaptionReceiptCounter(_caption_receipt_label(pipe_name))
+    )
+    caption_receipt.start()
     handle: Any = None
     backoff = 0.5
     while not stop_event.is_set():
@@ -405,6 +566,10 @@ def _windows_pipe_reader_loop(
             # re-acks "accepted" (matching the original receipt), never
             # "applied".
             reack_result = "accepted" if parsed is not None and parsed[0] == "reload" else "applied"
+            # U46: a redelivered caption id is a LOST ACK, not a second caption --
+            # counted separately so "received" keeps meaning "cues the engine was
+            # asked to inject" on the receipt line.
+            caption_receipt.record_from_dispatch(parsed, reack_result, replayed=True)
             if reack_result == "accepted":
                 # The first accepted reload may now be doing a slow main-loop
                 # arm. A lost acknowledgement replay must not wait behind that
@@ -462,6 +627,7 @@ def _windows_pipe_reader_loop(
             cid: str = command_id,
             line_text: str = command_line,
             completed: threading.Event = ack_written,
+            parsed_cmd: Any = parsed,
         ) -> bool:
             # F1 redesign: the ack is ALWAYS written synchronously now (a
             # "reload"'s eventual settle outcome goes out-of-band via
@@ -488,6 +654,9 @@ def _windows_pipe_reader_loop(
                     result, detail = "error", repr(exc)
                 if result == "applied":
                     applied.mark_applied(cid)
+                # U46: the caption leg's only positive evidence. Recorded here,
+                # where the engine's own verdict for this command is final.
+                caption_receipt.record_from_dispatch(parsed_cmd, result)
                 _windows_pipe_write_line(
                     h,
                     write_lock,
@@ -500,9 +669,12 @@ def _windows_pipe_reader_loop(
         GLib.idle_add(_dispatch_and_ack)
         while not stop_event.is_set() and not ack_written.wait(0.05):
             pass
+    caption_receipt.stop()
 
 
-def _run_forever_windows_pipe(engine_instance: Any, pipe_name: str) -> dict[str, Any]:
+def _run_forever_windows_pipe(
+    engine_instance: Any, pipe_name: str, *, hold_slate_at_plan_eos: bool = False
+) -> dict[str, Any]:
     """D2 Windows worker-pipe entry point: starts the reader thread, then runs the
     engine's normal ``run_forever`` loop with ``control_fifo=None`` (no FIFO --
     the reader thread marshals commands onto the SAME GLib main loop via
@@ -517,7 +689,9 @@ def _run_forever_windows_pipe(engine_instance: Any, pipe_name: str) -> dict[str,
     )
     reader_thread.start()
     try:
-        result: dict[str, Any] = engine_instance.run_forever(control_fifo=None)
+        result: dict[str, Any] = engine_instance.run_forever(
+            control_fifo=None, hold_slate_at_plan_eos=hold_slate_at_plan_eos
+        )
         return result
     finally:
         stop_event.set()
@@ -555,15 +729,27 @@ def main() -> int:
         commit_timeout_s=commit_timeout,
     )
     swaps = int(os.environ.get("SWAPS", "0"))
+    # U41: the daemon's live-channel launcher (strategy._default_worker_launcher)
+    # marks its child with WORKER_PERSISTENT_ENV=1; the engine arms its plan-EOS
+    # slate hold only for that. Unset -- a smoke SWAPS run, a test harness, the
+    # beta.5 baseline pin -- is a FINITE run that must still exit when its plan
+    # ends (that pin's only shutdown is the worker exiting at plan EOS). Read
+    # through the sibling module, never a civiccast package import: see this
+    # module's docstring for the isolation contract.
+    persistent = os.environ.get(reload_policy_mod.WORKER_PERSISTENT_ENV) == "1"
     try:
         if swaps > 0:
             result = engine_instance.run(
                 swaps=swaps, interval_s=int(os.environ.get("INTERVAL", "2"))
             )
         elif os.name == "nt" and control_fifo:
-            result = _run_forever_windows_pipe(engine_instance, control_fifo)
+            result = _run_forever_windows_pipe(
+                engine_instance, control_fifo, hold_slate_at_plan_eos=persistent
+            )
         else:
-            result = engine_instance.run_forever(control_fifo=control_fifo)
+            result = engine_instance.run_forever(
+                control_fifo=control_fifo, hold_slate_at_plan_eos=persistent
+            )
     except enginemod.PrerollTimeoutError as exc:
         # Item 82: a slow-but-progressing preroll under CPU load is a slow
         # start, not a crash. Exit with a DISTINCT code (never 1, the generic

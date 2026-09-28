@@ -90,7 +90,6 @@ class _BeginRecord:
     segment_names: tuple[str, ...]
     queue_depth: int
     oldest_queue_age_seconds: float
-    preceding_batch_seconds: float
     started_at: float
 
 
@@ -147,7 +146,6 @@ class BatchDiagnosticCollector:
         segment_names: tuple[str, ...] | list[str],
         queue_depth: int,
         oldest_queue_age_seconds: float,
-        preceding_batch_seconds: float = 0.0,
     ) -> None:
         """Record that a batch was selected, BEFORE it runs.
 
@@ -171,7 +169,6 @@ class BatchDiagnosticCollector:
                 segment_names=tuple(str(n) for n in segment_names)[:_MAX_SEGMENT_NAMES],
                 queue_depth=int(queue_depth),
                 oldest_queue_age_seconds=_round_seconds(oldest_queue_age_seconds),
-                preceding_batch_seconds=_round_seconds(preceding_batch_seconds),
                 started_at=time.monotonic(),
             )
 
@@ -214,7 +211,6 @@ class BatchDiagnosticCollector:
                         else begun.queue_depth
                     ),
                     "oldest_queue_age_seconds": begun.oldest_queue_age_seconds,
-                    "preceding_batch_seconds": begun.preceding_batch_seconds,
                     "outcome": str(outcome),
                     "reason": str(reason),
                     "consumed_segments": int(consumed_segments),
@@ -273,7 +269,6 @@ class BatchDiagnosticCollector:
                             "queue_depth": begun.queue_depth,
                             "queue_depth_after": None,
                             "oldest_queue_age_seconds": begun.oldest_queue_age_seconds,
-                            "preceding_batch_seconds": begun.preceding_batch_seconds,
                             "outcome": "unfinished",
                             "reason": "still-in-flight",
                             "consumed_segments": 0,

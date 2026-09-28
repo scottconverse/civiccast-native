@@ -15,9 +15,16 @@ from pydantic import BaseModel, ConfigDict, Field
 from civiccast.captions.models import CaptionCue
 
 CAPTION_EMBED_PROOF_BOUNDARY = "egress-caption-embed-to-emitted-stream-decode-back"
+# The hours field is unbounded, not two digits wide: a live sidecar's program
+# clock is an absolute second count since the channel's program start and
+# ``format_webvtt_timestamp`` renders it with ``divmod(total_ms, 3_600_000)``,
+# so a station that has been on air for more than 100 hours writes three-digit
+# hours (``112:59:50.000``). Bounding hours at two digits silently dropped every
+# cue of a channel past that mark -- see U46 (2026-09-26), where public emitted a
+# caption-free stream while its sidecar kept growing.
 _TIMED_TEXT_RE = re.compile(
-    r"(?P<start>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{3})\s*-->\s*"
-    r"(?P<end>\d{1,2}:\d{2}(?::\d{2})?[\.,]\d{3})"
+    r"(?P<start>\d+:\d{2}(?::\d{2})?[\.,]\d{3})\s*-->\s*"
+    r"(?P<end>\d+:\d{2}(?::\d{2})?[\.,]\d{3})"
 )
 
 
@@ -209,6 +216,19 @@ def _read_timed_text(path: Path) -> str:
         except PermissionError:
             time.sleep(_ACTIVE_VTT_READ_BACKOFF_SECONDS)
     return path.read_text(encoding="utf-8")  # final attempt surfaces the real error
+
+
+def count_caption_timing_windows(path: Path) -> int:
+    """Count the cue timing windows a timed-text file *looks* like it has.
+
+    Deliberately structural, not regex-validated: the reader's whole failure mode
+    (U46, 2026-09-26) is a file full of windows that the parser cannot read, and a
+    count that reused the parser's own pattern would report 0 there and hide it.
+    A window is any line carrying the ``-->`` arrow, which no VTT/SRT writer in
+    this product emits for any other purpose.
+    """
+
+    return sum(1 for line in _read_timed_text(path).splitlines() if "-->" in line)
 
 
 def load_caption_cues_from_timed_text(

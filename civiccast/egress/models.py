@@ -537,6 +537,56 @@ def slate_restart_guard_state(command: EgressCommand) -> EgressState | None:
     return None
 
 
+# Command-id prefix of the recovery ``start`` the daemon's own startup/per-pass
+# sweeps queue after clearing a stale on-air claim
+# (``EgressDaemon._reconcile_stale_claims``). The sweep reads the persisted row
+# to DECIDE to recover and then writes ``STOPPED`` over it in the same
+# transaction, so the state it cleared exists only in that transaction -- and
+# the start it leaves behind is drained a poll later, by which time the row
+# reads STOPPED. U53 needs that state at dispatch: the channel WAS on air, so
+# the start owes the same "air the slate before conforming the program" rule
+# every other start of an active channel owes (``_SLATE_FIRST_ACTIVE_STATES``),
+# and a recovery start that resolves the program first is dark for the whole
+# conform -- measured live at 6 m 55 s (2026-09-26 18:54:20 -> 19:01:23,
+# government, after the C1 install restarted the service).
+#
+# The state rides on the command id rather than a new column for the same
+# reason as ``SLATE_RESTART_COMMAND_PREFIX`` above: the egress tables are
+# created by ``Base.metadata.create_all`` with no migration path for a column
+# added to an installed station. The id stays well inside the 120-char cap --
+# the prefix plus a state name plus ``uuid4().hex`` is at most 32 chars.
+RESTART_RECOVERY_COMMAND_PREFIX = "restart-recovery-"
+
+
+def restart_recovery_previous_state(command: EgressCommand) -> str | None:
+    """The state a recovery start's stale claim was cleared FROM, or ``None``.
+
+    ``None`` means "not a recovery start: dispatch it with no previous state".
+    The value is the persisted state the sweep read before it wrote STOPPED
+    (``ON_AIR`` / ``STARTING`` / ``TRANSITIONING`` -- see
+    ``EgressDaemon._STALE_RECONCILE_STATES``), returned as the raw token so the
+    daemon's own gate stays the single place that decides what a state implies.
+
+    An unparseable tail (no ``STATE-`` segment, or a token that is not a known
+    state) is treated as ``None`` rather than refused: the command is still a
+    recovery start and must run, only without the hint.
+    """
+    if not command.command_id.startswith(RESTART_RECOVERY_COMMAND_PREFIX):
+        return None
+    tail = command.command_id[len(RESTART_RECOVERY_COMMAND_PREFIX) :]
+    token, _, attempt = tail.rpartition("-")
+    if not attempt or token not in _STALE_CLAIM_STATES:
+        return None
+    return token
+
+
+#: The persisted states a recovery command may carry. Mirrors
+#: ``EgressDaemon._STALE_RECONCILE_STATES`` -- the states the sweeps are allowed
+#: to clear. A recovery command naming anything else is not one this daemon
+#: wrote, so ``restart_recovery_previous_state`` declines to vouch for it.
+_STALE_CLAIM_STATES: frozenset[str] = frozenset({"ON_AIR", "STARTING", "TRANSITIONING"})
+
+
 class EgressStateRow(BaseModel):
     """Last-known daemon state for one channel."""
 

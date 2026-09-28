@@ -840,6 +840,19 @@ class ChannelAutomationService:
         # see that method's docstring.
         self._plan_horizon: dict[str, tuple[str | None, datetime, datetime, float]] = {}
         self._rollover_issued: set[str] = set()
+        # U53 item 3 (2026-09-26): the boundary plan resolved for the NEXT
+        # boundary, remembered per channel as ``(boundary, seconds, label)``.
+        # ``_rollover_lead_seconds`` sizes the lead from the item that must be
+        # prepared, and an adaptive lead can only ever move the dispatch
+        # EARLIER -- so the duration has to be known BEFORE the trigger the
+        # duration itself computes, which is why it is resolved on the first
+        # poll tick after a boundary's horizon is established rather than at
+        # the trigger. Keyed by the boundary it was resolved for, which is what
+        # makes it once-per-boundary rather than once-per-tick: a new plan
+        # means a new ``plan_end_at``, which replaces this entry. Only used to
+        # size the lead; the dispatch itself still resolves its own plan at
+        # dispatch time, so a schedule edited in between is not missed.
+        self._rollover_asset_probe: dict[str, tuple[datetime, float | None, str | None]] = {}
         # D43 hardening (2026-09-05): the monotonic timestamp of the last
         # rollover DISPATCH per channel, enforcing
         # _rollover_min_interval_seconds between them. Each dispatch runs
@@ -958,9 +971,12 @@ class ChannelAutomationService:
     # 2026-09-24 13:28:25: public's rollover was issued with 119s left, its
     # cold conform (measured 270s, capped at 300s) did not finish, and the
     # channel went dark at 13:30:30. See ``_rollover_lead_seconds``.
-    # U03: the timeout is covered PER PASS -- a normalized segment runs a
-    # loudnorm measurement pass and then the conform, each within that same
-    # bound, so the U02 lead of one timeout covered half the worst case.
+    # U03: the timeout is covered PER PASS -- in the worktree this was sized
+    # in, a normalized segment runs a loudnorm measurement pass and then the
+    # conform, each within that same bound, so the U02 lead of one timeout
+    # covered half of THAT build's worst case. U05: the installed base this
+    # candidate patches has no separate loudnorm measurement pass, so the same
+    # multiplier over-estimates rather than under-estimates here.
     # See ``_ROLLOVER_PREPARATION_PASSES``.
     #
     # The reload's settle budget after preparation completes: the worker
@@ -974,25 +990,52 @@ class ChannelAutomationService:
     _ROLLOVER_LEAD_MARGIN_SECONDS = 60.0
     # BETA.10 U03: how many ``_run_ffmpeg`` calls ONE reload preparation of ONE
     # segment can make on the GStreamer path. ``_run_ffmpeg`` applies
-    # ``self._preparation_timeout_seconds`` to EACH call (``preparer.py:1432``),
-    # so one pass is not the bound -- the count is. On this path
-    # (``playout_trim_supported=False``, wired at ``build_channel_automation``)
-    # there are two, in ``_prepare_segment``:
-    #   1. ``preparer.py:1907`` -- the two-pass loudnorm MEASUREMENT pass
-    #      (``build_loudnorm_probe_args``), which runs only when the segment
-    #      needs normalizing AND a ``loudness_target_lufs`` is configured
-    #      (the guard at ``preparer.py:1899``).
-    #   2. ``preparer.py:1937`` -- the conform encode that writes the segment.
-    # A segment that needs no normalization makes only pass 2; the cache-HIT
-    # path makes one (the stream-copy at ``preparer.py:1008``). So this is the
-    # WORST case, which is what the lead has to cover.
+    # ``self._preparation_timeout_seconds`` to EACH call
+    # (``preparer.py:1373``), so one pass is not the bound -- the count is.
+    # U05 re-derived that count from the INSTALLED preparer rather than from
+    # the worktree's. On this path (``playout_trim_supported=False``, wired at
+    # ``build_channel_automation``) the installed ``_prepare_segment`` makes
+    # ONE bounded call -- the conform encode that writes the segment
+    # (``preparer.py:1839``); the cache-HIT path makes one too (the stream-copy
+    # at ``preparer.py:949``). The worktree makes TWO: it adds a two-pass
+    # loudnorm MEASUREMENT pass (``build_loudnorm_probe_args``) ahead of the
+    # encode. The installed preparer has no such pass -- its loudness probe
+    # goes through ``check_streaming_loudness`` (``preparer.py:1642``), which is
+    # not a ``_run_ffmpeg`` call and carries no preparation timeout of its own.
+    # 2.0 is kept as written for BOTH bases deliberately: it is the worktree's
+    # worst case and a superset of this installed base's, so the computed lead
+    # (690s at the shipped 300s) stays an over-estimate of the bounded work one
+    # preparation can do, never an under-estimate. U05 was told to keep it
+    # unless it would be WRONG here; too generous is not the failure mode a
+    # rollover lead has.
     # ``_conform_full_asset_into_cache`` -- itself a probe plus an encode
-    # (``preparer.py:581``/``609``) -- is deliberately NOT counted: its only
+    # (``preparer.py:550``) -- is deliberately NOT counted: its only
     # synchronous call site is guarded by ``_playout_trim_supported``
-    # (``preparer.py:1838``), which is False for the gst engine, so on this path
+    # (``preparer.py:1779``), which is False for the gst engine, so on this path
     # it runs only on the background warm worker (``_schedule_warm``), never
     # inside a reload's preparation.
     _ROLLOVER_PREPARATION_PASSES = 2.0
+    # U53 item 3 (coordinator's engineering call, 2026-09-26): the lead above
+    # is sized from the preparation TIMEOUT, which bounds what one ffmpeg pass
+    # may take -- not what the item coming up actually costs. The measured cost
+    # of the whole-asset conform is a REALTIME FACTOR, and the two are
+    # unrelated: a 300s timeout covers a 9020.8s asset here (555s, 16.3x) only
+    # because the timeout happened to exceed the real cost, and it stops
+    # covering it the moment the asset is longer or the box is busier (866s
+    # measured under load, 18.6-23.8x).
+    #
+    # ``lead = max(floor, asset_seconds / factor + margin)`` makes the lead a
+    # function of the item that must be prepared. The factor is deliberately
+    # conservative: 12x is slower than every rate measured on this station
+    # (16.3x uncontended, 18.6-23.8x under load) so the computed lead is
+    # biased long, which is the safe direction -- an over-long lead arms the
+    # rollover early and lets ``should_defer_switch`` hold it until the
+    # boundary (U41's deferred path), while a short one leaves the channel
+    # reaching EOS with nothing armed (2026-09-24 13:28:25, public).
+    # ``_ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS`` still applies: a lead that
+    # approaches the defer watchdog is warned about, never clamped.
+    _ROLLOVER_CONFORM_REALTIME_FACTOR = 12.0
+    _ROLLOVER_CONFORM_MARGIN_SECONDS = 120.0
     #: BETA.10 U03: the engine's own deferred/boundary-aligned switch watchdog,
     #: ``GstPlayoutEngine.defer_switch_timeout_s`` (``engine.py:614``, default
     #: 900.0s). If it fires first it FORCES the switch to the armed leg
@@ -1442,6 +1485,38 @@ class ChannelAutomationService:
             # pipe connection before asking it to reload back to the schedule.
             # Do not consume the latch/cooldown or call the provider yet.
             return
+        if self._daemon_has_pending_preparation(channel_id):
+            # U47: the daemon is preparing this channel's program for the
+            # slate that is on air right now (a slate-first hand-off). The
+            # reload this pass would queue is the very hand-off it is already
+            # running: it reaches ``_request_reload`` -> ``_cancel_preparation``,
+            # abandons the in-flight preparation and conforms the program a
+            # second time. Like the control-connection gate above, this does NOT
+            # consume the latch or the cooldown -- if the hand-off's preparation
+            # FAILS, the channel stays FALLBACK_SLATE with no preparation
+            # registered and the next tick issues the reload exactly as before.
+            return
+        chained_program_end = self._daemon_chained_slate_program_end(channel_id)
+        if chained_program_end is not None and now < chained_program_end:
+            # U53 item 1: this row does not mean "the channel is on the slate
+            # with its programme still due". The plan on air is a chained
+            # filler: the slate covers only the gap up to the programme's own
+            # due instant, and that programme follows it in the same plan. So
+            # the reload this pass would queue is for a programme that is
+            # ALREADY on air (or about to be, with nothing left to prepare),
+            # and issuing it would cut the chained leg off at the reload
+            # boundary and conform the same programme a second time.
+            #
+            # Same contract as the two gates above: waiting consumes neither
+            # the latch nor the cooldown. The record is cleared by the next
+            # dispatch that is not a chain (``_record_dispatched_plan`` writes
+            # it set-or-clear) and validated against the proof event of the
+            # plan it describes, so a chain that never actually landed cannot
+            # suppress anything; and once ``now`` reaches the chained
+            # programme's own projected end this gate stops applying on its
+            # own, so a channel that really is stuck on the slate after it is
+            # replanned exactly as before.
+            return
         if channel_id in self._reload_issued:
             return
         # Audit ENG-002: when the due item persistently fails PREPARATION,
@@ -1469,7 +1544,7 @@ class ChannelAutomationService:
             channel_id,
         )
 
-    def _rollover_lead_seconds(self) -> float:
+    def _rollover_lead_seconds(self, asset_seconds: float | None = None) -> float:
         """BETA.10 U02: how far ahead of the live plan's projected end the
         GStreamer path's rollover must be issued for a preparation that runs
         to its configured bound to still settle before EOS.
@@ -1490,11 +1565,27 @@ class ChannelAutomationService:
         operator who has measured their own preparation and settle times.
 
         BETA.10 U03: the timeout is multiplied by
-        ``_ROLLOVER_PREPARATION_PASSES`` -- a normalized segment's preparation
-        runs a loudnorm MEASUREMENT pass and then the conform itself, each
-        bounded by that timeout, so the U02 single-timeout lead (390s at the
-        station's 300s) covered only half of the worst case this build can run.
-        At the shipped 300s the lead is now 2*300 + 30 + 60 = 690s.
+        ``_ROLLOVER_PREPARATION_PASSES``. In the worktree this was sized in, a
+        normalized segment's preparation runs a loudnorm MEASUREMENT pass and
+        then the conform itself, each bounded by that timeout, so the U02
+        single-timeout lead (390s at the station's 300s) covered only half of
+        THAT build's worst case. U05: the installed base this candidate patches
+        makes ONE bounded call per segment -- its loudness probe goes through
+        ``check_streaming_loudness``, not ``_run_ffmpeg`` -- so the multiplier
+        is a deliberate over-estimate here rather than an under-estimate. At
+        the shipped 300s the lead is 2*300 + 30 + 60 = 690s either way; see
+        ``_ROLLOVER_PREPARATION_PASSES``.
+
+        U53 item 3 (2026-09-26): ``asset_seconds``, when the caller knows it,
+        raises that floor to the measured cost of conforming the item that
+        must actually be prepared --
+        ``asset_seconds / _ROLLOVER_CONFORM_REALTIME_FACTOR +
+        _ROLLOVER_CONFORM_MARGIN_SECONDS``. The timeout-derived value is a
+        FLOOR, not a replacement: the two answer different questions ("what
+        may one ffmpeg pass take" vs "what will this asset cost"), so the
+        larger wins and an item cheaper than the timeout bound keeps exactly
+        today's lead. ``None`` (no plan resolved, or the caller is not on the
+        boundary-provider path) keeps the pre-U53 computation byte for byte.
 
         This is deliberately a LEAD, not a cadence: the dispatch it permits is
         still gated by ``_rollover_min_interval_seconds``, the issued latch,
@@ -1519,8 +1610,73 @@ class ChannelAutomationService:
             + self._ROLLOVER_RELOAD_SETTLE_BUDGET_SECONDS
             + self._ROLLOVER_LEAD_MARGIN_SECONDS,
         )
+        if asset_seconds is not None and asset_seconds > 0.0:
+            computed = max(
+                computed,
+                asset_seconds / self._ROLLOVER_CONFORM_REALTIME_FACTOR
+                + self._ROLLOVER_CONFORM_MARGIN_SECONDS,
+            )
         self._warn_if_rollover_lead_nears_the_defer_watchdog(computed, source="computed default")
         return computed
+
+    def _cached_rollover_asset(
+        self, channel_id: str, plan_end_at: datetime
+    ) -> tuple[float | None, str | None] | None:
+        """The duration this boundary ALREADY resolved, without resolving it again.
+
+        U53b item 8: ``_probe_rollover_asset`` caches per boundary -- including its
+        failures -- so its answer is available to any later tick of the same plan,
+        notably the dispatch tick, which by construction never enters the probe
+        window and must not pay for a provider call the dispatch body is about to
+        make anyway. ``None`` (no answer) means this boundary has not been resolved
+        at all; ``(None, None)`` means it WAS resolved and resolved to nothing.
+        """
+
+        cached = self._rollover_asset_probe.get(channel_id)
+        if cached is not None and cached[0] == plan_end_at:
+            return cached[1], cached[2]
+        return None
+    def _probe_rollover_asset(
+        self, channel_id: str, plan_end_at: datetime
+    ) -> tuple[float | None, str | None]:
+        """U53 item 3: the duration and label of the item the boundary at
+        ``plan_end_at`` resolves to, resolved ONCE per boundary.
+
+        An adaptive lead can only ever move the dispatch EARLIER, so its input
+        has to be known before the trigger that input itself computes -- a
+        probe taken when the flat lead fires is a probe taken too late to move
+        anything. This therefore runs on the first poll tick after the horizon
+        is established, which costs at most one extra boundary resolution per
+        plan per channel (the dispatch resolves its own plan again at dispatch
+        time, so a schedule edited in between is still picked up); the
+        resolver behind it is memoized on ``(path, mtime_ns, size)``, so the
+        repeat is a schedule lookup, not another probe of the media.
+
+        Fails open, and caches the failure so a broken provider is still
+        attempted only once per boundary: an unresolvable or empty target
+        leaves the timeout-derived floor standing, which is exactly the
+        pre-U53 behaviour. The dispatch site keeps its own error handling and
+        retry cooldown untouched.
+        Callers outside this window read the same cache through
+        ``_cached_rollover_asset`` rather than calling this.
+        """
+
+        cached_asset = self._cached_rollover_asset(channel_id, plan_end_at)
+        if cached_asset is not None:
+            return cached_asset
+        assert self._boundary_source_plan_provider is not None  # caller-gated
+        try:
+            plan = self._boundary_source_plan_provider(channel_id, plan_end_at)
+        except SourcePrepareError:
+            self._rollover_asset_probe[channel_id] = (plan_end_at, None, None)
+            return None, None
+        if plan is None or not plan.segments:
+            self._rollover_asset_probe[channel_id] = (plan_end_at, None, None)
+            return None, None
+        seconds = sum(segment.duration_seconds for segment in plan.segments)
+        label = plan.segments[0].label
+        self._rollover_asset_probe[channel_id] = (plan_end_at, seconds, label)
+        return seconds, label
 
     def _warn_if_rollover_lead_nears_the_defer_watchdog(
         self, lead_seconds: float, *, source: str
@@ -1975,6 +2131,27 @@ class ChannelAutomationService:
             last_segment_start_at=last_segment_start_at,
             min_lead_seconds=self._rollover_min_lead_seconds(planned_seconds),
         )
+        # U53 item 3: the trigger the flat, timeout-derived lead would fire at
+        # -- the moment this dispatch is due WITHOUT any knowledge of what the
+        # boundary resolves to. It guards the adaptive probe below: while
+        # ``now`` is short of it the dispatch is still in the future, so the
+        # probe is the only thing this tick can do and the only window in which
+        # a longer lead can still move anything; at or past it the dispatch is
+        # already due and the probe would buy nothing (which is what keeps a
+        # plan arming at its own start, and a stale-horizon recovery, from
+        # probing at all).
+        flat_trigger_at = max(
+            last_segment_start_at,
+            plan_end_at - timedelta(seconds=self._rollover_lead_seconds()),
+        )
+        inside_lead_recovery = False
+        # U41: hoisted so the boundary record can carry the horizon this
+        # dispatch measured. ``None`` when there is no boundary provider (the
+        # non-GStreamer path), which is exactly the "no horizon recorded" case
+        # the daemon treats as today's behavior.
+        lead_seconds: float | None = None
+        asset_seconds: float | None = None
+        asset_label: str | None = None
         if self._boundary_source_plan_provider is not None:
             # One scheduled item per plan: give short items their whole life
             # for preparation (the ``last_segment_start_at`` clamp below), for
@@ -1984,14 +2161,51 @@ class ChannelAutomationService:
             # able to finish and settle before the outgoing pipeline reaches
             # EOS, or the channel reaches EOS with nothing armed (2026-09-24
             # 13:28:25, public). See ``_rollover_lead_seconds``.
+            #
+            # U53 item 3 (2026-09-26): the lead is ADAPTIVE -- the item the
+            # boundary resolves to may cost more to conform than the
+            # preparation timeout allows (a 9020.8s asset costs a measured
+            # 485.8-866s), and a lead that does not cover it dispatches too
+            # late. The duration is resolved once per boundary, on this same
+            # tick-level path, so that the lead it produces can move THIS
+            # trigger earlier; see ``_probe_rollover_asset``.
+            if now < flat_trigger_at:
+                asset_seconds, asset_label = self._probe_rollover_asset(channel_id, plan_end_at)
+            else:
+                # U53b item 8: this tick is at or past the flat trigger, so it does
+                # not probe -- but the boundary's own duration was resolved a few
+                # ticks earlier, inside this plan's window, and cached per boundary.
+                # Reading that answer is free, and it is the difference between the
+                # lead line saying the floor stands for a 300s item and saying "no
+                # asset duration available for the boundary". The second is what the
+                # station logged for EVERY floor-fired dispatch after C2 (8/8), and
+                # it reads as a boundary that could not be resolved when it was in
+                # fact resolved fine -- the floor simply outran it.
+                cached_asset = self._cached_rollover_asset(channel_id, plan_end_at)
+                if cached_asset is not None:
+                    asset_seconds, asset_label = cached_asset
+            lead_seconds = self._rollover_lead_seconds(asset_seconds)
             trigger_at = max(
                 last_segment_start_at,
-                plan_end_at - timedelta(seconds=self._rollover_lead_seconds()),
+                plan_end_at - timedelta(seconds=lead_seconds),
+            )
+            # BETA.10 U41 (live 2026-09-25, education 23:53:17 -> 23:54:41):
+            # a plan whose whole life is SHORTER than the lead can never be
+            # armed ahead of its own start, so the clamp above collapses the
+            # trigger to ``last_segment_start_at`` -- the instant the previous
+            # rollover settled. That dispatch is recovery (less than a lead of
+            # runway remained the moment the plan took air), not cadence, and
+            # the D43 floor below is measured from the PREVIOUS dispatch while
+            # being sized to the plan now on air: it can hold the recovery
+            # back for up to half the remaining plan. Exempt it exactly like
+            # the B2 retry path, which is exempt for the same reason.
+            inside_lead_recovery = plan_end_at - last_segment_start_at < timedelta(
+                seconds=lead_seconds
             )
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
 
-        if not retrying_undelivered and not stale_horizon_recovery:
+        if not retrying_undelivered and not stale_horizon_recovery and not inside_lead_recovery:
             # D43 cadence floor, D45 fix: never dispatch rollovers for one
             # channel faster than _rollover_min_interval_seconds(planned_seconds)
             # apart -- sized to the plan actually on air, not a fixed
@@ -2119,6 +2333,16 @@ class ChannelAutomationService:
             record_kwargs: dict[str, object] = {"command_id": reload_command_id}
             if force_fallback:
                 record_kwargs["force_fallback"] = True
+            if lead_seconds is not None:
+                # U41: carry the horizon this dispatch measured, so a DEFERRED
+                # rollover's plan can be built with its life measured from the
+                # switch rather than from this dispatch. Only the boundary-
+                # provider path measures a lead at all, and only the daemon
+                # knows whether the switch will defer (it decides that at
+                # reload time, against the live state), so the value travels
+                # unconditionally and the daemon applies it to the deferred
+                # case alone -- see ``record_rollover_plan_end``.
+                record_kwargs["min_plan_seconds"] = lead_seconds
             record_plan_end(channel_id, plan_end_at, **record_kwargs)
         self._enqueue(channel_id, "reload", now=now, command_id=reload_command_id)
         self._rollover_issued.add(channel_id)
@@ -2144,6 +2368,31 @@ class ChannelAutomationService:
             )
             self._rollover_retry_warned_at.pop(channel_id, None)
             self._rollover_pid_age_warned_at.pop(channel_id, None)
+        if lead_seconds is not None:
+            # U53 item 3: the lead is now adaptive, so say what it was computed
+            # FROM. A lead read off an incident log is otherwise
+            # indistinguishable from the flat timeout-derived one it replaced
+            # (690s for a 300s preparation timeout), and the item that widened
+            # it is the whole reason the dispatch moved.
+            if asset_seconds is not None and asset_label is not None:
+                _LOG.info(
+                    "Channel automation computed the rollover lead for %s: lead=%.0fs "
+                    "for %s (%.0fs at %.0fx + %.0fs).",
+                    channel_id,
+                    lead_seconds,
+                    asset_label,
+                    asset_seconds,
+                    self._ROLLOVER_CONFORM_REALTIME_FACTOR,
+                    self._ROLLOVER_CONFORM_MARGIN_SECONDS,
+                )
+            else:
+                _LOG.info(
+                    "Channel automation computed the rollover lead for %s: lead=%.0fs "
+                    "(no asset duration available for the boundary; the "
+                    "timeout-derived floor stands).",
+                    channel_id,
+                    lead_seconds,
+                )
         _LOG.info(
             "Channel automation issued a seamless plan rollover for %s: the live plan "
             "ends in %.0fs; target=%s before the engine reaches EOS.",
@@ -2151,6 +2400,21 @@ class ChannelAutomationService:
             (plan_end_at - now).total_seconds(),
             "filler" if force_fallback else "extended schedule",
         )
+        if inside_lead_recovery:
+            # BETA.10 U41: say so explicitly. The 2026-09-25 education dark
+            # window read "the live plan ends in 80s" with no indication that
+            # this was the plan's WHOLE life, not a mistimed dispatch -- the
+            # rollover was issued as early as it could be, and the remaining
+            # plan was simply shorter than the lead the preparation needs.
+            # Operators (and the next incident reader) need that distinction.
+            _LOG.info(
+                "Channel automation rollover for %s was issued as soon as the previous "
+                "plan settled: the plan on air is %.0fs long, shorter than the %.0fs "
+                "lead a preparation may need -- there is no earlier moment to dispatch.",
+                channel_id,
+                (plan_end_at - last_segment_start_at).total_seconds(),
+                lead_seconds,
+            )
 
     def _reestablish_plan_horizon(
         self,
@@ -2361,6 +2625,53 @@ class ChannelAutomationService:
         if not callable(reader):
             return False
         return bool(reader(channel_id))
+
+    def _daemon_has_pending_preparation(self, channel_id: str) -> bool:
+        """U47: whether the daemon is already preparing THIS channel's program.
+
+        Same optional-capability shape as ``has_manual_override`` and
+        ``_daemon_has_pending_reload_settlement`` above: a daemon double that
+        predates the reader answers "no", preserving its existing behavior.
+
+        This is deliberately the NARROW reader (``has_pending_preparation``),
+        not ``has_pending_reload_settlement``: the latter also reports an ARMED
+        reload that is still settling, and using it here would hold the
+        slate-replan pass off through every rollover's settle window -- a
+        change with its own latch and cooldown, and none of U47's business.
+
+        The window this closes is the slate-first hand-off's own conform: the
+        channel is legitimately FALLBACK_SLATE (the slate is on air and the
+        program is being prepared) while a preparation for it is registered, so
+        without this the pass would queue a ``reload`` that
+        ``EgressDaemon._request_reload`` answers with ``_cancel_preparation`` --
+        abandoning the hand-off and conforming the same program a second time."""
+
+        reader = getattr(self._daemon, "has_pending_preparation", None)
+        if not callable(reader):
+            return False
+        return bool(reader(channel_id))
+
+    def _daemon_chained_slate_program_end(self, channel_id: str) -> datetime | None:
+        """U53 item 1: when the plan on air is a CHAINED filler -- a slate
+        trimmed to the gap it fills, followed in the SAME plan by the programme
+        due when that gap closes -- the projected end of that programme; else
+        None.
+
+        Same optional-capability shape as the three probes above: a daemon that
+        predates the reader answers None, which is exactly this gate's
+        "nothing chained here" case.
+
+        Needed because a chained leg makes the state row lie in the one
+        direction this pass acts on: ``target_state`` is FALLBACK_SLATE and
+        ``segments[0]`` is the slate, so the row reads FALLBACK_SLATE for the
+        whole leg -- while a real programme is airing behind the filler. See
+        ``_check_slate_replan``'s gate for what is done with it."""
+
+        reader = getattr(self._daemon, "chained_slate_program_end", None)
+        if not callable(reader):
+            return None
+        value = reader(channel_id)
+        return value if isinstance(value, datetime) else None
 
     def _daemon_worker_initial_control_connection_observed(self, channel_id: str) -> bool:
         """Read the optional initial worker-control connection observation.
@@ -2669,6 +2980,15 @@ def build_channel_automation(
         source_plan_provider=source_plan_provider,
         boundary_source_plan_provider=(
             source_plan_provider.plan_at if gstreamer_engine_selected() else None
+        ),
+        # U53 item 1: a filler rollover trims the filler to the gap and chains
+        # the programme due when it closes. Wired only where the shape it
+        # depends on holds -- the GStreamer engine, whose preparer writes each
+        # per-plan file at the segment's declared duration (the same reason
+        # boundary_source_plan_provider above is gated the same way). The
+        # ffmpeg-concat engine stays exactly as it was: filler airs whole.
+        next_program_start_provider=(
+            source_plan_provider.next_item_start_at if gstreamer_engine_selected() else None
         ),
         lookahead_source_plan_provider=None,
         takeover_audit_store=PostgresTakeoverAuditStore(session_factory),

@@ -84,19 +84,40 @@ PLUGIN_LICENSE: Final[dict[str, str]] = {
     # disposition) -- the first build of this closure to ship them, so
     # unlike the entries above there is no live gst_plugin_get_license()
     # probe against a BUILT tree containing these three yet. Recorded from
-    # documentation instead: all three are gst-plugins-base/gst-plugins-good
-    # C plugins covered by the same upstream COPYING.LIB (LGPL-2.1-or-later)
-    # as every other plugin in this table drawn from those two modules, and
-    # `gstreamer-libs`/`gstreamer-plugins` 1.28.5's own METADATA declares
+    # documentation instead: gstcompositor/gstpango are gst-plugins-base C
+    # plugins covered by the same upstream COPYING.LIB (LGPL-2.1-or-later)
+    # as every other plugin in this table drawn from that module, and
+    # `gstreamer-libs`/`gstreamer-plugins` 1.28.7's own METADATA declares
     # "LGPL" project-wide (see `licenses/gstreamer_libs.txt` /
     # `licenses/gstreamer_plugins.txt` after a build). A live probe against
     # the first built tree that actually contains them is a real follow-up,
     # same as `gsttypefindfunctions.dll` got above -- reviewed-against-
     # documentation is recorded as the weaker claim it is, not upgraded to
-    # "observed" before it has been.
+    # "observed" before it has been. That same documentation-derived premise
+    # was WRONG for the third of the three; see the probe below.
+    #
+    # U17 live probe, 2026-09-24, `gst-inspect-1.0 <plugin.dll>` against the
+    # BUILT 1.28.7 tree (and the installed 1.28.5 tree, for comparison):
+    #   gstcompositor.dll  -> License=LGPL, Source module=gst-plugins-base
+    #   gstpango.dll       -> License=LGPL, Source module=gst-plugins-base
+    #   gsthlssink3.dll    -> License=MPL,  Source module=gst-plugin-hlssink3
+    # The first two agree with the entries below. The third did NOT: it is a
+    # gst-plugins-rs Rust plugin (MPL-2.0 is that family's licence), not a
+    # gst-plugins-base/gst-plugins-good C plugin. The probe is identical on
+    # the installed 1.28.5 tree, i.e. PRE-EXISTING, not introduced by the
+    # 1.28.5 -> 1.28.7 update.
+    #
+    # CORRECTED 2026-09-24 (U16, owner decision, Scott Converse): the entry
+    # below now records MPL-2.0 -- the licence the live probe actually
+    # observed -- instead of the documented LGPL-2.1-or-later. The value
+    # feeds the shipped per-file licence table rendered by
+    # `runtime_manifest.render_license_bom` into LICENSE-BOM.md; that file is
+    # a BUILD artifact (not tracked in this repo), so the next closure build
+    # renders the corrected value and any artifact built before this date
+    # still carries the old one -- regenerate it, do not hand-edit it.
     "gstcompositor.dll": "LGPL-2.1-or-later",
     "gstpango.dll": "LGPL-2.1-or-later",
-    "gsthlssink3.dll": "LGPL-2.1-or-later",
+    "gsthlssink3.dll": "MPL-2.0",
     "gstcoreelements.dll": "LGPL-2.1-or-later",
     "gstd3d11.dll": "LGPL-2.1-or-later",
     "gstd3d12.dll": "LGPL-2.1-or-later",

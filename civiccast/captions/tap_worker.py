@@ -634,16 +634,6 @@ class CaptionTapWorker:
             concurrent.futures.Future[_ChannelScanResult],
             tuple[str, int, frozenset[str]],
         ] = {}
-        #: channel -> duration (seconds) of the MOST RECENTLY COMPLETED batch.
-        #: Written only after a real batch finishes; read only to label a later
-        #: overload discard with the batch whose duration pushed the queue over
-        #: the max-2 gate.  The gate can only evaluate queued backlog AFTER the
-        #: in-flight batch ends, so a live in-flight age is necessarily gone by
-        #: then -- this is the only value that can still explain that queue.
-        self._channel_last_batch_seconds: dict[str, float] = {}
-        #: channel -> monotonic start of the batch currently running, used ONLY
-        #: to compute the completed duration above (diagnostic enabled).
-        self._channel_batch_started_at: dict[str, float] = {}
         self._backoff = backoff_policy or CaptionBackoffPolicy()
         # One clock for the whole worker, and the SAME clock the backoff policy
         # runs on, so a test that drives the backoff forward also drives the
@@ -850,8 +840,6 @@ class CaptionTapWorker:
             tokens = self._channel_inflight.setdefault(channel_id, set())
             tokens.update((generation, name) for name in names)
             self._channel_futures[future] = (channel_id, generation, names)
-            if self._batch_diagnostic.enabled:
-                self._channel_batch_started_at[channel_id] = time.monotonic()
         future.add_done_callback(self._channel_future_done)
         return future
 
@@ -871,49 +859,10 @@ class CaptionTapWorker:
                 tokens.difference_update((generation, name) for name in names)
                 if not tokens:
                     self._channel_inflight.pop(channel_id, None)
-                    # Opt-in only: no clock read and no map mutation when off.
-                    if self._batch_diagnostic.enabled:
-                        started = self._channel_batch_started_at.pop(channel_id, None)
-                        if started is not None:
-                            self._channel_last_batch_seconds[channel_id] = max(
-                                0.0, time.monotonic() - started
-                            )
         try:
             future.result()
         except Exception:
             _LOG.exception("Caption tap channel %s future failed outside isolation.", channel_id)
-
-    def _forget_last_batch_duration(self, channel_id: str) -> None:
-        """Drop any retained completed-batch duration for a channel/session.
-
-        Called on every session reset and fail-closed caption clear so a later
-        cold overload cannot be attributed to a session that has already ended.
-        Inert when the diagnostic is disabled.
-        """
-
-        if not self._batch_diagnostic.enabled:
-            return
-        with self._channel_executor_lock:
-            self._channel_last_batch_seconds.pop(channel_id, None)
-            self._channel_batch_started_at.pop(channel_id, None)
-
-    def _last_batch_seconds(self, channel_id: str) -> float:
-        """Duration of the most recently COMPLETED batch for this channel.
-
-        Metadata only (a float, seconds); reads no files and no audio.  This is
-        what an overload discard reports: by the time the max-2 gate can count
-        queued backlog the in-flight batch has already ended, so the queue the
-        gate sees is exactly the work that piled up behind THIS batch.  0.0
-        means no batch has completed yet -- honest, not fabricated.
-
-        INERT when the diagnostic is disabled: returns 0.0 without taking the
-        executor lock or reading any retained value.
-        """
-
-        if not self._batch_diagnostic.enabled:
-            return 0.0
-        with self._channel_executor_lock:
-            return self._channel_last_batch_seconds.get(channel_id, 0.0)
 
     def _inflight_names(self, channel_id: str) -> frozenset[str]:
         """Return paths owned by any live ASR task for this channel."""
@@ -1062,7 +1011,6 @@ class CaptionTapWorker:
             outcome="overloaded",
             reason="max-backlog-catch-up-shed",
             queue_depth=len(queued_segments),
-            preceding_batch_seconds=self._last_batch_seconds(channel_id),
         )
         # Measure BEFORE deleting: the span comes from each segment's own WAV
         # header, and ``_chunk_span_seconds`` cannot read a file that is already
@@ -1208,9 +1156,6 @@ class CaptionTapWorker:
         self._channel_workers.pop(channel_id, None)
         self._channel_publishers.pop(channel_id, None)
         self._previous_segments.pop(channel_id, None)
-        # The preceding-batch duration belongs to the session that just ended;
-        # a cold new session must not inherit it as its own overload cause.
-        self._forget_last_batch_duration(channel_id)
         self._backoff.forget(channel_id)
         # The over-limit streak belongs to the session that just ended, exactly
         # like the backoff state above it -- and so does the catch-up shed
@@ -1474,7 +1419,6 @@ class CaptionTapWorker:
                         outcome="overloaded",
                         reason="max-backlog-exceeded",
                         queue_depth=len(queued_segments),
-                        preceding_batch_seconds=self._last_batch_seconds(channel_id),
                     )
                     self._invalidate_inflight_for_overload(channel_id)
                     dropped += self._fail_closed_overload(channel_id, channel_dir, queued_segments)
@@ -1617,7 +1561,9 @@ class CaptionTapWorker:
                     batch_id,
                     outcome="committed" if committed_items else "no-commit",
                     reason=(
-                        "asr-committed" if committed_items else "asr-completed-no-committed-items"
+                        "asr-committed"
+                        if committed_items
+                        else "asr-completed-no-committed-items"
                     ),
                     consumed_segments=result.consumed_segments,
                     committed_review_items=committed_items,
@@ -1907,8 +1853,6 @@ class CaptionTapWorker:
         channel_id: str,
         generation: int,
         segments: list[tuple[int, Path]],
-        *,
-        preceding_batch_seconds: float = 0.0,
         queue_depth: int | None = None,
     ) -> str:
         """Open a per-batch record and return its id.
@@ -1943,7 +1887,6 @@ class CaptionTapWorker:
             segment_names=[path.name for _index, path in segments],
             queue_depth=len(segments) if queue_depth is None else queue_depth,
             oldest_queue_age_seconds=self._oldest_queue_age_seconds(segments),
-            preceding_batch_seconds=preceding_batch_seconds,
         )
         return batch_id
 
@@ -1976,7 +1919,6 @@ class CaptionTapWorker:
         outcome: str,
         reason: str,
         queue_depth: int,
-        preceding_batch_seconds: float = 0.0,
     ) -> None:
         """Record a batch the gate discarded BEFORE any ASR ran.
 
@@ -1992,7 +1934,6 @@ class CaptionTapWorker:
             channel_id,
             self._session_generation.get(channel_id, 0),
             segments,
-            preceding_batch_seconds=preceding_batch_seconds,
             queue_depth=queue_depth,
         )
         self._finish_batch(
@@ -2338,7 +2279,6 @@ class CaptionTapWorker:
 
     def _clear_channel_captions_locked(self, channel_id: str) -> None:
         self._channel_workers.pop(channel_id, None)
-        self._forget_last_batch_duration(channel_id)
         publisher = self._channel_publishers.pop(channel_id, None)
         if publisher is None:
             publisher = LiveWebVttPublisher(

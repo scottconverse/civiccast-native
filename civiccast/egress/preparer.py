@@ -33,6 +33,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import subprocess
 import threading
@@ -144,14 +145,40 @@ _PREPARED_PLAN_DIR_BUDGET_GB = 5.0
 _PREPARED_PLAN_DIR_MAX_AGE_S = 24.0 * 3600.0
 
 #: Item 66 round-3 (Opus review): _evict_cache_over_budget's orphan reap.
-#: A ``.ts.tmp`` this old was abandoned mid-write (a crash, a killed
-#: process) -- any legitimate in-flight conform or promotion finishes in
-#: seconds to low minutes even for an hour-long asset. A ``.json`` with no
+#: Any cache-dir intermediate this old was abandoned mid-write (a crash, a
+#: killed process) -- any legitimate in-flight conform or promotion finishes
+#: in seconds to low minutes even for an hour-long asset. A ``.json`` with no
 #: sibling ``.ts`` this old is a loudness-only probe (see
 #: ``_write_cache_meta``) whose conform never landed (every attempt failed,
 #: or the process was killed between the two writes).
-_ORPHAN_CACHE_TMP_MAX_AGE_S = 3600.0
+_ORPHAN_CACHE_SCRATCH_MAX_AGE_S = 3600.0
 _ORPHAN_CACHE_META_MAX_AGE_S = 24.0 * 3600.0
+
+#: The only two names this module ever creates for a REAL cache entry:
+#: ``{key}.ts`` (the conformed media) and ``{key}.json`` (its sidecar meta),
+#: where ``key`` is ``sha256(...).hexdigest()[:32]`` -- see ``_cache_key``.
+#: Everything else in the directory is scratch written by a conform, a
+#: promotion, or the loudness ride: a ``{key}.ts.tmp``, a ``{key}.json.tmp``,
+#: the ride's ``{key}.ts.tmp.ride-audio.ts`` muxed intermediate and its
+#: ``civiccast-ride-*.pcm`` PCM tee (``civiccast.egress.loudness_ride``).
+#: BETA.10 U53: classifying by name instead of by a ``*.ts`` glob is what
+#: keeps the ride's two artifacts out of the ENTRY set -- ``.ride-audio.ts``
+#: ends in ``.ts``, so the old glob fed it to oldest-first eviction, which
+#: could unlink a ride's live intermediate as if it were a stale entry, and
+#: neither artifact was ever reaped by the ``*.ts.tmp`` orphan sweep.
+_CACHE_ENTRY_TS_RE = re.compile(r"\A[0-9a-f]{32}\.ts\Z")
+_CACHE_ENTRY_META_RE = re.compile(r"\A[0-9a-f]{32}\.json\Z")
+
+#: BETA.10 U53: how recently an intermediate must have been written to count
+#: as in-flight. Every writer here (an ffmpeg conform, a promotion copy, the
+#: ride) writes continuously, so an mtime this old means the writer is gone
+#: or wedged and nothing is waiting on the space. Such a file stops counting
+#: toward the budget immediately (the 1h floor above still decides when it is
+#: deleted). Without this, one abandoned 9.0 GB partial left by a restart
+#: counted for a full hour, and the next conform promotion evicted warm
+#: entries -- the entries that make a preparation take 6 s instead of the
+#: 100-500 s measured on the station through 17:59-18:40.
+_SCRATCH_LIVENESS_S = 60.0
 
 #: Item 66 round-3 (Opus review, point 7): an untrimmed loudness probe no
 #: longer decodes the whole asset -- it samples a window instead. This is
@@ -472,6 +499,114 @@ def _format_optional_seconds(value: float | None) -> str:
     segment), and ``"start"``/``"end"`` read better in a warning than ``None``
     — which is also what a ``%.3f`` conversion would crash on."""
     return "start" if value is None else f"{value:.3f}s"
+
+
+#: U59: ffprobe is resolved by name and invoked exactly the way
+#: ``civiccast.stream._ffmpeg`` invokes it, so the package keeps one "is FFmpeg
+#: installed" story -- the bundled runtime ``civiccast doctor`` verifies --
+#: instead of a second, private one.
+_FFPROBE_EXECUTABLE = "ffprobe"
+
+
+#: U59: the audio head of a sliced piece is dropped onto the piece's own first
+#: video packet when it leads by more than this many seconds. 1 ms is the same
+#: epsilon the alignment pass seeks with, and it is a twentieth of one AAC frame
+#: (21.3 ms), so a piece that is genuinely aligned is never re-copied.
+_PIECE_START_ALIGN_EPS_S = 0.001
+
+
+def _first_packet_pts(path: Path, selector: str) -> float | None:
+    """``selector``'s first packet PTS in ``path``, or None.
+
+    U59 (live C9, government reload_id=13, 2026-09-27 19:15:49): under
+    ``-c copy`` a sliced piece's audio starts exactly at the requested in-point
+    while the video can only resume at its own keyframe, so the piece is
+    audio-long by the video's start lag -- measured 0.853 s on the live
+    education leg and 0.533 s on the same leg's conform. The engine chains a
+    leg's pieces PER STREAM, so those lags sum: government's two-piece leg
+    spread 5.181 s against the 2.000 s single-asset bound, fail-opened, and the
+    mux held its last frame for the aired 4.148 s freeze.
+
+    ffprobe prints the file's own timestamps -- not the muxer's rebased ones --
+    and every stream of a piece shares one mpegts timestamp base, so the two
+    streams' first packets compare directly. Total by contract, like the probes
+    around preparation: an absent or unhelpful ffprobe answers ``None`` and the
+    caller keeps the piece it already has.
+    """
+    if shutil.which(_FFPROBE_EXECUTABLE) is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-select_streams",
+                selector,
+                "-show_entries",
+                "packet=pts_time",
+                "-of",
+                "csv=p=0",
+                "-read_intervals",
+                "%+#1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    rows = result.stdout.strip().splitlines()
+    if not rows:
+        return None
+    try:
+        return float(rows[0].split(",")[0])
+    except ValueError:
+        return None
+
+
+def _packet_pts(path: Path, selector: str) -> list[float]:
+    """Every packet PTS of ``selector`` in ``path``, or ``[]``.
+
+    The alignment pass needs the video's LAST packet as well as its first, so
+    this reads the whole stream -- one ffprobe over a file the copy-out pass
+    already reads end to end. An unanswerable probe answers ``[]`` and the
+    caller keeps the piece it has.
+    """
+    if shutil.which(_FFPROBE_EXECUTABLE) is None:
+        return None
+    try:
+        result = subprocess.run(  # noqa: S603
+            [
+                _FFPROBE_EXECUTABLE,
+                "-v",
+                "error",
+                "-select_streams",
+                selector,
+                "-show_entries",
+                "packet=pts_time",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120.0,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    pts: list[float] = []
+    for row in result.stdout.splitlines():
+        try:
+            pts.append(float(row.split(",")[0]))
+        except ValueError:
+            continue
+    return pts
 
 
 def _probe_prepared_segment_decodability(path: Path) -> bool | None:
@@ -932,8 +1067,8 @@ class SourcePreparer:
             )
         if result.round_error is not None:
             _LOG.warning(
-                "Speech leveling for %r (window: %s): the re-encode round failed (%s); "
-                "airing the nominal artifact.",
+                "Speech leveling for %r (window: %s): a re-encode round failed (%s); "
+                "airing the best attempt the guard kept.",
                 source_path.name,
                 window,
                 result.round_error,
@@ -952,15 +1087,19 @@ class SourcePreparer:
         if not selection.hard_tp_met:
             # The artifact airs anyway -- a hot artifact beats a silent channel
             # -- but the hard true-peak bound did not hold, and that is an
-            # operator's problem, not a footnote.
+            # operator's problem, not a footnote.  U42: the encoder settings
+            # name which lever produced this artifact, because the two levers
+            # are not equally cheap and the next reader will want to know.
             _LOG.error(
                 "Speech leveling for %r (window: %s): the kept attempt is above the hard "
-                "true-peak bound (%s dBFS sample peak; %s dBTP emitted, ceiling %s dBTP).",
+                "true-peak bound (%s dBFS sample peak; %s dBTP emitted, ceiling %s dBTP; "
+                "encoder %s).",
                 source_path.name,
                 window,
                 _fmt_measure(kept.decoded_peak_dbfs),
                 _fmt_measure(kept.emitted_dbtp),
                 _fmt_measure(kept.limit_dbtp),
+                kept.encoder or "not recorded",
             )
 
     def _conform_full_asset_into_cache(
@@ -1480,6 +1619,72 @@ class SourcePreparer:
                 source_path.name,
             )
 
+    def _align_piece_stream_starts(
+        self,
+        piece_path: Path,
+        cancel_event: threading.Event | None,
+    ) -> Path | None:
+        """Drop a piece's audio head onto its video's first packet (U59).
+
+        Returns the aligned sibling of ``piece_path``, or ``None`` when the
+        piece needs no alignment, carries only one stream, or cannot be
+        re-copied -- the caller then emits the piece it already has. Nothing
+        here can fail a preparation: an unanswerable probe, a failed child, or
+        a missing output all degrade to the historic piece.
+
+        The pass is ``-copyts``: ffmpeg's own output ``-ss`` floors the video to
+        a keyframe and would re-create the very lag being removed, while
+        ``-copyts`` makes the output seek drop exactly the packets before the
+        target and keeps every video packet. Both ends are pinned to the video's
+        own first and last packets, so whatever tail asymmetry the slice's
+        ``-t`` cut left is removed too. Measured on the live education leg's own
+        piece, reproduced offline from that leg's conform (``-ss 7199.5 -t
+        593.813 -c copy``, 340 MB): input v first 1.933333 / a first 1.400000
+        (head lag 0.533333, span delta 0.480) -> aligned v first 1.401000 /
+        a first 1.401000 over the same 593.333333 s of video; the video's own
+        packets and span unchanged, both streams' ends within one AAC frame.
+        """
+        video_pts = _packet_pts(piece_path, "v:0")
+        audio_start = _first_packet_pts(piece_path, "a:0")
+        if not video_pts or audio_start is None:
+            return None
+        video_start = video_pts[0]
+        if audio_start >= video_start - _PIECE_START_ALIGN_EPS_S:
+            return None
+        aligned_path = piece_path.with_name(piece_path.name + ".aligned")
+        args = [
+            "-hide_banner",
+            "-loglevel",
+            "warning",
+            "-i",
+            str(piece_path),
+            "-copyts",
+            "-ss",
+            f"{video_start - _PIECE_START_ALIGN_EPS_S:g}",
+            "-to",
+            f"{video_pts[-1] + _PIECE_START_ALIGN_EPS_S:g}",
+            "-c",
+            "copy",
+            "-f",
+            "mpegts",
+            str(aligned_path),
+        ]
+        try:
+            result = self._run_ffmpeg(args, cancel_event)
+        except SourcePreparationCancelledError:
+            aligned_path.unlink(missing_ok=True)
+            raise
+        if result.returncode != 0 or not aligned_path.exists() or aligned_path.stat().st_size == 0:
+            aligned_path.unlink(missing_ok=True)
+            _LOG.warning(
+                "U59 piece alignment failed; emitting the unaligned slice for %s "
+                "(audio leads video by %.3fs)",
+                piece_path.name,
+                video_start - audio_start,
+            )
+            return None
+        return aligned_path
+
     def _emit_prepared_from_cache(
         self,
         cached_ts: Path,
@@ -1499,9 +1704,16 @@ class SourcePreparer:
         ``inpoint``/``outpoint`` (zero ffmpeg work). Otherwise -> stream-copy
         the wanted window into the per-plan output: no re-encode, seconds even
         for hour-long assets, and the historic trim-free contract holds.
-        ``-ss`` before ``-i`` under ``-c copy`` floors to the previous keyframe
-        (<= one GOP early at the canonical profile) — the honest trade for
-        engine-agnostic prepared segments; documented in the playout runbook.
+        ``-ss`` before ``-i`` under ``-c copy`` floors the VIDEO to its previous
+        keyframe while the audio starts at the exact in-point, so a raw slice is
+        audio-long by the video's start lag -- measured 0.853 s live and 0.533 s
+        on the same leg's conform, 5.181 s summed over the live C9 government
+        leg's two pieces (U59). The slice is therefore re-copied against its own
+        bytes with the audio head dropped onto the piece's first video packet
+        (``_align_piece_stream_starts``): same video frames, same span, no
+        per-piece lag to accumulate. A piece that cannot be re-copied is emitted
+        unchanged, so the historic contract holds for an asset whose streams are
+        not both present or not knowable; documented in the playout runbook.
         """
         inpoint = segment.inpoint_seconds
         if self._playout_trim_supported:
@@ -1550,7 +1762,20 @@ class SourcePreparer:
                 raise SourcePrepareError(
                     f"Cached conform copy-out failed for {segment.label!r}; inspect FFmpeg output."
                 )
-            tmp_output_path.replace(output_path)
+            # U59: the raw slice above is audio-long by the video's start lag
+            # (the video can only resume at its own keyframe, the audio starts at
+            # the exact in-point). The engine chains a leg's pieces per stream,
+            # so that lag sums across a multi-piece leg into the fail-open bound
+            # and a held-frame video hole on air. Re-copy the piece against its
+            # own bytes, dropping the audio's head onto the piece's first video
+            # packet -- the video's frames and span are untouched, so this only
+            # stops the audio from running ahead of the picture.
+            aligned_path = self._align_piece_stream_starts(tmp_output_path, cancel_event)
+            if aligned_path is not None:
+                tmp_output_path.unlink(missing_ok=True)
+                aligned_path.replace(output_path)
+            else:
+                tmp_output_path.replace(output_path)
             emitted = str(output_path)
             emit_inpoint = None
             emit_outpoint = None
@@ -1609,12 +1834,21 @@ class SourcePreparer:
         ``build_conform_source_args`` build those exactly as before.
         """
         # U29: the warm's OWN budget, scaled to the asset -- see
-        # ``warm_preparation_timeout_seconds``. Computed here (not inside the
-        # job) so the value the job hands ffmpeg and the value the failure
-        # warning prints are provably the same number.
-        warm_timeout_seconds = warm_preparation_timeout_seconds(
-            media_duration_seconds, self._preparation_timeout_seconds
-        )
+        # ``warm_preparation_timeout_seconds``. U42 moved WHERE it is computed:
+        # no longer here, but inside ``_job``. The caller cannot always supply
+        # a duration -- a TRIMMED airing probes nothing at all (the ``if
+        # trimmed:`` branch in ``prepare``), and a cache meta can have
+        # persisted ``media_duration_seconds: null`` for a later airing to read
+        # back -- and ``warm_preparation_timeout_seconds(None, base)`` is the
+        # bare base. That is the flat 300 s that killed the live whole-asset
+        # conforms ("unknown duration, allowed 300s to conform", six warms in
+        # one day), so the job probes the duration itself when it has none.
+        # It probes THERE, on the single warm worker, and not here: this method
+        # runs inline on the air path's thread (``prepare`` calls it), and an
+        # ffprobe must never sit between a segment and airtime. Computing it
+        # inside the job keeps the property U29 wanted -- the value handed to
+        # ffmpeg and the value the failure warning prints are provably the same
+        # number -- because both read the one local the job binds below.
         with self._warming_guard:
             if key in self._warming:
                 return
@@ -1635,7 +1869,28 @@ class SourcePreparer:
             self._warming.add(key)
 
         def _job() -> None:
+            # U42: both names are bound BEFORE the ``try``, so the failure
+            # branch below can always print a coherent bound -- including when
+            # the probe is itself what raised. ``warm_preparation_timeout_
+            # seconds`` is pure arithmetic, so the pre-try computation costs
+            # nothing when the caller already supplied a usable duration.
+            warm_duration_seconds = media_duration_seconds
+            warm_timeout_seconds = warm_preparation_timeout_seconds(
+                warm_duration_seconds, self._preparation_timeout_seconds
+            )
             try:
+                # U42: an unknown duration scales nothing. Probe it here -- on
+                # the warm worker, never on the air path -- then size the
+                # budget, the conform call and the warning text from what the
+                # probe read. ``probe_media_duration_seconds`` is deliberately
+                # total (``None`` for every failure mode), so a genuinely
+                # unprobeable asset keeps the base bound and the honest
+                # "unknown duration" wording instead of inventing one.
+                if warm_duration_seconds is None or warm_duration_seconds <= 0:
+                    warm_duration_seconds = probe_media_duration_seconds(source_path)
+                    warm_timeout_seconds = warm_preparation_timeout_seconds(
+                        warm_duration_seconds, self._preparation_timeout_seconds
+                    )
                 # Item 66 round-4 (Opus review, point 1): this job may have
                 # sat in the single-worker warm queue for a while (round-3,
                 # point 4) -- by the time it is finally about to run, the
@@ -1663,7 +1918,7 @@ class SourcePreparer:
                     config,
                     loudness,
                     normalized,
-                    media_duration_seconds=media_duration_seconds,
+                    media_duration_seconds=warm_duration_seconds,
                     timeout_seconds=warm_timeout_seconds,
                     lower_priority=True,
                 )
@@ -1687,10 +1942,13 @@ class SourcePreparer:
                 # bound it exceeded; ffmpeg's own stderr is in the log.
                 with self._warming_guard:
                     self._warm_backoff_until[key] = time.monotonic() + _WARM_FAILURE_BACKOFF_SECONDS
+                # U42: the DURATION THE WARM USED (its own probe's value when
+                # the caller had none), so this line and the bound next to it
+                # always describe the same attempt.
                 duration_text = (
                     "unknown duration"
-                    if media_duration_seconds is None
-                    else f"{media_duration_seconds:g}s of media"
+                    if warm_duration_seconds is None
+                    else f"{warm_duration_seconds:g}s of media"
                 )
                 reason = f"{type(exc).__name__}: {exc}"
                 if len(reason) > 300:
@@ -1842,13 +2100,15 @@ class SourcePreparer:
         Item 66 round-3 (Opus review) also reaps two kinds of orphaned
         cache-dir detritus that no other code path here ever cleans up:
 
-        * an abandoned ``{key}.ts.tmp`` (a conform or promotion interrupted
-          mid-write, e.g. by a crash or a killed process) older than
-          ``_ORPHAN_CACHE_TMP_MAX_AGE_S`` (1h) is deleted outright; a
-          younger one is assumed still in-flight and its bytes are counted
-          toward the budget below so a burst of concurrent warms/promotions
-          can't blow past the configured budget before any of them finish
-          and become real ``.ts`` entries;
+        * an abandoned intermediate -- any file that is neither a
+          ``{key}.ts`` entry nor a ``{key}.json`` sidecar, see
+          ``_CACHE_ENTRY_TS_RE`` -- older than
+          ``_ORPHAN_CACHE_SCRATCH_MAX_AGE_S`` (1h) is deleted outright; a
+          younger one that is still being written to (mtime within
+          ``_SCRATCH_LIVENESS_S``) is assumed in-flight and its bytes are
+          counted toward the budget below so a burst of concurrent
+          warms/promotions can't blow past the configured budget before any
+          of them finish and become real ``.ts`` entries;
         * a ``{key}.json`` with no sibling ``{key}.ts`` (a loudness-only
           probe meta -- see ``_write_cache_meta`` -- whose conform never
           followed) older than ``_ORPHAN_CACHE_META_MAX_AGE_S`` (24h) is
@@ -1858,23 +2118,29 @@ class SourcePreparer:
         cache_dir = self._cache_dir()
         now = time.time()
         try:
-            ts_entries = sorted(cache_dir.glob("*.ts"), key=lambda p: p.stat().st_mtime)
+            names = sorted(cache_dir.iterdir())
         except OSError:
             return
 
+        ts_entries: list[tuple[float, Path]] = []
         tmp_bytes = 0
-        with contextlib.suppress(OSError):
-            for tmp in cache_dir.glob("*.ts.tmp"):
-                try:
-                    age = now - tmp.stat().st_mtime
-                except OSError:
-                    continue
-                if age > _ORPHAN_CACHE_TMP_MAX_AGE_S:
-                    with contextlib.suppress(OSError):
-                        tmp.unlink()
-                    continue
+        for path in names:
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            if _CACHE_ENTRY_TS_RE.match(path.name):
+                ts_entries.append((stat.st_mtime, path))
+                continue
+            if _CACHE_ENTRY_META_RE.match(path.name):
+                continue  # a sidecar -- handled by the meta sweep below
+            age = now - stat.st_mtime
+            if age > _ORPHAN_CACHE_SCRATCH_MAX_AGE_S:
                 with contextlib.suppress(OSError):
-                    tmp_bytes += tmp.stat().st_size
+                    path.unlink()
+                continue
+            if age <= _SCRATCH_LIVENESS_S:
+                tmp_bytes += stat.st_size
 
         with contextlib.suppress(OSError):
             for meta_path in cache_dir.glob("*.json"):
@@ -1888,11 +2154,12 @@ class SourcePreparer:
                     with contextlib.suppress(OSError):
                         meta_path.unlink()
 
+        ts_entries.sort()  # oldest first: by mtime, then by path for a stable tie-break
         total = tmp_bytes
-        for p in ts_entries:
+        for _mtime_s, p in ts_entries:
             with contextlib.suppress(OSError):
                 total += p.stat().st_size
-        for oldest in ts_entries:
+        for _mtime_s, oldest in ts_entries:
             if total <= budget:
                 break
             try:
