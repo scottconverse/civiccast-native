@@ -5006,3 +5006,256 @@ def test_u37_observer_window_close_reports_what_it_counted(
     # Already disarmed: a second tick is silent.
     assert engine._on_rebase_observer_deadline(pending) is False
     assert capsys.readouterr().err == ""
+
+
+# --- (9) U62: the fallback's switch point, re-read from the FURTHEST pad -------
+#
+# U62's live shape (C12, 2026-09-28): a slate->program ``mode=immediate``
+# fallback whose commit the U37 rebase drain deferred for its whole 3.0s
+# deadline. The arm-time switch point is 185.808s; by the time the commit ran the
+# mux's own position was 188.7698s -- so every buffer the new leg delivered
+# entered the mux ~3s in the past, the emitted PES carried the stale PTS against
+# a DTS at the mux's real position (232 relay ``Invalid timestamps`` = 89 video +
+# 143 audio, of which 142 are the back-dated run and one is a pre-existing AAC
+# discontinuity at 169.771s), and the relay repaired the two streams
+# ASYMMETRICALLY: published picture lost a single 0.033333s frame at the switch
+# (seg092 video ends 188.369789, seg093 begins 188.403122) while published audio
+# resumed only at 190.179s -- a 3.008s hole in the programme's sound. Measured across seg085-seg110, sync is RESTORED once the hole ends
+# (seg094: video 190.169800 vs audio 190.179133; seg110: both 222.243133, the
+# same ~10ms baseline as the healthy seg085/088/090), so the harm is the hole
+# itself, not a lasting offset.
+#
+# R8's clamp already re-read the switch point from the mux's aired frontier, but
+# AUDIO only -- and the audio pad is the one ``_arm_mux_tail_cutoff`` fences: a
+# fenced buffer is DROPPED and a dropped buffer is never consumed, so the audio
+# frontier passes the arm-time bound only once that fence has RELEASED. On the
+# C12 shape it never did (no ``stage=mux-tail-released*`` line, and the drain
+# burned its full 3.0s with the video pad still holding 2 buffers), so the clamp
+# stayed silent -- the run that needed it is the run it could not serve. It is not
+# unsatisfiable in general: at U56g's r8 probe run the fence carried a marker
+# target, the drain drained (1.421s), the audio frontier ran on, and the audio-only
+# clamp DID fire -- and, moving audio alone, left the two streams 1.055s apart at
+# the selector (video running_time=7.094, audio running_time=8.149). The pad whose
+# frontier carries the answer without waiting on that fence (video) is exactly the
+# one r8 excluded, so an audio-only read fails silent-when-held and an audio-only
+# write fails desynchronised-when-released. These tests pin the generalisation: the
+# MAXIMUM frontier across the affected pads, applied to all of the new leg's source
+# pads, with the retiring leg's cut left where it ended.
+
+_U62_ARM_NS = 185_808_000_000
+_U62_VIDEO_FRONTIER_NS = 188_769_800_000
+
+
+def _u62_fallback_pending(
+    recorder: _Recorder,
+    *,
+    txn_id: int = 44,
+    video_level: int = 2,
+    audio_level: int = 0,
+) -> tuple[dict[str, Any], _FakeDrainPad, _FakeDrainPad]:
+    """The C12 fallback shape: an arm-time switch point, a drain that never
+    empties, and mux sink pads whose aired frontiers a test owns.
+
+    The levels are C12's own: the AUDIO pad was empty by the deadline (its
+    arrivals were being dropped by the arm-time fence) while the VIDEO pad still
+    held two queued buffers -- which is why the live WARN names ``sink_65`` and
+    not ``sink_66``."""
+    pending, video, audio = _u37_rebase_pending(recorder, txn_id=txn_id, audio_level=audio_level)
+    video.level = video_level
+    return pending, video, audio
+
+
+def _u62_deferred_commit(
+    engine: Any,
+    engine_module: types.ModuleType,
+    pending: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Arm, defer, then expire the drain deadline the way the main loop would."""
+    _u37_timeout_adds(monkeypatch, engine_module)
+    engine._prepare_reload_handoff(pending)
+    engine._begin_reload_commit(pending)
+    pending["rebase_drain_started_t"] = time.monotonic() - 3.5
+    engine._resume_rebase_drain(pending)
+
+
+def _last_set_offset(calls: list[str], pad_name: str) -> str:
+    applied = [call for call in calls if call.startswith(f"set_offset:{pad_name}:")]
+    assert applied, f"no set_offset for {pad_name}; calls={calls}"
+    return applied[-1]
+
+
+def test_u62_the_fallback_switch_point_is_reclamped_from_the_furthest_pad(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The C12 red, in the harness: the video pad's frontier is the answer.
+
+    Both new-leg pads take the ONE furthest aired frontier, the retiring leg's
+    cut stays where it ended, and the offsets land before the selector mutation
+    releases the holds -- so nothing crosses with the stale arm-time value."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.pipeline = _FakeClockPipeline(recorder, clock_time_ns=_U62_ARM_NS)
+    pending, video_pad, audio_pad = _u62_fallback_pending(recorder)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._mux_pad_airing_rt = {
+        "sink_65": _U62_VIDEO_FRONTIER_NS,
+        "sink_66": _U62_ARM_NS - 108_000_000,
+    }
+    engine._pending_reload = pending
+
+    _u62_deferred_commit(engine, engine_module, pending, monkeypatch)
+
+    calls = recorder.calls
+    for pad_name in ("new-video", "new-audio"):
+        assert _last_set_offset(calls, pad_name) == (
+            f"set_offset:{pad_name}:{_U62_VIDEO_FRONTIER_NS}"
+        ), calls
+    assert _index_of(calls, f"set_offset:new-video:{_U62_VIDEO_FRONTIER_NS}") < _index_of(
+        calls, "video_sel.set_property:active-pad=new-video"
+    ), calls
+
+    assert pending["fallback_switch_reclamped_ns"] == _U62_VIDEO_FRONTIER_NS
+    # The cut is NOT moved with the offsets: the retiring leg ended at the
+    # arm-time bound, and raising it here would let the already-dropped retiring
+    # buffers back through the fence to be re-dated a second time.
+    assert pending["old_tail_cutoff_ns"] == _U62_ARM_NS
+
+    assert (
+        "CTRL reload diagnostic: stage=fallback-switch-point-reclamped "
+        f"streams=video,audio was={_U62_ARM_NS} now={_U62_VIDEO_FRONTIER_NS} "
+        "pads=sink_65,sink_66 reload_id=44"
+    ) in capsys.readouterr().err
+
+
+def test_u62_a_measured_switch_is_never_reclamped(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The seamless/measured path is provably untouched.
+
+    ``fallback_switch_running_time_ns`` is written by the fallback branch alone,
+    so a switch with real per-stream ends keeps the ONE number its own ends
+    produced -- even with frontiers far ahead of it available."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _video_src, _audio_src = _u16_pending(recorder, txn_id=45)
+    video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+    audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._mux_pad_airing_rt = {"sink_65": 9_000_000_000, "sink_66": 9_000_000_000}
+    engine._pending_reload = pending
+    _u37_timeout_adds(monkeypatch, engine_module)
+
+    engine._prepare_reload_handoff(pending)
+    engine._begin_reload_commit(pending)
+
+    assert "fallback_switch_running_time_ns" not in pending
+    assert "fallback_switch_reclamped_ns" not in pending
+    assert "stage=fallback-switch-point-reclamped" not in capsys.readouterr().err
+    applied = [call for call in recorder.calls if call.startswith("set_offset:new-")]
+    assert applied == [
+        "set_offset:new-video-src:1000000000",
+        "set_offset:new-audio-src:1000000000",
+    ], applied
+
+
+def test_u62_an_audio_only_frontier_ahead_still_fires_and_carries_both_streams(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """R8's own case, kept and made whole.
+
+    The audio pad ahead of the frozen bound alone must still clamp -- that is
+    r8's guarantee -- and it now carries the one-offset-for-both-streams
+    invariant instead of leaving video on the stale value."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    engine.pipeline = _FakeClockPipeline(recorder, clock_time_ns=_U62_ARM_NS)
+    pending, video_pad, audio_pad = _u62_fallback_pending(recorder, txn_id=48)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._mux_pad_airing_rt = {
+        "sink_65": _U62_ARM_NS - 8_000_000,
+        "sink_66": 187_000_000_000,
+    }
+    engine._pending_reload = pending
+
+    _u62_deferred_commit(engine, engine_module, pending, monkeypatch)
+
+    calls = recorder.calls
+    for pad_name in ("new-video", "new-audio"):
+        assert _last_set_offset(calls, pad_name) == f"set_offset:{pad_name}:187000000000"
+    assert (
+        "CTRL reload diagnostic: stage=fallback-switch-point-reclamped "
+        f"streams=video,audio was={_U62_ARM_NS} now=187000000000 "
+        "pads=sink_65,sink_66 reload_id=48"
+    ) in capsys.readouterr().err
+
+
+def test_u62_a_frontier_behind_the_switch_point_is_not_a_clamp(
+    engine_module: types.ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The offset stands when nothing has aired past it: no line, no mutation."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+    audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._mux_pad_airing_rt = {
+        "sink_65": _U62_ARM_NS - 8_000_000,
+        "sink_66": _U62_ARM_NS,
+    }
+    video_src = _FakeHoldPad("new-video", recorder)
+    audio_src = _FakeHoldPad("new-audio", recorder)
+    pending: dict[str, Any] = {
+        "txn_id": 46,
+        "fallback_switch_running_time_ns": _U62_ARM_NS,
+        "new_video_pad": object(),
+        "new_audio_pad": object(),
+        "new_src_pads": [video_src, audio_src],
+    }
+
+    engine._clamp_fallback_switch_point(pending)
+
+    assert capsys.readouterr().err == ""
+    assert "fallback_switch_reclamped_ns" not in pending
+    assert recorder.calls == [], recorder.calls
+
+
+def test_u62_a_new_leg_pad_without_set_offset_is_skipped_not_fatal(
+    engine_module: types.ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pad that cannot be re-offset must not take the commit with it, and the
+    line names only the streams it actually moved."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+    audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+    engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}
+    engine._mux_pad_airing_rt = {
+        "sink_65": _U62_ARM_NS + 1_000_000_000,
+        "sink_66": _U62_ARM_NS + 1_000_000_000,
+    }
+    opaque = types.SimpleNamespace(name="new-video")
+    audio_src = _FakeHoldPad("new-audio", recorder)
+    pending: dict[str, Any] = {
+        "txn_id": 47,
+        "fallback_switch_running_time_ns": _U62_ARM_NS,
+        "new_video_pad": object(),
+        "new_audio_pad": object(),
+        "new_src_pads": [opaque, audio_src],
+    }
+
+    engine._clamp_fallback_switch_point(pending)
+
+    assert recorder.calls == ["set_offset:new-audio:186808000000"], recorder.calls
+    assert pending["fallback_switch_reclamped_ns"] == _U62_ARM_NS + 1_000_000_000
+    assert (
+        "CTRL reload diagnostic: stage=fallback-switch-point-reclamped "
+        f"streams=audio was={_U62_ARM_NS} now=186808000000 "
+        "pads=sink_65,sink_66 reload_id=47"
+    ) in capsys.readouterr().err

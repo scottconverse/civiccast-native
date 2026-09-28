@@ -6212,14 +6212,39 @@ class GstPlayoutEngine:
         running time for this stream, which is the value the emitted PES PTS
         carries.
 
-        AUDIO only and FORWARD only, deliberately. Video is not clamped and the
-        video path is not touched at all, which is what keeps this from opening a
-        video hole; and a frontier at or behind the frozen offset is not a clamp
-        -- the offset stands. The one-offset-for-both-streams invariant is not
-        broken: this runs on the fallback, where there is no per-stream bound to
-        keep in step with (``old_tail_cutoff_ns`` is the same value the offsets
-        were set to, and it is left alone -- the fence's own release already
-        governs what it drops).
+        U62: EVERY affected pad and FORWARD only, deliberately -- the frontier that
+        matters is the furthest one the mux has already aired, because that is the
+        mux's own position in this switch and nothing may be placed behind it. The
+        r8 form of this read is AUDIO only, and the audio pad is the one
+        ``_arm_mux_tail_cutoff`` fences: a fenced buffer is DROPPED, a dropped
+        buffer is never consumed, so the audio pad's frontier moves past the
+        arm-time bound only once that fence has RELEASED. On C12 it never did --
+        no ``stage=mux-tail-released*`` line in the whole run, the drain burned its
+        full 3.0s deadline with the video pad still holding 2 buffers, and the
+        reclamp stayed silent while the UNFENCED video pad's frontier ran on to
+        188.769s against a frozen 185.808s. That is the failing half: silent on the
+        very shape it was written for.
+
+        It is not unsatisfiable in general, and the other half is why the audio
+        column is not enough. At U56g's r8 probe run the fence carried a marker
+        target (``target={'sink_66': 9215988888}``), the drain drained (1.421s), the
+        audio frontier ran on, and the audio-only clamp DID fire -- and, moving the
+        audio offset alone, left the two streams 1.055s apart where they entered the
+        selector (``new-leg-selector-first-buffer``: video ``running_time=7.094``,
+        audio ``running_time=8.149``) while video kept the stale arm-time offset.
+        So an audio-only read fails one way, silent when the fence holds the pad,
+        and an audio-only write fails the other, desynchronising when it releases.
+        The max over the affected pads, written to EVERY new leg pad, is what makes
+        both cases land on one number.
+
+        The maximum across the affected pads is applied to ALL of the new leg's
+        source pads, which keeps the one-offset-for-both-streams invariant and can
+        never place a stream behind what the mux already aired; and a frontier at
+        or behind the frozen offset is not a clamp -- the offset stands.
+        ``old_tail_cutoff_ns`` is still left alone, and deliberately: it is the
+        bound the retiring leg is CUT at, and moving it forward here would let the
+        already-dropped retiring buffers back through the fence to be re-dated a
+        second time. The offsets move; the cut stays where the retiring leg ended.
         """
         switch_ns = pending.get("fallback_switch_running_time_ns")
         if switch_ns is None or self._stopping:
@@ -6227,33 +6252,37 @@ class GstPlayoutEngine:
         airing = getattr(self, "_mux_pad_airing_rt", None) or {}
         if not airing:
             return
-        affected = {
-            stream: pad_name
-            for stream, _pad, pad_name in self._rebase_affected_mux_pads(pending)
-        }
+        affected = self._rebase_affected_mux_pads(pending)
+        frontier = max(
+            (int(airing[pad_name]) for _s, _p, pad_name in affected if pad_name in airing),
+            default=None,
+        )
+        if frontier is None or frontier <= int(switch_ns):
+            return
+        offsets: list[str] = []
         for index, pad in enumerate(pending.get("new_src_pads") or ()):
             label = (
                 _NEW_LEG_STREAM_LABELS[index]
                 if index < len(_NEW_LEG_STREAM_LABELS)
                 else None
             )
-            if label != _MUX_TAIL_FENCE_STREAM:
-                continue
-            pad_name = affected.get(label)
-            frontier = airing.get(pad_name) if pad_name is not None else None
-            if frontier is None or int(frontier) <= int(switch_ns):
+            if label is None or not hasattr(pad, "set_offset"):
                 continue
             with contextlib.suppress(Exception):
                 pad.set_offset(int(frontier))
-                pending["fallback_switch_reclamped_ns"] = int(frontier)
-                print(
-                    "CTRL reload diagnostic: "
-                    f"stage=fallback-switch-point-reclamped stream={label} "
-                    f"was={int(switch_ns)} now={int(frontier)} "
-                    f"pad={pad_name} reload_id={pending.get('txn_id')}",
-                    file=sys.stderr,
-                    flush=True,
-                )
+                offsets.append(label)
+        if not offsets:
+            return
+        pending["fallback_switch_reclamped_ns"] = int(frontier)
+        print(
+            "CTRL reload diagnostic: "
+            f"stage=fallback-switch-point-reclamped streams={','.join(offsets)} "
+            f"was={int(switch_ns)} now={int(frontier)} "
+            f"pads={','.join(pad_name for _s, _p, pad_name in affected if pad_name in airing)} "
+            f"reload_id={pending.get('txn_id')}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     def _continue_reload_commit(self, pending: dict[str, Any]) -> None:
         """Second half of the commit: switch both selectors, release, confirm.
@@ -6265,10 +6294,10 @@ class GstPlayoutEngine:
         split; that order is what the U30/U34 handover tests pin, and
         ``pending['selector_handoff_started']`` keeps its meaning exactly: the
         first selector mutation has completed."""
-        # U56 round 8: the fallback's switch point is re-read HERE, after the
+        # U56 round 8 / U62: the fallback's switch point is re-read HERE, after the
         # bounded drain has given the mux pad its queued buffers up, because that
-        # is the first moment the mux's aired frontier is final. Audio only,
-        # forward only. See ``_clamp_fallback_switch_point``.
+        # is the first moment the mux's aired frontier is final. Every affected
+        # pad, forward only. See ``_clamp_fallback_switch_point``.
         self._clamp_fallback_switch_point(pending)
         new_video_pad = pending["new_video_pad"]
         new_audio_pad = pending["new_audio_pad"]
