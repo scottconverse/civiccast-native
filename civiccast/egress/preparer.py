@@ -501,114 +501,6 @@ def _format_optional_seconds(value: float | None) -> str:
     return "start" if value is None else f"{value:.3f}s"
 
 
-#: U59: ffprobe is resolved by name and invoked exactly the way
-#: ``civiccast.stream._ffmpeg`` invokes it, so the package keeps one "is FFmpeg
-#: installed" story -- the bundled runtime ``civiccast doctor`` verifies --
-#: instead of a second, private one.
-_FFPROBE_EXECUTABLE = "ffprobe"
-
-
-#: U59: the audio head of a sliced piece is dropped onto the piece's own first
-#: video packet when it leads by more than this many seconds. 1 ms is the same
-#: epsilon the alignment pass seeks with, and it is a twentieth of one AAC frame
-#: (21.3 ms), so a piece that is genuinely aligned is never re-copied.
-_PIECE_START_ALIGN_EPS_S = 0.001
-
-
-def _first_packet_pts(path: Path, selector: str) -> float | None:
-    """``selector``'s first packet PTS in ``path``, or None.
-
-    U59 (live C9, government reload_id=13, 2026-09-27 19:15:49): under
-    ``-c copy`` a sliced piece's audio starts exactly at the requested in-point
-    while the video can only resume at its own keyframe, so the piece is
-    audio-long by the video's start lag -- measured 0.853 s on the live
-    education leg and 0.533 s on the same leg's conform. The engine chains a
-    leg's pieces PER STREAM, so those lags sum: government's two-piece leg
-    spread 5.181 s against the 2.000 s single-asset bound, fail-opened, and the
-    mux held its last frame for the aired 4.148 s freeze.
-
-    ffprobe prints the file's own timestamps -- not the muxer's rebased ones --
-    and every stream of a piece shares one mpegts timestamp base, so the two
-    streams' first packets compare directly. Total by contract, like the probes
-    around preparation: an absent or unhelpful ffprobe answers ``None`` and the
-    caller keeps the piece it already has.
-    """
-    if shutil.which(_FFPROBE_EXECUTABLE) is None:
-        return None
-    try:
-        result = subprocess.run(  # noqa: S603
-            [
-                _FFPROBE_EXECUTABLE,
-                "-v",
-                "error",
-                "-select_streams",
-                selector,
-                "-show_entries",
-                "packet=pts_time",
-                "-of",
-                "csv=p=0",
-                "-read_intervals",
-                "%+#1",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30.0,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if result.returncode != 0:
-        return None
-    rows = result.stdout.strip().splitlines()
-    if not rows:
-        return None
-    try:
-        return float(rows[0].split(",")[0])
-    except ValueError:
-        return None
-
-
-def _packet_pts(path: Path, selector: str) -> list[float]:
-    """Every packet PTS of ``selector`` in ``path``, or ``[]``.
-
-    The alignment pass needs the video's LAST packet as well as its first, so
-    this reads the whole stream -- one ffprobe over a file the copy-out pass
-    already reads end to end. An unanswerable probe answers ``[]`` and the
-    caller keeps the piece it has.
-    """
-    if shutil.which(_FFPROBE_EXECUTABLE) is None:
-        return None
-    try:
-        result = subprocess.run(  # noqa: S603
-            [
-                _FFPROBE_EXECUTABLE,
-                "-v",
-                "error",
-                "-select_streams",
-                selector,
-                "-show_entries",
-                "packet=pts_time",
-                "-of",
-                "csv=p=0",
-                str(path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120.0,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return []
-    if result.returncode != 0:
-        return []
-    pts: list[float] = []
-    for row in result.stdout.splitlines():
-        try:
-            pts.append(float(row.split(",")[0]))
-        except ValueError:
-            continue
-    return pts
-
-
 def _probe_prepared_segment_decodability(path: Path) -> bool | None:
     """U36 item 7: the decodability probe the emission-time rejection uses.
 
@@ -1619,72 +1511,6 @@ class SourcePreparer:
                 source_path.name,
             )
 
-    def _align_piece_stream_starts(
-        self,
-        piece_path: Path,
-        cancel_event: threading.Event | None,
-    ) -> Path | None:
-        """Drop a piece's audio head onto its video's first packet (U59).
-
-        Returns the aligned sibling of ``piece_path``, or ``None`` when the
-        piece needs no alignment, carries only one stream, or cannot be
-        re-copied -- the caller then emits the piece it already has. Nothing
-        here can fail a preparation: an unanswerable probe, a failed child, or
-        a missing output all degrade to the historic piece.
-
-        The pass is ``-copyts``: ffmpeg's own output ``-ss`` floors the video to
-        a keyframe and would re-create the very lag being removed, while
-        ``-copyts`` makes the output seek drop exactly the packets before the
-        target and keeps every video packet. Both ends are pinned to the video's
-        own first and last packets, so whatever tail asymmetry the slice's
-        ``-t`` cut left is removed too. Measured on the live education leg's own
-        piece, reproduced offline from that leg's conform (``-ss 7199.5 -t
-        593.813 -c copy``, 340 MB): input v first 1.933333 / a first 1.400000
-        (head lag 0.533333, span delta 0.480) -> aligned v first 1.401000 /
-        a first 1.401000 over the same 593.333333 s of video; the video's own
-        packets and span unchanged, both streams' ends within one AAC frame.
-        """
-        video_pts = _packet_pts(piece_path, "v:0")
-        audio_start = _first_packet_pts(piece_path, "a:0")
-        if not video_pts or audio_start is None:
-            return None
-        video_start = video_pts[0]
-        if audio_start >= video_start - _PIECE_START_ALIGN_EPS_S:
-            return None
-        aligned_path = piece_path.with_name(piece_path.name + ".aligned")
-        args = [
-            "-hide_banner",
-            "-loglevel",
-            "warning",
-            "-i",
-            str(piece_path),
-            "-copyts",
-            "-ss",
-            f"{video_start - _PIECE_START_ALIGN_EPS_S:g}",
-            "-to",
-            f"{video_pts[-1] + _PIECE_START_ALIGN_EPS_S:g}",
-            "-c",
-            "copy",
-            "-f",
-            "mpegts",
-            str(aligned_path),
-        ]
-        try:
-            result = self._run_ffmpeg(args, cancel_event)
-        except SourcePreparationCancelledError:
-            aligned_path.unlink(missing_ok=True)
-            raise
-        if result.returncode != 0 or not aligned_path.exists() or aligned_path.stat().st_size == 0:
-            aligned_path.unlink(missing_ok=True)
-            _LOG.warning(
-                "U59 piece alignment failed; emitting the unaligned slice for %s "
-                "(audio leads video by %.3fs)",
-                piece_path.name,
-                video_start - audio_start,
-            )
-            return None
-        return aligned_path
-
     def _emit_prepared_from_cache(
         self,
         cached_ts: Path,
@@ -1704,16 +1530,9 @@ class SourcePreparer:
         ``inpoint``/``outpoint`` (zero ffmpeg work). Otherwise -> stream-copy
         the wanted window into the per-plan output: no re-encode, seconds even
         for hour-long assets, and the historic trim-free contract holds.
-        ``-ss`` before ``-i`` under ``-c copy`` floors the VIDEO to its previous
-        keyframe while the audio starts at the exact in-point, so a raw slice is
-        audio-long by the video's start lag -- measured 0.853 s live and 0.533 s
-        on the same leg's conform, 5.181 s summed over the live C9 government
-        leg's two pieces (U59). The slice is therefore re-copied against its own
-        bytes with the audio head dropped onto the piece's first video packet
-        (``_align_piece_stream_starts``): same video frames, same span, no
-        per-piece lag to accumulate. A piece that cannot be re-copied is emitted
-        unchanged, so the historic contract holds for an asset whose streams are
-        not both present or not knowable; documented in the playout runbook.
+        ``-ss`` before ``-i`` under ``-c copy`` floors to the previous keyframe
+        (<= one GOP early at the canonical profile) — the honest trade for
+        engine-agnostic prepared segments; documented in the playout runbook.
         """
         inpoint = segment.inpoint_seconds
         if self._playout_trim_supported:
@@ -1762,20 +1581,7 @@ class SourcePreparer:
                 raise SourcePrepareError(
                     f"Cached conform copy-out failed for {segment.label!r}; inspect FFmpeg output."
                 )
-            # U59: the raw slice above is audio-long by the video's start lag
-            # (the video can only resume at its own keyframe, the audio starts at
-            # the exact in-point). The engine chains a leg's pieces per stream,
-            # so that lag sums across a multi-piece leg into the fail-open bound
-            # and a held-frame video hole on air. Re-copy the piece against its
-            # own bytes, dropping the audio's head onto the piece's first video
-            # packet -- the video's frames and span are untouched, so this only
-            # stops the audio from running ahead of the picture.
-            aligned_path = self._align_piece_stream_starts(tmp_output_path, cancel_event)
-            if aligned_path is not None:
-                tmp_output_path.unlink(missing_ok=True)
-                aligned_path.replace(output_path)
-            else:
-                tmp_output_path.replace(output_path)
+            tmp_output_path.replace(output_path)
             emitted = str(output_path)
             emit_inpoint = None
             emit_outpoint = None
