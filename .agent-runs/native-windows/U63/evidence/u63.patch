@@ -1,0 +1,181 @@
+diff --git a/civiccast/egress/automation.py b/civiccast/egress/automation.py
+index 13526bb3..016cf90e 100644
+--- a/civiccast/egress/automation.py
++++ b/civiccast/egress/automation.py
+@@ -1081,6 +1081,22 @@ class ChannelAutomationService:
+     # to back off re-querying the schedule after the provider raises
+     # SourcePrepareError or returns no/empty plan for a rollover check.
+     _ROLLOVER_RETRY_COOLDOWN_SECONDS = 30.0
++    # U63 defect A: the boundary answer can be a legal but degenerate plan -- a
++    # short TAIL of the closing scheduled item, or nothing at all (C14,
++    # 00:28:38, is the second case: the derived boundary instant is excluded by
++    # the schedule's half-open item test).
++    # These two constants mirror the daemon's own reload-time rule
++    # (``EgressDaemon._resolve_schedule_tail``, with its own
++    # ``_SCHEDULE_TAIL_FLOOR_SECONDS`` / ``_SCHEDULE_TAIL_BOUNDARY_MARGIN_S``
++    # in daemon.py, which remain the source of truth for the policy): a tail
++    # below the floor is re-resolved where it ENDS, and the margin keeps that
++    # second look inside the NEXT item rather than on another boundary instant.
++    # They are restated here rather than imported from daemon.py: the automation
++    # owns its own rollover policy, and a cross-module import of another
++    # process's private policy constant would silently retune this one the next
++    # time the daemon's rule changes.
++    _ROLLOVER_TAIL_FLOOR_SECONDS = 30.0
++    _ROLLOVER_TAIL_BOUNDARY_MARGIN_SECONDS = 1.0
+     # D43 hardening, D45 fix (2026-09-05): a floor under the per-channel
+     # rollover CADENCE. The boundary-aligned trigger point alone is not
+     # enough -- it is derived from the plan, so a plan that comes back short
+@@ -1641,6 +1657,7 @@ class ChannelAutomationService:
+         if cached is not None and cached[0] == plan_end_at:
+             return cached[1], cached[2]
+         return None
++
+     def _probe_rollover_asset(
+         self, channel_id: str, plan_end_at: datetime
+     ) -> tuple[float | None, str | None]:
+@@ -1807,6 +1824,87 @@ class ChannelAutomationService:
+             max(self._ROLLOVER_MIN_INTERVAL_FLOOR_SECONDS, 0.5 * planned_seconds),
+         )
+ 
++    def _resolve_rollover_tail(
++        self,
++        channel_id: str,
++        boundary: datetime,
++        fresh_plan: EgressSourcePlan | None,
++    ) -> EgressSourcePlan | None:
++        """Re-resolve a degenerate boundary answer where its tail ENDS.
++
++        U63 defect A. ``_check_plan_rollover`` asks the schedule about
++        ``plan_end_at``, a DERIVED instant (``starts_at + sum(durations)``,
++        never measured), so the question lands on the closing item's own slot
++        end -- which the resolver's half-open item test
++        (``starts_at <= t < ends_at``) excludes. Live 2026-09-29 00:28:38,
++        education: the answer came back with no segments at all, the caller read
++        that as "nothing is scheduled", and the channel aired the fallback slate
++        for ~5 minutes while a programme was due where that closing slot ended
++        (the daemon measured the closing item's remaining tail at 23.5s when its
++        own reload ran at 00:37:28.275, i.e. the slot ended 23.5s later). The
++        daemon resolved the very same boundary to that programme
++        (``EgressDaemon._resolve_schedule_tail``) -- this applies the daemon's
++        rule at the automation's boundary instead, so the two processes agree
++        about what is due.
++
++        Returns ``fresh_plan`` untouched (identity) whenever the answer is at or
++        above the floor, whenever the second look finds nothing to air or finds
++        no improvement, and on ``SourcePrepareError`` -- so a real schedule gap
++        still resolves to the fallback slate (filler stays correct when
++        ``SCHEDULE_GAP_ABSORB_SECONDS`` owns the gap) and a programme that
++        genuinely has more than the floor left is never skipped in favour of
++        the one after it.
++
++        Mirrors ``EgressDaemon._resolve_schedule_tail`` with ONE deliberate
++        divergence: the daemon also bails on ``tail_seconds <= 0.0``, while an
++        empty answer is precisely the case this rule exists for here. The
++        daemon never sees it -- its ``source_plan`` is always a plan it already
++        resolved for some instant, so a ``0.0`` tail there is only a defensive
++        guard. The automation's answer comes back empty at C14's 00:28:38
++        boundary because the derived instant it asks about is excluded by that
++        half-open test, and an empty answer is also what a genuine gap
++        produces: the only way to tell them apart is to look one margin
++        past the boundary. That look is the same one the daemon makes at its
++        own reload, and on C14 it found the programme waiting: the daemon
++        resolved that boundary to a 23.5s tail of the closing item and then to
++        the 1800.0s item due where that tail ends (00:37:28.275, control-plane
++        log; 2026-09-29). Where the two processes look at the same boundary,
++        they should give the same answer. The exchange is still
++        strictly-improvement-only --
++        ``replacement_seconds <= tail_seconds`` keeps the empty answer, so
++        filler is never replaced by anything, and only a plan with real media
++        in it can ever be adopted.
++        """
++
++        assert self._boundary_source_plan_provider is not None
++        tail_seconds = (
++            0.0
++            if fresh_plan is None
++            else sum(segment.duration_seconds for segment in fresh_plan.segments)
++        )
++        if tail_seconds >= self._ROLLOVER_TAIL_FLOOR_SECONDS:
++            return fresh_plan
++        re_ask_at = boundary + timedelta(
++            seconds=tail_seconds + self._ROLLOVER_TAIL_BOUNDARY_MARGIN_SECONDS
++        )
++        try:
++            replacement = self._boundary_source_plan_provider(channel_id, re_ask_at)
++        except SourcePrepareError:
++            return fresh_plan
++        if replacement is None or replacement.channel_id != channel_id:
++            return fresh_plan
++        replacement_seconds = sum(segment.duration_seconds for segment in replacement.segments)
++        if replacement_seconds <= tail_seconds:
++            return fresh_plan
++        _LOG.info(
++            "Channel automation rollover for %s resolved to a %.1fs tail of the closing "
++            "scheduled item; using the plan due where that tail ends instead (%.1fs).",
++            channel_id,
++            tail_seconds,
++            replacement_seconds,
++        )
++        return replacement
++
+     def _check_plan_rollover(self, channel_id: str, *, now: datetime) -> None:
+         """Extend a finite program or filler plan before it EOSes.
+ 
+@@ -2297,6 +2395,14 @@ class ChannelAutomationService:
+                 self._monotonic() + self._ROLLOVER_RETRY_COOLDOWN_SECONDS
+             )
+             return
++        if self._boundary_source_plan_provider is not None:
++            # U63 defect A: a boundary answer that is only a sub-floor tail of
++            # the closing item is not an answer at all -- re-resolve it where
++            # that tail ends before deciding this is a fallback case. Only the
++            # boundary-provider path can be asked a boundary at all, and a
++            # manual override has already returned above, so this is exactly
++            # the daemon's own guard set for the same rule.
++            fresh_plan = self._resolve_rollover_tail(channel_id, max(now, plan_end_at), fresh_plan)
+         force_fallback = fresh_plan is None or not fresh_plan.segments
+         fresh_end = plan_end_at
+         if not force_fallback:
+@@ -2498,6 +2604,14 @@ class ChannelAutomationService:
+         be actively harmful: it would start a second whole-asset encode racing
+         the reload's own synchronous cold conform for the very same asset.
+ 
++        One case reaches past that rule and is warmed anyway (U63 defect B):
++        a boundary whose dispatch the model collapses onto ``previous_start``.
++        That happens exactly when the plan just dispatched is shorter than the
++        lead -- the regime this whole walk was written for -- and it is not a
++        collision with the reload's own conform but the SAME encode, started at
++        the only moment left. A shared cache key is deduped either way
++        (``_warming``), so the two can never run twice.
++
+         The dispatch model is ``dispatch(B) = max(previous_boundary,
+         B - lead)`` (``_check_plan_rollover``'s own ``trigger_at``), so the
+         walk reproduces it exactly rather than estimating. Best-effort
+@@ -2521,7 +2635,26 @@ class ChannelAutomationService:
+                 plan = self._resolve_boundary_plan_at(channel_id, boundary)
+                 if plan is None or not plan.segments:
+                     return
+-                if dispatch_at >= savable_at:
++                # U63 defect B: ``dispatch_at <= previous_start`` means this
++                # boundary's own dispatch has collapsed onto the instant we are
++                # dispatching from, and the ``now + lead`` test above cannot see
++                # the difference -- it rejects such a boundary by the poll
++                # overshoot ALONE. That collapse is precisely what a plan
++                # shorter than the lead does to every boundary after it: the
++                # max above always picks ``previous_start``, so the boundary the
++                # warm exists for is skipped and the walk warms the one after it
++                # a whole plan later. Live, 2026-09-29 00:23:48: government's
++                # 155s tail plan was dispatched with the 1800s item behind it,
++                # the 00:23:48 walk stepped over that item's boundary and warmed
++                # the NEXT one, and the item then prepared cold for 302.8s while
++                # the channel aired filler. When there is no earlier moment to
++                # dispatch, the only moment left to start the conform is now --
++                # the same sentence the rollover's own inside-lead recovery line
++                # states for the dispatch. Only the first step can reach this:
++                # every
++                # later step's ``previous_start`` is a boundary past
++                # ``fresh_start``.
++                if dispatch_at >= savable_at or dispatch_at <= previous_start:
+                     warmer(channel_id, plan)
+                     return
+                 advanced = sum(segment.duration_seconds for segment in plan.segments)

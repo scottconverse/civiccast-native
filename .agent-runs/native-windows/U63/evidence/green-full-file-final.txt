@@ -1,0 +1,406 @@
+# U63 -- the WHOLE test file, on the shipped candidate bytes and on the station's LIVE bytes
+#
+# Two runs of the same command over the same test file, differing only in which
+# civiccast/egress/automation.py is on disk. The point of the pair is that the two pre-existing
+# reds are the SAME TWO, with the SAME assertion and the SAME message, before and after the
+# change -- so nothing here can be blamed on U63.
+#
+#   RUN 1  candidate  sha256 50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed
+#          3,363 lines, 182,814 B     ->  2 failed, 80 passed
+#   RUN 2  LIVE base  sha256 92a94a1dc6995e986ad3cadd9c41e0114e5267caa7582625b7909707a6b0122e
+#          3,230 lines, 174,851 B     ->  5 failed, 77 passed
+#          (this is the module the station is running; see installed-base.sha256)
+#
+#   tests/egress/test_automation.py sha256 e4a3572741eb78ea82cda1c4322481394199ddb6c0bab3b2f9b8b965a90ba5e1
+#   python -m pytest tests/egress/test_automation.py -p no:randomly
+#
+# READING THE PAIR:
+#   * LIVE base fails FIVE: the two ``..._bounded_lead[300.0]`` / ``[3600.0]`` params, plus the
+#     three new U63 tests (which cannot pass without the fix).
+#   * Candidate fails TWO: exactly the same two ``..._bounded_lead`` params, at the same line
+#     (tests\egress\test_automation.py:228) with the same message
+#     (``assert ['reload'] == []``). Nothing new appears; the three U63 tests go green.
+#   * So the change turns three reds green and introduces none.
+#
+# WHY THE TWO ``bounded_lead`` REDS ARE PRE-EXISTING AND NOT U63's: the test hard-codes the
+# rollover lead as ~120s. It ticks at ``end - 121s`` and asserts NOTHING has been sampled and no
+# reload is pending, then ticks at ``end - 120s`` and asserts the boundary WAS sampled. The
+# deployed lead is 690s (see the live-log windows), so at ``end - 121s`` the rollover has long
+# since fired and a reload is already pending -- the first assertion fails before the test ever
+# reaches its second tick, on the LIVE bytes and on the candidate alike. Fixing that test means
+# re-deriving its 120s constant from the deployed lead, which is a different slice; it is
+# reported as a pre-existing red, not touched here.
+#
+# (The candidate run's identical failure line was checked against the LIVE run's, not assumed:
+# both are line 228, both ``AssertionError: assert ['reload'] == []``.)
+
+# ==== RUN 1 -- candidate bytes, whole test file
+
+============================= test session starts =============================
+platform win32 -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0
+rootdir: C:\Users\scott\Documents\Codex\2026-09-16\re\civiccast-ds-u63
+configfile: pyproject.toml
+plugins: anyio-4.13.0, hypothesis-6.152.4, asyncio-1.3.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 82 items
+
+tests\egress\test_automation.py FF...................................... [ 48%]
+..........................................                               [100%]
+
+================================== FAILURES ===================================
+__ test_single_item_rollover_prepares_next_boundary_with_bounded_lead[300.0] __
+
+duration = 300.0
+
+    @pytest.mark.parametrize("duration", [300.0, 3600.0])
+    def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration: float) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="ON_AIR",
+                current_source_label="Current programme",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pid=123,
+            )
+        )
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", (duration,), False)
+        sampled: list[datetime] = []
+    
+        def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+            sampled.append(boundary)
+            return _plan_with_duration(channel_id, 300, source_ref="next-programme")
+    
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, duration),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=next_plan,
+        )
+        end = _NOW + timedelta(seconds=duration)
+        service.run_once(now=_NOW)
+        service.run_once(now=end - timedelta(seconds=121))
+>       assert _pending_actions(store, "public") == []
+E       AssertionError: assert ['reload'] == []
+E         
+E         Left contains one more item: 'reload'
+E         Use -v to get more diff
+
+daemon     = <tests.egress.test_automation._HorizonAwareDaemon object at 0x000002189176B8F0>
+duration   = 300.0
+end        = datetime.datetime(2026, 6, 12, 6, 5, tzinfo=datetime.timezone.utc)
+next_plan  = <function test_single_item_rollover_prepares_next_boundary_with_bounded_lead.<locals>.next_plan at 0x0000021894B18180>
+sampled    = [datetime.datetime(2026, 6, 12, 6, 5, tzinfo=datetime.timezone.utc)]
+service    = <civiccast.egress.automation.ChannelAutomationService object at 0x000002189176AFF0>
+store      = <civiccast.egress.store.InMemoryEgressStore object at 0x000002189176B470>
+
+tests\egress\test_automation.py:228: AssertionError
+_ test_single_item_rollover_prepares_next_boundary_with_bounded_lead[3600.0] __
+
+duration = 3600.0
+
+    @pytest.mark.parametrize("duration", [300.0, 3600.0])
+    def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration: float) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="ON_AIR",
+                current_source_label="Current programme",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pid=123,
+            )
+        )
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", (duration,), False)
+        sampled: list[datetime] = []
+    
+        def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+            sampled.append(boundary)
+            return _plan_with_duration(channel_id, 300, source_ref="next-programme")
+    
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, duration),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=next_plan,
+        )
+        end = _NOW + timedelta(seconds=duration)
+        service.run_once(now=_NOW)
+        service.run_once(now=end - timedelta(seconds=121))
+>       assert _pending_actions(store, "public") == []
+E       AssertionError: assert ['reload'] == []
+E         
+E         Left contains one more item: 'reload'
+E         Use -v to get more diff
+
+daemon     = <tests.egress.test_automation._HorizonAwareDaemon object at 0x0000021895246480>
+duration   = 3600.0
+end        = datetime.datetime(2026, 6, 12, 7, 0, tzinfo=datetime.timezone.utc)
+next_plan  = <function test_single_item_rollover_prepares_next_boundary_with_bounded_lead.<locals>.next_plan at 0x0000021895291300>
+sampled    = [datetime.datetime(2026, 6, 12, 7, 0, tzinfo=datetime.timezone.utc)]
+service    = <civiccast.egress.automation.ChannelAutomationService object at 0x0000021895245730>
+store      = <civiccast.egress.store.InMemoryEgressStore object at 0x0000021895246300>
+
+tests\egress\test_automation.py:228: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/egress/test_automation.py::test_single_item_rollover_prepares_next_boundary_with_bounded_lead[300.0]
+FAILED tests/egress/test_automation.py::test_single_item_rollover_prepares_next_boundary_with_bounded_lead[3600.0]
+======================== 2 failed, 80 passed in 2.43s =========================
+
+# ==== RUN 2 -- LIVE base bytes, whole test file
+
+============================= test session starts =============================
+platform win32 -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0
+rootdir: C:\Users\scott\Documents\Codex\2026-09-16\re\civiccast-ds-u63
+configfile: pyproject.toml
+plugins: anyio-4.13.0, hypothesis-6.152.4, asyncio-1.3.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 82 items
+
+tests\egress\test_automation.py FF............FF..F..................... [ 48%]
+..........................................                               [100%]
+
+================================== FAILURES ===================================
+__ test_single_item_rollover_prepares_next_boundary_with_bounded_lead[300.0] __
+
+duration = 300.0
+
+    @pytest.mark.parametrize("duration", [300.0, 3600.0])
+    def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration: float) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="ON_AIR",
+                current_source_label="Current programme",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pid=123,
+            )
+        )
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", (duration,), False)
+        sampled: list[datetime] = []
+    
+        def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+            sampled.append(boundary)
+            return _plan_with_duration(channel_id, 300, source_ref="next-programme")
+    
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, duration),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=next_plan,
+        )
+        end = _NOW + timedelta(seconds=duration)
+        service.run_once(now=_NOW)
+        service.run_once(now=end - timedelta(seconds=121))
+>       assert _pending_actions(store, "public") == []
+E       AssertionError: assert ['reload'] == []
+E         
+E         Left contains one more item: 'reload'
+E         Use -v to get more diff
+
+daemon     = <tests.egress.test_automation._HorizonAwareDaemon object at 0x000001CB785E8F20>
+duration   = 300.0
+end        = datetime.datetime(2026, 6, 12, 6, 5, tzinfo=datetime.timezone.utc)
+next_plan  = <function test_single_item_rollover_prepares_next_boundary_with_bounded_lead.<locals>.next_plan at 0x000001CB7835C0E0>
+sampled    = [datetime.datetime(2026, 6, 12, 6, 5, tzinfo=datetime.timezone.utc)]
+service    = <civiccast.egress.automation.ChannelAutomationService object at 0x000001CB782C8080>
+store      = <civiccast.egress.store.InMemoryEgressStore object at 0x000001CB78673B90>
+
+tests\egress\test_automation.py:228: AssertionError
+_ test_single_item_rollover_prepares_next_boundary_with_bounded_lead[3600.0] __
+
+duration = 3600.0
+
+    @pytest.mark.parametrize("duration", [300.0, 3600.0])
+    def test_single_item_rollover_prepares_next_boundary_with_bounded_lead(duration: float) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        store.write_state(
+            EgressStateRow(
+                channel_id="public",
+                state="ON_AIR",
+                current_source_label="Current programme",
+                current_proof_event_id="ev-1",
+                updated_at=_NOW,
+                pid=123,
+            )
+        )
+        daemon = _HorizonAwareDaemon(live_channels={"public"})
+        daemon.dispatched["public"] = ("ev-1", (duration,), False)
+        sampled: list[datetime] = []
+    
+        def next_plan(channel_id: str, boundary: datetime) -> EgressSourcePlan:
+            sampled.append(boundary)
+            return _plan_with_duration(channel_id, 300, source_ref="next-programme")
+    
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, duration),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=next_plan,
+        )
+        end = _NOW + timedelta(seconds=duration)
+        service.run_once(now=_NOW)
+        service.run_once(now=end - timedelta(seconds=121))
+>       assert _pending_actions(store, "public") == []
+E       AssertionError: assert ['reload'] == []
+E         
+E         Left contains one more item: 'reload'
+E         Use -v to get more diff
+
+daemon     = <tests.egress.test_automation._HorizonAwareDaemon object at 0x000001CB78A868A0>
+duration   = 3600.0
+end        = datetime.datetime(2026, 6, 12, 7, 0, tzinfo=datetime.timezone.utc)
+next_plan  = <function test_single_item_rollover_prepares_next_boundary_with_bounded_lead.<locals>.next_plan at 0x000001CB78ACD260>
+sampled    = [datetime.datetime(2026, 6, 12, 7, 0, tzinfo=datetime.timezone.utc)]
+service    = <civiccast.egress.automation.ChannelAutomationService object at 0x000001CB78A845C0>
+store      = <civiccast.egress.store.InMemoryEgressStore object at 0x000001CB78A86390>
+
+tests\egress\test_automation.py:228: AssertionError
+_ TestPlanRollover.test_boundary_answer_between_two_slots_resolves_to_the_next_programme _
+
+self = <tests.egress.test_automation.TestPlanRollover object at 0x000001CB782E5280>
+
+    def test_boundary_answer_between_two_slots_resolves_to_the_next_programme(self) -> None:
+        """The C14 shape exactly: nothing resolves AT the derived boundary; the
+        next programme resolves a margin past it."""
+        end = _NOW + timedelta(seconds=554)
+    
+        def answers(boundary: datetime) -> EgressSourcePlan | None:
+            if boundary > end:
+                return _plan_with_duration("public", 1800.0, source_ref="next-programme")
+            return None
+    
+        sampled, force_fallback = self._run_554s_tail_boundary(answers)
+    
+>       assert sampled == [end, end + timedelta(seconds=1.0)]
+E       assert [datetime.dat...timezone.utc)] == [datetime.dat...timezone.utc)]
+E         
+E         Right contains one more item: datetime.datetime(2026, 6, 12, 6, 9, 15, tzinfo=datetime.timezone.utc)
+E         Use -v to get more diff
+
+answers    = <function TestPlanRollover.test_boundary_answer_between_two_slots_resolves_to_the_next_programme.<locals>.answers at 0x000001CB78ACDD00>
+end        = datetime.datetime(2026, 6, 12, 6, 9, 14, tzinfo=datetime.timezone.utc)
+force_fallback = [True]
+sampled    = [datetime.datetime(2026, 6, 12, 6, 9, 14, tzinfo=datetime.timezone.utc)]
+self       = <tests.egress.test_automation.TestPlanRollover object at 0x000001CB782E5280>
+
+tests\egress\test_automation.py:615: AssertionError
+_ TestPlanRollover.test_boundary_answer_that_is_a_sub_floor_tail_resolves_to_the_next_programme _
+
+self = <tests.egress.test_automation.TestPlanRollover object at 0x000001CB782E5670>
+
+    def test_boundary_answer_that_is_a_sub_floor_tail_resolves_to_the_next_programme(self) -> None:
+        """A tail of the closing item below the daemon's own floor (30s) is
+        re-resolved where it ENDS -- the daemon's rule, applied at the
+        automation's boundary instead of at reload time."""
+        end = _NOW + timedelta(seconds=554)
+    
+        def answers(boundary: datetime) -> EgressSourcePlan | None:
+            if boundary > end:
+                return _plan_with_duration("public", 1800.0, source_ref="next-programme")
+            return _plan_with_duration("public", 23.5, source_ref="closing-item-tail")
+    
+        sampled, force_fallback = self._run_554s_tail_boundary(answers)
+    
+>       assert sampled == [end, end + timedelta(seconds=24.5)]
+E       assert [datetime.dat...timezone.utc)] == [datetime.dat...timezone.utc)]
+E         
+E         Right contains one more item: datetime.datetime(2026, 6, 12, 6, 9, 38, 500000, tzinfo=datetime.timezone.utc)
+E         Use -v to get more diff
+
+answers    = <function TestPlanRollover.test_boundary_answer_that_is_a_sub_floor_tail_resolves_to_the_next_programme.<locals>.answers at 0x000001CB78ACDC60>
+end        = datetime.datetime(2026, 6, 12, 6, 9, 14, tzinfo=datetime.timezone.utc)
+force_fallback = [False]
+sampled    = [datetime.datetime(2026, 6, 12, 6, 9, 14, tzinfo=datetime.timezone.utc)]
+self       = <tests.egress.test_automation.TestPlanRollover object at 0x000001CB782E5670>
+
+tests\egress\test_automation.py:633: AssertionError
+_ TestPlanRollover.test_short_leg_next_boundary_is_warmed_now_not_one_plan_later _
+
+self = <tests.egress.test_automation.TestPlanRollover object at 0x000001CB782E6240>
+
+    def test_short_leg_next_boundary_is_warmed_now_not_one_plan_later(self) -> None:
+        """A plan shorter than the lead makes every later boundary's dispatch
+        collapse onto this very dispatch -- so the walk's ``now + lead`` test
+        rejects the boundary that actually needed the warm, by the poll
+        overshoot alone, and warms the one AFTER it instead.
+    
+        C14 government, 2026-09-29: the rollover that built the 155s tail plan
+        (00:23:48.598) was the last instant a whole-asset conform of the next
+        item could still have finished before its own preparation; the item
+        behind it (1800s Sustainability) then prepared cold for 302.8s and the
+        channel aired filler while it did.
+        """
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _WarmRecordingDaemon(durations=(692.0,))
+        first_boundary = _NOW + timedelta(seconds=692.0)
+        second_boundary = first_boundary + timedelta(seconds=155.0)
+        third_boundary = second_boundary + timedelta(seconds=1800.0)
+        sampled: list[datetime] = []
+    
+        def answers(_channel_id: str, boundary: datetime) -> EgressSourcePlan | None:
+            sampled.append(boundary)
+            if boundary < second_boundary:
+                return _plan_with_duration("public", 155.0, source_ref="closing-item-tail")
+            if boundary < third_boundary:
+                return _plan_with_duration("public", 1800.0, source_ref="sustainability")
+            return _plan_with_duration("public", 1800.0, source_ref="later-slice")
+    
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, 692.0),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=answers,
+        )
+        service.run_once(now=_NOW)
+        # The 692s plan on air against the 690s lead puts the trigger at
+        # ``_NOW + 2``; this tick lands 0.4s past it, which is the overshoot
+        # the walk's own comparison then measures.
+        service.run_once(now=_NOW + timedelta(seconds=2.4))
+        assert _pending_actions(store, "public") == ["reload"]
+        # The boundary the warm exists for is the FIRST one the walk is shown;
+        # it is also the only one it may look at. LIVE bytes answer
+        # ``[first, second, third]`` and warm "later-slice" -- the plan AFTER
+        # the one that needed it.
+>       assert sampled == [first_boundary, second_boundary]
+E       assert [datetime.dat...timezone.utc)] == [datetime.dat...timezone.utc)]
+E         
+E         Left contains one more item: datetime.datetime(2026, 6, 12, 6, 44, 7, tzinfo=datetime.timezone.utc)
+E         Use -v to get more diff
+
+answers    = <function TestPlanRollover.test_short_leg_next_boundary_is_warmed_now_not_one_plan_later.<locals>.answers at 0x000001CB78ACE520>
+daemon     = <tests.egress.test_automation._WarmRecordingDaemon object at 0x000001CB78A87F80>
+first_boundary = datetime.datetime(2026, 6, 12, 6, 11, 32, tzinfo=datetime.timezone.utc)
+sampled    = [datetime.datetime(2026, 6, 12, 6, 11, 32, tzinfo=datetime.timezone.utc), datetime.datetime(2026, 6, 12, 6, 14, 7, tzinfo=datetime.timezone.utc), datetime.datetime(2026, 6, 12, 6, 44, 7, tzinfo=datetime.timezone.utc)]
+second_boundary = datetime.datetime(2026, 6, 12, 6, 14, 7, tzinfo=datetime.timezone.utc)
+self       = <tests.egress.test_automation.TestPlanRollover object at 0x000001CB782E6240>
+service    = <civiccast.egress.automation.ChannelAutomationService object at 0x000001CB78A87E00>
+store      = <civiccast.egress.store.InMemoryEgressStore object at 0x000001CB78A87740>
+third_boundary = datetime.datetime(2026, 6, 12, 6, 44, 7, tzinfo=datetime.timezone.utc)
+
+tests\egress\test_automation.py:709: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/egress/test_automation.py::test_single_item_rollover_prepares_next_boundary_with_bounded_lead[300.0]
+FAILED tests/egress/test_automation.py::test_single_item_rollover_prepares_next_boundary_with_bounded_lead[3600.0]
+FAILED tests/egress/test_automation.py::TestPlanRollover::test_boundary_answer_between_two_slots_resolves_to_the_next_programme
+FAILED tests/egress/test_automation.py::TestPlanRollover::test_boundary_answer_that_is_a_sub_floor_tail_resolves_to_the_next_programme
+FAILED tests/egress/test_automation.py::TestPlanRollover::test_short_leg_next_boundary_is_warmed_now_not_one_plan_later
+======================== 5 failed, 77 passed in 2.25s =========================

@@ -1,0 +1,35 @@
+# U63 blast-radius delta -- the three new tests, and nothing else
+#
+# 2026-09-29. `comm` of the two FAILED-id sets in egress-dir.txt. Both inputs are sorted, so
+# comm's blank-column columns are meaningful; the counts are asserted, not eyeballed:
+#
+#   candidate (RUN 1)  107 ids
+#   reverted  (RUN 2)  110 ids
+#
+# Commands, verbatim:
+#   python -c "import re,pathlib; p=pathlib.Path('egress-dir-both.raw.txt').read_text(...);
+#              ... re.findall(r'^FAILED (\S+)', section) ..."   # one id per line, sorted, deduped
+#   comm -13 sec0.ids sec1.ids    # in RUN 2 only
+#   comm -23 sec0.ids sec1.ids    # in RUN 1 only
+#
+# `comm -13` -- present in the REVERTED run only, i.e. the tests the fix turns green:
+#
+tests/egress/test_automation.py::TestPlanRollover::test_boundary_answer_between_two_slots_resolves_to_the_next_programme
+tests/egress/test_automation.py::TestPlanRollover::test_boundary_answer_that_is_a_sub_floor_tail_resolves_to_the_next_programme
+tests/egress/test_automation.py::TestPlanRollover::test_short_leg_next_boundary_is_warmed_now_not_one_plan_later
+#
+# `comm -23` -- present in the CANDIDATE run only:
+#   (no output)
+#
+# Reading: inverting the two fixes makes exactly three tests fail -- the three U63 tests -- and
+# makes no other test fail that was not already failing. Equivalently: applying the fixes turns
+# exactly three reds green and touches nothing else in the tree.
+#
+# This is the whole-candidate blast radius statement. It says nothing about the absolute red
+# count, which is a property of the worktree's base (see the header of egress-dir.txt).
+#
+# (A note on the FIRST draft of this file, kept so the correction is visible: it reported
+# "base 108 vs candidate 107; the only difference is the new test", one test, and it derived
+# that from an earlier capture on a different candidate build. On the frozen bytes the count is
+# 110 vs 107 and the difference is three tests. The command that produced the old number was
+# not re-run against the frozen bytes, which is why it is superseded rather than amended.)

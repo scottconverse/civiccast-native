@@ -132,6 +132,49 @@ class _HorizonAwareDaemon(_FakeDaemon):
         return self.dispatched.get(channel_id)
 
 
+class _BoundaryRecordingDaemon(_HorizonAwareDaemon):
+    """A daemon double that, like the real ``EgressDaemon``, records the
+    ``force_fallback`` flag of every plan-rollover dispatch it is handed
+    (``record_rollover_plan_end``), for one live channel whose DISPATCHED plan
+    horizon the caller sets up front."""
+
+    def __init__(
+        self,
+        durations: tuple[float, ...] = (554.0,),
+        *,
+        channel_id: str = "public",
+        proof_event_id: str = "ev-1",
+    ) -> None:
+        super().__init__(live_channels={channel_id})
+        self.dispatched[channel_id] = (proof_event_id, durations, False)
+        self.force_fallback: list[bool] = []
+
+    def record_rollover_plan_end(
+        self,
+        _channel_id: str,
+        _plan_end_at: datetime,
+        *,
+        command_id: str | None,
+        force_fallback: bool = False,
+        min_plan_seconds: float | None = None,
+    ) -> None:
+        assert command_id is not None
+        self.force_fallback.append(force_fallback)
+
+
+class _WarmRecordingDaemon(_BoundaryRecordingDaemon):
+    """A daemon double that, like the real ``EgressDaemon``, can be handed the
+    U60/U61 plan look-ahead warm (``warm_source_plan``) and records the
+    ``source_ref`` of every segment of every plan it was asked to warm."""
+
+    def __init__(self, durations: tuple[float, ...] = (692.0,)) -> None:
+        super().__init__(durations=durations)
+        self.warmed_refs: list[str] = []
+
+    def warm_source_plan(self, _channel_id: str, plan: EgressSourcePlan) -> None:
+        self.warmed_refs.extend(segment.source_ref or "" for segment in plan.segments)
+
+
 def _plan_with_segments(
     channel_id: str, durations: tuple[float, ...], *, source_ref_prefix: str = "seg"
 ) -> EgressSourcePlan:
@@ -487,6 +530,7 @@ class TestPlanRollover:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 assert command_id is not None
                 self.force_fallback.append(force_fallback)
@@ -502,6 +546,168 @@ class TestPlanRollover:
 
         assert _pending_actions(store, "public") == ["reload"]
         assert daemon.force_fallback == [True]
+
+    # -- U63 defect A: the boundary lands between two slots -----------------
+    #
+    # Live 2026-09-29 00:28:38, education. ``plan_end_at`` is DERIVED
+    # (``starts_at + sum(durations)``), never measured, so the instant the
+    # automation asks the schedule about can land in the sub-second crack
+    # between the closing item's slot end and the next item's start -- the
+    # resolver's item test is the half-open ``starts_at <= t < ends_at``. On
+    # C14 that answer came back EMPTY, ``_check_plan_rollover`` read it as
+    # "nothing scheduled" and rolled the channel onto the fallback slate for
+    # ~5 minutes, while the daemon's own reload-time rule
+    # (``EgressDaemon._resolve_schedule_tail``) resolved the very same
+    # boundary half a second later to the next programme. These tests pin the
+    # automation's half of that rule.
+
+    def _tail_boundary_provider(
+        self,
+        answers: Callable[[datetime], EgressSourcePlan | None],
+        sampled: list[datetime],
+    ) -> Callable[[str, datetime], EgressSourcePlan | None]:
+        def boundary_provider(channel_id: str, boundary: datetime) -> EgressSourcePlan | None:
+            sampled.append(boundary)
+            return answers(boundary)
+
+        return boundary_provider
+
+    def _run_554s_tail_boundary(
+        self,
+        answers: Callable[[datetime], EgressSourcePlan | None],
+    ) -> tuple[list[datetime], list[bool]]:
+        """Drive one rollover tick for the C14 education shape: a 554s plan on
+        air (shorter than the 690s lead, so its trigger collapses onto the
+        instant it took air), and a boundary provider that answers by the
+        boundary instant it is asked about."""
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _BoundaryRecordingDaemon(durations=(554.0,))
+        sampled: list[datetime] = []
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, 554.0),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=self._tail_boundary_provider(answers, sampled),
+        )
+        # The first tick establishes the active plan's horizon and returns
+        # (there is nothing to roll over until that tuple exists); the second
+        # tick drives the rollover check itself.
+        service.run_once(now=_NOW)
+        service.run_once(now=_NOW + timedelta(seconds=2))
+        assert _pending_actions(store, "public") == ["reload"]
+        return sampled, daemon.force_fallback
+
+    def test_boundary_answer_between_two_slots_resolves_to_the_next_programme(self) -> None:
+        """The C14 shape exactly: nothing resolves AT the derived boundary; the
+        next programme resolves a margin past it."""
+        end = _NOW + timedelta(seconds=554)
+
+        def answers(boundary: datetime) -> EgressSourcePlan | None:
+            if boundary > end:
+                return _plan_with_duration("public", 1800.0, source_ref="next-programme")
+            return None
+
+        sampled, force_fallback = self._run_554s_tail_boundary(answers)
+
+        assert sampled == [end, end + timedelta(seconds=1.0)]
+        # LIVE bytes: [True] -- the channel airs filler with a programme due
+        # half a second later.
+        assert force_fallback == [False]
+
+    def test_boundary_answer_that_is_a_sub_floor_tail_resolves_to_the_next_programme(self) -> None:
+        """A tail of the closing item below the daemon's own floor (30s) is
+        re-resolved where it ENDS -- the daemon's rule, applied at the
+        automation's boundary instead of at reload time."""
+        end = _NOW + timedelta(seconds=554)
+
+        def answers(boundary: datetime) -> EgressSourcePlan | None:
+            if boundary > end:
+                return _plan_with_duration("public", 1800.0, source_ref="next-programme")
+            return _plan_with_duration("public", 23.5, source_ref="closing-item-tail")
+
+        sampled, force_fallback = self._run_554s_tail_boundary(answers)
+
+        assert sampled == [end, end + timedelta(seconds=24.5)]
+        assert force_fallback == [False]
+
+    def test_boundary_answer_with_no_programme_after_the_tail_keeps_the_filler(self) -> None:
+        """A real schedule gap must still resolve to filler -- filler stays the
+        correct answer to "a short tail and nothing scheduled after it"."""
+        end = _NOW + timedelta(seconds=554)
+
+        def answers(boundary: datetime) -> EgressSourcePlan | None:
+            assert boundary >= end
+            return None
+
+        _sampled, force_fallback = self._run_554s_tail_boundary(answers)
+
+        assert force_fallback == [True]
+
+    def test_boundary_answer_at_or_above_the_tail_floor_is_never_re_asked(self) -> None:
+        """A programme that genuinely has more than the floor left is aired as
+        it resolves -- the schedule is not consulted a second time, so a short
+        scheduled item can never be skipped in favour of the one after it."""
+        end = _NOW + timedelta(seconds=554)
+
+        def answers(_boundary: datetime) -> EgressSourcePlan | None:
+            return _plan_with_duration("public", 300.0, source_ref="short-programme")
+
+        sampled, force_fallback = self._run_554s_tail_boundary(answers)
+
+        assert sampled == [end]
+        assert force_fallback == [False]
+
+    def test_short_leg_next_boundary_is_warmed_now_not_one_plan_later(self) -> None:
+        """A plan shorter than the lead makes every later boundary's dispatch
+        collapse onto this very dispatch -- so the walk's ``now + lead`` test
+        rejects the boundary that actually needed the warm, by the poll
+        overshoot alone, and warms the one AFTER it instead.
+
+        C14 government, 2026-09-29: the rollover that built the 155s tail plan
+        (00:23:48.598) was the last instant a whole-asset conform of the next
+        item could still have finished before its own preparation; the item
+        behind it (1800s Sustainability) then prepared cold for 302.8s and the
+        channel aired filler while it did.
+        """
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public"))
+        self._on_air_state(store, "public", proof_event_id="ev-1")
+        daemon = _WarmRecordingDaemon(durations=(692.0,))
+        first_boundary = _NOW + timedelta(seconds=692.0)
+        second_boundary = first_boundary + timedelta(seconds=155.0)
+        third_boundary = second_boundary + timedelta(seconds=1800.0)
+        sampled: list[datetime] = []
+
+        def answers(_channel_id: str, boundary: datetime) -> EgressSourcePlan | None:
+            sampled.append(boundary)
+            if boundary < second_boundary:
+                return _plan_with_duration("public", 155.0, source_ref="closing-item-tail")
+            if boundary < third_boundary:
+                return _plan_with_duration("public", 1800.0, source_ref="sustainability")
+            return _plan_with_duration("public", 1800.0, source_ref="later-slice")
+
+        service = ChannelAutomationService(
+            store,
+            daemon,
+            lambda channel: _plan_with_duration(channel, 692.0),
+            settings=ChannelAutomationSettings(),
+            boundary_source_plan_provider=answers,
+        )
+        service.run_once(now=_NOW)
+        # The 692s plan on air against the 690s lead puts the trigger at
+        # ``_NOW + 2``; this tick lands 0.4s past it, which is the overshoot
+        # the walk's own comparison then measures.
+        service.run_once(now=_NOW + timedelta(seconds=2.4))
+        assert _pending_actions(store, "public") == ["reload"]
+        # The boundary the warm exists for is the FIRST one the walk is shown;
+        # it is also the only one it may look at. LIVE bytes answer
+        # ``[first, second, third]`` and warm "later-slice" -- the plan AFTER
+        # the one that needed it.
+        assert sampled == [first_boundary, second_boundary]
+        assert daemon.warmed_refs == ["sustainability"]
 
     def test_no_rollover_while_plan_has_plenty_of_runway(self) -> None:
         store = InMemoryEgressStore()
@@ -583,6 +789,7 @@ class TestPlanRollover:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 self.recorded.append((channel_id, plan_end_at, command_id))
 
@@ -628,6 +835,7 @@ class TestPlanRollover:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 assert command_id is not None
                 self.force_fallback.append(force_fallback)
@@ -2180,6 +2388,7 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 self.recorded.append((plan_end_at, command_id))
 
@@ -2245,6 +2454,7 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 self.recorded.append((plan_end_at, command_id))
 

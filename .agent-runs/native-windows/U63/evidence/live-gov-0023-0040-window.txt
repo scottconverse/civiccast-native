@@ -1,0 +1,91 @@
+# Live-log capture: the government (C14) 155 s plan, 2026-09-29 00:23:48 -> 00:40:25
+#
+# SOURCE: C:\ProgramData\CivicCast\logs\control_plane-app.log, read with a SHARED READ
+# ([System.IO.File]::Open(..., FileShare::ReadWrite)) while the station was live. Nothing was
+# opened, held, written, signalled, or restarted. The 14 lines below are verbatim; the filter
+# was `channel == government` + `civiccast.egress` + timestamp in [00:14:00, 00:50:00],
+# excluding the 5 s `egress state ->` heartbeat. (Scanner: u63-scan-gov2.ps1.)
+#
+# WHAT THESE 14 LINES SAY (the reading the report rests on -- every number below is in the
+# lines themselves):
+#
+# 1. 00:23:48.598 -- the rollover lead for the tick that dispatches the NEXT boundary is
+#    computed against "Senior Citizens Advisory Board - June 2026.mp4", and the parenthetical
+#    reports "(155s at 12x + 120s)". 155 s is the asset that the boundary provider will answer
+#    with at 00:35:18 (one 155 s segment -- the 00:23:53.450 prep line says "1 segment(s)").
+# 2. 00:23:48.599 / 00:23:51.042 / 00:23:53.450 / 00:23:53.466 -- that plan was rolled over,
+#    prepared (2.4 s, cache-warm), and accepted (reload_id=cc85940f, switch at EOS).
+# 3. 00:35:19.484 -- the NEXT lead line names "Sustainability Advisory Board - April 2026.mp4
+#    (1800s at 12x + 120s)". This is the 1800 s item, and this line is the FIRST appearance of
+#    it anywhere in the window: it is printed by the tick that dispatches it, not by the
+#    00:23:48 tick that could have warmed it.
+# 4. 00:35:19.485 x2 -- "the live plan ends in 153s" and "there is no earlier moment to
+#    dispatch" (the inside-lead-recovery line: trigger collapsed to last_segment_start_at).
+# 5. 00:35:22.199 -- prep queued. 00:37:54.949 / 00:38:55.846 / 00:39:56.515 -- the horizon is
+#    past due by 2s / 63s / 124s and the seamless reload is "still settling; waiting".
+# 6. 00:40:24.981 -- "preparation for government took 302.8s for 1 segment(s)". 302.8 s is a
+#    COLD conform of the 1800 s item (it is 2.0x the 155 s asset's 2.4 s warm-and-prepared
+#    time). 00:40:24.997 -- accepted with switch_at_end_of_current=False.
+#
+# The 302.8 s cold conform is the on-air cost: prep was queued at 00:35:22 and the plan could
+# not be accepted until 00:40:25, so the channel sat on the in-worker slate from ~00:37:30.
+#
+# NOTE WHAT IS *NOT* HERE: there is no `warm` line, no look-ahead line, and no conform-cache
+# line for the 1800 s item anywhere in this window, at any earlier tick. The warm path
+# (`SourcePreparer.warm_plan`) logs on FAILURE only, so a successful warm is silent -- which
+# means these logs cannot by themselves distinguish "the 00:23:48 walk warmed nothing" from
+# "the 00:23:48 walk warmed it and the 00:35:22 prep still cost 302.8 s". That limit is stated
+# in the report rather than papered over; the code reading (walk arithmetic, below) is what
+# carries the claim.
+#
+# ---- verbatim ----
+2026-09-29 00:23:48,598 INFO civiccast.egress.automation: Channel automation computed the rollover lead for government: lead=690s for Senior Citizens Advisory Board - June 2026.mp4 (155s at 12x + 120s).
+2026-09-29 00:23:48,599 INFO civiccast.egress.automation: Channel automation issued a seamless plan rollover for government: the live plan ends in 690s; target=extended schedule before the engine reaches EOS.
+2026-09-29 00:23:51,042 INFO civiccast.egress.daemon: channel government: reload source preparation queued
+2026-09-29 00:23:53,450 INFO civiccast.egress.daemon: Content-reload source preparation for government took 2.4s for 1 segment(s) (media preparation completed).
+2026-09-29 00:23:53,466 INFO civiccast.egress.daemon: Seamless content-reload accepted for government (reload_id=cc85940f-c9ca-4dca-a079-3a3d688212f4, switch_at_end_of_current=True); awaiting settlement.
+2026-09-29 00:35:19,484 INFO civiccast.egress.automation: Channel automation computed the rollover lead for government: lead=690s for Sustainability Advisory Board - April 2026.mp4 (1800s at 12x + 120s).
+2026-09-29 00:35:19,485 INFO civiccast.egress.automation: Channel automation issued a seamless plan rollover for government: the live plan ends in 153s; target=extended schedule before the engine reaches EOS.
+2026-09-29 00:35:19,485 INFO civiccast.egress.automation: Channel automation rollover for government was issued as soon as the previous plan settled: the plan on air is 155s long, shorter than the 690s lead a preparation may need -- there is no earlier moment to dispatch.
+2026-09-29 00:35:22,199 INFO civiccast.egress.daemon: channel government: reload source preparation queued
+2026-09-29 00:37:54,949 INFO civiccast.egress.automation: Channel automation rollover horizon for government is past due by 2s but the seamless reload is still settling; waiting.
+2026-09-29 00:38:55,846 INFO civiccast.egress.automation: Channel automation rollover horizon for government is past due by 63s but the seamless reload is still settling; waiting.
+2026-09-29 00:39:56,515 INFO civiccast.egress.automation: Channel automation rollover horizon for government is past due by 124s but the seamless reload is still settling; waiting.
+2026-09-29 00:40:24,981 INFO civiccast.egress.daemon: Content-reload source preparation for government took 302.8s for 1 segment(s) (media preparation completed).
+2026-09-29 00:40:24,997 INFO civiccast.egress.daemon: Seamless content-reload accepted for government (reload_id=31c01a0d-b497-402b-90c8-d36e2ed91e58, switch_at_end_of_current=False); awaiting settlement.
+
+# ---- the walk arithmetic these lines feed (read off the LIVE bytes, `_warm_upcoming_plan`) ----
+#
+# The look-ahead walk (automation.py, `_warm_upcoming_plan`) starts from the live plan's own
+# numbers and steps forward up to `_ROLLOVER_LOOKAHEAD_MAX_STEPS = 8` times:
+#
+#     lead          = timedelta(seconds=lead_seconds)
+#     savable_at    = now + lead                      # now = 00:23:48.598, lead = 690 s
+#                                                     #     -> savable_at = 00:35:18.6
+#     boundary      = fresh_end                       # 00:38:53 (00:35:18 + 155 s plan)
+#     previous_start = fresh_start                    # 00:35:18
+#     loop:
+#         dispatch_at = max(previous_start, boundary - lead)
+#
+#   STEP 1 -- boundary 00:38:53:
+#         dispatch_at = max(00:35:18, 00:38:53 - 690 s) = max(00:35:18, 00:27:23) = 00:35:18
+#                                                       == previous_start
+#         OLD test: `if dispatch_at >= savable_at` -> 00:35:18 >= 00:35:18.6 -> FALSE
+#         -> falls through, the walk advances past the boundary that needs warming.
+#     (The two numbers are 0.6 s apart, and savable_at is `now + 690 s` computed from the
+#     tick's own clock while dispatch_at is derived from the plan's declared end, so the
+#     comparison lands on whichever side the plan's declared end happens to fall. Here it
+#     falls on the wrong side by 0.6 s.)
+#
+#   STEP 2 -- boundary 01:08:53 (00:38:53 + 1800 s):
+#         dispatch_at = max(00:38:53, 01:08:53 - 690 s) = max(00:38:53, 00:57:23) = 00:57:23
+#         OLD test: 00:57:23 >= 00:35:18.6 -> TRUE -> wakes the warmer and RETURNS.
+#         -> the item the walk warms is the one AFTER the one that needed it.
+#
+#   NEW clause: `or dispatch_at <= previous_start` -- step 1's dispatch_at IS previous_start
+#   (the horizon is already inside the lead), so step 1 now wins and the 1800 s item is warmed
+#   at 00:23:48 instead of 00:35:19. Step 2 is unchanged (it still returns on its own test),
+#   and every step where `dispatch_at > previous_start` reaches the new clause as FALSE.
+#
+# The full statement, with the risks and the one thing this cannot prove, is in
+# reports/U63.md (work B).

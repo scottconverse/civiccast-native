@@ -1,0 +1,38 @@
+# U63 evidence: line endings, and why every digest in INDEX.txt is the committed digest
+#
+# WHY THIS NOTE EXISTS. The captures in this directory were written by a Windows pytest, which
+# emits CRLF. This repo commits text as LF. So for a capture, "the sha256 of the file on disk"
+# and "the sha256 of the committed blob" are two different numbers, and an index that prints
+# one of them without saying which is a trap for whoever checks it. Rather than reconcile two
+# digest families, THIS DIRECTORY WAS NORMALIZED: every evidence file written for the final
+# commit is LF on disk, so the digest in INDEX.txt is both the on-disk digest and the committed
+# blob digest, and one check verifies both.
+#
+# THE RULE, quoted from the repo rather than assumed:
+#     .gitattributes:6   * text=auto eol=lf
+#     $ git config --get core.autocrlf
+#     (unset -- so this is the attributes rule alone, not a user setting)
+#
+# HOW IT WAS ENFORCED. The files composed for this commit are written with an explicit LF
+# newline (`Path.write_text(..., newline="")`), and the pytest captures they quote are
+# LF-normalized on the way in (`.replace("\r\n", "\n")` before the text is embedded). The
+# deliverable itself was never translated: civiccast/egress/automation.py is LF with CR 0 both
+# in the worktree and in the tree (50dc48c8438b6d56..., blob 016cf90e), and so is its base, the
+# station's LIVE bytes (92a94a1dc6995e98..., blob 13526bb3).
+#
+# THIS IS NOT COSMETIC. An earlier revision of the revert helper used `Path.write_text` without
+# `newline=""`, which on Windows silently rewrote the file under test from LF to CRLF -- so the
+# "RED" bytes were not the candidate bytes minus two substitutions, they were that PLUS a
+# whole-file line-ending change. The helper now writes with `newline=""` and the three reverted
+# states in red-green-red.txt each carry CR 0. That bug is why this note is stated as a rule
+# rather than left implicit.
+#
+# A NOTE ON HOW NOT TO CHECK THIS. `grep -c $'\r' <file>` does NOT count CR in Git Bash: the
+# pattern expands to the empty string and the expression matches every line, so it returns the
+# LINE COUNT for every file, LF or CRLF. That mistake produced a wrong "all of these are CRLF"
+# table during this slice. The counts used here come from counting bytes in Python
+# (`data.count(b"\r")`), which is the check to reproduce.
+#
+# THIS FILE WAS WRITTEN LAST AND SO PRINTS NO DIGESTS OF ITSELF -- a file cannot hash itself
+# into its own content. Every other evidence file's row, with the digest that both the disk
+# bytes and the committed blob have, is in INDEX.txt.

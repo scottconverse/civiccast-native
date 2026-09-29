@@ -1,0 +1,34 @@
+# U63 installed base and candidate identity (the installable file only)
+#
+# 2026-09-29. The base is the automation module the station on C14 is RUNNING, read from the
+# install tree with a shared read, verified in full in base-vs-live-byte-identity.txt.
+# NO STATION ACTION was taken: nothing installed, restarted, signalled, or written under
+# C:\ProgramData or C:\Program Files, and nothing under ...\data\egress\live-hls\ was
+# opened or held.
+#
+# The brief spells the install path as "C:\Program Files (x86)\CivicCast (Native)\...".
+# That path DOES NOT EXIST on C14. The install tree is without the "(x86)":
+# "C:\Program Files\CivicCast (Native)\" -- the same non-x86 spelling U62b's install note
+# used. There is exactly one copy of the module. Disclosed, not worked around.
+#
+#   LIVE (running on C14)
+#       C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast\egress\automation.py
+#       92a94a1dc6995e986ad3cadd9c41e0114e5267caa7582625b7909707a6b0122e
+#       3,230 lines, 174,851 B, LF (CR 0), git blob 13526bb3
+#       == git rev-parse 088a5d89:civiccast/egress/automation.py, the slice's committed base
+#          (088a5d89's own commit message carries this same sha256)
+#
+#   CANDIDATE (installable; LIVE bytes + evidence/u63.patch, cmp-verified)
+#       civiccast/egress/automation.py
+#       50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed
+#       3,363 lines, 182,814 B, LF (CR 0), git blob 016cf90e
+#
+# Test files are NOT here. They live in the worktree civiccast-ds-u63 only; nothing about them
+# is installable and staging/U63-install/ carries one file.
+#
+# Row 1 is the required installed-base row, spelled as the brief spells it. It equals the base
+# the patch was built against, so there is no install drift to reconcile: the station is
+# running exactly the bytes this change is a delta on.
+
+92a94a1dc6995e986ad3cadd9c41e0114e5267caa7582625b7909707a6b0122e *civiccast/egress/automation.py
+50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed *candidate/civiccast/egress/automation.py

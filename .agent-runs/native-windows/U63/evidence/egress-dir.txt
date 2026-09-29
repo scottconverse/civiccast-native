@@ -1,0 +1,339 @@
+# U63 blast radius -- the whole tests/egress tree, twice, on frozen bytes
+#
+# 2026-09-29. Two runs of `python -m pytest tests/egress -p no:randomly` over the SAME test
+# tree, differing only in which civiccast/egress/automation.py is on disk. The module digest is
+# printed immediately before each run, so neither result can be mis-attributed to the other.
+#
+#   RUN 1  shipped candidate   50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed
+#          3,363 lines, 182,814 B
+#          ->  107 failed, 1444 passed, 41 skipped in 153.19s
+#
+#   RUN 2  both fixes TEMP-REVERTed   26f67b7448896d0405c74f39f8a2cd525d56a991e70ff68d1990029996dc8f0a
+#          3,363 lines, 182,740 B  (the two substitutions in red-green-red.txt, nothing else)
+#          ->  110 failed, 1441 passed, 41 skipped in 148.63s
+#
+#   tests/egress/test_automation.py  e4a3572741eb78ea82cda1c4322481394199ddb6c0bab3b2f9b8b965a90ba5e1
+#
+# THE CLAIM THIS FILE SUPPORTS IS THE DELTA, NOT THE TOTAL. The totals are large and they are
+# NOT this slice's: 107 of this tree's tests fail on the candidate bytes and 110 fail with the
+# fixes reverted. The difference between those two numbers is exactly the three new U63 tests
+# -- see egress-dir-delta.txt. So the change adds no failure to this tree and removes none.
+#
+# WHAT THE 107 ARE -- SAMPLED, AND THE CAUSES ARE DELIBERATELY NOT ADJUDICATED HERE. The
+# failures cluster in test_preparer.py (46 of the 107) and the sampled traces below are all
+# shape mismatches between the test tree in this repo and the newer module bytes the worktree
+# carries as the station's uncommitted overlay:
+#
+#   * tests/egress/test_gst_graph.py expects `videorate` at index 2 of the encode chain;
+#     the module under test builds `capsfilter` there.
+#   * tests/egress/test_gst_engine_*.py call `_mux_input_snapshot_t`, which the module under
+#     test does not define -- i.e. the test tree is written against a different engine revision
+#     than the one on disk here.
+#   * tests/egress/test_contracts.py asserts a `playlist.m3u8` output path where the module
+#     under test builds `playlist.mux.m3u8`.
+#   * tests/egress/test_hls_sink_live_playability.py drives a real ffmpeg and never gets a
+#     manifest -- the station's ffmpeg is built `--disable-libx264` by policy.
+#
+# An earlier draft of the index called all 107 "the known libx264 / pcrextract / hermetic-guard
+# set". That was checked and is NOT supported: grepping this run for `libx264`, `pcrextract`,
+# `soxr` and `hermetic` returns no match, so those names do not describe this population. Only
+# the last sample above is visibly in that family. The rest are overlay skew, and WHICH revision
+# is behind which test is not something this slice establishes -- it is a fact about the
+# worktree's base, not about U63 either way. Anyone wanting to adjudicate them should do it on a
+# clean checkout of the slice's base, where the same 107 are expected.
+#
+# Distribution by test file, candidate run (FAILED ids only; 107 total):
+#
+   46  test_preparer.py
+   15  test_gst_engine_first_output_timeout.py
+   15  test_gst_engine_reload_commit_ordering.py
+    9  test_daemon.py
+    5  test_gst_worker_preroll_timeout_exit.py
+    4  test_gst_worker_first_output_timeout_exit.py
+    3  test_gst_graph.py
+    2  test_automation.py
+    2  test_bulletin_filler.py
+    2  test_contracts.py
+    2  test_source_plan.py
+    1  test_hls_sink_live_playability.py
+    1  test_sinks_windows_paths.py
+#
+# (test_automation.py carries 2: they are the two pre-existing `..._bounded_lead[300.0]` /
+#  `[3600.0]` params, which fail identically on the LIVE base -- see
+#  green-full-file-final.txt. They are not U63's and are not fixed here.)
+#
+# NO TRACEBACK BLANKET. The raw captures are ~956 KB each and consist mostly of repeated
+# ffmpeg/gst tracebacks that say nothing the id list does not. The FAILED ids above are the
+# complete set; three verbatim failure blocks are reproduced as samples at the end.
+
+# ==== RUN 1/2 -- shipped candidate bytes 50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed -- 107 failed, 1444 passed, 41 skipped in 153.19s
+
+tests/egress/test_automation.py::test_single_item_rollover_prepares_next_boundary_with_bounded_lead[300.0]
+tests/egress/test_automation.py::test_single_item_rollover_prepares_next_boundary_with_bounded_lead[3600.0]
+tests/egress/test_bulletin_filler.py::TestBulletinFiller::test_no_approved_bulletins_delegates_to_slate
+tests/egress/test_bulletin_filler.py::TestBulletinTimeWindow::test_all_expired_falls_back_to_slate
+tests/egress/test_contracts.py::test_hls_sink_accepts_file_uri_directory
+tests/egress/test_contracts.py::test_hls_sink_builds_rolling_live_manifest_output_args
+tests/egress/test_daemon.py::test_command_id_scoping_closes_the_immediate_crash_relaunch_leak
+tests/egress/test_daemon.py::test_content_reload_never_defers_switch_off_of_fallback_slate
+tests/egress/test_daemon.py::test_dead_hls_relay_overrides_sink_health_to_false_on_the_next_daemon_tick
+tests/egress/test_daemon.py::test_drain_with_no_live_process_clears_the_recorded_rollover_plan_end
+tests/egress/test_daemon.py::test_hls_relay_health_override_is_not_applied_when_relay_is_still_alive
+tests/egress/test_daemon.py::test_retry_collision_a_stalled_retry_that_overwrites_the_recorded_value_still_cuts
+tests/egress/test_daemon.py::test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive
+tests/egress/test_daemon.py::test_stop_clears_the_recorded_rollover_plan_end
+tests/egress/test_daemon.py::test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_off_air_pop
+tests/egress/test_gst_engine_first_output_timeout.py::test_a_commit_that_finishes_gets_a_full_fresh_stall_budget
+tests/egress/test_gst_engine_first_output_timeout.py::test_a_reload_armed_but_not_committing_does_not_suspend_the_stall_bound
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_does_not_suppress_stall_when_reload_holds_remain
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_fires_the_first_output_timeout_before_any_buffer_is_seen
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_forces_a_ready_reload_when_outgoing_eos_is_missing
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_never_trips_while_output_is_advancing
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_ordinary_stall_disabled_at_zero_after_first_output
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_still_applies_the_ordinary_stall_bound_after_first_output
+tests/egress/test_gst_engine_first_output_timeout.py::test_first_output_marker_falls_back_to_zero_elapsed_when_playing_never_recorded
+tests/egress/test_gst_engine_first_output_timeout.py::test_first_output_marker_prints_once_when_output_first_advances
+tests/egress/test_gst_engine_first_output_timeout.py::test_output_progress_line_delta_is_relative_to_the_arm_time_snapshot
+tests/egress/test_gst_engine_first_output_timeout.py::test_output_progress_line_prints_at_most_once_per_five_seconds
+tests/egress/test_gst_engine_first_output_timeout.py::test_output_progress_line_prints_even_while_stalled
+tests/egress/test_gst_engine_first_output_timeout.py::test_stall_bound_does_not_kill_the_worker_while_a_commit_is_in_progress
+tests/egress/test_gst_engine_first_output_timeout.py::test_stall_bound_still_kills_the_worker_outside_a_commit
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_abort_drops_the_leg_at_its_own_pads_before_lifting_the_hold
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_abort_retires_the_leg_off_the_main_loop
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_abort_settles_the_caller_without_waiting_for_retirement
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_bus_error_outside_retiring_post_handoff_leg_remains_fatal[new-True]
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_bus_error_outside_retiring_post_handoff_leg_remains_fatal[old-False]
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_bus_error_outside_retiring_post_handoff_leg_remains_fatal[shared-True]
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_cleanup_failure_settles_false_but_keeps_a_producing_channel_on_air
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_commit_watchdog_start_failure_cancels_retirement_and_aborts_before_switch
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_f1_commit_log_requires_current_preroll_holds
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_finite_commit_closes_old_selector_pads_before_rebase_snapshot
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_first_selector_setter_failure_restores_current_leg
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_new_active_leg_bus_error_during_retirement_is_fatal
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_retirement_thread_start_failure_aborts_before_selector_switch
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_stop_settles_current_callback_once
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_success_callback_reentry_can_start_a_new_reload
+tests/egress/test_gst_graph.py::test_encode_chain_specs_default_openh264_has_h264parse
+tests/egress/test_gst_graph.py::test_encode_chain_specs_explicit_x264_has_x264_controls
+tests/egress/test_gst_graph.py::test_encode_chain_specs_hevc_uses_h265parse
+tests/egress/test_gst_worker_first_output_timeout_exit.py::test_main_emits_the_worker_result_receipt_on_the_first_output_timeout_exit
+tests/egress/test_gst_worker_first_output_timeout_exit.py::test_main_returns_the_first_output_timeout_exit_code
+tests/egress/test_gst_worker_first_output_timeout_exit.py::test_main_returns_zero_on_a_clean_run
+tests/egress/test_gst_worker_first_output_timeout_exit.py::test_main_still_returns_the_generic_crash_code_for_an_ordinary_stall
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_attempts_a_time_bounded_teardown_after_preroll_timeout
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_emits_a_worker_result_receipt_on_the_preroll_timeout_exit
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_reports_an_unclean_teardown_honestly
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_returns_the_preroll_timeout_exit_code_when_the_engine_raises
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_survives_a_teardown_that_itself_raises
+tests/egress/test_hls_sink_live_playability.py::test_hls_sink_produces_rolling_playable_live_manifest
+tests/egress/test_preparer.py::test_a_plan_with_local_writes_reports_its_plan_dir
+tests/egress/test_preparer.py::test_aired_before_asset_prepares_with_zero_ffmpeg_work
+tests/egress/test_preparer.py::test_cache_disabled_by_nonpositive_budget
+tests/egress/test_preparer.py::test_cache_hit_stream_copies_when_engine_cannot_trim
+tests/egress/test_preparer.py::test_cache_hit_utime_race_falls_through_to_a_miss
+tests/egress/test_preparer.py::test_corrupt_cache_sidecar_is_treated_as_miss
+tests/egress/test_preparer.py::test_duplicate_warms_are_deduped
+tests/egress/test_preparer.py::test_evict_cache_over_budget_counts_live_tmp_bytes_toward_budget
+tests/egress/test_preparer.py::test_evict_cache_over_budget_reaps_orphaned_tmp_and_meta
+tests/egress/test_preparer.py::test_full_asset_cache_hit_requires_the_explicit_flag
+tests/egress/test_preparer.py::test_full_asset_cache_hit_trusted_once_flag_is_set
+tests/egress/test_preparer.py::test_full_asset_warm_conform_has_no_trim_and_is_single_threaded
+tests/egress/test_preparer.py::test_join_in_progress_hits_cache_with_playout_trim
+tests/egress/test_preparer.py::test_loudness_probe_is_bounded_to_the_segment_window_when_trimmed
+tests/egress/test_preparer.py::test_loudness_probe_reused_across_prepares_of_the_same_asset
+tests/egress/test_preparer.py::test_loudness_probed_once_for_all_segments_of_one_asset_in_one_prepare
+tests/egress/test_preparer.py::test_prepare_does_not_block_behind_a_warm_holding_the_cache_lock
+tests/egress/test_preparer.py::test_prepare_does_not_block_behind_a_warm_when_engine_can_trim
+tests/egress/test_preparer.py::test_reloading_a_plan_never_touches_the_previous_plans_prepared_files
+tests/egress/test_preparer.py::test_repeated_identical_segments_prepare_once
+tests/egress/test_preparer.py::test_same_path_with_different_trims_prepares_separately
+tests/egress/test_preparer.py::test_slot_capped_untrimmed_conform_is_not_promoted_as_full_asset_cache
+tests/egress/test_preparer.py::test_slot_capped_untrimmed_conform_warms_the_true_full_asset
+tests/egress/test_preparer.py::test_source_preparer_conforms_inside_loudness_tolerance
+tests/egress/test_preparer.py::test_source_preparer_normalizes_when_loudness_is_out_of_tolerance
+tests/egress/test_preparer.py::test_stale_prepared_plan_directories_are_garbage_collected
+tests/egress/test_preparer.py::test_trimmed_miss_conform_write_is_atomic
+tests/egress/test_preparer.py::test_unknown_media_duration_on_untrimmed_slot_capped_segment_never_promotes
+tests/egress/test_preparer.py::test_untrimmed_miss_runs_one_bounded_conform_and_links_into_cache
+tests/egress/test_preparer.py::test_untrimmed_miss_still_airs_when_cache_promotion_fails_over_budget
+tests/egress/test_preparer.py::test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim
+tests/egress/test_preparer.py::test_untrimmed_probe_at_120_to_240s_never_trusts_an_unusable_resample
+tests/egress/test_preparer.py::test_untrimmed_probe_does_not_fall_back_when_sample_is_above_the_floor
+tests/egress/test_preparer.py::test_untrimmed_probe_falls_back_to_a_second_bounded_sample_on_silence_floor
+tests/egress/test_preparer.py::test_untrimmed_probe_keeps_first_reading_when_resample_fails
+tests/egress/test_preparer.py::test_untrimmed_probe_samples_mid_file_not_the_head
+tests/egress/test_preparer.py::test_untrimmed_probe_treats_asset_as_silent_when_both_samples_hit_the_floor
+tests/egress/test_preparer.py::test_untrimmed_probe_trusts_a_single_conclusive_sample_as_silent
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[120.0-0.0-120.0-False]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[150.0-30.0-120.0-False]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[240.0-96.0-120.0-False]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[3600.0-1440.0-120.0-True]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[400.0-160.0-120.0-True]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[67.0-0.0-67.0-False]
+tests/egress/test_preparer.py::test_untrimmed_probe_with_unknown_duration_samples_from_zero_never_silent
+tests/egress/test_preparer.py::test_untrimmed_second_prepare_of_same_asset_runs_zero_ffprobes
+tests/egress/test_sinks_windows_paths.py::test_hls_sink_resolves_windows_file_uri
+tests/egress/test_source_plan.py::test_slate_cache_is_immutable_across_changed_content
+tests/egress/test_source_plan.py::test_slate_plan_is_capped_to_the_playable_fill_horizon
+
+# ==== RUN 2/2 -- both fixes TEMP-REVERTed 26f67b7448896d0405c74f39f8a2cd525d56a991e70ff68d1990029996dc8f0a -- 110 failed, 1441 passed, 41 skipped in 148.63s
+
+tests/egress/test_automation.py::TestPlanRollover::test_boundary_answer_between_two_slots_resolves_to_the_next_programme
+tests/egress/test_automation.py::TestPlanRollover::test_boundary_answer_that_is_a_sub_floor_tail_resolves_to_the_next_programme
+tests/egress/test_automation.py::TestPlanRollover::test_short_leg_next_boundary_is_warmed_now_not_one_plan_later
+tests/egress/test_automation.py::test_single_item_rollover_prepares_next_boundary_with_bounded_lead[300.0]
+tests/egress/test_automation.py::test_single_item_rollover_prepares_next_boundary_with_bounded_lead[3600.0]
+tests/egress/test_bulletin_filler.py::TestBulletinFiller::test_no_approved_bulletins_delegates_to_slate
+tests/egress/test_bulletin_filler.py::TestBulletinTimeWindow::test_all_expired_falls_back_to_slate
+tests/egress/test_contracts.py::test_hls_sink_accepts_file_uri_directory
+tests/egress/test_contracts.py::test_hls_sink_builds_rolling_live_manifest_output_args
+tests/egress/test_daemon.py::test_command_id_scoping_closes_the_immediate_crash_relaunch_leak
+tests/egress/test_daemon.py::test_content_reload_never_defers_switch_off_of_fallback_slate
+tests/egress/test_daemon.py::test_dead_hls_relay_overrides_sink_health_to_false_on_the_next_daemon_tick
+tests/egress/test_daemon.py::test_drain_with_no_live_process_clears_the_recorded_rollover_plan_end
+tests/egress/test_daemon.py::test_hls_relay_health_override_is_not_applied_when_relay_is_still_alive
+tests/egress/test_daemon.py::test_retry_collision_a_stalled_retry_that_overwrites_the_recorded_value_still_cuts
+tests/egress/test_daemon.py::test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive
+tests/egress/test_daemon.py::test_stop_clears_the_recorded_rollover_plan_end
+tests/egress/test_daemon.py::test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_off_air_pop
+tests/egress/test_gst_engine_first_output_timeout.py::test_a_commit_that_finishes_gets_a_full_fresh_stall_budget
+tests/egress/test_gst_engine_first_output_timeout.py::test_a_reload_armed_but_not_committing_does_not_suspend_the_stall_bound
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_does_not_suppress_stall_when_reload_holds_remain
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_fires_the_first_output_timeout_before_any_buffer_is_seen
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_forces_a_ready_reload_when_outgoing_eos_is_missing
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_never_trips_while_output_is_advancing
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_ordinary_stall_disabled_at_zero_after_first_output
+tests/egress/test_gst_engine_first_output_timeout.py::test_check_stall_still_applies_the_ordinary_stall_bound_after_first_output
+tests/egress/test_gst_engine_first_output_timeout.py::test_first_output_marker_falls_back_to_zero_elapsed_when_playing_never_recorded
+tests/egress/test_gst_engine_first_output_timeout.py::test_first_output_marker_prints_once_when_output_first_advances
+tests/egress/test_gst_engine_first_output_timeout.py::test_output_progress_line_delta_is_relative_to_the_arm_time_snapshot
+tests/egress/test_gst_engine_first_output_timeout.py::test_output_progress_line_prints_at_most_once_per_five_seconds
+tests/egress/test_gst_engine_first_output_timeout.py::test_output_progress_line_prints_even_while_stalled
+tests/egress/test_gst_engine_first_output_timeout.py::test_stall_bound_does_not_kill_the_worker_while_a_commit_is_in_progress
+tests/egress/test_gst_engine_first_output_timeout.py::test_stall_bound_still_kills_the_worker_outside_a_commit
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_abort_drops_the_leg_at_its_own_pads_before_lifting_the_hold
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_abort_retires_the_leg_off_the_main_loop
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_abort_settles_the_caller_without_waiting_for_retirement
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_bus_error_outside_retiring_post_handoff_leg_remains_fatal[new-True]
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_bus_error_outside_retiring_post_handoff_leg_remains_fatal[old-False]
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_bus_error_outside_retiring_post_handoff_leg_remains_fatal[shared-True]
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_cleanup_failure_settles_false_but_keeps_a_producing_channel_on_air
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_commit_watchdog_start_failure_cancels_retirement_and_aborts_before_switch
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_f1_commit_log_requires_current_preroll_holds
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_finite_commit_closes_old_selector_pads_before_rebase_snapshot
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_first_selector_setter_failure_restores_current_leg
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_new_active_leg_bus_error_during_retirement_is_fatal
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_retirement_thread_start_failure_aborts_before_selector_switch
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_stop_settles_current_callback_once
+tests/egress/test_gst_engine_reload_commit_ordering.py::test_success_callback_reentry_can_start_a_new_reload
+tests/egress/test_gst_graph.py::test_encode_chain_specs_default_openh264_has_h264parse
+tests/egress/test_gst_graph.py::test_encode_chain_specs_explicit_x264_has_x264_controls
+tests/egress/test_gst_graph.py::test_encode_chain_specs_hevc_uses_h265parse
+tests/egress/test_gst_worker_first_output_timeout_exit.py::test_main_emits_the_worker_result_receipt_on_the_first_output_timeout_exit
+tests/egress/test_gst_worker_first_output_timeout_exit.py::test_main_returns_the_first_output_timeout_exit_code
+tests/egress/test_gst_worker_first_output_timeout_exit.py::test_main_returns_zero_on_a_clean_run
+tests/egress/test_gst_worker_first_output_timeout_exit.py::test_main_still_returns_the_generic_crash_code_for_an_ordinary_stall
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_attempts_a_time_bounded_teardown_after_preroll_timeout
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_emits_a_worker_result_receipt_on_the_preroll_timeout_exit
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_reports_an_unclean_teardown_honestly
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_returns_the_preroll_timeout_exit_code_when_the_engine_raises
+tests/egress/test_gst_worker_preroll_timeout_exit.py::test_main_survives_a_teardown_that_itself_raises
+tests/egress/test_hls_sink_live_playability.py::test_hls_sink_produces_rolling_playable_live_manifest
+tests/egress/test_preparer.py::test_a_plan_with_local_writes_reports_its_plan_dir
+tests/egress/test_preparer.py::test_aired_before_asset_prepares_with_zero_ffmpeg_work
+tests/egress/test_preparer.py::test_cache_disabled_by_nonpositive_budget
+tests/egress/test_preparer.py::test_cache_hit_stream_copies_when_engine_cannot_trim
+tests/egress/test_preparer.py::test_cache_hit_utime_race_falls_through_to_a_miss
+tests/egress/test_preparer.py::test_corrupt_cache_sidecar_is_treated_as_miss
+tests/egress/test_preparer.py::test_duplicate_warms_are_deduped
+tests/egress/test_preparer.py::test_evict_cache_over_budget_counts_live_tmp_bytes_toward_budget
+tests/egress/test_preparer.py::test_evict_cache_over_budget_reaps_orphaned_tmp_and_meta
+tests/egress/test_preparer.py::test_full_asset_cache_hit_requires_the_explicit_flag
+tests/egress/test_preparer.py::test_full_asset_cache_hit_trusted_once_flag_is_set
+tests/egress/test_preparer.py::test_full_asset_warm_conform_has_no_trim_and_is_single_threaded
+tests/egress/test_preparer.py::test_join_in_progress_hits_cache_with_playout_trim
+tests/egress/test_preparer.py::test_loudness_probe_is_bounded_to_the_segment_window_when_trimmed
+tests/egress/test_preparer.py::test_loudness_probe_reused_across_prepares_of_the_same_asset
+tests/egress/test_preparer.py::test_loudness_probed_once_for_all_segments_of_one_asset_in_one_prepare
+tests/egress/test_preparer.py::test_prepare_does_not_block_behind_a_warm_holding_the_cache_lock
+tests/egress/test_preparer.py::test_prepare_does_not_block_behind_a_warm_when_engine_can_trim
+tests/egress/test_preparer.py::test_reloading_a_plan_never_touches_the_previous_plans_prepared_files
+tests/egress/test_preparer.py::test_repeated_identical_segments_prepare_once
+tests/egress/test_preparer.py::test_same_path_with_different_trims_prepares_separately
+tests/egress/test_preparer.py::test_slot_capped_untrimmed_conform_is_not_promoted_as_full_asset_cache
+tests/egress/test_preparer.py::test_slot_capped_untrimmed_conform_warms_the_true_full_asset
+tests/egress/test_preparer.py::test_source_preparer_conforms_inside_loudness_tolerance
+tests/egress/test_preparer.py::test_source_preparer_normalizes_when_loudness_is_out_of_tolerance
+tests/egress/test_preparer.py::test_stale_prepared_plan_directories_are_garbage_collected
+tests/egress/test_preparer.py::test_trimmed_miss_conform_write_is_atomic
+tests/egress/test_preparer.py::test_unknown_media_duration_on_untrimmed_slot_capped_segment_never_promotes
+tests/egress/test_preparer.py::test_untrimmed_miss_runs_one_bounded_conform_and_links_into_cache
+tests/egress/test_preparer.py::test_untrimmed_miss_still_airs_when_cache_promotion_fails_over_budget
+tests/egress/test_preparer.py::test_untrimmed_miss_still_conforms_full_asset_when_engine_can_trim
+tests/egress/test_preparer.py::test_untrimmed_probe_at_120_to_240s_never_trusts_an_unusable_resample
+tests/egress/test_preparer.py::test_untrimmed_probe_does_not_fall_back_when_sample_is_above_the_floor
+tests/egress/test_preparer.py::test_untrimmed_probe_falls_back_to_a_second_bounded_sample_on_silence_floor
+tests/egress/test_preparer.py::test_untrimmed_probe_keeps_first_reading_when_resample_fails
+tests/egress/test_preparer.py::test_untrimmed_probe_samples_mid_file_not_the_head
+tests/egress/test_preparer.py::test_untrimmed_probe_treats_asset_as_silent_when_both_samples_hit_the_floor
+tests/egress/test_preparer.py::test_untrimmed_probe_trusts_a_single_conclusive_sample_as_silent
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[120.0-0.0-120.0-False]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[150.0-30.0-120.0-False]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[240.0-96.0-120.0-False]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[3600.0-1440.0-120.0-True]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[400.0-160.0-120.0-True]
+tests/egress/test_preparer.py::test_untrimmed_probe_window_by_media_duration[67.0-0.0-67.0-False]
+tests/egress/test_preparer.py::test_untrimmed_probe_with_unknown_duration_samples_from_zero_never_silent
+tests/egress/test_preparer.py::test_untrimmed_second_prepare_of_same_asset_runs_zero_ffprobes
+tests/egress/test_sinks_windows_paths.py::test_hls_sink_resolves_windows_file_uri
+tests/egress/test_source_plan.py::test_slate_cache_is_immutable_across_changed_content
+tests/egress/test_source_plan.py::test_slate_plan_is_capped_to_the_playable_fill_horizon
+
+# ==== SAMPLES -- three verbatim failure blocks from RUN 1, chosen to name the shapes
+
+____ test_encode_chain_specs_default_openh264_has_h264parse ____
+    def test_encode_chain_specs_default_openh264_has_h264parse() -> None:
+        specs = encode_chain_specs()
+        factories = [s.factory for s in specs]
+>       assert factories == [
+            "videoconvert",
+            "videoscale",
+            "videorate",
+            "capsfilter",
+            "openh264enc",
+            "h264parse",
+        ]
+E       AssertionError: assert ['videoconver..., 'h264parse'] == ['videoconver..., 'h264parse']
+E         
+E         At index 2 diff: 'capsfilter' != 'videorate'
+E         Right contains one more item: 'h264parse'
+E         Use -v to get more diff
+
+factories  = ['videoconvert', 'videoscale', 'capsfilter', 'openh264enc', 'h264parse']
+specs      = (ElementSpec(factory='videoconvert', name=None, props={}, secret_props={}), ElementSpec(factory='videoscale', name=Non...e': 60}, secret_props={}), ElementSpec(factory='h264parse', name=None, props={'config-interval': -1}, secret_props={}))
+
+tests\egress\test_gst_graph.py:33: AssertionError
+
+____ test_hls_sink_produces_rolling_playable_live_manifest ____
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-2700/test_hls_sink_produces_rolling0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x0000028FE411EFF0>
+
+    def test_hls_sink_produces_rolling_playable_live_manifest(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The mission's core proof: real ffmpeg, real rolling HLS, real HTTP,
+        real ffprobe, and the manifest actually updates over time."""
+    
+        # The media router serves only folders inside CIVICCAST_LIVE_HLS_ROOT.
+        monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(tmp_path))
+        live_dir = tmp_path / "live-hls" / "gov-ch12"
+        handle = _start_live_hls_encoder(live_dir)
+        try:
+            manifest_path = live_dir / "playlist.m3u8"
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline and not manifest_path.exists():
+                time.sleep(0.2)
+>           assert manifest_path.exists(), "ffmpeg never wrote a live manifest within 30s"
+E           AssertionError: ffmpeg never wrote a live manifest within 30s
+E           assert False
+E            +  where False = exists()

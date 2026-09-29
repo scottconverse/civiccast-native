@@ -1,0 +1,33 @@
+# U63 GREEN -- the same five tests on the shipped candidate bytes, no TEMP-REVERT
+#
+#   civiccast/egress/automation.py
+#       sha256 50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed
+#       3,363 lines, 182,814 B, LF
+#   tests/egress/test_automation.py
+#       sha256 e4a3572741eb78ea82cda1c4322481394199ddb6c0bab3b2f9b8b965a90ba5e1
+#
+#   python -m pytest tests/egress/test_automation.py -k 'boundary_answer or warmed_now' -p no:randomly
+#
+# 5 passed, 77 deselected. Same command, same selection, same test file as red-green-red.txt --
+# the only difference is that the two fixes are present. That file carries the reverted digests.
+#
+# The five, in collection order:
+#   test_boundary_answer_between_two_slots_resolves_to_the_next_programme      (A, positive)
+#   test_boundary_answer_that_is_a_sub_floor_tail_resolves_to_the_next_programme  (A, positive)
+#   test_boundary_answer_with_no_programme_after_the_tail_keeps_the_filler     (A, NEGATIVE control)
+#   test_boundary_answer_at_or_above_the_tail_floor_is_never_re_asked          (A, NEGATIVE control)
+#   test_short_leg_next_boundary_is_warmed_now_not_one_plan_later              (B, positive)
+
+# ==== GREEN on the shipped bytes 50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed
+
+============================= test session starts =============================
+platform win32 -- Python 3.12.13, pytest-9.0.3, pluggy-1.6.0
+rootdir: C:\Users\scott\Documents\Codex\2026-09-16\re\civiccast-ds-u63
+configfile: pyproject.toml
+plugins: anyio-4.13.0, hypothesis-6.152.4, asyncio-1.3.0, cov-7.1.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+collected 82 items / 77 deselected / 5 selected
+
+tests\egress\test_automation.py .....                                    [100%]
+
+====================== 5 passed, 77 deselected in 1.38s =======================

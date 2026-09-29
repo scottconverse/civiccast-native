@@ -1,0 +1,120 @@
+# Live-log capture: the education (C14) filler rollover, 2026-09-29 00:28:38 -> 00:42:07
+#
+# SOURCE: C:\ProgramData\CivicCast\logs\control_plane-app.log, read with a SHARED READ
+# ([System.IO.File]::Open(..., FileShare::ReadWrite)) while the station was live. Nothing was
+# opened, held, written, signalled, or restarted. Lines are verbatim; the `egress state ->`
+# heartbeats are elided except where they mark the state change itself (each is marked
+# `[state line]`). Prefix `control_plane-app.log | ` is the scanner's file tag.
+#
+# WHAT THESE LINES SAY:
+#
+# 1. 00:28:38.222 [state line] the channel is ON_AIR on "Parks & Recreation Advisory Board -
+#    April 2026.mp4" (pid 24616). That is the live plan at the tick below.
+# 2. 00:28:38.237 -- the lead line for the tick, and it is the DEGENERATE one:
+#        "lead=690s (no asset duration available for the boundary; the timeout-derived floor
+#         stands)."
+#    The boundary provider answered with NOTHING for this boundary. No asset, no duration.
+# 3. 00:28:38.238 -- "issued a seamless plan rollover for education: the live plan ends in
+#    554s; target=filler before the engine reaches EOS."
+#    **target=filler.** This is the line Defect A is about. The next schedule item was due;
+#    the channel was told to put the filler slate on instead.
+# 4. 00:28:38.238 -- the inside-lead-recovery line: "the plan on air is 554s long, shorter
+#    than the 690s lead a preparation may need -- there is no earlier moment to dispatch."
+#    The tick ran as a recovery tick (trigger collapsed to last_segment_start_at), which is
+#    the same shape as the government tick at 00:35:19.485.
+# 5. 00:28:40.552 -- prep queued for that filler plan. 00:30:13.521 -- "preparation for
+#    education took 93.0s for 1 segment(s)". 93.0 s for ONE segment, on a plan that is the
+#    slate: this is the filler conform, not the programme's.
+# 6. 00:37:25.746 [state line] -> FALLBACK_SLATE. 00:37:25.856 -- "issued reload for
+#    education: a scheduled program is due." The DAEMON wakes up 5 min after the automation
+#    tick and reloads, because a programme is on the schedule and the channel is not on it.
+# 7. 00:37:28.275 -- "Plan for education resolved to a 23.5s tail of the closing scheduled
+#    item; using the plan due where that tail ends instead (1800.0s)."
+#    The 23.5 s is the DAEMON's own measurement, at ITS reload time, of what was left of the
+#    closing item. It is NOT what the automation's boundary provider answered at 00:28:38 --
+#    see the arithmetic below, which shows the two cannot be the same number.
+# 8. 00:38:xx - 00:42:05 [state lines] FALLBACK_SLATE repeats. 00:42:05.212 --
+#    "preparation for education took 276.9s for 1 segment(s)"; 00:42:05.219 -- terminating
+#    the worker deliberately ("reload out of fallback slate: filler is interruptible by
+#    design (issue #157)"). 00:42:07.539 -- worker exited (exit_code=1, deliberate_kill=True).
+#    00:42:07.590 -- relay start, 9 stale files cleared; 00:42:07.609 -- relay up.
+#    00:42:07.646 -- "Restarting education onto the plan its interrupted reload already
+#    prepared: label='NSF NCAR Explorer Series...'". 00:42:07.667 -- GStreamer worker start.
+#    => the ~13 s stream restart in the incident doc, and the slate finally leaving the air at
+#    ~00:42:07, five minutes after the programme was due.
+#
+# ---- verbatim ----
+control_plane-app.log | 2026-09-29 00:28:38,222 INFO civiccast.egress.daemon: channel education: egress state -> ON_AIR (source=Parks & Recreation Advisory Board - April 2026.mp4, pid=24616, last_error=-)   [state line]
+control_plane-app.log | 2026-09-29 00:28:38,237 INFO civiccast.egress.automation: Channel automation computed the rollover lead for education: lead=690s (no asset duration available for the boundary; the timeout-derived floor stands).
+control_plane-app.log | 2026-09-29 00:28:38,238 INFO civiccast.egress.automation: Channel automation issued a seamless plan rollover for education: the live plan ends in 554s; target=filler before the engine reaches EOS.
+control_plane-app.log | 2026-09-29 00:28:38,238 INFO civiccast.egress.automation: Channel automation rollover for education was issued as soon as the previous plan settled: the plan on air is 554s long, shorter than the 690s lead a preparation may need -- there is no earlier moment to dispatch.
+control_plane-app.log | 2026-09-29 00:28:40,552 INFO civiccast.egress.daemon: channel education: reload source preparation queued
+control_plane-app.log | 2026-09-29 00:30:13,521 INFO civiccast.egress.daemon: Content-reload source preparation for education took 93.0s for 1 segment(s) (media preparation completed).
+control_plane-app.log | 2026-09-29 00:37:25,746 INFO civiccast.egress.daemon: channel education: egress state -> FALLBACK_SLATE (source=CivicCast slate, pid=24616, last_error=-)   [state line]
+control_plane-app.log | 2026-09-29 00:37:25,856 INFO civiccast.egress.automation: Channel automation issued reload for education: a scheduled program is due.
+control_plane-app.log | 2026-09-29 00:37:28,275 INFO civiccast.egress.daemon: Plan for education resolved to a 23.5s tail of the closing scheduled item; using the plan due where that tail ends instead (1800.0s).
+control_plane-app.log | 2026-09-29 00:37:28,277 INFO civiccast.egress.daemon: channel education: reload source preparation queued
+control_plane-app.log | 2026-09-29 00:42:05,212 INFO civiccast.egress.daemon: Content-reload source preparation for education took 276.9s for 1 segment(s) (media preparation completed).
+control_plane-app.log | 2026-09-29 00:42:05,219 WARNING civiccast.egress.daemon: channel education: terminating the worker deliberately for a reload (reload out of fallback slate: filler is interruptible by design (issue #157)...
+control_plane-app.log | 2026-09-29 00:42:07,539 INFO civiccast.egress.daemon: channel education: worker exited (exit_code=1, state=TRANSITIONING, desired=ACTIVE, pending_reload=True, deliberate_kill=True)
+control_plane-app.log | 2026-09-29 00:42:07,539 INFO civiccast.egress.daemon: channel education: that non-zero exit was a deliberate kill -- reload out of fallback slate: filler is interruptible by design (issue #157), so the due program is...
+control_plane-app.log | 2026-09-29 00:42:07,590 INFO civiccast.egress.hls_relay: HLS relay start: cleared 9 stale file(s) from C:\ProgramData\CivicCast\data\egress\live-hls\education before launching the relay child.
+control_plane-app.log | 2026-09-29 00:42:07,609 INFO civiccast.egress.hls_relay: HLS relay up for education (sink 'Web preview (HLS)'): udp://127.0.0.1:18256 -> C:\ProgramData\CivicCast\data\egress\live-hls\education.
+control_plane-app.log | 2026-09-29 00:42:07,643 INFO civiccast.captions.retention: channel education: caption retention verdict pending (stale 228s); start proceeds, divergence check passed; background sweep in flight=True
+control_plane-app.log | 2026-09-29 00:42:07,646 INFO civiccast.egress.daemon: Restarting education onto the plan its interrupted reload already prepared: label='NSF NCAR Explorer Series： The Day After Tomorrow： Truth or fiction？.mp4' ...
+control_plane-app.log | 2026-09-29 00:42:07,667 INFO civiccast.egress.gst.strategy: channel education: starting GStreamer worker: ['C:\\Program Files\\CivicCast (Native)\\runtime\\python.exe', ...
+
+# ---- why the boundary answer was EMPTY, not the 23.5 s tail (the branch arithmetic) ----
+#
+# This is the one part of Defect A that has to be reasoned from the code rather than read off
+# a log line, because the automation never prints what its provider answered (it prints only
+# the lead line, which here says "no asset duration available for the boundary").
+#
+# At the 00:28:38.238 tick the automation had:
+#     plan_end_at  = the live plan's declared end   = 00:28:38 + 554 s = 00:37:52
+#     now          = 00:28:38.238
+#     lead         = 690 s
+#
+# `_check_plan_rollover` dispatches on a three-way branch over the provider's answer. Working
+# backward from the printed outcome:
+#
+#   * The line printed `target=filler` and `force_fallback` was therefore TRUE. The only ways
+#     the code reaches `force_fallback = True` are (a) the provider returned `None`/no
+#     segments, or (b) `fresh_plan.channel_id != channel_id`.
+#   * Branch 2 (`use the answer as-is`) requires `fresh_end <= plan_end_at and
+#     fresh_seconds < planned_seconds`. With `fresh_start = max(now, plan_end_at) =
+#     plan_end_at = 00:37:52`, `fresh_end <= plan_end_at` forces `fresh_seconds <= 0`.
+#     A 23.5 s answer cannot satisfy it: 23.5 s <= 0 is FALSE.
+#   * Branch 3 (`extend past the answer`) also needs a non-empty answer.
+#   => the answer was EMPTY (branch 1). An empty answer is exactly what the printed lead line
+#      says: "no asset duration available for the boundary".
+#
+# And the 23.5 s cannot be the same answer, because it was MEASURED AT A DIFFERENT TIME:
+# the daemon's line is timestamped 00:37:28.275, i.e. 4:50 after the automation tick, against
+# a plan whose declared end was ~00:37:52. 00:37:52 - 00:37:28 = 23.5 s. That is the daemon's
+# own arithmetic on its own clock, at its own reload, and it matches to the tenth of a second.
+#
+# So the incident doc's hypothesis ("the automation was handed the 23.5 s tail and chose
+# filler") is REFUTED: the automation was handed nothing. It saw an empty boundary answer,
+# fell into the filler branch, and the look-ahead (`_warm_upcoming_plan`) was skipped along
+# with it -- which is why no warm of the programme happened and the daemon had to do a cold
+# 276.9 s conform five minutes later at 00:37:28.
+#
+# The engine's own changeover is what put the daemon in that position: the plan's declared end
+# (~00:37:52) and the item's end (~00:37:51.5) agree, but the engine reached EOS at the
+# 00:37:22 changeover and the slate came up at 00:37:25.746 -- ~28-30 s before the declared
+# end. The origin of that ~28-30 s base offset is the ONE open sub-piece of A1; the leading
+# candidate is the deferred-start anchor rule in `_establish_horizon_from_dispatch`, and it is
+# reported as a candidate, not as a finding. See reports/U63.md, work A1.
+
+# ---- the fix (A2), stated against these lines ----
+#
+# With the candidate bytes, the 00:28:38.238 tick does not stop at the empty answer: the new
+# `_resolve_rollover_tail` re-asks the provider at `boundary + tail_seconds + 1.0 s` (the tail
+# here being 0.0 s, since the answer was empty), gets the programme that is due where the tail
+# ends, and -- only if that answer is strictly longer than the tail -- uses it in place of the
+# filler. On this shape it replaces `target=filler` with the programme, and because the plan
+# is then non-empty the look-ahead runs in the same tick. The floor that keeps this from
+# eating a legitimate short item is `_ROLLOVER_TAIL_FLOOR_SECONDS = 30.0`, which is the
+# daemon's own `SCHEDULE_GAP_ABSORB_SECONDS` tail rule, NOT the brief's "(shorter than the
+# rollover lead)" wording -- stated loudly in the report as a deliberate divergence.

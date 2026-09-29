@@ -1,0 +1,164 @@
+# evidence index -- U63, two channel-automation rollover defects from the C14 8h2 run
+#
+# 2026-09-29. NO STATION ACTION of any kind: nothing installed, restarted, signalled, or
+# written under C:\ProgramData or C:\Program Files, and no file under
+# ...\data\egress\live-hls\ was opened or held. Station logs and the installed module were read
+# with SHARED reads only while the box was live.
+#
+# Slice worktree: re/civiccast-ds-u63, branch beta10-u63, based on THE STATION'S LIVE BYTES.
+# The tree carries the station's whole installed civiccast package as an UNCOMMITTED overlay
+# (33 modified + 6 untracked paths, all of them the station's newer bytes, none of them this
+# slice's work); only the two files below plus this evidence directory are committed.
+#
+# LIVE base -- automation.py, read from the install tree. NOTE the brief's "(x86)" path does not
+# exist on C14; the real tree is "C:\Program Files\CivicCast (Native)\":
+#     sha256 92a94a1dc6995e986ad3cadd9c41e0114e5267caa7582625b7909707a6b0122e
+#     174,851 B, 3,230 lines, LF (CR 0), git blob 13526bb3
+#     == git rev-parse 088a5d89:civiccast/egress/automation.py  (base == the running bytes)
+#
+# CANDIDATE -- LIVE bytes + u63.patch, cmp-verified:
+#     sha256 50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed
+#     182,814 B, 3,363 lines, LF (CR 0), git blob 016cf90e
+#
+# SLICE COMMIT: no SHA is printed in this file, on purpose. On beta10-u63, parent 088a5d89,
+# 3 paths (automation.py, test_automation.py, this evidence directory) -- committed LOCALLY.
+# `git push` is BLOCKED on this repo (origin resolves to blocked://coder-may-not-push), so
+# nothing left the machine.
+#
+# Why no SHA: this header is part of the commit it would name, so writing the id in makes the id
+# wrong the instant the write is amended in -- which is what happened here. Earlier revisions of
+# this file named f7c89ac7dd6f2b75c00cfb38f6db5026f6fe8c5f and then eaa7df69171e6de244b41509bfa
+# ba638bd2abec5; amending each rewrote it, and BOTH ids now exist only in the reflog. The id is
+# instead carried OUTSIDE the commit, where it cannot invalidate itself:
+#     git log -1 --format=%H HEAD -- civiccast/egress/automation.py   (derives it)
+#     staging/U63/INSTALL-NOTE.md  and  reports/U63.md                (state it)
+#
+# THE TWO CARRIES, ONE LINE EACH:
+#
+#   A -- education, 00:37:22 -> 00:42:07 (~5 min of filler where a programme was due). The
+#   automation's boundary provider answered NOTHING at the 00:28:38.238 tick, so
+#   `_check_plan_rollover` took its empty-answer branch and set force_fallback -> filler. The
+#   23.5 s "tail" in the incident doc is the DAEMON's own measurement five minutes later
+#   (00:37:28.275; 00:37:52 - 00:37:28 = 23.5 s), not the automation's answer -- branch 2 of
+#   the dispatch requires fresh_seconds <= 0 and cannot accept 23.5 s. NEW:
+#   `_resolve_rollover_tail` re-asks the provider where the answer's own tail ends and takes
+#   that plan only when it is strictly longer than the tail, floor
+#   `_ROLLOVER_TAIL_FLOOR_SECONDS = 30.0` (the daemon's SCHEDULE_GAP_ABSORB_SECONDS tail
+#   rule -- deliberately NOT the brief's "shorter than the rollover lead", which is 690 s here
+#   and would cut legitimate short items).
+#
+#   B -- government, a 155 s plan on air with a cold 1800 s item behind it: prep took 302.8 s
+#   (00:35:22 -> 00:40:25), so the channel sat on in-worker slate for ~3 min. The look-ahead
+#   walk `_warm_upcoming_plan` tested only `dispatch_at >= savable_at`; on the 00:23:48 tick
+#   step 1 (the boundary that needed warming) landed 0.6 s on the wrong side
+#   (dispatch_at 00:35:18 vs savable_at 00:35:18.6) and the walk returned at step 2, warming
+#   the plan AFTER the one that needed it. NEW: one clause, `or dispatch_at <= previous_start`.
+#
+# WHAT IS NOT PROVEN -- read before judging it:
+#   * A1's ~28-30 s base offset (declared plan end vs the engine's actual EOS at the 00:37:22
+#     changeover) is OPEN. The leading candidate is `_establish_horizon_from_dispatch`'s
+#     deferred-start anchor rule; it is reported as a candidate, not as a finding.
+#   * B's warm side cannot be read off the logs: `warm_plan` logs on FAILURE only, and the
+#     window shows no warm/look-ahead/conform-cache line for the 1800 s item at any tick. So
+#     "the 00:23:48 walk warmed nothing" rests on the walk arithmetic, not on a log line.
+#     Both are stated in reports/U63.md.
+#   * The 107 reds in egress-dir.txt are NOT diagnosed. The delta is the claim; the absolute
+#     population is a property of this worktree's base. See that file's header.
+#
+# ---- files: sha256 prefix (16), size, name ----
+#
+# Every file in this directory is LF on disk (CR 0, checked by counting bytes in Python). That
+# is deliberate: it makes the digest below BOTH the on-disk digest and the committed blob
+# digest, so one check verifies both and there is only one number to reconcile. lf-normalization
+# .txt explains the rule, the one bug that made it necessary, and the grep that does NOT work
+# for checking it.
+#
+# e6d499c2b1f9cac0    5,618 B  base-vs-live-byte-identity.txt
+# 73266ee00c43d8bd    2,054 B  egress-dir-delta.txt
+# e4cbfef74df3f648   28,956 B  egress-dir.txt
+# 8dacbbbdacb6f1bc   21,438 B  green-full-file-final.txt
+# d75d6b4ded760257    2,059 B  installed-base.sha256
+# 2afab0cc2b73c81d    2,602 B  lf-normalization.txt
+# c13283b5c1fcd917   11,000 B  live-edu-0028-0042-window.txt
+# 22d4b448d5bd1d3b    7,712 B  live-gov-0023-0040-window.txt
+# d6f113ca74e08a89    1,911 B  red-green-green.txt
+# 38744d9e71b42ea1   21,409 B  red-green-red.txt
+# 44426c186be9a6dd   10,559 B  u63.patch
+#
+# (This file is the twelfth and prints no row for itself -- a file cannot hash itself into its
+# own content. `sha256sum INDEX.txt` at HEAD is the check for it.)
+#
+# The load-bearing items:
+#
+#   base-vs-live-byte-identity.txt   the install-path "(x86)" miss, LIVE sha/blob/CR/line-count,
+#                                    and the full patch transcript: LIVE 92a94a1d... + u63.patch
+#                                    (44426c18...) -> 50dc48c8..., `git apply` rc=0, `cmp:
+#                                    IDENTICAL` against the worktree candidate, and
+#                                    `git apply --check -R` OK. This is what makes "the candidate
+#                                    is LIVE bytes + this patch" checkable rather than asserted.
+#   u63.patch                        the deliverable diff. 181 lines, 10,559 B, one file,
+#                                    134 added / 1 removed. Applies to a FRESH copy of LIVE with
+#                                    `git apply -p1`.
+#   installed-base.sha256            the two identity rows (installed base + installable
+#                                    candidate), path spelled as the brief spells it.
+#   red-green-red.txt                the five new tests on the shipped candidate bytes with the
+#                                    two fixes TEMP-REVERTed: A only 2 failed / 3 passed; B only
+#                                    1 failed / 4 passed; A+B 3 failed / 2 passed. The helper
+#                                    refuses unless each pattern occurs exactly once, so a
+#                                    partial revert cannot produce a green-looking RED. The
+#                                    reverted byte states differ from the candidate by exactly
+#                                    the substitutions shown (each state's wc -l -c is in the
+#                                    header; 50dc48c8 -> c4478d29 / 5021499c / 26f67b74).
+#   red-green-green.txt              the same five tests, same command, on the shipped bytes:
+#                                    5 passed / 77 deselected. Two of the five are NEGATIVE
+#                                    controls, which is why the RED runs are 3-failed and not
+#                                    5-failed.
+#   green-full-file-final.txt        the WHOLE test file, candidate bytes vs LIVE base bytes:
+#                                    2 failed / 80 passed vs 5 failed / 77 passed. The two reds
+#                                    are the SAME TWO in both runs -- the pre-existing
+#                                    `..._bounded_lead[300.0]` / `[3600.0]` params at
+#                                    tests\egress\test_automation.py:228, message
+#                                    `assert ['reload'] == []`. They hard-code a ~120 s rollover
+#                                    lead; the deployed lead is 690 s. Not U63's, not touched.
+#   egress-dir.txt                   the whole tests/egress tree, both byte states: candidate
+#                                    107 failed / 1444 passed / 41 skipped in 153.19s; both
+#                                    reverted 110 failed / 1441 passed / 41 skipped in 148.63s.
+#                                    All 217 FAILED ids, the per-file distribution, and three
+#                                    verbatim sample failures. Causes NOT adjudicated.
+#   egress-dir-delta.txt             `comm` of the two id sets: 110 vs 107, the difference is
+#                                    exactly the three new U63 tests, nothing added and nothing
+#                                    removed. Blast radius = the new tests, nothing else.
+#   live-edu-0028-0042-window.txt    the education log lines verbatim + the branch arithmetic
+#                                    that refutes the incident doc's 23.5 s hypothesis.
+#   live-gov-0023-0040-window.txt    the government log lines verbatim + the walk arithmetic
+#                                    (step 1 vs step 2) the new clause acts on.
+#   lf-normalization.txt             why every digest here is unambiguous, the `newline=""` bug
+#                                    that rewrote the file under test CRLF during an early RED,
+#                                    and the `grep -c $'\r'` mistake that produced a wrong
+#                                    line-ending table earlier in this slice.
+#
+# ---- what this evidence set does NOT contain, and why ----
+#
+# Nine intermediates from earlier in the slice were DELETED rather than shipped, because every
+# unique claim in them is now carried by the files above and leaving them would have put two
+# generations of numbers in one directory:
+#
+#   a2-baseline-full-file.txt, a3-green.txt, a3-red.txt, b3-red.txt, b3-green.txt,
+#   b3-full-file.txt, green-full-file.txt   -- all captured on a SUPERSEDED candidate build, and
+#   all CRLF; superseded by green-full-file-final.txt / red-green-red.txt / red-green-green.txt.
+#   b3-egress-dir.txt, b3-egress-dir-delta.txt -- renamed and rewritten as egress-dir.txt and
+#   egress-dir-delta.txt. Their numbers differed (108 vs 107, "one test") because they came from
+#   the superseded build; the frozen bytes give 110 vs 107 and three tests. The old delta file's
+#   header says so, so the correction is visible rather than silent.
+#
+# The revert helper (`revert_u63.py`) and the capture driver scripts are deliberately NOT here:
+# they are scaffolding for producing RED, not deliverables, and shipping them would invite
+# running them against a live tree. The mechanism they perform is described, with the exact
+# before/after lines, in red-green-red.txt's header.
+#
+# SLICE COMMIT SHA: derive it, do not read it here. `git log -1 --format=%H HEAD --
+# civiccast/egress/automation.py` prints the commit that carries the change; reports/U63.md and
+# staging/U63/INSTALL-NOTE.md state it. Every amend that followed the code commit was
+# evidence-only: no byte of civiccast/egress/automation.py or of tests/egress/test_automation.py
+# was touched by any of them, so the change under test never moved -- only the tree it is
+# recorded in.

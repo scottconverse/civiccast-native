@@ -1,0 +1,106 @@
+# U63 base / candidate byte identity -- verification transcript, 2026-09-29
+#
+# Worktree: C:\Users\scott\Documents\Codex\2026-09-16\re\civiccast-ds-u63 (branch beta10-u63)
+# Station files were READ ONLY. No station action: no install, no restart, no signal, no write
+# under C:\ProgramData or C:\Program Files, and no file under ...\data\egress\live-hls\
+# was opened or held.
+#
+# THIS FILE ANSWERS ONE QUESTION: is the candidate really "the bytes the station is running,
+# plus this patch, and nothing else"? A reader who trusts a diff must be able to check that
+# without re-running anything, so the transcript below is the commands and their own output.
+#
+# ---------------------------------------------------------------------------- 1. THE BASE
+#
+# $ ls -d "/c/Program Files (x86)/CivicCast (Native)"     # the install path the brief spells
+# ls: cannot access '/c/Program Files (x86)/CivicCast (Native)': No such file or directory
+# $ ls -d "/c/Program Files/CivicCast (Native)"          # the install path that exists on C14
+# /c/Program Files/CivicCast (Native)
+#
+# The brief's "(x86)" spelling does not exist on this station. There is exactly one copy of the
+# module and exactly one install tree:
+#
+# $ find "/c/Program Files/CivicCast (Native)" -name automation.py -path '*egress*'
+# /c/Program Files/CivicCast (Native)/runtime/Lib/site-packages/civiccast/egress/automation.py
+#
+# $ sha256sum <LIVE>
+# 92a94a1dc6995e986ad3cadd9c41e0114e5267caa7582625b7909707a6b0122e */c/Program Files/CivicCast (Native)/.../civiccast/egress/automation.py
+# $ wc -l -c <LIVE>
+#   3230 174851 <LIVE>
+# $ git hash-object <LIVE>
+# 13526bb39551a3de57e1694dbd8661ad24a0bdfb
+# $ tr -cd '\r' < <LIVE> | wc -c          # CR count 0 => LF-only, as the repo commits
+# 0
+# $ stat -c '%s bytes  mtime %y' <LIVE>
+# 174851 bytes  mtime 2026-09-27 23:32:06.181878500 -0600
+#
+# $ git rev-parse 088a5d89:civiccast/egress/automation.py     # the slice's committed base
+# 13526bb39551a3de57e1694dbd8661ad24a0bdfb
+#
+# -> LIVE blob == base blob 13526bb3. The candidate's parent commit is the running bytes, so
+#    the delta below is a delta on what is on air, not on some nearby revision.
+#
+# ------------------------------------------------------------------- 2. THE PATCH APPLIES
+#
+# $ mkdir -p <scratch>/civiccast/egress
+# $ cp <LIVE> <scratch>/civiccast/egress/automation.py     # a FRESH copy; nothing else there
+# $ sha256sum <scratch>/civiccast/egress/automation.py     # == LIVE, before the patch
+# 92a94a1dc6995e986ad3cadd9c41e0114e5267caa7582625b7909707a6b0122e *civiccast/egress/automation.py
+# $ wc -l -c <scratch>/civiccast/egress/automation.py
+#   3230 174851
+#
+# $ sha256sum evidence/u63.patch
+# 44426c186be9a6ddb13902929fd01e7969bbd5963f3adef496ba59d2cb0e174e *evidence/u63.patch
+# $ wc -l -c evidence/u63.patch
+#   181 10559
+# $ grep -cE '^\+\+\+ ' evidence/u63.patch    # files touched
+# 1
+#
+# $ cd <scratch> && git apply -p1 --verbose evidence/u63.patch
+# Checking patch civiccast/egress/automation.py...
+# Applied patch civiccast/egress/automation.py cleanly.
+# git apply rc=0
+#
+# $ sha256sum <scratch>/civiccast/egress/automation.py     # AFTER the patch
+# 50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed *civiccast/egress/automation.py
+# $ wc -l -c <scratch>/civiccast/egress/automation.py
+#   3363 182814
+# $ git hash-object <scratch>/civiccast/egress/automation.py
+# 016cf90e6f45604cd6a6a33839a1299da9f72edf
+# $ tr -cd '\r' < <scratch>/civiccast/egress/automation.py | wc -c
+# 0
+#
+# $ cmp <scratch>/civiccast/egress/automation.py <worktree>/civiccast/egress/automation.py
+# cmp: IDENTICAL
+# $ sha256sum <worktree>/civiccast/egress/automation.py
+# 50dc48c8438b6d56b3f35ce9ce7aac7177429c5fb3cd39941e1d5d40c7dcf3ed */c/Users/scott/Documents/Codex/2026-09-16/re/civiccast-ds-u63/civiccast/egress/automation.py
+#
+# -> LIVE bytes + u63.patch == the candidate, byte for byte, proved by cmp and not by the
+#    arithmetic of the line counts (the counts are shown because they agree: 3230 -> 3363,
+#    174851 -> 182814, +133 lines net, and the patch carries 134 added / 1 removed).
+#
+# $ cd <worktree> && git apply --check -R -p1 evidence/u63.patch
+# reverse-apply check: OK
+#
+# -> the patch comes off the candidate cleanly too, so it is a genuine one-step delta and a
+#    rollback is `git apply -R` of the same file, not a hand edit.
+#
+# DELIBERATELY NOT RUN: `git apply --check -p1` of this patch against the WORKTREE. The worktree
+# file is already the candidate, so a forward apply against it is expected to report
+# "patch does not apply"; that line was produced by an earlier version of this script and is a
+# statement about the worktree's state, not a failure of the patch. The load-bearing direction
+# is step 2 above, and it is proved by `cmp`.
+#
+# ----------------------------------------------------------------- 3. WHAT IS IN THE DELTA
+#
+# One source file and one test file. `git diff --stat` against the slice's base:
+#
+#   civiccast/egress/automation.py  | 134 ++++++++++++++++++++++++++++++-
+#   tests/egress/test_automation.py | 210 ++++++++++++++++++++++++++++++++++++++++
+#   2 files changed, 344 insertions(+), 1 deletion(-)
+#
+# automation.py is the ONLY installable file. The test file lives in the repo worktree and is
+# not part of any install -- staging/U63-install/ carries exactly one file, the module.
+#
+# The tree also carries the station's whole installed `civiccast` package as an UNCOMMITTED
+# overlay (station bytes, not this slice's work). That overlay is why tests/egress shows 107
+# reds; it is disclosed in egress-dir.txt and in reports/U63.md, and none of it is committed.
