@@ -141,6 +141,16 @@ def gst_audio_encoder_name(ffmpeg_codec: str) -> str:
 # capsfilter otherwise leaves open; they require an explicit NV12 input. Pinned MF-only.
 _MF_ENCODERS = frozenset({"mfh264enc", "mfh265enc"})
 
+# openh264 only encodes in parallel across slices: at its defaults (one slice,
+# multi-thread=0) the live program encoder runs on one core. On high-motion
+# source (Senior Citizens June 1548..1590 s) that measured 1.08..1.12x real time
+# overall and 1.39..1.43x over the worst 10 s -- slower than real time, which is
+# what starved muxed video and tripped the forced-switch path (U59 round 8).
+# Four fixed slices on four threads measured 0.50x overall / 0.58x worst 10 s at
+# the same bitrate (5923 vs 5950 kbit/s); eight slices were slower (0.69x / 0.82x)
+# with three channel workers sharing the box. Coordinator measurement 2026-09-28.
+_OPENH264_PARALLEL_PROPS = {"slice-mode": "n-slices", "num-slices": 4, "multi-thread": 4}
+
 
 def _apply_encoder_fixups(
     specs: tuple[ElementSpec, ...], encoder: str, bitrate_kbps: int
@@ -150,6 +160,9 @@ def _apply_encoder_fixups(
     * ``openh264enc`` takes ``bitrate`` in BITS/sec (unlike mf/nv/x264, which use
       kbit/sec), so the profile's kbit/sec value is converted or software encoding
       under-delivers ~2x.
+    * ``openh264enc`` also gets four fixed slices on four threads
+      (``_OPENH264_PARALLEL_PROPS``) so the live encode keeps real time on
+      high-motion source.
     * Media Foundation encoders need an explicit ``NV12`` input pinned on the conform
       capsfilter; every other encoder negotiates its own format and is left untouched.
     """
@@ -157,7 +170,16 @@ def _apply_encoder_fixups(
     for spec in specs:
         caps = str(spec.props.get("caps", ""))
         if spec.factory == "openh264enc" and "bitrate" in spec.props:
-            fixed.append(replace(spec, props={**spec.props, "bitrate": bitrate_kbps * 1000}))
+            fixed.append(
+                replace(
+                    spec,
+                    props={
+                        **spec.props,
+                        "bitrate": bitrate_kbps * 1000,
+                        **_OPENH264_PARALLEL_PROPS,
+                    },
+                )
+            )
         elif (
             encoder in _MF_ENCODERS
             and spec.factory == "capsfilter"

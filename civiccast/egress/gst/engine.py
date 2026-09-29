@@ -7166,36 +7166,6 @@ class GstPlayoutEngine:
                 # audio 3.605 against a switch point of 2.533). The fence may not
                 # come off until an arrival reaches it.
                 pending.setdefault("mux_tail_target", {})[pad_name] = int(seed["end"])
-            else:
-                # U62 round 2: a leg with no measured end still has a bound.
-                #
-                # The slate->program fallback is exactly that leg: an endless
-                # slate never EOSes, so ``outgoing_end`` holds no per-stream end
-                # for it and this fence armed with NO target at all (live C13:
-                # ``stage=mux-tail-armed pads=sink_66 target=None`` -- the only
-                # such arm among the 52 in that run). An empty target map makes
-                # ``_mux_tail_arrived`` vacuously true, so
-                # ``_defer_mux_tail_release`` disarmed the fence at the first
-                # selector mutation: no wait, no release, and every arrival after
-                # it crossed the pad unfenced. Those are the two lines the 51
-                # healthy arms print and this one did not.
-                #
-                # What the fence is FOR is measured on the deferred path (U56
-                # round 5): a retiring tail crossing the pad past the switch point
-                # steps the emitted audio backwards. The fallback is the one
-                # switch that could do it with no bound at all, so it gets the
-                # same bound as every other switch -- the one the retiring leg is
-                # cut at anyway.
-                #
-                # The switch point IS the bound the retiring leg is cut at, so it
-                # is also the value its tail must reach before the fence may come
-                # off: one number, two readers, exactly as on the measured path
-                # (``old_tail_cutoff_ns`` is the same value the selector-side
-                # fence and the new leg's rebase offsets already carry, and it is
-                # an int here -- the guard above returned early on None).
-                pending.setdefault("mux_tail_target", {})[pad_name] = int(
-                    pending["old_tail_cutoff_ns"]
-                )
             try:
                 probe_id = pad.add_probe(
                     Gst.PadProbeType.BUFFER, _mux_tail_cutoff_probe, pending
