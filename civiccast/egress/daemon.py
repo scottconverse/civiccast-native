@@ -12,12 +12,12 @@ import time
 import uuid
 from collections.abc import Callable, Generator
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from threading import Event, Lock, RLock
-from typing import Any, NamedTuple, Protocol, cast
+from typing import Any, ClassVar, NamedTuple, Protocol, cast
 
 from civiccast.captions.tap import build_audio_tap_plan
 from civiccast.egress._text import db_safe_text, db_safe_text_or_none
@@ -61,17 +61,32 @@ from civiccast.egress.health import (
     read_latest_ffmpeg_encoder_metrics,
     worker_produced_output,
 )
+
+# BETA.10 U16 item B: the output A/V guard reads the channel's own HLS window
+# with the SAME manifest semantics (and the same ffprobe resolution/timeout/
+# tri-state fail-safe) U12 gave the relay's progress and stream-kind checks: an
+# independent reader of the same window would eventually disagree with those
+# about what "the newest complete segment" means.
+from civiccast.egress.hls_relay import (
+    _last_complete_segment,
+    _playlist_path_for,
+    _segment_first_packet_pts,
+)
 from civiccast.egress.models import (
+    MAX_PLAYLIST_SUBCHAINS,
+    RESTART_RECOVERY_COMMAND_PREFIX,
     CaptionStatus,
     EgressCommand,
     EgressConfig,
     EgressHealthSample,
     EgressProofEvent,
     EgressSourcePlan,
+    EgressSourceSegment,
     EgressState,
     EgressStateRow,
     redact_source_uri,
     redact_uris_in_text,
+    restart_recovery_previous_state,
     slate_restart_guard_state,
 )
 from civiccast.egress.pacing import UniformPacingLatch
@@ -87,6 +102,12 @@ from civiccast.stream._ffmpeg import FfmpegNotFoundError
 
 SourcePlanProvider = Callable[[str], EgressSourcePlan | None]
 BoundarySourcePlanProvider = Callable[[str, datetime], EgressSourcePlan | None]
+#: U53 item 1: ``(channel_id, after)`` -> the start instant of the next
+#: playable scheduled item strictly after ``after``, or None when nothing
+#: further is scheduled. Supplied by ``ScheduleSourcePlanProvider
+#: .next_item_start_at`` in production; a filler rollover uses it to trim the
+#: filler to the gap and chain the programme due at its end into the same plan.
+NextProgramStartProvider = Callable[[str, datetime], datetime | None]
 FallbackSourceProvider = Callable[[EgressConfig], EgressSourcePlan]
 SourcePreparerFunc = Callable[[EgressSourcePlan, EgressConfig], SourcePreparationReport]
 BrandingPlanProvider = Callable[[str], EgressBrandingPlan | None]
@@ -214,10 +235,33 @@ _STDERR_TAIL_MAX_CHARS = 600
 _RELOAD_COMMIT_TIMEOUT_MARKER = "CTRL reload: commit did not finish"
 _RELOAD_FRAME_RE = re.compile(
     r'^\s*File ".*[\\/]engine\.py", line (?P<line>\d+) in '
-    r"(?P<function>_dispose_source_leg|_retire_reload_old_leg|"
+    r"(?P<function>_dispose_confirmed_old_leg|_confirm_reload_selector_handoff|"
+    r"_dispose_source_leg|_retire_reload_old_leg|"
     r"_finish_reload_commit|_begin_reload_commit|_commit_reload|_commit_reload_body)\s*$"
 )
+# U14 F1: ordered INNERMOST blocking frame first, because ``_child_stderr_tail``
+# returns the first name in this tuple that appears anywhere in the log -- so a
+# caller listed ahead of its callee wins and sends the reader one frame off.
+#
+# Measured, 2026-09-24 18:48 (U13): the dump puts the retirement thread in
+# ``_dispose_confirmed_old_leg`` (engine.py:3468) with its three-line caller
+# ``_retire_reload_old_leg`` (engine.py:3151) directly beneath it; the tuple held
+# only the caller, so the operator's state row and control-plane-app.log:22310
+# named the waiter -- "blocked at engine.py:3151 in _retire_reload_old_leg" -- and
+# never the synchronous ``release_request_pad`` that actually held the lock.
+# ``_confirm_reload_selector_handoff`` is the twin case: five further watchdog
+# dumps in the same log block the main loop at its ``get_property("active-pad")``
+# readback (engine.py:2964) reached through ``_begin_reload_commit`` (engine.py:3141),
+# and before U14 no name in this tuple matched it at all.
+#
+# The two commit-path frames therefore rank above ``_dispose_source_leg`` (the
+# ABORT path's disposer, kept because beta.5-era evidence used it): a dump can
+# contain both threads' frames, and the marker that gates this whole branch
+# (``_RELOAD_COMMIT_TIMEOUT_MARKER``) is printed by the COMMIT watchdog, so the
+# commit-path frame is the one that answers the question the operator asked.
 _RELOAD_FRAME_PRIORITY = (
+    "_dispose_confirmed_old_leg",
+    "_confirm_reload_selector_handoff",
     "_dispose_source_leg",
     "_retire_reload_old_leg",
     "_finish_reload_commit",
@@ -261,10 +305,172 @@ _SLOW_START_EXIT_CODES = frozenset(
 # treat the reload as lost and fall back to restart rather than wait forever.
 _PENDING_RELOAD_SETTLE_DEADLINE_S = 960.0
 _ROLLOVER_EXTENSION_TOLERANCE_S = 0.25
+
+# U26 defect 2 (live, government, 2026-09-25 02:58 MDT): a reload that resolves
+# the schedule at wall-clock now can land on the CLOSING SECONDS of the item
+# that is due. With the GStreamer engine selected the production provider is
+# built with ``max_segments=1`` (automation.py:2634), so the plan for that slot
+# is one segment covering only its remainder -- legal, prepared, and aired to
+# EOS, after which the channel needs a SECOND worker start to reach the program
+# that was due the whole time. The log pins the shape: the engine reached EOS at
+# 02:58:19,385 for a plan whose own recorded end was 02:58:30.392844Z (~11s of
+# slot left), the restart onto that stub went ON_AIR at 02:58:26,207, the stub
+# itself ran to EOS at 02:58:34,137, and the next worker only reached ON_AIR at
+# 02:58:36,574.
+#
+# Below this floor a tail is not worth the restart that installs it. Landing a
+# restart costs ~10s end to end on this box (prepare ~2.2s + [terminate + exit
+# detection] ~2.2s + respawn ~2.4s + worker start to first output ~2s + settle),
+# so 30s is ~3x the cost of the switch itself -- while still an order of
+# magnitude below the shortest plausible scheduled item, and half the
+# automation's own 60s rollover lead margin so it can never fight the rollover
+# machinery. It is also far below the slate fill horizon (3600s, one continuous
+# pre-conformed fill file since U27), which is what makes replacing the tail
+# safe rather than a second way to sit on slate.
+_SCHEDULE_TAIL_FLOOR_SECONDS = 30.0
+# The boundary is taken just PAST the tail's own end, where the next item
+# becomes due: the resolver's item test is the half-open ``starts_at <= t <
+# ends_at`` (_current_item_index), and two adjacent slots need not meet exactly
+# (a gap the fill policy owns, a schedule authored to the second, a plan whose
+# durations were floored), so the margin keeps the resolution inside the next
+# item rather than on a boundary instant.
+_SCHEDULE_TAIL_BOUNDARY_MARGIN_S = 1.0
+# U36 item 7: how many times a boundary reload the worker ABORTED pre-commit is
+# re-resolved and re-armed before the channel gives up on the seamless path and
+# arms the fallback slate at the boundary instead. Two, because the abort's
+# observed causes are transient (a decodebin stream error on one prepared
+# segment, a source that was not ready) and every retry costs only a re-resolve
+# plus a prepare while the outgoing leg keeps airing -- whereas giving up
+# leaves the boundary unprepared, which is what cost the public channel ~80s of
+# dead air on 2026-09-25 (10s aggregate stall watchdog -> exit 1 -> relaunch).
+_RELOAD_RETRY_LIMIT = 2
+# BETA.10 live finding: after a relay child is (re)spawned it needs a moment to
+# receive the UDP feed and cut its first segment before its window is judged.
+# Self-heal is suppressed inside this window so a fresh child is never killed.
+_HLS_RELAY_STARTUP_GRACE_S = 20.0
 _START_EXPIRED_FALLBACK_REASON = (
     "Scheduled source plan expired during preparation; aired fallback slate while "
     "automation resolves the current schedule."
 )
+
+# BETA.10 U47: the reason recorded on an ACTIVE channel's start/relaunch while its
+# program is being prepared. The live 2026-09-26 finding (evidence/public-exit1-1119
+# and evidence/public-exit0-0159): a worker exit was followed by a relaunch that
+# resolved and conformed the scheduled program for 20-133 s with NO encoder running
+# at all -- the channel was black for the whole preparation and the relay reported
+# "live window has not advanced" (public dark ~11 min at 01:59). The rule: an ACTIVE
+# channel is never dark while its program is being prepared, so the relaunch airs
+# the fallback slate at once and hands the prepared program in afterwards.
+_SLATE_FIRST_HANDOFF_REASON = (
+    "Preparing the scheduled program; airing the fallback slate so the channel "
+    "stays up while it conforms."
+)
+
+#: The states an ACTIVE channel can be in when a start/relaunch reaches
+#: ``_start_steps``. ON_AIR and TRANSITIONING are the crash-relaunch route
+#: (``_begin_relaunch`` writes STARTING first, but the row a relaunch reads back
+#: can still be the pre-exit one); FALLBACK_SLATE is a channel already holding the
+#: slate that is being restarted for some other reason. A STOPPED/ERROR channel --
+#: an operator start of a dark channel -- is deliberately NOT here: there is no
+#: slate to keep, so the first thing that channel should air is the program.
+#:
+#: U53 item 4: STARTING is here too. ``_start_steps`` publishes STARTING before
+#: its worker exists, so a predecessor that died mid-start leaves that row
+#: behind, and the restart-recovery sweep -- whose own reconcile set
+#: (``_STALE_RECONCILE_STATES``, mirrored by ``_STALE_CLAIM_STATES`` in
+#: models.py) is ``{"ON_AIR", "STARTING", "TRANSITIONING"}`` -- reads it to
+#: DECIDE to recover and carries it onto the queued command. With STARTING out
+#: of this set that recovery start passed ``slate_first=True`` and then failed
+#: this gate, so it conformed its program with nothing on air: the same dead
+#: air the ON_AIR shape had, reached through the other recovered state.
+_SLATE_FIRST_ACTIVE_STATES = frozenset({"ON_AIR", "STARTING", "FALLBACK_SLATE", "TRANSITIONING"})
+
+# BETA.10 U16 item B: the OUTPUT A/V sync guard.
+#
+# The U16 finding (2026-09-24) was a one-sided rebase step -- one leg's
+# timestamps moved ~109s and the other's did not -- and NOTHING in the egress
+# path looked at the A/V relationship of the program actually leaving the
+# encoder, so the only place that step was ever visible was a human watching the
+# channel. This guard is the cheap output-side self-check that closes that gap:
+# per channel, on a settled ON_AIR channel only, measure the first packet PTS of
+# video and of audio in the newest COMPLETE segment of the channel's HLS window
+# (``_segment_first_packet_pts``, U12's own ffprobe resolution/timeout/fail-safe)
+# and, when the two stay apart across consecutive probes, restart that channel's
+# worker the same way a dead encoder is restarted.
+#
+# The thresholds are deliberately loose. A SINGLE probe being off is normal --
+# segment cuts land on video keyframes, so a cut segment's audio can legitimately
+# lead or lag its video by a fraction of a frame, and a window roll can show one
+# more of those -- which is why the verdict needs THREE consecutive over-limit
+# probes (~90s of a channel that is visibly broken) and why the limit itself is
+# a whole second rather than a frame. This guard is a backstop for a fault the
+# system cannot yet prevent (see the U16 reports): it must be far slower to
+# act than the rebase path it watches.
+_OUTPUT_AV_GUARD_PROBE_INTERVAL_S = 30.0
+#: |audio first PTS - video first PTS| above this (seconds) is over limit.
+_OUTPUT_AV_GUARD_MAX_OFFSET_S = 1.0
+#: Consecutive over-limit probes before the guard acts.
+_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES = 3
+#: Restarts the guard may spend per channel inside the rolling window below.
+#: Past it the channel keeps being reported but is NOT restarted again: a
+#: channel whose output is still desynced after three replacement workers is
+#: not fixed by a fourth, and an unbounded restart loop on a station that is
+#: otherwise on air is worse than a channel an operator has been told about.
+_OUTPUT_AV_GUARD_RESTART_BUDGET = 3
+_OUTPUT_AV_GUARD_BUDGET_WINDOW_S = 3600.0
+#: Cadence of the budget-exhausted ERROR line (it repeats, but not per probe).
+_OUTPUT_AV_GUARD_EXHAUSTED_LOG_INTERVAL_S = 600.0
+
+# BETA.10 U30: the relay-self-heal FAILURE escalation.
+#
+# The U30 finding (2026-09-25, observed live twice: education 06:27, government
+# 01:03) is that the relay self-heal is a one-step recovery with no step after
+# it. A deferred program->program reload commits at a segment boundary
+# (``CTRL reload committed (elements=52)``), the HLS window stops advancing, the
+# relay supervisor correctly detects the frozen window, correctly respawns its
+# ffmpeg child once -- and that child then writes nothing either. The one-shot
+# ``heal_attempted`` latch (hls_relay audit finding 4) deliberately prevents a
+# second heal in the same episode, so the relay path is out of moves and the
+# channel sits frozen until a human restarts it. Both live incidents ended
+# exactly that way: ``STALE 36s -> 144s -> full channel restart``.
+#
+# This guard is the missing second step, modeled on the U16 output A/V guard
+# above (same shape: probe on the existing poll tick, act through the existing
+# bounded worker termination, bounded restarts per rolling hour, throttled
+# CRITICAL once the budget is gone).
+#
+# SIGNAL DECISION: the HLS live window is the signal, and it is the only one.
+# It is what residents actually see, the daemon already reads it every tick for
+# the relay poll, and the relay supervisor already stamps an exact clock for it
+# (``heal_frozen_seconds`` -- time since the heal). The worker's ``CTRL output: N
+# buffers`` progress line is deliberately NOT used even though it is the more
+# direct "is the engine producing" question: the daemon has no cheap, reliable
+# seam to it. Those lines are written to the worker child's stderr and the
+# daemon holds only a ``Popen`` handle and a probe counter, never the child's
+# text stream; reading it would mean capturing and parsing a child's stderr on
+# the hot path, and (see the U30 report) the stderr of the live incident shows
+# the counter ADVANCING all the way through the freeze, so it would not even
+# have answered the question. The window is ground truth; production is a
+# hypothesis about the window.
+#
+# The bound is the relay's own bound plus one segment cadence of slack. The
+# relay already required ``_DEFAULT_STALL_BOUND_S`` (30s) of a motionless
+# window before it healed at all, and a healthy replacement ffmpeg child writes
+# its first segment within its normal segment cadence (seconds). Waiting
+# another 30s after the heal is an order of magnitude past that, and it keeps
+# the two bounds identical and equally explainable to an operator instead of
+# introducing a second magic number.
+_FREEZE_ESCALATION_AFTER_HEAL_S = 30.0
+#: Worker restarts this escalation may spend per channel inside the window
+#: below, mirroring the U16 budget. Past it the channel is reported and NOT
+#: restarted again: a freeze that survives three replacement workers (each of
+#: which also replaces the relay child) is not fixed by a fourth, and a station
+#: otherwise on air is worse off in an unbounded restart loop than with one
+#: channel an operator has been told about.
+_FREEZE_ESCALATION_RESTART_BUDGET = 3
+_FREEZE_ESCALATION_BUDGET_WINDOW_S = 3600.0
+#: Cadence of the budget-exhausted CRITICAL line (it repeats, but not per tick).
+_FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S = 600.0
 
 
 class _PendingReloadSettlement(NamedTuple):
@@ -284,6 +490,29 @@ class _PendingReloadSettlement(NamedTuple):
     previous_source_label: str | None
     target_state: EgressState
     plan_dir: Path | None
+    #: U36 item 7: the rollover horizon this reload was armed for, or ``None``
+    #: for a reload with no recorded horizon. Carried into the settlement so
+    #: ``_poll_reload_settlement`` can re-arm an aborted boundary reload against
+    #: the SAME boundary (``_retry_aborted_boundary_reload``) and key its bounded
+    #: retry budget on it.
+    rollover_plan_end_at: datetime | None = None
+    #: U53 item 1: the projected end of the next scheduled programme when this
+    #: reload's plan is a filler with that programme chained behind it, else
+    #: ``None``. Carried into ``_commit_reload_settlement``'s
+    #: ``_record_dispatched_plan`` call, which is what makes
+    #: ``chained_slate_program_end`` -- and so channel automation's
+    #: slate-replan suppression -- describe THIS plan and no other.
+    chained_program_end_at: datetime | None = None
+
+
+class _TailFloorOutcome(NamedTuple):
+    """U36 decision 2: what ``_resolve_schedule_tail`` decided. ``plan`` is the
+    plan the caller should air -- the original tail, the item due where that
+    tail ends, or (``slate`` True) the fallback slate. ``slate`` tells the
+    caller to publish ``FALLBACK_SLATE`` for it rather than ``ON_AIR``."""
+
+    plan: EgressSourcePlan
+    slate: bool
 
 
 def _ascii_safe(text: str) -> str:
@@ -349,6 +578,16 @@ class OrphanInfo(NamedTuple):
 class _PreparationState(Enum):
     PENDING = "preparing"
     START_EXPIRED = "start-expired"
+    #: U47: a start/relaunch of a channel that was ALREADY ON AIR has launched
+    #: its worker on the fallback slate, so the channel is no longer dark -- but
+    #: the scheduled program it is actually there for has not been prepared yet.
+    #: The caller hands that program in through the ordinary reload path.
+    #:
+    #: A separate value rather than a bool because the two outcomes mean
+    #: different things to ``_poll_preparation``: START_EXPIRED re-enters
+    #: ``_start`` with the slate forced, whereas this one must NOT re-enter
+    #: ``_start`` at all (that would relaunch the worker it just launched).
+    SLATE_FIRST = "slate-first"
 
 
 class _PreparationRequest(NamedTuple):
@@ -356,12 +595,53 @@ class _PreparationRequest(NamedTuple):
     config: EgressConfig
 
 
+class _ReusePreparedPlan(NamedTuple):
+    """F3(b): the outcome a reload's steps return when it must NOT take the
+    in-place selector swap because the channel is on FALLBACK_SLATE and the
+    policy declined to defer, carrying the preparation report that reload had
+    ALREADY produced.
+
+    A non-deferred reload out of FALLBACK_SLATE tears down the live slate leg
+    under the input-selector, which wedged for 270 s on 2026-09-24 (U13), so
+    that combination is routed to the terminate+restart path instead. Carrying
+    the report is what keeps that restart from conforming the same plan a
+    second time (measured 133.6 s for the 18:48 government program).
+
+    Never constructed without a report: when this daemon has no
+    ``source_preparer`` there is nothing to reuse, so the steps return plain
+    ``False`` and the ordinary restart re-resolves the plan.
+
+    ``target_state`` is the running state the SEAMLESS path would have
+    published for this same report (``_reload_steps``' own ``target_state``,
+    ``FALLBACK_SLATE`` only for a force-fallback filler rollover). The restart
+    reproduces it rather than re-deriving it, so a reused slate plan cannot be
+    published as ``ON_AIR`` and vice versa."""
+
+    report: SourcePreparationReport
+    target_state: EgressState
+
+
+# What a preparation's steps can hand back when they finish: ``True``/``False``
+# for a reload's arm outcome, ``None`` for a start that ran (or deliberately
+# declined), a ``_PreparationState`` for the one state a start can report, and
+# ``_ReusePreparedPlan`` for an F3(b) reload that declined the in-place swap
+# while holding a plan the restart must air instead of re-preparing.
+_PreparationOutcome = bool | _PreparationState | _ReusePreparedPlan | None
+
 _PreparationSteps = Generator[
-    _PreparationRequest, SourcePreparationReport, bool | _PreparationState | None
+    _PreparationRequest,
+    SourcePreparationReport,
+    _PreparationOutcome,
 ]
 AsyncSourcePreparerFunc = Callable[
     [EgressSourcePlan, EgressConfig, Event, frozenset[Path]], SourcePreparationReport
 ]
+#: U60: the off-air whole-asset pre-conform the automation's rollover
+#: look-ahead asks for -- ``SourcePreparer.warm_plan``. Returns nothing and
+#: must be total (it queues work; it never prepares anything itself), so the
+#: automation's dispatch tick can call it without a latency or failure
+#: contract on the caller.
+SourcePlanWarmerFunc = Callable[[EgressConfig, EgressSourcePlan], None]
 
 
 @dataclass
@@ -372,6 +652,64 @@ class _PendingPreparation:
     kind: str
     process: object | None
     config: EgressConfig | None
+    #: U47: this preparation is the hand-off half of a slate-first start, i.e.
+    #: the channel is ON AIR on the fallback slate right now and this reload is
+    #: trying to replace it with the scheduled program. Carried here because the
+    #: failure of exactly this preparation must NOT take the ordinary
+    #: "fall back to restart" route -- see ``_poll_preparation``.
+    slate_first: bool = False
+
+
+@dataclass
+class _OutputAvGuardState:
+    """Per-channel bookkeeping for the output A/V sync guard (U16 item B).
+
+    ``pid`` is the worker these measurements describe: the streak is reset
+    whenever it changes, because a replacement worker's first segment says
+    nothing about its predecessor's last one.
+
+    ``offsets`` holds the last ``_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES``
+    ``(offset_seconds, segment_name)`` pairs -- the evidence the ERROR line
+    reports, so an operator can see the three measurements rather than only
+    being told the channel was restarted.
+
+    ``restarted_at`` is this channel's restart timestamps inside
+    ``_OUTPUT_AV_GUARD_BUDGET_WINDOW_S`` (pruned on each use), and
+    ``last_exhausted_log_at`` throttles the exhausted-budget line.
+    """
+
+    pid: int | None = None
+    streak: int = 0
+    offsets: list[tuple[float, str]] = field(default_factory=list)
+    last_probe_at: float | None = None
+    restarted_at: list[float] = field(default_factory=list)
+    last_exhausted_log_at: float | None = None
+
+
+@dataclass
+class _FreezeEscalationState:
+    """Per-channel bookkeeping for the relay-self-heal failure escalation (U30).
+
+    Two different kinds of state live here, and they are deliberately NOT
+    cleared together:
+
+    * ``pid``/``escalated_for_pid`` are the CURRENT EPISODE -- which worker the
+      frozen window is evidence about, and whether this escalation has already
+      acted on that worker. A pid change voids the episode: whatever the
+      replacement does, its predecessor's frozen window says nothing about it.
+      ``escalated_for_pid`` is what makes "exactly one ERROR line and one
+      restart per escalation" true even in the ticks before a killed worker's
+      exit is reaped and its replacement started.
+    * ``restarted_at``/``last_exhausted_log_at`` are the CHANNEL's budget, and
+      are deliberately NOT voided by a pid change: a restart obviously changes
+      the pid, so clearing the budget with it would make the budget meaningless
+      and the escalation an unbounded restart loop.
+    """
+
+    pid: int | None = None
+    escalated_for_pid: int | None = None
+    restarted_at: list[float] = field(default_factory=list)
+    last_exhausted_log_at: float | None = None
 
 
 class EgressDaemon:
@@ -384,6 +722,13 @@ class EgressDaemon:
         work_dir: Path,
         source_plan_provider: SourcePlanProvider,
         boundary_source_plan_provider: BoundarySourcePlanProvider | None = None,
+        # U53 item 1: used only when a rollover's target is filler -- it answers
+        # "when is the next scheduled programme due?" so the filler can be
+        # trimmed to exactly that gap and the programme chained behind it in the
+        # same plan (one plan per channel, kept). None (every caller that does
+        # not wire it, plus the ffmpeg-concat engine) means the filler airs
+        # whole, exactly as before.
+        next_program_start_provider: NextProgramStartProvider | None = None,
         fallback_source_provider: FallbackSourceProvider | None = None,
         source_preparer: SourcePreparerFunc | None = None,
         async_source_preparer: AsyncSourcePreparerFunc | None = None,
@@ -400,6 +745,7 @@ class EgressDaemon:
         resolve_secret: SecretResolver | None = None,
         ffmpeg_starter: FfmpegStarter | None = None,
         orphan_probe: Callable[[int], OrphanInfo | None] | None = None,
+        pid_is_dead: Callable[[int], bool | None] | None = None,
         orphan_terminator: Callable[[int, float], None] | None = None,
         as_run_recorder: AsRunRecorder | None = None,
         restart_cooldown_seconds: float = _RESTART_COOLDOWN_SECONDS,
@@ -429,6 +775,14 @@ class EgressDaemon:
         # directories -- never a correctness issue, just slower cleanup.
         prepared_plan_release: Callable[[Path | None], None] | None = None,
         channel_start_hook: Callable[[str], None] | None = None,
+        # U60: ``SourcePreparer.warm_plan``, called by the automation's
+        # rollover look-ahead to pre-conform an upcoming boundary's assets
+        # while the plan on air is still shorter than the rollover lead.
+        # None (the default, and every caller that doesn't construct a real
+        # ``SourcePreparer``) makes ``warm_source_plan`` a no-op -- the
+        # automation probes for that method and skips the walk, so an old or
+        # bare daemon behaves exactly as it did before U60.
+        source_plan_warmer: SourcePlanWarmerFunc | None = None,
     ) -> None:
         self._store = store
         # Single injectable monotonic clock for all crash-relaunch timing (the
@@ -441,12 +795,14 @@ class EgressDaemon:
         self._hls_relay = hls_relay_supervisor
         self._command_failure_hook = command_failure_hook
         self._channel_start_hook = channel_start_hook
+        self._source_plan_warmer = source_plan_warmer
         # Cleared only by a successful real launch reset, never by an in-place
         # content reload or duplicate Start against the current worker.
         self._caption_reset_failed: set[str] = set()
         self._work_dir = work_dir
         self._source_plan_provider = source_plan_provider
         self._boundary_source_plan_provider = boundary_source_plan_provider
+        self._next_program_start_provider = next_program_start_provider
         self._fallback_source_provider = fallback_source_provider
         self._source_preparer = source_preparer
         self._async_source_preparer = async_source_preparer
@@ -511,6 +867,15 @@ class EgressDaemon:
         # Per channel: the horizon of the source plan actually DISPATCHED to the
         # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
         self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
+        # Per channel (U53 item 1): when the dispatched plan is a filler whose tail
+        # is the next scheduled programme chained behind it, the projected end of
+        # that chained programme -- ``(proof_event_id, end_at)``. Set and cleared
+        # only by ``_record_dispatched_plan`` (the single dispatch choke point),
+        # keyed by the same proof event as the horizon record, so a stale chain can
+        # never outlive the plan it described. Read by
+        # ``chained_slate_program_end`` -> channel automation's slate-replan
+        # suppression. Empty means "the dispatched plan is not a chained filler".
+        self._chained_slate_program: dict[str, tuple[str | None, datetime]] = {}
         # Item 78 fix 3: the automation-known projected end of the LIVE plan a
         # rollover reload is extending, recorded by ChannelAutomationService
         # (record_rollover_plan_end) immediately before it enqueues the reload
@@ -666,7 +1031,9 @@ class EgressDaemon:
         # ordinary equality now, not a special-cased wildcard. See
         # ``record_rollover_plan_end`` and ``_request_reload``'s docstrings
         # for the exact matching rule.
-        self._rollover_plan_end_at: dict[str, tuple[str | None, datetime, bool]] = {}
+        # U41: the fourth element is the rollover's own horizon
+        # (``min_plan_seconds``) when the dispatcher measured one, else None.
+        self._rollover_plan_end_at: dict[str, tuple[str | None, datetime, bool, float | None]] = {}
         # S9-5 crash-relaunch back-off: a latch paces rapid repeat relaunches, a
         # per-channel streak counts consecutive rapid crashes (for escalation +
         # reset on healthy uptime), and _backoff_relaunch holds a deferred relaunch
@@ -700,11 +1067,20 @@ class EgressDaemon:
         # Issue #157: channels whose encoder WE terminated for a filler
         # reload - their non-zero exit still honors the pending reload.
         self._reload_kills: set[str] = set()
+        # U52 item 2: WHY each of those kills happened, carried to the
+        # ``worker exited`` line. A deliberate kill exits non-zero on real
+        # ffmpeg, so without this the log line for a 3m48s-slate-recovery
+        # restart is byte-identical in shape to an encoder crash.
+        self._reload_kill_reasons: dict[str, str] = {}
         # Issue #161: a server restart leaves the previous server's encoder
         # children streaming to the sink ports; before starting fresh, the
         # daemon reaps any still-running ffmpeg pid from the durable state
         # row. Seams default to psutil implementations.
         self._orphan_probe = orphan_probe or _default_orphan_probe
+        # Restart reconciliation uses a SEPARATE, stricter liveness predicate
+        # (tri-state; fails CLOSED on uncertainty) so it never treats
+        # AccessDenied/unknown as 'dead' the way the orphan probe's None does.
+        self._pid_is_dead = pid_is_dead or _default_pid_is_dead
         self._orphan_terminator = orphan_terminator or _default_orphan_terminator
         # S23 as-run capture: optional append-only side-write at each ACTUAL
         # source transition (None on the test/CLI in-memory path). Capture is
@@ -727,6 +1103,21 @@ class EgressDaemon:
         # _poll_hls_relay) so a relay death (disk full / ffmpeg missing / OOM)
         # is visible even while the main encoder keeps sending fine.
         self._hls_relay_dead: dict[str, bool] = {}
+        # BETA.10 U16 item B: the output A/V sync guard's measurement seam and
+        # per-channel bookkeeping. The probe is a plain attribute (not a
+        # constructor parameter) for the same reason ``_monotonic`` is one: it
+        # is not a production wiring choice -- the shipped measurement is
+        # ``_segment_first_packet_pts`` and always will be -- but tests must be
+        # able to script measurements without an ffprobe and without real
+        # segments on disk.
+        self._output_av_probe: Callable[[Path], tuple[float, float] | None] = (
+            _segment_first_packet_pts
+        )
+        self._output_av_guard: dict[str, _OutputAvGuardState] = {}
+        # BETA.10 U30: the relay-self-heal failure escalation's per-channel
+        # bookkeeping. No seam is needed here -- its input signal is the relay
+        # supervisor's ``heal_frozen_seconds``, which the daemon already holds.
+        self._freeze_escalation: dict[str, _FreezeEscalationState] = {}
         # The STORED config each live pipeline was built from (review round 3
         # delta, MAJOR 2). Health samples key ``sink_connected`` by sink label
         # from this, not from whatever the config row says NOW: a sink saved
@@ -753,6 +1144,14 @@ class EgressDaemon:
         # settles applied; the PREVIOUS value is released at that point (see
         # ``_poll_reload_settlement``) rather than left for GC alone.
         self._active_prepared_plan_dir: dict[str, Path] = {}
+        # F3(b): the plan a non-deferred FALLBACK_SLATE reload already
+        # prepared (carried in a ``_ReusePreparedPlan``), held between "the
+        # restart was decided" and "the restart's ``_start`` consumes it". Its
+        # ``report.plan_dir`` is part of ``live_prepared_plan_dirs`` while it
+        # is held, and EVERY path that does not consume it must release it
+        # (see ``_discard_prepared_restart_plan``) -- an entry here is a live
+        # directory the preparer's GC may not evict.
+        self._prepared_restart_plans: dict[str, _ReusePreparedPlan] = {}
         self._prepared_plan_release = prepared_plan_release
         # Hostile-review follow-up (2026-09-06), item 1: the reload_id a
         # discarded (worker-exited/superseded/restarted) pending settlement
@@ -773,6 +1172,13 @@ class EgressDaemon:
         # channel that gets stopped, so it did not even close the gap it was
         # written for. Reverted to a plain reload_id with no expiry.)
         self._discarded_reload_ids: dict[str, str] = {}
+
+        # U36 item 7: bounded retry budget for a boundary reload the worker
+        # aborted pre-commit, keyed by channel. The value is
+        # ``(rollover_plan_end_at, attempts_used)``; the horizon is part of the
+        # key so a NEW boundary's budget starts at zero without anything having
+        # to clear the entry (see ``_retry_aborted_boundary_reload``).
+        self._reload_retries: dict[str, tuple[datetime | None, int]] = {}
 
     def enable_async_preparation(self) -> None:
         """Keep media conformance off the shared automation thread."""
@@ -811,8 +1217,13 @@ class EgressDaemon:
             pending.future.add_done_callback(release_unused)
 
     def _drive_preparation(
-        self, channel_id: str, steps: _PreparationSteps, *, kind: str
-    ) -> bool | _PreparationState | None:
+        self,
+        channel_id: str,
+        steps: _PreparationSteps,
+        *,
+        kind: str,
+        slate_first: bool = False,
+    ) -> _PreparationOutcome:
         with self._preparation_guard:
             if self._preparation_closed:
                 steps.close()
@@ -820,7 +1231,8 @@ class EgressDaemon:
             try:
                 request = next(steps)
             except StopIteration as done:
-                return cast(bool | _PreparationState | None, done.value)
+                # ``Generator``'s StopIteration value is typed ``Any``.
+                return cast(_PreparationOutcome, done.value)
             preparer = self._source_preparer
             assert preparer is not None
             executor = self._preparation_executor
@@ -833,7 +1245,7 @@ class EgressDaemon:
                     else:
                         steps.send(report)
                 except StopIteration as done:
-                    return cast(bool | _PreparationState | None, done.value)
+                    return cast(_PreparationOutcome, done.value)
                 raise RuntimeError("Unexpected second media preparation in one operation")
 
             cancel = Event()
@@ -857,6 +1269,7 @@ class EgressDaemon:
                 kind=kind,
                 process=self._processes.get(channel_id),
                 config=self._store.get_config(channel_id),
+                slate_first=slate_first,
             )
             _LOG.info("channel %s: %s source preparation queued", channel_id, kind)
             return _PreparationState.PENDING
@@ -874,7 +1287,7 @@ class EgressDaemon:
                 return
             self._preparations.pop(channel_id)
             completed = False
-            outcome: bool | _PreparationState | None = None
+            outcome: _PreparationOutcome = None
             try:
                 try:
                     report = pending.future.result()
@@ -884,18 +1297,46 @@ class EgressDaemon:
                     pending.steps.send(report)
             except StopIteration as done:
                 completed = True
-                outcome = cast(bool | _PreparationState | None, done.value)
+                outcome = cast(_PreparationOutcome, done.value)
             finally:
                 pending.steps.close()
             if completed:
-                if pending.kind == "reload" and outcome is False:
-                    self._fall_back_to_restart_reload(channel_id)
+                if isinstance(outcome, _ReusePreparedPlan):
+                    # F3(b): the reload declined the in-place selector swap
+                    # (FALLBACK_SLATE + non-deferred) and handed back the plan
+                    # it had already prepared. Terminate+restart, carrying that
+                    # report so the restart does not conform it again.
+                    self._fall_back_to_restart_for_reused_plan(channel_id, outcome)
+                elif pending.kind == "reload" and outcome is False:
+                    if pending.slate_first:
+                        # U47: the hand-off's program preparation failed while the
+                        # channel is ON AIR on the slate. The ordinary fallback
+                        # (``_fall_back_to_restart_reload``) adds this channel to
+                        # ``_reload_kills`` and terminates the live slate worker
+                        # (issue #157), taking an airing channel dark -- exactly
+                        # what U47 exists to prevent, and measurably what happened
+                        # before this branch existed: the slate worker was gone
+                        # and the channel had no encoder until the next restart.
+                        # Same handling as the synchronous path's tail in
+                        # ``_request_reload``.
+                        self._keep_slate_after_failed_hand_off(channel_id)
+                    else:
+                        self._fall_back_to_restart_reload(channel_id)
                 elif pending.kind == "start" and outcome is _PreparationState.START_EXPIRED:
                     self._start(
                         channel_id,
                         force_fallback_slate=True,
                         force_fallback_reason=_START_EXPIRED_FALLBACK_REASON,
                     )
+                elif pending.kind == "start" and outcome is _PreparationState.SLATE_FIRST:
+                    # U47: this is where the production (async) path reaches the
+                    # hand-off. ``_start`` already returned at the slate's own
+                    # preparation being QUEUED, so -- unlike the synchronous path
+                    # -- the slate worker is only up now, as this tick's
+                    # preparation settles. Handing the program in from here is
+                    # what keeps an ON_AIR channel airing the slate for the whole
+                    # conform instead of being dark for it.
+                    self._hand_off_slate_first_program(channel_id)
                 return
             raise RuntimeError("Unexpected second media preparation in one operation")
 
@@ -944,11 +1385,28 @@ class EgressDaemon:
         # channel with an armed-but-not-yet-settled content-reload -- a no-op
         # for every other channel (it returns immediately when there is no
         # pending entry).
+        # BETA.10 U16 item B: the output A/V guard runs LAST, deliberately. It
+        # judges the state row, so it must see the row the polls above just
+        # wrote -- in particular ``_poll_process`` rewrites it every tick and
+        # publishes ON_AIR / FALLBACK_SLATE / TRANSITIONING / DRAINING from the
+        # channel's own live condition. Running last also means a worker the
+        # guard kills at the end of one tick is already replaced (or is being
+        # replaced) by the time the next tick's guard pass looks at it.
         for poll in (
             self._poll_hls_relay,
             self._poll_process,
             self._service_backoff_relaunch,
             self._poll_reload_settlement,
+            self._poll_output_av_guard,
+            # BETA.10 U30: the relay-self-heal failure escalation goes after the
+            # A/V guard, for the same reason the A/V guard goes last -- it
+            # judges a settled channel state, so it must see the row the polls
+            # above just wrote. It is also strictly downstream of
+            # ``_poll_hls_relay`` in the same tick: that is the poll that calls
+            # the self-heal whose failure this one escalates, so ordering them
+            # this way means a heal performed this tick is observable by the
+            # escalation immediately rather than a tick late.
+            self._poll_freeze_escalation,
         ):
             try:
                 poll(channel_id)
@@ -1000,6 +1458,203 @@ class EgressDaemon:
         process = self._processes.get(channel_id)
         return process is not None and _process_poll(process) is None
 
+    #: Persisted states that claim a live encoder may be sitting on air. Only
+    #: Persisted states that claim a live encoder AND legitimately mean "this
+    #: channel should be on air", so a dead PID is a recoverable fault.
+    #: DRAINING is deliberately EXCLUDED: ``_drain`` sets it for explicit
+    #: operator/supervisor OFF-AIR intent (see ``_drain``/``_poll_process``),
+    #: so a restart that finds a dead pid mid-drain must stay off air -- never
+    #: auto-start a channel the operator meant to stop. STOPPED/FALLBACK_SLATE
+    #: are likewise terminal/deliberate and never reconciled.
+    _STALE_RECONCILE_STATES: ClassVar[frozenset[str]] = frozenset(
+        {"ON_AIR", "STARTING", "TRANSITIONING"}
+    )
+
+    def reconcile_stale_state(self) -> list[str]:
+        """STARTUP sweep: clear persisted on-air claims with a DEAD encoder.
+
+        Live defect (2026-09-24): after a supervisor restart, ``egress_states``
+        kept reading ON_AIR for three channels whose encoder PIDs no longer
+        existed, and the HLS playlists stayed frozen. The daemon's
+        ``_processes`` map is in-memory, so a fresh instance tracks no encoder;
+        recovery is normally driven by ``ChannelAutomationService`` re-issuing
+        ``start`` for a channel with no live process -- but only for
+        ``auto_start`` channels, so a persisted-ON_AIR channel that is NOT
+        auto_start was never reconciled and its stale row was trusted forever.
+
+        For each enabled channel whose persisted row claims an on-air state AND
+        whose encoder is *definitively gone* (see ``_encoder_is_gone``), it
+        atomically:
+
+        * clears the stale claim by writing STOPPED, and
+        * enqueues a ``start`` command issued by ``restart-recovery``,
+
+        via ONE store transaction (``store.recover_stale_state(...)``) so there
+        is no crash window in which STOPPED exists with no start queued -- the
+        hazard that would otherwise strand the channel dark because STOPPED is
+        not itself reconciled.
+
+        This is the STARTUP arm, so it also clears a claim that carries NO pid
+        at all: a crash before the pid was recorded leaves STARTING/ON_AIR with
+        ``pid=None``, and a just-started daemon provably owns no encoder for any
+        channel. The per-pass arm (:meth:`reconcile_dead_encoders`) deliberately
+        does not, because on a running daemon that shape can be its own work.
+
+        Safety properties:
+
+        * a LIVE pid is never touched, and neither is a pid whose identity
+          cannot be read -- fail closed, leave the row;
+        * a channel this daemon tracks is never touched, even if its worker has
+          already exited (``_poll_process`` owns that transition);
+        * STOPPED / FALLBACK_SLATE / DRAINING rows are never touched;
+        * the recovery command id is UNIQUE per attempt (and <=120 chars), so a
+          LATER restart queues a fresh start (a constant id would be skipped
+          forever by the SQL store's duplicate-id guard);
+        * idempotent within one attempt: after recovery the row is STOPPED, so
+          a re-run reports nothing and queues nothing.
+        """
+        return self._reconcile_stale_claims(reconcile_pidless_claims=True)
+
+    def reconcile_dead_encoders(self) -> list[str]:
+        """PER-PASS sweep: clear persisted on-air claims whose encoder is GONE.
+
+        The startup arm above runs once. A row whose encoder was still alive at
+        that instant and died afterwards is invisible to it: ``_poll_process``
+        returns immediately for a channel with no *tracked* process, and a
+        channel that is not ``auto_start`` has no other supervisor -- so the
+        frozen-HLS-with-a-stale-ON_AIR-row state returns with no restart at all.
+        This arm runs on every automation pass and reconciles those rows with
+        the same atomic store operation.
+
+        It reconciles only pid-BEARING claims: a pid-less claim on a running
+        daemon can be this daemon's own in-flight work (see
+        ``_reconcile_stale_claims``). Returns the channel ids recovered.
+        """
+        return self._reconcile_stale_claims(reconcile_pidless_claims=False)
+
+    def _reconcile_stale_claims(self, *, reconcile_pidless_claims: bool) -> list[str]:
+        """Shared body of the two sweeps; see their docstrings for the contract."""
+
+        recovered: list[str] = []
+        for config in self._store.list_configs():
+            if not config.enabled:
+                continue
+            channel_id = config.channel_id
+            if channel_id in self._processes:
+                # This daemon OWNS a worker for the channel -- and a worker that
+                # has ALREADY exited stays owned: ``_poll_process`` is what sees
+                # that exit and owns the crash relaunch, its back-off latch and
+                # its fallback escalation, all of which key off the persisted row
+                # still reading ON_AIR. Reconciling the row here would race that
+                # path and replace its pacing with a bare start on the same tick.
+                # (This subsumes the ``has_live_process`` short-circuit the first
+                # cut used, which let a just-exited worker through: it reported
+                # no live process, so the sweep cleared a row it did not own.)
+                continue
+            state = self._store.read_state(channel_id)
+            if state is None or state.state not in self._STALE_RECONCILE_STATES:
+                continue
+            if state.pid is None:
+                if not reconcile_pidless_claims:
+                    # On a RUNNING daemon a pid-less claim can be this daemon's
+                    # own in-flight work: ``_relaunch_after_crash``'s deferred
+                    # (back-off) branch persists exactly this shape -- STARTING,
+                    # no pid, no tracked process -- for the whole crash-loop
+                    # cooldown, and ``_service_backoff_relaunch`` is what services
+                    # it. Only the startup sweep, where a fresh instance provably
+                    # owns no encoder, may clear it.
+                    continue
+                detail = "carried no encoder pid"
+            else:
+                if not self._encoder_is_gone(state):
+                    continue
+                detail = f"referenced dead encoder pid {state.pid}"
+            command = EgressCommand(
+                channel_id=channel_id,
+                action="start",
+                issued_at=datetime.now(UTC),
+                issued_by="restart-recovery",
+                # Unique per attempt, bounded: the SQL store skips a repeated
+                # command_id forever, so a constant id would make a second
+                # restart queue nothing (permanently dark). uuid4().hex is 32
+                # chars; the prefix keeps it well under the 120-char cap.
+                #
+                # U53: the id also CARRIES the state this sweep is clearing.
+                # The row read above is the only place that state exists -- the
+                # transaction below writes STOPPED over it, and the start is
+                # drained a poll later -- but the dispatch needs it, because a
+                # channel that WAS on air must air the slate before it conforms
+                # a program (see ``restart_recovery_previous_state``). Read back
+                # by ``_process_command``.
+                command_id=f"{RESTART_RECOVERY_COMMAND_PREFIX}{state.state}-{uuid.uuid4().hex}",
+            )
+            self._store.recover_stale_state(
+                EgressStateRow(
+                    channel_id=channel_id,
+                    state="STOPPED",
+                    current_source_label=state.current_source_label,
+                    updated_at=datetime.now(UTC),
+                    pid=None,
+                    last_error=(
+                        f"restart recovery: persisted {state.state} claim {detail}; "
+                        "cleared stale claim and queued a start"
+                    ),
+                ),
+                command,
+            )
+            _LOG.warning(
+                "channel %s: cleared stale persisted %s claim (%s) and "
+                "atomically queued restart-recovery start %s.",
+                channel_id,
+                state.state,
+                detail,
+                command.command_id,
+            )
+            recovered.append(channel_id)
+        return recovered
+
+    def _encoder_is_gone(self, state: EgressStateRow) -> bool:
+        """True when the encoder the persisted row describes is definitively GONE.
+
+        ``_pid_is_dead`` answers only "does SOME process hold this pid?". After a
+        reboot Windows hands a dead encoder's pid to an unrelated process, so the
+        stale row's pid reads as ALIVE and the channel is never recovered -- the
+        exact 2026-09-24 shape. The question is "is this OUR encoder?", and the
+        identity evidence available is AGE: ``_write_state`` stamps
+        ``updated_at`` while ``_poll_process`` is polling a LIVE encoder, so a
+        process holding the pid that was CREATED AFTER that instant cannot be the
+        encoder the row describes.
+
+        The image name is NOT usable evidence here: the encoder worker runs as
+        ``<interpreter> <worker-script> <graph> <control-channel>``
+        (``gst/strategy.py``), so its image name is shared with the control plane
+        and with every other job (unlike the ffmpeg-only orphan probe in
+        ``_reap_orphan``, which can and does check the name).
+
+        Fails CLOSED on every uncertainty:
+
+        * liveness ``None`` (AccessDenied, psutil error) -> not gone;
+        * the pid is held by a process whose identity cannot be read (it exited
+          between the two probes, or access is denied) -> not gone;
+        * a process created BEFORE the row's own last write -> that is ours, and
+          is never touched.
+        """
+
+        pid = state.pid
+        if pid is None:  # pragma: no cover - callers gate on this
+            return False
+        dead = self._pid_is_dead(pid)
+        if dead is None:
+            # Unknown (AccessDenied / psutil error): fail closed.
+            return False
+        if dead:
+            return True
+        info = self._orphan_probe(pid)
+        if info is None:
+            # The pid exists but who holds it is unknowable: fail closed.
+            return False
+        return info.created_at > _epoch_seconds(state.updated_at)
+
     def has_manual_override(self, channel_id: str) -> bool:
         """True while an operator override (live takeover / forced fallback slate)
         is active for this channel. The base daemon has no notion of either — only
@@ -1041,6 +1696,76 @@ class EgressDaemon:
 
         return self._dispatched_plan_horizon.get(channel_id)
 
+    def warm_source_plan(self, channel_id: str, plan: EgressSourcePlan) -> None:
+        """Pre-conform every asset ``plan`` will air, off the air path (U60).
+
+        Called by channel-automation's rollover look-ahead while the plan on
+        air is still SHORTER than the rollover lead -- the one regime where the
+        incoming boundary's synchronous preparation has less runway than its
+        own whole-asset conform needs. Queues background work on the source
+        preparer's warm worker and returns immediately; nothing here blocks a
+        dispatch tick and nothing here can fail it.
+
+        The config is read from the STORE, not from any cached/built config:
+        the conform cache key is config-dependent (canonical profile, target
+        and tolerance LUFS), so warming against a config the air path will not
+        use would populate an entry nobody reads. A channel with no config, or
+        a disabled one, is skipped -- there is no air path to warm for.
+        """
+
+        warmer = self._source_plan_warmer
+        if warmer is None:
+            return
+        try:
+            config = self._store.get_config(channel_id)
+        except Exception:
+            _LOG.exception(
+                "U60 plan look-ahead warm could not read the config for %s; "
+                "skipping the warm (the air path is unaffected).",
+                channel_id,
+            )
+            return
+        if config is None or not config.enabled:
+            return
+        try:
+            warmer(config, plan)
+        except Exception:
+            # ``warm_plan`` is meant to be total; this is belt-and-braces so a
+            # future warmer implementation cannot surface a fault on the
+            # automation thread that dispatched the rollover.
+            _LOG.exception(
+                "U60 plan look-ahead warm failed for %s; the air path is "
+                "unaffected and will prepare this plan synchronously.",
+                channel_id,
+            )
+
+    def chained_slate_program_end(self, channel_id: str) -> datetime | None:
+        """The projected end of the programme chained behind the filler in the plan
+        this daemon most recently dispatched for ``channel_id``, or None.
+
+        U53 item 1: a filler rollover plan may carry ``[filler..., programme...]``
+        in one plan, in which case the state row legitimately stays
+        ``FALLBACK_SLATE`` for the whole of that programme. Channel automation's
+        slate-replan pass reads this so it does not cut the already-airing chained
+        programme back to its own start.
+
+        Returns None once a DIFFERENT plan has been dispatched (the chain is
+        cleared at the same choke point that writes the horizon, and the record is
+        validated against the horizon's proof event before it is believed), so a
+        leg that failed and was relaunched can never leave a stale suppression
+        behind."""
+
+        record = self._chained_slate_program.get(channel_id)
+        if record is None:
+            return None
+        proof_event_id, end_at = record
+        horizon = self._dispatched_plan_horizon.get(channel_id)
+        if horizon is None or horizon[0] != proof_event_id:
+            # The horizon moved on (or was never written): the chain is stale.
+            del self._chained_slate_program[channel_id]
+            return None
+        return end_at
+
     def _record_dispatched_plan(
         self,
         channel_id: str,
@@ -1048,16 +1773,26 @@ class EgressDaemon:
         proof_event_id: str | None,
         source_plan: EgressSourcePlan,
         switch_deferred: bool,
+        chained_program_end_at: datetime | None = None,
     ) -> None:
         """Remember the plan just dispatched, keyed by the proof event written with
         it (so a consumer can tell "this is the plan now on air" from "this is a
-        stale record"). See ``dispatched_plan_horizon``."""
+        stale record"). See ``dispatched_plan_horizon``.
+
+        ``chained_program_end_at`` (U53 item 1) is the projected end of the next
+        scheduled programme when ``source_plan`` is a filler with that programme
+        chained behind it; it is recorded -- or cleared -- here, together with the
+        horizon, so the two can never disagree about which plan is on air."""
 
         self._dispatched_plan_horizon[channel_id] = (
             proof_event_id,
             tuple(float(segment.duration_seconds) for segment in source_plan.segments),
             switch_deferred,
         )
+        if chained_program_end_at is None:
+            self._chained_slate_program.pop(channel_id, None)
+        else:
+            self._chained_slate_program[channel_id] = (proof_event_id, chained_program_end_at)
 
     def send_caption_cue(
         self,
@@ -1133,7 +1868,20 @@ class EgressDaemon:
             # An operator start is a fresh intent: the slate-EOS relaunch cap
             # (see _SLATE_EOS_RELAUNCH_MAX_CONSECUTIVE) starts over for it.
             self._slate_eos_relaunches.pop(command.channel_id, None)
-            self._start(command.channel_id)
+            # U53: a recovery start relaunches a channel the sweeps found
+            # claiming to be ON AIR, and the command id carries the state the
+            # sweep cleared (``restart_recovery_previous_state``). Handing it
+            # to ``_start`` is what lets U47's slate-first branch fire here --
+            # that branch is gated on ``previous_state`` being an active state,
+            # so a plain ``_start(channel_id)`` could never take it, and the
+            # channel stayed dark for the whole conform (6 m 55 s, measured).
+            # A non-recovery start parses to ``None`` and is unchanged.
+            recovered_state = restart_recovery_previous_state(command)
+            self._start(
+                command.channel_id,
+                previous_state=recovered_state,
+                slate_first=recovered_state is not None,
+            )
             return
         if command.action == "stop":
             self._stop(command.channel_id, draining=False)
@@ -1218,33 +1966,67 @@ class EgressDaemon:
         force_fallback_reason: str | None = None,
         resolved_plan: EgressSourcePlan | None = None,
         plan_resolution_started_at: float | None = None,
+        prepared_reload: _ReusePreparedPlan | None = None,
+        slate_first: bool = False,
     ) -> None:
         with self._preparation_guard:
             if channel_id in self._preparations:
+                # F3(b): a newer operation already owns this channel's
+                # preparation slot, so this restart never runs and the plan it
+                # was handed will not be aired. Release it here rather than let
+                # a caller-held plan leak past its restart (the caller has
+                # already dropped its own reference).
+                self._release_prepared_restart_plan(
+                    channel_id, prepared_reload, reason="a newer preparation owns this channel"
+                )
                 return
-            result = self._drive_preparation(
-                channel_id,
-                self._start_steps(
+            try:
+                result = self._drive_preparation(
                     channel_id,
-                    previous_state=previous_state,
-                    previous_source_label=previous_source_label,
-                    force_fallback_slate=force_fallback_slate,
-                    force_fallback_reason=force_fallback_reason,
-                    resolved_plan=resolved_plan,
-                    plan_resolution_started_at=(
-                        self._monotonic()
-                        if plan_resolution_started_at is None
-                        else plan_resolution_started_at
+                    self._start_steps(
+                        channel_id,
+                        previous_state=previous_state,
+                        previous_source_label=previous_source_label,
+                        force_fallback_slate=force_fallback_slate,
+                        force_fallback_reason=force_fallback_reason,
+                        resolved_plan=resolved_plan,
+                        prepared_reload=prepared_reload,
+                        slate_first=slate_first,
+                        plan_resolution_started_at=(
+                            self._monotonic()
+                            if plan_resolution_started_at is None
+                            else plan_resolution_started_at
+                        ),
                     ),
-                ),
-                kind="start",
-            )
+                    kind="start",
+                )
+            except BaseException:
+                # F3(b): a failure BEFORE the reused plan is bound (no config,
+                # plan resolution, an encoder start that raises) would drop a
+                # caller-supplied report's directory with no owner at all --
+                # the steps' own release paths only cover what they have
+                # already bound. Release, then propagate unchanged.
+                self._release_prepared_restart_plan(
+                    channel_id,
+                    prepared_reload,
+                    reason="start failed before the reused plan was bound",
+                )
+                raise
             if result is _PreparationState.START_EXPIRED:
                 self._start(
                     channel_id,
                     force_fallback_slate=True,
                     force_fallback_reason=_START_EXPIRED_FALLBACK_REASON,
                 )
+            elif result is _PreparationState.SLATE_FIRST:
+                # U47: the channel is already up on the slate and only the
+                # program is outstanding. Hand it in through the ordinary reload
+                # path -- NOT through ``_start``, which would tear down the very
+                # worker this start just launched. The hand-off deliberately does
+                # not run here: ``_drive_preparation`` in the ASYNC path returns
+                # at the QUEUE, so the program's preparation belongs to a later
+                # tick and ``_poll_preparation`` dispatches it (see there).
+                self._hand_off_slate_first_program(channel_id)
 
     def _start_steps(
         self,
@@ -1255,6 +2037,8 @@ class EgressDaemon:
         force_fallback_slate: bool = False,
         force_fallback_reason: str | None = None,
         resolved_plan: EgressSourcePlan | None = None,
+        prepared_reload: _ReusePreparedPlan | None = None,
+        slate_first: bool = False,
         plan_resolution_started_at: float,
     ) -> _PreparationSteps:
         # ``resolved_plan``: a program plan the caller ALREADY resolved from
@@ -1265,6 +2049,16 @@ class EgressDaemon:
         # refills) _source_lookahead, running the DB lookahead twice for one
         # start. Ignored when ``force_fallback_slate`` is set (the caller has
         # already decided the program is not to be trusted).
+        if prepared_reload is not None:
+            # F3(b): the plan this start must air was ALREADY resolved and
+            # conformed by the reload that just declined the in-place swap.
+            # Presenting it as the resolved plan is what keeps the provider
+            # from being consulted again (and its lookahead popped) for a plan
+            # this start will not use -- and what makes the "no valid source
+            # plan available" aborts below unreachable while a perfectly good
+            # prepared plan is in hand. The reuse branch further down binds it
+            # for real (with the reload's own target state).
+            resolved_plan = prepared_reload.report.source_plan
         try:
             config = self._store.get_config(channel_id)
             if config is None:
@@ -1275,18 +2069,46 @@ class EgressDaemon:
                 # #151: route udp-ts sinks through the channel-lifetime relay so
                 # this (re)launch splices into ONE continuous mux session.
                 config = self._ts_relay.apply(config)
-            # Read BEFORE ``apply`` below starts a relay: "was anything writing
-            # this channel's HLS window when this start began?"
+            # Was anything writing this channel's HLS window when this start
+            # began? Read BEFORE the U21 new-session reset below tears the
+            # previous relay child down. It answers a question the rebind does
+            # not: "should whatever playlist.m3u8 is on disk be deleted, or
+            # carried forward?" A relay that WAS alive leaves a window its
+            # replacement continues (``delete_segments+append_list``), so
+            # residents keep a manifest across an encoder crash-relaunch; a
+            # playlist whose writer is already gone belongs to a previous
+            # broadcast and must not be advertised.
             hls_relay_was_alive = (
                 self._hls_relay is not None and self._hls_relay.is_alive(channel_id) is True
+            )
+            # Is a worker still alive and owning this channel right now? Decided
+            # BEFORE ``apply`` so the relay reset and the short-circuit below
+            # agree on the same fact: a start that is a NO-OP must not disturb a
+            # live worker's session -- and must not restart that session's relay
+            # out from under it.
+            existing_process = self._processes.get(channel_id)
+            worker_already_live = (
+                existing_process is not None and _process_poll(existing_process) is None
             )
             stored_config = config
             if self._hls_relay is not None:
                 # DEFECT A: route hls sinks through the supervised ffmpeg relay
                 # that actually writes segments + a manifest for this engine.
-                config = self._hls_relay.apply(config)
-            existing_process = self._processes.get(channel_id)
-            if existing_process is not None and _process_poll(existing_process) is None:
+                # BETA.10 U21: every GENUINE worker (re)start -- first start,
+                # crash relaunch, output-desync guard restart, slate->program
+                # restart -- rebinds this channel's relay to the NEW session. A
+                # relay child carries its own corrected timeline, so an inherited
+                # child strands a PTS jump in the new worker's output as a
+                # constant output A/V offset for the rest of that child's life.
+                # U24: the relay child's stderr is captured next to the
+                # channel's other egress logs (``<work_dir>/<channel>/logs``),
+                # so a live incident leaves child-side evidence behind.
+                config = self._hls_relay.apply(
+                    config,
+                    new_session=not worker_already_live,
+                    log_root=self._work_dir,
+                )
+            if worker_already_live:
                 state = self._store.read_state(channel_id)
                 current_state: EgressState = (
                     "DRAINING" if channel_id in self._draining_channels else "ON_AIR"
@@ -1306,6 +2128,13 @@ class EgressDaemon:
                         state=current_state,
                     ),
                     seconds_on_air=self._seconds_on_air(channel_id),
+                )
+                # F3(b): this start is a no-op (a live worker already owns the
+                # channel), so the reuse branch below is never reached and a
+                # carried plan would be neither aired nor released -- the
+                # caller dropped its own reference when it handed it over.
+                self._release_prepared_restart_plan(
+                    channel_id, prepared_reload, reason="a live worker already owns this channel"
                 )
                 return None
             # Hostile-review follow-up, items 1 & 4: reaching here means either
@@ -1348,13 +2177,21 @@ class EgressDaemon:
                 # HlsSink worker that is gone): whatever playlist.m3u8 is on
                 # disk belongs to a previous broadcast. Remove it before the
                 # new writer produces anything so /api/public/live/current does
-                # not advertise it. A relay that was already alive
-                # (crash-relaunch of the encoder alone) keeps writing the same
-                # window and is left alone. Uses the STORED config: ``apply``
+                # not advertise it. A relay that WAS already alive leaves a
+                # window its replacement continues across the U21 rebind
+                # (``apply(..., new_session=True)`` above), so that window is
+                # carried forward rather than deleted -- the manifest survives
+                # an encoder crash-relaunch. Uses the STORED config: ``apply``
                 # above rewrote hls sinks to their relay's local-ts uri.
                 self._discard_stale_hls_playlists(channel_id, config=stored_config)
             using_fallback_slate = False
             fallback_reason: str | None = None
+            # U47: set only by the slate-first branch below, and read once at the
+            # very end of the encoder-start block (after health is appended, so
+            # the channel's own row/health record this start the same way any
+            # other start does). It marks that the worker launched here is on the
+            # SLATE and that a program preparation is still owed.
+            slate_first_handoff = False
             if force_fallback_slate and self._fallback_source_provider is not None:
                 # BLOCKER B1: the caller (a crash-relaunch that has never once
                 # reached a healthy uptime — see _LIVE_SOURCE_FAILURE_FALLBACK_STREAK)
@@ -1387,12 +2224,85 @@ class EgressDaemon:
                 if self._fallback_source_provider is None:
                     self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
                     self._append_health(channel_id, "FALLBACK_SLATE", sink_connected={})
+                    # F3(b): aborts before the reuse branch -- see the matching
+                    # release at this method's live-worker early return.
+                    self._release_prepared_restart_plan(
+                        channel_id,
+                        prepared_reload,
+                        reason="caption storage refused and no fallback slate is configured",
+                    )
                     return None
                 self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
                 source_plan = self._fallback_source_provider(config)
                 using_fallback_slate = True
             elif resolved_plan is not None:
                 source_plan = resolved_plan
+            elif (
+                slate_first
+                and previous_state in _SLATE_FIRST_ACTIVE_STATES
+                and prepared_reload is None
+                and self._fallback_source_provider is not None
+                and self._preparation_executor is not None
+            ):
+                # U47: this channel was ALREADY ON AIR and its worker is gone or
+                # being replaced. Whatever the schedule says, the channel must
+                # not be dark for the 20-133 s a cold conform takes -- so air the
+                # slate NOW and let the program follow through the reload path
+                # (``_hand_off_slate_first_program``). The program's own plan is
+                # deliberately NOT resolved here: the hand-off resolves it at
+                # hand-off time, which is also the freshest read of the schedule
+                # (a plan resolved before the slate aired could already be stale
+                # by the time the slate is up).
+                #
+                # ``prepared_reload is None`` keeps F3(b)'s reuse restart on its
+                # own path: that one already HAS the program conformed and must
+                # not sit on the slate first.
+                #
+                # ``_preparation_executor is not None`` scopes this to the
+                # asynchronous preparer -- ``enable_async_preparation``, which
+                # the station's own automation turns on (automation.py), and the
+                # path the live finding was measured on: there the start's
+                # ``_PreparationRequest`` goes to the executor and ``_start``
+                # returns with NO worker on air at all, so the channel is dark
+                # for the whole conform.
+                #
+                # SCOPE, stated exactly, because it is NOT an implementation
+                # limit: this branch would work without an executor too (the
+                # slate worker is a separate PROCESS -- airing it before the
+                # program's conform does not need a free daemon thread, and the
+                # conform that follows blocks only this thread while the slate is
+                # already on air). What it collides with there is a different,
+                # deliberately pinned contract: the crash-loop escalation ladder
+                # below. Airing the slate on the first crash-relaunch writes
+                # FALLBACK_SLATE immediately and stops the program being retried,
+                # which is 22 pinned tests -- `_LIVE_SOURCE_FAILURE_FALLBACK_STREAK`
+                # (a source that never comes up is retried until streak >= 5 and
+                # reaches the slate at a measured 405.0 s,
+                # test_daemon_first_output_timeout_relaunch.py) and the never-
+                # healthy latch it exists for ("dead air forever" -- see
+                # ``_begin_relaunch``'s B1 note). Two committed rules, pointing
+                # opposite ways for the same event.
+                #
+                # This unit therefore implements the rule where the finding was
+                # measured and where the station runs (the executor path), keeps
+                # the ladder intact everywhere else, and files the collision
+                # itself as a product question (oversight questions/U47.md)
+                # rather than picking a winner silently.
+                #
+                # B1 (the never-healthy crash-loop) deliberately wins over this
+                # branch -- it is checked first above, and it also sets
+                # ``using_fallback_slate``; a B1 relaunch is a channel that keeps
+                # failing on its program, so it airs the slate and stops there
+                # rather than immediately re-attempting the thing that is
+                # crashing it.
+                fallback_reason = _SLATE_FIRST_HANDOFF_REASON
+                self._write_state(channel_id, "FALLBACK_SLATE", last_error=fallback_reason)
+                # NOT annotated, unlike the B1 binding above: ``source_plan`` is one
+                # variable for the whole method, so a second annotation here is a
+                # mypy ``no-redef`` error rather than a second binding.
+                source_plan = self._fallback_source_provider(config)
+                using_fallback_slate = True
+                slate_first_handoff = True
             else:
                 try:
                     source_plan = self._source_plan_provider(channel_id)
@@ -1434,6 +2344,36 @@ class EgressDaemon:
                 )
                 else None
             )
+            if first_program_remaining_seconds is not None and prepared_reload is None:
+                # ``prepared_reload`` is excluded because that plan was already
+                # resolved through ``_reload_steps`` -- which applies this same
+                # floor -- and the reuse branch below re-binds the report's own
+                # plan, so consulting the boundary here would be a wasted call
+                # whose answer is discarded.
+                #
+                # U36 decision 2(ii): the relaunch path is never handed a
+                # sub-floor schedule tail either. It was the same defect as the
+                # rollover: on 2026-09-25 the public channel's 14:17:52 crash
+                # relaunch re-resolved the July 23 program with the drifted
+                # schedule clock and armed its single segment as the last few
+                # seconds of media that had already fully aired -- the leg EOSed
+                # immediately and the worker exited. The precondition above is
+                # exactly the set of cases where a program plan was resolved
+                # against a schedule boundary provider (not a slate, not an
+                # operator override), which is where "the schedule is nearly
+                # over" is a meaningful question at all -- and where the plan
+                # about to be PREPARED is still swappable. ``_resolve_schedule_tail``
+                # returns the plan unchanged, by identity, at or above the floor,
+                # so an ordinary start never consults the boundary a second time.
+                tail_outcome = self._resolve_schedule_tail(
+                    channel_id, source_plan, config, slate_when_no_next=True
+                )
+                if tail_outcome.plan is not source_plan:
+                    source_plan = tail_outcome.plan
+                    using_fallback_slate = tail_outcome.slate
+                    first_program_remaining_seconds = (
+                        None if tail_outcome.slate else source_plan.segments[0].duration_seconds
+                    )
             if not using_fallback_slate:
                 # Clean-machine walkthrough of beta.5 (2026-09-09 MDT): an
                 # operator Start at 22:00:39 still read Stopped at 22:00:41
@@ -1460,7 +2400,73 @@ class EgressDaemon:
             # relying solely on _try_content_reload's tracking (which never
             # runs at all while supports_content_reload is False).
             prepared_plan_dir: Path | None = None
-            if self._source_preparer is not None:
+            if prepared_reload is not None and using_fallback_slate:
+                # F3(b): the resolution above REFUSED the prepared plan --
+                # caption storage refused and demanded the fallback slate, so
+                # this start must air what it resolved, not the plan it was
+                # handed. Release the held plan (the caller dropped its own
+                # reference) and fall through to the ordinary preparation of
+                # the slate. ``resolved_plan`` above makes every OTHER
+                # resolution failure mode unreachable here.
+                self._release_prepared_restart_plan(
+                    channel_id,
+                    prepared_reload,
+                    reason="this start must air its own resolved fallback slate",
+                )
+            if prepared_reload is not None and not using_fallback_slate:
+                # F3(b): this start IS the restart of an interrupted
+                # FALLBACK_SLATE reload, and the plan it was interrupted on
+                # has already been conformed. Bind exactly what the yield
+                # below would have produced, without yielding -- re-running
+                # the preparer is the whole cost this path exists to avoid
+                # (measured 133.6 s on 2026-09-24). The plan aired is the
+                # report's own, per the owner-authorized option (a): if the
+                # schedule horizon moved while the restart was in flight, the
+                # next ordinary rollover corrects it.
+                reused_report = prepared_reload.report
+                source_plan = reused_report.source_plan
+                prepared_plan_dir = reused_report.plan_dir
+                # The state the SEAMLESS path would have published for this
+                # same plan, carried rather than re-derived: a force-fallback
+                # filler rollover (the one route to a non-deferred reload whose
+                # prepared plan is the SLATE) must come back up as
+                # FALLBACK_SLATE, not as ON_AIR over a slate plan.
+                using_fallback_slate = prepared_reload.target_state == "FALLBACK_SLATE"
+                self._record_prepared_loudness(channel_id, reused_report)
+                _LOG.info(
+                    "Restarting %s onto the plan its interrupted reload already prepared: "
+                    "label=%r plan_dir=%s state=%s.",
+                    channel_id,
+                    source_plan.segments[0].label if source_plan.segments else "-",
+                    prepared_plan_dir,
+                    prepared_reload.target_state,
+                )
+            elif slate_first_handoff:
+                # The restart-recovery hand-off's fallback plan is ALREADY an airing
+                # artifact: a filler provider hands back a plan whose segments are
+                # MPEG-TS files its own generator rendered (`bulletin_filler.py` ->
+                # `SlateSourceGenerator._render_fill` / `_render_rotation`). Sending
+                # that plan through `_PreparationRequest` is what made this hand-off
+                # state-only: the request is the SLATE's OWN conform -- loudness probe
+                # included -- so no worker was launched until it returned, and the
+                # slate that exists to COVER the conform was waiting on it. On the
+                # station (C2, 2026-09-26) that read `FALLBACK_SLATE` with `pid=-` and
+                # three channels dark for 3 m 02 s.
+                #
+                # Skipping the yield lets this generator complete on its first
+                # `next()`: `_drive_preparation` turns that `StopIteration` into a
+                # normal return, so the slate worker is launched in the SAME
+                # `process_once`, and the `SLATE_FIRST` result below hands the program
+                # over to the async reload path -- which is where the program's conform
+                # belongs.
+                #
+                # `prepared_plan_dir` stays None, so the reload path has no directory of
+                # ours to release out from under the airing slate, and the loudness
+                # cache is popped exactly as the `else` arm below pops it: nothing was
+                # prepared here, so a stale pre-restart program loudness must not be
+                # reported as this slate's.
+                self._last_loudness_lufs.pop(channel_id, None)
+            elif self._source_preparer is not None:
                 try:
                     preparation_report = yield _PreparationRequest(source_plan, config)
                     source_plan = preparation_report.source_plan
@@ -1767,6 +2773,15 @@ class EgressDaemon:
                 sink_connected=self._sink_connected(channel_id, config, state=running_state),
                 seconds_on_air=0,
             )
+            if slate_first_handoff:
+                # U47: the slate is airing and the channel is no longer dark, so
+                # this operation is NOT complete -- it still owes the program its
+                # caller asked for. Returned from inside the ``try`` so the two
+                # ERROR handlers below keep their own ``return None``: a start
+                # that FAILED to launch the slate has nothing to hand off, and
+                # reporting SLATE_FIRST there would tell the caller a program is
+                # on its way when no worker exists to put it on air.
+                return _PreparationState.SLATE_FIRST
         except (ConfigInvalidError, SecretUnresolvedError, FfmpegNotFoundError) as exc:
             # FfmpegNotFoundError only reaches here when the ladder's own
             # tier-failure seam above already tried (or could not try) the
@@ -2169,6 +3184,60 @@ class EgressDaemon:
                 channel_id,
             )
 
+    def _restore_relay_streams(
+        self,
+        channel_id: str,
+        *,
+        now: float,
+        producing: bool,
+        startup_grace_s: float,
+    ) -> None:
+        """BETA.10 U12: give the relay supervisor one bounded chance to
+        restore a relay that cannot carry every stream kind its sink requires.
+
+        Called on both relay states -- a child that exited (the relay argv
+        requires each kind the sink carries, so a probe missing one is a
+        prompt, deliberate exit) and a live child whose served window is
+        missing a kind (audio-only OR video-only) -- and also covers an
+        ordinary relay death, which nothing respawned before this. The
+        supervisor owns the gating (``producing``/startup grace for the live
+        case, a backoff for both) and the attempt bound, so this is a thin,
+        exception-safe hand-off; ``getattr``/``callable`` keeps it working with
+        the older/simpler supervisor doubles the tests inject, exactly like the
+        neighbouring ``note_progress``/``progress_stale`` calls.
+        """
+        if self._hls_relay is None:
+            return
+        restore = getattr(self._hls_relay, "maybe_restore_missing_streams", None)
+        if not callable(restore):
+            return
+        try:
+            restore(
+                channel_id,
+                now=now,
+                producing=producing,
+                startup_grace_s=startup_grace_s,
+            )
+        except Exception:
+            _LOG.exception("channel %s: HLS relay stream-restore attempt failed.", channel_id)
+
+    def _trim_relay_logs(self, channel_id: str) -> None:
+        """BETA.10 U24: hard-cap this channel's relay stderr logs.
+
+        A thin hand-off like the neighbouring relay-poll helpers: the supervisor
+        owns the cap, the in-place rewrite, and the warning that names the file.
+        ``getattr``/``callable`` keeps it working with the simpler supervisor
+        doubles the tests inject. It never restarts a child -- the whole point of
+        the in-place rewrite is that the relay serving residents keeps serving.
+        """
+        trim = getattr(self._hls_relay, "maybe_trim_logs", None)
+        if not callable(trim):
+            return
+        try:
+            trim(channel_id)
+        except Exception:
+            _LOG.exception("channel %s: HLS relay stderr log trim failed.", channel_id)
+
     def _poll_hls_relay(self, channel_id: str) -> None:
         """MAJOR M1: poll this channel's supervised HLS relay child liveness.
 
@@ -2183,6 +3252,11 @@ class EgressDaemon:
         """
         if self._hls_relay is None:
             return
+        # BETA.10 U24: the same tick that watches the relay also bounds its
+        # stderr capture. It runs FIRST and regardless of liveness, because a
+        # child that has already exited leaving an oversized log behind is
+        # exactly the case the cap exists for.
+        self._trim_relay_logs(channel_id)
         is_alive = getattr(self._hls_relay, "is_alive", None)
         if not callable(is_alive):
             return
@@ -2194,14 +3268,478 @@ class EgressDaemon:
             return
         was_already_flagged_dead = self._hls_relay_dead.get(channel_id, False)
         self._hls_relay_dead[channel_id] = not alive
-        if not alive and not was_already_flagged_dead:
-            _LOG.error(
-                "HLS relay child for channel %s is no longer running (disk full, "
-                "ffmpeg missing, or OOM are the known causes); the main encoder is "
-                "unaffected but residents on the hls sink are getting a stale or "
-                "dead stream until this channel's next start/reload restarts it.",
+        now = self._monotonic()
+        if not alive:
+            if not was_already_flagged_dead:
+                _LOG.error(
+                    "HLS relay child for channel %s is no longer running (disk full, "
+                    "ffmpeg missing, or OOM are the known causes; a relay child whose "
+                    "probing found a required stream missing exits by design -- see "
+                    "hls_relay's required stream mapping). The main encoder is "
+                    "unaffected. The relay is recovered on a bounded, backed-off "
+                    "cadence, so it may briefly have no live window while that cadence "
+                    "runs.",
+                    channel_id,
+                )
+            # BETA.10 U12: recover a dead relay child on THIS tick instead of
+            # waiting for the channel's next encoder start/reload. That gap is
+            # what left the live government channel serving audio-only HLS for
+            # hours after its 18:46:32 mid-stream restart: the child had exited
+            # (or was locked to a half-program window) and nothing respawned it.
+            # ``maybe_restore_missing_streams`` is bounded and backed off, so a
+            # relay that cannot be recovered cannot become a restart storm.
+            self._restore_relay_streams(
                 channel_id,
+                now=now,
+                producing=channel_id in self._on_air_confirmed_at,
+                startup_grace_s=_HLS_RELAY_STARTUP_GRACE_S,
             )
+            return
+        # BETA.10 U12, checked BEFORE the served-window machinery below because
+        # it is a different fault: an ALIVE relay can be advancing its window
+        # perfectly while every segment in it is missing a required stream --
+        # audio-only (the live government symptom at 18:46:32) or video-only
+        # (U13's measurement at 18:47:44-18:47:56) -- so no amount of progress
+        # monitoring sees it.
+        self._restore_relay_streams(
+            channel_id,
+            now=now,
+            producing=channel_id in self._on_air_confirmed_at,
+            startup_grace_s=_HLS_RELAY_STARTUP_GRACE_S,
+        )
+        # BETA.10 live finding (2026-09-23): a STILL-RUNNING relay child can
+        # stop advancing ``playlist.m3u8`` (the live government channel froze at
+        # seg000001130.ts for minutes while the relay pid and the main encoder's
+        # CTRL output counters both kept running). Process liveness alone
+        # therefore reports that frozen window as healthy. Layer a served-window
+        # progress check on top, using the SAME ``_hls_relay_dead`` seam so
+        # ``_sink_connected`` tells the truth about a stalled-but-alive relay.
+        note_progress = getattr(self._hls_relay, "note_progress", None)
+        if not callable(note_progress):
+            return
+        try:
+            note_progress(channel_id, now=now)
+        except Exception:
+            _LOG.exception("channel %s: HLS relay progress observation failed.", channel_id)
+            return
+        progress_stale = getattr(self._hls_relay, "progress_stale", None)
+        stalled = progress_stale(channel_id, now=now) if callable(progress_stale) else None
+        if stalled is None:
+            # No readable window to judge. That is legitimate during
+            # STARTING/no-source, so it is only a fault when the daemon has
+            # ALREADY confirmed this channel is producing AND at least one live
+            # relay is past its own startup grace without ever writing a window
+            # (audit finding 3). Otherwise stay "unknown", never "stale".
+            never_emitted = getattr(self._hls_relay, "never_emitted", None)
+            if not (
+                callable(never_emitted)
+                and channel_id in self._on_air_confirmed_at
+                and never_emitted(channel_id, now=now, startup_grace_s=_HLS_RELAY_STARTUP_GRACE_S)
+            ):
+                return
+            if not was_already_flagged_dead:
+                _LOG.error(
+                    "HLS relay child for channel %s is running but has never written "
+                    "a live window while the channel is producing; residents are "
+                    "getting no HLS stream. Attempting a bounded relay self-heal.",
+                    channel_id,
+                )
+            self._hls_relay_dead[channel_id] = True
+        else:
+            self._hls_relay_dead[channel_id] = bool(stalled)
+            if not stalled:
+                return
+            if not was_already_flagged_dead:
+                _LOG.error(
+                    "HLS relay child for channel %s is still running but its live window "
+                    "has not advanced; residents are getting a frozen stream. Attempting "
+                    "a bounded relay self-heal.",
+                    channel_id,
+                )
+        # Bounded self-heal: ONLY when the channel is genuinely producing (the
+        # daemon's own on-air evidence latch, never mere process liveness), and
+        # ONLY after the relay child has had its startup grace. A STARTING /
+        # no-source channel can legitimately have a static or absent window and
+        # must never be restarted from here. ``maybe_self_heal_stalled`` is
+        # one-shot per stall episode, so this cannot become a restart storm.
+        maybe_heal = getattr(self._hls_relay, "maybe_self_heal_stalled", None)
+        if not callable(maybe_heal):
+            return
+        producing = channel_id in self._on_air_confirmed_at
+        try:
+            maybe_heal(
+                channel_id,
+                now=now,
+                producing=producing,
+                startup_grace_s=_HLS_RELAY_STARTUP_GRACE_S,
+            )
+        except Exception:
+            _LOG.exception("channel %s: HLS relay self-heal attempt failed.", channel_id)
+
+    def _poll_output_av_guard(self, channel_id: str) -> None:
+        """U16 item B: measure the ON-AIR channel's output A/V relationship.
+
+        The gate order here is the contract, and each clause exists because
+        violating it would restart something that is not broken:
+
+        * No live worker -> nothing to measure and nothing to restart.
+        * Worker pid changed -> the previous worker's measurements are void
+          (streak reset), but the probe CADENCE is left alone: a relaunch must
+          not make the guard probe faster than once per interval.
+        * Not ON_AIR/FALLBACK_SLATE -> not judged. STARTING has no output yet,
+          DRAINING is deliberately leaving air, and TRANSITIONING is what
+          ``_poll_process`` publishes for a channel with a content reload in
+          flight -- exactly the moment the U16 rebase step happens, and a
+          legitimate reason for A/V to move against each other for a moment.
+          This guard judges the settled output, never the switch.
+        * FALLBACK_SLATE IS judged (U21 item B2). The slate leg runs through the
+          same mux, the same udpsink and the same relay child as a program leg,
+          so it can carry - and strand - the same output A/V offset; the U21
+          slate-entry incident was measured on a slate leg. Excluding it left
+          the desync shape with no net at all, because B1's rebind cannot cure
+          an offset born on a slate the worker never restarts out of. Judging a
+          slate leg is safe for the same reason judging a program leg is: the
+          guard reads the worker's own settled output, and a slate leg that
+          cannot settle is exactly what a restart repairs.
+        * Inside the probe interval -> not yet time (the tick rate is 2s).
+        * Probe could not measure -> neither advances nor resets the streak, and
+          can never restart anything by itself.
+
+        The guard does NOT poll the worker itself. It runs LAST in the poll
+        tuple, so ``_poll_process`` has already processed any exit this tick --
+        it either published the state row for a live worker or moved the channel
+        on (relaunch, slate, stop). A poll here would be a second, unordered
+        reader of the same process's exit state: it changes when the exit is
+        first observed by everything downstream of it, which is a real coupling
+        (it silently shifted a reload-settlement tick's liveness re-check in
+        ``test_worker_exit_between_poll_process_and_poll_reload_settlement_falls_back``)
+        for no gain -- the state row this guard gates on is already the answer.
+        """
+        process = self._processes.get(channel_id)
+        if process is None:
+            return
+
+        pid = _process_pid(process)
+        guard = self._output_av_guard.get(channel_id)
+        if guard is None:
+            guard = _OutputAvGuardState(pid=pid)
+            self._output_av_guard[channel_id] = guard
+        elif guard.pid != pid:
+            guard.pid = pid
+            guard.streak = 0
+            del guard.offsets[:]
+
+        state = self._store.read_state(channel_id)
+        if (
+            state is None
+            or state.state not in {"ON_AIR", "FALLBACK_SLATE"}
+            or channel_id in self._draining_channels
+        ):
+            return
+
+        now = self._monotonic()
+        if (
+            guard.last_probe_at is not None
+            and now - guard.last_probe_at < _OUTPUT_AV_GUARD_PROBE_INTERVAL_S
+        ):
+            return
+        guard.last_probe_at = now
+
+        measurement = self._measure_output_av_offset(channel_id)
+        if measurement is None:
+            return
+        offset, segment = measurement
+        if abs(offset) <= _OUTPUT_AV_GUARD_MAX_OFFSET_S:
+            guard.streak = 0
+            del guard.offsets[:]
+            return
+
+        guard.streak += 1
+        guard.offsets.append((offset, segment))
+        del guard.offsets[:-_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES]
+        if guard.streak < _OUTPUT_AV_GUARD_CONSECUTIVE_PROBES:
+            return
+        self._restart_desynced_output(channel_id, guard, process, now=now)
+
+    def _measure_output_av_offset(self, channel_id: str) -> tuple[float, str] | None:
+        """The newest COMPLETE segment's ``(audio - video)`` first-packet offset.
+
+        ``None`` when there is nothing to measure: no config, no measurable
+        ``hls`` sink, no complete segment yet, or a probe that could not answer
+        (see ``_segment_first_packet_pts``). Sinks are tried in config order and
+        the first measurable one wins -- two hls sinks of the same channel see
+        the same program, so any of them answers the same question, and one
+        unmeasurable sink (a directory not written yet) must not hide a sibling
+        that can answer.
+
+        Only ``hls`` sinks can be measured at all: an rtmp/rtsp sink's output is
+        not on this machine to read, so a channel with no hls sink is simply
+        never judged by this guard rather than judged on a guess.
+        """
+        config = self._built_configs.get(channel_id) or self._store.get_config(channel_id)
+        if config is None:
+            return None
+        for sink in config.sinks:
+            if sink.kind != "hls":
+                continue
+            playlist = _playlist_path_for(sink.uri)
+            segment = _last_complete_segment(playlist)
+            if segment is None:
+                continue
+            first_packets = self._output_av_probe(playlist.parent / segment)
+            if first_packets is None:
+                continue
+            video_pts, audio_pts = first_packets
+            return (audio_pts - video_pts, segment)
+        return None
+
+    def _restart_desynced_output(
+        self,
+        channel_id: str,
+        guard: _OutputAvGuardState,
+        process: object,
+        *,
+        now: float,
+    ) -> None:
+        """Report a confirmed output desync and restart the worker, or refuse.
+
+        The restart is the SAME route a dead encoder takes, and deliberately not
+        a private one: this terminates the worker WITHOUT recording it in
+        ``_reload_kills``, so the exit is an ordinary non-zero worker exit and
+        ``_poll_process`` next tick finds the row still ON_AIR and calls
+        ``_relaunch_after_crash`` -- the ordinary crash-relaunch path, with its
+        own back-off, escalation accounting and proof event. Recording it as a
+        deliberate kill would instead preserve a pending reload the guard never
+        intended and bind the two mechanisms together.
+
+        The kill is bounded (terminate -> short wait -> kill) so the worker is
+        genuinely gone by the next tick rather than merely asked to leave: the
+        ordinary path then sees a real non-zero exit, which is what it handles.
+        """
+        guard.restarted_at = [
+            at for at in guard.restarted_at if at > now - _OUTPUT_AV_GUARD_BUDGET_WINDOW_S
+        ]
+        measured = "; ".join(
+            f"{segment} measured {offset:+.3f}s" for offset, segment in guard.offsets
+        )
+        detail = (
+            f"channel {channel_id}: output A/V desync -- audio and video first packet "
+            f"timestamps differ by more than {_OUTPUT_AV_GUARD_MAX_OFFSET_S:.1f}s on "
+            f"{_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES} consecutive probes "
+            f"(audio minus video: {measured})"
+        )
+        if len(guard.restarted_at) >= _OUTPUT_AV_GUARD_RESTART_BUDGET:
+            if (
+                guard.last_exhausted_log_at is None
+                or now - guard.last_exhausted_log_at >= _OUTPUT_AV_GUARD_EXHAUSTED_LOG_INTERVAL_S
+            ):
+                guard.last_exhausted_log_at = now
+                _LOG.error(
+                    "%s. Guard restart budget exhausted (%d restarts already spent in the "
+                    "last hour): NOT restarting the worker again. The output is still "
+                    "desynced after replacement workers, so this needs an operator -- "
+                    "check the channel's source program and encoder.",
+                    detail,
+                    len(guard.restarted_at),
+                )
+            return
+        guard.restarted_at.append(now)
+        guard.streak = 0
+        del guard.offsets[:]
+        _LOG.error(
+            "%s. Restarting this channel's worker through the ordinary crashed-encoder "
+            "relaunch path.",
+            detail,
+        )
+        _process_terminate_bounded(process)
+
+    def _freeze_escalation_state(self, channel_id: str) -> _FreezeEscalationState:
+        state = self._freeze_escalation.get(channel_id)
+        if state is None:
+            state = _FreezeEscalationState()
+            self._freeze_escalation[channel_id] = state
+        return state
+
+    def _poll_freeze_escalation(self, channel_id: str) -> None:
+        """U30: escalate when a relay self-heal has run and the window is STILL frozen.
+
+        The relay supervisor's self-heal is one-shot per stall episode by design
+        (hls_relay audit finding 4: a second heal in the same episode would be a
+        restart storm), so a heal that does not restore the window leaves that
+        path with no next move. This poll is the next move: it waits
+        ``_FREEZE_ESCALATION_AFTER_HEAL_S`` past the heal and, if the window is
+        still frozen, restarts the channel's worker through the ordinary
+        crashed-encoder relaunch path.
+
+        The gate order is the contract, and each clause exists so that nothing
+        healthy is ever restarted:
+
+        * No live worker entry -> nothing to restart, and the channel's
+          bookkeeping is dropped (a stopped channel must not carry a stale
+          budget into its next start).
+        * Not ON_AIR/FALLBACK_SLATE, or draining -> not judged. These are the
+          only two states in which the channel is supposed to be delivering a
+          settled program. STARTING and TRANSITIONING are explicitly exempt:
+          both are transient by construction (TRANSITIONING is what
+          ``_poll_process`` publishes while a content reload is in flight --
+          exactly when the U30 freeze has been seen) and neither has a window
+          that is supposed to be advancing yet. DRAINING is leaving air on
+          purpose.
+        * Worker pid changed -> the episode is voided. A replacement worker's
+          frozen predecessor-window is not evidence about it.
+        * Already escalated for THIS pid -> nothing more to do (the killed
+          worker is still the live entry until its exit is reaped).
+        * ``heal_frozen_seconds`` is under the bound -> not a failed heal yet,
+          or no relay in a failed-heal state at all. ``None`` (no relay
+          tracked, or no live relay is mid-failed-heal) means "this question
+          does not apply" and must never escalate: with no relay in play there
+          is no heal to have failed.
+
+        The signal is the HLS live window and only that -- see the constants
+        block at the top of this module for why the worker's own output-progress
+        line is deliberately not used.
+        """
+        process = self._processes.get(channel_id)
+        if process is None:
+            self._freeze_escalation.pop(channel_id, None)
+            return
+
+        state = self._freeze_escalation_state(channel_id)
+        pid = _process_pid(process)
+        if state.pid != pid:
+            state.pid = pid
+            state.escalated_for_pid = None
+
+        row = self._store.read_state(channel_id)
+        if (
+            row is None
+            or row.state not in ("ON_AIR", "FALLBACK_SLATE")
+            or channel_id in self._draining_channels
+        ):
+            return
+        if state.escalated_for_pid == pid:
+            return
+
+        supervisor = self._hls_relay
+        if supervisor is None:
+            return
+        # Defensive like the rest of this daemon's relay seams (see
+        # ``_poll_hls_relay``): a supervisor double that predates this signal
+        # must read as "not applicable", never as an exception on every tick.
+        frozen_seconds = getattr(supervisor, "heal_frozen_seconds", None)
+        if not callable(frozen_seconds):
+            return
+        now = self._monotonic()
+        frozen = frozen_seconds(channel_id, now=now)
+        if frozen is None or frozen < _FREEZE_ESCALATION_AFTER_HEAL_S:
+            return
+        self._restart_frozen_channel(channel_id, state, process, pid=pid, frozen=frozen, now=now)
+
+    def _restart_frozen_channel(
+        self,
+        channel_id: str,
+        state: _FreezeEscalationState,
+        process: object,
+        *,
+        pid: int | None,
+        frozen: float,
+        now: float,
+    ) -> None:
+        """Report a confirmed post-heal freeze and restart the worker, or refuse.
+
+        The restart is the SAME route the output A/V guard and a dead encoder
+        take: terminate the worker WITHOUT recording it in ``_reload_kills``, so
+        its exit is an ordinary non-zero exit that ``_poll_process`` next tick
+        finds, with the row still ON_AIR, and hands to ``_relaunch_after_crash``
+        -- the ordinary crash-relaunch path with its own back-off and
+        accounting. The kill is bounded, so the worker is genuinely gone by the
+        next tick rather than only asked to leave.
+
+        This method does NOT touch the relay child, and that is the whole point of
+        the split: the self-heal this escalation exists to escalate ALREADY
+        replaced that child (its age is what ``heal_frozen_seconds`` reports), and
+        in both live incidents the fresh child wrote nothing either -- a child
+        that stops writing while its upstream has stopped feeding it is evidence
+        about the upstream, not about the child, so replacing it a second time
+        buys nothing. Nothing has replaced the WORKER, so the WORKER is what this
+        restarts.
+
+        Do NOT read that as "the relaunch leaves the relay alone end to end".
+        On the merged beta10 line it does not: the relaunch reaches
+        ``HlsRelaySupervisor.apply`` with the worker dead, so it takes U21's
+        ``new_session=True`` path, which drops the channel's ``_Relay`` record
+        and spawns a FRESH child -- a fresh one-shot ``heal_attempted`` latch
+        (hls_relay audit finding 4) on the same deterministic port, so the
+        still-frozen playlist re-arms exactly one further heal per relay
+        incarnation. That is bounded, but the bound is the rolling-hour
+        ``_FREEZE_ESCALATION_RESTART_BUDGET`` below (and the throttled CRITICAL
+        once it is spent), NOT the heal latch. The merged-line sequence is pinned
+        by
+        ``test_hls_relay_progress.py::test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm``;
+        the latch by itself is pinned by that file's
+        ``..._no_restart_storm_with_frozen_playlist``, with this escalation
+        switched off.
+
+        Past ``_FREEZE_ESCALATION_RESTART_BUDGET`` restarts in the rolling hour
+        the channel is reported and NOT restarted again.
+        """
+        state.restarted_at = [
+            at for at in state.restarted_at if at > now - _FREEZE_ESCALATION_BUDGET_WINDOW_S
+        ]
+        detail = (
+            f"channel {channel_id}: the HLS live window is still frozen {frozen:.1f}s after "
+            f"the relay self-heal replaced its ffmpeg child, so the self-heal did not "
+            f"restore it (residents are watching a stalled stream)"
+        )
+        if len(state.restarted_at) >= _FREEZE_ESCALATION_RESTART_BUDGET:
+            if (
+                state.last_exhausted_log_at is None
+                or now - state.last_exhausted_log_at >= _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S
+            ):
+                state.last_exhausted_log_at = now
+                _LOG.critical(
+                    "%s. Freeze escalation budget exhausted (%d worker restarts already "
+                    "spent in the last hour): NOT restarting the worker again. The window is "
+                    "still frozen after replacement workers, so this needs an operator -- "
+                    "check the channel's source program and the relay child's own output.",
+                    detail,
+                    len(state.restarted_at),
+                )
+            return
+        state.restarted_at.append(now)
+        state.escalated_for_pid = pid
+        _LOG.error(
+            "%s. Restarting this channel's worker through the ordinary crashed-encoder "
+            "relaunch path; restart %d of at most %d in the last hour (%d left in this "
+            "hour).",
+            detail,
+            len(state.restarted_at),
+            _FREEZE_ESCALATION_RESTART_BUDGET,
+            _FREEZE_ESCALATION_RESTART_BUDGET - len(state.restarted_at),
+        )
+        _process_terminate_bounded(process)
+
+    def _note_deliberate_kill(self, channel_id: str, reason: str) -> None:
+        """Record and announce a deliberate worker kill (U52 item 2).
+
+        Every site that terminates a worker on purpose records it in
+        ``_reload_kills`` so ``_poll_process`` honors the pending reload
+        instead of treating the non-zero exit as a crash. That bookkeeping
+        was silent: the live 2026-09-26 education boundary left a bare
+        ``worker exited (exit_code=1 ... pending_reload=True)`` in the log,
+        which is the same shape an encoder crash produces. Say it out loud
+        here, and carry ``reason`` to the exit line, so one line of log is
+        enough to tell the two apart.
+        """
+
+        self._reload_kill_reasons[channel_id] = reason
+        self._reload_kills.add(channel_id)
+        _LOG.warning(
+            "channel %s: terminating the worker deliberately for a reload (%s); its non-zero "
+            "exit is this kill, not a crash.",
+            channel_id,
+            reason,
+        )
 
     def _poll_process(self, channel_id: str) -> None:
         process = self._processes.get(channel_id)
@@ -2293,19 +3831,34 @@ class EgressDaemon:
         # ffmpeg; it still flows into the pending reload, not crash relaunch.
         deliberate_kill = channel_id in self._reload_kills
         self._reload_kills.discard(channel_id)
+        deliberate_kill_reason = self._reload_kill_reasons.pop(channel_id, None)
         queued_terminal_command = any(
             command.action in {"stop", "drain"}
             for command in self._store.peek_pending_commands(channel_id)
         )
         exited_state = self._store.read_state(channel_id)
+        # U52 item 2: name the difference between a deliberate kill and a
+        # crash ON this line. The live 2026-09-26 education boundary logged
+        # ``exit_code=1 ... pending_reload=True`` and nothing else -- the
+        # exact shape of an encoder crash -- while the daemon knew perfectly
+        # well it had terminated the worker itself.
         _LOG.info(
-            "channel %s: worker exited (exit_code=%s, state=%s, desired=%s, pending_reload=%s)",
+            "channel %s: worker exited (exit_code=%s, state=%s, desired=%s, pending_reload=%s, "
+            "deliberate_kill=%s)",
             channel_id,
             returncode,
             exited_state.state if exited_state is not None else "UNKNOWN",
             "STOPPED" if was_draining or queued_terminal_command else "ACTIVE",
             channel_id in self._pending_reloads,
+            deliberate_kill,
         )
+        if deliberate_kill:
+            _LOG.info(
+                "channel %s: that non-zero exit was a deliberate kill -- %s -- not an encoder "
+                "crash; the pending reload is honored.",
+                channel_id,
+                deliberate_kill_reason or "no reason was recorded at the kill site",
+            )
         pending_reload = self._pending_reloads.pop(channel_id, None)
         if (returncode != 0 and not deliberate_kill) or was_draining or queued_terminal_command:
             pending_reload = None
@@ -2334,8 +3887,22 @@ class EgressDaemon:
                 channel_id,
                 previous_state=previous_state,
                 previous_source_label=previous_source_label,
+                # F3(b): this IS the restart a FALLBACK_SLATE reload's
+                # terminate was for -- hand it the plan that reload already
+                # prepared, so the restart does not conform it again. Popped
+                # here (not left stashed) so the entry cannot outlive the
+                # restart it was held for; ``_start`` releases it itself if
+                # something prevents it from being aired.
+                prepared_reload=self._prepared_restart_plans.pop(channel_id, None),
             )
             return
+        # F3(b): nothing below takes the pending-reload restart this exit could
+        # have consumed a held prepared-restart plan, so that plan will never
+        # be aired by it -- release it now rather than leave a live directory
+        # (or a stale plan a LATER, unrelated restart would wrongly air) behind.
+        self._discard_prepared_restart_plan(
+            channel_id, reason=f"worker exit took no pending reload (code={returncode})"
+        )
         # A queued operator stop/drain is an explicit intent to leave air and
         # must win over recovery, even when the worker exits between command
         # enqueue and this poll.  The command is drained below against the
@@ -2802,6 +4369,15 @@ class EgressDaemon:
             previous_source_label=previous_source_label,
             force_fallback_slate=force_fallback_slate,
             force_fallback_reason=force_fallback_reason,
+            # U47: this is THE relaunch of a channel that was on air. It is where
+            # the live finding was observed -- a worker exit followed by the
+            # channel going dark for the whole cold conform of the next program
+            # (public-exit1-1119: dark from 11:19:40, still dark at 11:20:29;
+            # public-exit0-0159: ~11 min). Air the slate first; the program
+            # follows through the reload path. Inert when B1 forced the slate
+            # above (that branch is checked first in ``_start_steps`` and has no
+            # program to hand off).
+            slate_first=True,
         )
         # CC-WS5-006: a crash-relaunch brings up a FRESH worker on a fresh control
         # pipe. Replay the channel's desired state (reload/swap) over it so a swap
@@ -3020,6 +4596,68 @@ class EgressDaemon:
         release."""
         self._release_prepared_plan_dir(self._active_prepared_plan_dir.pop(channel_id, None))
 
+    def _stash_prepared_restart_plan(self, channel_id: str, plan: _ReusePreparedPlan) -> None:
+        """F3(b): hold the plan a FALLBACK_SLATE reload prepared, for the
+        restart that will air it.
+
+        Supersedes -- and releases -- any plan still held for this channel
+        first, mirroring ``_try_content_reload``'s handling of a still-pending
+        previous reload attempt: silently overwriting here would leak the
+        replaced plan's directory. A held plan's ``plan_dir`` is part of
+        ``live_prepared_plan_dirs`` for as long as it is held, so the
+        preparer's own GC cannot evict a directory this daemon still intends
+        to air."""
+        self._discard_prepared_restart_plan(
+            channel_id, reason="superseded by a newer prepared restart"
+        )
+        self._prepared_restart_plans[channel_id] = plan
+
+    def _discard_prepared_restart_plan(self, channel_id: str, *, reason: str) -> None:
+        """F3(b): release any prepared-restart plan held for ``channel_id``.
+
+        Called from every path where the restart that would have consumed it
+        can no longer happen -- operator stop, drain, a worker exit that did
+        not take the pending-reload restart, shutdown, and a superseding
+        attempt -- so a held directory is never left for GC alone."""
+        self._release_prepared_restart_plan(
+            channel_id, self._prepared_restart_plans.pop(channel_id, None), reason=reason
+        )
+
+    def _discard_all_prepared_restart_plans(self, *, reason: str) -> None:
+        """F3(b): release every held prepared-restart plan this daemon owns.
+
+        The service-shutdown sweep: no channel's restart can run after it, so
+        every held directory must be released here rather than left to GC.
+        Snapshot the keys first -- ``_discard_prepared_restart_plan`` mutates
+        the dict being iterated."""
+        for channel_id in tuple(self._prepared_restart_plans):
+            self._discard_prepared_restart_plan(channel_id, reason=reason)
+
+    def _release_prepared_restart_plan(
+        self,
+        channel_id: str,
+        plan: _ReusePreparedPlan | None,
+        *,
+        reason: str,
+    ) -> None:
+        """Release one given prepared-restart plan (no-op when ``None``).
+
+        Separate from ``_discard_prepared_restart_plan`` for the caller that
+        already holds the plan itself rather than the stash entry: ``_start``
+        takes it as an argument and must release it when its own
+        already-preparing guard means this start will not run."""
+        if plan is None:
+            return
+        report = plan.report
+        _LOG.info(
+            "Prepared restart plan for %s released unused (%s): label=%r plan_dir=%s.",
+            channel_id,
+            reason,
+            report.source_plan.segments[0].label if report.source_plan.segments else "-",
+            report.plan_dir,
+        )
+        self._release_prepared_plan_dir(report.plan_dir)
+
     def live_prepared_plan_dirs(self, channel_id: str) -> frozenset[Path]:
         """Hostile-review follow-up, item 5: every ``SourcePreparer`` per-plan
         directory this daemon currently considers LIVE for ``channel_id`` --
@@ -3030,11 +4668,16 @@ class EgressDaemon:
         size, or keep-N recency -- closing the gap where nothing but this
         daemon actually knows which directories are still referenced."""
         pending = self._pending_reload_settle.get(channel_id)
+        # F3(b): a report held for an in-flight FALLBACK_SLATE restart is just
+        # as live as an armed reload's -- the restart is about to air it, so
+        # the preparer's GC must keep its directory too.
+        restart_plan = self._prepared_restart_plans.get(channel_id)
         return frozenset(
             plan_dir
             for plan_dir in (
                 self._active_prepared_plan_dir.get(channel_id),
                 pending.plan_dir if pending is not None else None,
+                restart_plan.report.plan_dir if restart_plan is not None else None,
             )
             if plan_dir is not None
         )
@@ -3046,6 +4689,7 @@ class EgressDaemon:
         *,
         command_id: str | None,
         force_fallback: bool = False,
+        min_plan_seconds: float | None = None,
     ) -> None:
         """Public capability ``ChannelAutomationService`` calls (mirrors the
         ``dispatched_plan_horizon``/``has_manual_override`` getattr-probed
@@ -3074,8 +4718,25 @@ class EgressDaemon:
         unscoped (``command_id=None``) -- and ``None`` is no longer special:
         it matches a drain whose own ``command_id`` is also ``None`` by
         ordinary equality (see ``_request_reload``'s docstring), not by a
-        wildcard carve-out."""
-        self._rollover_plan_end_at[channel_id] = (command_id, plan_end_at, force_fallback)
+        wildcard carve-out.
+
+        U41: ``min_plan_seconds`` is the horizon the dispatcher measured for
+        this rollover (its own lead), carried alongside the boundary for the
+        same reason and under the same command scoping. It is applied only to
+        a DEFERRED switch: a deferred rollover's plan is built at dispatch but
+        takes air at the outgoing item's own end, so a horizon measured from
+        dispatch is partly spent by the time the plan is on air (live
+        2026-09-25 education: 689 s planned at 23:41:56, 83 s left at the
+        23:53:17 switch, EOS at 23:54:41). With the horizon measured from the
+        switch instead, the plan still has a full lead of life when it takes
+        air. ``None`` (every non-GStreamer deployment, and any recorder that
+        does not measure a lead) is today's behavior exactly."""
+        self._rollover_plan_end_at[channel_id] = (
+            command_id,
+            plan_end_at,
+            force_fallback,
+            min_plan_seconds,
+        )
 
     def has_pending_reload_settlement(self, channel_id: str) -> bool:
         """Public capability ``ChannelAutomationService`` probes (via
@@ -3100,6 +4761,100 @@ class EgressDaemon:
             return True
         return bool(reader(channel_id))
 
+    def has_pending_preparation(self, channel_id: str) -> bool:
+        """Whether a media preparation for this channel is registered right now.
+
+        U47: the reader ``ChannelAutomationService._check_slate_replan`` uses to
+        tell "this daemon is already preparing the program this channel is
+        waiting for" apart from "nobody is doing anything, so queue a reload".
+        Without it the automation's slate-replan pass fires into the middle of a
+        slate-first hand-off's OWN preparation: the queued ``reload`` command
+        reaches ``_request_reload`` -> ``_cancel_preparation``, which abandons
+        the in-flight hand-off and conforms the same program a second time
+        (measured 20-133 s per conform in the field).
+
+        Deliberately NARROWER than ``has_pending_reload_settlement`` above, which
+        also reports an armed reload still settling. Reusing that one here would
+        additionally hold the automation off for the whole settle window -- a
+        behavior change outside U47's scope, on the one path (a rollover's
+        settlement) that already has its own latch and cooldown.
+
+        Read from the automation thread, so ``_preparation_guard`` is not taken:
+        ``self._preparations`` is only ever mutated under that lock by the daemon
+        thread, and the worst a torn read can do is make this answer stale by one
+        tick -- far cheaper than blocking the automation loop on a conform."""
+        return channel_id in self._preparations
+
+    def _hand_off_slate_first_program(self, channel_id: str) -> None:
+        """U47: put the program a slate-first start owes onto the air, using the
+        reload machinery rather than another start.
+
+        Reached from ``_start`` (the synchronous path, where the slate is already
+        up and the steps returned ``SLATE_FIRST``) and from ``_poll_preparation``
+        (the async path, where the same value arrives when the slate's own
+        preparation settles).
+
+        ``_request_reload(slate_first=True)`` is what makes this safe on failure:
+        a hand-off whose program cannot be prepared keeps the live slate and
+        returns, instead of running the ordinary restart fallback -- which, out
+        of a live FALLBACK_SLATE, terminates the slate worker (issue #157) and
+        so would take a channel that is ON AIR and make it dark for a second
+        conform. That is exactly the outcome this unit exists to prevent.
+
+        The live-process guard is not redundant. ``_start`` returns SLATE_FIRST
+        after a successful launch, but the worker can be gone again by the time
+        this runs (a fast crash), and ``_request_reload``'s no-live-process
+        branch would then call ``_start`` -- which is correct, and is why this
+        method does not attempt it here itself."""
+        process = self._processes.get(channel_id)
+        if process is None or _process_poll(process) is not None:
+            return
+        _LOG.info(
+            "channel %s: fallback slate is on air; handing the prepared program in "
+            "through the reload path",
+            channel_id,
+        )
+        self._request_reload(channel_id, slate_first=True)
+
+    def _keep_slate_after_failed_hand_off(self, channel_id: str) -> None:
+        """U47: a slate-first hand-off whose program could not be prepared keeps
+        the slate that is already on air.
+
+        Called from both halves of the same failure. The synchronous one ends at
+        the tail of ``_request_reload``; the asynchronous one settles in
+        ``_poll_preparation``, where the failed reload is the ``outcome is
+        False`` case. Both would otherwise run ``_fall_back_to_restart_reload``,
+        which out of a live FALLBACK_SLATE terminates the slate worker (issue
+        #157) and leaves the channel dark until the retry's conform finishes --
+        the second darkness this unit exists to remove, arrived at from the other
+        side.
+
+        Deliberately does nothing but log: the slate worker is alive and airing,
+        the channel's state is already FALLBACK_SLATE, and the ordinary
+        slate-replan policy owns the retry. Restarting it, or writing the state
+        again, would be the darkness with extra steps."""
+        _LOG.warning(
+            "channel %s: slate-first hand-off could not prepare the program; "
+            "keeping the fallback slate on air and leaving the retry to the "
+            "slate-replan policy.",
+            channel_id,
+        )
+
+    def _fall_back_to_restart_for_reused_plan(
+        self, channel_id: str, outcome: _ReusePreparedPlan
+    ) -> bool:
+        """F3(b): take the terminate+restart path for a reload that declined
+        the in-place selector swap, carrying the plan it already prepared so
+        the restart does not conform it a second time.
+
+        Returns ``False`` -- "not armed" -- which is what both call sites
+        mean by it: ``_poll_preparation`` ignores the value, and
+        ``_try_content_reload`` passes it up so ``_request_reload`` runs its
+        own (report-less, therefore harmless) fallback exactly as it does for
+        a declined arm today."""
+        self._fall_back_to_restart_reload(channel_id, prepared_reload=outcome)
+        return False
+
     def _try_content_reload(
         self,
         channel_id: str,
@@ -3107,7 +4862,9 @@ class EgressDaemon:
         process: object,
         *,
         rollover_plan_end_at: datetime | None,
+        rollover_plan_min_seconds: float | None = None,
         force_fallback: bool = False,
+        slate_first: bool = False,
     ) -> bool | _PreparationState:
         self._cancel_preparation(channel_id)
         result = self._drive_preparation(
@@ -3117,11 +4874,281 @@ class EgressDaemon:
                 state,
                 process,
                 rollover_plan_end_at=rollover_plan_end_at,
+                rollover_plan_min_seconds=rollover_plan_min_seconds,
                 force_fallback=force_fallback,
             ),
             kind="reload",
+            slate_first=slate_first,
         )
+        if isinstance(result, _ReusePreparedPlan):
+            # F3(b): the SYNCHRONOUS preparation path (no
+            # ``enable_async_preparation`` executor) completes the steps inline,
+            # so the decision reaches here directly instead of via
+            # ``_poll_preparation``. Same outcome, same handling -- without
+            # this the carried plan would be dropped and the reload silently
+            # never restarted.
+            return self._fall_back_to_restart_for_reused_plan(channel_id, result)
         return result if result is not None else False
+
+    def _resolve_schedule_tail(
+        self,
+        channel_id: str,
+        source_plan: EgressSourcePlan,
+        config: EgressConfig,
+        *,
+        resolved_at: datetime | None = None,
+        slate_when_no_next: bool = False,
+    ) -> _TailFloorOutcome:
+        """Refuse to install a schedule tail shorter than the switch that does it.
+
+        U26 defect 2, generalized by U36 decision 2. A plan that resolves the
+        item due at some instant I -- wall-clock now (automation's slate gap
+        replan in automation.py's ``_check_slate_replan``, an operator reload,
+        the F3(b) reused-plan restart), a recorded rollover horizon, or a crash
+        relaunch -- can land on an item whose slot is nearly over. The resolver
+        then hands back a legal but degenerate plan (see
+        ``_SCHEDULE_TAIL_FLOOR_SECONDS``) that the channel airs to its end and
+        then EOSes on, costing a whole second restart to reach the program that
+        was due all along. U36's incident is the same defect on the two paths
+        the U26 guard skipped: the 14:06:50 horizon-bound rollover (whose new
+        leg delivered 1.6s before EOS -- ``mux-in 1.6s: video=+24 audio=+37``
+        -- on a horizon the plan recorded 3.65s past the outgoing leg's real
+        end) and the 14:17:52 crash relaunch (a single sub-floor segment).
+
+        So resolve the schedule where that tail ENDS instead -- the next item --
+        and use it when it is a strict improvement. Everything else keeps the
+        tail plan untouched, because in every one of those cases airing the tail
+        is the honest behavior: a media-shorter-than-slot tail, a gap the fill
+        policy owns, the end of the schedule, or a boundary that fails to
+        prepare all resolve to ``None`` or to the same/short plan.
+
+        It cannot skip a program that genuinely has more than the floor left:
+        the body returns ``source_plan`` unchanged (identity, not a copy) before
+        any boundary call whenever the tail is at or above
+        ``_SCHEDULE_TAIL_FLOOR_SECONDS``, and even below the floor the
+        replacement is only taken when the plan due where the tail ends is
+        STRICTLY longer than the tail it replaces. A tail of 30s or more is
+        therefore never even measured against the schedule, and a shorter one is
+        only ever exchanged for more media than it had.
+
+        ``resolved_at`` is the instant the plan was resolved for. Callers that
+        resolved at a known instant (a recorded rollover horizon) pass it, so
+        the second look lands where THAT tail ends rather than where
+        wall-clock now happens to be; callers that resolved at wall-clock now
+        pass nothing.
+
+        ``slate_when_no_next`` (U36 decision 2: "the leg starts the NEXT program
+        instead (slate only if there is no next program)") arms the fallback
+        slate for the two paths where a sub-floor tail is otherwise aired to an
+        EOS that takes the worker down -- the horizon-bound rollover and the
+        crash relaunch. The U26 no-horizon call site leaves it False and keeps
+        its documented contract: ``None`` is never returned there, because a
+        declined plan would send the caller to ``_request_reload``'s
+        terminate+restart fallback, which is what the tail plan is already
+        about to get anyway.
+        """
+
+        boundary_provider = self._boundary_source_plan_provider
+        if boundary_provider is None or self.has_manual_override(channel_id):
+            # An operator override owns plan resolution and resolves at
+            # wall-clock now by its own contract (see the head of
+            # ``_reload_steps``): never reach past it for a later boundary.
+            return _TailFloorOutcome(source_plan, False)
+        tail_seconds = sum(segment.duration_seconds for segment in source_plan.segments)
+        if tail_seconds <= 0.0 or tail_seconds >= _SCHEDULE_TAIL_FLOOR_SECONDS:
+            return _TailFloorOutcome(source_plan, False)
+        base_at = datetime.now(UTC) if resolved_at is None else resolved_at
+        boundary_at = base_at + timedelta(seconds=tail_seconds + _SCHEDULE_TAIL_BOUNDARY_MARGIN_S)
+        try:
+            next_plan = boundary_provider(channel_id, boundary_at)
+        except SourcePrepareError:
+            next_plan = None
+        if next_plan is None or next_plan.channel_id != channel_id:
+            if slate_when_no_next and self._fallback_source_provider is not None:
+                # Nothing is scheduled where this tail ends. Airing the tail
+                # would EOS the leg and take the worker down; slate at the
+                # boundary instead.
+                try:
+                    slate = self._fallback_source_provider(config)
+                except SourcePrepareError:
+                    return _TailFloorOutcome(source_plan, False)
+                if slate.channel_id != channel_id:
+                    return _TailFloorOutcome(source_plan, False)
+                _LOG.info(
+                    "Plan for %s resolved to a %.1fs tail of the closing scheduled item "
+                    "and nothing is scheduled where that tail ends; airing the fallback "
+                    "slate at the boundary instead.",
+                    channel_id,
+                    tail_seconds,
+                )
+                return _TailFloorOutcome(slate, True)
+            return _TailFloorOutcome(source_plan, False)
+        next_seconds = sum(segment.duration_seconds for segment in next_plan.segments)
+        if next_seconds <= tail_seconds:
+            return _TailFloorOutcome(source_plan, False)
+        _LOG.info(
+            "Plan for %s resolved to a %.1fs tail of the closing scheduled item; "
+            "using the plan due where that tail ends instead (%.1fs).",
+            channel_id,
+            tail_seconds,
+            next_seconds,
+        )
+        return _TailFloorOutcome(next_plan, False)
+
+    def _chain_next_program(
+        self,
+        channel_id: str,
+        filler_plan: EgressSourcePlan,
+        *,
+        boundary_at: datetime | None,
+    ) -> tuple[EgressSourcePlan, datetime | None]:
+        """U53 item 1: trim a rollover filler to the gap and chain the programme due
+        at its end into the SAME plan.
+
+        Returns ``(plan, chained_program_end_at)``. ``plan`` is ``filler_plan``
+        unchanged -- and the end is ``None`` -- for every case this cannot do
+        honestly: no ``next_program_start_provider`` wired, no boundary to measure
+        the gap from, no next programme due, nothing but filler (no boundary plan
+        provider), a programme that would arrive before the filler ends, or a chain
+        that would exceed ``MAX_PLAYLIST_SUBCHAINS`` (the bridge raises
+        ``PlaylistCapBypassedError`` for an oversize non-slate/cg plan, and failing
+        that check closed would take a channel off air).
+
+        Why this is a plan shape and not a second plan: the daemon and the engine
+        are one-plan-per-channel (``_record_dispatched_plan`` /
+        ``GstPlayoutEngine.reload_program`` replace the whole program leg), so the
+        only way filler and programme can be dispatched together -- the programme
+        prepared at the same moment, with the filler's own lead -- is for them to BE
+        that one plan. The filler's declared durations are what the preparer writes
+        to each per-plan file (``preparer.py``'s ``-t segment.duration_seconds`` on
+        the bounded conform and on the GStreamer engine's cache-hit copy-out), and
+        the bridge builds one decoder sub-chain per segment that runs to that file's
+        EOS, so trimming the filler's LAST segment to the remaining gap is what
+        makes the hand-off land on the programme's scheduled start.
+
+        Measured on this station (U53 Part I): the 17:57-18:07 education rollover
+        had a 554s plan on air, a filler target, and the next programme due 554s
+        later; the filler aired whole and the programme followed it instead. The
+        failure this avoids is the one item 3's adaptive lead only partly covers --
+        the lead decides WHEN to start preparing, not what to air while the
+        programme prepares."""
+
+        if self._next_program_start_provider is None or boundary_at is None:
+            return filler_plan, None
+        if self._boundary_source_plan_provider is None:
+            # Without a boundary provider there is no honest way to resolve the
+            # programme due at the gap: the only other provider answers "what is
+            # active NOW", which in this gap is the filler itself.
+            return filler_plan, None
+        try:
+            next_start = self._next_program_start_provider(channel_id, boundary_at)
+        except Exception:
+            _LOG.warning(
+                "Could not resolve the next scheduled programme after %s for %s; "
+                "airing the filler whole.",
+                boundary_at.isoformat(),
+                channel_id,
+                exc_info=True,
+            )
+            return filler_plan, None
+        if next_start is None:
+            return filler_plan, None
+        gap_seconds = (next_start - boundary_at).total_seconds()
+        if gap_seconds <= 0.0:
+            # The programme is already due at the boundary: this rollover is not
+            # filling a gap, so there is nothing to trim and nothing to chain.
+            return filler_plan, None
+        trimmed: list[EgressSourceSegment] = []
+        remaining = gap_seconds
+        for segment in filler_plan.segments:
+            duration = float(segment.duration_seconds)
+            if remaining > duration:
+                trimmed.append(segment)
+                remaining -= duration
+                continue
+            # The gap lands inside this segment: keep it, truncated, and drop the
+            # rest of the filler -- the programme starts where the gap ends.
+            #
+            # ``model_validate`` rather than ``model_copy(update=...)``: a copy
+            # skips validation, and ``duration_seconds`` is constrained ``gt=0``.
+            # The arithmetic above guarantees ``remaining`` is positive here, and
+            # validating proves it rather than assuming it.
+            trimmed.append(
+                EgressSourceSegment.model_validate(
+                    {**segment.model_dump(), "duration_seconds": remaining}
+                )
+            )
+            remaining = 0.0
+            break
+        if remaining > 0.0:
+            # The filler's own declared run is SHORTER than the gap. Chaining the
+            # programme now would put it on air before it is due -- strictly worse
+            # than airing the filler whole, which the next rollover then handles.
+            _LOG.info(
+                "Rollover filler for %s declares %.1fs but the next programme is due in "
+                "%.1fs; airing the filler whole (it will be re-evaluated at its own end).",
+                channel_id,
+                sum(float(segment.duration_seconds) for segment in filler_plan.segments),
+                gap_seconds,
+            )
+            return filler_plan, None
+        try:
+            program_plan = self._boundary_source_plan_provider(channel_id, next_start)
+        except Exception:
+            _LOG.warning(
+                "Could not resolve the programme due at %s for %s; airing the filler whole.",
+                next_start.isoformat(),
+                channel_id,
+                exc_info=True,
+            )
+            return filler_plan, None
+        if (
+            program_plan is None
+            or program_plan.channel_id != channel_id
+            or not program_plan.segments
+        ):
+            return filler_plan, None
+        if len(trimmed) + len(program_plan.segments) > MAX_PLAYLIST_SUBCHAINS:
+            _LOG.warning(
+                "Not chaining the programme due at %s behind the filler for %s: %d filler + "
+                "%d programme segments exceeds the %d-subchain playlist cap; airing the "
+                "filler whole.",
+                next_start.isoformat(),
+                channel_id,
+                len(trimmed),
+                len(program_plan.segments),
+                MAX_PLAYLIST_SUBCHAINS,
+            )
+            return filler_plan, None
+        program_seconds = sum(float(segment.duration_seconds) for segment in program_plan.segments)
+        chained_end_at = next_start + timedelta(seconds=program_seconds)
+        chained_plan = filler_plan.model_copy(
+            update={"segments": [*trimmed, *program_plan.segments]}
+        )
+        _LOG.info(
+            "Rollover filler for %s trimmed to the %.1fs gap and chained with the programme "
+            "due at %s (%d filler + %d programme segment(s), %.1fs of programme).",
+            channel_id,
+            gap_seconds,
+            next_start.isoformat(),
+            len(trimmed),
+            len(program_plan.segments),
+            program_seconds,
+        )
+        return chained_plan, chained_end_at
+
+    def _avoid_schedule_tail_plan(
+        self, channel_id: str, source_plan: EgressSourcePlan
+    ) -> EgressSourcePlan:
+        """The U26 no-horizon call site's view of ``_resolve_schedule_tail``:
+        the replacement plan, or the tail plan untouched. Kept as a named
+        method because that contract -- a plan is ALWAYS returned, never
+        ``None`` -- is what the U26 tests pin."""
+
+        config = self._store.get_config(channel_id)
+        if config is None:
+            return source_plan
+        return self._resolve_schedule_tail(channel_id, source_plan, config).plan
 
     def _reload_steps(
         self,
@@ -3130,6 +5157,7 @@ class EgressDaemon:
         process: object,
         *,
         rollover_plan_end_at: datetime | None,
+        rollover_plan_min_seconds: float | None = None,
         force_fallback: bool = False,
     ) -> _PreparationSteps:
         """Seamless program content-reload for a content-reload-capable strategy.
@@ -3174,7 +5202,16 @@ class EgressDaemon:
         ``self._rollover_plan_end_at`` forever, to be read by whatever
         reload attempt for this channel came next. Popping in the one
         caller that is reached on every single "reload" command, before any
-        of ITS branches run, is what actually closes all of them."""
+        of ITS branches run, is what actually closes all of them.
+
+        U41: ``rollover_plan_min_seconds`` is the horizon the dispatcher
+        measured for this rollover, threaded down from the same record as
+        ``rollover_plan_end_at`` and applied to the boundary plan of a DEFERRED
+        switch only (see the eligibility gate where the provider is called).
+        It is the difference between a plan that has a full lead of life when
+        it takes air and one that has already spent its lead waiting -- the
+        live 2026-09-25 education incident, 689 s planned, 83 s left at the
+        switch, EOS ~3 minutes later."""
         config = self._store.get_config(channel_id)
         if config is None or not config.enabled:
             return False
@@ -3183,7 +5220,7 @@ class EgressDaemon:
             # relay-routed URIs the running encoder was started with.
             config = self._ts_relay.apply(config)
         if self._hls_relay is not None:
-            config = self._hls_relay.apply(config)
+            config = self._hls_relay.apply(config, log_root=self._work_dir)
         source_plan = None
         target_state: EgressState = "ON_AIR"
         # Scheduled rollover prepares the item due at the outgoing boundary.
@@ -3194,6 +5231,40 @@ class EgressDaemon:
             if rollover_plan_end_at is not None
             else None
         )
+        # U41: the recorded horizon (``min_plan_seconds``) is applied ONLY to a
+        # switch that will defer, because only a deferred switch consumes its
+        # runway while it waits for the outgoing item's own end -- an immediate
+        # cut airs the plan the moment it is armed, so a horizon measured from
+        # the switch and one measured from dispatch are the same thing there.
+        #
+        # The decision is taken here in its ELIGIBILITY form (``now=None``: "is
+        # this reload one that defers at all"), not with the late ``now`` the
+        # value handed to the encoder below uses. That late ``now`` is item 78
+        # fix 3's stale-horizon cut and must stay late; making it early here
+        # would reintroduce exactly the defect it fixes. The two can disagree in
+        # the rare case where the boundary passes between this point and the
+        # request build; the horizon then applies to a reload that ends up
+        # cutting immediately, which costs a wider plan and nothing else.
+        #
+        # A force-fallback filler rollover is excluded: that branch is the slate
+        # fill by design (see the deliberate filler semantics below), and
+        # widening its late-plan lookup would change what that filler is allowed
+        # to select.
+        horizon_seconds: float | None = None
+        if (
+            not force_fallback
+            and rollover_plan_min_seconds is not None
+            and should_defer_switch(
+                previous_state=state.state,
+                manual_override_active=self.has_manual_override(channel_id),
+                plan_end_at=rollover_plan_end_at,
+                now=None,
+            )
+        ):
+            horizon_seconds = rollover_plan_min_seconds
+        horizon_kwargs: dict[str, float] = (
+            {"min_plan_seconds": horizon_seconds} if horizon_seconds is not None else {}
+        )
         if not force_fallback:
             try:
                 if (
@@ -3201,7 +5272,7 @@ class EgressDaemon:
                     and boundary_at is not None
                     and not self.has_manual_override(channel_id)
                 ):
-                    source_plan = boundary_provider(channel_id, boundary_at)
+                    source_plan = boundary_provider(channel_id, boundary_at, **horizon_kwargs)
                 else:
                     source_plan = self._source_plan_provider(channel_id)
             except SourcePrepareError:
@@ -3245,13 +5316,70 @@ class EgressDaemon:
                     )
                     return True
                 target_state = "FALLBACK_SLATE"
+        # U53 item 1: this is a filler rollover -- if the schedule has a programme
+        # due when the filler's gap closes, trim the filler to that gap and chain
+        # the programme into the same plan, so the programme is prepared now (with
+        # this reload's own lead) and airs at its scheduled instant instead of
+        # after however long the filler ran. Computed BEFORE the preparation
+        # request below, because the chained shape is what has to be prepared.
+        # A no-op (identical plan, None) whenever the chain cannot be built; see
+        # ``_chain_next_program``.
+        #
+        # Scoped to the force-fallback filler arm on purpose. The OTHER place
+        # this method can arm a slate -- ``_resolve_schedule_tail``'s
+        # ``slate_when_no_next`` outcome below -- already resolves the plan due
+        # where the tail ends, and widening the chain to cover it would change
+        # what that resolver is allowed to choose without any evidence for it;
+        # that is a separate decision, not this one.
+        chained_program_end_at: datetime | None = None
+        if force_fallback and target_state == "FALLBACK_SLATE" and source_plan is not None:
+            # (``source_plan is not None`` is a narrowing guard, not a behavior
+            # change: a None plan still falls through to the ``return False``
+            # immediately below, exactly as it did before this chain existed.)
+            source_plan, chained_program_end_at = self._chain_next_program(
+                channel_id,
+                source_plan,
+                boundary_at=rollover_plan_end_at,
+            )
         if source_plan is None or source_plan.channel_id != channel_id:
             return False
+        if not force_fallback:
+            # U26 defect 2 applied where U26 deliberately skipped it.
+            #
+            # U26 reasoned that a horizon-bound rollover resolves at the
+            # OUTGOING plan's end, so the boundary IS the tail's own end and the
+            # plan due there is the one the rollover already chose. U36 measured
+            # that false on the live station: the recorded horizon comes from the
+            # SCHEDULE clock while the outgoing leg started at the ON_AIR
+            # instant, so the two disagree by seconds. On 2026-09-25 the 14:06:50
+            # rollover resolved the July 23 program 664s into a 667s item, armed
+            # its single segment as "the last ~3s", and the new leg delivered
+            # 1.6s (`mux-in 1.6s: video=+24 audio=+37`) before EOS. On this
+            # engine ``max_segments=1`` makes that leg the WHOLE pipeline, so the
+            # EOS took the worker down. Decision 2(i) of the coordinator's
+            # answer: the floor applies here too, measured from the instant the
+            # plan was actually resolved for (`resolved_at=boundary_at`), and if
+            # nothing is scheduled where the tail ends the slate is armed at the
+            # boundary instead of airing the sliver.
+            #
+            # A force-fallback filler rollover is still the slate fill by design
+            # and keeps skipping the floor entirely.
+            tail_outcome = self._resolve_schedule_tail(
+                channel_id,
+                source_plan,
+                config,
+                resolved_at=boundary_at,
+                slate_when_no_next=True,
+            )
+            source_plan = tail_outcome.plan
+            if tail_outcome.slate:
+                target_state = "FALLBACK_SLATE"
         # F3: None unless the preparer actually reports a discrete per-plan
         # directory (see SourcePreparationReport.plan_dir) -- tracked into the
         # pending settlement below so _commit_reload_settlement can release the
         # PREVIOUS plan once this one lands.
         prepared_plan_dir: Path | None = None
+        preparation_report: SourcePreparationReport | None = None
         if self._source_preparer is not None:
             # Retain per-channel elapsed preparation evidence while the
             # production automation loop runs this work in the background.
@@ -3338,6 +5466,27 @@ class EgressDaemon:
                 now=datetime.now(UTC),
             ),
         )
+        # F3(b), owner-authorized 2026-09-24: an IMMEDIATE (non-deferred) reload
+        # out of FALLBACK_SLATE must not attempt the in-place selector swap.
+        # That combination tears down the live slate leg under the selector and
+        # wedged one commit for 270 s on 2026-09-24 (U13). The immediate cut
+        # itself is correct policy (U13 Q3) and is unchanged -- only the
+        # MECHANISM changes, to the terminate+restart the daemon already owns,
+        # carrying the report this reload just produced so that restart does not
+        # conform the same plan again. Scope is exactly this combination: a
+        # deferred rollover (the common case) and every ON_AIR/override reload
+        # keep the seamless path byte-for-byte.
+        if (
+            not request.switch_at_end_of_current
+            and state is not None
+            and state.state == "FALLBACK_SLATE"
+        ):
+            if preparation_report is None:
+                # No preparer configured, so nothing was prepared to reuse: the
+                # ordinary restart path re-resolves the plan, exactly as a
+                # declined seamless arm does today.
+                return False
+            return _ReusePreparedPlan(preparation_report, target_state)
         # F1 redesign: a daemon-generated id (not the strategy's own internal
         # uuid, which this layer never sees) so _poll_reload_settlement can
         # correlate reload-status.json's "id" field back to THIS specific
@@ -3428,7 +5577,11 @@ class EgressDaemon:
                 # setting it here first closes the window; that later call
                 # harmlessly re-sets the same value.
                 self._pending_reloads[channel_id] = (state.state, state.current_source_label)
-                self._reload_kills.add(channel_id)
+                self._note_deliberate_kill(
+                    channel_id,
+                    "reload ack timed out on a live pid: the worker is wedged on a "
+                    "synchronous GStreamer call and will never answer another command",
+                )
                 _process_terminate_bounded(process)
             return False
         # Item 3 fix: a still-pending PREVIOUS reload for this channel (this
@@ -3453,6 +5606,8 @@ class EgressDaemon:
             previous_source_label=state.current_source_label if state else None,
             target_state=target_state,
             plan_dir=prepared_plan_dir,
+            rollover_plan_end_at=rollover_plan_end_at,
+            chained_program_end_at=chained_program_end_at,
         )
         _LOG.info(
             "Seamless content-reload accepted for %s (reload_id=%s, switch_at_end_of_current=%s); "
@@ -3513,6 +5668,7 @@ class EgressDaemon:
             proof_event_id=proof_event.event_id,
             source_plan=source_plan,
             switch_deferred=pending.switch_at_end_of_current,
+            chained_program_end_at=pending.chained_program_end_at,
         )
         self._append_health(
             channel_id,
@@ -3528,6 +5684,85 @@ class EgressDaemon:
         if pending.plan_dir is not None:
             self._active_prepared_plan_dir[channel_id] = pending.plan_dir
 
+    def _retry_aborted_boundary_reload(
+        self, channel_id: str, pending: _PendingReloadSettlement, *, reason: str
+    ) -> bool:
+        """U36 item 7: re-resolve and re-arm a boundary reload the worker ABORTED
+        pre-commit, instead of discarding it and leaving the boundary unprepared.
+
+        Returns True when this method has already decided what happens next --
+        either a retry is armed, or (retries exhausted) the fallback slate is
+        armed AT the boundary. The caller must then do nothing further; the
+        terminate+restart fallback it would otherwise run never happens, which is
+        the point: the outgoing leg keeps airing while the retry is armed.
+        False means "not an aborted BOUNDARY reload" -- carry on with the
+        pre-U36 behavior (log, discard, restart fallback).
+
+        Only a rollover-armed reload gets this treatment: the retry re-resolves
+        through ``_request_reload``/``_reload_steps`` with the SAME horizon, so
+        it goes through the U36 tail floor again (decision 2(i)). A reload with
+        no horizon has no boundary to protect and no measured failure mode, so
+        it keeps the plain restart fallback.
+
+        Bounded by ``_RELOAD_RETRY_LIMIT``; the budget is keyed by horizon, so a
+        NEW boundary starts at zero without anything having to clear the entry
+        (see ``_reload_retries``). Once the slate arm itself has been tried and
+        aborted too (``used > _RELOAD_RETRY_LIMIT``), this returns False and the
+        channel takes the ordinary restart fallback rather than re-arming the
+        slate forever.
+
+        Evidence: on 2026-09-25 the public channel's 14:44 boundary reload was
+        ``aborted:error``, discarded with no retry (``_fall_back_to_restart_
+        reload`` does not terminate an ON_AIR worker, so nothing even restarted),
+        and the next boundary then arrived with nothing prepared -- 10s aggregate
+        stall watchdog, exit 1, ~80s of dead air.
+        """
+        horizon = pending.rollover_plan_end_at
+        if horizon is None:
+            return False
+        recorded = self._reload_retries.get(channel_id)
+        used = recorded[1] if recorded is not None and recorded[0] == horizon else 0
+        if used > _RELOAD_RETRY_LIMIT:
+            # The slate arm (below) has already been tried for THIS horizon and
+            # the worker aborted that too. Stop re-arming; let the caller take
+            # the restart fallback.
+            return False
+        # Discard BEFORE re-arming: _try_content_reload treats a still-pending
+        # previous attempt as superseded, and this attempt is not a supersession
+        # -- it is the successor to a failed one. This also releases the aborted
+        # attempt's plan_dir now rather than at the 960s deadline.
+        self._discard_pending_reload_settlement(channel_id, reason=f"worker reported {reason}")
+        self._reload_retries[channel_id] = (horizon, used + 1)
+        if used >= _RELOAD_RETRY_LIMIT:
+            _LOG.warning(
+                "Boundary reload for %s did not land (%s) and %d retries were spent; "
+                "arming the fallback slate at the boundary so the outgoing leg is not "
+                "left to run out unprepared.",
+                channel_id,
+                reason,
+                _RELOAD_RETRY_LIMIT,
+            )
+            # ``force_fallback`` skips the resolver entirely and takes the slate
+            # (``_fallback_source_provider``) -- the same arm automation uses for
+            # a filler rollover -- carrying the horizon so the switch still lands
+            # AT the boundary rather than immediately.
+            self.record_rollover_plan_end(channel_id, horizon, command_id=None, force_fallback=True)
+        else:
+            _LOG.warning(
+                "Boundary reload for %s did not land (%s); re-resolving and re-arming "
+                "(retry %d of %d) while the outgoing leg keeps airing.",
+                channel_id,
+                reason,
+                used + 1,
+                _RELOAD_RETRY_LIMIT,
+            )
+            self.record_rollover_plan_end(channel_id, horizon, command_id=None)
+        # _request_reload routes itself: seamless reload when the strategy
+        # accepts it, terminate+restart otherwise -- so a retry that cannot even
+        # be armed still ends somewhere sensible rather than nowhere.
+        self._request_reload(channel_id)
+        return True
+
     def _poll_reload_settlement(self, channel_id: str) -> None:
         """F1 redesign: poll ``reload-status.json`` for a channel with an
         armed-but-not-yet-settled content-reload (``_try_content_reload``).
@@ -3541,9 +5776,13 @@ class EgressDaemon:
           entry.
         * status matches and ``"result"`` starts with ``"aborted:"`` -- the
           reload did not land (build error, timeout, supersession downstream of
-          this specific attempt): log the reason and fall back to restart
-          (``_fall_back_to_restart_reload``), same path a synchronously-declined
-          reload always took.
+          this specific attempt). U36 item 7: if this was a BOUNDARY reload
+          (``pending.rollover_plan_end_at``), it is re-resolved and re-armed,
+          bounded, before the horizon (``_retry_aborted_boundary_reload``) --
+          discarding it outright left the boundary unprepared, which is what
+          cost the public channel ~80s of dead air on 2026-09-25. Otherwise, log
+          the reason and fall back to restart (``_fall_back_to_restart_reload``),
+          the same path a synchronously-declined reload always took.
         * no status yet, or an id that does not match (a superseded attempt's
           own settlement arriving late) -- keep waiting, UNLESS
           ``_PENDING_RELOAD_SETTLE_DEADLINE_S`` has elapsed since this reload
@@ -3612,6 +5851,11 @@ class EgressDaemon:
                 self._commit_reload_settlement(channel_id, pending)
                 return
             if isinstance(result, str) and result.startswith("aborted:"):
+                # U36 item 7: a boundary reload gets a bounded retry (and, when
+                # that is exhausted, the slate AT the boundary) before this
+                # channel is handed the restart fallback.
+                if self._retry_aborted_boundary_reload(channel_id, pending, reason=result):
+                    return
                 _LOG.warning(
                     "Seamless content-reload for %s did not land (%s); falling back to restart.",
                     channel_id,
@@ -3665,7 +5909,11 @@ class EgressDaemon:
         return data if isinstance(data, dict) else None
 
     def _fall_back_to_restart_reload(
-        self, channel_id: str, *, failure_reason: str | None = None
+        self,
+        channel_id: str,
+        *,
+        failure_reason: str | None = None,
+        prepared_reload: _ReusePreparedPlan | None = None,
     ) -> None:
         """The terminate+restart reload path a declined/aborted/lost content-
         reload always falls through to -- factored out of ``_request_reload``
@@ -3676,8 +5924,17 @@ class EgressDaemon:
         reload-settlement tracking for this channel too (a no-op if the
         caller already did -- every current call site does). Kept here as a
         backstop so a future call site reaching this method can never leave a
-        stale pending entry (and its leaked plan_dir) behind."""
+        stale pending entry (and its leaked plan_dir) behind.
+
+        ``prepared_reload`` (F3(b), default ``None``): the plan a
+        FALLBACK_SLATE reload prepared before declining the in-place selector
+        swap. Held for the restart ``_poll_process`` performs when this
+        method's worker exit arrives, so that restart reuses it instead of
+        conforming it again. Every other caller passes nothing and behaves
+        exactly as before."""
         self._discard_pending_reload_settlement(channel_id, reason="falling back to restart")
+        if prepared_reload is not None:
+            self._stash_prepared_restart_plan(channel_id, prepared_reload)
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
         self._pending_reloads[channel_id] = (
@@ -3717,10 +5974,29 @@ class EgressDaemon:
             # design - a due program must not wait out the fill-target plan
             # (after #154 that wait is up to an hour of slate). Programs
             # keep the graceful drain above.
-            self._reload_kills.add(channel_id)
+            self._note_deliberate_kill(
+                channel_id,
+                "reload out of fallback slate: filler is interruptible by design "
+                "(issue #157), so the due program is not made to wait out the "
+                "fill-target plan; the restart carries the prepared plan",
+            )
             _process_terminate(process)
 
-    def _request_reload(self, channel_id: str, *, command_id: str | None = None) -> None:
+    def _request_reload(
+        self, channel_id: str, *, command_id: str | None = None, slate_first: bool = False
+    ) -> None:
+        """Bring the channel's next program on air.
+
+        ``slate_first`` (U47, default ``False`` = every pre-existing caller and
+        every queued ``reload`` command): this reload is the HAND-OFF half of a
+        slate-first start -- the slate is already on air and the channel must
+        stay on it if this reload cannot prepare the program. It changes exactly
+        two things, both about staying up rather than about the reload itself:
+        the no-live-process branch's ``_start`` inherits the flag (the worker
+        died between the slate's launch and this call, so that start is once
+        again "rescue a live channel"), and a declined/failed preparation keeps
+        the slate instead of running the restart fallback. See the tail below
+        and ``_hand_off_slate_first_program``."""
         self._cancel_preparation(channel_id)
         # Item 78 fix 3 (coordinator review, round 3): pop the automation-
         # recorded rollover plan_end_at HERE, at the very top of the ONE
@@ -3775,11 +6051,20 @@ class EgressDaemon:
         recorded = self._rollover_plan_end_at.get(channel_id)
         rollover_plan_end_at: datetime | None = None
         force_fallback = False
+        # U41: the horizon the dispatcher measured for this rollover, applied
+        # to the deferred switch only (see ``_try_content_reload``).
+        rollover_plan_min_seconds: float | None = None
         if recorded is not None:
-            recorded_command_id, recorded_plan_end_at, recorded_force_fallback = recorded
+            (
+                recorded_command_id,
+                recorded_plan_end_at,
+                recorded_force_fallback,
+                recorded_min_plan_seconds,
+            ) = recorded
             if recorded_command_id == command_id:
                 rollover_plan_end_at = recorded_plan_end_at
                 force_fallback = recorded_force_fallback
+                rollover_plan_min_seconds = recorded_min_plan_seconds
                 self._rollover_plan_end_at.pop(channel_id, None)
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
@@ -3788,6 +6073,7 @@ class EgressDaemon:
                 channel_id,
                 previous_state=state.state if state else None,
                 previous_source_label=state.current_source_label if state else None,
+                slate_first=slate_first,
             )
             return
         # S15 (D-S1-6): if the strategy can rebuild program content in place (the
@@ -3796,22 +6082,48 @@ class EgressDaemon:
         # #151 fix applied to every reload). Any condition the seamless path can't
         # handle falls through to the terminate+restart reload below (which already
         # handles slate fallback, interruptible filler, and the graceful drain).
-        if (
-            state is not None
-            and getattr(self._encoder_strategy, "supports_content_reload", False)
-            and self._try_content_reload(
+        if state is not None and getattr(self._encoder_strategy, "supports_content_reload", False):
+            if self._try_content_reload(
                 channel_id,
                 state,
                 process,
                 rollover_plan_end_at=rollover_plan_end_at,
+                rollover_plan_min_seconds=rollover_plan_min_seconds,
                 force_fallback=force_fallback,
-            )
-        ):
-            # Preparing/accepted work is pending; it is not on-air proof. _poll_reload_
-            # settlement (in process_once's poll tuple) finishes the job (or
-            # falls back to restart via _fall_back_to_restart_reload below)
-            # once reload-status.json actually reports an outcome.
-            return
+                slate_first=slate_first,
+            ):
+                # Preparing/accepted work is pending; it is not on-air proof.
+                # _poll_reload_settlement (in process_once's poll tuple) finishes
+                # the job (or falls back to restart via
+                # _fall_back_to_restart_reload) once reload-status.json actually
+                # reports an outcome.
+                return
+            if slate_first:
+                if channel_id in self._prepared_restart_plans:
+                    # Already routed: the F3(b) branch above stashed a plan and
+                    # queued this channel's terminate+restart, so the exit that
+                    # lands in ``_poll_process`` will air the program. Logging
+                    # "keeping the fallback slate on air" here would be false --
+                    # the slate worker has already been terminated.
+                    return
+                # U47: this reload was the hand-off half of a slate-first start
+                # and it could not produce a program -- either the reload steps
+                # declined (an unusable plan, an arming refusal) or the
+                # preparation raised. The ordinary fallback below is WRONG here:
+                # out of a live FALLBACK_SLATE it adds this channel to
+                # ``_reload_kills`` and terminates the slate worker (issue #157)
+                # and then conforms the slate again, i.e. it would take a channel
+                # that is ON AIR and make it dark -- precisely the outcome U47
+                # exists to prevent. Keep the slate; the program's retry belongs
+                # to the automation's own slate-replan policy, which is already
+                # watching a FALLBACK_SLATE channel for a due program.
+                #
+                # This tail is the SYNCHRONOUS path only. The same failure on the
+                # asynchronous path never reaches here -- it settles in
+                # ``_poll_preparation`` -- and is handled there by the same
+                # helper, keyed off the pending preparation's ``slate_first``.
+                self._keep_slate_after_failed_hand_off(channel_id)
+                return
         self._fall_back_to_restart_reload(channel_id)
 
     def _drain(self, channel_id: str) -> None:
@@ -3826,12 +6138,21 @@ class EgressDaemon:
             # see the matching pop/comment in _poll_process's worker-exit
             # branches and ``_rollover_plan_end_at``'s docstring.
             self._rollover_plan_end_at.pop(channel_id, None)
+            # F3(b): a drain is a terminal off-air intent -- any plan held for
+            # a restart that will now never run must be released, not left for
+            # GC. Safe for the LIVE plan too: this release only ever touches a
+            # plan that has not been aired yet.
+            self._discard_prepared_restart_plan(channel_id, reason="channel drained")
             return
         state = self._store.read_state(channel_id)
         config = self._store.get_config(channel_id)
         self._draining_channels.add(channel_id)
         self._pending_reloads.pop(channel_id, None)
+        # F3(b): see the matching release in the no-process branch above -- a
+        # drain never restarts onto a held plan, so it must release it.
+        self._discard_prepared_restart_plan(channel_id, reason="channel draining to off air")
         self._reload_kills.discard(channel_id)  # drain cancels a pending kill
+        self._reload_kill_reasons.pop(channel_id, None)
         self._write_state(
             channel_id,
             "DRAINING",
@@ -3869,6 +6190,7 @@ class EgressDaemon:
         # Audit ENG-005: a leaked reload-kill flag would later misclassify a
         # genuine crash as a clean reload handoff.
         self._reload_kills.discard(channel_id)
+        self._reload_kill_reasons.pop(channel_id, None)
         # F1/F3 fix: an armed-but-unsettled reload is moot once the channel is
         # stopped (nothing will ever read reload-status.json for it again) --
         # release it immediately instead of waiting for GC. Hostile-review
@@ -3877,6 +6199,12 @@ class EgressDaemon:
         # logging, never recording the discarded reload_id for late-arrival
         # detection) -- routed through the shared helper now.
         self._discard_pending_reload_settlement(channel_id, reason="channel stopped")
+        # F3(b): same reasoning, and the same unconditional placement -- a held
+        # prepared-restart plan has not been aired by anything, so it is safe
+        # to release on BOTH stop flavors (the comment below is about the
+        # ACTIVE plan's directory, which the draining worker may still be
+        # reading; this one it is not).
+        self._discard_prepared_restart_plan(channel_id, reason="channel stopped")
         # Hostile-review follow-up (third pass), P2: the ACTIVE prepared-plan
         # directory is only safe to release here when this is a direct
         # (non-draining) stop -- the _process_terminate call further down
@@ -3961,6 +6289,7 @@ class EgressDaemon:
                 self._cancel_preparation(channel_id)
             snapshot = list(self._processes.items())
         if not snapshot:
+            self._discard_all_prepared_restart_plans(reason="service shutdown")
             return DrainResult(outcomes=())
 
         outcomes: dict[str, str] = {}
@@ -4013,6 +6342,12 @@ class EgressDaemon:
         # no named-pipe server leaks past supervised shutdown.
         for channel_id, _ in snapshot:
             self._close_worker_channel(channel_id)
+        # F3(b): service shutdown is a terminal off-air for every channel this
+        # daemon owns -- no restart will ever consume a prepared-restart plan
+        # still held here, so release them all rather than leak their
+        # directories for GC. Swept once, after the drain, so a channel that
+        # held a plan without appearing in the snapshot is covered too.
+        self._discard_all_prepared_restart_plans(reason="service shutdown")
 
         return DrainResult(
             outcomes=tuple(
@@ -4137,6 +6472,66 @@ class EgressDaemon:
                 for label in hls_labels:
                     health[label] = False
         return health
+
+
+def _default_pid_is_dead(pid: int) -> bool | None:
+    """Definitive tri-state liveness for restart reconciliation. NEVER guesses.
+
+    Unlike ``_default_orphan_probe`` (whose ``None`` conflates
+    ``psutil.NoSuchProcess`` with ``psutil.AccessDenied`` and is therefore only
+    safe for the *never-kill* orphan-reaper decision), this answers a strict
+    question -- "is this pid definitely gone?" -- and fails CLOSED on
+    uncertainty:
+
+    * ``True``  -- the pid does not exist (``psutil.pid_exists`` False): the
+      persisted claim is definitively dead and may be reconciled.
+    * ``False`` -- the pid exists (present in the process table): a live
+      process holds it, so the claim must be left alone. Access-denied still
+      returns False here: the pid EXISTS, it is merely unreadable, which is
+      uncertainty about IDENTITY, not about liveness.
+    * ``None``  -- we could not determine liveness (probe raised, no psutil):
+      unknown => the caller MUST NOT reconcile.
+
+    This deliberately does not modify ``_default_orphan_probe`` or the
+    orphan-reaper's own semantics; it is a separate, stricter predicate used
+    only by ``reconcile_stale_state``.
+    """
+    try:
+        import psutil
+    except Exception:  # psutil unavailable: unknown, never assume dead
+        return None
+    try:
+        exists = psutil.pid_exists(pid)
+    except Exception:  # any probe failure is uncertainty, not proof of death
+        return None
+    if exists:
+        return False
+    # pid_exists said the pid is gone. pid_exists can be fooled on some
+    # platforms by access restrictions, so corroborate with a second,
+    # independent signal: enumerating the process table. Only if BOTH agree the
+    # pid is absent do we call it definitively dead.
+    try:
+        if pid in psutil.pids():
+            return False
+    except Exception:
+        return None
+    return True
+
+
+def _epoch_seconds(when: datetime) -> float:
+    """``when`` as an epoch float, treating a NAIVE datetime as UTC.
+
+    ``EgressStateRow.updated_at`` is aware in production (the Postgres column is
+    ``DateTime(timezone=True)``), but the SQLite backend hands it back naive, and
+    the daemon writes UTC (``datetime.now(UTC)``) on every path. A naive value is
+    therefore a UTC value whose offset was dropped, not a local-time one; calling
+    ``.timestamp()`` on it directly would silently shift it by the host's offset
+    and could make a live encoder look like a reincarnated pid.
+    """
+
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return when.timestamp()
 
 
 def _default_orphan_probe(pid: int) -> OrphanInfo | None:

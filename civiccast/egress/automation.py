@@ -15,7 +15,13 @@ self-driving:
   the operator's original start command was consumed long ago;
 * a channel sitting on FALLBACK_SLATE gets a ``reload`` the moment the
   schedule yields a real source plan again, so a due program takes over the
-  gap without operator action.
+  gap without operator action;
+* a channel pass that runs longer than
+  ``CIVICCAST_AUTOMATION_PASS_WATCHDOG_SECONDS`` (30s by default) has the
+  automation thread's live Python stack dumped into the log, repeatedly until
+  the pass ends, and the pass's total duration reported when it does
+  (``_PassWatchdog``) -- so the next stall says which call it is stuck in
+  (U01, 2026-09-24: ~446s in one pass, and nothing in the log named the call).
 
 Combined with join-in-progress source plans (a rejoin resumes the current
 program at the wall-clock offset), an app restart puts every automated
@@ -30,10 +36,14 @@ command queue each tick is a cheap poll; no encoder ever spawns uncommanded).
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import math
 import os
+import sys
 import threading
 import time
+import traceback
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -45,7 +55,13 @@ from civiccast.egress.daemon import AlertEvaluatorHook, EgressDaemon
 from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.gst.reload_policy import rollover_trigger_at
-from civiccast.egress.models import ChannelAutomationRollup, EgressCommand, EgressProofEvent
+from civiccast.egress.models import (
+    ChannelAutomationRollup,
+    EgressCommand,
+    EgressProofEvent,
+    EgressSourcePlan,
+)
+from civiccast.egress.preparer import preparation_timeout_seconds_from_env
 from civiccast.egress.store import EgressStore
 from civiccast.native.station_runtime import EGRESS_DEGRADED_REASON_ENV
 
@@ -224,7 +240,62 @@ __all__ = [
     "ChannelAutomationSettings",
     "build_channel_automation",
     "default_egress_work_dir",
+    "pass_watchdog_repeat_seconds_from_env",
+    "pass_watchdog_threshold_seconds_from_env",
+    "rollover_lead_seconds_from_env",
 ]
+
+#: BETA.10 U02: operator override for the GStreamer path's rollover lead (see
+#: ``ChannelAutomationService._rollover_lead_seconds``). Its value is a
+#: positive float of seconds; every invalid or non-positive value is logged
+#: and ignored, exactly as ``preparer.preparation_timeout_seconds_from_env``
+#: treats its own variable, so a typo can never disable the rollover.
+ROLLOVER_LEAD_ENV = "CIVICCAST_EGRESS_ROLLOVER_LEAD_SECONDS"
+
+#: BETA.10 U04: the stuck-pass watchdog. U01 established that the single
+#: automation thread spent ~446s inside one channel pass on 2026-09-24
+#: (13:30:44,903 -> 13:38:10,887) and that nothing in the log said which call
+#: it was in, because a pass logs nothing until it returns. These two tunables
+#: are that missing answer: how long one pass may run before its stack is
+#: dumped (30s), and how often a pass that is STILL stalled is re-dumped (60s).
+#: Both are read once per service, by
+#: ``pass_watchdog_threshold_seconds_from_env`` /
+#: ``pass_watchdog_repeat_seconds_from_env``.
+#: The registry's spelling is ``CIVICCAST_`` (two C's, 9 characters), as it is
+#: for every other variable this module reads. The one-C ``CIVICAST_`` form is
+#: one character short and renders identically in most fonts -- the drift U03
+#: fixed in ``env_vars.py`` and that this unit introduced here twice (the two
+#: constants, and the module docstring). These names are new in U04, so there
+#: is no legacy spelling to keep and no alias to honour.
+WATCHDOG_THRESHOLD_ENV = "CIVICCAST_AUTOMATION_PASS_WATCHDOG_SECONDS"
+WATCHDOG_REPEAT_ENV = "CIVICCAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS"
+_DEFAULT_PASS_WATCHDOG_SECONDS = 30.0
+_DEFAULT_PASS_WATCHDOG_REPEAT_SECONDS = 60.0
+#: The watcher thread's name. Named for the thread it watches -- the production
+#: loop runs as ``civiccast-channel-automation`` (``app.py``), so an operator's
+#: thread dump shows the watcher directly beside its subject.
+WATCHDOG_THREAD_NAME = "civiccast-channel-automation-pass-watchdog"
+
+#: The longest sleep ``threading.Event.wait`` can time on this platform
+#: (CPython's ``TIMEOUT_MAX``: 4294967s here). U04 review (R1): a FINITE
+#: interval above it raises ``OverflowError`` -- reproduced at U04 review time
+#: as ``OverflowError: timeout value is too large`` from the watcher's own loop
+#: condition, which killed the thread and silently ended the diagnostics. The
+#: non-finite case was guarded from the start; this is the same failure reached
+#: by an ordinary large number, so both the reader (rejects) and ``_watch``
+#: (clamps, for a directly constructed watchdog) have to know about it.
+_MAX_WATCHDOG_SECONDS = threading.TIMEOUT_MAX
+
+#: The longest the watcher may sleep between look-ups of the pass it is
+#: watching, whatever the operator's threshold and repeat are (they may both be
+#: minutes). The wake period is ``min(threshold, repeat, this)``: the threshold
+#: bounds how long a crossed threshold can go unnoticed, the repeat bounds a
+#: tiny threshold from waking rarely, and this cap keeps the operator's own
+#: numbers out of the wake-up period entirely at the shipped 30s/60s. U04
+#: coordinator fix 2: the period used to BE the repeat after the first tick, so
+#: the first report of a fresh stall could land a whole repeat after the
+#: threshold -- ~90s at the defaults, and the whole of a short stall.
+_MAX_WATCHDOG_TICK_SECONDS = 5.0
 
 
 def default_egress_work_dir() -> Path:
@@ -236,6 +307,447 @@ def default_egress_work_dir() -> Path:
     if os.name == "nt" and os.environ.get("LOCALAPPDATA"):
         return Path(os.environ["LOCALAPPDATA"]) / "CivicCast" / "egress"
     return Path.home() / ".local" / "share" / "civiccast" / "egress"
+
+
+def rollover_lead_seconds_from_env() -> float | None:
+    """The operator's rollover-lead override (``ROLLOVER_LEAD_ENV``), or
+    ``None`` when unset/invalid/non-positive -- the caller then uses the
+    computed default (``ChannelAutomationService._rollover_lead_seconds``).
+
+    Mirrors ``preparer.preparation_timeout_seconds_from_env``'s treatment of
+    bad input: a warning naming the offending value, then the safe default.
+    ``None`` rather than a sentinel value keeps "the operator said nothing"
+    distinct from any legitimate lead the override could carry."""
+
+    raw = os.environ.get(ROLLOVER_LEAD_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        value = float(raw)
+    except ValueError:
+        _LOG.warning(
+            "Invalid %s=%r; using the computed rollover lead instead.",
+            ROLLOVER_LEAD_ENV,
+            raw,
+        )
+        return None
+    if value <= 0:
+        _LOG.warning(
+            "%s must be positive; using the computed rollover lead instead.",
+            ROLLOVER_LEAD_ENV,
+        )
+        return None
+    return value
+
+
+def _watchdog_seconds_from_env(name: str, default: float, *, zero_allowed: bool) -> float:
+    """Read one stuck-pass-watchdog tuning from ``name``, or ``default``.
+
+    Mirrors ``rollover_lead_seconds_from_env``'s treatment of bad input -- a
+    warning naming the offending value, then the safe default -- because a
+    typo must never silently disable a stall detector. (U03's lesson, and this
+    module's own: a setting that is quietly inert reads exactly like a setting
+    that is working until the day it matters.)
+
+    ``zero_allowed`` is the single asymmetry between the two tunables. ``0`` is
+    the documented OFF switch for the THRESHOLD, so it is valid there and
+    returned unchanged. It is invalid for the REPEAT interval: a 0s repeat
+    would make the watcher thread spin on ``Event.wait(0)``, burning a core to
+    re-check a pass it has just reported, which is the opposite of what a
+    diagnostic aid should cost. Non-finite values are invalid for both -- a
+    ``nan`` threshold compares false against every elapsed time (so every
+    tick would report) and a ``nan``/``inf`` repeat raises out of
+    ``Event.wait``, which would kill the watcher thread silently. U04 review
+    (R1) added the ceiling: a finite value above ``_MAX_WATCHDOG_SECONDS``
+    raises the same way, so it is rejected the same way. (A directly
+    constructed ``_PassWatchdog`` never goes through here, so ``_watch``
+    clamps as well.)
+
+    ``-0`` is normalised to ``0.0``. It is arithmetically zero -- the
+    documented off switch -- but it returns as ``-0.0``, whose sign then leaks
+    into ``_PassWatchdog.enabled``'s comparison and into anything that echoes
+    the value back. U04 review (R2)."""
+
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        _LOG.warning("Invalid %s=%r; using %.1fs.", name, raw, default)
+        return default
+    if not math.isfinite(value) or value < 0 or (value == 0 and not zero_allowed):
+        _LOG.warning(
+            "%s=%r must be %s; using %.1fs.",
+            name,
+            raw,
+            "0 (disables the watchdog) or a positive number" if zero_allowed else "positive",
+            default,
+        )
+        return default
+    if value > _MAX_WATCHDOG_SECONDS:
+        _LOG.warning(
+            "%s=%r must be at most %.0fs (the longest wait this platform can time); using %.1fs.",
+            name,
+            raw,
+            _MAX_WATCHDOG_SECONDS,
+            default,
+        )
+        return default
+    return 0.0 if value == 0 else value
+
+
+def pass_watchdog_threshold_seconds_from_env() -> float:
+    """How long one channel pass may run before the watchdog dumps the
+    automation thread's stack (``WATCHDOG_THRESHOLD_ENV``, default 30s).
+
+    ``0`` disables the watchdog completely: ``_PassWatchdog.start`` spawns no
+    thread, so there is no dump, no pass-end report and no thread to find in a
+    dump. The default is deliberately shorter than a channel's own rollover
+    lead (690s at the shipped 300s preparation timeout): the point is to catch
+    a pass that is stuck EARLY enough for its stack to still describe the
+    thing that is stuck."""
+
+    return _watchdog_seconds_from_env(
+        WATCHDOG_THRESHOLD_ENV, _DEFAULT_PASS_WATCHDOG_SECONDS, zero_allowed=True
+    )
+
+
+def pass_watchdog_repeat_seconds_from_env() -> float:
+    """How often a pass that is STILL over the threshold is re-dumped
+    (``WATCHDOG_REPEAT_ENV``, default 60s). Must be positive, finite and no
+    more than ``_MAX_WATCHDOG_SECONDS`` -- see ``_watchdog_seconds_from_env``.
+
+    This value sets the log volume for a long stall, exactly and predictably:
+    a stall lasting ``D`` seconds emits about ``D / repeat`` stack dumps, each
+    a handful of lines. At the 60s default a 15-minute stall is ~15 dumps; at
+    a DEBUG-minded 0.1s it would be ~9000. Nothing here floors the value --
+    short repeats are what the tests use and an operator measuring a suspected
+    stall may want them -- but the off switch (threshold ``0``) is always
+    available, and the arithmetic is stated so a value can be chosen knowing
+    what it costs the log."""
+
+    return _watchdog_seconds_from_env(
+        WATCHDOG_REPEAT_ENV, _DEFAULT_PASS_WATCHDOG_REPEAT_SECONDS, zero_allowed=False
+    )
+
+
+def _log_watchdog_failure(message: str) -> None:
+    """Log a watchdog-internal failure without ever raising out of it.
+
+    Every guard in ``_PassWatchdog`` falls back to a log call, and a log call
+    is not itself safe: ``logging`` re-raises ``RecursionError`` out of a
+    handler's ``emit`` rather than swallowing it, so the fallback can raise the
+    very exception the guard exists to contain. Reproduced at U04 review (R3),
+    at DEBUG level: ``pass_finished`` raised ``RecursionError`` out of a pass's
+    ``finally`` and replaced the pass's own exception. The nested guard here is
+    what makes "the watchdog can never raise into a channel pass" true rather
+    than merely intended.
+
+    ``BaseException`` -- ``KeyboardInterrupt``, ``SystemExit`` -- still
+    propagates, as it does from any Python code; that is not the watchdog's to
+    swallow."""
+
+    with contextlib.suppress(Exception):
+        _LOG.debug(message, exc_info=True)
+
+
+class _PassWatchdog:
+    """BETA.10 U04: name the call a stalled channel pass is stuck in.
+
+    2026-09-24 (U01): the single automation thread spent ~446s inside public's
+    pass and the log could not say which call it was in, because
+    ``_run_channel_pass`` logs nothing until it returns. This object is the
+    answer for the NEXT stall: while one pass has been running longer than
+    ``threshold_seconds``, a watcher thread dumps the automation thread's live
+    Python stack -- the first one within a tick of the threshold, then one
+    ``repeat_seconds`` after each report while the pass stays stalled -- and the
+    pass's own total duration is reported the moment it ends.
+
+    Three properties are load-bearing, because the thread being watched is the
+    one this build cannot afford to disturb:
+
+    * the automation thread only ever records or clears its own fields under
+      ``_lock`` -- the channel, the start time, the next-report time, the
+      watched thread's ident and the reported flag. It never formats a stack,
+      never logs and never waits;
+    * all logging happens on the WATCHER thread, and deliberately after the
+      lock is released, so a slow log handler can never block the automation
+      thread behind the watchdog;
+    * nothing here touches the store, the daemon, or any daemon lock. The only
+      inputs are ``sys._current_frames()`` and this object's own state.
+
+    With ``threshold_seconds == 0`` the watchdog is disabled: ``start`` spawns
+    no thread at all and every method here becomes a state update that logs
+    nothing."""
+
+    def __init__(
+        self,
+        *,
+        threshold_seconds: float,
+        repeat_seconds: float,
+        monotonic: Callable[[], float] | None = None,
+        current_frames: Callable[[], dict[int, Any]] | None = None,
+    ) -> None:
+        self._threshold_seconds = threshold_seconds
+        self._repeat_seconds = repeat_seconds
+        # The same clock the service uses, for the same reason: a test that
+        # injects a clock gets one consistent notion of elapsed time.
+        self._monotonic = monotonic or time.monotonic
+        # ``sys._current_frames`` is a private CPython API (there is no public
+        # one), injected rather than called directly so the failure path is
+        # testable: a dump that raises must not take the watcher with it.
+        self._current_frames = current_frames or sys._current_frames
+        #: Guards ONLY the three fields below. Held for assignments and reads,
+        #: never across a log call -- see the class docstring.
+        self._lock = threading.Lock()
+        self._channel_id: str | None = None
+        self._started_at = 0.0
+        #: Monotonic time at which the current pass may next be reported:
+        #: ``started_at + threshold`` when it begins, ``now + repeat`` after each
+        #: report. Held in the pass record rather than derived from a tick
+        #: count, so the schedule does not depend on WHEN the watcher happens to
+        #: wake -- a late tick reports late, never early or twice. U04
+        #: coordinator fix 2: with the period alone, a pass that crossed the
+        #: threshold between two ticks was first reported a whole repeat later.
+        self._next_report_at = 0.0
+        self._thread_ident: int | None = None
+        #: Whether this pass has already been reported as over the threshold.
+        #: Set by the watcher thread under ``_lock``; read and cleared by the
+        #: pass's own end so it can report its total duration exactly once.
+        self._reported = False
+        self._stop_event = threading.Event()
+        #: Touched only by ``start``/``stop``, both called from the automation
+        #: thread (``run_forever``), so it needs no lock of its own.
+        self._thread: threading.Thread | None = None
+
+    @property
+    def enabled(self) -> bool:
+        """False when the threshold is 0: the documented off switch."""
+
+        return self._threshold_seconds > 0 and self._repeat_seconds > 0
+
+    @property
+    def tick_seconds(self) -> float:
+        """How long the watcher sleeps between look-ups of the pass.
+
+        ``min(threshold, repeat, 5.0)``. Nothing is REPORTED on a tick that is
+        not due -- the watcher only checks whether a report is due -- so a small
+        operator value here costs wake-ups (one lock acquisition each, no stack
+        formatting, no log call), never extra log lines. A ``repeat`` below a
+        millisecond would make the watcher busy: the brief's formula, and a
+        documented cost rather than a silent floor."""
+
+        return min(self._threshold_seconds, self._repeat_seconds, _MAX_WATCHDOG_TICK_SECONDS)
+
+    def start(self) -> None:
+        """Start the watcher thread. No-op when disabled or already running.
+
+        Called by ``run_forever`` -- never by ``run_once``, which is why the
+        direct ``run_once`` this suite uses everywhere has no watcher thread
+        and stays byte-for-byte the loop it was.
+
+        Best-effort, deliberately. U04 review (R4): this runs on the automation
+        thread, and a ``RuntimeError: can't start new thread`` here used to
+        propagate out of ``run_forever`` before its ``try`` -- turning a
+        non-essential diagnostic into a dead automation loop, since
+        ``ThreadSupervisor`` does not restart a worker that has exited. A
+        watcher that cannot start costs the diagnostics, not the station, so a
+        failed spawn is logged and swallowed, and ``_thread`` is cleared so a
+        later ``run_forever`` can try again."""
+
+        if not self.enabled:
+            return
+        if self._thread is not None and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        thread = threading.Thread(
+            target=self._watch,
+            name=WATCHDOG_THREAD_NAME,
+            daemon=True,
+        )
+        try:
+            thread.start()
+        except Exception:
+            self._thread = None
+            _log_watchdog_failure("Stuck-pass watchdog could not start its watcher thread.")
+            return
+        self._thread = thread
+
+    def stop(self, *, timeout: float = 5.0) -> None:
+        """Stop the watcher thread and wait, bounded, for it to end.
+
+        Bounded because this runs in ``run_forever``'s ``finally``: a watcher
+        wedged in a log handler must not hold up an operator's shutdown. It is
+        a daemon thread either way, so a timeout here cannot keep the process
+        alive. ``self._thread`` is left set if the join times out, so a later
+        ``start`` refuses to spawn a second watcher rather than double-reporting
+        every stall."""
+
+        self._stop_event.set()
+        thread = self._thread
+        if thread is None:
+            return
+        thread.join(timeout)
+        if not thread.is_alive():
+            self._thread = None
+
+    def pass_started(self, channel_id: str) -> None:
+        """Record the pass now starting on the calling (automation) thread.
+
+        Called from ``_run_channel_pass``. Guarded because a bookkeeping bug
+        here must never fail a channel pass: this runs on the thread whose
+        work is the thing being protected, and the alternative -- an exception
+        from the watchdog -- would be charged to the pass."""
+
+        try:
+            with self._lock:
+                self._channel_id = channel_id
+                started_at = self._monotonic()
+                self._started_at = started_at
+                self._thread_ident = threading.get_ident()
+                self._reported = False
+                self._next_report_at = started_at + self._threshold_seconds
+        except Exception:
+            _log_watchdog_failure("Stuck-pass watchdog could not record a pass start.")
+
+    def pass_finished(self, channel_id: str) -> None:
+        """Clear the pass record; report its total duration if it tripped the
+        watchdog, exactly once.
+
+        Runs in a ``finally`` in ``_run_channel_pass``, so it must never raise:
+        an exception here would REPLACE whatever the pass itself raised and
+        blame the watchdog for it. The log call is inside the same guard for
+        that reason -- a broken log handler is not the pass's problem -- and
+        the guard's own fallback goes through ``_log_watchdog_failure``, whose
+        nested guard is what closes that last path (U04 review, R3)."""
+
+        try:
+            with self._lock:
+                if self._channel_id != channel_id:
+                    # Not this pass (already cleared, or a different channel
+                    # owns the record): nothing to clear, nothing to report.
+                    return
+                elapsed = self._monotonic() - self._started_at
+                reported = self._reported
+                threshold = self._threshold_seconds
+                self._channel_id = None
+                self._thread_ident = None
+                self._reported = False
+                self._next_report_at = 0.0
+            if not reported:
+                return
+            _LOG.warning(
+                "Channel automation pass for %s finished after %.1fs (exceeded watchdog %.1fs).",
+                channel_id,
+                elapsed,
+                threshold,
+            )
+        except Exception:
+            _log_watchdog_failure("Stuck-pass watchdog could not report a pass end.")
+
+    def _watch(self) -> None:
+        """The watcher thread's loop: sleep one tick, check, repeat.
+
+        The period is a constant ``tick_seconds`` -- ``min(threshold, repeat,
+        5.0)`` -- and it decides only how promptly a DUE report is noticed, not
+        how often one is emitted. Whether a report is due is the pass's own
+        ``_next_report_at``, so the schedule is independent of when the watcher
+        wakes: a slow machine reports late rather than early or twice.
+
+        U04 coordinator fix 2 replaced the two-phase period this used to have
+        (first tick at the threshold, every later one at the repeat). That
+        period was itself the report cadence, so a pass that crossed the
+        threshold between two ticks waited up to a whole repeat to be named --
+        measured at U04 review (R5) as up to ~90s at the shipped 30s/60s, and
+        the whole of any stall shorter than the repeat. The tick is now the
+        shortest interval that can make the threshold meaningful, and the
+        repeat is what it was always documented to be: the interval between
+        reports of a pass that is STILL stalled.
+
+        The whole iteration -- the wait included -- is guarded. U04 review (R1):
+        the wait itself can raise (``OverflowError`` above
+        ``_MAX_WATCHDOG_SECONDS``), and it sits in the loop CONDITION, so
+        guarding only ``_check`` left a path that killed the thread. Any raise
+        now costs one tick, and the next iteration re-checks the stop event."""
+
+        interval = self._wait_interval(self.tick_seconds)
+        while True:
+            try:
+                if self._stop_event.wait(interval):
+                    return
+                self._check()
+            except Exception:
+                # This thread has no supervisor: a reporting failure must cost
+                # one tick, never the rest of the stall.
+                _log_watchdog_failure("Stuck-pass watchdog tick failed.")
+
+    def _wait_interval(self, seconds: float) -> float:
+        """``seconds`` clamped to what ``Event.wait`` can actually time.
+
+        Only reachable by a directly constructed watchdog (the env reader
+        rejects anything above the ceiling), and cheap insurance against the
+        failure mode R1 found: a wait that raises out of the loop condition
+        takes the watcher with it."""
+
+        return min(seconds, _MAX_WATCHDOG_SECONDS)
+
+    def _check(self) -> None:
+        """Dump the automation thread's stack if a report of the current pass
+        is due."""
+
+        snapshot = self._snapshot_stalled_pass()
+        if snapshot is None:
+            return
+        channel_id, elapsed, stack = snapshot
+        # One decimal: U01's postmortem had to line the ~446s stall up against
+        # sub-second log timestamps, so the watchdog's own numbers carry the
+        # precision that made that reconstruction possible.
+        _LOG.warning(
+            "Channel automation pass for %s has run %.1fs (still running); "
+            "automation thread stack:\n%s",
+            channel_id,
+            elapsed,
+            stack,
+        )
+
+    def _snapshot_stalled_pass(self) -> tuple[str, float, str] | None:
+        """``(channel_id, elapsed_seconds, formatted_stack)`` for a pass whose
+        report is DUE, else ``None``.
+
+        Due means ``now >= _next_report_at``: one threshold after the pass
+        started, then one ``repeat`` after each report. The due time is
+        advanced under the lock before the stack is read, so the cadence is
+        settled by the pass record rather than by the watcher's wake-ups.
+
+        The pass is marked reported under the lock, BEFORE its stack is read,
+        for two reasons: a pass that ends in the same instant still reports its
+        own total duration, and a pass whose thread has already gone is still
+        reported as having exceeded the threshold -- which its elapsed time
+        genuinely did."""
+
+        with self._lock:
+            channel_id = self._channel_id
+            if channel_id is None:
+                return None
+            ident = self._thread_ident
+            now = self._monotonic()
+            elapsed = now - self._started_at
+            if now < self._next_report_at:
+                # Not due -- either under the threshold, or reported less than
+                # a repeat ago. A tick that finds nothing due logs nothing.
+                return None
+            self._reported = True
+            self._next_report_at = now + self._repeat_seconds
+
+        if ident is None:  # defensive: pass_started always records an ident
+            return None
+        frame = self._current_frames().get(ident)
+        if frame is None:
+            # The automation thread has exited -- there is no stack left to
+            # name. Its pass-end line still reports the overrun.
+            return None
+        return channel_id, elapsed, "".join(traceback.format_stack(frame))
 
 
 @dataclass(frozen=True)
@@ -333,6 +845,19 @@ class ChannelAutomationService:
         # see that method's docstring.
         self._plan_horizon: dict[str, tuple[str | None, datetime, datetime, float]] = {}
         self._rollover_issued: set[str] = set()
+        # U53 item 3 (2026-09-26): the boundary plan resolved for the NEXT
+        # boundary, remembered per channel as ``(boundary, seconds, label)``.
+        # ``_rollover_lead_seconds`` sizes the lead from the item that must be
+        # prepared, and an adaptive lead can only ever move the dispatch
+        # EARLIER -- so the duration has to be known BEFORE the trigger the
+        # duration itself computes, which is why it is resolved on the first
+        # poll tick after a boundary's horizon is established rather than at
+        # the trigger. Keyed by the boundary it was resolved for, which is what
+        # makes it once-per-boundary rather than once-per-tick: a new plan
+        # means a new ``plan_end_at``, which replaces this entry. Only used to
+        # size the lead; the dispatch itself still resolves its own plan at
+        # dispatch time, so a schedule edited in between is not missed.
+        self._rollover_asset_probe: dict[str, tuple[datetime, float | None, str | None]] = {}
         # D43 hardening (2026-09-05): the monotonic timestamp of the last
         # rollover DISPATCH per channel, enforcing
         # _rollover_min_interval_seconds between them. Each dispatch runs
@@ -399,6 +924,23 @@ class ChannelAutomationService:
         # Issue #117: one supervised BYO-SDI relay per configured channel.
         self._sdi_supervisor_factory = sdi_supervisor_factory or _default_sdi_factory
         self._sdi_relays: dict[str, Any] = {}
+        # BETA.10 U03: one-shot latch for the "the rollover lead is closing on
+        # the engine's defer-switch watchdog" WARNING -- see
+        # _warn_if_rollover_lead_nears_the_defer_watchdog. Per SERVICE lifetime,
+        # not per channel: the lead is a property of the deployment's
+        # configuration, identical for every channel, and _check_plan_rollover
+        # calls _rollover_lead_seconds on every ~2s poll tick.
+        self._rollover_lead_ceiling_warned = False
+        # BETA.10 U04: the stuck-pass watchdog's state, built here (once per
+        # service, like every other setting this class reads from the
+        # environment) but THREADED only by ``run_forever`` -- so ``run_once``
+        # called directly keeps running exactly the loop it always did, with
+        # no watcher thread. See ``_PassWatchdog``.
+        self._pass_watchdog = _PassWatchdog(
+            threshold_seconds=pass_watchdog_threshold_seconds_from_env(),
+            repeat_seconds=pass_watchdog_repeat_seconds_from_env(),
+            monotonic=self._monotonic,
+        )
 
     _START_RETRY_COOLDOWN_SECONDS = 30.0
     _RELOAD_RETRY_COOLDOWN_SECONDS = 30.0
@@ -427,6 +969,94 @@ class ChannelAutomationService:
     # dispatch at or after the plan's own end. See
     # _rollover_min_lead_seconds.
     _ROLLOVER_MIN_LEAD_SECONDS = 120.0
+    # BETA.10 U02/U03: the GStreamer path's rollover lead is no longer the fixed
+    # 120s above -- it has to cover a preparation that is allowed to run to
+    # ``CIVICCAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` (300s at the station,
+    # 300s by default) plus the reload's own post-preparation round trip.
+    # 2026-09-24 13:28:25: public's rollover was issued with 119s left, its
+    # cold conform (measured 270s, capped at 300s) did not finish, and the
+    # channel went dark at 13:30:30. See ``_rollover_lead_seconds``.
+    # U03: the timeout is covered PER PASS -- in the worktree this was sized
+    # in, a normalized segment runs a loudnorm measurement pass and then the
+    # conform, each within that same bound, so the U02 lead of one timeout
+    # covered half of THAT build's worst case. U05: the installed base this
+    # candidate patches has no separate loudnorm measurement pass, so the same
+    # multiplier over-estimates rather than under-estimates here.
+    # See ``_ROLLOVER_PREPARATION_PASSES``.
+    #
+    # The reload's settle budget after preparation completes: the worker
+    # pipe's reload ack is bounded at ``strategy._WORKER_PIPE_ACK_TIMEOUT_S``
+    # (5s), the daemon observes settlement on its ~2s poll tick, and building
+    # + prerolling the new leg is seconds of work. 30s covers that several
+    # times over; the 60s margin below absorbs the rest (command drain to the
+    # daemon's next tick, clock granularity) without materially extending how
+    # far ahead of EOS the reload is built.
+    _ROLLOVER_RELOAD_SETTLE_BUDGET_SECONDS = 30.0
+    _ROLLOVER_LEAD_MARGIN_SECONDS = 60.0
+    # BETA.10 U03: how many ``_run_ffmpeg`` calls ONE reload preparation of ONE
+    # segment can make on the GStreamer path. ``_run_ffmpeg`` applies
+    # ``self._preparation_timeout_seconds`` to EACH call
+    # (``preparer.py:1373``), so one pass is not the bound -- the count is.
+    # U05 re-derived that count from the INSTALLED preparer rather than from
+    # the worktree's. On this path (``playout_trim_supported=False``, wired at
+    # ``build_channel_automation``) the installed ``_prepare_segment`` makes
+    # ONE bounded call -- the conform encode that writes the segment
+    # (``preparer.py:1839``); the cache-HIT path makes one too (the stream-copy
+    # at ``preparer.py:949``). The worktree makes TWO: it adds a two-pass
+    # loudnorm MEASUREMENT pass (``build_loudnorm_probe_args``) ahead of the
+    # encode. The installed preparer has no such pass -- its loudness probe
+    # goes through ``check_streaming_loudness`` (``preparer.py:1642``), which is
+    # not a ``_run_ffmpeg`` call and carries no preparation timeout of its own.
+    # 2.0 is kept as written for BOTH bases deliberately: it is the worktree's
+    # worst case and a superset of this installed base's, so the computed lead
+    # (690s at the shipped 300s) stays an over-estimate of the bounded work one
+    # preparation can do, never an under-estimate. U05 was told to keep it
+    # unless it would be WRONG here; too generous is not the failure mode a
+    # rollover lead has.
+    # ``_conform_full_asset_into_cache`` -- itself a probe plus an encode
+    # (``preparer.py:550``) -- is deliberately NOT counted: its only
+    # synchronous call site is guarded by ``_playout_trim_supported``
+    # (``preparer.py:1779``), which is False for the gst engine, so on this path
+    # it runs only on the background warm worker (``_schedule_warm``), never
+    # inside a reload's preparation.
+    _ROLLOVER_PREPARATION_PASSES = 2.0
+    # U53 item 3 (coordinator's engineering call, 2026-09-26): the lead above
+    # is sized from the preparation TIMEOUT, which bounds what one ffmpeg pass
+    # may take -- not what the item coming up actually costs. The measured cost
+    # of the whole-asset conform is a REALTIME FACTOR, and the two are
+    # unrelated: a 300s timeout covers a 9020.8s asset here (555s, 16.3x) only
+    # because the timeout happened to exceed the real cost, and it stops
+    # covering it the moment the asset is longer or the box is busier (866s
+    # measured under load, 18.6-23.8x).
+    #
+    # ``lead = max(floor, asset_seconds / factor + margin)`` makes the lead a
+    # function of the item that must be prepared. The factor is deliberately
+    # conservative: 12x is slower than every rate measured on this station
+    # (16.3x uncontended, 18.6-23.8x under load) so the computed lead is
+    # biased long, which is the safe direction -- an over-long lead arms the
+    # rollover early and lets ``should_defer_switch`` hold it until the
+    # boundary (U41's deferred path), while a short one leaves the channel
+    # reaching EOS with nothing armed (2026-09-24 13:28:25, public).
+    # ``_ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS`` still applies: a lead that
+    # approaches the defer watchdog is warned about, never clamped.
+    _ROLLOVER_CONFORM_REALTIME_FACTOR = 12.0
+    _ROLLOVER_CONFORM_MARGIN_SECONDS = 120.0
+    #: BETA.10 U03: the engine's own deferred/boundary-aligned switch watchdog,
+    #: ``GstPlayoutEngine.defer_switch_timeout_s`` (``engine.py:614``, default
+    #: 900.0s). If it fires first it FORCES the switch to the armed leg
+    #: (``engine.py:2793``'s ``_on_defer_switch_timeout``), the opposite of what
+    #: a long rollover lead is buying, so a lead approaching it is worth one
+    #: warning. Read as a named constant rather than imported:
+    #: ``civiccast.egress.gst.engine`` imports ``gi`` (GStreamer) at module
+    #: scope and does not import at all without the packaged runtime, so
+    #: importing it here would break ``automation.py`` on every plain host.
+    #: ``test_automation`` pins this constant and ``engine.py``'s own default
+    #: equal by reading that source text.
+    _ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS = 900.0
+    #: BETA.10 U03: how far short of the watchdog above a lead may sit before it
+    #: is reported -- the ceiling is ``_ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS``
+    #: minus this (840s at the shipped default).
+    _ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS = 60.0
     # Hostile-review B2 fix: if a dispatched rollover reload has not landed
     # (no fresh current_proof_event_id) within this long, treat it as dropped
     # and retry once more before the plan's projected end, rather than waiting
@@ -534,6 +1164,34 @@ class ChannelAutomationService:
         shutdown = getattr(self._daemon, "shutdown_preparation", None)
         if enable is not None:
             enable()
+        # ONE startup reconciliation pass: a supervisor restart can leave
+        # persisted ON_AIR rows whose encoder PIDs died with the old control
+        # plane. Clearing those stale claims and re-queuing an ordinary start is
+        # what stops the "frozen HLS, stale ON_AIR, zero commands" state
+        # (2026-09-24). Best-effort: a reconciliation hiccup must never stop the
+        # automation loop from running.
+        reconcile = getattr(self._daemon, "reconcile_stale_state", None)
+        if reconcile is not None:
+            try:
+                recovered = reconcile()
+                if recovered:
+                    _LOG.warning(
+                        "Channel automation startup reconciliation cleared stale "
+                        "on-air state and queued recovery starts for: %s",
+                        ", ".join(recovered),
+                    )
+            except Exception:
+                _LOG.exception(
+                    "Startup stale-state reconciliation failed; automation continues "
+                    "(channels will be supervised on the normal poll path)."
+                )
+        # BETA.10 U04: the stuck-pass watchdog rides THIS loop's lifetime. It
+        # is started here, after the one-shot startup work above, so a failure
+        # there cannot leave a watcher thread running with no loop to watch;
+        # and it is stopped in the ``finally`` below, before the (possibly
+        # slow) drain, so ``run_forever`` returning always means the watcher
+        # is gone. Disabled (threshold 0) -> ``start`` spawns nothing.
+        self._pass_watchdog.start()
         try:
             while stop_event is None or not stop_event.is_set():
                 try:
@@ -547,6 +1205,7 @@ class ChannelAutomationService:
                 else:
                     time.sleep(poll_seconds)
         finally:
+            self._pass_watchdog.stop()
             if shutdown is not None:
                 shutdown()
 
@@ -554,6 +1213,15 @@ class ChannelAutomationService:
         """One pass over every enabled channel; returns the channel ids seen."""
 
         self._drain_as_run_outbox()
+        # BETA.10 U06: the startup sweep runs ONCE, so a persisted on-air row
+        # whose encoder was still alive at that instant and died afterwards was
+        # never reconciled -- `_poll_process` returns immediately for a channel
+        # with no tracked process, and a channel that is not auto_start has no
+        # other supervisor, so the frozen-HLS/stale-ON_AIR state simply came
+        # back. Sweep again on every pass, before the per-channel work, so a
+        # recovery start queued here is drained by that channel's own
+        # `process_once` below.
+        self._reconcile_dead_encoders_this_pass()
         seen: list[str] = []
         for config in self._store.list_configs():
             if not config.enabled:
@@ -613,22 +1281,89 @@ class ChannelAutomationService:
         except Exception:
             _LOG.exception("As-run outbox drain tick failed unexpectedly; retrying next poll.")
 
+    def _reconcile_dead_encoders_this_pass(self) -> None:
+        """BETA.10 U06: per-pass sweep for persisted claims whose encoder died.
+
+        The startup sweep (``reconcile_stale_state``, called once from
+        ``run_forever``) cannot see a row whose encoder was still alive at that
+        instant and died afterwards, and nothing else supervises a channel that
+        is not ``auto_start``: the daemon's ``_poll_process`` returns immediately
+        for a channel with no *tracked* process. Same best-effort contract as the
+        startup call -- a sweep hiccup must never stop the pass -- and the same
+        ``getattr`` guard, so a daemon double in a test that does not implement
+        the sweep is simply skipped.
+        """
+
+        reconcile = getattr(self._daemon, "reconcile_dead_encoders", None)
+        if reconcile is None:
+            return
+        try:
+            recovered = reconcile()
+            if recovered:
+                _LOG.warning(
+                    "Channel automation pass reconciliation cleared stale on-air "
+                    "state and queued recovery starts for: %s",
+                    ", ".join(recovered),
+                )
+        except Exception:
+            _LOG.exception(
+                "Per-pass stale-state reconciliation failed; this pass continues "
+                "(the channel is still supervised on the normal poll path)."
+            )
+
     def _run_channel_pass(self, config: Any, channel_id: str, now: datetime | None) -> None:
+        """BETA.10 U04: the pass's own watchdog boundary.
+
+        Records the pass (channel, start monotonic, automation thread ident)
+        before dispatching to ``_run_channel_pass_body`` and clears it in a
+        ``finally``, so the record survives every exit path -- including an
+        exception, which ``run_once``'s per-channel guard then charges to this
+        channel and not to the watchdog. With no watcher thread running (every
+        direct ``run_once`` in this suite) both calls are state updates that
+        log nothing and start nothing.
+        """
+
+        self._pass_watchdog.pass_started(channel_id)
+        try:
+            self._run_channel_pass_body(config, channel_id, now)
+        finally:
+            self._pass_watchdog.pass_finished(channel_id)
+
+    def _run_channel_pass_body(self, config: Any, channel_id: str, now: datetime | None) -> None:
         if self._daemon.has_live_process(channel_id):
             self._start_retry_at.pop(channel_id, None)
         elif config.auto_start:
             retry_at = self._start_retry_at.get(channel_id)
             if retry_at is None or self._monotonic() >= retry_at:
-                self._enqueue(channel_id, "start", now=now or datetime.now(UTC))
-                self._start_retry_at[channel_id] = (
-                    self._monotonic() + self._START_RETRY_COOLDOWN_SECONDS
-                )
-                _LOG.info(
-                    "Channel automation issued start for dark auto_start "
-                    "channel %s (retries every %.0fs until live).",
-                    channel_id,
-                    self._START_RETRY_COOLDOWN_SECONDS,
-                )
+                # Do not double-enqueue against a start already queued this
+                # cycle: startup reconciliation (``reconcile_stale_state``)
+                # queues a recovery start BEFORE the first pass, so enqueuing
+                # an auto_start here too would give ONE intent TWO starts.
+                pending_starts = [
+                    cmd
+                    for cmd in self._store.peek_pending_commands(channel_id)
+                    if cmd.action == "start"
+                ]
+                if pending_starts:
+                    # A start is already waiting to be drained this pass by
+                    # ``process_once`` below; let it do its job. Arm the retry
+                    # cooldown so a later pass (after that start is consumed
+                    # and if the channel is still dark) resumes the normal
+                    # auto_start supervision instead of looping.
+                    self._start_retry_at[channel_id] = (
+                        self._monotonic() + self._START_RETRY_COOLDOWN_SECONDS
+                    )
+                else:
+                    self._enqueue(channel_id, "start", now=now or datetime.now(UTC))
+                    self._start_retry_at[channel_id] = (
+                        self._monotonic() + self._START_RETRY_COOLDOWN_SECONDS
+                    )
+                    _LOG.info(
+                        "Channel automation issued start for dark auto_start "
+                        "channel %s (retries every %.0fs until live).",
+                        channel_id,
+                        self._START_RETRY_COOLDOWN_SECONDS,
+                    )
         self._daemon.process_once(channel_id)
         # Item 78 fix 1 (round 2, coordinator review): read wall-clock "now"
         # AFTER ``process_once`` returns, immediately before the checks that
@@ -755,6 +1490,38 @@ class ChannelAutomationService:
             # pipe connection before asking it to reload back to the schedule.
             # Do not consume the latch/cooldown or call the provider yet.
             return
+        if self._daemon_has_pending_preparation(channel_id):
+            # U47: the daemon is preparing this channel's program for the
+            # slate that is on air right now (a slate-first hand-off). The
+            # reload this pass would queue is the very hand-off it is already
+            # running: it reaches ``_request_reload`` -> ``_cancel_preparation``,
+            # abandons the in-flight preparation and conforms the program a
+            # second time. Like the control-connection gate above, this does NOT
+            # consume the latch or the cooldown -- if the hand-off's preparation
+            # FAILS, the channel stays FALLBACK_SLATE with no preparation
+            # registered and the next tick issues the reload exactly as before.
+            return
+        chained_program_end = self._daemon_chained_slate_program_end(channel_id)
+        if chained_program_end is not None and now < chained_program_end:
+            # U53 item 1: this row does not mean "the channel is on the slate
+            # with its programme still due". The plan on air is a chained
+            # filler: the slate covers only the gap up to the programme's own
+            # due instant, and that programme follows it in the same plan. So
+            # the reload this pass would queue is for a programme that is
+            # ALREADY on air (or about to be, with nothing left to prepare),
+            # and issuing it would cut the chained leg off at the reload
+            # boundary and conform the same programme a second time.
+            #
+            # Same contract as the two gates above: waiting consumes neither
+            # the latch nor the cooldown. The record is cleared by the next
+            # dispatch that is not a chain (``_record_dispatched_plan`` writes
+            # it set-or-clear) and validated against the proof event of the
+            # plan it describes, so a chain that never actually landed cannot
+            # suppress anything; and once ``now`` reaches the chained
+            # programme's own projected end this gate stops applying on its
+            # own, so a channel that really is stuck on the slate after it is
+            # replanned exactly as before.
+            return
         if channel_id in self._reload_issued:
             return
         # Audit ENG-002: when the due item persistently fails PREPARATION,
@@ -780,6 +1547,189 @@ class ChannelAutomationService:
         _LOG.info(
             "Channel automation issued reload for %s: a scheduled program is due.",
             channel_id,
+        )
+
+    def _rollover_lead_seconds(self, asset_seconds: float | None = None) -> float:
+        """BETA.10 U02: how far ahead of the live plan's projected end the
+        GStreamer path's rollover must be issued for a preparation that runs
+        to its configured bound to still settle before EOS.
+
+        The GStreamer path is the one that pre-conforms its source (the engine
+        reads only ``segment.path``), and ``_try_content_reload`` drives that
+        conform through ``SourcePreparer``, whose every ffmpeg call is bounded
+        by ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS``
+        (``preparer.preparation_timeout_seconds_from_env``; 300s at the
+        station and by default). The lead therefore has to be at least that
+        bound -- measured 2026-09-24: a rollover issued 120s before EOS with a
+        cold conform still in flight left the channel with nothing armed at
+        EOS, and it went dark.
+
+        ``max`` against ``_ROLLOVER_MIN_LEAD_SECONDS`` keeps the historic 120s
+        floor for a deployment that has shortened the preparation timeout
+        below it. ``ROLLOVER_LEAD_ENV`` overrides the whole computation for an
+        operator who has measured their own preparation and settle times.
+
+        BETA.10 U03: the timeout is multiplied by
+        ``_ROLLOVER_PREPARATION_PASSES``. In the worktree this was sized in, a
+        normalized segment's preparation runs a loudnorm MEASUREMENT pass and
+        then the conform itself, each bounded by that timeout, so the U02
+        single-timeout lead (390s at the station's 300s) covered only half of
+        THAT build's worst case. U05: the installed base this candidate patches
+        makes ONE bounded call per segment -- its loudness probe goes through
+        ``check_streaming_loudness``, not ``_run_ffmpeg`` -- so the multiplier
+        is a deliberate over-estimate here rather than an under-estimate. At
+        the shipped 300s the lead is 2*300 + 30 + 60 = 690s either way; see
+        ``_ROLLOVER_PREPARATION_PASSES``.
+
+        U53 item 3 (2026-09-26): ``asset_seconds``, when the caller knows it,
+        raises that floor to the measured cost of conforming the item that
+        must actually be prepared --
+        ``asset_seconds / _ROLLOVER_CONFORM_REALTIME_FACTOR +
+        _ROLLOVER_CONFORM_MARGIN_SECONDS``. The timeout-derived value is a
+        FLOOR, not a replacement: the two answer different questions ("what
+        may one ffmpeg pass take" vs "what will this asset cost"), so the
+        larger wins and an item cheaper than the timeout bound keeps exactly
+        today's lead. ``None`` (no plan resolved, or the caller is not on the
+        boundary-provider path) keeps the pre-U53 computation byte for byte.
+
+        This is deliberately a LEAD, not a cadence: the dispatch it permits is
+        still gated by ``_rollover_min_interval_seconds``, the issued latch,
+        and ``has_pending_reload_settlement``, and it is still clamped by
+        ``last_segment_start_at`` at the call site (never triggers before the
+        last segment of the live plan begins).
+
+        A lead longer than the live plan itself therefore arms at that last
+        segment's START, not before it -- see the call site's ``max``. The
+        ``_rollover_min_interval_seconds`` cadence floor still bounds how often
+        that can happen for a channel."""
+
+        override = rollover_lead_seconds_from_env()
+        if override is not None:
+            self._warn_if_rollover_lead_nears_the_defer_watchdog(
+                override, source=f"{ROLLOVER_LEAD_ENV} override"
+            )
+            return override
+        computed = max(
+            self._ROLLOVER_MIN_LEAD_SECONDS,
+            self._ROLLOVER_PREPARATION_PASSES * preparation_timeout_seconds_from_env()
+            + self._ROLLOVER_RELOAD_SETTLE_BUDGET_SECONDS
+            + self._ROLLOVER_LEAD_MARGIN_SECONDS,
+        )
+        if asset_seconds is not None and asset_seconds > 0.0:
+            computed = max(
+                computed,
+                asset_seconds / self._ROLLOVER_CONFORM_REALTIME_FACTOR
+                + self._ROLLOVER_CONFORM_MARGIN_SECONDS,
+            )
+        self._warn_if_rollover_lead_nears_the_defer_watchdog(computed, source="computed default")
+        return computed
+
+    def _cached_rollover_asset(
+        self, channel_id: str, plan_end_at: datetime
+    ) -> tuple[float | None, str | None] | None:
+        """The duration this boundary ALREADY resolved, without resolving it again.
+
+        U53b item 8: ``_probe_rollover_asset`` caches per boundary -- including its
+        failures -- so its answer is available to any later tick of the same plan,
+        notably the dispatch tick, which by construction never enters the probe
+        window and must not pay for a provider call the dispatch body is about to
+        make anyway. ``None`` (no answer) means this boundary has not been resolved
+        at all; ``(None, None)`` means it WAS resolved and resolved to nothing.
+        """
+
+        cached = self._rollover_asset_probe.get(channel_id)
+        if cached is not None and cached[0] == plan_end_at:
+            return cached[1], cached[2]
+        return None
+    def _probe_rollover_asset(
+        self, channel_id: str, plan_end_at: datetime
+    ) -> tuple[float | None, str | None]:
+        """U53 item 3: the duration and label of the item the boundary at
+        ``plan_end_at`` resolves to, resolved ONCE per boundary.
+
+        An adaptive lead can only ever move the dispatch EARLIER, so its input
+        has to be known before the trigger that input itself computes -- a
+        probe taken when the flat lead fires is a probe taken too late to move
+        anything. This therefore runs on the first poll tick after the horizon
+        is established, which costs at most one extra boundary resolution per
+        plan per channel (the dispatch resolves its own plan again at dispatch
+        time, so a schedule edited in between is still picked up); the
+        resolver behind it is memoized on ``(path, mtime_ns, size)``, so the
+        repeat is a schedule lookup, not another probe of the media.
+
+        Fails open, and caches the failure so a broken provider is still
+        attempted only once per boundary: an unresolvable or empty target
+        leaves the timeout-derived floor standing, which is exactly the
+        pre-U53 behaviour. The dispatch site keeps its own error handling and
+        retry cooldown untouched.
+        Callers outside this window read the same cache through
+        ``_cached_rollover_asset`` rather than calling this.
+        """
+
+        cached_asset = self._cached_rollover_asset(channel_id, plan_end_at)
+        if cached_asset is not None:
+            return cached_asset
+        assert self._boundary_source_plan_provider is not None  # caller-gated
+        try:
+            plan = self._boundary_source_plan_provider(channel_id, plan_end_at)
+        except SourcePrepareError:
+            self._rollover_asset_probe[channel_id] = (plan_end_at, None, None)
+            return None, None
+        if plan is None or not plan.segments:
+            self._rollover_asset_probe[channel_id] = (plan_end_at, None, None)
+            return None, None
+        seconds = sum(segment.duration_seconds for segment in plan.segments)
+        label = plan.segments[0].label
+        self._rollover_asset_probe[channel_id] = (plan_end_at, seconds, label)
+        return seconds, label
+
+    def _warn_if_rollover_lead_nears_the_defer_watchdog(
+        self, lead_seconds: float, *, source: str
+    ) -> None:
+        """BETA.10 U03: report ONCE per service lifetime when the rollover lead
+        reaches within ``_ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS`` of the
+        engine's defer-switch watchdog (``_ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS``,
+        840s of lead at the shipped 900s).
+
+        Past that point the watchdog (``engine.py:2793``) can force the switch
+        to whatever leg is armed before the outgoing plan reaches its own end
+        -- the deferral the whole rollover is built around stops being honoured,
+        so the lead stops buying what it was sized for. The value is still USED
+        as given: this warns, it does not clamp. Silently shortening an
+        operator's explicit ``ROLLOVER_LEAD_ENV`` would reinstate exactly the
+        failure the lead exists to prevent, and clamping the computed default
+        would make the lead lie about the worst-case preparation it is meant to
+        cover.
+
+        Once per service lifetime rather than once per tick: this is a property
+        of the deployment's configuration, not of the plan on air, and the
+        caller runs on every ~2s poll tick (the same reason
+        ``_ROLLOVER_RETRY_WARN_INTERVAL_SECONDS`` exists). The latch is a plain
+        per-instance flag -- the value it reports can change under a running
+        service only by an env change, which no live deployment performs."""
+
+        if self._rollover_lead_ceiling_warned:
+            return
+        ceiling = (
+            self._ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS
+            - self._ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS
+        )
+        if lead_seconds <= ceiling:
+            return
+        self._rollover_lead_ceiling_warned = True
+        _LOG.warning(
+            "Rollover lead is %.1fs (%s), past the %.1fs ceiling -- the "
+            "%.0fs headroom below the engine's %.0fs defer-switch watchdog. A "
+            "switch deferred longer than that watchdog is FORCED to the armed "
+            "leg, so this lead may be armed long enough for the watchdog to "
+            "cut before the outgoing plan reaches its own end. Using the "
+            "configured value as-is (raise the watchdog to match, or lower the "
+            "lead).",
+            lead_seconds,
+            source,
+            ceiling,
+            self._ROLLOVER_LEAD_CEILING_HEADROOM_SECONDS,
+            self._ROLLOVER_DEFER_SWITCH_TIMEOUT_SECONDS,
         )
 
     def _rollover_min_lead_seconds(self, planned_seconds: float) -> float:
@@ -1186,19 +2136,81 @@ class ChannelAutomationService:
             last_segment_start_at=last_segment_start_at,
             min_lead_seconds=self._rollover_min_lead_seconds(planned_seconds),
         )
+        # U53 item 3: the trigger the flat, timeout-derived lead would fire at
+        # -- the moment this dispatch is due WITHOUT any knowledge of what the
+        # boundary resolves to. It guards the adaptive probe below: while
+        # ``now`` is short of it the dispatch is still in the future, so the
+        # probe is the only thing this tick can do and the only window in which
+        # a longer lead can still move anything; at or past it the dispatch is
+        # already due and the probe would buy nothing (which is what keeps a
+        # plan arming at its own start, and a stale-horizon recovery, from
+        # probing at all).
+        flat_trigger_at = max(
+            last_segment_start_at,
+            plan_end_at - timedelta(seconds=self._rollover_lead_seconds()),
+        )
+        inside_lead_recovery = False
+        # U41: hoisted so the boundary record can carry the horizon this
+        # dispatch measured. ``None`` when there is no boundary provider (the
+        # non-GStreamer path), which is exactly the "no horizon recorded" case
+        # the daemon treats as today's behavior.
+        lead_seconds: float | None = None
+        asset_seconds: float | None = None
+        asset_label: str | None = None
         if self._boundary_source_plan_provider is not None:
             # One scheduled item per plan: give short items their whole life
-            # for preparation, while keeping the historic 120s cap for long
-            # programmes. This ensures the incoming leg can be prerolled before
-            # the outgoing finite pipeline reaches EOS.
+            # for preparation (the ``last_segment_start_at`` clamp below), for
+            # long programmes a lead that covers the WORST-CASE preparation
+            # this deployment allows -- BETA.10 U02: a preparation bounded by
+            # ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` must still be
+            # able to finish and settle before the outgoing pipeline reaches
+            # EOS, or the channel reaches EOS with nothing armed (2026-09-24
+            # 13:28:25, public). See ``_rollover_lead_seconds``.
+            #
+            # U53 item 3 (2026-09-26): the lead is ADAPTIVE -- the item the
+            # boundary resolves to may cost more to conform than the
+            # preparation timeout allows (a 9020.8s asset costs a measured
+            # 485.8-866s), and a lead that does not cover it dispatches too
+            # late. The duration is resolved once per boundary, on this same
+            # tick-level path, so that the lead it produces can move THIS
+            # trigger earlier; see ``_probe_rollover_asset``.
+            if now < flat_trigger_at:
+                asset_seconds, asset_label = self._probe_rollover_asset(channel_id, plan_end_at)
+            else:
+                # U53b item 8: this tick is at or past the flat trigger, so it does
+                # not probe -- but the boundary's own duration was resolved a few
+                # ticks earlier, inside this plan's window, and cached per boundary.
+                # Reading that answer is free, and it is the difference between the
+                # lead line saying the floor stands for a 300s item and saying "no
+                # asset duration available for the boundary". The second is what the
+                # station logged for EVERY floor-fired dispatch after C2 (8/8), and
+                # it reads as a boundary that could not be resolved when it was in
+                # fact resolved fine -- the floor simply outran it.
+                cached_asset = self._cached_rollover_asset(channel_id, plan_end_at)
+                if cached_asset is not None:
+                    asset_seconds, asset_label = cached_asset
+            lead_seconds = self._rollover_lead_seconds(asset_seconds)
             trigger_at = max(
                 last_segment_start_at,
-                plan_end_at - timedelta(seconds=self._ROLLOVER_MIN_LEAD_SECONDS),
+                plan_end_at - timedelta(seconds=lead_seconds),
+            )
+            # BETA.10 U41 (live 2026-09-25, education 23:53:17 -> 23:54:41):
+            # a plan whose whole life is SHORTER than the lead can never be
+            # armed ahead of its own start, so the clamp above collapses the
+            # trigger to ``last_segment_start_at`` -- the instant the previous
+            # rollover settled. That dispatch is recovery (less than a lead of
+            # runway remained the moment the plan took air), not cadence, and
+            # the D43 floor below is measured from the PREVIOUS dispatch while
+            # being sized to the plan now on air: it can hold the recovery
+            # back for up to half the remaining plan. Exempt it exactly like
+            # the B2 retry path, which is exempt for the same reason.
+            inside_lead_recovery = plan_end_at - last_segment_start_at < timedelta(
+                seconds=lead_seconds
             )
         if now < trigger_at:
             return  # not yet at the boundary-aligned trigger point
 
-        if not retrying_undelivered and not stale_horizon_recovery:
+        if not retrying_undelivered and not stale_horizon_recovery and not inside_lead_recovery:
             # D43 cadence floor, D45 fix: never dispatch rollovers for one
             # channel faster than _rollover_min_interval_seconds(planned_seconds)
             # apart -- sized to the plan actually on air, not a fixed
@@ -1326,6 +2338,16 @@ class ChannelAutomationService:
             record_kwargs: dict[str, object] = {"command_id": reload_command_id}
             if force_fallback:
                 record_kwargs["force_fallback"] = True
+            if lead_seconds is not None:
+                # U41: carry the horizon this dispatch measured, so a DEFERRED
+                # rollover's plan can be built with its life measured from the
+                # switch rather than from this dispatch. Only the boundary-
+                # provider path measures a lead at all, and only the daemon
+                # knows whether the switch will defer (it decides that at
+                # reload time, against the live state), so the value travels
+                # unconditionally and the daemon applies it to the deferred
+                # case alone -- see ``record_rollover_plan_end``.
+                record_kwargs["min_plan_seconds"] = lead_seconds
             record_plan_end(channel_id, plan_end_at, **record_kwargs)
         self._enqueue(channel_id, "reload", now=now, command_id=reload_command_id)
         self._rollover_issued.add(channel_id)
@@ -1351,6 +2373,31 @@ class ChannelAutomationService:
             )
             self._rollover_retry_warned_at.pop(channel_id, None)
             self._rollover_pid_age_warned_at.pop(channel_id, None)
+        if lead_seconds is not None:
+            # U53 item 3: the lead is now adaptive, so say what it was computed
+            # FROM. A lead read off an incident log is otherwise
+            # indistinguishable from the flat timeout-derived one it replaced
+            # (690s for a 300s preparation timeout), and the item that widened
+            # it is the whole reason the dispatch moved.
+            if asset_seconds is not None and asset_label is not None:
+                _LOG.info(
+                    "Channel automation computed the rollover lead for %s: lead=%.0fs "
+                    "for %s (%.0fs at %.0fx + %.0fs).",
+                    channel_id,
+                    lead_seconds,
+                    asset_label,
+                    asset_seconds,
+                    self._ROLLOVER_CONFORM_REALTIME_FACTOR,
+                    self._ROLLOVER_CONFORM_MARGIN_SECONDS,
+                )
+            else:
+                _LOG.info(
+                    "Channel automation computed the rollover lead for %s: lead=%.0fs "
+                    "(no asset duration available for the boundary; the "
+                    "timeout-derived floor stands).",
+                    channel_id,
+                    lead_seconds,
+                )
         _LOG.info(
             "Channel automation issued a seamless plan rollover for %s: the live plan "
             "ends in %.0fs; target=%s before the engine reaches EOS.",
@@ -1358,6 +2405,158 @@ class ChannelAutomationService:
             (plan_end_at - now).total_seconds(),
             "filler" if force_fallback else "extended schedule",
         )
+        if inside_lead_recovery:
+            # BETA.10 U41: say so explicitly. The 2026-09-25 education dark
+            # window read "the live plan ends in 80s" with no indication that
+            # this was the plan's WHOLE life, not a mistimed dispatch -- the
+            # rollover was issued as early as it could be, and the remaining
+            # plan was simply shorter than the lead the preparation needs.
+            # Operators (and the next incident reader) need that distinction.
+            _LOG.info(
+                "Channel automation rollover for %s was issued as soon as the previous "
+                "plan settled: the plan on air is %.0fs long, shorter than the %.0fs "
+                "lead a preparation may need -- there is no earlier moment to dispatch.",
+                channel_id,
+                (plan_end_at - last_segment_start_at).total_seconds(),
+                lead_seconds,
+            )
+        if not force_fallback and lead_seconds is not None:
+            # BETA.10 U60: the work of the boundary ahead can be started before
+            # its own dispatch -- warm the first one whose dispatch is still a
+            # full lead away, off the air path, so the cache entry its reload
+            # will need is resident before its preparation asks for it. The
+            # walk inside ``_warm_upcoming_plan`` enforces that invariant.
+            #
+            # BETA.10 U61: this used to run ONLY when ``inside_lead_recovery``
+            # -- the short-leg case U60 was written for, where the plan on air
+            # is shorter than the lead and its own start WAS the trigger. That
+            # gate excluded the ordinary cadence case, and ordinary cadence is
+            # where a long title needs it most. Live, 2026-09-27: government
+            # aired a 9020s meeting (Sustainability Advisory Board - April 2026)
+            # as 1800s slices, one scheduled item per plan. 1800s of plan
+            # against the deployed 690s lead is NOT ``inside_lead_recovery``, so
+            # the look-ahead never ran once: zero look-ahead lines in any
+            # station log, no ``warm/`` scratch under any channel, and the
+            # title's only cache artifact was the probe-only sidecar
+            # (``full_asset_conform: false``, no ``.ts``) its first slice left
+            # behind. Every slice therefore paid its own cold bounded conform --
+            # 383.6s, 406.0s, 458.5s, 293.6s, 267.0s, a fifth of each 1800s
+            # slice's wall clock spent re-encoding an asset the station had
+            # already conformed once, and the worst of them eating the 690s lead
+            # down to ~230s of margin. The whole-asset conform that makes every
+            # slice after the first a stream-copy HIT is exactly what this
+            # look-ahead is for, and in this regime it never ran at all.
+            #
+            # Nothing in the walk below weakens for the wider gate: it still
+            # stops at the first boundary at least ``now + lead`` out, so it
+            # never races the reload's own synchronous conform, and a boundary
+            # nearer than that is still deliberately left alone. In this regime
+            # the very first step already qualifies (a full-length plan's next
+            # boundary dispatches a whole plan length plus a lead from now),
+            # which is what gives a repeat slice ~30 minutes of runway on the
+            # single warm worker. The air path asks for the SAME warm, but it
+            # asks from inside ``_prepare_segment`` and only once that slice's
+            # own conform has returned -- a measured 267-458s later -- so its
+            # window is what is left of the slice minus whatever else the one
+            # worker is already holding. This gate is a head start, not a
+            # guarantee: a title long enough to outrun the runway still needs
+            # the queue fixes that follow.
+            # Runs strictly AFTER the enqueue above -- a latency optimisation
+            # must never sit between the dispatch and the command that carries
+            # it.
+            self._warm_upcoming_plan(
+                channel_id,
+                now=now,
+                lead_seconds=lead_seconds,
+                fresh_start=fresh_start,
+                fresh_end=fresh_end,
+            )
+
+    #: How many boundaries the U60 look-ahead will step over before giving up.
+    #: Deliberately a STEP cap and not a time horizon: a boundary beyond any
+    #: fixed horizon is *more* savable than one inside it, not less (its
+    #: dispatch, ``max(previous_start, its_end - lead)``, is further out), so a
+    #: "too far away, stop" test would abandon the search one step before the
+    #: first plan it should have warmed.
+    _ROLLOVER_LOOKAHEAD_MAX_STEPS = 8
+
+    def _warm_upcoming_plan(
+        self,
+        channel_id: str,
+        *,
+        now: datetime,
+        lead_seconds: float,
+        fresh_start: datetime,
+        fresh_end: datetime,
+    ) -> None:
+        """Ask the daemon to pre-conform the first boundary a full lead away.
+
+        Walks the boundaries after ``fresh_end`` -- the plan just dispatched --
+        and stops at the first whose own dispatch is at least ``now +
+        lead_seconds`` out. That is the earliest boundary a fresh whole-asset
+        conform could still finish before, and asking for any NEARER one would
+        be actively harmful: it would start a second whole-asset encode racing
+        the reload's own synchronous cold conform for the very same asset.
+
+        The dispatch model is ``dispatch(B) = max(previous_boundary,
+        B - lead)`` (``_check_plan_rollover``'s own ``trigger_at``), so the
+        walk reproduces it exactly rather than estimating. Best-effort
+        throughout: every fault, every unresolvable boundary and every missing
+        daemon capability ends the walk quietly. The dispatch it follows has
+        already been enqueued.
+        """
+
+        try:
+            warmer = getattr(self._daemon, "warm_source_plan", None)
+            if not callable(warmer):
+                # An older/bare daemon, or one built without a source
+                # preparer: nothing to warm with. Behaviour is unchanged.
+                return
+            lead = timedelta(seconds=lead_seconds)
+            savable_at = now + lead
+            boundary = fresh_end
+            previous_start = fresh_start
+            for _ in range(self._ROLLOVER_LOOKAHEAD_MAX_STEPS):
+                dispatch_at = max(previous_start, boundary - lead)
+                plan = self._resolve_boundary_plan_at(channel_id, boundary)
+                if plan is None or not plan.segments:
+                    return
+                if dispatch_at >= savable_at:
+                    warmer(channel_id, plan)
+                    return
+                advanced = sum(segment.duration_seconds for segment in plan.segments)
+                if advanced <= 0:
+                    return
+                previous_start = boundary
+                boundary = boundary + timedelta(seconds=advanced)
+        except Exception:
+            # A look-ahead that cannot be computed is a missed optimisation,
+            # never a failed rollover. The dispatch is already enqueued.
+            _LOG.debug(
+                "Channel automation plan look-ahead for %s did not complete; "
+                "the dispatched rollover is unaffected.",
+                channel_id,
+                exc_info=True,
+            )
+
+    def _resolve_boundary_plan_at(
+        self, channel_id: str, boundary: datetime
+    ) -> EgressSourcePlan | None:
+        """The schedule plan airing at ``boundary``, or None if there is none.
+
+        The same provider call ``_check_plan_rollover`` itself makes, with the
+        same "past the last published item" meaning: ``SourcePrepareError`` is
+        the documented way the provider says so, and for a look-ahead that is
+        simply the end of the walk.
+        """
+
+        provider = self._boundary_source_plan_provider
+        if provider is None:
+            return None
+        try:
+            return provider(channel_id, boundary)
+        except SourcePrepareError:
+            return None
 
     def _reestablish_plan_horizon(
         self,
@@ -1569,6 +2768,53 @@ class ChannelAutomationService:
             return False
         return bool(reader(channel_id))
 
+    def _daemon_has_pending_preparation(self, channel_id: str) -> bool:
+        """U47: whether the daemon is already preparing THIS channel's program.
+
+        Same optional-capability shape as ``has_manual_override`` and
+        ``_daemon_has_pending_reload_settlement`` above: a daemon double that
+        predates the reader answers "no", preserving its existing behavior.
+
+        This is deliberately the NARROW reader (``has_pending_preparation``),
+        not ``has_pending_reload_settlement``: the latter also reports an ARMED
+        reload that is still settling, and using it here would hold the
+        slate-replan pass off through every rollover's settle window -- a
+        change with its own latch and cooldown, and none of U47's business.
+
+        The window this closes is the slate-first hand-off's own conform: the
+        channel is legitimately FALLBACK_SLATE (the slate is on air and the
+        program is being prepared) while a preparation for it is registered, so
+        without this the pass would queue a ``reload`` that
+        ``EgressDaemon._request_reload`` answers with ``_cancel_preparation`` --
+        abandoning the hand-off and conforming the same program a second time."""
+
+        reader = getattr(self._daemon, "has_pending_preparation", None)
+        if not callable(reader):
+            return False
+        return bool(reader(channel_id))
+
+    def _daemon_chained_slate_program_end(self, channel_id: str) -> datetime | None:
+        """U53 item 1: when the plan on air is a CHAINED filler -- a slate
+        trimmed to the gap it fills, followed in the SAME plan by the programme
+        due when that gap closes -- the projected end of that programme; else
+        None.
+
+        Same optional-capability shape as the three probes above: a daemon that
+        predates the reader answers None, which is exactly this gate's
+        "nothing chained here" case.
+
+        Needed because a chained leg makes the state row lie in the one
+        direction this pass acts on: ``target_state`` is FALLBACK_SLATE and
+        ``segments[0]`` is the slate, so the row reads FALLBACK_SLATE for the
+        whole leg -- while a real programme is airing behind the filler. See
+        ``_check_slate_replan``'s gate for what is done with it."""
+
+        reader = getattr(self._daemon, "chained_slate_program_end", None)
+        if not callable(reader):
+            return None
+        value = reader(channel_id)
+        return value if isinstance(value, datetime) else None
+
     def _daemon_worker_initial_control_connection_observed(self, channel_id: str) -> bool:
         """Read the optional initial worker-control connection observation.
 
@@ -1778,7 +3024,9 @@ def build_channel_automation(
     from civiccast.egress.hls_relay import HlsRelaySupervisor
     from civiccast.egress.preparer import SourcePreparer
     from civiccast.egress.source_plan import (
+        SCHEDULE_GAP_ABSORB_SECONDS,
         ScheduleSourcePlanProvider,
+        gstreamer_source_segment_seconds_from_env,
         schedule_loop_enabled_from_env,
     )
     from civiccast.egress.store import PostgresEgressStore
@@ -1838,6 +3086,16 @@ def build_channel_automation(
         asset_resolver=asset_store.get_staff_row,
         max_segments=1 if gstreamer_engine_selected() else 8,
         loop_schedule=schedule_loop_enabled_from_env(),
+        max_segment_seconds=(
+            gstreamer_source_segment_seconds_from_env() if gstreamer_engine_selected() else None
+        ),
+        # U26: absorb a small schedule gap at the rollover boundary instead of
+        # resolving it to filler. The boundary between two items is where this
+        # provider's answer decides whether the channel leaves its program at
+        # all -- a filler answer there is what puts it on slate and into F3(b)'s
+        # exit-and-restart detour (reports/U26.md). See
+        # SCHEDULE_GAP_ABSORB_SECONDS for the size and the reasoning.
+        gap_absorb_seconds=SCHEDULE_GAP_ABSORB_SECONDS,
     )
     # #156: the persistent conform cache emits playout-time trims when the
     # engine honors them — the legacy ffmpeg-concat engine does (ffconcat
@@ -1865,6 +3123,15 @@ def build_channel_automation(
         boundary_source_plan_provider=(
             source_plan_provider.plan_at if gstreamer_engine_selected() else None
         ),
+        # U53 item 1: a filler rollover trims the filler to the gap and chains
+        # the programme due when it closes. Wired only where the shape it
+        # depends on holds -- the GStreamer engine, whose preparer writes each
+        # per-plan file at the segment's declared duration (the same reason
+        # boundary_source_plan_provider above is gated the same way). The
+        # ffmpeg-concat engine stays exactly as it was: filler airs whole.
+        next_program_start_provider=(
+            source_plan_provider.next_item_start_at if gstreamer_engine_selected() else None
+        ),
         lookahead_source_plan_provider=None,
         takeover_audit_store=PostgresTakeoverAuditStore(session_factory),
         # CA-3: gaps fill per the channel's fill_policy — rotating approved
@@ -1879,6 +3146,13 @@ def build_channel_automation(
             )
         ),
         prepared_plan_release=source_preparer_instance.release,
+        # U60: when the plan on air is shorter than the rollover lead, the
+        # next boundary's preparation has less runway than its own whole-asset
+        # conform needs. This lets the automation warm a later boundary's
+        # assets while the current short leg is still airing. Ungated by
+        # engine: it is a cache warm, and the ffmpeg-concat path benefits the
+        # same way.
+        source_plan_warmer=source_preparer_instance.warm_plan,
         resolve_secret=lambda ref: os.environ.get(ref),
         # S15: the GStreamer engine (default) or ffmpeg-concat (legacy), per
         # CIVICCAST_EGRESS_ENGINE.
