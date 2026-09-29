@@ -6,9 +6,21 @@
 # with SHARED reads only while the box was live.
 #
 # Slice worktree: re/civiccast-ds-u63, branch beta10-u63, based on THE STATION'S LIVE BYTES.
-# The tree carries the station's whole installed civiccast package as an UNCOMMITTED overlay
-# (33 modified + 6 untracked paths, all of them the station's newer bytes, none of them this
-# slice's work); only the two files below plus this evidence directory are committed.
+# The tree carries the station's whole installed civiccast package as an UNCOMMITTED overlay:
+# 30 modified + 5 untracked paths (35 in all), every one of them the station's newer bytes, none
+# of them this slice's work. Only the two source files plus this evidence directory are committed.
+#
+# CORRECTION (2026-09-29, in the docs-only follow-on commit that adds reports/U63.md): the line
+# above read "33 modified + 6 untracked" when the slice commit was written. Re-measured against
+# the slice commit it is 30 modified + 5 untracked, and the 33+6 figure is not reproducible at any
+# revision -- it was wrong, not merely stale. Reproduce with:
+#     git status --porcelain | grep -v -e 'civiccast/egress/automation.py' \
+#         -e 'tests/egress/test_automation.py' | awk '{print substr($0,1,2)}' | sort | uniq -c
+#   -> 30 " M" and 5 "??" (the untracked five are civiccast/captions/tap_batch_diagnostic.py,
+#      civiccast/egress/env_vars.py, civiccast/egress/loudness_ride.py,
+#      civiccast/egress/relay_reclaim.py, civiccast/platform/child_containment.py).
+#   At the follow-on commit there is one further untracked path, reports/ -- this slice's own
+#   report directory, not part of the station's overlay.
 #
 # LIVE base -- automation.py, read from the install tree. NOTE the brief's "(x86)" path does not
 # exist on C14; the real tree is "C:\Program Files\CivicCast (Native)\":
