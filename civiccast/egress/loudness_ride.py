@@ -195,6 +195,7 @@ __all__ = [
     "TP_GUARD_MAX_PEAK_DBFS",
     "TP_GUARD_PAD_MARGIN_DB",
     "TP_GUARD_TARGET_DBTP",
+    "UNREACHABLE_WINDOW_FRACTION",
     "LeveledAttempt",
     "LeveledSelection",
     "LeveledWindow",
@@ -240,6 +241,8 @@ __all__ = [
     "slew_limit",
     "sliding_levels",
     "to_arrays",
+    "unreachable_floor_lufs",
+    "unreachable_window_starts",
     "whole_program_err_lu",
     "window_levels",
     "worst_window_deviation_lu",
@@ -280,6 +283,13 @@ LOUDNESS_WHOLE_TOL_LU = 0.5
 #: not a window, because a fraction of a window measures a fraction of the
 #: program and would fail for arithmetic reasons rather than for level.
 LOUDNESS_WINDOW_MIN_TAIL_S = 1.0
+
+#: How much of a window must be beyond the ride's reach before the window is
+#: reported as quiet source rather than scored as a miss: a quarter, which is the
+#: owner's own rule (U45 answer 3, the quiet-source adjudicator).  The gate is the
+#: ride's *work*; a stretch the clamp cannot lift is the source's level, and
+#: scoring it would fail a lawful program for the material it was handed.
+UNREACHABLE_WINDOW_FRACTION = 0.25
 
 #: The children are dropped below normal priority so a ride (foreground,
 #: background warm, or a second channel's) can never outrank an on-air encoder.
@@ -1110,6 +1120,24 @@ def series_duration_s(series: Sequence[tuple[float, float]]) -> float:
     return series[-1][0] + BLOCK_STEP_S
 
 
+def _window_starts(duration_s: float, offset_s: float) -> list[float]:
+    """One tiling's window starts: the harness's own ``start < duration - 1`` walk.
+
+    Factored out so the *scored* windows and the windows the unreachability rule
+    excuses can never come from two different geometries: a rule that excluded a
+    start the gate never scores, or scored one the rule meant to exclude, would be
+    arithmetic nobody could read back from the numbers.
+    """
+    starts: list[float] = []
+    if duration_s <= 0.0:
+        return starts
+    start = offset_s
+    while start < duration_s - LOUDNESS_WINDOW_MIN_TAIL_S:
+        starts.append(start)
+        start += LOUDNESS_WINDOW_S
+    return starts
+
+
 def window_levels(
     series: Sequence[tuple[float, float]],
     duration_s: float,
@@ -1126,13 +1154,9 @@ def window_levels(
     window's gated loudness, or ``None`` when nothing in it cleared the gate.
     """
     out: list[tuple[float, float | None]] = []
-    if duration_s <= 0.0:
-        return out
-    start = offset_s
-    while start < duration_s - LOUDNESS_WINDOW_MIN_TAIL_S:
+    for start in _window_starts(duration_s, offset_s):
         end = min(start + LOUDNESS_WINDOW_S, duration_s)
         out.append((start, gated_loudness([v for t, v in series if start <= t < end])))
-        start += LOUDNESS_WINDOW_S
     return out
 
 
@@ -1142,6 +1166,7 @@ def worst_window_deviation_lu(
     *,
     target_lufs: float,
     offset_s: float | None = None,
+    unreachable_starts: Sequence[float] = (),
 ) -> tuple[float | None, float | None]:
     """The largest gated-window deviation from target, and the window's start.
 
@@ -1155,19 +1180,102 @@ def worst_window_deviation_lu(
     unmeasurable window is not evidence of a deviation, and scoring it as one
     would fail a lawful program for a silent passage.  ``(None, None)`` means no
     window was measurable at all.
+
+    ``unreachable_starts`` names windows the ride provably cannot lift
+    (:func:`unreachable_window_starts`) and they are skipped on the same
+    principle, one step further out: an unmeasurable window is one the gate has no
+    reading for, an unreachable one is a window whose reading is *about the
+    source*, not about the ride.  Both are excluded for the same reason -- the
+    gate is the ride's work -- and both leave ``(None, None)`` behind when they
+    are all there is.  Starts are matched to the millisecond, which is finer than
+    any tiling this module generates.
     """
     offsets = (0.0, LOUDNESS_WINDOW_OFFSET_S) if offset_s is None else (offset_s,)
+    unreachable_keys = {round(start, 3) for start in unreachable_starts}
     worst: float | None = None
     worst_start: float | None = None
     for off in offsets:
         for start, level in window_levels(series, duration_s, offset_s=off):
-            if level is None:
+            if level is None or round(start, 3) in unreachable_keys:
                 continue
             deviation = abs(level - target_lufs)
             if worst is None or deviation > worst:
                 worst = deviation
                 worst_start = start
     return worst, worst_start
+
+
+def unreachable_floor_lufs(
+    *,
+    target_lufs: float,
+    g_max_db: float,
+    window_tol_lu: float = LOUDNESS_WINDOW_TOL_LU,
+) -> float:
+    """The level below which no ride can put a second inside the window gate.
+
+    The clamp is what makes this a fact rather than a tuning choice: a second
+    whose own level is ``L`` can reach at most ``L + g_max``, so it can only land
+    inside the gate when ``L + g_max >= target - tol``.  Below this floor the
+    window leg is not asking what the ride achieved, it is asking what the source
+    contained -- and the answer is the same for every ride this module can run.
+
+    The tolerance is the gate's own (0.9 LU), which is *stricter* than the owner's
+    adjudicating instrument uses (1.0 LU), so this floor sits 0.1 LU higher and
+    fewer seconds are excused: the conservative direction for a gate, which would
+    rather report a miss than excuse one.
+    """
+    return target_lufs - window_tol_lu - g_max_db
+
+
+def unreachable_window_starts(
+    levels: Sequence[tuple[float, float | None]],
+    duration_s: float,
+    *,
+    target_lufs: float,
+    g_max_db: float,
+    window_tol_lu: float = LOUDNESS_WINDOW_TOL_LU,
+    min_fraction: float = UNREACHABLE_WINDOW_FRACTION,
+    offset_s: float | None = None,
+) -> tuple[float, ...]:
+    """The window starts whose four minutes the ride provably cannot lift.
+
+    ``levels`` is a :func:`sliding_levels` series of the *source* -- the same
+    series :func:`converge` rides -- read at one sample per second by
+    interpolation, exactly as the owner's quiet-source adjudicator reads it
+    (U45 answer 3): a window is quiet source when at least ``min_fraction`` of its
+    seconds sit below :func:`unreachable_floor_lufs`.  A sample with no measurable
+    level is the most unreachable kind there is -- nothing in its 45 s cleared
+    the absolute gate -- and is counted as such.
+
+    Both tilings are walked, so an exclusion always names a window the gate would
+    otherwise have scored.  ``()`` -- the common answer, and the answer for every
+    program in the product's own history that was not quiet -- means no window was
+    excused.
+    """
+    floor = unreachable_floor_lufs(
+        target_lufs=target_lufs, g_max_db=g_max_db, window_tol_lu=window_tol_lu
+    )
+    # A ``None`` level is substituted by the digital-silence sentinel, which is
+    # far below the floor and finite, so the interpolation stays real.  The ride's
+    # own sampling grid is one second and the windows start on multiples of 120 s,
+    # so every sample lands on a key and nothing is interpolated in practice; a
+    # caller reading a sparser series gets the interpolation, which is the honest
+    # generalization of the same walk.
+    series = [(t, DIGITAL_SILENCE if v is None else v) for t, v in levels]
+    offsets = (0.0, LOUDNESS_WINDOW_OFFSET_S) if offset_s is None else (offset_s,)
+    out: list[float] = []
+    for off in offsets:
+        for start in _window_starts(duration_s, off):
+            end = min(start + LOUDNESS_WINDOW_S, duration_s)
+            unreachable = 0
+            t = start
+            while t < end:
+                if interp(series, t) < floor:
+                    unreachable += 1
+                t += 1.0
+            if unreachable >= min_fraction * (end - start):
+                out.append(start)
+    return tuple(out)
 
 
 def whole_program_err_lu(
@@ -1986,6 +2094,12 @@ class LeveledAttempt:
     by :func:`encoder_settings_label` (U42).  It decides nothing -- it is what
     lets the guard's WARNING and the caller's ERROR say which lever produced the
     artifact that airs.
+
+    ``unreachable_windows`` names the window starts the gate did not score because
+    the *source* there is beyond the ride's reach (:func:`unreachable_window_starts`,
+    U64).  It changes no measurement -- ``worst_window_err_lu`` is already over the
+    windows that remain -- and exists so the exclusion is *reported*: a gate that
+    silently declines to judge a stretch is not a gate anyone can audit.
     """
 
     round_index: int
@@ -1997,6 +2111,7 @@ class LeveledAttempt:
     wall_s: float
     decoded_peak_dbfs: float | None = None
     encoder: str = ""
+    unreachable_windows: tuple[float, ...] = ()
 
     def loudness_ok(self, *, window_tol_lu: float, whole_tol_lu: float) -> bool:
         """Whether both loudness gates hold for this attempt's own artifact."""
@@ -2006,6 +2121,24 @@ class LeveledAttempt:
             and abs(self.worst_window_err_lu) <= window_tol_lu
             and abs(self.whole_err_lu) <= whole_tol_lu
         )
+
+    def loudness_excused(self, *, window_tol_lu: float, whole_tol_lu: float) -> bool:
+        """Whether the loudness gate's window leg is one this ride cannot reach.
+
+        True when the whole-program leg holds and the *reachable* windows are
+        inside tolerance -- including the case where a program has no reachable
+        window at all, whose ``worst_window_err_lu`` is therefore ``None``, where
+        the evidence of the exclusion is ``unreachable_windows`` itself.
+
+        This is the counterpart of ``loudness_ok``, not a replacement for it: the
+        whole-program leg is checked here too, in the same tolerance, because a
+        program can miss that one for reasons the clamp has nothing to do with.
+        """
+        if self.whole_err_lu is None or abs(self.whole_err_lu) > whole_tol_lu:
+            return False
+        if self.worst_window_err_lu is None:
+            return bool(self.unreachable_windows)
+        return abs(self.worst_window_err_lu) <= window_tol_lu
 
     def hard_tp_ok(self) -> bool:
         """Whether this attempt clears the hard true-peak gate.
@@ -2065,6 +2198,23 @@ def _encoder_suffix(attempt: LeveledAttempt) -> str:
     return "" if not attempt.encoder else f" ({attempt.encoder})"
 
 
+def _loudness_lawful(
+    attempt: LeveledAttempt,
+    *,
+    window_tol_lu: float,
+    whole_tol_lu: float,
+) -> bool:
+    """Whether this attempt's loudness is lawful: it passed, or it is excused.
+
+    One name for the selector's first level, so the two questions cannot drift
+    apart between the keep-best ordering and the caller's own verdict
+    (``preparer._log_ride_selection`` asks the same pair).
+    """
+    return attempt.loudness_ok(
+        window_tol_lu=window_tol_lu, whole_tol_lu=whole_tol_lu
+    ) or attempt.loudness_excused(window_tol_lu=window_tol_lu, whole_tol_lu=whole_tol_lu)
+
+
 def select_leveled_attempt(
     attempts: Sequence[LeveledAttempt],
     *,
@@ -2102,12 +2252,19 @@ def select_leveled_attempt(
     in ``warning``: every attempt names its own encoder settings
     (:attr:`LeveledAttempt.encoder`), so the operator can see which lever bought
     the artifact that airs.
+
+    U64 adds no axis either, and it changes level 1 by one clause: an attempt the
+    gate *excuses* (:meth:`LeveledAttempt.loudness_excused` -- the only window it
+    misses is one the clamp cannot reach) is lawful at this level exactly as an
+    attempt that passes is.  Without that clause a round would beat the nominal on
+    a technicality it did not earn, which is the same mistake in the other
+    direction.
     """
     nominal = attempts[0]
     kept = min(
         attempts,
         key=lambda a: (
-            0 if a.loudness_ok(window_tol_lu=window_tol_lu, whole_tol_lu=whole_tol_lu) else 1,
+            0 if _loudness_lawful(a, window_tol_lu=window_tol_lu, whole_tol_lu=whole_tol_lu) else 1,
             math.inf if a.decoded_peak_dbfs is None else a.decoded_peak_dbfs,
             math.inf if a.emitted_dbtp is None else a.emitted_dbtp,
             a.round_index,
@@ -2173,6 +2330,7 @@ def attempt_from_measurement(
     decoded_peak_dbfs: float | None = None,
     wall_s: float = 0.0,
     encoder: str = "",
+    unreachable_starts: Sequence[float] = (),
 ) -> LeveledAttempt:
     """Score one measured artifact, by the acceptance gate's own arithmetic.
 
@@ -2194,10 +2352,18 @@ def attempt_from_measurement(
     ``encoder`` is the settings label of the attempt's own encode
     (:func:`encoder_settings_label`), carried through untouched: this function
     scores a measurement and does not claim to know what produced it.
+
+    ``unreachable_starts`` is the source-side exclusion set
+    (:func:`unreachable_window_starts`); the starts outside this artifact's own
+    tiling are dropped, so the attempt reports the windows the gate skipped here,
+    not the ones it would have skipped for a longer file.
     """
     series = parse_ebur128_series(stderr)
     span = series_duration_s(series) if duration_s is None else duration_s
-    worst, _worst_start = worst_window_deviation_lu(series, span, target_lufs=target_lufs)
+    applied = tuple(sorted(s for s in unreachable_starts if s < span - LOUDNESS_WINDOW_MIN_TAIL_S))
+    worst, _worst_start = worst_window_deviation_lu(
+        series, span, target_lufs=target_lufs, unreachable_starts=applied
+    )
     return LeveledAttempt(
         round_index=round_index,
         limit_dbtp=limit_dbtp,
@@ -2208,6 +2374,7 @@ def attempt_from_measurement(
         wall_s=wall_s,
         decoded_peak_dbfs=decoded_peak_dbfs,
         encoder=encoder,
+        unreachable_windows=applied,
     )
 
 
@@ -2223,6 +2390,7 @@ def measure_artifact(
     timeout_s: float | None = None,
     cancel_event: threading.Event | None = None,
     encoder: str = "",
+    unreachable_starts: Sequence[float] = (),
 ) -> LeveledAttempt:
     """Measure one emitted artifact: its loudness series, and its decoded peak.
 
@@ -2237,6 +2405,11 @@ def measure_artifact(
     ``encoder`` is the caller's label for the encode that produced this file and
     is passed to the attempt unread (:func:`attempt_from_measurement`); the
     measurement is of the file, not of the settings that wrote it.
+
+    ``unreachable_starts`` is the source-side exclusion set, passed through to
+    the attempt unchanged: every attempt of one window is scored against the same
+    source, so a round cannot win by being judged on different windows than the
+    attempt it beats.
     """
     try:
         text = run_capture(
@@ -2268,6 +2441,7 @@ def measure_artifact(
         decoded_peak_dbfs=peak,
         wall_s=wall_s,
         encoder=encoder,
+        unreachable_starts=unreachable_starts,
     )
 
 
@@ -2340,6 +2514,16 @@ def level_window(
     round is moved onto the caller's path, every losing one deleted, so the
     caller has one file to publish and no choice left to make.
 
+    U64: before any of that, the source's own levels decide which windows this
+    ride *cannot* reach (:func:`unreachable_window_starts`) and those are handed
+    to every attempt, so the window leg is judged on the ride's work and not on
+    the level of the material it was handed.  A quiet four-minute stretch in an
+    otherwise loud program used to be reported as a gate miss by every ride that
+    ever met it -- the window one and the full-asset one alike -- because 28 dB of
+    lift is not a thing a +18 dB clamp can do.  No audio byte changes: the curve
+    is the same curve and the artifact is the same artifact; what changes is that
+    the exclusion is named instead of being silently scored as a failure.
+
     ``pcm_path`` is the tee of post-curve PCM the emit writes and the round
     reads.  The caller may supply one (it then owns the file and it outlives the
     call); otherwise the module makes its own, next to the artifact, and deletes
@@ -2371,6 +2555,18 @@ def level_window(
             "the source pass measured no loudness series, so there is nothing to level"
         )
     source_levels = sliding_levels(source_series, params.window_s, params.step_s)
+
+    # U64: the windows the ride provably cannot lift, from the source's own
+    # levels -- the same series converge() is about to ride.  Computed once, off
+    # the source, and handed to every attempt of this window: the exclusion is a
+    # property of the material, not of any one encode, so scoring a round against
+    # a different set than the nominal would make the keep-best comparison a lie.
+    unreachable = unreachable_window_starts(
+        source_levels,
+        series_duration_s(source_series),
+        target_lufs=params.target_lufs,
+        g_max_db=params.g_max_db,
+    )
 
     def render(
         curve: list[tuple[float, float]],
@@ -2454,6 +2650,7 @@ def level_window(
                 timeout_s=timeout_s,
                 cancel_event=cancel_event,
                 encoder=encoder_settings_label(profile),
+                unreachable_starts=unreachable,
             )
         ]
 
@@ -2534,6 +2731,7 @@ def level_window(
                     timeout_s=timeout_s,
                     cancel_event=cancel_event,
                     encoder=encoder_settings_label(profile, variant),
+                    unreachable_starts=unreachable,
                 )
             )
 

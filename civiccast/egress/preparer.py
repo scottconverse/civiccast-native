@@ -965,7 +965,22 @@ class SourcePreparer:
                 window,
                 result.round_error,
             )
+        if kept.unreachable_windows:
+            # U64: the gate declined to score these windows because the source
+            # there is beyond the clamp's reach.  Reported at INFO, and reported
+            # at all, because an exclusion nobody can read back from the log is
+            # indistinguishable from a gate that never ran.
+            _LOG.info(
+                "Speech leveling for %r (window: %s): %d four-minute stretch(es) not scored "
+                "-- the source is below the ride's reach there (starts %s s).",
+                source_path.name,
+                window,
+                len(kept.unreachable_windows),
+                ", ".join(f"{start:.0f}" for start in kept.unreachable_windows),
+            )
         if not kept.loudness_ok(
+            window_tol_lu=LOUDNESS_WINDOW_TOL_LU, whole_tol_lu=LOUDNESS_WHOLE_TOL_LU
+        ) and not kept.loudness_excused(
             window_tol_lu=LOUDNESS_WINDOW_TOL_LU, whole_tol_lu=LOUDNESS_WHOLE_TOL_LU
         ):
             _LOG.warning(
