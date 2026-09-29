@@ -2816,6 +2816,99 @@ def test_full_asset_cache_hit_trusted_once_flag_is_set(tmp_path: Path) -> None:
     assert "conform-cache" in seg.path
 
 
+def test_probe_only_write_cannot_clear_a_promoted_full_asset_conform(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U65: a probe-only metadata write must never clear an existing
+    full-asset conform's markers.
+
+    The conform cache is shared by every channel and every prepare, and
+    ``_prepare_segment`` reads ``meta`` ONCE per call, *before* its probe. Two
+    prepares for the same asset therefore interleave like this:
+
+        A: reads meta -> None (cache cold, so A takes the probe branch)
+        B: finishes a whole-asset conform and PROMOTES it -- ``{key}.ts`` plus
+           a sidecar carrying ``full_asset_conform=True``, method ``"ride"``
+        A: finishes its probe and writes its own sidecar, which carries no
+           markers
+
+    That is the live 2026-09-29 sequence on the 4.4 h August 11 asset.
+    ``_write_cache_meta`` REPLACES the whole sidecar, so A's write erases B's
+    markers -- and the next prepare reads ``full_asset_conform`` False and
+    re-conforms the entire asset (observed three times in one 8 h rung).
+
+    The interleaving is reproduced deterministically in one thread: the racing
+    prepare's own probe promotes the asset, so the probe-only write that
+    follows it IS the live race -- no threads, no sleeps. The racing prepare
+    is shaped so that its probe write is the LAST thing it does to this cache
+    entry: it is UNTRIMMED (the probe block that persists at 2817 is the
+    untrimmed one) on an engine that cannot trim at playout, so it conforms
+    only a bounded window, and its slot is capped below the asset's real
+    duration so the tail gate treats that window as a fragment (round-7) and
+    warms instead of promoting. Its warm is not run. Nothing repairs the
+    damage afterwards, so the final sidecar is attributable to the probe-only
+    write alone.
+    """
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 15949.2)
+    source = tmp_path / "raw-source.mp4"
+    source.write_text("fake media", encoding="utf-8")
+    calls: list[list[str]] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=lambda **_kwargs: _loudness(),
+        warm_scheduler=lambda _job: None,
+        playout_trim_supported=True,
+    )
+    key = preparer._cache_key(source, _config())
+    assert key is not None
+
+    promoted: list[bool] = []
+
+    def racing_loudness(**_kwargs: object) -> LoudnessGateResult:
+        """B's promotion, landing while A's probe is in flight."""
+        if not promoted:
+            finished = tmp_path / "work" / "finished-full-asset.ts"
+            finished.parent.mkdir(parents=True, exist_ok=True)
+            finished.write_text("the whole asset", encoding="utf-8")
+            preparer._promote_conform_into_cache(
+                key,
+                finished,
+                source,
+                _loudness(),
+                False,
+                media_duration_seconds=15949.2,
+                loudness_method="ride",
+            )
+            promoted.append(True)
+        return _loudness()
+
+    racing = SourcePreparer(
+        work_dir=tmp_path / "work",  # the SAME cache dir -- one shared cache
+        ffmpeg_runner=_counting_runner(calls),
+        loudness_checker=racing_loudness,
+        warm_scheduler=lambda _job: None,
+        playout_trim_supported=False,  # its own conform stays bounded, unpromoted
+    )
+
+    racing.prepare(_slot_capped_untrimmed_plan(source, duration_seconds=30.0), _config())
+    assert promoted, "the fixture must promote the asset during the probe"
+
+    meta_after = json.loads((preparer._cache_dir() / f"{key}.json").read_text(encoding="utf-8"))
+    assert meta_after["full_asset_conform"] is True, (
+        "the probe-only write erased the promoted full-asset conform's marker"
+    )
+    assert meta_after["loudness_method"] == "ride"
+
+    # The consequence the rung measured: the next prepare re-conforms the whole
+    # asset instead of serving the entry already sitting in the cache.
+    calls.clear()
+    report = preparer.prepare(_slot_capped_untrimmed_plan(source, duration_seconds=30.0), _config())
+
+    assert calls == [], "the promoted full-asset conform must still be a cache HIT"
+    assert "conform-cache" in report.source_plan.segments[0].path
+
+
 def test_default_warm_scheduler_runs_jobs_in_fifo_order_one_at_a_time(tmp_path: Path) -> None:
     """Item 66, point 4 (round-3 review tightened the assertions): the
     production ``_default_warm_scheduler`` used to spawn one daemon thread

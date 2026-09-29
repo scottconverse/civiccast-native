@@ -641,6 +641,7 @@ class SourcePreparer:
         media_duration_seconds: float | None = None,
         full_asset_conform: bool = False,
         loudness_method: str | None = None,
+        only_if_absent: bool = False,
     ) -> None:
         """Item 66 (point 1): now also called BEFORE any conform for this
         asset exists (a loudness-only probe result, persisted early so
@@ -697,11 +698,31 @@ class SourcePreparer:
         record still says how its audio was conformed. The probe-only write in
         ``_prepare_segment`` -- which lands BEFORE any conform for this asset
         exists -- leaves it ``None``, which is the honest answer at that point:
-        no conform has chosen a shape yet, and the later promote's write
-        replaces the whole sidecar with the real value. A meta file written by
-        pre-U20 code never carries this key, so ``.get(...)`` reads ``None``
-        there too -- also honest, since the installed base only ever
-        single-pass conformed.
+        no conform has chosen a shape yet.
+
+        ``only_if_absent`` (U65): publish this sidecar only if no sidecar for
+        this key exists yet, atomically. Round-6's "the later promote's write
+        replaces the whole sidecar with the real value" holds only WITHIN one
+        ``_prepare_segment`` call -- that is where ``meta`` is read, and the
+        probe branch is reached only when it read ``None``, so the probe's
+        write always precedes this call's own promote. It does NOT hold across
+        two concurrent prepares for the same asset, which is the ordinary case
+        on a multi-channel station sharing one cache: prepare A reads ``meta``
+        as ``None`` (cache cold) and starts its probe; prepare B finishes a
+        whole-asset conform and promotes it; A's probe then finishes and its
+        write here REPLACED B's sidecar, erasing ``full_asset_conform`` and
+        ``loudness_method``. The next prepare then read the flag False and
+        re-conformed the entire asset -- live 2026-09-29, three times in one
+        8 h rung on a 4.4 h asset. The probe-only caller passes
+        ``only_if_absent=True`` so this write can never clear markers it did
+        not set; the promote caller leaves it False, because a promote's write
+        is the authoritative one and must replace what it supersedes. This is
+        a no-op in the uncontended case: with no sidecar on disk (the only
+        state in which the probe branch runs single-threaded) the atomic
+        create always succeeds. It falls back to replacing only when the
+        existing file is not usable meta at all (unparseable or truncated),
+        so a corrupt sidecar still self-heals rather than stranding every
+        later prepare in a re-probe.
         """
         cache_dir = self._cache_dir()
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -716,7 +737,44 @@ class SourcePreparer:
         final = cache_dir / f"{key}.json"
         tmp = final.with_name(final.name + ".tmp")
         tmp.write_text(json.dumps(meta), encoding="utf-8")
-        tmp.replace(final)
+        if not only_if_absent:
+            tmp.replace(final)
+            return
+        # U65: atomic create-if-absent. ``os.link`` raises ``FileExistsError``
+        # when ``final`` already exists, rather than overwriting it the way
+        # ``replace`` does, so the FILESYSTEM arbitrates the race. That is why
+        # this needs neither the per-key conform lock (held for the whole ride,
+        # and deliberately taken non-blocking by the air path, so blocking a
+        # start-path probe write behind it would stall the prepare) nor a
+        # read-modify-write (which would still be a TOCTOU). Hard-linking is
+        # the same idiom ``_promote_finished_conform_into_cache`` already uses
+        # for the ``.ts`` (see its ``os.link`` fallback below for the
+        # cross-volume shape).
+        try:
+            os.link(tmp, final)
+        except FileExistsError:
+            # Somebody else published this key's sidecar while this probe was
+            # in flight -- normally a promote, whose write carries the
+            # ``full_asset_conform``/``loudness_method`` markers this probe
+            # cannot know about (the key fingerprints the asset, so it is the
+            # same asset). Theirs wins; this probe's result is dropped.
+            #
+            # Exception: if what is on disk is not usable meta at all -- an
+            # unparseable or truncated file, which ``_read_cache_meta`` reports
+            # as ``None`` -- there is nothing worth preserving, and the probe's
+            # own result is the better entry, so replace it. Without this the
+            # corrupt file would strand every later prepare in a re-probe.
+            if self._read_cache_meta(key) is None:
+                tmp.replace(final)
+        except OSError:
+            # The filesystem cannot hard-link (a network share or FAT32 work
+            # dir). Fall back to exactly the pre-U65 write so the probe result
+            # is still persisted and a prepare never newly fails here; the
+            # create-if-absent guarantee is then unavailable, which is the
+            # pre-U65 status quo rather than a regression.
+            tmp.replace(final)
+        finally:
+            tmp.unlink(missing_ok=True)
 
     def _conform_lock(self, key: str) -> threading.Lock:
         """A per-cache-key lock: a background warm and a foreground
@@ -2814,8 +2872,19 @@ class SourcePreparer:
                 # runs -- so every other segment of this asset (this
                 # prepare() call or a later one) skips the probe too, even
                 # though the full-asset conform itself may still be a MISS.
+                #
+                # U65: ``only_if_absent`` -- this is the PROBE-ONLY write. It
+                # carries no conform markers, so it must never replace a
+                # sidecar a concurrent prepare already published for this same
+                # key (a promote, whose write does carry them). See
+                # ``_write_cache_meta``'s own docstring for the live failure
+                # this closes.
                 self._write_cache_meta(
-                    key, loudness, normalized, media_duration_seconds=media_duration
+                    key,
+                    loudness,
+                    normalized,
+                    media_duration_seconds=media_duration,
+                    only_if_absent=True,
                 )
 
         # Untrimmed MISS: the full-asset conform IS what airs — conform it once,
