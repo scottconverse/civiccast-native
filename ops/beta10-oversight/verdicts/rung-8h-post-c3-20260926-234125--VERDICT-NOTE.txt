@@ -1,0 +1,2 @@
+2026-09-26 23:42:26 ADJUDICATION verify #1 education caption FAIL: EXCLUDED_SLATE - education was on FALLBACK_SLATE (pid 1608, no speech) preparing its program after the C3 restart; receipt was the pre-restart worker's (202s old). Coordinator error: rung started 23:41:25 before education reached ON_AIR.
+2026-09-27 00:03:51 STOPPED by coordinator at ~22m to install C4 (U56 engine fix for 0.6s video hole). Result: verify 1 OK + 1 excused (slate), loudness 1/1 PASS. Not a pass (stopped; video hole present, checker blind).

@@ -293,7 +293,3 @@ UsersscottAppDataLocalTemp*
 *.gguf
 *.bin
 *.onnx
-ops/**/evidence/**
-!ops/**/evidence/**/VERDICT*
-!ops/**/evidence/**/ADJUDICATION*
-!ops/**/evidence/**/INCIDENT*

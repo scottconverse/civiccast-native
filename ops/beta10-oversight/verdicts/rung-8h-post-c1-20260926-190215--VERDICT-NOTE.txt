@@ -1,0 +1,1 @@
+2026-09-26 21:25:47 STOPPED by coordinator at 2h24m for C2 (U53) install. Result to this point: verify 14/14 OK; loudness 4/5 PASS + #3 public EXCLUDED_QUIET_SOURCE (U54 re-adjudication, unreach=129/197s need 61); all changeovers ON_AIR, no slate/dark/exits. Not a full 8h pass (stopped).

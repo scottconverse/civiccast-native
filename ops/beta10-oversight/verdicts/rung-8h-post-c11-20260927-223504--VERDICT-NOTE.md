@@ -1,0 +1,1 @@
+## Coordinator stop 22:36: started too early (government relaunched out of the restart slate at 22:35:00, 4 s before this rung started); verify #1 BAD = government freshness/receipt during that relaunch. Void; restarted as a new rung.
