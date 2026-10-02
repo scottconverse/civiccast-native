@@ -823,6 +823,26 @@ mod tests {
     }
 
     #[cfg(target_os = "windows")]
+    /// Gate A clean lane, 2026-10-02: a 60 s readiness wait failed the signed
+    /// beta.10 installer on a clean VM where Ollama took 61 s to finish its
+    /// GPU discovery pass. The wait must stay comfortably above that
+    /// measurement (and never fall back below the old 60 s limit), and it must
+    /// not exceed the 300 s inference request timeout it sits in front of.
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn native_ai_self_test_readiness_wait_outlasts_slow_gpu_discovery() {
+        assert!(
+            NATIVE_AI_SELF_TEST_READY_TIMEOUT >= Duration::from_secs(240),
+            "readiness wait {:?} is too short: a clean Windows Sandbox needed 61 s",
+            NATIVE_AI_SELF_TEST_READY_TIMEOUT
+        );
+        assert!(
+            NATIVE_AI_SELF_TEST_READY_TIMEOUT <= Duration::from_secs(300),
+            "readiness wait {:?} must stay bounded by the 300 s request timeout",
+            NATIVE_AI_SELF_TEST_READY_TIMEOUT
+        );
+    }
+
     #[test]
     fn native_ollama_shutdown_is_bounded_and_kills_the_descendant_tree() {
         let fixture_started = SystemTime::now()
@@ -4759,6 +4779,24 @@ fn validate_native_caption_output(exit_code: i32, output: &str) -> Result<(), St
     Ok(())
 }
 
+/// How long the activation self-test waits for its private Ollama to answer
+/// `/api/version` before giving up.
+///
+/// This was a hard 60 s, and it failed the signed beta.10 installer on a clean
+/// Windows Sandbox (2026-10-02, Gate A clean lane: exit 67, "did not become
+/// ready in 60 seconds"). Ollama 0.30.6 listens at once but does not answer
+/// `/api/version` until its GPU discovery pass has finished; measured in that
+/// VM (16 GB, install on a mapped folder, big CUDA libraries read over the
+/// share) that took 61 s, one second over the old limit, so a machine only
+/// slightly slower than the test VM (cold disk, antivirus scanning a fresh
+/// multi-GB CUDA tree) failed activation and left no station. The three
+/// inference requests that follow passed in 86 s, 75 s and 29 s against their
+/// own 300 s limit, so readiness was the only budget that was too small. 300 s
+/// matches that request timeout and Ollama's own `OLLAMA_LOAD_TIMEOUT` (5 m);
+/// a healthy host still returns on the first poll, so only a slow start waits.
+#[cfg(target_os = "windows")]
+const NATIVE_AI_SELF_TEST_READY_TIMEOUT: Duration = Duration::from_secs(300);
+
 #[cfg(target_os = "windows")]
 struct NativeOllamaSelfTestServer {
     child: Child,
@@ -4838,7 +4876,7 @@ impl NativeOllamaSelfTestServer {
             .build()
             .map_err(|error| format!("Could not create native AI self-test client: {error}"))?;
         let endpoint = format!("http://{}/api/version", self.host);
-        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let deadline = std::time::Instant::now() + NATIVE_AI_SELF_TEST_READY_TIMEOUT;
         loop {
             if let Some(status) = self
                 .child
@@ -4870,7 +4908,8 @@ impl NativeOllamaSelfTestServer {
             }
             if std::time::Instant::now() >= deadline {
                 return Err(format!(
-                    "Staged native AI runtime did not become ready in 60 seconds. {}",
+                    "Staged native AI runtime did not become ready in {} seconds. {}",
+                    NATIVE_AI_SELF_TEST_READY_TIMEOUT.as_secs(),
                     self.diagnostics()
                 ));
             }

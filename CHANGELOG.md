@@ -64,6 +64,24 @@ field-tester sign-off exist yet for this build.
 
 - Product version bumped to `1.0.0-beta.10`.
 
+### The installer's final self-test gave up on its AI runtime after 60 seconds (2026-10-02)
+
+The first Gate A clean-lane run of the signed beta.10 `setup.exe` (a clean
+Windows Sandbox) laid down every file and then aborted: the station's own
+activation self-test starts a private copy of the bundled AI runtime (Ollama
+0.30.6) and waited only 60 seconds for it to answer. In that VM it answered
+after 61 seconds (75 seconds with the optional Vulkan probe off), so the install
+failed with exit code 67 and no station was registered. The same step passed on a
+fast host, so only a slower first start (a cold disk, or antivirus scanning the
+freshly written multi-gigabyte CUDA libraries) exposed it. The wait is now 300
+seconds, matching the 300-second limit on the three model requests that follow
+(they passed in 86, 75 and 29 seconds in the same VM); a healthy machine still
+returns on the first poll. A unit test pins the new limit and was seen failing at
+60 seconds. This changes the installer only, not the station runtime. The
+installer process also exited with an access-violation code after that failure
+instead of a clean error; that separate defect is recorded as a follow-up and is
+not changed here.
+
 ### A killed control plane left its relay ffmpegs holding the relays (U31, 2026-09-25)
 
 On 2026-09-25 the supervisor killed the control plane at 07:21:07 after a 30 s
