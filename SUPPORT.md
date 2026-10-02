@@ -98,13 +98,13 @@ If you are working on, evaluating, or running the native line:
   have a native-specific path, so context has to be spelled out by hand.
 - Do not treat anything reported against the native line as a supported,
   SLA'd, or fully field-proven path. The same "community-driven, no SLA"
-  posture above applies. A clean-machine verification record exists at
-  `.agent-runs/native-windows/k1-clean-box-proof/evidence/` (clean-box
-  install → activation → clerk loop → captions → product-engine egress,
-  2026-08-19); it is an engineering proof, not a support commitment.
+  posture above applies. The published beta.7's verification record
+  ([`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md))
+  states what was and was not proven; it is an engineering record, not a
+  support commitment.
 
 This section will be replaced with a real support surface once the native
-line has its own proof boundary document beyond the K1 clean-box record above.
+line has its own proof boundary document beyond those verification records.
 
 ## What Is Not Supported
 
