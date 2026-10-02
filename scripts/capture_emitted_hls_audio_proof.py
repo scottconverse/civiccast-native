@@ -92,6 +92,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from itertools import pairwise
 from pathlib import Path
 from typing import Any, Final
 
@@ -129,6 +130,19 @@ DEFAULT_MAX_SEGMENTS: Final[int] = 300
 #: loop gives up and reports UNVERIFIED.  Well above the >=3 min target.
 DEFAULT_MAX_WAIT_SECONDS: Final[float] = 420.0
 
+#: The relay replaces ``playlist.m3u8`` atomically and writes each segment out
+#: of band, so a read that lands inside that window on Windows gets EACCES (or
+#: ENOENT for the instant the name is gone).  A transient race is not a station
+#: fault: every live read is retried this many times, this far apart, before it
+#: fails exactly as it did before the retry existed (U48).
+RACE_RETRY_ATTEMPTS: Final[int] = 20
+RACE_RETRY_DELAY_SECONDS: Final[float] = 0.1
+
+#: The two errnos an atomic replace produces, and only those two: a retry here
+#: must never absorb a real permission failure or a real absence past the
+#: budget.
+_RACE_ERRORS: Final[tuple[type[OSError], ...]] = (PermissionError, FileNotFoundError)
+
 #: A segment whose observed size is 0, or which reports a duration wildly
 #: different from its playlist EXTINF, is treated as partial rather than
 #: trusted.  0.5 s of drift on a 2 s segment is the tolerated ceiling.
@@ -137,6 +151,15 @@ _SEGMENT_DURATION_TOLERANCE_SECONDS: Final[float] = 0.75
 _LOUDNESS_I_RE = re.compile(r"\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS\b")
 _LOUDNESS_LRA_RE = re.compile(r"\bLRA:\s*(-?\d+(?:\.\d+)?)\s+LU\b")
 _LOUDNESS_PEAK_RE = re.compile(r"\bPeak:\s*(-?\d+(?:\.\d+)?)\s+dBFS\b")
+
+# Per-segment true peak, for the field that asks whether any ONE segment
+# overshoots.  ``measure_window``'s ebur128 summary prints its ``Peak:`` line to
+# ONE decimal (measured on the station's ffmpeg: it printed -1.1 for a segment
+# astats resolves as -1.280067), and one decimal cannot tell a 0.04 dBFS
+# overshoot from 0.00.  ``aresample=192000`` is the same 4x oversampling ebur128
+# applies internally for true peak; astats prints six decimals.
+_SEGMENT_PEAK_RE: Final[re.Pattern[str]] = re.compile(r"Peak level dB:\s*(-?\d+(?:\.\d+)?|-inf)")
+_SEGMENT_PEAK_GRAPH: Final[str] = "aresample=192000,astats=metadata=1:reset=0"
 
 
 class Verdict:
@@ -340,13 +363,76 @@ class Playlist:
     discontinuity_indices: list[int] = field(default_factory=list)
 
 
-def parse_playlist(path: Path) -> Playlist:
-    """Parse a media playlist, recording sequence gaps and parse failures."""
+def _read_live_text(path: Path) -> str:
+    """Read a live file whole, retrying a racing atomic replace.
 
-    if not path.is_file():
-        return Playlist(path=path, parse_error="playlist missing")
+    One handle per attempt: opened, read to EOF, closed before any retry.  A
+    handle held across a retry can block the relay's replace, which is the very
+    fault this absorbs.  Raises the last race error once the budget is spent.
+    """
+
+    last: OSError | None = None
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        try:
+            with path.open(encoding="utf-8", errors="replace") as handle:
+                return handle.read()
+        except _RACE_ERRORS as exc:
+            last = exc
+            if attempt + 1 < RACE_RETRY_ATTEMPTS:
+                time.sleep(RACE_RETRY_DELAY_SECONDS)
+    if last is None:  # pragma: no cover - the budget is at least one attempt
+        raise CaptureError(f"unreadable live file: {path}")
+    raise last
+
+
+def _read_live_bytes(path: Path) -> bytes:
+    """Read a live file's bytes whole, retrying a racing atomic replace."""
+
+    last: OSError | None = None
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        try:
+            with path.open("rb") as handle:
+                return handle.read()
+        except _RACE_ERRORS as exc:
+            last = exc
+            if attempt + 1 < RACE_RETRY_ATTEMPTS:
+                time.sleep(RACE_RETRY_DELAY_SECONDS)
+    if last is None:  # pragma: no cover - the budget is at least one attempt
+        raise CaptureError(f"unreadable live file: {path}")
+    raise last
+
+
+def _wait_for_file(path: Path) -> bool:
+    """True once the path exists; False after the race-retry budget.
+
+    ``Path.is_file()`` swallows ``OSError``, so a file that is momentarily gone
+    during the relay's replace and one that is genuinely absent look identical
+    here -- the retry is the only thing that separates them.
+    """
+
+    for attempt in range(RACE_RETRY_ATTEMPTS):
+        if path.is_file():
+            return True
+        if attempt + 1 < RACE_RETRY_ATTEMPTS:
+            time.sleep(RACE_RETRY_DELAY_SECONDS)
+    return False
+
+
+def parse_playlist(path: Path) -> Playlist:
+    """Parse a media playlist, recording sequence gaps and parse failures.
+
+    The read is retried through a racing atomic replace (``_read_live_text``),
+    and the retry is built on the read itself rather than on a pre-check:
+    ``Path.is_file()`` swallows ``OSError``, so an ``is_file()`` guard would
+    report a raced playlist as "playlist missing" -- a station fault that never
+    happened.  A playlist that is still unreadable once the budget is spent
+    reports exactly what it reported before the retry existed.
+    """
+
     try:
-        text = path.read_text(encoding="utf-8", errors="replace")
+        text = _read_live_text(path)
+    except FileNotFoundError:
+        return Playlist(path=path, parse_error="playlist missing")
     except OSError as exc:
         return Playlist(path=path, parse_error=f"playlist unreadable: {exc}")
 
@@ -595,6 +681,18 @@ PCR_MODULUS: Final[int] = 1 << 42
 #: One frame at 30 fps in 90 kHz PTS ticks; used as the PTS delta tolerance.
 _PTS_FRAME_TOLERANCE_TICKS: Final[int] = 3000
 
+#: A video inter-packet gap is a hole when it exceeds this many frame intervals.
+#: The interval is derived per segment from the stream's own ``r_frame_rate`` and
+#: never hard-coded: the emitted cadence differs by channel, and ffprobe was
+#: observed reporting ``60/1`` on a changeover segment whose real cadence is 30.
+_VIDEO_HOLE_FRAME_INTERVALS: Final[float] = 2.0
+
+#: An audio inter-packet gap is a hole when it exceeds this many seconds.  AAC at
+#: 48 kHz emits 1024-sample frames (21.3 ms), so a single dropped frame is
+#: ~42.7 ms and stays under this bar on purpose -- U57 was written for a 0.6 s
+#: picture hole, and this bar names an audio hole without flagging one frame.
+_AUDIO_HOLE_SECONDS: Final[float] = 0.05
+
 
 def _modular_delta(previous: int, current: int, modulus: int) -> int:
     """Forward counter delta with wrap: ``(current - previous) % modulus``.
@@ -605,6 +703,109 @@ def _modular_delta(previous: int, current: int, modulus: int) -> int:
     """
 
     return (int(current) - int(previous)) % modulus
+
+
+def _parse_frame_interval(value: Any) -> float | None:
+    """One frame interval in seconds from an ffprobe rational, or None.
+
+    ``r_frame_rate`` is a rational string ("30/1", "30000/1001").  A zero or
+    unparseable denominator yields None so the caller falls back to the cadence
+    the segment's own packets show rather than inventing a threshold.
+    """
+
+    if not isinstance(value, str) or "/" not in value:
+        return None
+    numerator, _, denominator = value.partition("/")
+    try:
+        rate = float(numerator) / float(denominator)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    if not rate > 0:
+        return None
+    return 1.0 / rate
+
+
+def _inter_packet_gap_stats(packet_pts: list[float]) -> dict[str, Any]:
+    """Largest inter-packet gap in one stream, with its offset in the segment.
+
+    Packets are sorted by PTS first: MPEG-TS carries them in decode order, and a
+    B-frame reorder would otherwise read as a negative step.  ``..._offset`` is
+    where the gap starts, in presentation seconds from the stream's first packet
+    in this segment -- the number an operator compares against the changeover
+    they just watched.  ``min_positive_gap_seconds`` is the cadence the packets
+    actually show, which is what keeps a misreported ``r_frame_rate`` from
+    turning every healthy step into a "hole".
+    """
+
+    ordered = sorted(float(value) for value in packet_pts)
+    stats: dict[str, Any] = {
+        "packets": len(ordered),
+        "max_gap_seconds": None,
+        "max_gap_offset_seconds": None,
+        "min_positive_gap_seconds": None,
+    }
+    if len(ordered) < 2:
+        return stats
+    origin = ordered[0]
+    largest = 0.0
+    largest_at = 0.0
+    smallest: float | None = None
+    for previous, current in pairwise(ordered):
+        step = current - previous
+        if step <= 0:
+            continue
+        if smallest is None or step < smallest:
+            smallest = step
+        if step > largest:
+            largest = step
+            largest_at = previous - origin
+    stats["max_gap_seconds"] = largest
+    stats["max_gap_offset_seconds"] = largest_at
+    stats["min_positive_gap_seconds"] = smallest
+    return stats
+
+
+def _packet_hole_problems(records: list[dict[str, Any]]) -> list[str]:
+    """Name every mid-segment packet hole the probe recorded (U57).
+
+    PTS is sampled only at segment heads, so a picture that freezes *inside* one
+    segment is invisible to it: measured at the 2026-09-26 changeover,
+    public/seg000003655 drops 0.600 s of video at +0.833 s while every
+    head-to-head PTS step stays legal.  This walks the per-stream packet gaps the
+    probe collected and names the holes with their numbers.
+
+    A video gap is a hole when it exceeds ``_VIDEO_HOLE_FRAME_INTERVALS`` frame
+    intervals, where the interval is the LARGER of what ``r_frame_rate`` declares
+    and the smallest positive gap the segment's own packets show.  ffprobe
+    reported ``60/1`` for government/seg3711 (real cadence 30 fps); the declared
+    interval alone (16.7 ms) is shorter than the healthy step (33.33 ms) and
+    would flag all 59 healthy gaps.  An audio gap is a hole when it exceeds
+    ``_AUDIO_HOLE_SECONDS``.
+
+    A record carrying no packet statistics (an injected stub, an older capture)
+    is skipped, not failed: absence of the measurement is not evidence of a hole.
+    """
+
+    problems: list[str] = []
+    for record in records:
+        name = str(record.get("name") or "segment")
+        video_gap = record.get("video_max_gap_seconds")
+        if isinstance(video_gap, (int, float)):
+            interval = record.get("video_frame_interval_seconds")
+            if not isinstance(interval, (int, float)) or not interval > 0:
+                interval = 1.0 / 30.0
+            if float(video_gap) > float(interval) * _VIDEO_HOLE_FRAME_INTERVALS:
+                problems.append(
+                    f"VIDEO_HOLE({name}, {float(video_gap):.3f}s at "
+                    f"+{float(record.get('video_max_gap_offset_seconds') or 0.0):.3f}s)"
+                )
+        audio_gap = record.get("audio_max_gap_seconds")
+        if isinstance(audio_gap, (int, float)) and float(audio_gap) > _AUDIO_HOLE_SECONDS:
+            problems.append(
+                f"AUDIO_HOLE({name}, {float(audio_gap):.3f}s at "
+                f"+{float(record.get('audio_max_gap_offset_seconds') or 0.0):.3f}s)"
+            )
+    return problems
 
 
 def evaluate_pts_pcr_continuity(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -620,6 +821,15 @@ def evaluate_pts_pcr_continuity(records: list[dict[str, Any]]) -> dict[str, Any]
     PCR cadence is deliberately NOT asserted and the tick unit is never assumed
     for a gap verdict.  A non-forward PCR (modulo 2**42) fails; a missing PCR
     is UNVERIFIED.  This intentionally narrows the "gap-free" claim to PTS.
+
+    **Packet gaps are the third, internal check (U57).**  PTS is only sampled at
+    segment heads, so a frozen picture *inside* a segment is invisible to it --
+    measured at the 2026-09-26 changeover, public/seg000003655 drops 0.600 s of
+    video at +0.833 s while its head-to-head PTS step stays legal.  Each record's
+    per-stream packet gaps (collected by ``_default_probe``) are judged here:
+    video against the stream's own frame interval, audio against a fixed 50 ms
+    bar.  A hole is named with its gap and offset, e.g.
+    ``VIDEO_HOLE(public/seg000003655.ts, 0.600s at +0.833s)``.
     """
 
     problems: list[str] = []
@@ -634,45 +844,62 @@ def evaluate_pts_pcr_continuity(records: list[dict[str, Any]]) -> dict[str, Any]
     pcr_values = [record.get("pcr_first") for record in records]
     durations = [record.get("duration") for record in records]
 
-    if any(value is None for value in pts_values):
+    # Packet-level holes are PROVEN from the packet timeline alone, so they are
+    # evaluated before the PTS/PCR presence gates.  On a host whose TSDuck
+    # payload carries no `pcrextract` plugin (the shipped one has four processor
+    # plugins and not that one) every segment reports no PCR, and the presence
+    # gate below would return a bare "no PCR" UNVERIFIED while a measured 0.600 s
+    # video hole went unnamed.  A proven defect outranks a missing sanity signal.
+    problems.extend(_packet_hole_problems(records))
+
+    pts_missing = any(value is None for value in pts_values)
+    pcr_missing = any(value is None for value in pcr_values)
+    if pts_missing and not problems:
         return {
             "status": Verdict.UNVERIFIED,
             "problems": ["one or more segments report no video PTS"],
             "detail": "one or more segments report no video PTS",
         }
-    if any(value is None for value in pcr_values):
+    if pcr_missing and not problems:
         return {
             "status": Verdict.UNVERIFIED,
             "problems": ["one or more segments report no PCR"],
             "detail": "one or more segments report no PCR",
         }
 
-    for index in range(1, len(pts_values)):
-        delta = _modular_delta(pts_values[index - 1], pts_values[index], PTS_MODULUS)
-        previous_duration = durations[index - 1]
-        if delta == 0:
-            problems.append(f"segment {index} PTS did not advance (delta 0 ticks)")
-            continue
-        if previous_duration is not None:
-            expected = round(float(previous_duration) * PTS_CLOCK_HZ)
-            # A wrap produces a small positive delta; a real forward step is
-            # ~expected.  Anything far from expected (including a wrap-induced
-            # near-modulus value) is a gap or overlap.
-            if abs(delta - expected) > _PTS_FRAME_TOLERANCE_TICKS:
-                problems.append(
-                    f"segment {index} PTS delta {delta} ticks != expected {expected}"
-                )
+    if pts_missing:
+        problems.append("one or more segments report no video PTS")
+    else:
+        for index in range(1, len(pts_values)):
+            delta = _modular_delta(pts_values[index - 1], pts_values[index], PTS_MODULUS)
+            previous_duration = durations[index - 1]
+            if delta == 0:
+                problems.append(f"segment {index} PTS did not advance (delta 0 ticks)")
+                continue
+            if previous_duration is not None:
+                expected = round(float(previous_duration) * PTS_CLOCK_HZ)
+                # A wrap produces a small positive delta; a real forward step is
+                # ~expected.  Anything far from expected (including a wrap-induced
+                # near-modulus value) is a gap or overlap.
+                if abs(delta - expected) > _PTS_FRAME_TOLERANCE_TICKS:
+                    problems.append(
+                        f"segment {index} PTS delta {delta} ticks != expected {expected}"
+                    )
 
-    for index in range(1, len(pcr_values)):
-        delta = _modular_delta(pcr_values[index - 1], pcr_values[index], PCR_MODULUS)
-        if delta == 0:
-            problems.append(f"segment {index} PCR did not advance (delta 0 ticks)")
-            break
+    if pcr_missing:
+        problems.append("one or more segments report no PCR")
+    else:
+        for index in range(1, len(pcr_values)):
+            delta = _modular_delta(pcr_values[index - 1], pcr_values[index], PCR_MODULUS)
+            if delta == 0:
+                problems.append(f"segment {index} PCR did not advance (delta 0 ticks)")
+                break
 
     return {
         "status": Verdict.FAIL if problems else Verdict.PASS,
         "problems": problems,
-        "detail": "PTS advances gap-free; PCR monotonic (cadence not asserted)"
+        "detail": "PTS advances gap-free; packet gaps within tolerance; "
+        "PCR monotonic (cadence not asserted)"
         if not problems
         else "; ".join(problems),
     }
@@ -871,15 +1098,21 @@ def _copy_segment(
     extinf: float,
     evidence: dict[str, Any],
 ) -> dict[str, Any] | None:
-    """Copy one TS immutably; record a partial/missing segment as a blocker."""
+    """Copy one TS immutably; record a partial/missing segment as a blocker.
 
+    Both live touches are race-aware (U48): the presence check and the byte
+    read are each retried through the relay's replace before a segment is
+    called missing or its capture called incomplete.
+    """
+
+    present = _wait_for_file(source)
     record: dict[str, Any] = {
         "name": source.name,
         "sequence": sequence,
         "extinf_seconds": extinf,
-        "present": source.is_file(),
+        "present": present,
     }
-    if not source.is_file():
+    if not present:
         record["capture_status"] = "missing"
         evidence["blocking_reasons"].append(f"referenced segment missing: {source.name}")
         return None
@@ -888,14 +1121,11 @@ def _copy_segment(
         size_before = source.stat().st_size
         if size_before <= 0:
             raise CaptureError(f"segment is empty: {source.name}")
-        digest = hashlib.sha256()
-        with source.open("rb") as src, snapshot_path.open("wb") as dst:
-            while True:
-                chunk = src.read(1024 * 1024)
-                if not chunk:
-                    break
-                digest.update(chunk)
-                dst.write(chunk)
+        data = _read_live_bytes(source)
+        if len(data) != size_before:
+            raise CaptureError(f"segment changed size during capture: {source.name}")
+        digest = hashlib.sha256(data)
+        snapshot_path.write_bytes(data)
         size_after = source.stat().st_size
         copied = snapshot_path.stat().st_size
         if copied != size_before or size_after != size_before:
@@ -1043,6 +1273,88 @@ def measure_window(
     return result
 
 
+def measure_segment_peaks(
+    records: list[dict[str, Any]],
+    *,
+    ffmpeg: Path | None = None,
+    run: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Highest true peak of any ONE captured segment, and which segment.
+
+    ``measure_window`` measures the CONCAT window.  That number is not the max
+    over the window's members: ffmpeg decodes the concat as one continuous
+    stream, so a member's own peak can be absent from the window's reported peak
+    (U49 measured both directions of that on real emitted HLS -- a window 0.5 dB
+    above one member and 0.1 dB below another).  This walks the captured
+    segments one at a time so a single overshooting segment cannot be averaged
+    away by its neighbours.
+
+    Evidence only, never a verdict input: the caller decides what an overshoot
+    means.  Unmeasurable segments are listed rather than assumed clean, and the
+    peak stays None when nothing could be measured -- an absent measurement must
+    not read as a pass.
+
+    Cost: one short analyzer run per captured segment (a release-grade 180 s
+    window at a 2 s cadence is ~90 runs, each decoding ~2 s of audio).
+    """
+
+    runner = run or _default_run
+    peaks: list[tuple[float, str]] = []
+    unmeasured: list[str] = []
+    for record in records:
+        if record.get("capture_status") != "complete":
+            continue
+        name = str(record.get("name") or record.get("snapshot_path") or "?")
+        snapshot_path = record.get("snapshot_path")
+        if not snapshot_path:
+            unmeasured.append(name)
+            continue
+        analysis = runner(
+            [
+                str(ffmpeg) if ffmpeg is not None else "ffmpeg",
+                "-hide_banner",
+                "-nostats",
+                "-i",
+                str(snapshot_path),
+                "-vn",
+                "-af",
+                _SEGMENT_PEAK_GRAPH,
+                "-f",
+                "null",
+                "-",
+            ]
+        )
+        if not analysis.get("ok"):
+            unmeasured.append(name)
+            continue
+        found = [
+            float(value)
+            for value in _SEGMENT_PEAK_RE.findall(analysis.get("stderr") or "")
+            if value != "-inf"
+        ]
+        if not found:
+            unmeasured.append(name)
+            continue
+        # astats prints a Peak level per channel and an Overall section; Overall
+        # is the max over channels, so the max over every hit IS the Overall.
+        peaks.append((max(found), name))
+
+    if not peaks:
+        return {
+            "true_peak_max_segment_dbtp": None,
+            "true_peak_max_segment": None,
+            "true_peak_segments_measured": 0,
+            "true_peak_segments_unmeasured": unmeasured,
+        }
+    peak, name = max(peaks, key=lambda item: item[0])
+    return {
+        "true_peak_max_segment_dbtp": round(peak, 6),
+        "true_peak_max_segment": name,
+        "true_peak_segments_measured": len(peaks),
+        "true_peak_segments_unmeasured": unmeasured,
+    }
+
+
 def _resolve_tsp() -> Path | None:
     candidates = [
         Path(r"C:\Program Files\CivicCast (Native)\packs\native-server-binaries\payload\tsduck\bin\tsp.exe"),
@@ -1095,11 +1407,24 @@ def _default_probe(
     *,
     tsp: Path | None = None,
 ) -> dict[str, Any]:
-    """Probe one segment for first video PTS, duration, and first PCR.
+    """Probe one segment for first video PTS, duration, first PCR, packet gaps.
 
-    PTS + duration come from ffprobe; PCR comes from TSDuck when available.
-    A missing PTS or missing PCR is reported as ``None`` and the continuity
-    check treats that as UNVERIFIED rather than PASS.
+    PTS + duration + the packet timelines come from ffprobe; PCR comes from
+    TSDuck when available.  A missing PTS or missing PCR is reported as ``None``
+    and the continuity check treats that as UNVERIFIED rather than PASS.
+
+    **ONE call, every stream (U57).**  ``-select_streams v:0`` is what hid the
+    defect: the video packet timeline alone cannot say whether audio kept
+    running through a video hole.  Measured on the nine fixture segments, this
+    call costs 45 ms/segment against 38 ms for the v:0-only call, and
+    ``stream.duration`` survives next to ``packet=pts_time`` on both ffprobe
+    builds on this host (station n8.1.2 and the PATH build), so nothing was lost
+    by widening it.
+
+    The packet gaps are judged by ``_packet_hole_problems`` via
+    ``evaluate_pts_pcr_continuity``; the ``video_frame_interval_seconds`` field
+    carries the derived interval so that judgement happens next to the gap it
+    belongs to.
     """
 
     result = _default_run(
@@ -1107,10 +1432,9 @@ def _default_probe(
             str(ffprobe),
             "-v",
             "error",
-            "-select_streams",
-            "v:0",
             "-show_entries",
-            "stream=start_pts,duration",
+            "stream=codec_type,start_pts,duration,r_frame_rate,sample_rate:"
+            "packet=pts_time,stream_index",
             "-of",
             "json",
             str(segment),
@@ -1125,7 +1449,23 @@ def _default_probe(
         return {"status": Verdict.UNVERIFIED, "detail": "ffprobe emitted invalid JSON"}
 
     streams = payload.get("streams") or []
-    stream = streams[0] if streams else {}
+    # No `index` field is emitted for a stream that was not requested, so a
+    # stream's POSITION in this array is the value its packets carry as
+    # `stream_index` (verified: video 0, audio 1 on all nine fixture segments).
+    video_stream: dict[str, Any] = {}
+    audio_stream: dict[str, Any] = {}
+    video_index: int | None = None
+    audio_index: int | None = None
+    for position, candidate in enumerate(streams):
+        if not isinstance(candidate, dict):
+            continue
+        if candidate.get("codec_type") == "video" and video_index is None:
+            video_stream = candidate
+            video_index = position
+        elif candidate.get("codec_type") == "audio" and audio_index is None:
+            audio_stream = candidate
+            audio_index = position
+    stream = video_stream
     duration = None
     try:
         duration = float(stream.get("duration"))
@@ -1133,11 +1473,48 @@ def _default_probe(
         duration = None
     start_pts = stream.get("start_pts")
     pcr_first = _first_pcr_from_tsp(tsp, segment) if tsp is not None else None
+
+    packets: dict[Any, list[float]] = {}
+    for packet in payload.get("packets") or []:
+        if not isinstance(packet, dict):
+            continue
+        try:
+            packet_pts = float(packet["pts_time"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        packets.setdefault(packet.get("stream_index"), []).append(packet_pts)
+
+    video_stats = _inter_packet_gap_stats(packets.get(video_index, []))
+    audio_stats = _inter_packet_gap_stats(packets.get(audio_index, []))
+
+    # The frame interval comes from the stream's own `r_frame_rate` and never
+    # from a hard-coded 30 -- but never BELOW the cadence the packets show.
+    # ffprobe reports `60/1` for government/seg3711, whose real cadence is 30 fps;
+    # a naive two-frame bar from that (0.033333 s) is shorter than the healthy
+    # step the segment actually has (0.033334 s) and would flag all 59 of them.
+    frame_interval = _parse_frame_interval(stream.get("r_frame_rate"))
+    observed_interval = video_stats.get("min_positive_gap_seconds")
+    if isinstance(observed_interval, (int, float)) and observed_interval > 0:
+        observed_interval = float(observed_interval)
+        frame_interval = (
+            observed_interval
+            if frame_interval is None
+            else max(frame_interval, observed_interval)
+        )
+
     return {
         "status": Verdict.PASS,
         "video_start_pts": start_pts,
         "duration": duration,
         "pcr_first": pcr_first,
+        "video_packets": video_stats.get("packets"),
+        "video_max_gap_seconds": video_stats.get("max_gap_seconds"),
+        "video_max_gap_offset_seconds": video_stats.get("max_gap_offset_seconds"),
+        "video_frame_interval_seconds": frame_interval,
+        "audio_packets": audio_stats.get("packets"),
+        "audio_max_gap_seconds": audio_stats.get("max_gap_seconds"),
+        "audio_max_gap_offset_seconds": audio_stats.get("max_gap_offset_seconds"),
+        "audio_sample_rate": audio_stream.get("sample_rate"),
     }
 
 
@@ -1286,6 +1663,12 @@ def verify_channel(
         min_duration_seconds=min_duration_seconds,
         ffmpeg=ffmpeg,
         run=run,
+    )
+    # ADD, do not replace: true_peak_dbfs above is the CONCAT window's peak and
+    # stays exactly as it was.  A member's own peak is not the window's peak, so
+    # the per-segment question needs its own measurement (U49).
+    snapshot["audio_window"].update(
+        measure_segment_peaks(snapshot["segments"], ffmpeg=ffmpeg, run=run)
     )
     snapshot["status"] = snapshot["audio_window"]["status"]
     return snapshot

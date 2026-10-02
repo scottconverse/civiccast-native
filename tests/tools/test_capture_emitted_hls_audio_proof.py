@@ -1740,3 +1740,301 @@ def test_scratch_directory_is_removed_after_capture(tmp_path: Path) -> None:
     # Snapshot copies live inside the supplied scratch dir, never in the HLS root.
     for record in snapshot["segments"]:
         assert root not in Path(record["snapshot_path"]).parents
+
+
+# --- U57: per-segment packet-level holes ------------------------------------
+
+
+_U57_VIDEO_INTERVAL = 0.033334
+
+
+def test_continuity_flags_mid_segment_video_hole() -> None:
+    """A 0.600 s video gap inside one segment FAILs with its numbers (U57).
+
+    These are the numbers the station's own ffprobe reports for
+    public/seg000003655 at the 2026-09-26 programme changeover: 35 video
+    packets, largest gap 0.600 s starting 0.833 s after the first packet.  Every
+    head-to-head PTS step in that window stays legal, so the head-level check
+    passed it -- the hole lives strictly inside the segment, and audio kept
+    running through it (0.021 s max audio gap).
+    """
+
+    mod = _load()
+    result = mod.evaluate_pts_pcr_continuity(
+        [
+            {
+                "name": "public/seg000003654.ts",
+                "video_start_pts": 90_000 * 100,
+                "pcr_first": 5_000_000_000,
+                "duration": 2.0,
+            },
+            {
+                "name": "public/seg000003655.ts",
+                "video_start_pts": 90_000 * 102,
+                "pcr_first": 5_000_180_000,
+                "duration": 2.0,
+                "video_max_gap_seconds": 0.600,
+                "video_max_gap_offset_seconds": 0.833334,
+                "video_frame_interval_seconds": _U57_VIDEO_INTERVAL,
+                "audio_max_gap_seconds": 0.021334,
+                "audio_max_gap_offset_seconds": 1.2,
+            },
+        ]
+    )
+
+    assert result["status"] == mod.Verdict.FAIL
+    assert result["problems"] == [
+        "VIDEO_HOLE(public/seg000003655.ts, 0.600s at +0.833s)"
+    ], result["problems"]
+
+
+def test_continuity_flags_mid_segment_audio_hole() -> None:
+    """An audio gap over 50 ms FAILs too -- a video-only check would miss it."""
+
+    mod = _load()
+    result = mod.evaluate_pts_pcr_continuity(
+        [
+            {
+                "name": "public/seg000003700.ts",
+                "video_start_pts": 90_000 * 100,
+                "pcr_first": 5_000_000_000,
+                "duration": 2.0,
+                "video_max_gap_seconds": 0.033334,
+                "video_frame_interval_seconds": _U57_VIDEO_INTERVAL,
+                "audio_max_gap_seconds": 0.448,
+                "audio_max_gap_offset_seconds": 0.512,
+            },
+        ]
+    )
+
+    assert result["status"] == mod.Verdict.FAIL
+    assert result["problems"] == [
+        "AUDIO_HOLE(public/seg000003700.ts, 0.448s at +0.512s)"
+    ], result["problems"]
+
+
+def test_continuity_packet_gap_threshold_is_strict() -> None:
+    """Exactly two frame intervals (and exactly 50 ms of audio) is NOT a hole.
+
+    The measured healthy step and the declared interval disagree in the fourth
+    decimal (0.033334 s observed vs 0.033333 s from 30/1); a >= comparison
+    would turn every healthy step of a whole channel into a hole.
+    """
+
+    mod = _load()
+    record = {
+        "name": "public/seg000003654.ts",
+        "video_start_pts": 90_000 * 100,
+        "pcr_first": 5_000_000_000,
+        "duration": 2.0,
+        "video_frame_interval_seconds": _U57_VIDEO_INTERVAL,
+        "audio_max_gap_seconds": 0.05,
+        "audio_max_gap_offset_seconds": 0.0,
+    }
+
+    at_the_bar = mod.evaluate_pts_pcr_continuity(
+        [{**record, "video_max_gap_seconds": 2 * _U57_VIDEO_INTERVAL,
+          "video_max_gap_offset_seconds": 0.0}]
+    )
+    assert at_the_bar["status"] == mod.Verdict.PASS, at_the_bar["problems"]
+
+    over_the_bar = mod.evaluate_pts_pcr_continuity(
+        [{**record, "video_max_gap_seconds": 2 * _U57_VIDEO_INTERVAL + 1e-6,
+          "video_max_gap_offset_seconds": 0.0}]
+    )
+    assert over_the_bar["status"] == mod.Verdict.FAIL
+    assert over_the_bar["problems"] == [
+        "VIDEO_HOLE(public/seg000003654.ts, 0.067s at +0.000s)"
+    ], over_the_bar["problems"]
+
+
+def test_continuity_passes_clean_window_carrying_packet_stats() -> None:
+    """A genuinely continuous window with packet stats still PASSes.
+
+    This is the false-positive control for the new check: the 30 fps cadence of
+    a healthy segment must not read as a hole.
+    """
+
+    mod = _load()
+    result = mod.evaluate_pts_pcr_continuity(
+        [
+            {
+                "name": f"public/seg{i:09d}.ts",
+                "video_start_pts": 90_000 * (100 + 2 * i),
+                "pcr_first": 5_000_000_000 + 180_000 * i,
+                "duration": 2.0,
+                "video_packets": 60,
+                "video_max_gap_seconds": 0.033334,
+                "video_max_gap_offset_seconds": 0.0,
+                "video_frame_interval_seconds": _U57_VIDEO_INTERVAL,
+                "audio_packets": 83,
+                "audio_max_gap_seconds": 0.021334,
+                "audio_max_gap_offset_seconds": 1.0,
+            }
+            for i in range(4)
+        ]
+    )
+
+    assert result["status"] == mod.Verdict.PASS
+    assert result["problems"] == []
+    assert "packet gaps within tolerance" in result["detail"]
+
+
+def test_continuity_names_hole_even_when_pcr_is_missing() -> None:
+    """A proven hole outranks a missing PCR: FAIL, with the hole named.
+
+    The shipped TSDuck payload carries no `pcrextract` plugin, so on that host
+    every segment reports no PCR.  If the presence gate ran first it would
+    return a bare "no PCR" UNVERIFIED and a measured 0.600 s hole would go
+    unnamed -- the same blindness this check exists to remove.
+    """
+
+    mod = _load()
+    result = mod.evaluate_pts_pcr_continuity(
+        [
+            {
+                "name": "public/seg000003655.ts",
+                "video_start_pts": 90_000 * 100,
+                "pcr_first": None,
+                "duration": 2.0,
+                "video_max_gap_seconds": 0.600,
+                "video_max_gap_offset_seconds": 0.833334,
+                "video_frame_interval_seconds": _U57_VIDEO_INTERVAL,
+            },
+        ]
+    )
+
+    assert result["status"] == mod.Verdict.FAIL, result
+    assert "VIDEO_HOLE(public/seg000003655.ts, 0.600s at +0.833s)" in result["problems"]
+    assert "one or more segments report no PCR" in result["problems"]
+
+
+def test_parse_frame_interval_reads_rational_and_rejects_junk() -> None:
+    mod = _load()
+
+    assert mod._parse_frame_interval("30/1") == pytest.approx(1 / 30)
+    assert mod._parse_frame_interval("30000/1001") == pytest.approx(1001 / 30000)
+    for junk in ("0/0", "60/0", "", "30", None, 30, "x/y"):
+        assert mod._parse_frame_interval(junk) is None, junk
+
+
+def test_inter_packet_gap_stats_reports_largest_gap_offset_and_cadence() -> None:
+    """The stats are computed on the PTS-sorted timeline, with a real offset."""
+
+    mod = _load()
+    pts = [0.0, 0.033334, 0.066668, 0.666668, 0.700002, 0.733336]
+
+    stats = mod._inter_packet_gap_stats(pts)
+
+    assert stats["packets"] == 6
+    assert stats["max_gap_seconds"] == pytest.approx(0.600, abs=1e-9)
+    assert stats["max_gap_offset_seconds"] == pytest.approx(0.066668, abs=1e-9)
+    assert stats["min_positive_gap_seconds"] == pytest.approx(0.033334, abs=1e-9)
+
+    # Decode order may put a later PTS first; sorting is what makes the gap real.
+    shuffled = [pts[3], pts[0], pts[5], pts[1], pts[4], pts[2]]
+    assert mod._inter_packet_gap_stats(shuffled)["max_gap_seconds"] == pytest.approx(
+        0.600, abs=1e-9
+    )
+
+    empty = mod._inter_packet_gap_stats([])
+    assert empty["packets"] == 0
+    assert empty["max_gap_seconds"] is None
+
+
+_U57_FIXTURES_ENV = "CIVICAST_U57_FIXTURES"
+
+
+def _u57_fixture_dir() -> Path | None:
+    import os
+
+    raw = os.environ.get(_U57_FIXTURES_ENV, "").strip()
+    if not raw:
+        return None
+    root = Path(raw)
+    return root if root.is_dir() else None
+
+
+@pytest.mark.skipif(
+    _u57_fixture_dir() is None,
+    reason=f"set {_U57_FIXTURES_ENV} to the U57 fixture copies to run this",
+)
+def test_u57_real_changeover_fixtures_report_the_hole() -> None:
+    """The real emitted segments: the hole is named and its neighbours PASS.
+
+    The fixtures are plain copies of station output taken at the 2026-09-26
+    changeover (sha256 recorded in the oversight folder).  They are not in this
+    repository, so the test skips unless CIVICAST_U57_FIXTURES points at them.
+    """
+
+    mod = _load()
+    root = _u57_fixture_dir()
+    assert root is not None
+    ffprobe = mod._resolve_ffprobe()
+    assert ffprobe is not None and Path(ffprobe).is_file(), "ffprobe not available"
+
+    def probed(channel: str, sequences: list[int]) -> list[dict]:
+        records = []
+        for sequence in sequences:
+            name = f"seg{sequence:09d}.ts"
+            payload = mod._default_probe(ffprobe, root / channel / name)
+            assert payload["status"] == mod.Verdict.PASS, (name, payload)
+            records.append({"name": f"{channel}/{name}", **payload})
+        return records
+
+    public = probed("public", [3653, 3654, 3655, 3656, 3657])
+    changeover = public[2]
+    assert changeover["video_packets"] == 35
+    assert changeover["video_max_gap_seconds"] == pytest.approx(0.600, abs=1e-6)
+    assert changeover["video_max_gap_offset_seconds"] == pytest.approx(0.833334, abs=1e-6)
+    assert changeover["audio_max_gap_seconds"] == pytest.approx(0.021334, abs=1e-6)
+    assert public[1]["video_max_gap_seconds"] == pytest.approx(0.033334, abs=1e-6)
+
+    government = probed("government", [3710, 3711, 3712, 3713])
+    changeover = government[1]
+    assert changeover["video_packets"] == 60
+    assert changeover["video_max_gap_seconds"] == pytest.approx(0.581334, abs=1e-6)
+    assert changeover["video_max_gap_offset_seconds"] == pytest.approx(1.933333, abs=1e-6)
+    # r_frame_rate says 60/1 on this segment and its real cadence is 30 fps: the
+    # derived interval must land on the observed cadence and not the declared
+    # one, or the two-frame bar (0.033333 s) would sit at the healthy step
+    # (0.033334 s) and all 59 healthy gaps would be called holes.  Float PTS
+    # jitter leaves the observed cadence at 1/30 to within 0.1 ms.
+    assert mod._parse_frame_interval("60/1") == pytest.approx(1 / 60, abs=1e-9)
+    assert changeover["video_frame_interval_seconds"] == pytest.approx(1 / 30, abs=1e-4)
+
+    # PTS heads on the public chain are continuous (measured: every head delta
+    # equals the previous segment's duration to the tick), so the hole is the
+    # only thing that can fail this window.
+    with_pcr = [
+        {**record, "pcr_first": 5_000_000_000 + 180_000 * i}
+        for i, record in enumerate(public)
+    ]
+    verdict = mod.evaluate_pts_pcr_continuity(with_pcr)
+    assert verdict["status"] == mod.Verdict.FAIL, verdict
+    assert verdict["problems"] == [
+        "VIDEO_HOLE(public/seg000003655.ts, 0.600s at +0.833s)"
+    ], verdict["problems"]
+
+    # A contiguous run of clean neighbours still PASSes, on both sides of the
+    # changeover.  (Dropping only the middle segment would not be a fair clean
+    # window: the head check would then see a 336000-tick jump against the
+    # previous segment's 180000-tick duration and fail on that -- correctly.)
+    clean_windows = [with_pcr[:2], with_pcr[3:]]
+    for window in clean_windows:
+        assert len(window) >= 2
+        verdict = mod.evaluate_pts_pcr_continuity(window)
+        assert verdict["status"] == mod.Verdict.PASS, (window, verdict["problems"])
+
+    # And the government window names its own hole.  Its 3711 -> 3712 head delta
+    # is 1500 ticks (16.7 ms) short of the declared duration, under the 3000-tick
+    # frame tolerance, so that head check passes and the hole is what fails.
+    government_pcr = [
+        {**record, "pcr_first": 5_000_000_000 + 180_000 * i}
+        for i, record in enumerate(government)
+    ]
+    verdict = mod.evaluate_pts_pcr_continuity(government_pcr)
+    assert verdict["status"] == mod.Verdict.FAIL, verdict
+    assert verdict["problems"] == [
+        "VIDEO_HOLE(government/seg000003711.ts, 0.581s at +1.933s)"
+    ], verdict["problems"]
