@@ -10,8 +10,13 @@ currently available.
 1. Read the exact tester handoff and the Windows release-trust instructions.
 2. Use the complete signed beta.10 USB/LAN kit for a first install. The kit
    includes the installer, runtime packs, and the signed `station\` model
-   bundle (about 21 GB). A GitHub download by itself does not provide the model
-   bundle needed by a new station.
+   bundle (about 21 GB), the offline way to bring the large AI components. The
+   installer itself is small: its window also explains each large component,
+   uses a copy already on the computer (**Found locally - verified**) and
+   downloads the rest with a progress display and a **Stop downloading**
+   button. A first install that has no kit and no earlier install and relies
+   only on downloads is not yet proven for beta.10, so use the kit your
+   handoff names.
 3. If this is an upgrade from an already-installed beta.3-or-later station,
    use only the exact release assets the handoff names. Existing recordings,
    database data, settings, and cached AI models are retained by the supported
@@ -49,7 +54,8 @@ currently available.
 ## First setup and recovery
 
 1. On the station itself, open **First setup** from the **CivicCast Operator
-   Console** shortcut or the installer handoff URL.
+   Console** shortcut, or by opening `http://127.0.0.1:8000/operator/` in a
+   browser on the station.
 2. Enter the station name and create the first administrator account.
 3. When CivicCast shows the one-time recovery codes, select **Print kit** or
    **Save kit** and store the result away from the computer. Do not put codes

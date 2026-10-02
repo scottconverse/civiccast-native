@@ -58,12 +58,20 @@ WSL2/Ubuntu-hosted deployment; that lane's history lives in the separate,
 private `scottconverse/civiccast` repository -- see
 [BRANCHES.md](BRANCHES.md).)
 
-The setup app also sets up the local Ollama AI runtime for you (reusing a
-healthy existing install, or installing a pinned version if none is present)
-and ensures the same three-tag target set of standard summary and
-translation models, downloading only the tags still missing, in the
-background once the console is already open, rather than making you install
-Ollama yourself.
+The installer itself is small; the large AI components (caption engine, local
+summary and translation model, and on capable hardware an optional
+higher-quality caption engine and GPU acceleration) are not inside it. During
+install the CivicCast Installer window explains each large component, uses a
+copy already on the computer (**Found locally - verified**, for example from a
+USB/LAN kit's `station\` folder or an earlier install), and downloads the rest
+with a progress display and a **Stop downloading** button. The complete signed
+USB/LAN kit (about 21 GB with its `station\` model bundle) is the offline
+alternative. A first install with no kit and no earlier install is not yet
+proven for beta.10: the setup step that activates the station fails closed
+when it cannot find the model packs, so use the kit your handoff names. You do
+not install Ollama yourself, and there is no further background download after
+setup; a technical admin can fetch or import models later with
+`civiccast model download` or `civiccast model import-offline`.
 
 ## How do I verify the installer download?
 
@@ -74,15 +82,15 @@ signing or attestation status is called out separately in each release.
 
 ## What do I need before the first real meeting?
 
-- A Windows 11, Linux, or macOS host that passes `civiccast doctor`.
+- A Windows 11 host that passes `civiccast doctor`.
 - Local durable storage prepared by the setup app, or Postgres 17+ with
   `DATABASE_URL` configured by a technical admin.
 - A first local admin account and saved recovery kit from the Setup screen.
 - FFmpeg for packaging video.
 - Ollama and model bundles if you want local summaries or translation. The
-  Windows setup app provisions Ollama and downloads the model bundles for
-  you automatically in the background. Bring your own API key instead if you
-  choose a paid hosted model.
+  Windows setup app provisions Ollama and delivers the model bundles during
+  install (from the USB/LAN kit or the installer's download screen; see
+  above). Bring your own API key instead if you choose a paid hosted model.
 - The camera, encoder, or NDI/RTMP/RTSP/SRT source you plan to use.
 - Archive and notification credentials only if your station will use those
   providers during the test.

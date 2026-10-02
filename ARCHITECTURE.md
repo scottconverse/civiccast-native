@@ -211,7 +211,8 @@ operator handoff:
   controls.
 - Real-Postgres tests exercise summary, records, publish, subscribe, podcast,
   schedule, and live-store paths.
-- The installer UI is a guided wizard with an operator-console handoff URL.
+- The installer UI is a guided wizard that finishes by opening the operator
+  console on the station; first setup is admitted by loopback address alone.
 - Windows private-key writes apply local ACL restrictions.
 - Browser gates include a full-stack operator publish-approval cycle against a
   live FastAPI fixture.

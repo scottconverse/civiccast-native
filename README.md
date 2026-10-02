@@ -27,8 +27,8 @@ and the five runtime `.ccpack` packs are attached to the
 [`v1.0.0-beta.7` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7),
 with `SHA256SUMS.txt` and installer sidecar metadata for checksum checks;
 the installer itself carries the Authenticode signature. The ~21 GB AI-model
-`station\` bundle is deliberately not a release asset (see "Install and run"
-below). `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable public
+`station\` bundle (the offline alternative to the installer's own download
+screen) is deliberately not a release asset (see "Install and run" below). `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable public
 release) are now superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable
 assets) remains superseded; `v1.0.0-beta.2` was never published -- it exists
 only as an internal Gate A upgrade-baseline kit (see
@@ -374,8 +374,12 @@ and no human field tester has signed off on it.
   `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
   `v1.0.0-beta.2` was never published -- it exists only as an internal
   Gate A upgrade-baseline kit, not a release a tester can obtain.
-  A **first-time install** needs the USB/LAN-delivered model bundle
-  (~21 GB) -- the GitHub download alone does not include it.
+  A **first-time install** brings its large AI components either in the
+  USB/LAN-delivered model bundle (~21 GB, the offline alternative) or, for
+  components the installer can download, through the installer window's
+  download screen -- the GitHub download alone does not include them. A first
+  install that relies only on downloads is not yet proven for beta.10; see
+  [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md).
   **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
   (`setup.exe` + packs + `station\` folder) to the station and run
   `setup.exe` over the existing install; recordings, settings, database,

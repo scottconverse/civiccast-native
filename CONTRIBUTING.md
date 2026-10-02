@@ -92,7 +92,7 @@ purpose so it does not get copied into a deployment script unintentionally.
 
 The operator portal uses installer-managed local SQLite storage by default in
 dev and standalone beta runs. Start the backend with the normal app factory,
-open the Setup screen from the installer handoff URL, and choose **Prepare
+open the Setup screen (`/operator/`, from the same computer), and choose **Prepare
 storage** before creating the first admin. Use Postgres only when you are
 testing Postgres-specific migration or deployment behavior; see
 [`civiccast/apps/portal-operator/README.md`](civiccast/apps/portal-operator/README.md)
