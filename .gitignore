@@ -284,8 +284,6 @@ UsersscottAppDataLocalTemp*
 /runs/
 **/coder-config/
 *.ccpack
-*.ts
-!tests/fixtures/media/README*
 *.jsonl
 *.mp4
 *.wav
