@@ -240,7 +240,9 @@ itself — no CLI worker needed. Posture for a three-channel station:
 - **Program-start speed and the conform cache (issue #156, fixed):** an asset
   that has aired before starts within seconds — its canonical conform is kept
   in a persistent cache (`CIVICCAST_EGRESS_WORK_DIR/conform-cache/`, bounded by
-  `CIVICCAST_CONFORM_CACHE_GB`, default 20; set `0` to disable). The **first-ever
+  `CIVICCAST_CONFORM_CACHE_GB`, default 60 since beta.10 -- it was 20, and a
+  4.4-hour asset measured about 11 GB, so a few long assets exceeded a 20 GB
+  cache and were rebuilt repeatedly; set `0` to disable). The **first-ever
   airing of a long asset still conforms at airtime** (same duration as before —
   schedule long premieres with that in mind, or air a short lead-in first); a
   join-in-progress first airing conforms only the remaining portion, exactly as

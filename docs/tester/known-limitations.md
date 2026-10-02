@@ -21,14 +21,37 @@ The published beta.7's eight-hour physical-machine soak ran with live captions
 off. It is not captions-ON endurance proof. Live captions remain off by default
 on new installations; an explicitly saved setting survives upgrades.
 
-Beta.8 is an unpublished candidate with caption stabilization, restart timing
-and retention-processing repairs. Local Blackwell evidence includes a roughly
-7.5-minute recovery capture with sidecar-to-stream text correspondence and a
-separate loaded CUDA/float16 model check. It does not prove long-run stability
-or the final public installer's behavior. Startup overload remains a risk to
-monitor. The existing two-segment backlog limit and initial 120-second pause
-remain unchanged. Preserve logs and report pauses or missing captions rather
-than changing thresholds to make a test pass.
+`v1.0.0-beta.10` is the next candidate and the current owner-held unpublished
+candidate (`v1.0.0-beta.8` and `v1.0.0-beta.9` were never published, and their
+work is included in it). When it is published it will be a GitHub pre-release,
+not a production release. Its lab evidence is an eight-hour watched run on a
+three-channel lab station; see
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md).
+The formal Gate A station acceptance has not been run for it, and no human
+field tester has signed off on it.
+
+Known limits of the beta.10 candidate:
+
+- **Live-caption audio can be dropped under heavy load.** A caption worker that
+  falls behind now catches up by skipping its oldest audio instead of pausing
+  for minutes. In the eight-hour run this happened 13 times; on a quiet machine
+  the total was about 160 seconds of audio on two channels. Captions stay on
+  the air, but those seconds of speech have no caption. The cause is the
+  caption worker falling behind during long first-time media preparations. A
+  fix is the next work item and is not in beta.10. Preserve logs and report
+  missing captions rather than changing thresholds to make a test pass.
+- **Two program-change first attempts aborted and corrected themselves** in
+  about three seconds on the government channel, with no on-air effect.
+- **One known single-frame (0.033 second) video drop** at a part-to-part join
+  inside a program.
+- **A stretch of a source that is too quiet** for the speech leveling to reach
+  -16 LUFS is reported, not leveled.
+- **Carried over from beta.9 and not re-tested in the beta.10 run:** a channel
+  whose schedule runs out can stop and need a manual start; `/api/health` can
+  report healthy while a channel cannot air; the built-in decode-back check
+  failed on certain cue timings in beta.9.
+- **Not proven:** runs longer than eight hours, operation at a real station, SDI
+  hardware and a cable headend.
 
 ## Installer Trust
 

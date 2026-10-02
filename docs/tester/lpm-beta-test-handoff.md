@@ -21,7 +21,7 @@ tag is current.
 `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
 now superseded but still run; see "Upgrading from `v1.0.0-beta.1`" below and
 "Release Build To Use" for the download-only path. Beta.7 has exact-package
-upgrade proof from beta.5; that evidence does not certify a future beta.8 kit.
+upgrade proof from beta.5; that evidence does not certify a future beta.10 kit.
 
 If Sergio/LPM is still on a USB-delivered `v1.0.0-beta.1` station, that
 install is also superseded but still runs; see "Upgrading from
@@ -158,7 +158,7 @@ received; do not trust a hash copied from anywhere else.
    ```
 
    Historical filename example for a beta.5 USB/LAN kit (substitute the exact
-   filename from your current handoff, not a guessed beta.8 filename):
+   filename from your current handoff, not a guessed beta.10 filename):
 
    ```powershell
    Get-FileHash '.\CivicCast (Native)_1.0.0-beta.5_x64-setup.exe' -Algorithm SHA256

@@ -179,7 +179,7 @@ transcribe (U11, 2026-09-24; U23, 2026-09-25):
 
 `PUT /api/staff/station/profile` with `{"live_captions_enabled": false}`
 (role: `setup_admin`), or `true` to turn them on. It remains **off by default
-in beta.8** (`LIVE_CAPTIONS_DEFAULT` in `civiccast/installer/models.py`),
+in beta.10** (`LIVE_CAPTIONS_DEFAULT` in `civiccast/installer/models.py`),
 persisted in station-state explicitly at
 first-admin setup, returned by `GET /api/staff/station/profile`, and read on
 **every scan** — so turning it off stops the ASR within one poll interval on a
@@ -270,8 +270,9 @@ GPU use. An environment request for CUDA alone is not evidence that CUDA
 loaded. If backend identity is unavailable, the diagnostic says so rather
 than presenting the request as the result.
 
-Beta.8 development evidence and its limits are in the
-[verification record](../releases/v1.0.0-beta.8-verification.md). These
+The beta.10 candidate's lab evidence and its limits (including 13 catch-up
+discard events in an eight-hour three-channel run) are in the
+[verification record](../releases/v1.0.0-beta.10-verification.md). These
 changes do not raise the backlog threshold or shorten overload backoff.
 
 If a channel's caption-session reset fails (for example, a locked caption

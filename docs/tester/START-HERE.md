@@ -34,7 +34,7 @@ upgrade-baseline kit, never a release a tester receives.
 available, check
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) first
 -- it is the single source of truth for which tag is current, and this page
-may not have been updated yet. The beta.8 candidate remains unpublished until
+may not have been updated yet. The beta.10 candidate remains unpublished until
 that record and the public release page say otherwise.**
 
 A first-time install on a station with no prior CivicCast install needs the
@@ -53,7 +53,7 @@ is download-only (`setup.exe` plus the runtime packs, no `station\` folder
 needed) and keeps the station's existing recordings, database, and AI
 models. The published beta.7 release has download-only upgrade proof from
 beta.5; consult its exact verification record for that evidence. This is not
-advance acceptance of a beta.8 upgrade.
+advance acceptance of a beta.10 upgrade.
 
 ## Clean-Machine Test Rule
 
