@@ -156,6 +156,94 @@ class TestCaptionStabilizer:
         ]
         assert len({cue.cue_id for cue in stabilizer.committed()}) == 2
 
+    def test_live_confirmation_commits_reworded_continuous_speech(self) -> None:
+        """Live geometry must commit real speech even when ASR re-words it.
+
+        Measured on the Blackwell GPU run (2026-09-16, device=cuda/float16): the
+        caption tap fed 5 s segments with 4 s of overlap, so every ASR window was
+        9 s wide and advanced 5 s.  The live stabilizer required the SAME
+        normalized text twice, which continuous speech never produces, so
+        active.vtt stayed empty and the emitted stream carried only A/53 null
+        padding.  In live mode a later window that begins INSIDE the pending
+        cue's span has re-heard that same audio, and confirms it -- regardless of
+        exact wording -- while a correction (a new reading at the SAME start)
+        still resets the count.
+        """
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert (
+            stabilizer.observe(
+                _hypothesis("Dewpoints in Arizona. We're in the 40s.", start=0.0, end=9.0)
+            )
+            == []
+        )
+        # Reworded, but this window starts inside [0, 9): same audio re-heard.
+        committed = stabilizer.observe(
+            _hypothesis("We're in the 40s and 30s, so very much shuts down.", start=5.0, end=14.0)
+        )
+
+        assert len(committed) == 1
+        assert "40s and 30s" in committed[0].text
+
+    def test_live_confirmation_still_resets_on_a_correction(self) -> None:
+        """A new reading at the SAME start is a correction, not a re-hearing."""
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert stabilizer.observe(_hypothesis("motion carries", start=0.0, end=5.0)) == []
+        assert stabilizer.observe(_hypothesis("motion failed", start=0.0, end=5.0)) == []
+
+        committed = stabilizer.observe(_hypothesis("motion failed", start=0.0, end=5.0))
+
+        assert len(committed) == 1
+        assert committed[0].text == "motion failed"
+
+    def test_live_confirmation_never_commits_a_lone_uncorroborated_cue(self) -> None:
+        """One window alone must not air: live mode still needs corroboration."""
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert stabilizer.observe(_hypothesis("single window speech", start=0.0, end=9.0)) == []
+        assert stabilizer.committed() == []
+
+    def test_live_confirmation_rejects_a_tiny_overlap(self) -> None:
+        """A sliver of overlap must NOT corroborate an unrelated long cue.
+
+        Regression for the live-confirmation boundary: the guard compared the
+        incoming start against ``pending.hypothesis.end_seconds`` -- the ASR
+        hypothesis's CLAIMED end, not the audio span actually re-heard.  A
+        pending 8 s window therefore "contained" a later start that overlapped
+        it by as little as one millisecond (or one microsecond), so an
+        otherwise uncorroborated 8 s caption could be confirmed by a completely
+        different reading.  Corroboration must require a SUBSTANTIVE overlap
+        with the pending window, not mere adjacency to its claim.
+        """
+
+        stabilizer = CaptionStabilizer(live=True)
+        assert (
+            stabilizer.observe(
+                _hypothesis("the quick brown fox jumps", start=0.0, end=8.0)
+            )
+            == []
+        )
+        # Only 1 ms inside the pending claim -> must NOT confirm.
+        committed = stabilizer.observe(
+            _hypothesis("completely different words here", start=7.999, end=15.0)
+        )
+
+        assert committed == []
+        assert stabilizer.committed() == []
+
+    def test_live_confirmation_rejects_a_sub_millisecond_overlap(self) -> None:
+        """Even a 1 microsecond overlap must not corroborate an unrelated cue."""
+
+        stabilizer = CaptionStabilizer(live=True)
+        stabilizer.observe(_hypothesis("first unrelated long cue", start=0.0, end=8.0))
+        committed = stabilizer.observe(
+            _hypothesis("second unrelated different cue", start=7.999999, end=16.0)
+        )
+
+        assert committed == []
+        assert stabilizer.committed() == []
+
     def test_low_confidence_flag_uses_threshold(self) -> None:
         stabilizer = CaptionStabilizer(low_confidence_threshold=0.8)
         stabilizer.observe(_hypothesis("uncertain name", confidence=0.62))

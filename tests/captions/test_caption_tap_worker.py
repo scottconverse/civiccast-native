@@ -25,7 +25,12 @@ from types import SimpleNamespace
 import pytest
 
 from civiccast.captions import runtime as caption_runtime_module
-from civiccast.captions.models import AudioChunk, CaptionHypothesis, CustomVocabulary
+from civiccast.captions.models import (
+    AudioChunk,
+    CaptionCue,
+    CaptionHypothesis,
+    CustomVocabulary,
+)
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.runtime import FasterWhisperRuntime
 from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
@@ -151,6 +156,43 @@ def _worker(  # type: ignore[no-untyped-def]
 
 def _active_vtt(tap_root: Path, channel_id: str) -> Path:
     return tap_root.parent / "egress" / channel_id / "captions" / "active.vtt"
+
+
+class _VaryingLiveRuntime:
+    """Live ASR shape: real speech, DIFFERENT words on every 9 s window.
+
+    Mirrors the measured Blackwell behaviour (2026-09-16, device=cuda/float16):
+    the tap feeds 5 s segments with 4 s of overlap, so each 9 s window advances
+    5 s and transcribes different words.  Exact-text re-confirmation is
+    unreachable for that geometry, so the tap confirms on window overlap instead.
+    """
+
+    _TEXTS = (
+        "Dewpoints in Arizona. We're in the 40s and 30s.",
+        "We're in the 40s and 30s, so very much shuts down.",
+        "Friday just really big drop in the amount of convection.",
+        "Sunday a little more activity in the mountains.",
+        "And back comes the moisture with thunderstorms.",
+    )
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def transcribe(
+        self,
+        chunks: Iterable[AudioChunk],
+        vocabulary: CustomVocabulary | None = None,
+    ) -> Iterable[CaptionHypothesis]:
+        for chunk in chunks:
+            text = self._TEXTS[self.calls % len(self._TEXTS)]
+            self.calls += 1
+            yield CaptionHypothesis(
+                source_id=f"{chunk.chunk_id}-live",
+                start_seconds=chunk.start_seconds,
+                end_seconds=chunk.end_seconds,
+                text=text,
+                confidence=0.9,
+            )
 
 
 class TestCaptionTapWorker:
@@ -306,6 +348,117 @@ class TestCaptionTapWorker:
         assert first.consumed_segments == 1
         assert second.consumed_segments == 0
         assert len(runtime.seen_chunks) == 1
+
+    def test_varying_live_asr_text_still_reaches_the_active_sidecar(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """Real live speech must reach active.vtt even though every window differs.
+
+        Measured on the Blackwell GPU run (2026-09-16, device=cuda/float16): the
+        caption tap processed 960+ chunks and transcribed real speech correctly,
+        yet active.vtt stayed at 7 bytes (empty WebVTT) and the emitted stream
+        carried only A/53 null padding.  Cause: the tap feeds 5 s segments with
+        4 s overlap (9 s windows advancing 5 s) while the stabilizer required the
+        SAME normalized text twice, which continuous speech never produces.  The
+        live tap therefore corroborates cues by window overlap.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        # Two 5 s chunks in the first scan: within max_backlog=2, and enough for
+        # one window to be corroborated by the next overlapping window.
+        for index in range(2):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        runtime = _VaryingLiveRuntime()
+        store = InMemoryCaptionReviewStore()
+        # Production geometry: 5 s segments with 4 s of overlap -> 9 s windows
+        # advancing 5 s.  (The harness default of a 1 s segment with 4 s of
+        # overlap collapses both windows onto start 0.0, which is not the live
+        # shape this regression is about.)
+        worker = CaptionTapWorker(
+            tap_root=tap_root,
+            caption_work_dir=tap_root.parent / "egress",
+            runtime=runtime,
+            review_store=store,
+            segment_seconds=5.0,
+            overlap_seconds=4.0,
+            atomic_segments=True,
+        )
+
+        result = worker.run_once()
+
+        assert result.consumed_segments >= 2
+        sidecar = _active_vtt(tap_root, channel)
+        assert sidecar.is_file()
+        cues = load_caption_cues_from_timed_text(sidecar, source_id=channel)
+        assert cues, (
+            "live windows produced no active cue; the emitted stream would carry no caption text"
+        )
+        # The corroborated (later, overlapping) window supplies the committed text.
+        assert any("40s and 30s" in cue.text for cue in cues)
+
+    def test_stale_session_publish_cannot_restore_the_previous_broadcast(
+        self, tmp_path: Path
+    ) -> None:
+        """A cue published by the PREVIOUS session must not overwrite the reset.
+
+        Regression for the reset race: begin_channel_session() blanked the
+        sidecar, but a caption result still in flight from the old session's
+        worker could publish afterwards and put the old broadcast's cue back on
+        air (reproduced directly: reset -> old publish -> old caption visible).
+        The publish path is now generation-stamped, so a result carrying a
+        generation older than the channel's current one is dropped.
+        """
+
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        (tap_root / channel).mkdir(parents=True)
+        store = InMemoryCaptionReviewStore()
+        worker = _worker(tap_root, _ScriptedRuntime(), store)
+
+        # Seed the sidecar the way a previous broadcast left it.
+        publisher = worker._publisher_for(channel)
+        publisher.publish(
+            [
+                CaptionCue(
+                    cue_id="cue-OLD",
+                    start_seconds=10.0,
+                    end_seconds=18.0,
+                    text="OLD SESSION CAPTION",
+                    confidence=0.9,
+                    low_confidence=False,
+                )
+            ]
+        )
+        sidecar = _active_vtt(tap_root, channel)
+        assert "OLD SESSION CAPTION" in sidecar.read_text(encoding="utf-8")
+
+        # Capture the OLD generation, then start a new session.
+        stale_generation = worker._session_generation.get(channel, 0)
+        worker.begin_channel_session(channel)
+        assert "OLD SESSION CAPTION" not in sidecar.read_text(encoding="utf-8")
+
+        # A late publish from the old session must be refused.  Exercise the
+        # public publish path rather than a helper, so the assertion is
+        # behavioural and would fail on unfixed code for the right reason.
+        stale_cues = [
+            CaptionCue(
+                cue_id="cue-OLD",
+                start_seconds=10.0,
+                end_seconds=18.0,
+                text="OLD SESSION CAPTION",
+                confidence=0.9,
+                low_confidence=False,
+            )
+        ]
+        worker.publish_for_current_session(channel, stale_generation, stale_cues)
+
+        remaining = sidecar.read_text(encoding="utf-8")
+        assert "OLD SESSION CAPTION" not in remaining, (
+            "a finished session's caption reappeared after the reset"
+        )
 
     def test_multiple_channels_keep_separate_caption_streams(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"

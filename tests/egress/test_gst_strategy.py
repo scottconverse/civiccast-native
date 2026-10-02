@@ -256,6 +256,65 @@ def test_live_caption_pts_preserves_a_future_cue() -> None:
     )
 
 
+def test_live_caption_pts_rebases_an_absolute_program_clock_cue_to_the_live_edge() -> None:
+    """A cue stamped on the station's absolute program clock must not be
+    scheduled tens of minutes into the future.
+
+    Measured on the 2026-09-16 Blackwell captions-ON run: the live tap numbers
+    audio by an absolute program clock (chunk_index * segment_seconds), so a
+    genuine cue carried 00:52:12 -> 3,132,120 ms while the restarted caption
+    appsrc's running time was only ~90 s.  The cue was emitted ~50.7 minutes
+    ahead of the video and the decode-back saw only A/53 null padding.  The
+    unrelated-epoch timestamp must be pinned to the live edge so it can reach
+    the emitted stream.
+    """
+
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=3_132_120,
+            running_time_ms=90_000,
+            stream_position_ms=90_000,
+        )
+        == 90_250
+    )
+
+
+def test_live_caption_pts_rebases_a_short_restart_lag_instead_of_airing_late() -> None:
+    """A short restart must not leave captions permanently ~20 s behind.
+
+    Regression for the restart-lag hole: the tap stamps cues by an absolute
+    segment index, so after a short restart the tap clock can sit ~20 s ahead of
+    the freshly restarted pipeline's running time.  That is BELOW the 30 s
+    unrelated-epoch bound, so the cue kept its PTS and aired ~20 s late --
+    forever, because the offset never self-corrects.  A lag that large relative
+    to a young pipeline is not a "genuinely near-future" cue; it is a stale
+    clock and must be pinned to the live edge.
+    """
+
+    # 20 s of lag against a young pipeline: must be rebased to the live edge.
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=20_000,
+            running_time_ms=250,
+            stream_position_ms=250,
+        )
+        == 500
+    )
+
+
+def test_live_caption_pts_still_preserves_a_genuinely_near_future_cue() -> None:
+    """The rebase bound must not disturb a cue that is really just ahead."""
+
+    assert (
+        align_live_caption_pts_ms(
+            requested_pts_ms=100_000,
+            running_time_ms=90_000,
+            stream_position_ms=90_000,
+        )
+        == 100_000
+    )
+
+
 def test_live_caption_pts_never_overlaps_the_prior_caption_buffer() -> None:
     assert (
         align_live_caption_pts_ms(
