@@ -7,8 +7,9 @@
 > `release/beta10`. When published, beta.10 will be a GitHub pre-release (a
 > beta candidate), not a production release.
 >
-> Push, merge, tag and release are owner actions: nothing in this file, and no
-> earlier dated authorization in the history files, publishes beta.10. The
+> Push, merge, tag and release are owner actions. The owner (Scott) authorized
+> them for beta.10 on 2026-10-02; the release itself is performed through the
+> documented publish runbook, and nothing in this file publishes anything. The
 > coordinator's working handoff, with the current decisions and rules, is
 > [`ops/beta10-oversight/HANDOFF-2026-10-01.md`](ops/beta10-oversight/HANDOFF-2026-10-01.md).
 >
