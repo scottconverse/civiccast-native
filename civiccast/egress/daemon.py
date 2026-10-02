@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
 from threading import Event, Lock, RLock
-from typing import Any, NamedTuple, Protocol, cast
+from typing import Any, ClassVar, NamedTuple, Protocol, cast
 
 from civiccast.captions.tap import build_audio_tap_plan
 from civiccast.egress._text import db_safe_text, db_safe_text_or_none
@@ -400,6 +400,7 @@ class EgressDaemon:
         resolve_secret: SecretResolver | None = None,
         ffmpeg_starter: FfmpegStarter | None = None,
         orphan_probe: Callable[[int], OrphanInfo | None] | None = None,
+        pid_is_dead: Callable[[int], bool | None] | None = None,
         orphan_terminator: Callable[[int, float], None] | None = None,
         as_run_recorder: AsRunRecorder | None = None,
         restart_cooldown_seconds: float = _RESTART_COOLDOWN_SECONDS,
@@ -705,6 +706,10 @@ class EgressDaemon:
         # daemon reaps any still-running ffmpeg pid from the durable state
         # row. Seams default to psutil implementations.
         self._orphan_probe = orphan_probe or _default_orphan_probe
+        # Restart reconciliation uses a SEPARATE, stricter liveness predicate
+        # (tri-state; fails CLOSED on uncertainty) so it never treats
+        # AccessDenied/unknown as 'dead' the way the orphan probe's None does.
+        self._pid_is_dead = pid_is_dead or _default_pid_is_dead
         self._orphan_terminator = orphan_terminator or _default_orphan_terminator
         # S23 as-run capture: optional append-only side-write at each ACTUAL
         # source transition (None on the test/CLI in-memory path). Capture is
@@ -999,6 +1004,113 @@ class EgressDaemon:
 
         process = self._processes.get(channel_id)
         return process is not None and _process_poll(process) is None
+
+    #: Persisted states that claim a live encoder may be sitting on air. Only
+    #: these are candidates for startup reconciliation; STOPPED (explicit
+    #: operator intent) and FALLBACK_SLATE (deliberate, non-encoder state) are
+    #: never reconciled.
+    #: Persisted states that claim a live encoder AND legitimately mean "this
+    #: channel should be on air", so a dead PID is a recoverable fault.
+    #: DRAINING is deliberately EXCLUDED: ``_drain`` sets it for explicit
+    #: operator/supervisor OFF-AIR intent (see ``_drain``/``_poll_process``),
+    #: so a restart that finds a dead pid mid-drain must stay off air -- never
+    #: auto-start a channel the operator meant to stop. STOPPED/FALLBACK_SLATE
+    #: are likewise terminal/deliberate and never reconciled.
+    _STALE_RECONCILE_STATES: ClassVar[frozenset[str]] = frozenset(
+        {"ON_AIR", "STARTING", "TRANSITIONING"}
+    )
+
+    def reconcile_stale_state(self) -> list[str]:
+        """Startup reconciliation: clear persisted on-air claims with DEAD PIDs.
+
+        Live defect (2026-09-24): after a supervisor restart, ``egress_states``
+        kept reading ON_AIR for three channels whose encoder PIDs no longer
+        existed, and the HLS playlists stayed frozen. The daemon's
+        ``_processes`` map is in-memory, so a fresh instance tracks no encoder;
+        recovery is normally driven by ``ChannelAutomationService`` re-issuing
+        ``start`` for a channel with no live process -- but only for
+        ``auto_start`` channels, so a persisted-ON_AIR channel that is NOT
+        auto_start was never reconciled and its stale row was trusted forever.
+
+        For each enabled channel whose persisted row claims an on-air state AND
+        whose recorded PID is *definitively dead* (see ``_pid_is_dead``: a
+        tri-state predicate that fails CLOSED on AccessDenied/unknown, unlike
+        the orphan probe's ``None``), it atomically:
+
+        * clears the stale claim by writing STOPPED, and
+        * enqueues a ``start`` command issued by ``restart-recovery``,
+
+        via ONE store transaction (``store.recover_stale_state(...)``) so there
+        is no crash window in which STOPPED exists with no start queued -- the
+        hazard that would otherwise strand the channel dark because STOPPED is
+        not itself reconciled.
+
+        Safety properties:
+
+        * a LIVE pid is never touched (``_pid_is_dead`` returns False);
+        * an UNKNOWN liveness result (AccessDenied, psutil error) is never
+          treated as dead -- fail closed, leave the row;
+        * STOPPED / FALLBACK_SLATE rows are never touched;
+        * the recovery command id is UNIQUE per attempt (and <=120 chars), so a
+          LATER restart queues a fresh start (a constant id would be skipped
+          forever by the SQL store's duplicate-id guard);
+        * idempotent within one attempt: after recovery the row is STOPPED, so
+          a re-run reports nothing and queues nothing.
+        """
+        recovered: list[str] = []
+        for config in self._store.list_configs():
+            if not config.enabled:
+                continue
+            channel_id = config.channel_id
+            if self.has_live_process(channel_id):
+                continue
+            state = self._store.read_state(channel_id)
+            if state is None or state.state not in self._STALE_RECONCILE_STATES:
+                continue
+            if state.pid is None:
+                # Cannot confirm death of an unknown pid: leave it to the
+                # normal automation/poll path rather than guessing.
+                continue
+            if self._pid_is_dead(state.pid) is not True:
+                # definitively-dead is REQUIRED; False (alive) and None
+                # (unknown/AccessDenied) both mean "do not touch".
+                continue
+            command = EgressCommand(
+                channel_id=channel_id,
+                action="start",
+                issued_at=datetime.now(UTC),
+                issued_by="restart-recovery",
+                # Unique per attempt, bounded: the SQL store skips a repeated
+                # command_id forever, so a constant id would make a second
+                # restart queue nothing (permanently dark). uuid4().hex is 32
+                # chars; the prefix keeps it well under the 120-char cap.
+                command_id=f"restart-recovery-{uuid.uuid4().hex}",
+            )
+            self._store.recover_stale_state(
+                EgressStateRow(
+                    channel_id=channel_id,
+                    state="STOPPED",
+                    current_source_label=state.current_source_label,
+                    updated_at=datetime.now(UTC),
+                    pid=None,
+                    last_error=(
+                        "restart recovery: persisted "
+                        f"{state.state} referenced dead encoder pid {state.pid}; "
+                        "cleared stale claim and queued a start"
+                    ),
+                ),
+                command,
+            )
+            _LOG.warning(
+                "channel %s: cleared stale persisted %s claim (dead encoder pid %s) "
+                "and atomically queued restart-recovery start %s.",
+                channel_id,
+                state.state,
+                state.pid,
+                command.command_id,
+            )
+            recovered.append(channel_id)
+        return recovered
 
     def has_manual_override(self, channel_id: str) -> bool:
         """True while an operator override (live takeover / forced fallback slate)
@@ -4137,6 +4249,50 @@ class EgressDaemon:
                 for label in hls_labels:
                     health[label] = False
         return health
+
+
+def _default_pid_is_dead(pid: int) -> bool | None:
+    """Definitive tri-state liveness for restart reconciliation. NEVER guesses.
+
+    Unlike ``_default_orphan_probe`` (whose ``None`` conflates
+    ``psutil.NoSuchProcess`` with ``psutil.AccessDenied`` and is therefore only
+    safe for the *never-kill* orphan-reaper decision), this answers a strict
+    question -- "is this pid definitely gone?" -- and fails CLOSED on
+    uncertainty:
+
+    * ``True``  -- the pid does not exist (``psutil.pid_exists`` False): the
+      persisted claim is definitively dead and may be reconciled.
+    * ``False`` -- the pid exists (present in the process table): a live
+      process holds it, so the claim must be left alone. Access-denied still
+      returns False here: the pid EXISTS, it is merely unreadable, which is
+      uncertainty about IDENTITY, not about liveness.
+    * ``None``  -- we could not determine liveness (probe raised, no psutil):
+      unknown => the caller MUST NOT reconcile.
+
+    This deliberately does not modify ``_default_orphan_probe`` or the
+    orphan-reaper's own semantics; it is a separate, stricter predicate used
+    only by ``reconcile_stale_state``.
+    """
+    try:
+        import psutil
+    except Exception:  # psutil unavailable: unknown, never assume dead
+        return None
+    try:
+        exists = psutil.pid_exists(pid)
+    except Exception:  # any probe failure is uncertainty, not proof of death
+        return None
+    if exists:
+        return False
+    # pid_exists said the pid is gone. pid_exists can be fooled on some
+    # platforms by access restrictions, so corroborate with a second,
+    # independent signal: enumerating the process table. Only if BOTH agree the
+    # pid is absent do we call it definitively dead.
+    try:
+        if pid in psutil.pids():
+            return False
+    except Exception:
+        return None
+    return True
 
 
 def _default_orphan_probe(pid: int) -> OrphanInfo | None:

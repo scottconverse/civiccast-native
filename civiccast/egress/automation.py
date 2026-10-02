@@ -534,6 +534,27 @@ class ChannelAutomationService:
         shutdown = getattr(self._daemon, "shutdown_preparation", None)
         if enable is not None:
             enable()
+        # ONE startup reconciliation pass: a supervisor restart can leave
+        # persisted ON_AIR rows whose encoder PIDs died with the old control
+        # plane. Clearing those stale claims and re-queuing an ordinary start is
+        # what stops the "frozen HLS, stale ON_AIR, zero commands" state
+        # (2026-09-24). Best-effort: a reconciliation hiccup must never stop the
+        # automation loop from running.
+        reconcile = getattr(self._daemon, "reconcile_stale_state", None)
+        if reconcile is not None:
+            try:
+                recovered = reconcile()
+                if recovered:
+                    _LOG.warning(
+                        "Channel automation startup reconciliation cleared stale "
+                        "on-air state and queued recovery starts for: %s",
+                        ", ".join(recovered),
+                    )
+            except Exception:
+                _LOG.exception(
+                    "Startup stale-state reconciliation failed; automation continues "
+                    "(channels will be supervised on the normal poll path)."
+                )
         try:
             while stop_event is None or not stop_event.is_set():
                 try:
@@ -619,16 +640,35 @@ class ChannelAutomationService:
         elif config.auto_start:
             retry_at = self._start_retry_at.get(channel_id)
             if retry_at is None or self._monotonic() >= retry_at:
-                self._enqueue(channel_id, "start", now=now or datetime.now(UTC))
-                self._start_retry_at[channel_id] = (
-                    self._monotonic() + self._START_RETRY_COOLDOWN_SECONDS
-                )
-                _LOG.info(
-                    "Channel automation issued start for dark auto_start "
-                    "channel %s (retries every %.0fs until live).",
-                    channel_id,
-                    self._START_RETRY_COOLDOWN_SECONDS,
-                )
+                # Do not double-enqueue against a start already queued this
+                # cycle: startup reconciliation (``reconcile_stale_state``)
+                # queues a recovery start BEFORE the first pass, so enqueuing
+                # an auto_start here too would give ONE intent TWO starts.
+                pending_starts = [
+                    cmd
+                    for cmd in self._store.peek_pending_commands(channel_id)
+                    if cmd.action == "start"
+                ]
+                if pending_starts:
+                    # A start is already waiting to be drained this pass by
+                    # ``process_once`` below; let it do its job. Arm the retry
+                    # cooldown so a later pass (after that start is consumed
+                    # and if the channel is still dark) resumes the normal
+                    # auto_start supervision instead of looping.
+                    self._start_retry_at[channel_id] = (
+                        self._monotonic() + self._START_RETRY_COOLDOWN_SECONDS
+                    )
+                else:
+                    self._enqueue(channel_id, "start", now=now or datetime.now(UTC))
+                    self._start_retry_at[channel_id] = (
+                        self._monotonic() + self._START_RETRY_COOLDOWN_SECONDS
+                    )
+                    _LOG.info(
+                        "Channel automation issued start for dark auto_start "
+                        "channel %s (retries every %.0fs until live).",
+                        channel_id,
+                        self._START_RETRY_COOLDOWN_SECONDS,
+                    )
         self._daemon.process_once(channel_id)
         # Item 78 fix 1 (round 2, coordinator review): read wall-clock "now"
         # AFTER ``process_once`` returns, immediately before the checks that

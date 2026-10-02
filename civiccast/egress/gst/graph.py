@@ -211,6 +211,12 @@ class CaptionEmbedLeg:
     combiner: ElementSpec = ElementSpec("cccombiner", name="cccombiner")
     inserter_chain: tuple[ElementSpec, ...] = (
         ElementSpec("h264ccinserter", name="h264ccinserter", props={"remove-caption-meta": True}),
+        # ``h264ccinserter`` rewrites the H.264 stream to carry the caption SEI.
+        # The parser after it must re-emit SPS/PPS as part of that rewritten
+        # stream: without that, the HLS relay's FFmpeg input sees the video PID
+        # but cannot decode it ('non-existing PPS 0 referenced'), which is the
+        # live public audio-only HLS failure. ``config-interval=-1`` sends the
+        # parameter sets with every IDR, matching the encoder-tail parser contract.
         ElementSpec("h264parse", props={"config-interval": -1}),
     )
 
@@ -387,7 +393,19 @@ def encode_chain_specs(
             props["option-string"] = f"vbv-maxrate={bitrate_kbps}:vbv-bufsize={bufsize}:nal-hrd=cbr"
         specs.append(ElementSpec("x264enc", props=props))
     else:
-        specs.append(ElementSpec(encoder, props={"bitrate": bitrate_kbps}))
+        # Every encoded-video HLS downstream depends on a bounded IDR cadence:
+        # the live-HLS sink now copies the encoded stream instead of
+        # re-encoding it (so A/53 closed-caption SEI survives), which means it
+        # can no longer force keyframes itself -- the encoder MUST guarantee an
+        # intra frame at least every gop frames or the sink's ~2s segment
+        # contract silently degrades to the upstream GOP length. openh264enc
+        # exposes this as ``gop-size`` (frames between intra frames); x264enc's
+        # equivalent is ``key-int-max`` above. Unknown encoders keep the prior
+        # bitrate-only props so this stays a no-op for them.
+        props = {"bitrate": bitrate_kbps}
+        if "openh264" in encoder.lower():
+            props["gop-size"] = gop
+        specs.append(ElementSpec(encoder, props=props))
     lowered = encoder.lower()
     if "265" in lowered or "hevc" in lowered:
         specs.append(ElementSpec("h265parse", props={"config-interval": -1}))

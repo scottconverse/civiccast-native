@@ -29,6 +29,7 @@ Verifies, in order:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import socket
 import subprocess
@@ -45,13 +46,59 @@ from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.sinks import HlsSink, build_sink
 from civiccast.egress.store import InMemoryEgressStore
-from civiccast.stream._ffmpeg import FfmpegProcessHandle, start_ffmpeg
+from civiccast.stream._ffmpeg import (
+    FfmpegProcessHandle,
+    resolve_h264_encoder,
+    start_ffmpeg,
+)
 from civiccast.stream.media_router import live_router
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
-    reason="ffmpeg/ffprobe not on PATH; live-HLS playability proof skipped",
+    shutil.which("ffmpeg") is None
+    and os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT") is None,
+    reason="no ffmpeg on PATH and no packaged runtime root declared",
 )
+
+
+def _packaged_ffmpeg_dir() -> Path | None:
+    """The install-root FFmpeg bin dir implied by the declared version root.
+
+    ``CIVICCAST_GSTREAMER_RUNTIME_ROOT`` names the version root
+    (``<install_root>/runtime``); the FFmpeg pack is at
+    ``<install_root>/dependencies/ffmpeg/bin`` (a sibling of ``runtime``).
+    Also accept the install root being passed directly.
+    """
+    root = os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT")
+    if not root:
+        return None
+    base = Path(root)
+    for candidate in (base.parent / "dependencies" / "ffmpeg" / "bin", base / "dependencies" / "ffmpeg" / "bin"):
+        if (candidate / "ffmpeg.exe").is_file():
+            return candidate
+    return None
+
+
+def _selected_ffmpeg() -> str:
+    """Resolve an FFmpeg that truly carries a usable H.264 encoder.
+
+    Prefers the packaged station binary (via the shipped install layout), else
+    PATH. The product resolver verifies a real encoder exists; a host without
+    one FAILS LOUDLY rather than skipping.
+    """
+    directory = _packaged_ffmpeg_dir()
+    packaged = directory / "ffmpeg.exe" if directory is not None else None
+    path = str(packaged) if packaged is not None else shutil.which("ffmpeg")
+    assert path, "no FFmpeg executable available (packaged or PATH)"
+    encoder = resolve_h264_encoder(ffmpeg_path=path)
+    assert encoder, f"FFmpeg {path!r} advertises no usable H.264 encoder"
+    print(f"[hls-sink-playability] ffmpeg={path} h264_encoder={encoder}")
+    return path
+
+
+def _selected_ffprobe() -> str:
+    ffmpeg = Path(_selected_ffmpeg())
+    name = "ffprobe.exe" if ffmpeg.name.lower().endswith(".exe") else "ffprobe"
+    return str(ffmpeg.with_name(name))
 
 
 def _free_port() -> int:
@@ -94,25 +141,64 @@ class _BackgroundUvicorn:
         self._thread.join(timeout=10.0)
 
 
-def _start_live_hls_encoder(live_dir: Path) -> FfmpegProcessHandle:
-    """Start a real, persistent ffmpeg process: a looping synthetic test
-    pattern (infinite by construction — the same "no defined end" shape a
+def _write_encoded_test_source(path: Path) -> None:
+    """Encode a short A/V clip whose IDR interval matches HlsSink.segment_seconds.
+
+    Mirrors the production encoder leg's contract (encoded H.264 with a
+    bounded keyframe cadence) so the copy-based sink can cut ~2s segments.
+    """
+    result = subprocess.run(
+        [
+            _selected_ffmpeg(),
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=size=320x180:rate=15",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:sample_rate=48000",
+            "-t",
+            "4",
+            "-c:v",
+            resolve_h264_encoder(ffmpeg_path=_selected_ffmpeg()),
+            "-g",
+            str(15 * HlsSink.segment_seconds),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def _start_live_hls_encoder(live_dir: Path, encoded_source: Path) -> FfmpegProcessHandle:
+    """Start a real, persistent ffmpeg process: a looping, ENCODED test
+    source (infinite by construction -- the same "no defined end" shape a
     live RTMP/SRT feed has) muxed to rolling HLS via HlsSink's own args.
 
     This exercises HlsSink.output_args() exactly as
     ``civiccast.egress.runtime.build_persistent_encoder_args`` would append
-    it to a channel's sink list — the only difference from the real egress
-    path is the input side (lavfi test pattern here vs. the encoder's
-    conformed concat input in production), which is the live-vs-recorded
-    distinction the mission asks this test to stand in for.
+    it to a channel's sink list -- the only difference from the real egress
+    path is the source being a looping lavfi file instead of the encoder's
+    conformed concat input.
 
-    Deliberately does NOT pass ``-c:v``/``-g`` on the input side: production's
-    common no-branding path reaches ``HlsSink.output_args()`` via a plain
-    ``-c copy`` (see ``egress.runtime._stream_mapping_args``), i.e. with
-    whatever GOP the upstream source already has — arbitrarily large, and
-    entirely outside HlsSink's control. Using a raw testsrc input (no prior
-    encode, so no "coincidentally helpful" GOP either) means this test can
-    only pass if HlsSink.output_args() itself forces the keyframe cadence.
+    The source is ENCODED H.264 with an explicit 2s IDR interval, matching
+    production: the encoder leg conforms+encodes the programme, then every
+    sink (HlsSink included) reaches its output via ``-c:v copy`` (see
+    ``egress.runtime._stream_mapping_args`` / ``_per_sink_output_args``).
+    HlsSink stream-copies to preserve the A/53 caption SEI, so it cannot force
+    keyframes itself -- the ~2s ``-hls_time`` cut points come from this
+    upstream GOP, exactly as ``gst/graph.py`` pins openh264enc's ``gop-size``
+    in production.
     """
     sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=str(live_dir)))
     assert isinstance(sink, HlsSink)
@@ -120,15 +206,11 @@ def _start_live_hls_encoder(live_dir: Path) -> FfmpegProcessHandle:
         "-hide_banner",
         "-loglevel",
         "warning",
+        "-stream_loop",
+        "-1",
         "-re",
-        "-f",
-        "lavfi",
         "-i",
-        "testsrc=size=320x180:rate=15",
-        "-f",
-        "lavfi",
-        "-i",
-        "sine=frequency=440:sample_rate=48000",
+        str(encoded_source),
     ]
     return start_ffmpeg([*input_args, *sink.output_args()])
 
@@ -163,7 +245,9 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
     # The media router serves only folders inside CIVICCAST_LIVE_HLS_ROOT.
     monkeypatch.setenv("CIVICCAST_LIVE_HLS_ROOT", str(tmp_path))
     live_dir = tmp_path / "live-hls" / "gov-ch12"
-    handle = _start_live_hls_encoder(live_dir)
+    encoded_source = tmp_path / "encoded-source.mkv"
+    _write_encoded_test_source(encoded_source)
+    handle = _start_live_hls_encoder(live_dir, encoded_source)
     try:
         manifest_path = live_dir / "playlist.m3u8"
         deadline = time.monotonic() + 30.0
@@ -194,9 +278,10 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
         for duration in first_durations:
             assert duration <= HlsSink.segment_seconds * 1.5, (
                 f"segment duration {duration}s is not close to the documented "
-                f"{HlsSink.segment_seconds}s target -- the hls muxer is cutting on "
-                "whatever keyframe cadence the upstream encode happens to produce, "
-                "not the requested -hls_time (missing -force_key_frames/-g control)"
+                f"{HlsSink.segment_seconds}s target -- the hls muxer cuts on the "
+                "upstream IDR cadence and HlsSink stream-copies video (it cannot "
+                "force keyframes), so the upstream encoder must hold a bounded "
+                "keyframe interval (gst/graph.py pins openh264enc gop-size)"
             )
 
         # Serve it for real over HTTP.
@@ -226,7 +311,7 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
             # segment URIs relative to it, exactly as a browser/hls.js would.
             ffprobe_result = subprocess.run(
                 [
-                    "ffprobe",
+                    _selected_ffprobe(),
                     "-v",
                     "error",
                     "-show_entries",

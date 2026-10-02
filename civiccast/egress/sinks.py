@@ -199,17 +199,24 @@ class HlsSink(EgressSink):
     case); ``program_date_time`` lets a resuming player anchor to wall-clock
     time.
 
-    ffmpeg's HLS muxer can only cut a segment on a keyframe, so ``-hls_time``
-    is only a *target* — actual segment length is whatever GOP the video
-    arrives with. Every other sink in this module is reached via a stream
-    copy (``-c:v copy``, see ``egress.runtime``), so relying on upstream GOP
-    would make this sink's "2s segments / 12s window" promise depend on
-    encoder config it does not control (and, for an unbranded channel, on the
-    *source recording's* original GOP — arbitrarily long). This sink
-    therefore re-encodes its own video leg with ``-force_key_frames`` pinned
-    to ``segment_seconds`` — the standard ffmpeg idiom for muxer-driven
-    segment cuts — so the live window's real cadence matches what's
-    documented regardless of what precedes it in the graph.
+    Video is STREAM-COPIED (``-c:v copy``), like every other sink in this
+    module (see ``egress.runtime``). It is deliberately NOT re-encoded: a
+    re-encode through the bundled H.264 encoders (``libopenh264``,
+    ``h264_mf``) strips the A/53 closed-caption SEI, so a captioned channel's
+    HLS leg silently lost every caption the upstream embed leg had produced.
+
+    Cadence consequence: ffmpeg's HLS muxer cuts only on a keyframe, and
+    ``-hls_time`` is therefore a *target*, not a guarantee -- the real segment
+    length follows the video's IDR interval, and stream-copy means this sink
+    cannot force keyframes (``-force_key_frames``/``-g`` are encoder-side).
+    The "2s segments / 12s window" promise therefore depends on the upstream
+    encoder emitting a bounded IDR cadence. For the native GStreamer leg that
+    is contractual: ``gst/graph.py`` pins ``openh264enc``'s ``gop-size`` to
+    ``segment_seconds`` worth of frames. A channel whose video reaches this
+    sink with a longer GOP than ``segment_seconds`` (e.g. an arbitrarily long
+    source recording's original GOP, or a branded path that re-encodes
+    without an equivalent keyframe pin) will produce correspondingly longer
+    segments -- the sink cannot correct that without discarding captions.
 
     ``self.spec.uri`` is a local directory (validated in
     ``EgressSinkSpec._kind_matches_uri``); ``civiccast.stream.media_router``
@@ -218,12 +225,6 @@ class HlsSink(EgressSink):
 
     segment_seconds = 2
     playlist_size = 6  # 6 x 2s segments = 12s sliding window
-    # ponytail: fixed re-encode ladder rather than threading CanonicalProfile
-    # through build_sink() — this sink's job is a servable live preview
-    # window, not per-channel-profile bitrate parity. Thread the profile
-    # through if a channel ever needs its HLS leg to match its SRT/RTMP
-    # bitrate exactly.
-    video_bitrate_kbps = 3000
 
     def _directory(self) -> Path:
         parsed = urlsplit(self.spec.uri)
@@ -240,22 +241,23 @@ class HlsSink(EgressSink):
         segment_pattern = str(directory / "seg%09d.ts")
         return [
             *self.spec.extra_output_args,
-            # Force a keyframe every segment_seconds so the hls muxer's
-            # -hls_time cut points are real, not just a request the encoder
-            # is free to ignore. -g is set high (never the deciding factor)
-            # so force_key_frames alone controls cadence.
+            # Stream-copy the encoded video instead of re-encoding it. A
+            # re-encode through the bundled H.264 encoders (libopenh264,
+            # h264_mf) strips the A/53 closed-caption SEI, so the HLS leg lost
+            # every caption even though the upstream GStreamer embed leg
+            # produced it -- the decode-back verifier then saw zero cues on a
+            # captioned channel. Copy preserves the SEI byte-for-byte.
+            #
+            # Cadence consequence: -force_key_frames/-g are encoder-side and
+            # are impossible with copy, so the ~2s cut points now depend on the
+            # upstream encoder's IDR interval. That interval is contractual:
+            # gst/graph.py pins openh264enc's ``gop-size`` to segment_seconds
+            # worth of frames. Copy also means the video bitrate is whatever
+            # upstream already produced, so -b:v is intentionally absent.
             "-c:v",
-            "h264",
-            "-pix_fmt",
-            "yuv420p",
-            "-g",
-            "999999",
-            "-force_key_frames",
-            f"expr:gte(t,n_forced*{self.segment_seconds})",
+            "copy",
             "-c:a",
             "aac",
-            "-b:v",
-            f"{self.video_bitrate_kbps}k",
             "-f",
             "hls",
             "-hls_time",
