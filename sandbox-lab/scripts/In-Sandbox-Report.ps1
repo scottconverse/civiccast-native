@@ -3810,7 +3810,14 @@ try {
                                 $wlogs = Get-ChildItem 'C:\ProgramData\CivicCast' -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'worker|gst|egress|relay|tsp' -and $_.Name -match '\.(log|txt|err|out)$' -and $_.Length -lt 20MB } | Select-Object -First 12
                                 foreach ($wl in $wlogs) { "=== TAIL $($wl.FullName)" | Add-Content -Path $dg -Encoding UTF8; (Get-Content -LiteralPath $wl.FullName -Tail 60 -ErrorAction SilentlyContinue | Out-String) | Add-Content -Path $dg -Encoding UTF8 }
                             } catch { "diag exception: $_" | Add-Content -Path (Join-Path $OutDir 'T4-ENGINE-DIAG.txt') -Encoding UTF8 }
-                            $tsProof = Test-TsProof -TspExe $tspExe -Port $enginePort -Seconds 40 -OutDir $OutDir -Label 'engine-government'
+                            # ONE-OFF (run 5): keep capturing, up to 12 x 40 s, so the log shows WHEN the cold worker's first packets arrive.
+                            $tsProof = $null
+                            for ($capTry = 1; $capTry -le 12; $capTry++) {
+                                "capture_attempt=$capTry start_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Add-Content -Path $t4notes -Encoding UTF8
+                                $tsProof = Test-TsProof -TspExe $tspExe -Port $enginePort -Seconds 40 -OutDir $OutDir -Label 'engine-government'
+                                "capture_attempt=$capTry end_utc=$((Get-Date).ToUniversalTime().ToString('o')) verdict=$($tsProof.verdict) packets=$($tsProof.packets_total)" | Add-Content -Path $t4notes -Encoding UTF8
+                                if ($tsProof.verdict -eq 'pass') { break }
+                            }
                             try { "snapshot_after_capture_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Add-Content -Path (Join-Path $OutDir 'T4-ENGINE-DIAG.txt') -Encoding UTF8; (netstat -ano -p udp | Out-String) | Add-Content -Path (Join-Path $OutDir 'T4-ENGINE-DIAG.txt') -Encoding UTF8 } catch {}
                             ($tsProof | ConvertTo-Json -Depth 6) | Set-Content -Path (Join-Path $OutDir 'egress-verify-engine.json') -Encoding UTF8
                             "engine_tsp_verdict=$($tsProof.verdict) invalid_syncs=$($tsProof.invalid_syncs) transport_errors=$($tsProof.transport_errors) discontinuities=$($tsProof.discontinuities)" | Add-Content -Path $t4notes -Encoding UTF8
