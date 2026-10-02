@@ -3799,7 +3799,19 @@ try {
                                 ($lastHealthBody | ConvertTo-Json -Depth 8) | Set-Content -Path (Join-Path $OutDir 'T4-ENGINE-HEALTH-BODY.json') -Encoding UTF8
                             }
                             $tspExe = Join-Path $tsdukBin 'tsp.exe'
-                            $tsProof = Test-TsProof -TspExe $tspExe -Port $enginePort -Seconds 8 -OutDir $OutDir -Label 'engine-government'
+                            # ONE-OFF DIAGNOSTICS (2026-10-02 beta.10 Gate A rerun; diagnostics only, no product change):
+                            # snapshot what is running and listening, and the worker's own logs, BEFORE and DURING the capture.
+                            try {
+                                $dg = Join-Path $OutDir 'T4-ENGINE-DIAG.txt'
+                                "snapshot_before_capture_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Set-Content -Path $dg -Encoding UTF8
+                                (Get-CimInstance Win32_Process | Where-Object { $_.Name -match 'tsp|python|gst|ffmpeg|ollama' } | Select-Object ProcessId,Name,@{n='Cmd';e={ if ($_.CommandLine) { $_.CommandLine.Substring(0,[Math]::Min(300,$_.CommandLine.Length)) } }} | Format-List | Out-String) | Add-Content -Path $dg -Encoding UTF8
+                                (netstat -ano -p udp | Out-String) | Add-Content -Path $dg -Encoding UTF8
+                                (Get-ChildItem 'C:\ProgramData\CivicCast' -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddMinutes(-15) -and $_.Length -lt 50MB } | Select-Object FullName,Length,LastWriteTime | Format-Table -AutoSize | Out-String -Width 250) | Add-Content -Path $dg -Encoding UTF8
+                                $wlogs = Get-ChildItem 'C:\ProgramData\CivicCast' -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match 'worker|gst|egress|relay|tsp' -and $_.Name -match '\.(log|txt|err|out)$' -and $_.Length -lt 20MB } | Select-Object -First 12
+                                foreach ($wl in $wlogs) { "=== TAIL $($wl.FullName)" | Add-Content -Path $dg -Encoding UTF8; (Get-Content -LiteralPath $wl.FullName -Tail 60 -ErrorAction SilentlyContinue | Out-String) | Add-Content -Path $dg -Encoding UTF8 }
+                            } catch { "diag exception: $_" | Add-Content -Path (Join-Path $OutDir 'T4-ENGINE-DIAG.txt') -Encoding UTF8 }
+                            $tsProof = Test-TsProof -TspExe $tspExe -Port $enginePort -Seconds 40 -OutDir $OutDir -Label 'engine-government'
+                            try { "snapshot_after_capture_utc=$((Get-Date).ToUniversalTime().ToString('o'))" | Add-Content -Path (Join-Path $OutDir 'T4-ENGINE-DIAG.txt') -Encoding UTF8; (netstat -ano -p udp | Out-String) | Add-Content -Path (Join-Path $OutDir 'T4-ENGINE-DIAG.txt') -Encoding UTF8 } catch {}
                             ($tsProof | ConvertTo-Json -Depth 6) | Set-Content -Path (Join-Path $OutDir 'egress-verify-engine.json') -Encoding UTF8
                             "engine_tsp_verdict=$($tsProof.verdict) invalid_syncs=$($tsProof.invalid_syncs) transport_errors=$($tsProof.transport_errors) discontinuities=$($tsProof.discontinuities)" | Add-Content -Path $t4notes -Encoding UTF8
                             # Bounded, best-effort stop of the daemon we started.
