@@ -1,8 +1,15 @@
 # HANDOFF
 
-## 2026-09-17 current: beta.8 release preparation and PR 231
+## 2026-10-02 current: beta.10 is the owner-held unpublished candidate
 
-This section supersedes the historical status sections below.
+`v1.0.0-beta.10` (branch `release/beta10`) is the next release; beta.7 is still
+the published tag, and beta.8 and beta.9 were never published. See
+`PROJECT-STATUS.md` and `docs/releases/v1.0.0-beta.10-verification.md`. The
+beta.8 section below is historical.
+
+## 2026-09-17 (historical): beta.8 release preparation and PR 231
+
+This section supersedes the older status sections below.
 Current branch: `fix/blackwell-caption-runtime`.
 Current HEAD: `904a8453cd77e259b7e8a34bcc48bb1f047c7a2e` (test synchronization correction).
 Current reviewed product HEAD: `d89e7e930c914f85f357024e5f2fef4bc7596801`.
