@@ -24,7 +24,7 @@ import signal
 import sys
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from itertools import count, pairwise
 from pathlib import Path
 from typing import Any, ClassVar
@@ -341,16 +341,6 @@ _DEFAULT_FIRST_OUTPUT_TIMEOUT_S = 45.0
 _MIN_FIRST_OUTPUT_TIMEOUT_S = 10.0
 _MAX_FIRST_OUTPUT_TIMEOUT_S = 120.0
 _FIRST_OUTPUT_TIMEOUT_ENV_VAR = "CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S"
-# beta.10 diagnostic (opt-in, default OFF): when truthy, _check_stall prints a
-# one-line, ASCII-only "CTRL stall-diag:" summary at the moment it decides to quit
-# on the post-first-buffer budget, naming exactly which precondition of the
-# deferred-boundary escape (_force_deferred_boundary) was NOT satisfied. The
-# 2026-09-21 live capture showed THAT a worker stalls at a rollover (buffer
-# cadence jump to ~4.5x, then a flatline) but not WHICH precondition blocked the
-# escape: pending is None, new_leg_ready False, or old_leg_eos True. This converts
-# that inference into a fact and changes no behaviour -- it prints and then returns
-# exactly as before.
-_STALL_DIAG_ENV_VAR = "CIVICAST_GST_STALL_DIAG"
 
 # Item 84c (measured in sandbox run 17, soak-a6d7871-20260906-213332Z, Opus
 # diagnosis): the ``CTRL first-output: first buffer after 0.0s`` marker was a
@@ -402,6 +392,227 @@ def _drop_everything_probe(_pad: object, _info: object) -> object:
     return Gst.PadProbeReturn.DROP
 
 
+def _drop_past_switch_point_probe(
+    pad: Gst.Pad, info: Gst.PadProbeInfo, pending: dict[str, Any]
+) -> Gst.PadProbeReturn:
+    """U56: the retiring leg's fence at a seamless change, bounded by VALUE.
+
+    ``_arm_old_selector_cutoff`` installs this on both outgoing pads. It used to
+    install the unbounded ``_drop_everything_probe`` above, so the retiring leg's
+    output stopped dead at the instant the probe was armed. The rebase reference
+    that same commit is built from is ``max(observed outgoing ends)`` -- the
+    LATER of the two streams, because the new leg may never start EARLIER than
+    where either stream stopped. On the live station the outgoing video's
+    delivery point trails the outgoing audio's by ~0.64 s (285
+    ``rebase-reference`` samples, all three channels: median +0.643 s, 98.2%
+    within +0.5..+0.9 s), so an unbounded fence threw away the video that should
+    have carried the picture from the video end up to the switch point. Audio
+    playout continued and the mux got no video for ~0.64 s; the emitted HLS
+    reported it as ``segment 60 PTS delta 171000 ticks != expected 108000``.
+
+    Bounding the fence by the switch point passes exactly the outgoing tail the
+    rebase reference already accounts for, and still drops everything past it --
+    so the new leg's offset is unchanged: nothing beyond the bound can ever
+    cross, which keeps ``max(observed)`` the bound it was computed as.
+
+    Everything that is not a single BUFFER -- an event, a buffer list -- is
+    still dropped whole. That is not incidental: the retiring leg's EOS crossing
+    the selector is the U30 defect this probe also exists to close. A buffer the
+    segment cannot place is dropped too: an unmeasurable buffer is an unbounded
+    one, and the pre-U56 all-drop answer is the safe one.
+    """
+    state = pending.get("outgoing_end", {}).get(pad)
+    cutoff = pending.get("old_tail_cutoff_ns")
+    if state is None or cutoff is None:
+        return Gst.PadProbeReturn.DROP
+    if not info.type & Gst.PadProbeType.BUFFER:
+        return Gst.PadProbeReturn.DROP
+    buffer = info.get_buffer()
+    if buffer is None:
+        return Gst.PadProbeReturn.DROP
+    computed = GstPlayoutEngine._buffer_end_running_time(pad, buffer, state["segment"])
+    if computed is None:
+        return Gst.PadProbeReturn.DROP
+    end, _segment = computed
+    return Gst.PadProbeReturn.OK if end <= cutoff else Gst.PadProbeReturn.DROP
+
+
+def _mux_tail_drop_decision(
+    pad: Gst.Pad, info: Gst.PadProbeInfo, pending: dict[str, Any]
+) -> Gst.PadProbeReturn:
+    """U56 round 6: the switch-point bound as the MUX fence must apply it.
+
+    ``_drop_past_switch_point_probe`` is the SELECTOR-side fence: the retiring
+    leg's own ingress, where every buffer belongs to the leg whose segment the
+    fence holds, so "a buffer the segment cannot place is an unbounded one" is
+    true there and dropping it is the safe answer.
+
+    On the mux sink pad the same branch is the defect. By the time this fence is
+    armed the incoming leg is about to take the pad, and the incoming leg's audio
+    restarts its own timestamps at the head of its own file. MEASURED, on C6
+    plus accounting only (``tree_fix12``): this fence took 82 decisions in the
+    reddening (audio-EOS-first, offset-incoming) arm -- 49 of them the retiring
+    audio's own tail, with exactly the ends the CLEAN arm's 49 drops carry
+    (2.602666 -> 3.626666) -- and 33 that CANNOT BE PLACED AT ALL, pts 0.000 to
+    0.683, i.e. before the retiring segment's own start of 0.700. All 33 landed
+    at or after the changeover segment crossed. They are the incoming leg's
+    audio head: 33 frames = 0.683 s of pts, and the arm emits a 0.610656 s audio
+    hole where the clean arm emits 0.021344 s.
+
+    So: the same bound, read the same way, with the one branch that only makes
+    sense UPSTREAM of the changeover inverted -- a buffer this leg's segment
+    cannot place is a buffer of the OTHER leg, and it is kept. Anything that is
+    not a single buffer is kept too: this pad carries the mux's own events, and
+    the fence is installed BUFFER-typed precisely so it never decides one.
+
+    Fail-open on a missing bound, deliberately: this probe cannot be installed
+    without ``old_tail_cutoff_ns`` (``_arm_mux_tail_cutoff`` returns early), and
+    the pre-U56 all-drop answer is the one defect the fence exists to remove.
+    """
+    state = pending.get("outgoing_end", {}).get(pad)
+    cutoff = pending.get("old_tail_cutoff_ns")
+    if state is None or cutoff is None:
+        return Gst.PadProbeReturn.OK
+    if not info.type & Gst.PadProbeType.BUFFER:
+        return Gst.PadProbeReturn.OK
+    buffer = info.get_buffer()
+    if buffer is None:
+        return Gst.PadProbeReturn.OK
+    computed = GstPlayoutEngine._buffer_end_running_time(pad, buffer, state["segment"])
+    if computed is None:
+        return Gst.PadProbeReturn.OK
+    end, _segment = computed
+    return Gst.PadProbeReturn.OK if end <= cutoff else Gst.PadProbeReturn.DROP
+
+
+def _mux_tail_segment_probe(
+    pad: Gst.Pad, info: Gst.PadProbeInfo, pending: dict[str, Any]
+) -> Gst.PadProbeReturn:
+    """U56 rounds 6-7: the changeover segment RECORDS the origin boundary.
+
+    GStreamer serialises events and buffers on one pad, so a SEGMENT crossing a
+    fenced pad is an exact origin boundary rather than a proxy for one: every
+    buffer the retiring leg sends crossed before it, and every buffer of the leg
+    that replaces it crosses after it. MEASURED on the round-6 accounting arm:
+    the retiring audio's last arrival reaches the fence's target (pts 4.284000 ->
+    end 3.605333, the target to the nanosecond) at the instant the changeover
+    segment crosses -- drop stamp 248520.046 against segment stamp 248520.046 --
+    and the incoming head starts 16 ms later, entirely after it.
+
+    Round 6 released the fence here on that reasoning. Round 7 measured the
+    reasoning's PREMISE false on the LIVE C7 bytes (``u56r7-tree_fix13``): the
+    retiring audio's tail is NOT already gone. The fence's own arm had already
+    counted buffers popped into the mpegtsmux aggregator queue when the commit
+    crossed (``stage=rebase-drain-wait pads=sink_66=3``, 5 seen), and the last of
+    them airs at emitted 3602.560 -- 0.093 s PAST the switch point --
+    ``EMIT audio back=1 minstep=-0.093344s @ 3602.560->3602.467``, the backward
+    step the relay rejects as 'Invalid timestamps'.
+
+    Those buffers are inside the mux before this fence can judge them, which is
+    also why REMOVING the release changes nothing: ``tree_fix18f`` holds the
+    fence at the boundary and emits byte-identical join numbers to C7 (AF
+    n=414, maxfwd=0.733333, minstep=-0.093344; VF n=436, minstep=-0.093344).
+    The release is therefore kept as measured-inert, NOT as the fix.
+
+    The fix is upstream of the mux: U56 round 7 removed the encoder chain's
+    ``videorate`` (see ``graph.encode_chain_specs``), the one element that saw
+    both legs and carried its output grid frontier across the changeover. That
+    moves the switch point two frames later and cuts the surviving back step to
+    0.027 s (``EMIT audio minstep=-0.026678s``), inside this fence's own 0.030 s
+    bar.
+
+    The DECISION still protects the incoming head: ``_mux_tail_drop_decision``
+    keeps every buffer it cannot place in the retiring segment
+    (``_buffer_end_running_time`` -> None) and every buffer whose end is inside
+    the bound, which is exactly the shape of an incoming head. The release only
+    shortens how long the fence holds.
+
+    The event is passed through (OK, never DROP): the segment must reach the mux.
+    A segment matching the leg the fence is holding is not a boundary -- a
+    re-sent sticky event is not a new origin -- so the release is keyed on the
+    (start, base) pair actually changing. With no held segment to compare
+    against, any segment releases: an unanchored fence may not claim an origin.
+    """
+    if pending.get("mux_tail_released"):
+        return Gst.PadProbeReturn.OK
+    event = info.get_event()
+    if event is None or event.type != Gst.EventType.SEGMENT:
+        return Gst.PadProbeReturn.OK
+    with contextlib.suppress(Exception):
+        incoming = event.parse_segment()
+        state = (pending.get("outgoing_end") or {}).get(pad) or {}
+        held = state.get("segment")
+        if held is None or (
+            int(incoming.start) != int(held.start) or int(incoming.base) != int(held.base)
+        ):
+            pending["mux_tail_released"] = True
+            print(
+                f"CTRL reload diagnostic: stage=mux-tail-released-by-segment "
+                f"pad={pad.get_name()} "
+                f"incoming_start={incoming.start} incoming_base={incoming.base} "
+                f"held_start={None if held is None else int(held.start)} "
+                f"held_base={None if held is None else int(held.base)} "
+                f"reload_id={pending.get('txn_id')}",
+                file=sys.stderr,
+                flush=True,
+            )
+    return Gst.PadProbeReturn.OK
+
+
+def _mux_tail_cutoff_probe(
+    pad: Gst.Pad, info: Gst.PadProbeInfo, pending: dict[str, Any]
+) -> Gst.PadProbeReturn:
+    """U56 round 5: the same value bound, one hop downstream, on the AUDIO pad.
+
+    ``_drop_past_switch_point_probe`` guards the selector's sink pads -- the
+    retiring leg's own ingress, which is UPSTREAM of the 1.0 s non-leaky
+    ``input-selector`` isolation queue. A leg that raced ahead of the commit has
+    its whole post-switch-point tail sitting INSIDE that queue by the time the
+    fence is armed, and nothing upstream of a queued buffer can drop it.
+    MEASURED on the LIVE bytes (``u56z15-fix7``): zero audio decisions are ever
+    taken at the selector-side fence, while ~48 audio buffers cross to the mux
+    during the drain -- the retiring audio's last two air past the switch point
+    and the emitted audio steps back by the trim (``-1.072 s``, the C5 RED).
+
+    This probe puts the SAME bound, read from the SAME one number
+    (``pending["old_tail_cutoff_ns"]``), on the last pad the audio crosses before
+    the mux, which is DOWNSTREAM of that queue.
+
+    BUFFER only, deliberately: this pad is the live mux's own flow, and the
+    events crossing it belong to the mux, not to the retiring leg. The
+    selector-side fence must also carry events (its EOS drop is the U30 fix),
+    which is why the two are typed differently. It is installed on the AUDIO pad
+    only -- see ``_arm_mux_tail_cutoff``.
+
+    Round 6: the decision is ``_mux_tail_drop_decision``, not the selector-side
+    ``_drop_past_switch_point_probe``, and a second probe
+    (``_mux_tail_segment_probe``) releases the fence at the changeover segment.
+    Both exist because this pad, unlike the selector's, goes on carrying the
+    INCOMING leg after the switch -- see those two docstrings for the measured
+    numbers.
+
+    The arrival is recorded before the decision, because the release gate reads
+    the retiring tail's ARRIVALS: the fence eats them, so an empty pad no longer
+    means the retiring leg has been consumed.
+    """
+    pending["mux_last_arrival_t"] = time.monotonic()
+    if pending.get("mux_tail_released"):
+        return Gst.PadProbeReturn.OK
+    decision = _mux_tail_drop_decision(pad, info, pending)
+    with contextlib.suppress(Exception):
+        state = pending.get("outgoing_end", {}).get(pad)
+        buffer = info.get_buffer()
+        if state is not None and buffer is not None:
+            computed = GstPlayoutEngine._buffer_end_running_time(
+                pad, buffer, state["segment"]
+            )
+            if computed is not None:
+                seen = pending.setdefault("mux_tail_seen", {})
+                if computed[0] > seen.get(pad.get_name(), -1):
+                    seen[pad.get_name()] = computed[0]
+    return decision
+
+
 # U16: the two streams a playout leg carries, in the order a leg declares them --
 # ``new_src_pads`` is built as ``(out_pad, audio_out_pad)`` and ``selector_sink_pads``
 # is likewise video-first, so the index of a pad in either list IS its stream label.
@@ -430,20 +641,67 @@ def _seconds_or_none(value_ns: int | None) -> str:
 # watchdog kill 10s later).
 _OUTPUT_PROGRESS_INTERVAL_S = 5.0
 
+# U59 round 4: the changeover leg-rate diagnostic. Live, 2026-09-27 (the
+# reload_id=6 government changeover) the AIRING video collapsed to ~23.00 fps
+# across the retiring leg's last ~21s while the audio never moved at all. Round
+# 3 established the media is clean at every offset and that ordinary 8x-1080p
+# contention dips BOTH streams together (measured ~0.92 nominal each), which is
+# a different shape from that one. The mechanism is still unknown, so this is an
+# INSTRUMENT, not a guard: it changes nothing about what the pipeline does, and
+# prints one WARN line per episode carrying the evidence the next occurrence
+# needs. Floors are the brief's: video below 0.9x nominal for 2 consecutive CTRL
+# output polls WHILE audio stays at or above 0.97x, i.e. one stream starving
+# against a healthy other, never a box-wide stall (which the U34 per-stream
+# watchdog already owns).
+_U59_RATE_ENV_VAR = "CIVICAST_GST_LEG_RATE_DIAG"
+# Nominal rates are DERIVED from the leg's own capsfilters at fire time (the
+# video framerate and the audio sample rate the leg was built against); these are
+# only the fallback for a leg whose caps are not negotiable at the read.
+_U59_RATE_NOMINAL_VIDEO_PER_S = 30.0
+_U59_RATE_NOMINAL_AUDIO_PER_S = 48000.0 / 1024.0  # AAC: 1024 samples per buffer
+_U59_RATE_VIDEO_FLOOR = 0.9
+_U59_RATE_AUDIO_FLOOR = 0.97
+_U59_RATE_STREAK_POLLS = 2
+_U59_RATE_WARN_INTERVAL_S = 10.0
+_U59_RATE_RECENT_FIRE_S = 60.0
+# The rung the rate is judged on, in preference order: ``sel`` (what the channel
+# is AIRING) first -- see the diagnostic block for why ``in`` is the wrong
+# witness. Both streams are read from the SAME rung, so the video/audio
+# comparison is like-for-like.
+_U59_RATE_RUNG_PREFERENCE = ("sel", "queue", "in")
+_U59_QOS_WINDOW_S = 30.0
+_U59_QOS_HISTORY = 64
+_U59_RATE_KEEP_LEGS = 3
 
-def _stall_diag_enabled() -> bool:
-    """beta.10 diagnostic switch: truthy ``CIVICAST_GST_STALL_DIAG`` enables the
-    ``CTRL stall-diag:`` line in ``_check_stall``. Read on each check so an operator
-    can toggle it without a rebuild; default OFF keeps the normal log identical.
-    Mirrors this file's existing env-var conventions: the value is compared
-    case-insensitively and anything unrecognised is treated as OFF rather than
-    raising, so a typo can never disable a watchdog."""
-    return os.environ.get(_STALL_DIAG_ENV_VAR, "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+# U59 round 4b: the delivery-LAG judge, the second instrument for the same
+# defect. Round 4 judges the on-air leg's INSTANTANEOUS rate against a 0.9x
+# floor, which a sustained-but-mild shortfall never crosses -- live 2026-09-28
+# 06:24 (public, reload_id=16) drained video at ~0.967x nominal for ~60s and
+# emitted a 2.000s picture hole, while its per-poll rate sat just AT the floor.
+# A shortfall that mild cannot be caught by any rate floor that is also quiet on
+# healthy legs; what it does move, without bound, is the ACCUMULATED difference
+# between the seconds of audio and the seconds of video the leg has delivered.
+# This judge measures exactly that: the growth of that lag across a rolling
+# window, which is drift-immune (a 29.97fps leg's 0.1% mismatch moves it 0.06s
+# per 60s window, 16x under the bound) and, because both streams are counted in
+# their OWN nominal seconds, blind by construction to a box-wide contention dip
+# (both streams at 0.92 nominal give a lag growth of exactly 0).
+#
+# Measured on the real excerpts (see reports/U59.md round 5): across ~6000s of
+# C9 polling and 418s of C11, a healthy leg's 60s-window growth never exceeded
+# 0.32s; the two occurrences measured +4.57s (C9) and +2.36s (C11). The bound
+# sits between them with ~3x margin on both sides.
+_U59_LAG_WINDOW_S = 60.0
+_U59_LAG_BOUND_S = 1.0
+_U59_LAG_STREAK_POLLS = 2
+# How many (time, lag) samples the window is reconstructed from. Samples are
+# pruned by TIME first (see ``_u59_prune_lag_samples``): everything inside the
+# window, plus the one sample before it that is the window's baseline, so the
+# growth is computable at ANY poll cadence rather than only at the 5s
+# ``_OUTPUT_PROGRESS_INTERVAL_S``. This count is then only the memory guard for a
+# caller driving the judge far faster than the progress interval -- a 5s cadence
+# needs 13 samples for a 60s window, and 128 covers it down to a 0.47s cadence.
+_U59_LAG_SAMPLES = 128
 
 
 def _resolve_first_output_timeout_s(explicit: float | None) -> float:
@@ -546,6 +804,140 @@ _DEFAULT_COMMIT_TIMEOUT_S = 15.0
 _MIN_COMMIT_TIMEOUT_S = 3.0
 _MAX_COMMIT_TIMEOUT_S = 120.0
 
+# U37: the two bounds on a deferred switch's rebase guard (see
+# ``_arm_rebase_segment_observers``). ``_REBASE_DRAIN_DEADLINE_S`` is how long the
+# commit may WAIT, off the main loop's critical path, for the affected mux sink
+# pads to give up the outgoing leg's last queued buffer before it switches. It is
+# the load-bearing half of the guard, and it is sized from measurement rather than
+# from the intuition that "the mux is greedy, so the queue empties in
+# milliseconds": on the real LPM media the affected pad holds a steady 5-6 buffers
+# -- ordinary backlog -- for as long as the outgoing tail's last ~1s is still
+# arriving through the chain, and only then falls 6->4->2->1->0. Measured over
+# this slice's 15 final-candidate switches: 1.125-2.141s, eleven of them inside
+# 1.125-1.203 and the two worst at 2.109 and 2.141s. An earlier draft's 1.0s
+# bound sat below that, and its own artefact records the false alarm: ``WARN:
+# rebase drain did not empty within 1.0s for reload 1 (sink_66=5 still queued at
+# the mux); switching anyway`` -- on a switch whose recorded output is
+# indistinguishable from the runs that drained inside the bound.
+# ``_REBASE_OBSERVER_DEADLINE_S`` is how long after that the arrival observers may
+# keep counting -- measured from the switch itself, so the two windows do not
+# overlap. It bounds only the observers' own bookkeeping: they no longer change
+# what airs, so an expired one costs nothing. Raising the drain bound reduces the
+# margin the observer deadline has over the drain poller it removes at expiry, so
+# the two must stay summed above ``_REBASE_DRAIN_DEADLINE_S``.
+_REBASE_DRAIN_DEADLINE_S = 3.0
+# U56 round 5: how long the mux tail fence may stay on after the first selector
+# mutation, waiting for the retiring leg's last buffer to reach the mux pad.
+_MUX_TAIL_DEADLINE_S = 0.3
+# ...and how close an arriving end must come to the retiring leg's own measured
+# end to count as "the tail is here". Strictly under one buffer interval: one AAC
+# frame is 21.3ms, and 50ms of slack measured the SECOND-TO-LAST audio buffer
+# (end 3.584 against a 3.605 target) as "the tail is here" and released the fence
+# on the arrival it was armed to drop.
+_MUX_TAIL_ARRIVED_EPSILON_NS = 5_000_000
+# ...and how long a fenced pad must have been silent before the fence may come
+# off. MEASURED: the retiring audio's last two buffers reach the mux pad in the
+# SAME tick as the drain's "drained" -- the tick the fence used to come off -- so
+# a condition on the seen end alone releases on the very arrival it exists to
+# hold for. One poll interval of silence separates "the tail has arrived" from
+# "the tail is arriving".
+_MUX_TAIL_QUIET_S = 0.020
+# U56 round 5: the one stream the mux fence is installed on. The video is
+# excluded by measurement, not by preference -- see ``_arm_mux_tail_cutoff``.
+_MUX_TAIL_FENCE_STREAM = "audio"
+_REBASE_OBSERVER_DEADLINE_S = 1.0
+# 20ms: fine enough that a drain is seen within a frame of the pad emptying, and
+# that the wait added to a real switch is its own duration and no more; coarse
+# enough not to spin.
+_REBASE_DRAIN_POLL_MS = 20
+
+# U56 round 4: the switch point at a seamless change is the end of the SHORTER
+# outgoing leg, and this is the bound on how much of the LONGER leg it may throw
+# away. The value-bounded fence above passes the outgoing tail the switch point
+# already accounts for; taking the MAX of the two ends (the rule until now)
+# accounts for the longer leg only, so on the shorter stream's own timeline the
+# new leg starts later than the outgoing one stopped and the difference never
+# airs. Measured live 2026-09-27, the emitted hole IS that difference: 0.631s at
+# the education seam, video end 8998.836 vs audio end 8999.467, and the audio was
+# clean at every one of the 14 boundaries the coordinator tallied -- because the
+# audio is the longer leg on 291 of the 295 boundaries in this slice's census of
+# the three copied worker logs. Switching at the shorter leg's end instead cuts
+# the longer leg's tail at that value, which is exactly what the same fence
+# already did with it, and neither stream then has a gap: the shorter one has
+# nothing left to deliver, the longer one is cut where the new leg's offset
+# covers it.
+#
+# The bound is what keeps that trade from silencing a broken asset. It is right
+# only for the media's own A/V end offset; far above it the asymmetry is not a
+# boundary, and trimming would silently discard seconds of a programme to cover
+# for it. Past the bound today's max-based answer stands and the WARN in
+# ``_begin_reload_commit`` names the spread -- a truly broken asset must stay
+# visible. 2.0s sits above every healthy boundary in that census (98.3% within
+# +0.5..+0.9s, the extremes 0.033s and 2.781s) and far below the ~9.4s a
+# collapsed stream was measured to run behind, so it separates the two shapes by
+# a wide margin on both sides.
+_SWITCH_SHORTER_LEG_MAX_TRIM_S = 2.0
+
+# U44: how far past its OWN previous arrival a video buffer may land at a mux sink
+# pad and still be honoured, and how far ahead of the pipeline's own running time
+# it may be. An arrival that clears BOTH is one the mux could only air by WAITING
+# for it, which is the freeze ``_make_mux_pad_arrival_guard`` exists to stop.
+#
+# 2.5s: the largest legitimate forward step measured on this pad is the switch's
+# own drain-then-rebase step, 1.753s (dbg1/dbg2, 2026-09-26), and the drain wait
+# that bounds it is ``_REBASE_DRAIN_DEADLINE_S`` = 3.0s -- so this sits just under
+# the deadline that produces legitimate steps and far above the 33ms cadence of the
+# stream itself. The defect's own steps measured 10.033s (an intra-leg subchain
+# boundary) and 25.033s (the reload that took government off air).
+#
+# 1.0s: the mux airs at the pipeline clock and sleeps in
+# ``gst_aggregator_wait_and_check`` until the clock reaches its chosen head's
+# running time, so an arrival further ahead than this is a freeze of at least that
+# long; below it the mux is merely buffering ahead, which is ordinary. This arm is
+# also what keeps the guard off a legitimate arrival: a pre-rebase arrival is
+# clipped under the OLD segment (behind the clock, no wait) exactly as U37
+# measured, and a stream that simply arrived early is caught by the cadence arm
+# instead, because early arrivals are still in cadence.
+_MUX_ARRIVAL_CADENCE_BOUND_NS = 2_500_000_000
+_MUX_ARRIVAL_AHEAD_BOUND_NS = 1_000_000_000
+
+# U37: how far behind another stream's AIRING running time one required stream may
+# fall before the per-stream judge calls it stalled (``_check_stream_stalls``).
+# Chosen from measurement rather than taste, and reproducible from a run's own
+# recorded output: for every PES the mux emitted, take the largest airing running
+# time across the streams minus the emitting stream's own (the parser is a
+# throwaway -- any TS/PES reader gives this). Across the 74 healthy stream-rows
+# (video and audio counted separately) of the 35 healthy recordings this slice
+# produced -- the real LPM media through the live playout shape (1280x720@30,
+# openh264enc, the caption-embed leg), every one on the same instrument -- the
+# largest lag anywhere was 0.726678s, in the same range as the media's own A/V
+# end offset at the boundary (0.014-0.748s across those runs; the outgoing
+# video's last frame ends ~0.7s before its audio). That is the shape this slice
+# exists to tolerate, not a defect of its own, and the same offset produced both
+# that 0.726678s and a full collapse -- which is why the judge is a bound and not
+# a prediction. Not one healthy row emitted a PES more than 1.0s behind. The four
+# collapsed captures ran their video 9.408000-9.429333s behind, each with 253 of
+# ~1720 emitted PES more than 1.0s behind and 133 more than 5.0s. 2.0s sits 2.75x
+# above every healthy value measured and 4.70x below the collapse.
+#
+# Two properties do the real work here, and both are worth keeping in mind before
+# this number is retuned. It is only reachable by a stream that is STILL
+# advancing -- a stream whose running time has stopped is judged by the flat rule,
+# which is the tighter bound and the correct attribution for a frozen frontier --
+# and the lag has to PERSIST for a whole ``stall_timeout_s`` before anything is
+# judged. That persistence is what makes the bound safe against an A/V end offset
+# at the switch boundary: an offset O lags the ending stream for about O of wall
+# clock, so it can only reach this judge when O alone exceeds ``stall_timeout_s``
+# and this bound together.
+_STREAM_LAG_BOUND_S = 2.0
+
+# U41: the always-hot SLATE leg's selector index. It is the second leg the graph
+# builds (``bridge.py`` pads the program leg at 0 and the live/infinite slate at
+# 1), and it is the only thing in the pipeline that can be put on air when the
+# programme's own plan has ended and its replacement is not ready yet -- which is
+# what makes ``_hold_slate_for_plan_eos`` a hold rather than a stop.
+_SLATE_LEG_INDEX = 1
+
 
 def _resolve_commit_timeout_s(explicit: float) -> float:
     """Validate/clamp the reload-commit watchdog bound to
@@ -622,6 +1014,15 @@ class InputSelectorSwap(SwapController):
 
 class GstPlayoutEngine:
     """One persistent playout pipeline built from a ``PlayoutGraph``."""
+
+    # U41: whether the end of the programme's PLAN is a reason to stop feeding the
+    # channel. Class-level defaults, so a partially-built engine (and every test
+    # that assembles one with ``object.__new__``) inherits the finite-run
+    # behaviour -- ``run()`` still ends at EOS. Only ``run_forever``, the
+    # production worker, turns the hold on; only a commit turns ``_plan_eos_held``
+    # back off. See ``_on_program_pad_plan_eos``.
+    _hold_slate_at_plan_eos: bool = False
+    _plan_eos_held: bool = False
 
     def __init__(
         self,
@@ -731,6 +1132,99 @@ class GstPlayoutEngine:
         # ``now - self._last_output_progress_print_t`` comparison is a plain
         # float subtraction with no None-guard needed.
         self._last_output_progress_print_t = 0.0
+        # U59 round 4: per-worker state for the changeover leg-rate diagnostic
+        # (see the block comment above ``_U59_RATE_ENV_VAR``). Allocated here
+        # rather than left to the class-level defaults so two engines in one
+        # process can never share an episode latch; the defaults stay immutable
+        # for the ``object.__new__`` shapes (the U16 real-runtime emitter).
+        self._u59_init_diagnostics()
+        # U30: one BUFFER counter per mux SINK pad -- the always-on answer to
+        # "which stream is still feeding the mux?". The counter above reads the
+        # mux SRC, so it keeps advancing (at the audio-only rate, measured 234
+        # buffers/5s against 332-496 for healthy A/V) while video is starving;
+        # both live 2026-09-25 freezes read as healthy output in that line. The
+        # U16 first-buffer reporters cannot answer it either -- they REMOVE
+        # themselves after one buffer, and the freeze happened long after that.
+        #
+        # Keyed by pad NAME, never by resolved stream label: a label resolved
+        # before caps negotiation would key on something the next print cannot
+        # find and render as ``video=+0`` -- a lie in the exact direction this
+        # diagnostic exists to detect. Single writer per key (one probe per pad,
+        # one streaming thread each), read only on the GLib loop -- the same
+        # lock-free contract as ``_output_buffers`` above.
+        self._mux_input_pads: dict[str, Any] = {}
+        self._mux_input_buffers: dict[str, int] = {}
+        self._mux_input_snapshot: dict[str, int] = {}
+        self._mux_input_snapshot_t = 0.0
+        # U37: per-pad AIRING running time -- the running time at which the mux
+        # last EMITTED a buffer it took off this pad (the aggregator's
+        # ``buffer-consumed`` signal, armed in ``_install_mux_input_counters``).
+        # This is the per-stream watchdog's reference, in place of the arrival
+        # counter above: arrivals say what REACHED the mux, which is blind by
+        # construction to the shape U37 is about. After a deferred switch a
+        # stale outgoing-tail buffer could be re-dated ~9.4 s into the future and
+        # pin the video pad's head while the mux drained audio alone -- with
+        # video buffers still arriving at their normal rate the whole time, so
+        # ``video=+122`` read as healthy while the channel aired no video at all.
+        # Only consumption says what the channel was AIRING. Keyed by pad NAME
+        # for the same reason the counters are, single writer per pad (the mux's
+        # streaming thread), read only on the GLib loop.
+        self._mux_pad_airing_rt: dict[str, int] = {}
+        # U44: the arrival guard's own state -- the running time of the last video
+        # buffer ACCEPTED at each mux sink pad, and how many arrivals the guard has
+        # dropped there. The reference is the guard's whole memory: advancing it on
+        # an accepted arrival and NOT on a dropped one is what lets two consecutive
+        # future-dated arrivals both be dropped while the next real frame re-seeds
+        # it. Keyed by pad NAME for the same reason the counters above are, single
+        # writer per pad (that pad's own streaming thread), and read only to render
+        # the diagnostic's count.
+        self._mux_pad_arrival_rt: dict[str, int] = {}
+        self._mux_pad_arrival_drops: dict[str, int] = {}
+        # U34: per-stream stall state -- the watchdog above measures ONE
+        # aggregate count (the mux SRC pad), so a channel whose video branch
+        # stopped feeding the mux while audio kept flowing keeps "advancing"
+        # and is never judged stalled. That is exactly the shape of all four
+        # 2026-09-25 freezes (U30 measured 390 buffers/5s healthy against 244
+        # buffers/5s with video gone -- the audio-only rate), and the worker
+        # never exited. These three follow the pads above, keyed by pad NAME for
+        # the same reason those are: a pad whose caps are not yet negotiated has
+        # no honest label, and a wrong label would accuse the wrong stream.
+        # ``_stream_last_rt``/``_stream_last_advance_t`` are re-baselined
+        # wherever the aggregate reference is (arm time, commit settlement).
+        # ``_stream_ever_seen`` is never cleared: a stream that has fed the mux
+        # once is a stream whose silence is news, while a pad that has never
+        # produced at all is the first-output budget's business.
+        self._stream_last_rt: dict[str, int] = {}
+        self._stream_last_advance_t: dict[str, float] = {}
+        # U37: when each pad was FIRST seen lagging the leading stream's airing
+        # running time by more than ``_STREAM_LAG_BOUND_S``. The second half of
+        # the running-time judge: a stream that keeps advancing but sits seconds
+        # behind the others is not airing in step either, and the mux cannot emit
+        # a stream whose head the other has already passed. Re-baselined with
+        # ``_stream_last_advance_t`` (arm time, commit settlement) and cleared the
+        # moment the pad is back within the bound.
+        self._stream_lag_since: dict[str, float] = {}
+        self._stream_ever_seen: set[str] = set()
+        # U34: the reload context the per-stream stall line reports -- the last
+        # content reload's id and where it got to ("prepared"/"committing"/
+        # "committed"/"cleanup-failed"). None until the first content reload;
+        # the live reload-7 case renders ``last reload id=7 stage=committed``,
+        # matching the ``stage=committed elements=52`` line the coordinator
+        # read off the station.
+        self._reload_context: tuple[int, str] | None = None
+        # U30 EOS-origin diagnostic: WHERE the EOS that ends this worker's output
+        # first arrived. Both 2026-09-25 incidents and both off-live campaigns end
+        # with a bus EOS that quits the run loop -- a CLEAN teardown the daemon
+        # cannot tell from an operator's ``stop`` -- and no line said where the EOS
+        # entered the persistent output half. "The outgoing leg's own end escaped a
+        # guard that was not watching" and "something inside the output half
+        # emitted EOS on its own" are the same sight in the log and opposite
+        # diagnoses. One report-only observer per already-counted pad appends its
+        # label here in arrival order (which is data order, so the list reads like
+        # the pipeline), and ``_announce_pipeline_eos`` renders it. Bounded: the
+        # list is capped and a worker prints at most one EOS line per lifetime.
+        self._eos_arrivals: list[str] = []
+        self._eos_arrivals_overflow = 0
         # Per-leg element lists (index-aligned with ``selector_sink_pads``) so a
         # content-reload can dispose the leg it replaces. ``_collecting`` captures the
         # elements built for the current leg; ``_pending_reload`` holds the in-flight
@@ -750,6 +1244,15 @@ class GstPlayoutEngine:
         self._source_leg_seq = 0
         self._reload_txn_counter = count(1)
         self._abort_retire_threads: list[threading.Thread] = []
+        # Item 3 (education exit 1, 2026-09-25 14:51:22): an aborted reload leg is
+        # NOT gone when ``_abort_pending_reload`` returns -- its disposal runs on a
+        # worker thread -- so its elements are still live and still post to the bus
+        # for the whole of that window. ``_abort_retire_threads`` above is only the
+        # join list for ``stop()``; this is the attribution record
+        # ``_belongs_to_aborted_leg`` reads, one entry per aborted leg whose
+        # elements have not been proven gone:
+        # ``{"thread": Thread, "elements": list, "retired": bool}``.
+        self._abort_retire_legs: list[dict[str, Any]] = []
         self._pending_reload: dict[str, Any] | None = None
         # A commit keeps its transaction in ``_pending_reload`` until old-leg
         # retirement and main-loop finalization both complete. Only the potentially
@@ -1091,15 +1594,31 @@ class GstPlayoutEngine:
             )
         return pushed
 
-    def _pipeline_running_time_ms(self) -> int:
+    def _pipeline_running_time_ns(self) -> int | None:
+        """The pipeline's own running time in nanoseconds, or ``None`` if unreadable.
+
+        ``None`` is deliberately distinct from a measured ``0``: a pipeline that
+        has not yet reached its base time really is at zero, while one whose clock
+        cannot be read at all is not -- and the U44 guard, whose whole job is to
+        decide whether an arrival is LATE, must never act on a number it never
+        measured. ``_pipeline_running_time_ms`` renders both of those as 0 (its
+        own contract, unchanged), which is the right answer for a printed
+        diagnostic and the wrong one for a data-path decision.
+        """
         clock = self.pipeline.get_clock()
         if clock is None:
-            return 0
+            return None
         base_time = int(self.pipeline.get_base_time())
         clock_time = int(clock.get_time())
         if clock_time < base_time:
+            return None
+        return clock_time - base_time
+
+    def _pipeline_running_time_ms(self) -> int:
+        running_time_ns = self._pipeline_running_time_ns()
+        if running_time_ns is None:
             return 0
-        return max(0, round((clock_time - base_time) / int(Gst.MSECOND)))
+        return max(0, round(running_time_ns / int(Gst.MSECOND)))
 
     def _prime_live_caption_stream(self) -> None:
         """Prime the sparse caption pad with a GAP so PLAYING cannot deadlock."""
@@ -1674,13 +2193,73 @@ class GstPlayoutEngine:
                 )
                 self._abort_pending_overlay_swap(overlay_layer_name, reason="error")
                 return True
+            # Item 3: last attribution before the fatal tail. A leg the engine has
+            # ALREADY aborted is not gone until its background retirement finishes,
+            # and in that window neither ``_belongs_to_pending_reload`` (slot
+            # cleared) nor ``_belongs_to_retiring_reload`` (an abort never had a
+            # commit) can attribute it -- so its teardown used to decide the
+            # worker's fate. See ``_belongs_to_aborted_leg``.
+            if self._belongs_to_aborted_leg(message.src):
+                err, _debug = message.parse_error()
+                source_name = "unknown"
+                with contextlib.suppress(Exception):
+                    source_name = message.src.get_name()
+                print(
+                    "CTRL reload: contained error from an already-aborted reload leg "
+                    f"(source={source_name}): {err}",
+                    flush=True,
+                )
+                return True
             self._error = message.parse_error()
             if self._loop is not None:
                 self._loop.quit()
         elif message.type == Gst.MessageType.EOS:
+            self._announce_pipeline_eos(message.src)
             if self._loop is not None:
                 self._loop.quit()
+        else:
+            # U59 round 4: observe-only. QoS is the one message class this engine
+            # has never handled, and it is the decoder's own account of exactly
+            # the shape this round is chasing -- a video branch being told to
+            # slow down while audio is untouched. Read via getattr because the
+            # fake-Gst harnesses in this repo's tests build a MessageType without
+            # a QOS member; a diagnostic must not be the reason one fails.
+            qos_type = getattr(Gst.MessageType, "QOS", None)
+            if qos_type is not None and message.type == qos_type:
+                self._u59_record_qos(message)
         return True
+
+    def _announce_pipeline_eos(self, src: Any) -> None:
+        """Name the pipeline-level EOS that is about to quit this worker.
+
+        A bus EOS quits the run loop, so the worker exits and the daemon sees a
+        CLEAN teardown -- and until U30 no line anywhere said the channel's
+        output had ended. An off-live U30 run reproduced exactly that shape: an
+        immediate reload committed, the mux then reached the OUTGOING leg's own
+        end 2.2 s later, the file stopped growing at that PTS, and the worker
+        left with ``{'error': None, 'teardown_clean': True}``. Without this line
+        that is indistinguishable in the log from an operator's ``stop``.
+
+        Cheap and always-on: at most one line per worker lifetime, because it
+        quits the loop immediately after. The ``[mux-in ...]`` suffix is the
+        same interval counter the progress line carries, so the line also says
+        what was still feeding the mux when the output ended -- which is what
+        separates "video went silent first" from "everything stopped at once".
+        The U30 ``[eos-arrivals: ...]`` clause says WHERE that EOS entered the
+        output half -- see ``_record_eos_arrival``."""
+        name = "unknown"
+        with contextlib.suppress(Exception):
+            if src is not None:
+                name = src.get_name()
+        suffix = ""
+        with contextlib.suppress(Exception):
+            suffix = self._mux_input_delta_suffix(time.monotonic() - self._mux_input_snapshot_t)
+        print(
+            f"CTRL output: pipeline EOS from {name} -- quitting the worker"
+            f"{suffix}{self._eos_arrival_suffix()}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     # -- S9-5 pipeline supervision: stall watchdog --------------------------------
 
@@ -1713,6 +2292,9 @@ class GstPlayoutEngine:
             return Gst.PadProbeReturn.OK
 
         src.add_probe(Gst.PadProbeType.BUFFER | Gst.PadProbeType.BUFFER_LIST, _count)
+        # U30: armed AFTER the counter, so ``probes[0]`` on this pad stays the
+        # progress signal the stall watchdog reads (see the test fixtures).
+        self._install_eos_observer(src, self._make_mux_src_eos_label())
 
     # -- U16 start-side diagnostic: what the OUTPUT side first saw ---------------
     #
@@ -1781,6 +2363,802 @@ class GstPlayoutEngine:
                     Gst.PadProbeType.BUFFER, self._make_mux_first_buffer_reporter(pad_name)
                 )
 
+    # -- U30 input-side diagnostic: which stream is still feeding the mux --------
+    #
+    # The mux SRC counter says "output is advancing"; it cannot say WHAT is
+    # advancing. Both 2026-09-25 incidents froze with the worker alive and the
+    # output total still climbing at the audio-only rate, and the reload commit
+    # path gave no line that distinguished "the outgoing leg never ended" from
+    # "it ended and the settlement was declined". These two additions close
+    # exactly those two gaps, and both are always-on and cheap: one int
+    # increment per buffer per pad (no allocation, no locking, no logging) and
+    # one already-existing log line that gains a suffix.
+
+    def _install_mux_input_counters(self) -> None:
+        """Arm one BUFFER counter per mux sink pad, and record the pad set.
+
+        Called once at worker start, beside ``_install_mux_input_diagnostics``,
+        and deliberately NOT self-removing (unlike the U16 first-buffer
+        reporters): the failure both incidents showed came long after the first
+        buffer, so a one-shot probe has nothing left to say about it.
+
+        A pad whose probe cannot be installed is NOT registered. A registered
+        pad that can never be probed would read ``+0`` forever and accuse a
+        healthy stream of having stopped -- the honest rendering of "we could
+        not count this stream" is absence from the line.
+
+        The mux is part of the persistent output half (it never restarts across
+        swaps), so its sink pads are the same objects for the whole worker
+        lifetime; counting them once covers every later reload.
+
+        Silent and safe with no mux, no sink pads, or an un-iterable pad set --
+        same contract as ``_install_mux_input_diagnostics``."""
+        # Fresh dicts, not ``clear()``: this method's contract is that it is
+        # silent and safe whatever it finds, and a re-arm must not accumulate
+        # the previous pad set.
+        self._mux_input_pads = {}
+        self._mux_input_buffers = {}
+        # U44: the arrival guard's reference and tally, created on the same terms
+        # -- an empty reference is the SAFE direction (the next arrival is adopted,
+        # never dropped), so a re-arm can only ever make the guard more permissive.
+        self._mux_pad_arrival_rt = {}
+        self._mux_pad_arrival_drops = {}
+        mux = getattr(self, "mux", None)
+        if mux is None:
+            return
+        try:
+            iterator = mux.iterate_sink_pads()
+        except Exception:
+            return
+        if iterator is None:
+            return
+        while True:
+            try:
+                result, pad = iterator.next()
+            except Exception:
+                return
+            if result != Gst.IteratorResult.OK or pad is None:
+                return
+            try:
+                pad_name = pad.get_name()
+            except Exception:
+                pad_name = "unknown"
+            self._mux_input_pads[pad_name] = pad
+            self._mux_input_buffers[pad_name] = 0
+            try:
+                pad.add_probe(Gst.PadProbeType.BUFFER, self._make_mux_input_counter(pad_name))
+            except Exception:
+                # Could not be counted -> must not be listed (see docstring).
+                self._mux_input_pads.pop(pad_name, None)
+                self._mux_input_buffers.pop(pad_name, None)
+            else:
+                # U37: the per-stream watchdog's AIRING frontier, for the
+                # registered pads only -- a pad that is not listed is not judged,
+                # so a recorder for it would be dead weight. Outside the try
+                # above for the same reason ``_install_eos_observer`` is: a
+                # refused recorder must not un-register a counter that IS
+                # installed (the flow ladder must keep counting this pad).
+                self._install_mux_pad_airing_frontier(pad, pad_name)
+                # U44: and the data-path guard for these same pads. Inside this
+                # ``else`` on purpose: a pad whose BUFFER probe was refused is not
+                # registered, so it is neither counted, nor judged, nor guarded --
+                # and it is named by the WARN that already fired above.
+                self._install_mux_pad_arrival_guard(pad, pad_name)
+            # U30: armed after the counter (never inside its try -- a refused
+            # observer must not un-register a counter that IS installed), and
+            # labelled lazily: this runs before caps are negotiated.
+            self._install_eos_observer(pad, self._make_mux_sink_eos_label(pad))
+
+    def _install_mux_pad_airing_frontier(self, pad: Any, pad_name: str) -> None:
+        """U37: record when the mux last AIRED a buffer off ``pad``, and at what running time.
+
+        ``emit-signals`` makes the aggregator emit ``buffer-consumed`` for every
+        buffer it takes off this pad to build an output buffer, and the signal
+        carries the CLIPPED buffer -- whose PTS is this stream's running time at
+        the mux. Measured on the installed 1.28 runtime: with ``set_offset(x)``
+        on a branch pad, ``consumed.pts - arrival.pts == x`` exactly for every
+        buffer, i.e. the recorded value really is the mux's own running time for
+        this stream and not the leg's raw timeline.
+
+        Best-effort, but not silent-ignoring: a pad whose signal cannot be armed
+        is named in a WARN, because a required stream this watchdog cannot see is
+        exactly the blindness U37 exists to close. The pad stays registered
+        (``_mux_input_pads``, so the ``mux-in`` flow ladder keeps reporting it)
+        and the per-stream judge simply skips it while it has no frontier --
+        which is the same "has never produced" exclusion these tests already
+        carry, now asked of airing rather than of arrival."""
+        try:
+            pad.set_property("emit-signals", True)
+            pad.connect("buffer-consumed", self._make_mux_pad_consumed_recorder(pad_name))
+        except Exception as exc:
+            print(
+                f"WARN: mux pad {pad_name} cannot report consumed buffers "
+                f"({exc!r}); its stream is not judged by running time",
+                flush=True,
+            )
+
+    def _make_mux_pad_consumed_recorder(self, pad_name: str) -> Any:
+        """A per-pad ``buffer-consumed`` recorder closing over ITS OWN pad name.
+
+        A factory rather than a def-in-loop for the same two reasons as
+        ``_make_mux_input_counter``: the closure must key on its own pad, and
+        ``__name__`` stays stable for logs and tests."""
+
+        def _record_mux_pad_consumed(_pad: Gst.Pad, buffer: Any) -> None:
+            # Guarded end to end -- this runs on the mux's streaming thread, and
+            # a watchdog input must never be able to take a channel off air.
+            # ``Gst.CLOCK_TIME_IS_VALID`` is a C macro and is NOT exposed by
+            # PyGObject (measured: AttributeError inside this very handler), so
+            # the validity test is spelled out instead.
+            with contextlib.suppress(Exception):
+                pts = buffer.pts
+                if isinstance(pts, int) and 0 <= pts < Gst.CLOCK_TIME_NONE:
+                    self._mux_pad_airing_rt[pad_name] = pts
+
+        return _record_mux_pad_consumed
+
+    def _make_mux_input_counter(self, pad_name: str) -> Any:
+        """A per-pad BUFFER counter closing over ITS OWN pad name.
+
+        A factory rather than a def-in-loop, for the same two reasons as
+        ``_make_mux_first_buffer_reporter``: the closure must key on its own
+        pad, and ``__name__`` stays stable for logs and tests."""
+
+        def _count_mux_input(_pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            # Guarded end to end -- this runs on a streaming thread, and a
+            # diagnostic must never be able to take a channel off air. OK, never
+            # DROP: this probe observes, it does not police the data path.
+            with contextlib.suppress(Exception):
+                self._mux_input_buffers[pad_name] = self._mux_input_buffers.get(pad_name, 0) + 1
+            return Gst.PadProbeReturn.OK
+
+        return _count_mux_input
+
+    def _install_mux_pad_arrival_guard(self, pad: Any, pad_name: str) -> None:
+        """U44: arm the drop guard for a future-dated VIDEO arrival on ``pad``.
+
+        See ``_make_mux_pad_arrival_guard`` for the mechanism and the measured
+        numbers. A pad whose probe cannot be installed is NAMED in a WARN: this
+        guard's absence is not a diagnostic gap but a live defect left in place, so
+        it must not be silent. The pad stays registered either way -- the WARN is
+        the only honest rendering of "this stream is not protected"."""
+        try:
+            pad.add_probe(Gst.PadProbeType.BUFFER, self._make_mux_pad_arrival_guard(pad_name))
+        except Exception as exc:
+            print(
+                f"WARN: mux pad {pad_name} cannot take the arrival guard ({exc!r}); a "
+                "future-dated buffer on this stream will NOT be dropped and can stall "
+                "the mux for its own full future offset",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _make_mux_pad_arrival_guard(self, pad_name: str) -> Any:
+        """U44: the DROP probe that keeps a future-dated video arrival off the mux.
+
+        A factory rather than a def-in-loop for the same two reasons as
+        ``_make_mux_input_counter``: the closure must key on its own pad, and
+        ``__name__`` stays stable for logs and tests.
+
+        WHAT IT PROTECTS. ``gst_base_ts_mux_find_best_pad`` picks the pad to pop
+        from on the queued heads' timestamps and ``gst_aggregator_wait_and_check``
+        then sleeps until the clock reaches the chosen head's running time, so ONE
+        video buffer whose running time lies D seconds in the future starves the
+        muxed VIDEO for ~D seconds while audio plays on -- a freeze the flow
+        ladders cannot see, because video buffers keep ARRIVING at their normal
+        rate the whole time. The live 2026-09-26 government freeze (reload id=4,
+        running time 6900.968s, off air 13s later) was 25s of it.
+
+        The producer of that buffer is measured, and it is not the reload: each
+        video subchain ends in a ``videorate``, which is forced to push one
+        closing-duplicate frame at its subchain boundary (gstvideorate.c:1063/1077,
+        on the ``count < 1`` branch no property can switch off), and the leg's
+        ``concat`` updates its base for the NEXT subchain (gstconcat.c:589) before
+        forwarding that duplicate -- so the duplicate is clipped under the new
+        segment and its running time lands one subchain-duration in the future.
+        Measured: 10.033s at a 10s subchain, 25.033s at the 25s one that took the
+        channel off air. The freeze lasts exactly as long as the subchain, which is
+        why a 10s subchain only grazes the 10s per-stream judge.
+
+        WHEN IT DROPS. Only on a pad whose stream label, resolved LAZILY inside the
+        probe (caps are not negotiated at install time), is ``video`` -- production
+        video subchains end in ``videorate``, the source of the duplicate, while the
+        audio tail has no ``audiorate``, and dropping legitimately-clipped AUDIO
+        arrivals on this same path was measured at a 1.024s hole in the aired audio.
+        Only when BOTH arms fire, so an ordinary forward step cannot be touched:
+
+        * the arrival's running time is more than
+          ``_MUX_ARRIVAL_CADENCE_BOUND_NS`` past this pad's previous ACCEPTED
+          arrival's -- far above the 33ms video cadence and above the 1.753s
+          legitimate switch step; and
+        * it is more than ``_MUX_ARRIVAL_AHEAD_BOUND_NS`` ahead of the pipeline's
+          own running time -- i.e. the mux would have to WAIT for it, which is the
+          freeze itself.
+
+        The second arm is what keeps this off legitimate media: a pre-rebase arrival
+        is clipped under the OLD segment and so sits BEHIND the clock (no wait, no
+        drop), and an arrival far past its predecessor but already behind the clock
+        -- a genuine hole the mux airs immediately -- is likewise left alone.
+
+        The reference advances only on ACCEPTED arrivals: a second future-dated
+        arrival behind the first is dropped too, and the first real frame after the
+        drop (which lands behind the dropped one) re-seeds it. A BUFFER probe sees
+        no segment events, so nothing here can be re-seeded by a segment crossing --
+        structurally, not by a check. Cost of a false positive: one frame, against
+        which the alternative is D seconds of frozen video.
+
+        Guarded end to end: this runs on a streaming thread and must never be able
+        to take a channel off air by raising."""
+
+        def _guard_mux_pad_arrival(pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            with contextlib.suppress(Exception):
+                if self._mux_pad_stream_label(pad) != "video":
+                    return Gst.PadProbeReturn.OK
+                _pts, running_time, _base = self._measure_first_buffer(pad, info)
+                if running_time is None:
+                    return Gst.PadProbeReturn.OK
+                pipeline_running_time = self._pipeline_running_time_ns()
+                previous = self._mux_pad_arrival_rt.get(pad_name)
+                if previous is None or pipeline_running_time is None:
+                    # First arrival on this pad, or no clock to compare it with:
+                    # adopt it as the reference and let it through. Never guess.
+                    self._mux_pad_arrival_rt[pad_name] = running_time
+                    return Gst.PadProbeReturn.OK
+                if (
+                    running_time - previous <= _MUX_ARRIVAL_CADENCE_BOUND_NS
+                    or running_time - pipeline_running_time <= _MUX_ARRIVAL_AHEAD_BOUND_NS
+                ):
+                    self._mux_pad_arrival_rt[pad_name] = running_time
+                    return Gst.PadProbeReturn.OK
+                # Both arms fire: honouring this arrival means sleeping until the
+                # clock reaches it, which is the whole defect. Drop it, count it,
+                # and do NOT move the reference.
+                drops = self._mux_pad_arrival_drops
+                drops[pad_name] = drops.get(pad_name, 0) + 1
+                print(
+                    f"CTRL mux diagnostic: dropped future-dated video arrival "
+                    f"pad={pad_name} "
+                    f"running_time={_seconds_or_none(running_time)} "
+                    f"last_arrival={_seconds_or_none(previous)} "
+                    f"pipeline_running_time={_seconds_or_none(pipeline_running_time)} "
+                    f"ahead={_seconds_or_none(running_time - pipeline_running_time)} "
+                    f"step={_seconds_or_none(running_time - previous)} "
+                    f"drops={drops[pad_name]}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                return Gst.PadProbeReturn.DROP
+            return Gst.PadProbeReturn.OK
+
+        return _guard_mux_pad_arrival
+
+    def _snapshot_mux_input(self, now: float) -> None:
+        """Move the mux-input baseline to ``now``.
+
+        Called at arm time and after every progress print, so each line reports
+        the interval since the previous one rather than a cumulative total --
+        ``video=+0`` on one interval is the signal, and a cumulative total would
+        hide a stream that stopped ten minutes ago behind everything it sent
+        before that."""
+        with contextlib.suppress(Exception):
+            self._mux_input_snapshot = dict(self._mux_input_buffers)
+            self._mux_input_snapshot_t = now
+
+    def _mux_input_delta_suffix(self, elapsed: float) -> str:
+        """The whole flow ladder as one suffix: the mux clause, then the chain
+        clause. ``""`` when nothing was counted anywhere.
+
+        The mux clause is ``" [mux-in <elapsed>s: video=+N audio=+M ...]"`` -- a
+        pure read of the counters against the last snapshot, and byte-identical
+        to what it rendered before the chain clause existed whenever no chain
+        counter was armed. Video first, then audio, then anything else by pad
+        name: those two are the streams whose silence changes what the channel
+        is airing. See ``_chain_input_delta_suffix`` for the rest of the ladder.
+
+        Guarded throughout, because it runs inside the progress path and must
+        never be able to raise into it."""
+        pads = getattr(self, "_mux_input_pads", None) or {}
+        counters = getattr(self, "_mux_input_buffers", None) or {}
+        snapshot = getattr(self, "_mux_input_snapshot", None) or {}
+        mux_clause = ""
+        if pads and counters:
+            try:
+                parts: list[tuple[int, str, int]] = []
+                for pad_name, pad in pads.items():
+                    current = counters.get(pad_name, 0)
+                    # A pad missing from the snapshot has no interval baseline yet
+                    # (it was registered after the last print): report ``+0`` rather
+                    # than invent a delta from a baseline we never took.
+                    previous = snapshot.get(pad_name, current)
+                    label = self._mux_pad_stream_label(pad)
+                    rank = 0 if label == "video" else 1 if label == "audio" else 2
+                    parts.append((rank, str(label), current - previous))
+                parts.sort(key=lambda item: (item[0], item[1]))
+                rendered = " ".join(f"{label}=+{delta}" for _rank, label, delta in parts)
+            except Exception:
+                return self._chain_input_delta_suffix(elapsed)
+            mux_clause = f" [mux-in {elapsed:.1f}s: {rendered}]"
+        return mux_clause + self._chain_input_delta_suffix(elapsed)
+
+    # -- U30 flow ladder: WHERE between the selector and the mux data stops -----
+    #
+    # ``[mux-in ...]`` says whether the output half is still being fed; it cannot
+    # say WHERE inside it a stream stopped. The dead immediate-switch runs of the
+    # 2026-09-25 off-live campaign show the switched-in leg's buffer arriving on
+    # the selector's own input pad, the selector's active-pad readback confirming
+    # the switch, and the mux input counters never moving for that leg -- so the
+    # loss is in the stretch those counters cannot see:
+    # ``selector -> isolation queue -> encoder -> mux``. One counter at each end
+    # of it bisects that stretch on the next occurrence, at the same cost as the
+    # mux counters (one int increment per buffer, no allocation, no locking, no
+    # logging, and no extra line).
+    #
+    # Rung ``in`` closes the remaining ambiguity: ``sel`` at ``+0`` after a switch
+    # says the new leg's data stopped at or before the selector's src pad, which
+    # is either "the leg's producer stopped pushing" or "the selector swallowed
+    # it". ``in`` counts the leg's buffers arriving at the selector's OWN request
+    # sink pad, so ``in +N, sel +0`` names the selector and ``in +0, sel +0``
+    # names the producer. Armed per reload (the pad is created by the reload), so
+    # it is absent until the first switch and re-baselined at each one.
+
+    _CHAIN_INPUT_RUNGS: ClassVar[tuple[str, ...]] = ("in", "sel", "queue")
+    _CHAIN_INPUT_STREAMS: ClassVar[tuple[str, ...]] = ("video", "audio")
+    _CHAIN_INPUT_ISOLATION_QUEUES: ClassVar[dict[str, str]] = {
+        "video": "program_video_selector_isolation",
+        "audio": "program_audio_selector_isolation",
+    }
+
+    def _install_chain_input_counters(self) -> None:
+        """Arm one BUFFER counter at each end of the selector->queue stretch.
+
+        Rung ``sel`` is the selector's src pad -- what the selector actually
+        forwarded -- and rung ``queue`` is the isolation queue's src pad, the
+        encode chain's own input. Two rungs, one per stream each: the selectors
+        and the queues are part of the persistent output half and never restart
+        across a swap, so their src pads are the same objects for the whole
+        worker lifetime. Rung ``in`` (see ``_install_new_leg_inbound_counters``)
+        is the third and cannot be armed here: its pad only exists once a reload
+        has built a replacement leg.
+
+        Keyed by ``(rung, stream)`` rather than by pad name: an
+        ``input-selector``'s src pad can be armed before caps are negotiated, and
+        a label read from unnegotiated caps falls back to the pad name, which the
+        next print could not match (reading ``+0`` forever).
+
+        Same registration contract as ``_install_mux_input_counters``: an element
+        that cannot be found, a missing src pad, or a refused probe leaves that
+        rung/stream OUT of the map. A registered-but-uncountable rung would read
+        ``+0`` forever and accuse a healthy stream of having stopped; absence is
+        the honest rendering of "not counted". Silent and safe with no selector,
+        no queue, or no pipeline."""
+        self._chain_input_pads: dict[tuple[str, str], Gst.Pad] = {}
+        self._chain_input_buffers: dict[tuple[str, str], int] = {}
+        pipeline = getattr(self, "pipeline", None)
+        lookup = getattr(pipeline, "get_by_name", None)
+
+        def _src_pad(element: Any) -> Any:
+            """The element's static ``src`` pad, or ``None`` if it has none."""
+            get_static_pad = getattr(element, "get_static_pad", None)
+            if not callable(get_static_pad):
+                return None
+            with contextlib.suppress(Exception):
+                return get_static_pad("src")
+            return None
+
+        def _isolation_queue(stream: str) -> Any:
+            """The named isolation queue for ``stream``, or ``None``."""
+            if not callable(lookup):
+                return None
+            with contextlib.suppress(Exception):
+                return lookup(self._CHAIN_INPUT_ISOLATION_QUEUES[stream])
+            return None
+
+        video_selector = getattr(self, "selector", None)
+        audio_selector = getattr(self, "audio_selector", None)
+        candidates: list[tuple[str, str, Any, Callable[[], str]]] = [
+            # U30: the ``sel`` label carries the selector's active sink pad as it
+            # stood when the EOS arrived -- see ``_make_selector_src_eos_label``.
+            (
+                "sel",
+                "video",
+                _src_pad(video_selector),
+                self._make_selector_src_eos_label(video_selector, "video"),
+            ),
+            (
+                "sel",
+                "audio",
+                _src_pad(audio_selector),
+                self._make_selector_src_eos_label(audio_selector, "audio"),
+            ),
+        ]
+        candidates += [
+            (
+                "queue",
+                stream,
+                _src_pad(_isolation_queue(stream)),
+                self._make_chain_eos_label("queue", stream),
+            )
+            for stream in self._CHAIN_INPUT_ISOLATION_QUEUES
+        ]
+        for rung, stream, pad, label in candidates:
+            if pad is None:
+                continue
+            key = (rung, stream)
+            self._chain_input_pads[key] = pad
+            self._chain_input_buffers[key] = 0
+            try:
+                pad.add_probe(Gst.PadProbeType.BUFFER, self._make_chain_input_counter(rung, stream))
+            except Exception:
+                # Could not be counted -> must not be listed (see docstring).
+                self._chain_input_pads.pop(key, None)
+                self._chain_input_buffers.pop(key, None)
+            # U30: armed after the counter, so ``probes[0]`` stays the counter.
+            # A rung label is a constant (or one property read) -- no caps needed.
+            self._install_eos_observer(pad, label)
+
+    def _install_new_leg_inbound_counters(self, pending: dict[str, Any]) -> None:
+        """Arm rung ``in``: the new leg's buffers arriving at its selector sink pad.
+
+        Called from ``_arm_new_leg_selector_diagnostics`` -- after the rebase
+        offsets are set and while the holds still block the first buffer, so no
+        buffer can cross before the counter exists. Overwrites the previous
+        reload's pad reference for the key, so ``in`` always names the leg that
+        is selected NOW. Best-effort per pad, exactly like every other rung: a
+        pad that cannot be counted is left out, never registered as ``+0``.
+
+        Rung ``in`` JOINS the ladder; it must never require one to exist.
+        ``_install_chain_input_counters`` arms these two maps once per worker and
+        this method only adds a key to them, so an object that never armed the
+        ladder has no rung ``in`` to add -- and no ladder to render either, since
+        ``_chain_input_delta_suffix`` already renders a missing rung as absent
+        rather than ``+0``. The shape is real, not hypothetical: the U16
+        real-runtime emitter arms the selector-side diagnostics on a bare
+        ``object.__new__(GstPlayoutEngine)`` (no ``__init__``, no pipeline), and
+        an unguarded write here raised ``AttributeError`` and took that whole
+        emit down with it."""
+        pads = getattr(self, "_chain_input_pads", None)
+        counters = getattr(self, "_chain_input_buffers", None)
+        if pads is None or counters is None:
+            return
+        for label, pad_key in (("video", "new_video_pad"), ("audio", "new_audio_pad")):
+            pad = pending.get(pad_key)
+            if pad is None or not hasattr(pad, "add_probe"):
+                continue
+            key = ("in", label)
+            pads[key] = pad
+            counters[key] = 0
+            try:
+                pad.add_probe(Gst.PadProbeType.BUFFER, self._make_chain_input_counter("in", label))
+            except Exception:
+                # Could not be counted -> must not be listed (see docstring).
+                pads.pop(key, None)
+                counters.pop(key, None)
+            # U30: armed after the counter, so ``probes[0]`` stays the counter.
+            self._install_eos_observer(pad, self._make_chain_eos_label("in", label))
+
+    def _make_chain_eos_label(self, rung: str, stream: str) -> Callable[[], str]:
+        """The ``U30`` EOS-observer label for a rung/stream pair.
+
+        Deliberately the SAME text the flow ladder uses (``"sel:video"``), so one
+        rendered arrival reads against the counter clause of the same line. Rung
+        ``out`` is not a ladder rung -- it labels the OUTGOING leg's own selector
+        sink pads, armed per reload by ``reload_program``."""
+
+        def _label() -> str:
+            return f"{rung}:{stream}"
+
+        return _label
+
+    def _make_chain_input_counter(self, rung: str, stream: str) -> Any:
+        """A per-rung BUFFER counter closing over ITS OWN rung and stream.
+
+        A factory rather than a def-in-loop, for the same two reasons as
+        ``_make_mux_input_counter``: the closure must key on its own rung, and
+        ``__name__`` stays stable for logs and tests."""
+
+        def _count_chain_input(_pad: Gst.Pad, _info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            # Guarded end to end -- this runs on a streaming thread, and a
+            # diagnostic must never be able to take a channel off air. OK, never
+            # DROP: this probe observes, it does not police the data path.
+            with contextlib.suppress(Exception):
+                key = (rung, stream)
+                self._chain_input_buffers[key] = self._chain_input_buffers.get(key, 0) + 1
+            return Gst.PadProbeReturn.OK
+
+        return _count_chain_input
+
+    def _snapshot_chain_input(self) -> None:
+        """Move the flow ladder's baseline to right now.
+
+        Called at arm time and after every progress print, for the same reason as
+        ``_snapshot_mux_input``: each line reports its own interval, and a
+        cumulative total would hide a stream that stopped ten minutes ago behind
+        everything it sent before that."""
+        with contextlib.suppress(Exception):
+            self._chain_input_snapshot = dict(self._chain_input_buffers)
+
+    def _chain_input_delta_suffix(self, elapsed: float) -> str:
+        """``" [chain-in <elapsed>s: sel video=+N audio=+M | queue video=+N audio=+M]"``.
+
+        Rungs upstream to downstream, then video before audio, so the clause
+        reads in data order and matches the mux clause's stream order. A rung or
+        stream that was never counted is absent, not ``+0``. Returns ``""`` when
+        nothing was counted, so a graph without these elements renders exactly the
+        line it rendered before -- and is guarded throughout, because it runs
+        inside the same progress/EOS path as the mux clause."""
+        pads = getattr(self, "_chain_input_pads", None) or {}
+        counters = getattr(self, "_chain_input_buffers", None) or {}
+        snapshot = getattr(self, "_chain_input_snapshot", None) or {}
+        if not pads or not counters:
+            return ""
+        try:
+            rung_rank = {rung: index for index, rung in enumerate(self._CHAIN_INPUT_RUNGS)}
+            stream_rank = {stream: index for index, stream in enumerate(self._CHAIN_INPUT_STREAMS)}
+            ranked = sorted(
+                pads,
+                key=lambda key: (
+                    rung_rank.get(key[0], len(rung_rank)),
+                    stream_rank.get(key[1], len(stream_rank)),
+                    key,
+                ),
+            )
+            grouped: dict[str, list[str]] = {}
+            for key in ranked:
+                current = counters.get(key, 0)
+                # A rung missing from the snapshot has no interval baseline yet
+                # (registered after the last print): report ``+0`` rather than
+                # invent a delta from a baseline we never took.
+                previous = snapshot.get(key, current)
+                grouped.setdefault(key[0], []).append(f"{key[1]}=+{current - previous}")
+            rendered = " | ".join(f"{rung} {' '.join(items)}" for rung, items in grouped.items())
+        except Exception:
+            return ""
+        return f" [chain-in {elapsed:.1f}s: {rendered}]"
+
+    # -- U30 EOS-origin diagnostic: where the EOS that ends output arrived ------
+    #
+    # ``CTRL output: pipeline EOS from civiccast-playout`` names the end of the
+    # channel's output but not its origin, and both off-live campaigns produce
+    # that line in a shape no other line explains: the outgoing leg streamed its
+    # whole 4.05s through ``sel``/``queue`` into the mux, the worker then quit
+    # cleanly, and NOT ONE of the reload's own guards printed -- no
+    # ``outgoing-EOS-dropped``, no ``firing``, no commit. Either the EOS crossed
+    # a selector sink pad the boundary probe was not on, or it came into being
+    # downstream of the probe entirely. Those are opposite fixes, and the log
+    # could not tell them apart.
+    #
+    # One report-only observer on each pad that already carries a flow-ladder
+    # counter answers it on the NEXT occurrence: the labels land in
+    # ``_eos_arrivals`` in arrival order (which is data order), so
+    # ``[eos-arrivals: out:video, sel:video, queue:video, mux-sink:video, mux-src]``
+    # says the outgoing leg's own EOS ran all the way through, while
+    # ``[eos-arrivals: none]`` is itself the finding: nothing in the observed
+    # output half ever saw an EOS, so it was generated below every one of them.
+    #
+    # The first campaign to run with those labels back was NOT that clean, and
+    # the reason was the labels, not the pipeline: ten of its eleven dead runs
+    # read ``[eos-arrivals: sel:video, sel:audio, queue:video, mux-sink:video,
+    # queue:audio, mux-sink:audio, mux-src]`` -- an EOS on the selector's own src
+    # pad, with NO ``out:*`` arrival before it, and no boundary-probe guard line
+    # either. An ``input-selector`` cannot put an EOS on its src pad unless one
+    # arrived on a sink pad, so that EOS crossed a selector sink pad that carries
+    # no label -- the one stretch the labelled set did not cover. Two additions
+    # close it, both still one observer per pad and one int per reload:
+    #
+    # * ``sink-pad:<padname>:<stream>`` -- one observer on EVERY sink pad of both
+    #   selectors, including the pads of the leg being switched in
+    #   (``_install_selector_sink_eos_observers``, called by ``reload_program``).
+    #   The next occurrence names the pad instead of leaving "somewhere".
+    # * ``sel:<stream>[active=<padname>]`` -- the selector's ``active-pad`` read
+    #   at EOS time (``_make_selector_src_eos_label``), which says whether the
+    #   selector was still pointed at the leg that had been airing when it
+    #   emitted that EOS.
+    #
+    # Report-only, always: never DROP, never REMOVE, never a line of its own --
+    # the EOS it watches for is the one about to quit the worker anyway, so this
+    # cannot change what the channel airs. The observers on the OUTGOING selector
+    # sink pads are armed before the reload's boundary probes are (same-priority
+    # pads probes run in installation order), so an arrival is recorded even when
+    # the boundary probe installed after it returns DROP.
+    #
+    # ONLY ``Gst.EventType.EOS`` is recorded. An EVENT_DOWNSTREAM probe fires for
+    # every downstream event on its pad -- stream-start, caps, segment, tag -- and
+    # an earlier U30 build of this diagnostic recorded all of them: the campaign
+    # line came back ``[eos-arrivals: sel:audio, queue:audio, ... +186 more]`` on
+    # runs whose entire log was 4 s long, which is a per-buffer event stream, not
+    # 198 ends of output. A label list that admits non-EOS events does not answer
+    # "where did the EOS enter?" -- it answers "what happened on these pads", and
+    # it answers it in a clause named ``eos-arrivals``. Filtering on the event type
+    # is what makes a rendered label a claim about an EOS.
+
+    _EOS_ARRIVAL_MAX: ClassVar[int] = 12
+
+    def _record_eos_arrival(self, label: str) -> None:
+        """Append one arrival label, keeping the rendered line bounded.
+
+        Guarded end to end -- this runs on a streaming thread inside a probe. A
+        label identical to the previous one is folded: two observers on one pad
+        (a superseded reload re-arms the same outgoing pad) observe one EOS, and
+        reporting it twice would read as two arrivals."""
+        with contextlib.suppress(Exception):
+            arrivals = getattr(self, "_eos_arrivals", None)
+            if arrivals is None:
+                self._eos_arrivals = arrivals = []
+            if arrivals and arrivals[-1] == label:
+                return
+            if len(arrivals) < self._EOS_ARRIVAL_MAX:
+                arrivals.append(label)
+            else:
+                self._eos_arrivals_overflow = getattr(self, "_eos_arrivals_overflow", 0) + 1
+
+    def _make_eos_observer(self, label: Callable[[], str]) -> Any:
+        """A report-only EOS observer closing over a LAZY label.
+
+        Records an arrival for ``Gst.EventType.EOS`` and nothing else, so the
+        rendered list is a list of ends of output rather than of every caps,
+        segment and tag event that happened to cross the same pad.
+
+        A factory rather than a def-in-loop for the same reason as
+        ``_make_mux_input_counter``: ``__name__`` stays stable for logs and tests.
+        Lazy rather than a plain string because a mux sink pad's stream label is
+        only readable once caps are negotiated, and these observers are armed
+        before PLAYING."""
+
+        def _observe_eos(_pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+            # Guarded end to end -- streaming thread. OK, never DROP: this probe
+            # observes the data path, it does not police it.
+            with contextlib.suppress(Exception):
+                event = info.get_event() if info is not None else None
+                # An unreadable event is NOT an arrival: silence here stays
+                # silence, and the line keeps saying ``none`` rather than
+                # inventing an EOS this observer never saw.
+                if event is not None and event.type == Gst.EventType.EOS:
+                    self._record_eos_arrival(label())
+            return Gst.PadProbeReturn.OK
+
+        return _observe_eos
+
+    def _make_mux_src_eos_label(self) -> Callable[[], str]:
+        """The mux's own src pad -- the last pad inside the worker.
+
+        A constant label, but a callable like every other one: an EOS arriving
+        HERE means the mux itself emitted it, so nothing upstream of the mux
+        produced the end and this pad is the boundary the diagnosis turns on.
+        """
+
+        def _label() -> str:
+            return "mux-src"
+
+        return _label
+
+    def _make_mux_sink_eos_label(self, pad: Any) -> Callable[[], str]:
+        """Lazy label for one mux sink pad: the stream that stopped feeding it.
+
+        Lazy because these observers are armed before PLAYING, when the pad's
+        caps are not negotiated yet and the stream label is not yet readable."""
+
+        def _label() -> str:
+            return f"mux-sink:{self._mux_pad_stream_label(pad)}"
+
+        return _label
+
+    def _make_selector_src_eos_label(self, selector: Any, stream: str) -> Callable[[], str]:
+        """``"sel:video[active=sink_0]"`` -- the selector's own EOS, plus where
+        the selector was pointed when it emitted it.
+
+        ``sel:video`` alone says the selector's src pad emitted an EOS, not which
+        input was feeding it when it did. The deferred deaths record that arrival
+        while the pad the outgoing leg delivers on records nothing, and the
+        reading turns on exactly this: the selector was still pointed at the
+        outgoing leg (so the EOS came out of the leg that had been airing) or it
+        had already been pointed elsewhere. One property read at EOS time buys
+        that separation; no new probe, no per-buffer cost.
+
+        Read lazily and guarded: a selector whose ``active-pad`` cannot be read
+        renders the bare ``sel:video`` the line rendered before -- silence about
+        the pad, never a guess at it."""
+
+        def _label() -> str:
+            with contextlib.suppress(Exception):
+                active = selector.get_property("active-pad") if selector is not None else None
+                if active is not None:
+                    return f"sel:{stream}[active={active.get_name()}]"
+            return f"sel:{stream}"
+
+        return _label
+
+    def _make_selector_sink_eos_label(self, pad: Any, stream: str) -> Callable[[], str]:
+        """Lazy label for one selector SINK pad: the pad's own name.
+
+        ``out:video``/``out:audio`` can only name the pad the outgoing leg is
+        EXPECTED to deliver on. An ``input-selector`` puts an EOS on its src pad
+        only after one reached a sink pad, so a ``sel:video`` arrival with no
+        ``out:video`` arrival means the EOS crossed a sink pad that carries no
+        label -- and this label names it, whatever it turns out to be
+        (``sink-pad:sink_1:video``). Lazy because the name is read at EOS time,
+        after a commit may already have replaced the leg on that pad."""
+
+        def _label() -> str:
+            with contextlib.suppress(Exception):
+                return f"sink-pad:{pad.get_name()}:{stream}"
+            return f"sink-pad:?:{stream}"
+
+        return _label
+
+    def _selector_sink_pad_pairs(self) -> list[tuple[str, Any]]:
+        """``(stream, pad)`` for every sink pad of both program selectors.
+
+        The engine's own link-order record of which legs feed which selector:
+        index 0 is the leg that has been airing, the rest are the legs a reload
+        left attached. Read at arm time, so a pad added to the selector by a
+        LATER reload is not covered -- ``reload_program`` passes those in
+        explicitly."""
+        pairs: list[tuple[str, Any]] = []
+        for stream, pads in (
+            ("video", getattr(self, "selector_sink_pads", [])),
+            ("audio", getattr(self, "audio_sink_pads", [])),
+        ):
+            for pad in list(pads):
+                if pad is not None:
+                    pairs.append((stream, pad))
+        return pairs
+
+    def _install_selector_sink_eos_observers(
+        self,
+        extra: Sequence[tuple[str, Any]] = (),
+        skip: Sequence[Any] = (),
+    ) -> None:
+        """Name EVERY selector sink pad, so an EOS crossing one is named.
+
+        ``out:video``/``out:audio`` are armed on the pads the outgoing leg is
+        expected to deliver on; ten of the eleven deferred deaths of the
+        2026-09-25 off-live campaign recorded an EOS at the selector's own src
+        pad with no arrival on either of them, and the EOS must have reached a
+        sink pad to get there. These observers close that hole with the pad's own
+        name, and ``extra`` covers the pads of the leg being switched IN -- which
+        is held at its first buffer and carries no observer at all until the
+        commit arms the ``in`` rung, so an arrival from the NEW leg is otherwise
+        unobservable no matter what it does.
+
+        ``skip`` is the pads that already carry ``out:*``: one EOS must not
+        render under two labels. Report-only and best-effort per pad, exactly
+        like ``_install_eos_observer`` -- a pad that refuses a probe stays
+        unobserved rather than being reported as silent."""
+        for stream, pad in list(self._selector_sink_pad_pairs()) + list(extra):
+            if any(pad is skipped for skipped in skip):
+                continue
+            self._install_eos_observer(pad, self._make_selector_sink_eos_label(pad, stream))
+
+    def _install_eos_observer(self, pad: Any, label: Callable[[], str]) -> None:
+        """Arm one observer if the pad can take it; silent and safe otherwise.
+
+        Same registration contract as every flow-ladder rung: a pad that is
+        missing or refuses a probe is left unobserved, never reported as having
+        seen nothing, because ``[eos-arrivals: none]`` is a claim about the
+        pipeline and must not be made by a pad we never watched."""
+        if pad is None or not hasattr(pad, "add_probe"):
+            return
+        with contextlib.suppress(Exception):
+            pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._make_eos_observer(label))
+
+    def _eos_arrival_suffix(self) -> str:
+        """``" [eos-arrivals: out:video, sel:video, mux-src]"`` -- or
+        ``" [eos-arrivals: none]"`` when no observed pad saw one.
+
+        Guarded: it runs inside the bus EOS path, and returns ``""`` (rendering
+        the line exactly as it was before U30) if the arrival state cannot be
+        read at all."""
+        with contextlib.suppress(Exception):
+            arrivals = getattr(self, "_eos_arrivals", None) or []
+            if not arrivals:
+                return " [eos-arrivals: none]"
+            rendered = ", ".join(arrivals)
+            overflow = getattr(self, "_eos_arrivals_overflow", 0)
+            if overflow:
+                rendered += f", +{overflow} more"
+            return f" [eos-arrivals: {rendered}]"
+        return ""
+
     def _arm_stall_watchdog(self) -> None:
         # Item 84: arm unconditionally as long as EITHER budget is active --
         # before this fix a ``stall_timeout_s <= 0`` (an operator disabling the
@@ -1804,6 +3182,23 @@ class GstPlayoutEngine:
         self._output_buffers_at_arm = self._output_buffers
         self._first_output_seen = False
         self._last_output_progress_print_t = self._stall_last_advance_t
+        # U59 round 4: the rate diagnostic's first interval starts at arm time --
+        # the same moment the ladder below takes its baseline -- and its episode
+        # latch starts clean (a worker that just armed has no episode in flight).
+        # The last-fire stamp is deliberately NOT reset: the bound-exceeded
+        # WARN's 60s "delivery fell short" window must survive an arm.
+        self._u59_rate_interval_t = self._stall_last_advance_t
+        self._u59_rate_streak = 0
+        self._u59_rate_in_episode = False
+        # U30: the per-stream counters' baseline must start here too -- the
+        # progress line's ``[mux-in ...]`` / ``[chain-in ...]`` deltas are
+        # measured from arm time (and from each later print), never from a
+        # cumulative total.
+        self._snapshot_mux_input(self._stall_last_advance_t)
+        self._snapshot_chain_input()
+        # U34: the per-stream references start at the same moment and against
+        # the same baseline as the aggregate one -- see ``_check_stream_stalls``.
+        self._arm_stream_stall_reference(self._stall_last_advance_t)
         GLib.timeout_add_seconds(1, self._check_stall)
 
     def _maybe_print_first_output_marker(self) -> None:
@@ -1857,11 +3252,809 @@ class GstPlayoutEngine:
             return
         self._last_output_progress_print_t = now
         delta = self._output_buffers - self._output_buffers_at_arm
+        # U30: the total above cannot say WHICH stream is advancing -- it kept
+        # climbing at the audio-only rate through both 2026-09-25 freezes. The
+        # suffix names each counted mux sink pad's delta over THIS interval, and
+        # is "" (line byte-identical) whenever nothing was counted.
+        mux_in = self._mux_input_delta_suffix(now - self._mux_input_snapshot_t)
         print(
-            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING",
+            f"CTRL output: {self._output_buffers} buffers (+{delta}) since PLAYING{mux_in}",
             file=sys.stderr,
             flush=True,
         )
+        # U59 round 4: judged BEFORE this poll's snapshot, so the deltas it reads
+        # are this interval's -- the ladder's baseline is still the previous
+        # print's (the same baseline the line above just rendered).
+        self._u59_judge_leg_rate(now)
+        # U59 round 4b: the same poll feeds the accumulated-delivery judge, and on
+        # the same terms -- before the snapshot, so it reads this interval's
+        # deltas. It is a second instrument, not a replacement: the rate floor
+        # catches a leg that is COLLAPSING, this catches one that is quietly
+        # running short (0.967x nominal on 2026-09-28 06:24) and accumulating the
+        # seconds that become the changeover's hole.
+        self._u59_judge_leg_lag(now)
+        self._snapshot_mux_input(now)
+        self._snapshot_chain_input()
+
+    # -- U59 round 4: the changeover leg-rate diagnostic ------------------------
+    #
+    # Judged on rung ``sel`` -- the selector's src pad, i.e. the stream the
+    # channel is actually AIRING -- which is armed for both streams for the whole
+    # worker lifetime. Rung ``in`` is the wrong witness: it names the leg selected
+    # NOW, which during a deferral is the INCOMING leg (held, so it reads ~0 on
+    # both streams and the audio guard would swallow the fire), while the U59
+    # evidence puts the collapse on the RETIRING leg's last ~21s -- exactly the
+    # leg rung ``in`` stops naming once the switch commits.
+    #
+    # Disclosed limits. (a) It judges the leg on air at each poll, so a collapse
+    # that never reaches ``sel`` is invisible. (b) It cannot see inside
+    # ``decodebin``: a decodebin's internal queues are reachable only by iterating
+    # a live bin, which a diagnostic must never do to a channel that is on air, so
+    # the queue column can read ``queues=none`` on a leg whose stall is
+    # decoder-internal -- an honest gap, not a measurement of zero. (c) Per-piece
+    # position is read from the video concat's sink-pad PTS, which is the piece's
+    # own media timeline: exact within a piece, and "the leg's running time" is
+    # the sum of the completed pieces plus the position in the active one.
+
+    _u59_legs: ClassVar[tuple[dict[str, Any], ...]] = ()
+    _u59_qos: ClassVar[tuple[dict[str, Any], ...]] = ()
+    _u59_rate_streak: ClassVar[int] = 0
+    _u59_rate_in_episode: ClassVar[bool] = False
+    _u59_fired_t: ClassVar[float | None] = None
+    _u59_rate_interval_t: ClassVar[float] = 0.0
+    _u59_lag_samples: ClassVar[tuple[tuple[float, float], ...]] = ()
+    _u59_lag_total: ClassVar[float] = 0.0
+    _u59_lag_txn: ClassVar[Any] = None
+    _u59_lag_streak: ClassVar[int] = 0
+    _u59_lag_in_episode: ClassVar[bool] = False
+    _u59_lag_fired_t: ClassVar[float | None] = None
+    _u59_lag_interval_t: ClassVar[float] = 0.0
+
+    def _u59_init_diagnostics(self) -> None:
+        """This worker's own diagnostic state.
+
+        The class-level defaults are immutable tuples for the shapes that never
+        run ``__init__`` (``object.__new__(GstPlayoutEngine)`` -- the U16
+        real-runtime emitter and several tests): they read empty containers
+        instead of mutating a class attribute shared with every other instance.
+        """
+        self._u59_legs = ()
+        self._u59_qos = ()
+        self._u59_rate_streak = 0
+        self._u59_rate_in_episode = False
+        self._u59_fired_t = None
+        self._u59_rate_interval_t = 0.0
+        self._u59_lag_samples = ()
+        self._u59_lag_total = 0.0
+        self._u59_lag_txn = None
+        self._u59_lag_streak = 0
+        self._u59_lag_in_episode = False
+        self._u59_lag_fired_t = None
+        self._u59_lag_interval_t = 0.0
+
+    @staticmethod
+    def _u59_enabled() -> bool:
+        """The one kill switch: ``CIVICAST_GST_LEG_RATE_DIAG=0`` (or ``off`` /
+        ``false`` / ``no``) silences the line. Unset and empty mean ON -- this
+        round exists to catch an occurrence nothing else in the log explains, so
+        it is armed by default and only an explicit refusal turns it off."""
+        raw = os.environ.get(_U59_RATE_ENV_VAR)
+        if raw is None or not raw.strip():
+            return True
+        return raw.strip().lower() not in ("0", "off", "false", "no")
+
+    @staticmethod
+    def _u59_factory_name(element: Any) -> str:
+        """The element's factory name, or ``""`` -- never raises."""
+        with contextlib.suppress(Exception):
+            return str(element.get_factory().get_name())
+        return ""
+
+    @staticmethod
+    def _u59_element_name(element: Any) -> str:
+        with contextlib.suppress(Exception):
+            return str(element.get_name() or "")
+        return ""
+
+    @staticmethod
+    def _u59_pad_index(pad: Any) -> int:
+        """A concat request pad's ``sink_<n>`` index, for ordering pieces.
+
+        ``sinkpads`` is returned in an unspecified order; the request order is the
+        build order, which is the playlist order, so sorting by the name's numeric
+        suffix reconstructs it. A pad whose name carries no index sorts last."""
+        name = ""
+        with contextlib.suppress(Exception):
+            name = str(pad.get_name() or "")
+        match = re.search(r"_(\d+)$", name)
+        return int(match.group(1)) if match else 1 << 30
+
+    def _u59_record_qos(self, message: Any) -> None:
+        """Remember one QOS message for the diagnostic's 30s window.
+
+        Bounded and append-only on the GLib loop (``_on_bus`` is a bus-sync
+        handler), read on the same loop, so no lock is needed or wanted."""
+        with contextlib.suppress(Exception):
+            entry: dict[str, Any] = {"t": time.monotonic(), "src": "unknown"}
+            with contextlib.suppress(Exception):
+                entry["src"] = str(message.src.get_name())
+            with contextlib.suppress(Exception):
+                structure = message.get_structure()
+                if structure is not None:
+                    for key in ("jitter", "proportion", "quality"):
+                        if structure.has_field(key):
+                            with contextlib.suppress(Exception):
+                                entry[key] = float(structure.get_value(key))
+                    for key in ("dropped", "processed"):
+                        if structure.has_field(key):
+                            with contextlib.suppress(Exception):
+                                entry[key] = int(structure.get_value(key))
+            history = list(self._u59_qos) + [entry]
+            self._u59_qos = tuple(history[-_U59_QOS_HISTORY:])
+
+    def _u59_record_leg(self, pending: dict[str, Any]) -> None:
+        """Remember the leg just built, for the rate diagnostic.
+
+        Called from ``_install_new_leg_inbound_counters`` -- the same moment rung
+        ``in`` is re-armed, i.e. "this leg is the selected one now". Guarded end to
+        end: this runs inside the reload path, and a diagnostic must never be the
+        reason a changeover fails."""
+        if not self._u59_enabled():
+            return
+        try:
+            record = self._u59_leg_record(pending)
+        except Exception:
+            return
+        if record is None:
+            return
+        legs = [leg for leg in self._u59_legs if leg.get("txn_id") != record["txn_id"]]
+        legs.append(record)
+        self._u59_legs = tuple(legs[-_U59_RATE_KEEP_LEGS:])
+
+    def _u59_leg_record(self, pending: dict[str, Any]) -> dict[str, Any] | None:
+        """The diagnostic's view of one leg, from the elements the build returned.
+
+        ``pending['new_elements']`` is the build's collection list in ``_make``
+        order, so a ``filesrc`` starts a new piece and the pieces come out in
+        playlist order -- which is also the video concat's request-pad order and
+        therefore the index a ``sink_<n>`` name carries. No new key is added to
+        ``pending``: that dict is the reload's own contract, and a diagnostic has
+        no business extending it."""
+        elements = list(pending.get("new_elements") or ())
+        if not elements:
+            return None
+        label = _DIAGNOSTIC_NONE
+        concat: Any = None
+        pieces: list[dict[str, Any]] = []
+        queues: list[Any] = []
+        decoders: list[Any] = []
+        capsfilters: list[Any] = []
+        for element in elements:
+            factory = self._u59_factory_name(element)
+            name = self._u59_element_name(element)
+            if factory == "filesrc":
+                path: Any = None
+                with contextlib.suppress(Exception):
+                    path = element.get_property("location")
+                pieces.append(
+                    {
+                        "filesrc": element,
+                        "path": path,
+                        "count": 0,
+                        "first_pts": None,
+                        "last_pts": None,
+                        "last_t": 0.0,
+                    }
+                )
+            elif factory == "concat" and name.startswith("vconcat_") and concat is None:
+                concat = element
+                match = re.match(r"^vconcat_(.+)_\d+$", name)
+                if match:
+                    label = match.group(1)
+            elif factory in ("queue", "multiqueue"):
+                queues.append(element)
+            elif factory in getattr(self, "_DECODERS", ()):
+                decoders.append(element)
+            elif factory == "capsfilter":
+                capsfilters.append(element)
+        concat_pads: list[Any] = []
+        if concat is not None:
+            with contextlib.suppress(Exception):
+                concat_pads = sorted(getattr(concat, "sinkpads", None) or [], key=self._u59_pad_index)
+        for index, piece in enumerate(pieces):
+            if index >= len(concat_pads):
+                break
+            pad = concat_pads[index]
+            piece["pad"] = pad
+            if not hasattr(pad, "add_probe"):
+                continue
+            with contextlib.suppress(Exception):
+                pad.add_probe(Gst.PadProbeType.BUFFER, self._u59_make_piece_probe(piece))
+        return {
+            "txn_id": pending.get("txn_id"),
+            "label": label,
+            "video_pad": pending.get("new_video_pad"),
+            "pieces": pieces,
+            "queues": queues,
+            "decoders": decoders,
+            "capsfilters": capsfilters,
+            "recorded_t": time.monotonic(),
+        }
+
+    @staticmethod
+    def _u59_make_piece_probe(entry: dict[str, Any]) -> Callable[..., Any]:
+        """An observe-only BUFFER probe on one piece's video concat sink pad.
+
+        Two readings, no mutation: the pad's buffer count and its PTS window.
+        ``concat`` does not rewrite PTS on its SINK pads, so ``last_pts -
+        first_pts`` on a piece's pad is that piece's own media span -- which is
+        what "position in its piece" means here. Single writer (that pad's
+        streaming thread), read on the GLib loop: the same lock-free contract as
+        every other counter in this module."""
+
+        def _u59_piece_probe(_pad: Any, info: Any) -> Any:
+            try:
+                entry["count"] = int(entry.get("count") or 0) + 1
+                entry["last_t"] = time.monotonic()
+                get_buffer = getattr(info, "get_buffer", None)
+                buffer = get_buffer() if callable(get_buffer) else None
+                if buffer is not None:
+                    pts = int(getattr(buffer, "pts", -1))
+                    # CLOCK_TIME_NONE (and a negative) is "no timestamp", not a
+                    # position: recording it would render a leg 584 years long.
+                    if 0 <= pts < (1 << 62):
+                        if entry.get("first_pts") is None:
+                            entry["first_pts"] = pts
+                        entry["last_pts"] = pts
+            except Exception:
+                pass
+            return Gst.PadProbeReturn.OK
+
+        return _u59_piece_probe
+
+    def _u59_airing_leg(self) -> dict[str, Any] | None:
+        """Which recorded leg is on air, by pad IDENTITY first.
+
+        The selector's ``active-pad`` compared against each record's
+        ``new_video_pad`` is exact -- the same identity comparison
+        ``_confirm_reload_selector_handoff`` reads back. Only when that read is
+        unavailable (no selector, or a pad we never recorded) does it fall back to
+        the leg with the most recent per-piece activity, then to the newest
+        record: during a deferral the incoming leg is HELD and silent, so activity
+        picks the retiring leg that is still airing. A per-piece TIE (no leg has
+        strictly newer activity) deliberately keeps the FIRST active leg -- the
+        older, retiring one -- which is the same answer that read would give."""
+        legs = self._u59_legs
+        if not legs:
+            return None
+        active: Any = None
+        with contextlib.suppress(Exception):
+            selector = getattr(self, "selector", None)
+            if selector is not None:
+                active = selector.get_property("active-pad")
+        if active is not None:
+            for leg in reversed(legs):
+                if leg.get("video_pad") is active:
+                    return leg
+        best: dict[str, Any] | None = None
+        best_t = 0.0
+        for leg in legs:
+            for piece in leg.get("pieces") or ():
+                last_t = float(piece.get("last_t") or 0.0)
+                if last_t > best_t:
+                    best_t = last_t
+                    best = leg
+        return best if best is not None else legs[-1]
+
+    @staticmethod
+    def _u59_piece_span(piece: dict[str, Any] | None) -> float | None:
+        """A piece's media span in seconds, or ``None`` when it never reported a
+        timestamp. ``None`` is not ``0.0``: an un-timestamped piece is unknown,
+        and rendering it as zero would claim the leg had not advanced."""
+        if not piece:
+            return None
+        first = piece.get("first_pts")
+        last = piece.get("last_pts")
+        if first is None or last is None:
+            return None
+        return (int(last) - int(first)) / Gst.SECOND
+
+    @staticmethod
+    def _u59_caps_text(element: Any) -> str:
+        with contextlib.suppress(Exception):
+            pad = element.get_static_pad("src")
+            if pad is not None:
+                caps = pad.get_current_caps()
+                if caps is not None:
+                    return str(caps.to_string())
+        return ""
+
+    def _u59_nominal_rates(self, leg: dict[str, Any] | None) -> tuple[float, float]:
+        """The leg's OWN nominal rates, from its capsfilters' negotiated caps.
+
+        The floor is only meaningful against the rate this leg was actually built
+        for, so the framerate and sample rate are read rather than assumed. The
+        module constants stand in when the caps are not readable -- the comparison
+        must never run against an invented zero."""
+        video = _U59_RATE_NOMINAL_VIDEO_PER_S
+        audio = _U59_RATE_NOMINAL_AUDIO_PER_S
+        if not leg:
+            return video, audio
+        for element in leg.get("capsfilters") or ():
+            text = self._u59_caps_text(element)
+            if text.startswith("video/"):
+                match = re.search(r"framerate=\(fraction\)(\d+)/(\d+)", text)
+                if match and int(match.group(2)):
+                    video = int(match.group(1)) / int(match.group(2))
+            elif text.startswith("audio/"):
+                match = re.search(r"rate=\(int\)(\d+)", text)
+                if match and int(match.group(1)):
+                    audio = int(match.group(1)) / 1024.0
+        return video, audio
+
+    def _u59_rate_rung(self) -> str | None:
+        """The rung both streams are read from -- see the block comment for why
+        ``sel`` leads. Both streams must be present: a video reading compared
+        against an absent audio one is not a comparison."""
+        pads = getattr(self, "_chain_input_pads", None) or {}
+        for rung in _U59_RATE_RUNG_PREFERENCE:
+            if all((rung, stream) in pads for stream in self._CHAIN_INPUT_STREAMS):
+                return rung
+        return None
+
+    def _u59_rates(self, rung: str, interval: float) -> tuple[float, float] | None:
+        """``(video, audio)`` buffers per second over the poll's interval.
+
+        The baseline is ``_chain_input_snapshot`` -- the value the last progress
+        print left behind, since the judge runs BEFORE this poll's snapshot. A
+        rung/stream registered after that snapshot has no baseline yet and is
+        treated exactly as ``_chain_input_delta_suffix`` treats it (delta 0 from
+        the current count), so the first interval after a switch cannot report a
+        delta we never measured."""
+        pads = getattr(self, "_chain_input_pads", None) or {}
+        counters = getattr(self, "_chain_input_buffers", None) or {}
+        snapshot = getattr(self, "_chain_input_snapshot", None) or {}
+        if interval <= 0.0:
+            return None
+        deltas: list[float] = []
+        for stream in self._CHAIN_INPUT_STREAMS:
+            key = (rung, stream)
+            if key not in pads or key not in counters:
+                return None
+            current = counters[key]
+            deltas.append((current - snapshot.get(key, current)) / interval)
+        return deltas[0], deltas[1]
+
+    def _u59_judge_leg_rate(self, now: float) -> None:
+        """Fire the diagnostic's one WARN line for a video-starved leg.
+
+        Runs on the CTRL output poll, before that poll's snapshot, so the delta it
+        reads is this interval's. An episode is the run of consecutive polls with
+        video below the floor WHILE audio stays above its own: the audio guard is
+        what separates this shape from the box-wide contention dips that take both
+        streams down together (measured ~0.92 nominal each on 2026-09-27), which
+        are not this defect and must not be logged as one. One line per episode,
+        and at most one line per ``_U59_RATE_WARN_INTERVAL_S``; an episode
+        suppressed by the interval is not latched, so it fires as soon as the
+        interval allows while it is still running."""
+        try:
+            interval = now - float(self._u59_rate_interval_t or 0.0)
+            self._u59_rate_interval_t = now
+            if not self._u59_enabled():
+                return
+            if interval <= 0.0:
+                return
+            rung = self._u59_rate_rung()
+            if rung is None:
+                return
+            rates = self._u59_rates(rung, interval)
+            if rates is None:
+                return
+            video_rate, audio_rate = rates
+            leg = self._u59_airing_leg()
+            video_nominal, audio_nominal = self._u59_nominal_rates(leg)
+            starving = video_rate < _U59_RATE_VIDEO_FLOOR * video_nominal
+            audio_healthy = audio_rate >= _U59_RATE_AUDIO_FLOOR * audio_nominal
+            if not (starving and audio_healthy):
+                self._u59_rate_streak = 0
+                self._u59_rate_in_episode = False
+                return
+            self._u59_rate_streak = int(self._u59_rate_streak or 0) + 1
+            if self._u59_rate_in_episode:
+                return
+            if self._u59_rate_streak < _U59_RATE_STREAK_POLLS:
+                return
+            fired_t = self._u59_fired_t
+            if fired_t is not None and now - float(fired_t) < _U59_RATE_WARN_INTERVAL_S:
+                return
+            self._u59_rate_in_episode = True
+            self._u59_fired_t = now
+            print(
+                self._u59_warn_line(
+                    now=now,
+                    leg=leg,
+                    rung=rung,
+                    video_rate=video_rate,
+                    audio_rate=audio_rate,
+                    video_nominal=video_nominal,
+                    audio_nominal=audio_nominal,
+                    interval=interval,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            # A diagnostic is never allowed to take a channel off air.
+            return
+
+    def _u59_warn_line(
+        self,
+        *,
+        now: float,
+        leg: dict[str, Any] | None,
+        rung: str,
+        video_rate: float,
+        audio_rate: float,
+        video_nominal: float,
+        audio_nominal: float,
+        interval: float,
+    ) -> str:
+        """The one line an episode prints: which leg, how far into it, which piece
+        of its playlist and how far into that, its source path, the queue levels
+        and decoders on its branch, and any QOS from the last 30s."""
+        txn_id = (leg or {}).get("txn_id")
+        return (
+            f"WARN: leg chain-in video below floor "
+            f"reload_id={_DIAGNOSTIC_NONE if txn_id is None else txn_id} "
+            f"rung={rung} "
+            f"video={video_rate:.1f}/s ({video_rate / video_nominal:.2f}x nominal {video_nominal:.1f}) "
+            f"audio={audio_rate:.1f}/s ({audio_rate / audio_nominal:.2f}x nominal {audio_nominal:.1f}) "
+            f"window={interval:.1f}s polls={_U59_RATE_STREAK_POLLS} "
+            f"{self._u59_leg_suffix(now, leg)}"
+        )
+
+    def _u59_leg_suffix(self, now: float, leg: dict[str, Any] | None) -> str:
+        """The per-leg half of a U59 WARN line, shared by both instruments.
+
+        Factored out in round 4b so the delivery-lag line names the same leg with
+        the same fields as the rate line -- one description of the leg, two
+        measurements of it. The text is byte-identical to what the rate line
+        built inline before this round."""
+        pieces = list((leg or {}).get("pieces") or [])
+        active_index: int | None = None
+        best_t = 0.0
+        for index, piece in enumerate(pieces):
+            last_t = float(piece.get("last_t") or 0.0)
+            # ``last_t`` is a monotonic stamp, so a piece that never streamed has
+            # none and must not be selected -- its position is unknown, which is
+            # exactly what ``pos=none`` says. Two pieces CAN carry the same stamp
+            # (the clock is coarser than a 30fps probe), and on that tie the LATER
+            # piece wins: pieces stream in playlist order, so the later index is
+            # the one still streaming when the stamps agree.
+            if last_t <= 0.0:
+                continue
+            if last_t >= best_t:
+                best_t = last_t
+                active_index = index
+        if active_index is None:
+            piece_field = f"piece={_DIAGNOSTIC_NONE}"
+            pos_field = f"pos={_DIAGNOSTIC_NONE}"
+            leg_rt_field = f"leg_rt={_DIAGNOSTIC_NONE}"
+            path_field = _DIAGNOSTIC_NONE
+        else:
+            active = pieces[active_index]
+            span = self._u59_piece_span(active)
+            completed = 0.0
+            for piece in pieces[:active_index]:
+                piece_span = self._u59_piece_span(piece)
+                if piece_span is not None:
+                    completed += piece_span
+            piece_field = f"piece={active_index + 1}/{len(pieces)}"
+            pos_field = (
+                f"pos={_DIAGNOSTIC_NONE}" if span is None else f"pos={span:.3f}s"
+            )
+            leg_rt_field = (
+                f"leg_rt={_DIAGNOSTIC_NONE}"
+                if span is None and completed <= 0.0
+                else f"leg_rt={completed + (span or 0.0):.3f}s"
+            )
+            path_field = str(active.get("path") or _DIAGNOSTIC_NONE)
+        return (
+            f"leg={(leg or {}).get('label') or _DIAGNOSTIC_NONE} "
+            f"{piece_field} {pos_field} {leg_rt_field} path={path_field} "
+            f"queues={self._u59_queue_field(leg)} "
+            f"decoders={self._u59_decoder_field(leg)} {self._u59_qos_field(now)}"
+        )
+
+    def _u59_judge_leg_lag(self, now: float) -> None:
+        """Round 4b: fire one WARN line when the on-air leg stops DELIVERING video
+        as fast as it delivers audio, measured as accumulated lag.
+
+        The quantity is ``audio_seconds - video_seconds`` delivered by this leg,
+        each counted in its own negotiated nominal, and the test is its GROWTH
+        across a fully covered ``_U59_LAG_WINDOW_S`` window -- not its absolute
+        value, because an absolute bound would accumulate a small nominal
+        mismatch over a 2000s leg. The window's own baseline is a sample taken at
+        least a window ago, so the growth over it is drift-immune.
+
+        Why a second instrument: the round-4 rate floor must stay quiet on
+        healthy legs, and a shortfall mild enough to stay above a quiet floor
+        (0.967x nominal, live 2026-09-28 06:24) still accumulates seconds -- it
+        became a 2.000s picture hole. This measures the accumulation itself, and
+        the number it prints is the number the switch then measures as the
+        ``video_end``/``audio_end`` spread.
+
+        Disclosed limits. (a) It is armed only once the window is fully covered,
+        i.e. after the first ``_U59_LAG_WINDOW_S`` of a leg, because a growth over
+        a partly covered window is not the bound it is compared against. (b) The
+        accumulator resets when the leg on air changes identity, so a deficit is
+        never inherited across a changeover. (c) Like the rate judge it watches
+        rung ``sel``, so a collapse that never reaches the selector is invisible
+        to it. (d) It is one-sided: a leg CATCHING UP (a post-switch burst, video
+        above nominal) grows the lag negatively and is not this defect.
+        """
+        try:
+            interval = now - float(self._u59_lag_interval_t or 0.0)
+            self._u59_lag_interval_t = now
+            if not self._u59_enabled():
+                return
+            if interval <= 0.0:
+                return
+            rung = self._u59_rate_rung()
+            if rung is None:
+                return
+            rates = self._u59_rates(rung, interval)
+            if rates is None:
+                return
+            video_rate, audio_rate = rates
+            leg = self._u59_airing_leg()
+            video_nominal, audio_nominal = self._u59_nominal_rates(leg)
+            self._u59_accumulate_leg_lag(now, leg, video_rate, audio_rate,
+                                        video_nominal, audio_nominal, interval)
+            growth = self._u59_lag_growth(now)
+            if growth is None or growth < _U59_LAG_BOUND_S:
+                self._u59_lag_streak = 0
+                self._u59_lag_in_episode = False
+                return
+            self._u59_lag_streak = int(self._u59_lag_streak or 0) + 1
+            if self._u59_lag_in_episode:
+                return
+            if self._u59_lag_streak < _U59_LAG_STREAK_POLLS:
+                return
+            fired_t = self._u59_lag_fired_t
+            if fired_t is not None and now - float(fired_t) < _U59_RATE_WARN_INTERVAL_S:
+                return
+            self._u59_lag_in_episode = True
+            self._u59_lag_fired_t = now
+            print(
+                self._u59_lag_line(
+                    now=now,
+                    leg=leg,
+                    rung=rung,
+                    growth=growth,
+                    video_rate=video_rate,
+                    audio_rate=audio_rate,
+                    interval=interval,
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+        except Exception:
+            # A diagnostic is never allowed to take a channel off air.
+            return
+
+    def _u59_accumulate_leg_lag(
+        self,
+        now: float,
+        leg: dict[str, Any] | None,
+        video_rate: float,
+        audio_rate: float,
+        video_nominal: float,
+        audio_nominal: float,
+        interval: float,
+    ) -> None:
+        """Add this poll's delivery to the on-air leg's lag, resetting on a change
+        of leg. The sample list is pruned by time and capped, so the memory cost
+        is a constant however long a leg runs."""
+        txn_id = (leg or {}).get("txn_id")
+        if not self._u59_lag_samples or txn_id != self._u59_lag_txn:
+            self._u59_lag_samples = ()
+            self._u59_lag_total = 0.0
+            self._u59_lag_txn = txn_id
+            self._u59_lag_streak = 0
+            self._u59_lag_in_episode = False
+        video_seconds = video_rate * interval / video_nominal
+        audio_seconds = audio_rate * interval / audio_nominal
+        self._u59_lag_total = float(self._u59_lag_total or 0.0) + (
+            audio_seconds - video_seconds
+        )
+        samples = list(self._u59_lag_samples) + [(now, self._u59_lag_total)]
+        self._u59_lag_samples = tuple(self._u59_prune_lag_samples(samples, now))
+
+    @staticmethod
+    def _u59_prune_lag_samples(
+        samples: list[tuple[float, float]], now: float
+    ) -> list[tuple[float, float]]:
+        """Keep every sample inside the window, plus the newest one BEFORE it.
+
+        That older sample is the window's baseline: without it the growth is
+        uncomputable, so it is dropped last -- the count cap trims the oldest
+        IN-window sample, never the baseline. Pruning by time rather than by
+        count is what keeps a full window available whatever the poll cadence."""
+        cutoff = now - _U59_LAG_WINDOW_S
+        inside = [sample for sample in samples if sample[0] > cutoff]
+        before = [sample for sample in samples if sample[0] <= cutoff]
+        keep = ([before[-1]] if before else []) + inside[-(_U59_LAG_SAMPLES - 1):]
+        return keep
+
+    def _u59_lag_growth(self, now: float) -> float | None:
+        """The lag's growth across the window ending now, or ``None`` while the
+        window is not yet fully covered -- an uncovered window has no baseline and
+        must not be judged as if it were zero."""
+        cutoff = now - _U59_LAG_WINDOW_S
+        baseline: float | None = None
+        for sample_t, sample_total in self._u59_lag_samples:
+            if sample_t > cutoff:
+                break
+            baseline = sample_total
+        if baseline is None:
+            return None
+        return float(self._u59_lag_total or 0.0) - baseline
+
+    def _u59_lag_line(
+        self,
+        *,
+        now: float,
+        leg: dict[str, Any] | None,
+        rung: str,
+        growth: float,
+        video_rate: float,
+        audio_rate: float,
+        interval: float,
+    ) -> str:
+        """The lag episode's one line. It names the accumulated deficit in
+        seconds and the window it grew across, which is the quantity the
+        changeover will measure as its ``video_end``/``audio_end`` spread -- then
+        the same leg description the rate line carries."""
+        txn_id = (leg or {}).get("txn_id")
+        return (
+            f"WARN: leg delivery lag "
+            f"reload_id={_DIAGNOSTIC_NONE if txn_id is None else txn_id} "
+            f"rung={rung} "
+            f"lag=+{growth:.3f}s over {_U59_LAG_WINDOW_S:.1f}s "
+            f"(bound {_U59_LAG_BOUND_S:.1f}s, polls={_U59_LAG_STREAK_POLLS}) "
+            f"video={video_rate:.1f}/s audio={audio_rate:.1f}/s window={interval:.1f}s "
+            f"{self._u59_leg_suffix(now, leg)}"
+        )
+
+    def _u59_leg_delivery_clause(self, moment: float) -> str:
+        """The bound-exceeded line's delivery clause, naming whichever instrument
+        measured the shortfall that became this spread.
+
+        Prefers the LAG witness: it measures the deficit in seconds -- the same
+        quantity the spread is -- whereas the rate witness only reports that the
+        instantaneous rate was low at some point. Round 4 could only see the rate
+        witness; live 2026-09-28 06:24 is the case where the lag witness fired and
+        the rate one did not."""
+        lag_t = getattr(self, "_u59_lag_fired_t", None)
+        if (
+            lag_t is not None
+            and 0.0 <= moment - float(lag_t) <= _U59_RATE_RECENT_FIRE_S
+        ):
+            return (
+                "video delivery fell short at the end of the leg "
+                f"(leg delivery lag fired {moment - float(lag_t):.1f}s ago)"
+            )
+        rate_t = getattr(self, "_u59_fired_t", None)
+        if (
+            rate_t is not None
+            and 0.0 <= moment - float(rate_t) <= _U59_RATE_RECENT_FIRE_S
+        ):
+            return (
+                "video delivery fell short at the end of the leg "
+                f"(leg chain-in video below floor {moment - float(rate_t):.1f}s ago)"
+            )
+        return ""
+
+    @staticmethod
+    def _u59_queue_field(leg: dict[str, Any] | None) -> str:
+        """``current-level-buffers``/``current-level-time`` for every queue-like
+        element in the leg. ``none`` when the leg has no top-level queue -- true of
+        a playlist leg, whose sub-chains carry no queue at all -- and that is an
+        honest "not addressable here", never a measured zero (see the block
+        comment's limit (b))."""
+        rendered: list[str] = []
+        for element in (leg or {}).get("queues") or ():
+            name = _DIAGNOSTIC_NONE
+            with contextlib.suppress(Exception):
+                name = str(element.get_name() or _DIAGNOSTIC_NONE)
+            buffers = _DIAGNOSTIC_NONE
+            with contextlib.suppress(Exception):
+                current = element.get_property("current-level-buffers")
+                if current is not None:
+                    buffers = str(int(current))
+            seconds = _DIAGNOSTIC_NONE
+            with contextlib.suppress(Exception):
+                current_time = element.get_property("current-level-time")
+                if current_time is not None:
+                    seconds = f"{int(current_time) / Gst.SECOND:.3f}s"
+            rendered.append(f"{name}={buffers}buf/{seconds}")
+        return ",".join(rendered) if rendered else _DIAGNOSTIC_NONE
+
+    @staticmethod
+    def _u59_decoder_field(leg: dict[str, Any] | None) -> str:
+        names: list[str] = []
+        for element in (leg or {}).get("decoders") or ():
+            with contextlib.suppress(Exception):
+                name = str(element.get_name() or "")
+                if name:
+                    names.append(name)
+        return ",".join(names) if names else _DIAGNOSTIC_NONE
+
+    def _u59_qos_field(self, now: float) -> str:
+        """QOS messages seen in the last ``_U59_QOS_WINDOW_S``, newest three
+        rendered. ``qos=0 in 30s`` when the window is empty, so the line always
+        carries the answer rather than omitting the question."""
+        cutoff = now - _U59_QOS_WINDOW_S
+        recent = [entry for entry in self._u59_qos if float(entry.get("t") or 0.0) >= cutoff]
+        if not recent:
+            return f"qos=0 in {int(_U59_QOS_WINDOW_S)}s"
+        rendered: list[str] = []
+        for entry in recent[-3:]:
+            fields = [str(entry.get("src") or "unknown")]
+            for key, label in (
+                ("jitter", "jit"),
+                ("proportion", "prop"),
+                ("quality", "qual"),
+                ("dropped", "drop"),
+                ("processed", "proc"),
+            ):
+                if key in entry:
+                    value = entry[key]
+                    fields.append(
+                        f"{label}={value:.4f}" if isinstance(value, float) else f"{label}={value}"
+                    )
+            rendered.append(",".join(fields))
+        return f"qos={len(recent)} in {int(_U59_QOS_WINDOW_S)}s [{'; '.join(rendered)}]"
+
+    def _bound_exceeded_warn_line(
+        self,
+        pending: dict[str, Any],
+        measured_ends: Sequence[tuple[str, int | None]],
+        spread_ns: int,
+        now: float | None = None,
+    ) -> str:
+        """U59 round 4 item 2: the bound-exceeded line states what was MEASURED.
+
+        The pre-round-4 text ended "... keeping the longer-leg end (no trim) -- a
+        truly broken asset must stay visible", which asserts a cause -- an asset
+        whose streams merely differ in length. Live 2026-09-27 showed the other
+        cause: an asset that is not broken at all, whose video DELIVERY fell short
+        at the end of the leg. The line therefore names the two measured ends, and
+        says delivery fell short when either U59 instrument fired inside the last
+        ``_U59_RATE_RECENT_FIRE_S``. The WARN prefix and the first clause are
+        unchanged, so an existing grep for
+        ``reload switch-at-shorter-leg bound exceeded`` still matches.
+
+        Round 4b: the clause is now chosen by ``_u59_leg_delivery_clause``, which
+        prefers the LAG witness (it measures the deficit in seconds -- the same
+        quantity as the spread) and falls back to the round-4 rate witness. When
+        neither fired the line is byte-identical to round 4's."""
+        ends = {label: end for label, end in measured_ends}
+        parts = [
+            "WARN: reload switch-at-shorter-leg bound exceeded",
+            f"reload_id={pending.get('txn_id')}",
+            f"spread={spread_ns / Gst.SECOND:.3f}s",
+            f"> {_SWITCH_SHORTER_LEG_MAX_TRIM_S:.3f}s;",
+            "keeping the longer-leg end (no trim)",
+            f"video_end={_seconds_or_none(ends.get('video'))}",
+            f"audio_end={_seconds_or_none(ends.get('audio'))}",
+        ]
+        moment = time.monotonic() if now is None else now
+        clause = self._u59_leg_delivery_clause(moment)
+        if clause:
+            parts.append(clause)
+        return " ".join(parts)
 
     def _check_stall(self) -> bool:
         """Quit the run loop on either of two DISTINCT budgets, measured from
@@ -1903,7 +4096,15 @@ class GstPlayoutEngine:
                 self._first_output_seen = True
                 self._maybe_print_first_output_marker()
             self._maybe_print_output_progress(now)
-            return True  # output advancing — keep watching
+            # U34: the aggregate advanced -- but it advanced on SOME stream.
+            # In both shapes of a real freeze one branch keeps feeding the mux
+            # (audio), so this is the only branch where the aggregate counter
+            # is blind by construction; a per-stream judgement belongs here and
+            # nowhere else. When the aggregate itself is flat the code below
+            # keeps precedence unchanged.
+            # False here means a per-stream stall was judged and the loop was
+            # quit -- the watchdog is done, exactly like the paths below.
+            return self._check_stream_stalls(now)
         self._maybe_print_output_progress(now)
         elapsed = now - self._stall_last_advance_t
         if not self._first_output_seen:
@@ -1939,27 +4140,20 @@ class GstPlayoutEngine:
             return True
         if elapsed >= self.stall_timeout_s:
             pending = self._pending_reload
-            if (
-                pending is not None
-                and pending.get("switch_at_end_of_current", False)
-                and pending.get("new_leg_ready", False)
-                and not pending.get("old_leg_eos", False)
-                and not pending.get("commit_in_progress", False)
+            # A fully prerolled replacement is held safely off the selector,
+            # but a broken outgoing leg can stop producing without ever
+            # delivering EOS. Once output has flatlined for the ordinary
+            # stall budget, force this transaction through the existing
+            # forced-boundary path instead of killing the worker and losing
+            # the ready replacement. The helper marks this transaction's
+            # boundary satisfied and reuses the normal lock-safe
+            # commit/retirement path. U34: the per-stream path asks the same
+            # question of the same preconditions, so both call this one
+            # predicate rather than restating it.
+            if self._force_ready_deferred_switch(
+                reason="output stalled after replacement preroll; forcing switch"
             ):
-                # A fully prerolled replacement is held safely off the selector,
-                # but a broken outgoing leg can stop producing without ever
-                # delivering EOS. Once output has flatlined for the ordinary
-                # stall budget, force this transaction through the existing
-                # forced-boundary path instead of killing the worker and losing
-                # the ready replacement. The helper marks this transaction's
-                # boundary satisfied and reuses the normal lock-safe
-                # commit/retirement path.
-                forced = self._force_deferred_boundary(
-                    pending["txn_id"],
-                    reason="output stalled after replacement preroll; forcing switch",
-                )
-                if forced:
-                    return True
+                return True
             if pending is not None and pending.get("commit_in_progress", False):
                 # Round-2 finding 2: the two watchdogs were racing and the WRONG
                 # one always won. A commit holds the replacement leg held (not
@@ -1994,33 +4188,6 @@ class GstPlayoutEngine:
             # worker's stderr tail into ``last_error`` when the child exits non-zero,
             # so the reason a channel bounced is on the operator's state row instead
             # of only in an uncollected stdout log.
-            # beta.10 diagnostic (opt-in, default OFF): name the exact precondition that
-            # stopped _force_deferred_boundary from rescuing THIS stall, turning the
-            # 2026-09-21 rollover-stall inference into a fact. Print-only: nothing below
-            # branches on it, and with the env var unset this emits nothing at all.
-            if _stall_diag_enabled():
-                if pending is None:
-                    _why = "no_pending_reload"
-                elif pending.get("commit_in_progress", False):
-                    _why = "commit_in_progress"
-                elif not pending.get("switch_at_end_of_current", False):
-                    _why = "not_switch_at_end_of_current"
-                elif not pending.get("new_leg_ready", False):
-                    _why = "new_leg_not_ready"
-                elif pending.get("old_leg_eos", False):
-                    _why = "old_leg_already_eos"
-                else:
-                    _why = "conds_met_force_failed"
-                print(
-                    f"CTRL stall-diag: budget={int(self.stall_timeout_s)}s "
-                    f"first_output_seen={self._first_output_seen} "
-                    f"buffers={self._output_buffers} at_arm={self._output_buffers_at_arm} "
-                    f"escape_blocked_by={_why} "
-                    f"pending_keys={sorted(pending.keys()) if pending is not None else []} "
-                    f"pid={os.getpid()}",
-                    file=sys.stderr,
-                    flush=True,
-                )
             print(
                 # ASCII only: the daemon folds this line into the state row's
                 # last_error, which is written to Postgres. A non-ASCII byte here
@@ -2045,8 +4212,323 @@ class GstPlayoutEngine:
         the duration of a commit (the commit watchdog owns that window), and this
         is what makes the hand-back clean: the channel that comes out of a commit
         gets a full ``stall_timeout_s`` to resume output, rather than inheriting
-        however much of the budget had already elapsed when the commit began."""
-        self._stall_last_advance_t = time.monotonic()
+        however much of the budget had already elapsed when the commit began.
+
+        U30: the flow ladder's interval restarts here too. A committed reload is
+        exactly the moment the question "is the SWITCHED-IN leg feeding the mux
+        yet?" starts to have an answer, and without this baseline the first
+        progress/EOS line after a commit would report a delta that straddles the
+        commit and the healthy outgoing flow before it -- which is how the
+        2026-09-25 freezes read as ``video=+121`` while the mux was receiving
+        nothing but the retiring tail. Only the diagnostic interval moves; the
+        stall watchdog reads ``_output_buffers`` and is unaffected."""
+        now = time.monotonic()
+        self._stall_last_advance_t = now
+        self._snapshot_mux_input(now)
+        self._snapshot_chain_input()
+        # U34: the per-stream references restart here too, for the same reason
+        # and with the same clean hand-back: the leg that was switched IN has
+        # only just begun to have a chance to feed the mux, and it must get the
+        # full per-stream budget rather than inherit the commit's silence.
+        self._arm_stream_stall_reference(now)
+
+    # -- U34 per-stream stall judgement ---------------------------------------
+
+    def _required_stream_labels(self) -> set[str]:
+        """The stream labels whose silence means the channel stopped airing.
+
+        ``video`` always; ``audio`` only when the persistent output half
+        actually carries an audio branch (``self.audio_selector`` is built iff
+        the graph declares an audio encoder -- see the pipeline build), because
+        a graph with no audio branch has no audio mux pad to judge and an
+        audio-less channel must not be judged silent for having no audio.
+
+        Caption/subtitle pads are deliberately excluded from this set: a cue
+        track is legitimately sparse (minutes can pass between cues), so its
+        silence is not an outage. They stay in the logged flow ladder
+        (``_mux_input_delta_suffix``) where an operator can see them."""
+        labels = {"video"}
+        if getattr(self, "audio_selector", None) is not None:
+            labels.add("audio")
+        return labels
+
+    def _arm_stream_stall_reference(self, now: float) -> None:
+        """Baseline every counted mux SINK pad's stall reference at ``now``.
+
+        Called at arm time and from ``_reset_stall_reference`` (commit
+        settlement), exactly where the aggregate reference is re-baselined, so
+        the two watchdogs always agree about when the current window started.
+
+        U37: the reference is the pad's AIRING running time
+        (``_mux_pad_airing_rt``), not its arrival count, so what this watchdog
+        measures is whether the mux is still EMITTING this stream -- see the
+        attribute's own comment for why arrivals cannot answer that.
+
+        Pads whose frontier is already set at this moment are credited as having
+        produced -- ``_stream_ever_seen`` is additive and never cleared, so a
+        stream that fed the mux before a commit is still a stream whose later
+        silence is an outage."""
+        with contextlib.suppress(Exception):
+            pads = getattr(self, "_mux_input_pads", None) or {}
+            airing = getattr(self, "_mux_pad_airing_rt", None) or {}
+            ever = getattr(self, "_stream_ever_seen", None)
+            if ever is None:
+                ever = set()
+                self._stream_ever_seen = ever
+            self._stream_last_rt = dict(airing)
+            self._stream_last_advance_t = dict.fromkeys(pads, now)
+            # U37: the lag clock starts over with the advance clock -- a new
+            # window must not inherit a lag measured before it began.
+            self._stream_lag_since = {}
+            for pad_name in pads:
+                if airing.get(pad_name) is not None:
+                    ever.add(pad_name)
+
+    def _check_stream_stalls(self, now: float) -> bool:
+        """U34: judge each REQUIRED stream's own mux SINK pad.
+
+        Called only from ``_check_stall``'s output-ADVANCING branch, because
+        that is the branch where the aggregate counter is blind by
+        construction: the four 2026-09-25 freezes each kept the mux SRC counter
+        climbing at the audio-only rate (244 buffers/5s against 390 healthy)
+        while the video branch fed the mux nothing at all. A required stream
+        (``video``, plus ``audio`` when the graph has an audio branch) flat for
+        ``stall_timeout_s`` is judged stalled even though the aggregate moved.
+
+        U37: "flat" is the stream's AIRING running time -- the running time of
+        the last buffer the mux CONSUMED off that pad (``buffer-consumed``) --
+        and no longer its arrival count. The two differ exactly in the shape that
+        motivated this slice: a stream keeps arriving at its normal rate while
+        the mux emits none of it (U37 measured a 9.4 s audio-only run with the
+        video pad's head pinned ~9.4 s into the future and ``video`` still
+        arriving), and an arrival count reads that as healthy.
+
+        Two predicates, one action (U37). A required stream is judged stalled if
+        its airing running time does not advance with wall clock for
+        ``stall_timeout_s`` (the flat rule, which owns the attribution), OR if it
+        keeps advancing but sits more than ``_STREAM_LAG_BOUND_S`` behind the
+        leading required stream's airing running time for that same budget (the
+        lag rule -- a stream the other has already passed cannot air in step).
+        The flat rule is consulted first and the two are never combined: a frozen
+        stream's lag grows without bound, so a lag-only judge would name the audio
+        it left behind rather than the video that froze. Both take
+        ``_act_on_stream_stall``, so a lagged stream gets U34's rescue-or-exit
+        route, not a new one.
+
+        Returns True to keep watching, False when this watchdog has stopped it
+        (the loop was quit), mirroring ``_check_stall``.
+
+        Deliberately NOT judged:
+
+        * a pad outside ``_required_stream_labels`` (caption/subtitle -- sparse
+          by nature -- or an unnegotiated pad with no honest label);
+        * a pad with no airing frontier at all -- a stream this mux has never
+          emitted, which is the first-output budget's question, not this one;
+        * any stream while a reload commit is in flight -- the commit watchdog
+          owns that window (same rationale as the aggregate suspension), and
+          the reference is pushed forward silently so the per-stream check
+          cannot print inside a window the healthy-run test asserts is free of
+          ``CTRL stall`` lines.
+
+        Known bounded limitation (U37): the aggregator emits ``buffer-consumed``
+        for a buffer its clip vfunc DROPPED too, and that one carries the leg's
+        UNCLIPPED pts, which is not this mux pad's running time. Such a value can
+        move the frontier spuriously and delay (never cause) a judgement by at
+        most one ``stall_timeout_s``. A BACKWARDS step is therefore not judged:
+        with that value arriving in the same channel, a raw leg-domain pts after
+        a rebase is indistinguishable from a real pts regression, and a watchdog
+        that restarts a healthy channel whenever it switches is worse than one
+        that waits a budget longer.
+
+        Lock-free on purpose: the frontier is written by one streaming thread per
+        pad and read here on the GLib main loop, the same single-writer contract
+        as ``_output_buffers``. Nothing is re-baselined outside this method
+        except at arm/reset time from the same main loop."""
+        if self.stall_timeout_s <= 0:
+            # Same operator opt-out as the aggregate check: ``stall_timeout_s
+            # <= 0`` means "no post-first-buffer stall bound at all".
+            return True
+        pads = getattr(self, "_mux_input_pads", None) or {}
+        airing = getattr(self, "_mux_pad_airing_rt", None) or {}
+        if not pads:
+            return True
+        last_rt = getattr(self, "_stream_last_rt", None)
+        if last_rt is None:
+            last_rt = {}
+            self._stream_last_rt = last_rt
+        last_advance = getattr(self, "_stream_last_advance_t", None)
+        if last_advance is None:
+            last_advance = {}
+            self._stream_last_advance_t = last_advance
+        ever = getattr(self, "_stream_ever_seen", None)
+        if ever is None:
+            ever = set()
+            self._stream_ever_seen = ever
+        lag_since = getattr(self, "_stream_lag_since", None)
+        if lag_since is None:
+            lag_since = {}
+            self._stream_lag_since = lag_since
+        required = self._required_stream_labels()
+        pending = getattr(self, "_pending_reload", None)
+        suspended = pending is not None and pending.get("commit_in_progress", False)
+        judged: list[tuple[str, float]] = []
+        for pad_name in sorted(pads):
+            current = airing.get(pad_name)
+            if current is None:
+                # The mux has emitted nothing off this pad yet: a stream that has
+                # not started, which is the first-output budget's question.
+                continue
+            previous = last_rt.get(pad_name)
+            if previous is None or current != previous:
+                # The mux emitted a different buffer off this pad since the
+                # previous tick (or emitted its first): this stream is airing.
+                last_rt[pad_name] = current
+                last_advance[pad_name] = now
+                ever.add(pad_name)
+                continue
+            if pad_name not in ever or self._mux_pad_stream_label(pads[pad_name]) not in required:
+                continue
+            elapsed = now - last_advance.get(pad_name, now)
+            if elapsed < self.stall_timeout_s:
+                continue
+            if suspended:
+                last_advance[pad_name] = now
+                continue
+            judged.append((pad_name, elapsed))
+        # U37: the leading AIRING running time among the streams this judge may
+        # name, and the pad carrying it. The lag half measures every other
+        # required stream against this. It is the max of the same frontiers the
+        # flat half reads, so the two halves can never disagree about which
+        # stream is ahead.
+        leader_pad: str | None = None
+        leader_rt = 0
+        for candidate in sorted(pads):
+            candidate_rt = airing.get(candidate)
+            if candidate_rt is None:
+                continue
+            if self._mux_pad_stream_label(pads[candidate]) not in required:
+                continue
+            if leader_pad is None or candidate_rt > leader_rt:
+                leader_pad = candidate
+                leader_rt = candidate_rt
+        for candidate in sorted(pads):
+            candidate_rt = airing.get(candidate)
+            if candidate_rt is None or leader_pad is None:
+                continue
+            if self._mux_pad_stream_label(pads[candidate]) not in required:
+                continue
+            behind_s = (leader_rt - candidate_rt) / 1_000_000_000.0
+            if behind_s > _STREAM_LAG_BOUND_S:
+                lag_since.setdefault(candidate, now)
+            else:
+                # Back within the bound: whatever this pad was behind, it is not
+                # behind it any more, and a lag has to be continuous to be judged.
+                lag_since.pop(candidate, None)
+        if suspended:
+            # A commit in flight owns its window (the flat rule above pushes the
+            # advance clock forward inside it). Drop the lag clocks with it rather
+            # than let one grow across a switch whose own boundary is expected to
+            # move the streams apart for a moment.
+            lag_since.clear()
+            return True
+        if judged:
+            # Judge the stream silent longest: one line, one exit, and the most
+            # informative of the offenders.
+            pad_name, elapsed = max(judged, key=lambda item: item[1])
+            label = self._mux_pad_stream_label(pads[pad_name])
+            return self._act_on_stream_stall(
+                label=label,
+                force_reason=f"{label} stream stalled after replacement preroll; forcing switch",
+                headline=f"no {label} buffers for {int(elapsed)}s",
+                error_reason=f"{label} stream stalled",
+            )
+        # Nothing has stopped airing -- but a stream can still be running seconds
+        # behind the others, which is the other half of the running-time judge and
+        # the `or` the slice asked for. Reached only when the flat half is empty,
+        # deliberately: a frozen stream's lag against the leader also grows without
+        # bound, so a lag-only judge would name the stream the frozen one left
+        # behind instead of the frozen one. The flat half is the tighter bound and
+        # the correct attribution, and it goes first.
+        lagged = [
+            (candidate, now - lag_since[candidate])
+            for candidate in sorted(lag_since)
+            if now - lag_since[candidate] >= self.stall_timeout_s
+        ]
+        if not lagged or leader_pad is None:
+            return True
+        pad_name, elapsed = max(lagged, key=lambda item: item[1])
+        label = self._mux_pad_stream_label(pads[pad_name])
+        leader_label = self._mux_pad_stream_label(pads[leader_pad])
+        behind_s = (leader_rt - airing.get(pad_name, leader_rt)) / 1_000_000_000.0
+        return self._act_on_stream_stall(
+            label=label,
+            force_reason=(
+                f"{label} stream running {behind_s:.1f}s behind {leader_label} after "
+                "replacement preroll; forcing switch"
+            ),
+            headline=(
+                f"{label} running time {behind_s:.1f}s behind {leader_label} for {int(elapsed)}s"
+            ),
+            error_reason=f"{label} stream lagging {leader_label}",
+        )
+
+    def _act_on_stream_stall(
+        self, *, label: str, force_reason: str, headline: str, error_reason: str
+    ) -> bool:
+        """The ACTION half of the per-stream judge -- U34's action, unchanged.
+
+        Factored out (U37) so the running-time judge's two predicates -- a stream
+        that stopped airing and a stream that is airing seconds behind the others
+        -- take exactly the same route off air: force a ready replacement through
+        if one is held, else exit non-zero naming the stream. Returns True to keep
+        watching; False when this watchdog stopped the loop."""
+        # Same rescue as the aggregate path, same preconditions: a fully
+        # prerolled replacement held off the selector can take over a wedged
+        # channel without any restart at all.
+        if self._force_ready_deferred_switch(reason=force_reason):
+            return True
+        ctx = getattr(self, "_reload_context", None)
+        ctx_text = (
+            f"last reload id={ctx[0]} stage={ctx[1]}" if ctx is not None else "no content reload"
+        )
+        print(
+            # STDERR, not stdout, and ASCII only: the daemon reads the worker's
+            # stderr tail into ``last_error`` for the operator's state row (see
+            # the aggregate stall message). Deliberately does NOT reuse the
+            # aggregate wording "no output for" -- the aggregate watchdog did
+            # NOT judge this stall, and a log reader (or a test) must be able to
+            # tell which watchdog named it.
+            f"CTRL stall: {headline} ({ctx_text}) - quitting for daemon restart",
+            file=sys.stderr,
+            flush=True,
+        )
+        # ("stall", ...) -- the ordinary exit-1 case the daemon already
+        # relaunches, with a reason that names the stream that stopped.
+        self._error = ("stall", error_reason)
+        if self._loop is not None:
+            self._loop.quit()
+        return False
+
+    def _force_ready_deferred_switch(self, *, reason: str) -> bool:
+        """Force a ready-but-waiting deferred switch through the existing
+        forced-boundary path; True when the force was accepted.
+
+        A fully prerolled replacement is held safely off the selector, but a
+        broken outgoing leg can stop producing without ever delivering the EOS
+        or boundary this switch is waiting for -- the live reload-7 case. Both
+        stall paths (the aggregate one and U34's per-stream one) reach their
+        bound in exactly that state and need exactly this rescue, so the
+        predicate lives here once instead of being restated (and drifting)."""
+        pending = getattr(self, "_pending_reload", None)
+        if (
+            pending is not None
+            and pending.get("switch_at_end_of_current", False)
+            and pending.get("new_leg_ready", False)
+            and not pending.get("old_leg_eos", False)
+            and not pending.get("commit_in_progress", False)
+        ):
+            return bool(self._force_deferred_boundary(pending["txn_id"], reason=reason))
+        return False
 
     def _await_playing(self) -> None:
         """Bounded wait for the PLAYING transition so a wedged preroll can't hang the
@@ -2184,14 +4666,26 @@ class GstPlayoutEngine:
         clean = self.stop()
         return {"swaps": state["n"], "error": self._error, "teardown_clean": clean}
 
-    def run_forever(self, *, control_fifo: str | None = None) -> dict[str, Any]:
+    def run_forever(
+        self, *, control_fifo: str | None = None, hold_slate_at_plan_eos: bool = False
+    ) -> dict[str, Any]:
         """Run the channel until EOS, a pipeline error, SIGINT/SIGTERM, or a control
         ``stop``. Production mode for the per-channel worker. If ``control_fifo`` is
         given, newline commands (``swap <index>``, ``reload <graph.json>``, ``stop``)
         drive seamless role swaps and program content-reloads (D-S1-6: change the
         active source in place, never a restart). SIGTERM — what the daemon's
         ``terminate()`` sends — also quits and tears down gracefully (time-bounded
-        ``→NULL`` with force-exit so the worker can never hang)."""
+        ``→NULL`` with force-exit so the worker can never hang).
+
+        ``hold_slate_at_plan_eos`` (U41) is the one part of that contract that is
+        NOT universal, so it is a parameter and defaults OFF. Set it only for a
+        PERSISTENT live channel -- the daemon's own launches mark those with
+        ``reload_policy.WORKER_PERSISTENT_ENV=1`` in the child's environment and
+        ``worker.main()`` forwards it here. The engine then holds the always-hot
+        slate for the current programme's EOS (see ``_on_program_pad_plan_eos``)
+        instead of letting EOS end the run. A FINITE run -- smoke ``SWAPS`` mode,
+        a harness, the beta.5 baseline pin, whose only shutdown IS the plan ending
+        -- must keep the old behaviour, so anything unmarked passes False."""
         bus = self.pipeline.get_bus()
         bus.add_signal_watch()
         bus.connect("message", self._on_bus)
@@ -2200,6 +4694,18 @@ class GstPlayoutEngine:
         # than per-reload because the start of a worker's timeline is the other
         # end of the same question the reload diagnostic asks.
         self._install_mux_input_diagnostics()
+        # U30: the always-on per-sink-pad counters behind the progress line's
+        # ``[mux-in ...]`` suffix -- armed here (the mux is part of the
+        # persistent output half, so its sink pads outlive every reload) so the
+        # next freeze says WHICH stream stopped, in the same line the live
+        # incidents already had and misread as healthy.
+        self._install_mux_input_counters()
+        # U30: the second half of that ladder -- counters at the two ends of the
+        # ``selector -> isolation queue`` stretch the mux counters cannot see, so
+        # the next occurrence of the 2026-09-25 stop says not just THAT the
+        # switched-in leg's data stopped, but WHERE. Same persistent-output-half
+        # lifetime, same one-int-per-buffer cost, no extra line.
+        self._install_chain_input_counters()
         loop = GLib.MainLoop()  # before PLAYING so a startup bus ERROR isn't swallowed
         self._loop = loop
         self._prime_live_caption_stream()
@@ -2209,6 +4715,18 @@ class GstPlayoutEngine:
         self._arm_live_caption_gap_heartbeat()
         self._flush_lang_tags()  # push deferred secondary-audio ISO-639 descriptors
         self._arm_stall_watchdog()  # S9-5: quit (→ daemon restart) on a silent output stall
+        # U41: the plan ending is not the channel ending. A worker that reaches the
+        # end of its programme with no replacement ready holds the always-hot slate
+        # instead of quitting, so the daemon never has to relaunch it (2026-09-25
+        # education channel: worker exit_code=0 at 23:54:41 with state=ON_AIR, ~3
+        # minutes dark, while the next source was still being prepared). Armed here
+        # -- the production entry point -- and ONLY for a run the daemon marked
+        # persistent, so a finite run keeps its EOS-ends-the-run contract (the
+        # beta.5 baseline pin depends on it; ``run()`` never arms it either).
+        self._hold_slate_at_plan_eos = hold_slate_at_plan_eos
+        self._plan_eos_held = False
+        if hold_slate_at_plan_eos:
+            self._arm_plan_eos_hold_probes()
 
         keepalive_fd = self._watch_control_fifo(control_fifo) if control_fifo else None
 
@@ -2499,26 +5017,50 @@ class GstPlayoutEngine:
         old_audio_pad = self.audio_sink_pads[0] if self.audio_sink_pads else None
         old_elements = self._source_leg_elements[0]
 
-        # Build + link the new leg. A failure here has committed no state, so the
-        # current program keeps playing — just propagate (the caller logs it).
-        # F2 fix: ``_instantiate_source_leg`` already disposes ITS OWN partial
-        # build on a raise (its own try/except); this second layer covers the
-        # remaining leak window -- ``_link_leg_to_selectors`` raising AFTER
-        # instantiate already succeeded, which would otherwise leave a fully
-        # built, still-in-the-pipeline (but never-linked-anywhere) leg behind
-        # with nothing left holding a reference to it.
-        new_elements: list[Gst.Element] = []
-        try:
-            out_pad, audio_out_pad, new_elements = self._instantiate_source_leg(new_leg)
-            new_video_pad, new_audio_pad = self._link_leg_to_selectors(
-                "program(reload)", out_pad, audio_out_pad
-            )
-        except Exception:
-            self._dispose_elements_best_effort(new_elements)
-            raise
+        # U30 EOS-origin diagnostic: watch the OUTGOING leg's own selector sink
+        # pads, armed HERE -- before ``_arm_new_leg_selector_diagnostics``
+        # installs this reload's boundary probes. Same-priority pad probes run in
+        # installation order, so the observer sees an EOS even when the boundary
+        # probe installed after it returns DROP (and when the boundary probe is
+        # never reached at all, which is the deferred dead runs' shape). These
+        # are the pads the outgoing leg actually delivers on: an ``out:video``
+        # arrival with no ``mux-sink:video`` after it localises the loss to the
+        # stretch between them, and an ``out:video`` with no drop line at all
+        # says the reload never got the chance to decline it.
+        self._install_eos_observer(old_video_pad, self._make_chain_eos_label("out", "video"))
+        self._install_eos_observer(old_audio_pad, self._make_chain_eos_label("out", "audio"))
+
+        # U30 Work 2 -- TRANSACTION OWNERSHIP BEGINS BEFORE THE BUILD.
+        #
+        # OBSERVED (2026-09-25 off-live reproduction, GST_DEBUG=input-selector:7,
+        # concat:7): the deferred boundary EOS crosses the selector's ACTIVE sink
+        # pad WHILE the new leg is still being built. On the reproducer the EOS
+        # crossed at 0:00:02.195 and this reload's first arming line printed at
+        # 0:00:02.441 -- 0.25s later -- because ``self._pending_reload`` and its
+        # boundary DROP probes used to be installed only after
+        # ``_instantiate_source_leg``/``_link_leg_to_selectors`` returned. An EOS
+        # arriving in that window was forwarded by the selector, reached
+        # ``mpegtsmux``, and quit the worker: ``teardown_clean=True``, no commit
+        # stage, ``reload-status.json`` ``aborted:stopped``, output stopped for
+        # good. The same graph ending at the same instant COMMITS when the probes
+        # are armed in time -- one race, two outcomes.
+        #
+        # So: transaction identity, the pending slot and the DROP probes are
+        # established first; only the fields that describe the NEW leg are filled
+        # in when the build returns. Nothing on the EOS path reads a new-leg field
+        # -- ``_on_old_leg_eos`` merely records the boundary, and
+        # ``_on_new_leg_ready`` commits at once when the boundary was already seen
+        # -- so an EOS caught during the build becomes the ordinary healthy
+        # deferred switch instead of a dead channel.
+        #
+        # ``rebase_new_leg`` comes from the leg object alone, so the arming
+        # condition is exactly the one this method always used
+        # (``switch_at_end_of_current or rebase_new_leg``) with the widest
+        # possible window. It also cannot leak a built leg any more: an exception
+        # here now precedes the build rather than following it.
+        rebase_new_leg = not source_leg_is_clock_timed(new_leg)
+
         pending: dict[str, Any] = {
-            "new_video_pad": new_video_pad,
-            "new_audio_pad": new_audio_pad,
             # Round-2 finding 5: identifies THIS reload transaction. The boundary
             # probes live on the OUTGOING pads, which are the same pad objects
             # across successive transactions (``selector_sink_pads[0]`` until a
@@ -2530,7 +5072,13 @@ class GstPlayoutEngine:
             "old_video_pad": old_video_pad,
             "old_audio_pad": old_audio_pad,
             "old_elements": old_elements,
-            "new_elements": new_elements,
+            # The NEW-leg fields, filled in below once the build returns. They are
+            # present from the start because this dict is reachable before then --
+            # the boundary probes below run on streaming threads while the build
+            # is still in progress.
+            "new_video_pad": None,
+            "new_audio_pad": None,
+            "new_elements": [],
             "probe_id": None,
             "readiness_probes": [],
             "ready_pads": set(),
@@ -2552,7 +5100,15 @@ class GstPlayoutEngine:
             # outgoing-EOS condition starts satisfied for an immediate switch.
             "switch_at_end_of_current": switch_at_end_of_current,
             "new_leg_ready": False,
-            "old_leg_eos": not switch_at_end_of_current,
+            # U41: a boundary-aligned switch normally waits for the outgoing leg's
+            # own EOS. After ``_hold_slate_for_plan_eos`` there is no such EOS to
+            # wait for -- the leg already ended and its EOS was dropped -- so the
+            # transaction starts with the boundary recorded, which is the state
+            # ``_on_new_leg_ready`` commits on at once. Without this, a reload
+            # dispatched after a held plan end would sit on a ready leg until the
+            # 900 s ``defer_switch_timeout_s`` fired, with the slate on air the
+            # whole time.
+            "old_leg_eos": (not switch_at_end_of_current) or self._plan_eos_held,
             "boundary_forced": False,
             "defer_timeout_id": None,
             # Finite replacement timing state (immediate or deferred):
@@ -2572,38 +5128,73 @@ class GstPlayoutEngine:
             #                     last buffer, and the pad's cached segment.
             #   outgoing_eos_pads -- outgoing pads whose EOS callback has reached
             #                     the main loop (deduplicates queued callbacks).
-            "new_src_pads": [pad for pad in (out_pad, audio_out_pad) if pad is not None],
+            "new_src_pads": [],
             "hold_probes": [],
             "holds_awaited": 0,
             "held_pads": set(),
             "boundary_probes": [],
             "outgoing_end": {},
             "outgoing_eos_pads": set(),
+            "selector_notify_handlers": [],
+            # A finite/segment-timed leg starts near running time zero even during
+            # an immediate slate-to-programme switch. Hold and rebase it before
+            # selection. A clock-timed live leg is already on the pipeline
+            # running-time base and cannot be paused without going stale, so it
+            # remains unheld/unrebased.
+            "rebase_new_leg": rebase_new_leg,
         }
-        # A finite/segment-timed leg starts near running time zero even during an
-        # immediate slate-to-programme switch. Hold and rebase it before selection.
-        # A clock-timed live leg is already on the pipeline running-time base and
-        # cannot be paused without going stale, so it remains unheld/unrebased.
-        pending["rebase_new_leg"] = not source_leg_is_clock_timed(new_leg)
         self._pending_reload = pending
+        if switch_at_end_of_current or rebase_new_leg:
+            self._arm_boundary_probes(pending)
+
+        # Build + link the new leg. A failure here has committed no state, so the
+        # current program keeps playing — just propagate (the caller logs it).
+        # F2 fix: ``_instantiate_source_leg`` already disposes ITS OWN partial
+        # build on a raise (its own try/except); this second layer covers the
+        # remaining leak window -- ``_link_leg_to_selectors`` raising AFTER
+        # instantiate already succeeded, which would otherwise leave a fully
+        # built, still-in-the-pipeline (but never-linked-anywhere) leg behind
+        # with nothing left holding a reference to it.
+        #
+        # U30 Work 2: the probes armed above sit on the LIVE outgoing pads and
+        # DROP that leg's EOS, so this unwind must take them off again. A
+        # survivor would swallow the channel's next real boundary EOS forever --
+        # worse than the race it closes.
+        new_elements: list[Gst.Element] = []
         try:
-            if switch_at_end_of_current or pending["rebase_new_leg"]:
-                # Watch BOTH outgoing pads (video AND audio -- an unhandled audio
-                # EOS latches the mux's audio pad just as fatally as a video one
-                # takes the whole pipeline down): track each pad's last-buffer end
-                # running time (the rebase reference) and DROP its EOS, so no
-                # pipeline-level EOS is ever produced at the boundary. Armed for
-                # EVERY deferred switch, plus an immediate finite switch so its
-                # replacement can be rebased to the actual outgoing A/V edge.
-                for pad in (old_video_pad, old_audio_pad):
-                    if pad is None:
-                        continue
-                    probe_id = pad.add_probe(
-                        Gst.PadProbeType.BUFFER | Gst.PadProbeType.EVENT_DOWNSTREAM,
-                        self._on_outgoing_pad_data,
-                        pending["txn_id"],
-                    )
-                    pending["boundary_probes"].append((pad, probe_id))
+            out_pad, audio_out_pad, new_elements = self._instantiate_source_leg(new_leg)
+            new_video_pad, new_audio_pad = self._link_leg_to_selectors(
+                "program(reload)", out_pad, audio_out_pad
+            )
+        except Exception:
+            self._remove_boundary_probes(pending)
+            if self._pending_reload is pending:
+                self._pending_reload = None
+            self._dispose_elements_best_effort(new_elements)
+            raise
+        # The build is done; the transaction can now describe what it built. The
+        # boundary probes have been watching throughout, so any EOS they dropped
+        # is already recorded in ``pending["old_leg_eos"]`` (and any buffer ends
+        # in ``pending["outgoing_end"]``).
+        pending["new_video_pad"] = new_video_pad
+        pending["new_audio_pad"] = new_audio_pad
+        pending["new_elements"] = new_elements
+        pending["new_src_pads"] = [pad for pad in (out_pad, audio_out_pad) if pad is not None]
+        # U30 EOS-origin diagnostic, second half: name EVERY selector sink pad,
+        # including the one this reload just linked the new leg to. The ``out:*``
+        # observers above can only name the pad the outgoing leg is expected to
+        # deliver on; ten of the eleven deferred deaths recorded an EOS at the
+        # selector's own src pad with no arrival on either of them, and an
+        # ``input-selector`` only forwards an EOS that reached a sink pad. The
+        # new leg's pads are named here because NOTHING else watches them before
+        # the commit -- the ``in`` rung and its observer are armed at commit time
+        # -- so an EOS arriving from the leg being switched in is otherwise
+        # unobservable, which is the one hypothesis this reload can act on.
+        self._install_selector_sink_eos_observers(
+            extra=(("video", new_video_pad), ("audio", new_audio_pad)),
+            skip=(old_video_pad, old_audio_pad),
+        )
+        try:
             if pending["rebase_new_leg"]:
                 # ENG-002: hold a finite new leg AT its first buffer.
                 # BLOCK|BUFFER lets the sticky STREAM_START/CAPS/SEGMENT through
@@ -2685,6 +5276,8 @@ class GstPlayoutEngine:
             f"held_streams={len(pending['hold_probes'])} timing={timing} mode={switch_mode}",
             flush=True,
         )
+        # U34: the context a later per-stream stall line reports.
+        self._reload_context = (txn_id, "prepared")
         if pending["switch_at_end_of_current"] and not pending["old_leg_eos"]:
             pending["defer_timeout_id"] = GLib.timeout_add_seconds(
                 max(1, int(self.defer_switch_timeout_s)), self._on_defer_switch_timeout, txn_id
@@ -2790,6 +5383,45 @@ class GstPlayoutEngine:
         if event is None:
             return Gst.PadProbeReturn.OK
         if event.type == Gst.EventType.EOS:
+            # U30: name the drop before it happens. Until now the ONLY trace of
+            # this path was the settlement line the queued callback prints
+            # later, so an EOS dropped and then declined by one of
+            # ``_on_old_leg_eos``'s guards left no line at all -- and a leg that
+            # never delivered EOS to a probed pad left no line either. Those two
+            # are the same sight (a frozen channel, a live worker) but opposite
+            # diagnoses, and the 2026-09-25 logs could not tell them apart:
+            # a drop line followed by no settle line is the first; no line at
+            # all is the second.
+            # The pad name is resolved with a fallback rather than inside the
+            # blanket guard: this line's ABSENCE is itself evidence (see above), so
+            # nothing but the write may be allowed to eat the whole line.
+            try:
+                pad_name = pad.get_name()
+            except Exception:
+                pad_name = "<unknown>"
+            # Round 6: both outgoing leg pads are ``sink_0`` on two different
+            # selectors, so the pad NAME cannot say which stream's EOS this is --
+            # and EOS ORDER is what separates the clean reloads from the
+            # reddening ones (live tally: video-first 5/5 clean, audio-first
+            # 0/3). Resolve it by pad identity, the test ``_on_old_leg_eos`` uses.
+            # The mux fence's own pad is not a leg pad and reports as such.
+            try:
+                if pending is not None and pad is pending.get("old_video_pad"):
+                    stream_name = "video"
+                elif pending is not None and pad is pending.get("old_audio_pad"):
+                    stream_name = "audio"
+                else:
+                    stream_name = "<not-a-leg-pad>"
+            except Exception:
+                stream_name = "<unknown>"
+            with contextlib.suppress(Exception):
+                print(
+                    f"CTRL reload diagnostic: outgoing-EOS-dropped pad={pad_name} "
+                    f"stream={stream_name} "
+                    f"pending_txn={pending['txn_id'] if pending is not None else 'none'}",
+                    file=sys.stderr,
+                    flush=True,
+                )
             GLib.idle_add(self._on_old_leg_eos, pad, txn_id)
             return Gst.PadProbeReturn.DROP
         if event.type == Gst.EventType.SEGMENT and pending is not None:
@@ -2846,12 +5478,14 @@ class GstPlayoutEngine:
 
         Printed to stderr beside the existing ``finite switch rebased to running
         time ...`` stdout line. ``ends=[video=..,audio=..]`` are the two numbers
-        the shared ``max`` was taken over -- the per-pad values that U16 could
-        not recover from the live logs -- and ``fallback`` says whether the
-        pipeline's own running time stood in for them. Both are needed to
-        decompose a step: two ends ~109s apart indict the shared max, while two
-        agreeing ends whose shared value still lands far from the output's own
-        position indict the reference basis instead.
+        the switch point is chosen from (round 4: the SHORTER of them; the
+        ``switch-at-shorter-leg`` line names which one won and what was trimmed)
+        -- the per-pad values that U16 could not recover from the live logs --
+        and ``fallback`` says whether the pipeline's own running time stood in
+        for them. Both are needed to decompose a step: two ends ~109s apart
+        indict the ends themselves, while two agreeing ends whose shared value
+        still lands far from the output's own position indict the reference
+        basis instead.
         """
         ends = ",".join(
             f"{label}={_seconds_or_none(end)}"
@@ -2868,6 +5502,82 @@ class GstPlayoutEngine:
             f"mode={mode} streams={len(pending['new_src_pads'])} "
             f"fallback={'yes' if rebase_fallback else 'no'} ends=[{ends}] "
             f"pipeline_running_time={pipeline} "
+            f"switch_running_time={_seconds_or_none(switch_running_time)}"
+        )
+
+    @staticmethod
+    def _select_switch_running_time(
+        measured_ends: list[tuple[str, int | None]],
+        *,
+        max_trim_ns: int,
+    ) -> tuple[int, tuple[str, int] | None, int, bool]:
+        """The switch point, from the two FINAL outgoing ends (U56 round 4).
+
+        Returns ``(switch_running_time, trim, spread_ns, bound_exceeded)``:
+
+        * ``switch_running_time`` -- the value BOTH new-leg pads are offset to and
+          the value ``old_tail_cutoff_ns`` publishes to the fence. One number, two
+          readers, and it has to stay that way: the fence exists to cut the
+          retiring leg exactly where the offset stops accounting for it.
+        * ``trim`` -- ``(longer_stream, spread_ns)`` when the SHORTER leg's end was
+          chosen and the longer leg's tail past it is therefore cut, else ``None``.
+          ``None`` covers three different situations on purpose -- the two ends
+          agree (nothing to cut), only one stream was measured (nothing to compare
+          against), and the spread was over the bound -- because in all three the
+          answer is the same single end and the diagnostic names which one it was.
+        * ``spread_ns`` -- the difference between the two ends, ``0`` when fewer
+          than two were measured. Reported even when nothing was trimmed, so the
+          bound's own decision is readable from the log line.
+        * ``bound_exceeded`` -- the spread was over ``max_trim_ns``. The longer
+          leg's end stands (today's pre-round-4 answer) and the caller WARNs.
+
+        ``measured_ends`` is ``(label, end)`` in leg order, video first, from
+        ``_reload_outgoing_ends_in_order`` -- labelled by PAD IDENTITY, so the
+        shorter/longer naming cannot be swapped by dict iteration order.
+        """
+        ends = [(label, end) for label, end in measured_ends if end is not None]
+        if not ends:
+            raise ValueError("no outgoing end measured")
+        longest = max(ends, key=lambda item: item[1])
+        shortest = min(ends, key=lambda item: item[1])
+        spread_ns = longest[1] - shortest[1]
+        if len(ends) == 1:
+            return longest[1], None, 0, False
+        if spread_ns > max_trim_ns:
+            return longest[1], None, spread_ns, True
+        if spread_ns <= 0:
+            # The two legs ended together: the choice is a no-op and says so by
+            # reporting no trim, rather than naming a stream that lost nothing.
+            return longest[1], None, 0, False
+        return shortest[1], (longest[0], spread_ns), spread_ns, False
+
+    @staticmethod
+    def _switch_shorter_leg_diagnostic(
+        pending: dict[str, Any],
+        *,
+        measured_ends: list[tuple[str, int | None]],
+        switch_running_time: int,
+        trim: tuple[str, int] | None,
+        spread_ns: int,
+        bound_exceeded: bool,
+    ) -> str:
+        """One line naming which leg the switch point came from (U56 round 4).
+
+        ``trimmed`` names the LONGER stream and how much of its delivered tail the
+        fence cut; ``none`` when the two legs ended together, only one was
+        measured, or the spread was over the bound -- ``bound_exceeded`` tells the
+        last of those apart from the first two. ``spread`` is reported alongside
+        so a boundary at 0.9s and one at 3.0s differ in more than their verdict.
+        """
+        ends = dict(measured_ends)
+        trimmed = _DIAGNOSTIC_NONE if trim is None else f"{trim[0]}:{trim[1] / Gst.SECOND:.3f}"
+        return (
+            f"CTRL reload diagnostic: switch-at-shorter-leg reload_id={pending['txn_id']} "
+            f"video_end={_seconds_or_none(ends.get('video'))} "
+            f"audio_end={_seconds_or_none(ends.get('audio'))} "
+            f"trimmed={trimmed} spread={_seconds_or_none(spread_ns)} "
+            f"bound={_SWITCH_SHORTER_LEG_MAX_TRIM_S:.3f} "
+            f"bound_exceeded={'yes' if bound_exceeded else 'no'} "
             f"switch_running_time={_seconds_or_none(switch_running_time)}"
         )
 
@@ -3052,6 +5762,14 @@ class GstPlayoutEngine:
                         label=label, txn_id=txn_id, applied_offset=applied_offset
                     ),
                 )
+        # U30: the same pad, counted rather than reported once -- see the flow
+        # ladder's ``in`` rung for why the first buffer alone cannot say whether
+        # the producer KEPT pushing after the switch.
+        self._install_new_leg_inbound_counters(pending)
+        # U59 round 4: the same moment is "this leg is the selected one now", so
+        # it is also where the rate diagnostic learns which leg to attribute a
+        # video starvation to. Guarded inside -- see ``_u59_record_leg``.
+        self._u59_record_leg(pending)
 
     @staticmethod
     def _mux_pad_stream_label(pad: Any) -> str:
@@ -3114,8 +5832,16 @@ class GstPlayoutEngine:
         the daemon restarts the channel to a known state. A bounded freeze then a
         restart is the fail-safe end of this path; the alternative (forwarding the
         EOS) is an immediate, unconditional restart at EVERY boundary, which is the
-        defect. Closing the gap properly means switching to slate for the interval,
-        which is a separate change."""
+        defect.
+
+        U41 closed the same gap one case earlier -- a plan that ends with NO
+        transaction in flight at all, which is what the 2026-09-25 education-channel
+        incident was: ``_on_program_pad_plan_eos`` holds the slate for that interval.
+        This path still freezes, deliberately: a transaction IS in flight, so its
+        commit (or its abort, which hands the frozen leg back to the stall watchdog)
+        is the settlement this boundary belongs to. The interval is bounded by
+        ``reload_timeout_s`` rather than by a live slate, and the watchdog owns the
+        escalation if it expires."""
         pending = self._pending_reload
         if pending is None:
             return False  # aborted or superseded before this fired
@@ -3318,6 +6044,10 @@ class GstPlayoutEngine:
             return False
         print(f"CTRL reload: firing (reload_id={pending['txn_id']})", flush=True)
         pending["commit_in_progress"] = True
+        # U34: set synchronously with the commit flag, so a per-stream stall
+        # judged in this window (it cannot be -- commits suspend that check --
+        # but a crash dump can) still names where the channel was.
+        self._reload_context = (pending["txn_id"], "committing")
         pending["retirement_cancelled"] = False
         try:
             watchdog, completed = self._arm_commit_watchdog()
@@ -3409,6 +6139,14 @@ class GstPlayoutEngine:
         if self.audio_sink_pads and pending["new_audio_pad"] is not None:
             self.audio_sink_pads[0] = pending["new_audio_pad"]
         self._source_leg_elements[0] = pending["new_elements"]
+        # U41: the program is back, so any plan-EOS hold is over -- and the hold has
+        # to be re-armed on the pad just published, because the probe from before
+        # this commit sits on the pad the line above displaced. Both statements
+        # belong to this moment and nowhere else: earlier and the probe would guard
+        # a pad that is not on air yet, later and a plan end in between would still
+        # quit the worker.
+        self._plan_eos_held = False
+        self._arm_plan_eos_hold_probes()
         pending["selector_handoff_confirmed"] = True
         print(
             "CTRL reload diagnostic: stage=selector-handoff-confirmed",
@@ -3462,34 +6200,51 @@ class GstPlayoutEngine:
         try:
             self._begin_reload_commit(pending)
         except Exception as exc:
-            pending["retirement_cancelled"] = True
-            start_retirement.set()
-            thread.join(timeout=min(1.0, self.teardown_timeout_s))
-            self._reload_commit_thread = None
-            self._release_selector_notify_handlers(pending)
-            if not pending.get("selector_handoff_started", False):
-                # Nothing reached either selector. Restore the outgoing leg exactly
-                # as it was before the attempt, then retire the unused replacement.
-                pending["handoff_started"] = False
-                pending["commit_in_progress"] = False
-                self._release_old_tail_drop_fences(pending)
-                self._finish_commit_watchdog(pending)
-                print(f"ERROR: reload commit setup failed before handoff: {exc!r}", flush=True)
-                self._abort_pending_reload("commit-setup")
-            else:
-                # Once the first selector mutation starts there is no atomic rollback
-                # for a possible split A/V handoff. Keep the watchdog armed so this
-                # worker exits nonzero and the daemon rebuilds a coherent pipeline.
-                print(
-                    f"ERROR: reload selector handoff failed: {exc!r}; "
-                    "commit watchdog will force worker recovery",
-                    file=sys.stderr,
-                    flush=True,
-                )
+            self._handle_commit_failure(pending, exc)
             return
         # ``_begin_reload_commit`` releases the holds and then confirms immediate
         # selector readback. A real pending 1.28 switch starts this thread later
         # from ``notify::active-pad``; setter return alone never starts teardown.
+
+    def _handle_commit_failure(self, pending: dict[str, Any], exc: BaseException) -> None:
+        """Roll back a commit attempt that raised -- sync, or on a U37 drain resume.
+
+        Factored out of ``_start_reload_commit``'s ``except`` (U37) unchanged, so
+        the deferred rebase path rolls back through exactly the same code as the
+        synchronous one. ``selector_handoff_started`` is what decides the two
+        outcomes: before the first selector mutation the attempt is fully
+        rollbackable; after it, there is no atomic rollback for a split A/V
+        handoff and the commit watchdog is deliberately left armed to force worker
+        recovery."""
+        pending["retirement_cancelled"] = True
+        start_retirement = pending.get("retirement_start_event")
+        if start_retirement is not None:
+            start_retirement.set()
+        thread = self._reload_commit_thread
+        if thread is not None:
+            thread.join(timeout=min(1.0, self.teardown_timeout_s))
+        self._reload_commit_thread = None
+        self._release_selector_notify_handlers(pending)
+        self._release_rebase_observers(pending)
+        if not pending.get("selector_handoff_started", False):
+            # Nothing reached either selector. Restore the outgoing leg exactly
+            # as it was before the attempt, then retire the unused replacement.
+            pending["handoff_started"] = False
+            pending["commit_in_progress"] = False
+            self._release_old_tail_drop_fences(pending)
+            self._finish_commit_watchdog(pending)
+            print(f"ERROR: reload commit setup failed before handoff: {exc!r}", flush=True)
+            self._abort_pending_reload("commit-setup")
+        else:
+            # Once the first selector mutation starts there is no atomic rollback
+            # for a possible split A/V handoff. Keep the watchdog armed so this
+            # worker exits nonzero and the daemon rebuilds a coherent pipeline.
+            print(
+                f"ERROR: reload selector handoff failed: {exc!r}; "
+                "commit watchdog will force worker recovery",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def _begin_reload_commit(self, pending: dict[str, Any]) -> None:
         """Main-loop half: request the rebased replacement and release its holds."""
@@ -3497,8 +6252,9 @@ class GstPlayoutEngine:
             if pending[timeout_key] is not None:
                 with contextlib.suppress(Exception):
                     GLib.source_remove(pending[timeout_key])
-        new_video_pad = pending["new_video_pad"]
-        new_audio_pad = pending["new_audio_pad"]
+        # Still fail here, before the rebase block below, rather than only in
+        # ``_continue_reload_commit``: a missing selector must abort this attempt
+        # while nothing has been mutated, not after a rebase has been applied.
         selector = self.selector
         if selector is None:
             raise RuntimeError("video selector disappeared during reload commit")
@@ -3509,32 +6265,108 @@ class GstPlayoutEngine:
             # timestamp observer; every later buffer is dropped before it can enter
             # input-selector. This prevents the old leg advancing after the rebase
             # snapshot without recreating the coupled A/V quiescence deadlock.
+            #
+            # U56: the fence is BOUND to the snapshot read below, not left
+            # unbounded. Until ``old_tail_cutoff_ns`` is written (a few statements
+            # away) it drops everything; from then on it drops only what the
+            # retiring leg produces PAST the switch point, so the outgoing tail
+            # the offset already accounts for is aired instead of discarded.
             self._arm_old_selector_cutoff(pending)
             # Rebase the held leg onto the outgoing leg's end BEFORE anything of it
             # crosses the selector (mechanism 3 in reload_program's docstring).
-            # ONE offset for both streams -- the max of the two outgoing ends -- so
-            # neither video nor audio can start EARLIER than where its own stream
-            # stopped: a backwards step is what breaks PCR/CC, whereas a sub-frame
-            # forward step is absorbed by the mux.
-            observed = [
-                state["end"]
-                for state in pending["outgoing_end"].values()
-                if state["end"] is not None
-            ]
+            # ONE offset for both streams, so neither video nor audio can start
+            # EARLIER than where its own stream stopped: a backwards step is what
+            # breaks PCR/CC.
+            #
+            # U56: the forward step that same choice creates is NOT sub-frame, and
+            # until round 4 the choice was the MAX of the two ends -- which leaves
+            # a real gap on the SHORTER stream's own timeline, and is exactly why
+            # the fence above has to be value-bounded rather than instantaneous.
+            # The gap the emitted output sees is the part no outgoing buffer
+            # covers.
+            #
+            # U56 round 4: that one offset is the SHORTER of the two outgoing ends,
+            # not the max. The max cannot start either stream early, but it starts
+            # the shorter one LATE by the whole A/V end offset -- and the emitted
+            # hole is exactly that offset, because the shorter stream has nothing
+            # left to cover it with (measured live 2026-09-27: hole 0.631s =
+            # audio end 8999.467 - video end 8998.836, picture only). The shorter
+            # end costs the longer leg its tail past that point, which the fence
+            # above has already been dropping since U56 -- so the value the fence
+            # cuts at and the value the offsets are set to are still ONE number,
+            # and that is the invariant to keep when changing either. See
+            # ``_SWITCH_SHORTER_LEG_MAX_TRIM_S`` for the bound on the trim and why
+            # a spread over it keeps the max instead.
+            #
+            # The ends read here are the FINAL ones: ``outgoing_end`` is updated by
+            # the outgoing pad probe as the leg delivers and stops being updated
+            # once it EOSes, and this snapshot is taken after the deferral has
+            # waited for the end of the current programme -- so a leg that EOSed
+            # is read at its true end whether it EOSed before or after the other
+            # one (live, 2026-09-27: video first at the round-3 education seam,
+            # audio first at the reload_id=6 one).
+            measured_ends = self._reload_outgoing_ends_in_order(pending)
+            observed = [end for _label, end in measured_ends if end is not None]
             # U16: the pipeline-time read happens ONCE, in the branch that uses
             # it, and both the applied value and the report come from that one
             # read -- a second read a tick later would print a reference that is
             # not the one the offset was actually set to.
             if observed:
-                switch_running_time = max(observed)
+                (
+                    switch_running_time,
+                    switch_trim,
+                    switch_spread_ns,
+                    switch_trim_bound_exceeded,
+                ) = self._select_switch_running_time(
+                    measured_ends,
+                    max_trim_ns=int(_SWITCH_SHORTER_LEG_MAX_TRIM_S * Gst.SECOND),
+                )
                 pipeline_running_time_ms: int | None = None
             else:
                 # No buffer was ever observed on the outgoing pads (a leg that
                 # EOS'd immediately, or a forced switch before any buffer): fall
                 # back to the pipeline's own running time. Never 0 -- that would
-                # rewind the output timeline by the whole uptime.
+                # rewind the output timeline by the whole uptime. With no
+                # per-stream bound to read, the fence stays unbounded.
                 pipeline_running_time_ms = self._pipeline_running_time_ms()
                 switch_running_time = pipeline_running_time_ms * int(Gst.MSECOND)
+                # Nothing was measured, so there are no two ends to compare and
+                # nothing to trim: the reference is the pipeline's own position,
+                # which is not a per-stream end at all.
+                switch_trim = None
+                switch_spread_ns = 0
+                switch_trim_bound_exceeded = False
+                # U56 round 8: name the fallback, and the value it took, on the
+                # pending record. The offset below is frozen here -- BEFORE the
+                # rebase drain -- and on this branch the drain airs retiring
+                # audio, so the release half re-measures and clamps forward.
+                # See ``_clamp_fallback_switch_point``.
+                pending["fallback_switch_running_time_ns"] = switch_running_time
+            # U56 round 4: over the bound the max stands and the spread is named,
+            # so a boundary that was NOT trimmed never looks like one that was.
+            # U59 round 4 item 2: the line names the two MEASURED ends and no
+            # longer asserts a broken asset -- see ``_bound_exceeded_warn_line``.
+            if switch_trim_bound_exceeded:
+                print(
+                    self._bound_exceeded_warn_line(pending, measured_ends, switch_spread_ns),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            # U56: Publish the bound the fence reads. This is the SAME value the
+            # offsets below are set to, from the SAME snapshot -- one number, so
+            # the retiring leg can never air content the new leg's offset does
+            # not account for, and never loses content it does.
+            # R8: the fallback publishes the SAME number the offsets above are set
+            # to. ``observed`` empty means the outgoing pads were quiet at this read,
+            # not that the retiring leg has no tail: on the round-7 red the tail was
+            # already past the selector and inside the mux's isolation queue
+            # (stage=rebase-drain-wait pads=sink_65=3,sink_66=4, drained after
+            # 2.141s). Publishing None disarmed the mux fence entirely
+            # (_arm_mux_tail_cutoff returns [] and _mux_tail_drop_decision is
+            # fail-OPEN), so that tail aired past the switch: emitted
+            # EMIT audio back=1 minstep=-2.134 -> relay 'Invalid timestamps'.
+            # One number, two readers -- unchanged, just no longer unbounded.
+            pending["old_tail_cutoff_ns"] = switch_running_time
             for pad in pending["new_src_pads"]:
                 # NB: the leg's OWN tail src pad, not the selector's sink pad --
                 # set_offset there marks the leg's sticky SEGMENT for re-send, so
@@ -3543,6 +6375,12 @@ class GstPlayoutEngine:
                 # the stored copy is not rewritten (measured, GStreamer 1.28.5).
                 with contextlib.suppress(Exception):
                     pad.set_offset(switch_running_time)
+            # U56 round 5: the same bound, one hop downstream, on the audio pad.
+            # The selector-side fence above reads the same cutoff, but the
+            # retiring audio's tail has already passed it into the isolation
+            # queue; this is the last pad before the mux, downstream of that
+            # queue. See ``_arm_mux_tail_cutoff``.
+            self._arm_mux_tail_cutoff(pending)
             switch_mode = "deferred" if pending["switch_at_end_of_current"] else "immediate"
             print(
                 "CTRL reload: finite switch rebased to running time "
@@ -3550,9 +6388,9 @@ class GstPlayoutEngine:
                 f"streams={len(pending['new_src_pads'])} reload_id={pending['txn_id']}",
                 flush=True,
             )
-            # U16: the same switch, decomposed -- the per-pad ends the shared max
-            # was taken over, whether the pipeline-time fallback stood in for
-            # them, and the value actually applied. Guarded: a diagnostic must
+            # U16: the same switch, decomposed -- the per-pad ends the shared
+            # reference was taken over, whether the pipeline-time fallback stood in
+            # for them, and the value actually applied. Guarded: a diagnostic must
             # never be able to abort a commit.
             with contextlib.suppress(Exception):
                 print(
@@ -3561,6 +6399,24 @@ class GstPlayoutEngine:
                         switch_running_time=switch_running_time,
                         rebase_fallback=pipeline_running_time_ms is not None,
                         pipeline_running_time_ms=pipeline_running_time_ms,
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            # U56 round 4: which leg the reference came from, and what that cost
+            # the other one. Printed at EVERY boundary, not only a trimmed one:
+            # which branch this took is the fact that makes the next live change
+            # decomposable, and a boundary that trimmed 0.6s and one that trimmed
+            # nothing are otherwise indistinguishable in the emitted output.
+            with contextlib.suppress(Exception):
+                print(
+                    self._switch_shorter_leg_diagnostic(
+                        pending,
+                        measured_ends=measured_ends,
+                        switch_running_time=switch_running_time,
+                        trim=switch_trim,
+                        spread_ns=switch_spread_ns,
+                        bound_exceeded=switch_trim_bound_exceeded,
                     ),
                     file=sys.stderr,
                     flush=True,
@@ -3575,8 +6431,111 @@ class GstPlayoutEngine:
             # pads above report the leg's own pre-offset timeline).
             with contextlib.suppress(Exception):
                 self._arm_new_leg_selector_diagnostics(pending, switch_running_time)
+            # U37: the outgoing leg's last queued buffer is still sitting on the
+            # mux's sink pad for as long as it takes that pad to pop it, and the
+            # segment this rebase sends downstream re-dates exactly that buffer --
+            # see ``_arm_rebase_segment_observers``. Observe this switch's
+            # arrivals, then refuse to switch at all until the pad has given the
+            # old buffer up; the wait is bounded and off the main loop's critical
+            # path.
+            if self._arm_rebase_segment_observers(pending):
+                held = self._rebase_drain_held(pending)
+                if held and self._defer_rebase_drain(pending, held):
+                    return
+        self._continue_reload_commit(pending)
+
+    def _clamp_fallback_switch_point(self, pending: dict[str, Any]) -> None:
+        """U56 round 8: re-measure the FALLBACK's switch point where it is final.
+
+        The fallback branch of ``_begin_reload_commit`` has no per-stream
+        outgoing end to read, so it takes the pipeline's own running time as the
+        switch point. That read happens BEFORE the bounded rebase drain, and on
+        the fallback the drain is not a formality: the mux sink pad is still
+        holding the retiring leg's already-consumed audio, and giving it up airs
+        it. By the time the drain reports empty the audio mux pad's own aired
+        frontier has moved past the frozen switch point, and the incoming audio's
+        head lands exactly ON the offset (its own running time is still 0.000 at
+        the crossing), so it lands behind the retiring audio that just aired.
+        That is the emitted backward step.
+
+        So the switch point is re-read here, on the release half, from the mux's
+        OWN aired frontier: ``_mux_pad_airing_rt`` is written by
+        ``_install_mux_pad_airing_frontier``'s ``buffer-consumed`` handler, and
+        with ``set_offset`` on a branch pad ``consumed.pts - arrival.pts ==
+        offset`` for every buffer -- the recorded value really is the mux's own
+        running time for this stream, which is the value the emitted PES PTS
+        carries.
+
+        AUDIO only and FORWARD only, deliberately. Video is not clamped and the
+        video path is not touched at all, which is what keeps this from opening a
+        video hole; and a frontier at or behind the frozen offset is not a clamp
+        -- the offset stands. The one-offset-for-both-streams invariant is not
+        broken: this runs on the fallback, where there is no per-stream bound to
+        keep in step with (``old_tail_cutoff_ns`` is the same value the offsets
+        were set to, and it is left alone -- the fence's own release already
+        governs what it drops).
+        """
+        switch_ns = pending.get("fallback_switch_running_time_ns")
+        if switch_ns is None or self._stopping:
+            return
+        airing = getattr(self, "_mux_pad_airing_rt", None) or {}
+        if not airing:
+            return
+        affected = {
+            stream: pad_name
+            for stream, _pad, pad_name in self._rebase_affected_mux_pads(pending)
+        }
+        for index, pad in enumerate(pending.get("new_src_pads") or ()):
+            label = (
+                _NEW_LEG_STREAM_LABELS[index]
+                if index < len(_NEW_LEG_STREAM_LABELS)
+                else None
+            )
+            if label != _MUX_TAIL_FENCE_STREAM:
+                continue
+            pad_name = affected.get(label)
+            frontier = airing.get(pad_name) if pad_name is not None else None
+            if frontier is None or int(frontier) <= int(switch_ns):
+                continue
+            with contextlib.suppress(Exception):
+                pad.set_offset(int(frontier))
+                pending["fallback_switch_reclamped_ns"] = int(frontier)
+                print(
+                    "CTRL reload diagnostic: "
+                    f"stage=fallback-switch-point-reclamped stream={label} "
+                    f"was={int(switch_ns)} now={int(frontier)} "
+                    f"pad={pad_name} reload_id={pending.get('txn_id')}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+    def _continue_reload_commit(self, pending: dict[str, Any]) -> None:
+        """Second half of the commit: switch both selectors, release, confirm.
+
+        Split out of ``_begin_reload_commit`` (U37) so the rebased path can wait,
+        bounded and asynchronously, for the affected mux sink pads to drain before
+        anything is switched -- see ``_arm_rebase_segment_observers``. Everything
+        below runs in the same order, on the same main loop, as it did before that
+        split; that order is what the U30/U34 handover tests pin, and
+        ``pending['selector_handoff_started']`` keeps its meaning exactly: the
+        first selector mutation has completed."""
+        # U56 round 8: the fallback's switch point is re-read HERE, after the
+        # bounded drain has given the mux pad its queued buffers up, because that
+        # is the first moment the mux's aired frontier is final. Audio only,
+        # forward only. See ``_clamp_fallback_switch_point``.
+        self._clamp_fallback_switch_point(pending)
+        new_video_pad = pending["new_video_pad"]
+        new_audio_pad = pending["new_audio_pad"]
+        selector = self.selector
+        if selector is None:
+            raise RuntimeError("video selector disappeared during reload commit")
         print("CTRL reload: switching selector", flush=True)
         print("CTRL reload diagnostic: stage=switching-selector", file=sys.stderr, flush=True)
+        # U56 round 5: the retiring audio's bound stays on past the first
+        # mutation until the retiring tail has actually ARRIVED at the mux --
+        # the drain's "pad is empty" is not that, once a fence eats the arrivals.
+        # See ``_defer_mux_tail_release``.
+        self._defer_mux_tail_release(pending)
         # Explicitly preserve successful upstream flow while each request is
         # pending and after it becomes inactive. InputSelectorPad currently
         # defaults this to true, but the reload contract must not depend on an
@@ -3654,6 +6613,11 @@ class GstPlayoutEngine:
                 file=sys.stderr,
                 flush=True,
             )
+            self._reload_context = (pending["txn_id"], "cleanup-failed")
+            # U37: an observer left installed would keep counting for the rest of
+            # the worker's life -- remove it on every exit from the commit, not
+            # only on the clean one.
+            self._release_rebase_observers(pending)
             for pad, probe_id in pending["boundary_probes"]:
                 with contextlib.suppress(Exception):
                     pad.remove_probe(probe_id)
@@ -3666,6 +6630,10 @@ class GstPlayoutEngine:
 
         print("CTRL reload: old leg disposed", flush=True)
         print("CTRL reload diagnostic: stage=old-leg-disposed", file=sys.stderr, flush=True)
+        # U37: normally already removed by the rebased segment crossing the pad;
+        # idempotent, and guarantees no observer outlives the transaction it
+        # describes.
+        self._release_rebase_observers(pending)
         # Only now may the outgoing pads' EOS-drop probes go: the retiring leg can
         # still emit an EOS (the audio stream typically ends a beat after video)
         # right up until it is unlinked and NULLed.
@@ -3681,6 +6649,10 @@ class GstPlayoutEngine:
             file=sys.stderr,
             flush=True,
         )
+        # U34: the state a per-stream stall in the live reload-7 shape reports
+        # ("committed") -- the freeze happened after the commit, and this is
+        # the line the coordinator's station evidence carried.
+        self._reload_context = (pending["txn_id"], "committed")
         # Item 4 (honest ack): tell the caller the reload actually landed. Fired
         # last, after every other commit side-effect, and guarded so a callback
         # failure (e.g. the worker's pipe write) can never re-wedge a reload that
@@ -3710,6 +6682,193 @@ class GstPlayoutEngine:
         self._abort_pending_reload("timeout")
         return False  # one-shot
 
+    def _is_current_program_pad(self, pad: Any) -> bool:
+        """True only for the pad the channel is airing RIGHT NOW.
+
+        Identity, never name or value. ``selector_sink_pads[0]`` is replaced by
+        every commit (see ``_confirm_reload_selector_handoff``), so the pad a
+        superseded transaction was watching is a DIFFERENT object from the one on
+        air, and that is exactly the distinction the hold needs: an EOS from the
+        displaced leg is the boundary machinery's business, not the hold's."""
+        for slots in (self.selector_sink_pads, self.audio_sink_pads):
+            for current in slots[:1]:
+                if current is not None and current is pad:
+                    return True
+        return False
+
+    def _arm_plan_eos_hold_probes(self) -> None:
+        """Install the U41 plan-EOS hold on the CURRENT program leg's selector sink
+        pads -- video and audio, one probe each.
+
+        Best-effort by construction: a pad that refuses the probe is left
+        unguarded, which is precisely the pre-U41 behaviour (the leg's EOS crosses
+        and the worker exits cleanly), never a new failure. Both call sites matter:
+        ``run_forever`` installs it for the first plan, and every commit installs it
+        again, because a commit REPLACES the pad object in
+        ``selector_sink_pads[0]``/``audio_sink_pads[0]`` -- a probe left behind on
+        the displaced pad would guard a leg the channel no longer airs, and the next
+        plan end would quit the worker exactly as it used to.
+
+        Nothing is installed when the hold is disarmed (``run()``'s finite
+        contract), and nothing is installed on the slate pads -- the slate leg is
+        live and infinite (``bridge.py``), so an EOS from it is real information
+        that must keep its existing behaviour."""
+        if not self._hold_slate_at_plan_eos:
+            return
+        for pad in self.selector_sink_pads[:1] + self.audio_sink_pads[:1]:
+            if pad is None:
+                continue
+            try:
+                pad.add_probe(Gst.PadProbeType.EVENT_DOWNSTREAM, self._on_program_pad_plan_eos)
+            except Exception as exc:  # pragma: no cover - a pad that refuses a probe
+                print(
+                    f"WARN: could not arm the plan-EOS hold on {pad!r}: {exc!r}; "
+                    "this leg's EOS will keep its existing behaviour",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+    def _on_program_pad_plan_eos(self, pad: Gst.Pad, info: Gst.PadProbeInfo) -> Gst.PadProbeReturn:
+        """Streaming thread: the CURRENT program leg reached its natural end and
+        nothing is being prepared to replace it. DROP the EOS and put the slate on
+        air, so the channel never goes dark waiting.
+
+        Why a probe and not the bus: once an EOS crosses an ACTIVE selector pad it
+        is forwarded to ``mpegtsmux`` and to the bus, and ``_on_bus`` answers a
+        pipeline EOS by quitting the loop (engine.py:1841-1844). The output side is
+        ended by then -- re-selecting a pad cannot revive it. The only place an EOS
+        can be declined is before it crosses, which is the same mechanism every
+        healthy rollover already uses (``_arm_boundary_probes``).
+
+        Why it declines so much: this probe sits on the same pad as a transaction's
+        boundary probe and is installed FIRST (arming order is
+        ``run_forever``/commit, then the transaction). Same-priority pad probes run
+        in installation order, so an unconditional DROP here would starve
+        ``_on_outgoing_pad_data`` and no reload could ever commit. Hence:
+
+        * a reload transaction in flight -> OK: its boundary probe owns this
+          boundary, and the commit it drives is the correct outcome;
+        * fewer than two legs -> OK: there is no slate to hold, and swallowing the
+          EOS would turn a clean, classifiable exit into an unclassifiable freeze;
+        * not the current program pad -> OK: the slate leg and every displaced pad
+          keep their own behaviour;
+        * not an EOS (the mask is EVENT_DOWNSTREAM, which also carries segments,
+          caps and tags) or an unreadable event -> OK. Dropping a SEGMENT here
+          would corrupt the very timeline the reload machinery rebases onto.
+
+        The decision is main-loop state (``_pending_reload``) read from a streaming
+        thread, which is safe in one direction only: a transaction that appears
+        between this read and the queued ``_hold_slate_for_plan_eos`` makes that
+        callback re-check and decline, whereas a transaction that was already in
+        flight is seen here. Losing that race is the pre-U41 behaviour, not a new
+        failure."""
+        if not self._hold_slate_at_plan_eos:
+            return Gst.PadProbeReturn.OK
+        if self._pending_reload is not None:
+            return Gst.PadProbeReturn.OK
+        if len(self.selector_sink_pads) < 2:
+            return Gst.PadProbeReturn.OK
+        if not self._is_current_program_pad(pad):
+            return Gst.PadProbeReturn.OK
+        try:
+            event = info.get_event()
+        except Exception:
+            return Gst.PadProbeReturn.OK  # an unanswerable probe info is not an EOS
+        if event is None or getattr(event, "type", None) != Gst.EventType.EOS:
+            return Gst.PadProbeReturn.OK
+        print(
+            "CTRL plan EOS: program leg ended with no reload in flight; holding the slate",
+            file=sys.stderr,
+            flush=True,
+        )
+        GLib.idle_add(self._hold_slate_for_plan_eos)
+        return Gst.PadProbeReturn.DROP
+
+    def _hold_slate_for_plan_eos(self) -> bool:
+        """Main-loop: the programme's plan ended with nothing replacing it, so put
+        the always-hot slate leg on air and stay there until a reload commits.
+
+        The slate leg is ``videotestsrc is-live=True`` + ``audiotestsrc
+        is-live=True`` -- live and infinite, so it never EOSes and the output keeps
+        advancing: the S9-5 stall watchdog is not tripped, the bus never sees an
+        EOS, and the worker stays alive under the daemon's state row, which is
+        already ON_AIR. That is also why the plan's end no longer needs to be
+        treated as the channel's end: nothing about the off-air decision belonged
+        to the plan in the first place.
+
+        ``_plan_eos_held`` is what the next ``reload_program`` reads: its
+        ``old_leg_eos`` flag starts True, so ``_on_new_leg_ready`` commits the
+        instant the replacement's first buffer lands instead of arming the 900 s
+        ``defer_switch_timeout_s`` for a boundary that has already passed.
+
+        If the selector cannot be switched after the EOS has been dropped, the
+        output really would freeze with no signal, so the worker is failed
+        explicitly (``_error`` + quit) -- the daemon's restart is the correct and
+        only remaining recovery, and it is the same escalation the stall watchdog
+        uses."""
+        if not self._hold_slate_at_plan_eos or self._plan_eos_held:
+            return False
+        if self._pending_reload is not None:
+            return False  # a transaction appeared while this callback was queued
+        if len(self.selector_sink_pads) < 2:
+            return False
+        try:
+            self.swap.swap_to(_SLATE_LEG_INDEX)
+        except Exception as exc:
+            print(
+                f"CTRL plan EOS: could not select the slate leg ({exc!r}); "
+                "failing the worker so the daemon restarts the channel",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._error = f"plan EOS: slate hold failed: {exc!r}"
+            if self._loop is not None:
+                with contextlib.suppress(Exception):
+                    self._loop.quit()
+            return False
+        self._plan_eos_held = True
+        print(
+            "CTRL plan EOS: slate on air; the channel stays up until the replacement is ready",
+            file=sys.stderr,
+            flush=True,
+        )
+        return False
+
+    def _arm_boundary_probes(self, pending: dict[str, Any]) -> None:
+        """Watch BOTH outgoing pads (video AND audio -- an unhandled audio EOS
+        latches the mux's audio pad just as fatally as a video one takes the whole
+        pipeline down): track each pad's last-buffer end running time (the rebase
+        reference) and DROP its EOS, so no pipeline-level EOS is ever produced at
+        the boundary. Armed for EVERY deferred switch, plus an immediate finite
+        switch so its replacement can be rebased to the actual outgoing A/V edge.
+
+        U30 Work 2: armed BEFORE the new leg is built, because the boundary EOS
+        arrives while that build is still running (see ``reload_program``). An EOS
+        that crosses the selector in that window is forwarded, reaches
+        ``mpegtsmux``, and quits the worker -- output stops with no commit. The
+        probe is the only thing that can decline it, so it has to exist first."""
+        for pad in (pending["old_video_pad"], pending["old_audio_pad"]):
+            if pad is None:
+                continue
+            probe_id = pad.add_probe(
+                Gst.PadProbeType.BUFFER | Gst.PadProbeType.EVENT_DOWNSTREAM,
+                self._on_outgoing_pad_data,
+                pending["txn_id"],
+            )
+            pending["boundary_probes"].append((pad, probe_id))
+
+    @staticmethod
+    def _remove_boundary_probes(pending: dict[str, Any]) -> None:
+        """Take this transaction's outgoing-side probes off the live pads.
+
+        Every exit from an uncommitted transaction must run this. These probes
+        DROP the outgoing leg's EOS and are installed on pads that outlive the
+        transaction (``selector_sink_pads[0]`` is only replaced by a commit), so a
+        survivor would swallow the channel's real boundary EOS forever."""
+        for pad, probe_id in pending.get("boundary_probes", ()):
+            with contextlib.suppress(Exception):
+                pad.remove_probe(probe_id)
+
     def _abort_pending_reload(self, reason: str) -> None:
         """Tear down the in-flight (uncommitted) reload leg and clear the pending slot.
         The currently-active program is untouched. Used by supersede, build-error,
@@ -3729,9 +6888,7 @@ class GstPlayoutEngine:
         for pad, probe_id in pending.get("readiness_probes", ()):
             with contextlib.suppress(Exception):  # first-buffer probes remove themselves
                 pad.remove_probe(probe_id)
-        for pad, probe_id in pending["boundary_probes"]:
-            with contextlib.suppress(Exception):
-                pad.remove_probe(probe_id)
+        self._remove_boundary_probes(pending)
         # MUST run before _dispose_source_leg below: a held pad has a GStreamer
         # streaming thread parked inside the blocking probe, and tearing the leg
         # down around a still-installed block is how a "disposal" turns into a
@@ -3810,12 +6967,25 @@ class GstPlayoutEngine:
         elements: list[Gst.Element],
     ) -> None:
         """Retire an aborted leg on a worker thread; see ``_abort_pending_reload``."""
+        # Item 3: reap a previous aborted leg only once it is provably gone -- its
+        # retirement thread finished AND that retirement reported complete. Until
+        # both hold, ``_belongs_to_aborted_leg`` keeps attributing its elements, so
+        # the teardown of a leg this engine already rejected cannot take a still-
+        # producing channel off air. A leg whose disposal FAILED is deliberately
+        # kept: it is still in the pipeline, and the WARN below is the evidence.
+        self._abort_retire_legs = [
+            record
+            for record in self._abort_retire_legs
+            if record["thread"].is_alive() or not record["retired"]
+        ]
+        record: dict[str, Any] = {"thread": None, "elements": list(elements), "retired": False}
 
         def _retire() -> None:
             try:
                 retired, detail = self._dispose_source_leg(video_pad, audio_pad, elements)
             except Exception as exc:  # defensive: disposal returns a failure result
                 retired, detail = False, f"unexpected abort retirement error: {exc!r}"
+            record["retired"] = retired
             if not retired:
                 print(
                     f"WARN: aborted reload leg ({reason}) did not retire cleanly: {detail}",
@@ -3825,7 +6995,9 @@ class GstPlayoutEngine:
 
         self._abort_retire_threads = [t for t in self._abort_retire_threads if t.is_alive()]
         thread = threading.Thread(target=_retire, name="cc-abort-retire", daemon=True)
+        record["thread"] = thread
         self._abort_retire_threads.append(thread)
+        self._abort_retire_legs.append(record)
         try:
             thread.start()
         except Exception as exc:
@@ -3833,6 +7005,7 @@ class GstPlayoutEngine:
             # in-line retirement this method exists to move OFF the loop. The
             # blocking risk is the lesser problem versus never cleaning up at all.
             self._abort_retire_threads.remove(thread)
+            self._abort_retire_legs.remove(record)
             print(
                 f"WARN: aborted reload leg ({reason}) retiring inline; "
                 f"worker thread did not start: {exc!r}",
@@ -3869,6 +7042,14 @@ class GstPlayoutEngine:
         represented in that snapshot or is dropped before reaching the selector.
         A partial installation raises; the caller removes every recorded fence while
         the original programme is still selected.
+
+        U56: the fence drops by VALUE (``_drop_past_switch_point_probe``), not by
+        the instant it was armed. The bound it enforces is
+        ``pending["old_tail_cutoff_ns"]``, written by ``_begin_reload_commit``
+        immediately after it reads the very snapshot this ordering protects -- so
+        the fence and the new leg's rebase offset are provably one number. Until
+        that key is written the probe drops everything, which is the pre-U56
+        behaviour for the sub-millisecond window between these two statements.
         """
         for stream, selector_pad in (
             ("video", pending["old_video_pad"]),
@@ -3881,11 +7062,580 @@ class GstPlayoutEngine:
                     Gst.PadProbeType.BUFFER
                     | Gst.PadProbeType.BUFFER_LIST
                     | Gst.PadProbeType.EVENT_DOWNSTREAM,
-                    _drop_everything_probe,
+                    _drop_past_switch_point_probe,
+                    pending,
                 )
                 pending["old_tail_drop_probes"].append((selector_pad, probe_id))
             except Exception as exc:
                 raise RuntimeError(f"old selector cutoff failed for {stream}: {exc!r}") from exc
+
+    def _arm_mux_tail_cutoff(self, pending: dict[str, Any]) -> list[str]:
+        """U56 round 5: put the switch-point bound on the AUDIO mux sink pad.
+
+        The selector-side fence cannot reach a leg that has already raced ahead
+        of the commit -- see ``_mux_tail_cutoff_probe``. This is the same bound,
+        one hop downstream, on the pad ``_rebase_affected_mux_pads`` already
+        resolves for the U37 drain.
+
+        AUDIO only, and that is a measurement, not a preference. On the video
+        path this fence is harmful. Round 5 attributed that to the encoder
+        chain's ``videorate`` (which it no longer carries -- U56 round 7 removed
+        it, see ``graph.encode_chain_specs``), and the round-5 measurement
+        stands on its own terms: the trees that fenced both pads
+        (``tree_fix4``/``tree_fix5``) each emitted a 0.067 s video hole, while
+        the same code with only diagnostics differing (``tree_fix6``) did not.
+        The reason survives the removal: a video buffer arriving at the mux past
+        the bound is the INCOMING leg's first picture, whose own end sits ON the
+        bound by construction (each stream's first buffer is mapped to the switch
+        running time), so a video fence at this hop drops legitimate incoming
+        picture rather than outgoing tail. The retiring VIDEO's tail is already
+        dropped at the selector-side fence (``u56z15-fix7``: 18 buffers, every
+        one ``dec=DROP``), so the video needs nothing added to it.
+
+        The probe's own decision reads ``pending["outgoing_end"][pad]`` for the
+        segment to measure a running time in. Nothing has recorded state for a
+        MUX pad -- it is not a leg pad -- so it is seeded here, from the matching
+        outgoing leg pad's state when that exists. The seed is the RETIRING
+        leg's segment and it stays that segment for the fence's whole life, which
+        is what makes the bound mean "past the switch point in the retiring leg's
+        own timeline" rather than "later than the wall clock".
+
+        Round 5 assumed that seeding alone kept the incoming leg's buffers: they
+        would carry the same pts the retiring leg's did and compute as running
+        ~0.000, inside the bound. MEASURED, that holds only when the incoming
+        file's own head starts where the retiring one did. An incoming leg whose
+        timestamps restart lower (or higher) is either unplaceable in this
+        segment or placeable past the bound, and round 5's probe answered DROP to
+        both. That is why the decision is now ``_mux_tail_drop_decision`` and why
+        the fence also releases at the changeover segment
+        (``_mux_tail_segment_probe``).
+
+        A pad that cannot take the probe is a WARN, not a raise: the extra fence
+        is an addition to the switch, and a commit that cannot arm it is the
+        pre-fix behaviour, not a broken channel.
+
+        The probes join ``old_tail_drop_probes`` so that every existing abort and
+        retirement path removes them; the release only DISARMS them
+        (``_disarm_mux_tail_cutoff``), so none is ever removed twice.
+        """
+        if pending.get("old_tail_cutoff_ns") is None:
+            return []
+        outgoing = pending.get("outgoing_end", {})
+        armed: list[str] = []
+        for stream, pad, pad_name in self._rebase_affected_mux_pads(pending):
+            if stream != _MUX_TAIL_FENCE_STREAM:
+                continue
+            old_pad = pending.get(f"old_{stream}_pad")
+            seed = outgoing.get(old_pad) if old_pad is not None else None
+            state = pending["outgoing_end"].setdefault(
+                pad, {"end": None, "segment": None}
+            )
+            if state.get("segment") is None and seed is not None:
+                state["segment"] = seed.get("segment")
+            if seed is not None and seed.get("end") is not None:
+                # The retiring leg's OWN measured end for this stream (live:
+                # audio 3.605 against a switch point of 2.533). The fence may not
+                # come off until an arrival reaches it.
+                pending.setdefault("mux_tail_target", {})[pad_name] = int(seed["end"])
+            try:
+                probe_id = pad.add_probe(
+                    Gst.PadProbeType.BUFFER, _mux_tail_cutoff_probe, pending
+                )
+            except Exception as exc:
+                print(
+                    f"WARN: mux tail cutoff not installed on {pad_name} "
+                    f"(stream={stream}) for reload {pending.get('txn_id')}: {exc!r}; "
+                    "the outgoing audio may still air past the switch point",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+            pending["old_tail_drop_probes"].append((pad, probe_id))
+            pending.setdefault("mux_tail_cutoff_probes", []).append((pad, probe_id))
+            # The origin boundary, on the same pad. Same ownership: both probe
+            # ids live in ``old_tail_drop_probes``, so every abort and retirement
+            # path removes each exactly once, and the release only disarms.
+            try:
+                seg_probe_id = pad.add_probe(
+                    Gst.PadProbeType.EVENT_DOWNSTREAM, _mux_tail_segment_probe, pending
+                )
+            except Exception as exc:
+                print(
+                    f"WARN: mux tail origin release not installed on {pad_name} "
+                    f"(stream={stream}) for reload {pending.get('txn_id')}: {exc!r}; "
+                    "the fence still releases on the retiring tail's own arrival "
+                    "or its deadline",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            else:
+                pending["old_tail_drop_probes"].append((pad, seg_probe_id))
+                pending.setdefault("mux_tail_cutoff_probes", []).append((pad, seg_probe_id))
+            armed.append(pad_name)
+        if armed:
+            print(
+                f"CTRL reload diagnostic: stage=mux-tail-armed "
+                f"pads={','.join(armed)} "
+                f"target={pending.get('mux_tail_target')} "
+                f"cutoff={pending.get('old_tail_cutoff_ns')} "
+                f"reload_id={pending.get('txn_id')}",
+                file=sys.stderr,
+                flush=True,
+            )
+        return armed
+
+    @staticmethod
+    def _disarm_mux_tail_cutoff(pending: dict[str, Any]) -> None:
+        """U56 round 5: turn the mux fence into a pass-through, once, at release.
+
+        DISARMED, not removed. The probes live in ``old_tail_drop_probes``, which
+        every abort and retirement path already drains, so leaving the removal to
+        that owner removes each probe exactly once. Removing them here as well is
+        what produced the round-5 ``pad has no probe with id`` warning: the
+        release filtered ``old_tail_drop_probes`` by value, and two wrappers for
+        the same GStreamer pad are not equal. A fence that is disarmed cannot be
+        removed twice, and a probe that is never removed cannot outlive its
+        transaction.
+
+        The bound is only meaningful while the RETIRING leg feeds the mux: from
+        the switch onward the mux sees the INCOMING leg, and the bound reads the
+        retiring leg's own end. Nothing that arrived before the release is
+        re-decided by disarming -- the decision was taken as the buffer crossed.
+
+        Round 6: this is now the SECOND of two release paths. The first is
+        ``_mux_tail_segment_probe``, which fires the instant the changeover
+        segment crosses the pad -- the boundary between the two legs, measured,
+        not inferred. This one remains for the order where the retiring tail is
+        still in flight and reaches its own measured end first (the clean case),
+        and as the deadline behind both.
+        """
+        if not (pending.get("mux_tail_cutoff_probes") or ()):
+            return
+        pending["mux_tail_released"] = True
+
+    @staticmethod
+    def _mux_tail_arrived(pending: dict[str, Any]) -> bool:
+        """U56 round 5: has the RETIRING audio's tail finished arriving at the mux?
+
+        The drain wait (``_defer_rebase_drain``) polls the mux sink pad's
+        ``current-level-buffers``, and a fence makes that level fall to zero
+        EARLY: the fence eats the arrivals, so an empty pad stops meaning "the
+        retiring leg has been consumed" and starts meaning "the fence is keeping
+        up". MEASURED on the fix bytes: level hit zero 0.156 s after the arm with
+        two of the retiring leg's buffers still inside the 1.0 s non-leaky
+        isolation queue; they reached the pad as the fence came off, aired, and
+        stepped the emitted audio backwards by 1.072 s.
+
+        The honest condition is this one, in two halves. Every fenced pad has
+        SEEN an arrival whose computed end reaches the retiring leg's own
+        measured end (so nothing of the retiring leg is still on its way), AND
+        every fenced pad has been silent for a drain-poll interval (so the
+        arrival that satisfies the first half is not still crossing the pad when
+        the fence comes off). The first half alone released on that arrival --
+        measured, both escapes carried the release instant's own timestamp.
+        """
+        targets = pending.get("mux_tail_target") or {}
+        if not targets:
+            return True
+        seen = pending.get("mux_tail_seen") or {}
+        reach = _MUX_TAIL_ARRIVED_EPSILON_NS
+        if not all(
+            seen.get(pad_name, -1) >= int(target) - reach
+            for pad_name, target in targets.items()
+        ):
+            return False
+        last = pending.get("mux_last_arrival_t")
+        if last is not None and time.monotonic() - last < _MUX_TAIL_QUIET_S:
+            return False
+        return True
+
+    def _defer_mux_tail_release(self, pending: dict[str, Any]) -> None:
+        """U56 round 5: hold the mux fence past the first mutation, bounded.
+
+        Called where the release used to happen -- immediately after the first
+        selector mutation. Holding past the mutation is safe by measurement: the
+        incoming leg's buffers carry the SAME pts the outgoing leg's did, and the
+        fence reads them under the RETIRING leg's segment, so it computes their
+        running time as ~0.000 and keeps them. It is only the retiring leg's
+        queued tail -- running times past the bound -- that it drops.
+
+        Bounded by ``_MUX_TAIL_DEADLINE_S`` so a tail that never completes cannot
+        hold the fence open; the deadline is far shorter than the time it would
+        take the incoming leg's own timeline to reach the bound.
+        """
+        if not (pending.get("mux_tail_cutoff_probes") or ()):
+            return
+        pending["mux_tail_release_t"] = time.monotonic()
+        if self._mux_tail_arrived(pending):
+            self._disarm_mux_tail_cutoff(pending)
+            return
+        print(
+            f"CTRL reload diagnostic: stage=mux-tail-wait "
+            f"seen={pending.get('mux_tail_seen')} "
+            f"target={pending.get('mux_tail_target')} "
+            f"reload_id={pending.get('txn_id')}",
+            file=sys.stderr,
+            flush=True,
+        )
+        GLib.timeout_add(_REBASE_DRAIN_POLL_MS, self._poll_mux_tail_release, pending)
+
+    def _poll_mux_tail_release(self, pending: dict[str, Any]) -> bool:
+        """U56 round 5: the bounded wait for the retiring audio tail to arrive."""
+        waited = time.monotonic() - pending.get("mux_tail_release_t", time.monotonic())
+        arrived = self._mux_tail_arrived(pending)
+        if arrived or waited >= _MUX_TAIL_DEADLINE_S:
+            print(
+                f"CTRL reload diagnostic: stage=mux-tail-released waited={waited:.3f}s "
+                f"arrived={arrived} seen={pending.get('mux_tail_seen')} "
+                f"reload_id={pending.get('txn_id')}",
+                file=sys.stderr,
+                flush=True,
+            )
+            self._disarm_mux_tail_cutoff(pending)
+            return False
+        return True
+
+    # -- U37: drain the affected mux sink pads, and observe their arrivals -------
+    #
+    # A deferred program->program switch rebases the incoming leg by giving its
+    # sticky SEGMENT a new base (``set_offset`` on the leg's own tail src pads).
+    # A mux sink pad receives that segment as an ordinary event and
+    # ``gst_aggregator_default_sink_event`` copies it into ``agg_pad->segment``
+    # the moment it arrives -- but the buffers already queued on that pad are
+    # clipped later, at POP time, under whatever segment is current THEN. So ONE
+    # outgoing-leg buffer left in the video pad's queue when the rebased segment
+    # lands is re-dated into the new base's timeline: its running time becomes
+    # its OWN running time plus this transaction's rebase offset.
+    #
+    # Measured off-live on the real LPM media, in the recorded mux output
+    # (2026-09-25): the stale frame's running time 9.411322222s AIRED at
+    # 19.992322222s -- 9.411322222 + the 10.581s switch running time this
+    # transaction reports as ``rebase-reference`` -- and the next video frame
+    # stepped BACKWARDS to 10.581322222s. That 9.411s PTS regression, at emission
+    # #297, is the src-rate collapse this slice was opened for. The same
+    # capture's audio was continuous throughout.
+    #
+    # The buffer that must not be re-dated is in exactly one place that matters:
+    # QUEUED on the pad when the switch begins. No probe can see it (probes fire
+    # on ARRIVAL), so the commit does not switch anything until the pad has GIVEN
+    # IT UP (``_rebase_drain_held``). Lossless: those buffers are ordinary
+    # outgoing-leg media and they leave the pad by being CONSUMED, not dropped.
+    #
+    # What ARRIVES during that wait needs no guard at all, which is the one thing
+    # this fix's first draft got wrong. Serialized on this pad, an arrival that
+    # precedes the rebased SEGMENT is still clipped under the OLD segment and
+    # therefore airs with its own correct running time -- it is the outgoing
+    # leg's legitimate tail. Dropping it is pure loss, measured (2026-09-25) by
+    # running the same real reload with a DROP-until-SEGMENT fence instead:
+    # ``stage=rebase-fence-disarmed pad=sink_66 stream=audio dropped=48`` (that
+    # build's wording) plus a
+    # 1.024s hole in the aired audio (1013 frames against the 1061 every
+    # non-dropping run airs), with that run's video set a strict subset of the
+    # non-dropping one's (653 frames against 659) and nothing anywhere that the
+    # non-dropping run did not also air. The probe is therefore an OBSERVER: it
+    # counts what a stream put on the pad before its rebased segment crossed,
+    # removes itself on that segment, and changes nothing.
+    #
+    # Both bounds (``_REBASE_DRAIN_DEADLINE_S`` / ``_REBASE_OBSERVER_DEADLINE_S``)
+    # report themselves when reached, because a guard whose premise has failed
+    # must say so rather than hold a stream off air. Neither touches the handover
+    # order the U30/U34 tests pin: they run strictly BEFORE the first selector
+    # mutation.
+
+    def _rebase_affected_mux_pads(self, pending: dict[str, Any]) -> list[tuple[str, Any, str]]:
+        """``(stream, pad, pad_name)`` for each mux SINK pad this switch replaces.
+
+        The stream list comes from the transaction's OWN pads -- ``new_video_pad``
+        / ``new_audio_pad`` -- not from ``_required_stream_labels()``: a stream the
+        new leg does not carry is not switched, and waiting on its mux pad would
+        hold a stream off air for a rebase it is not part of.
+
+        Silent when no mux pad is registered (unit fakes; a graph with no mux):
+        there is nothing to guard. A switched stream with NO pad resolving to its
+        label is a WARN -- the guard cannot see a stream it is meant to protect.
+        """
+        streams: list[str] = []
+        if pending.get("new_video_pad") is not None:
+            streams.append("video")
+        if pending.get("new_audio_pad") is not None:
+            streams.append("audio")
+        pads = getattr(self, "_mux_input_pads", None) or {}
+        if not streams or not pads:
+            return []
+        affected: list[tuple[str, Any, str]] = []
+        for stream in streams:
+            match = next(
+                (
+                    (pad_name, pad)
+                    for pad_name, pad in sorted(pads.items())
+                    if self._mux_pad_stream_label(pad) == stream
+                ),
+                None,
+            )
+            if match is None:
+                print(
+                    f"WARN: no mux sink pad resolves to stream {stream} for reload "
+                    f"{pending.get('txn_id')}; the rebase drain cannot guard a pad it "
+                    "cannot find",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+            affected.append((stream, match[1], match[0]))
+        return affected
+
+    def _arm_rebase_segment_observers(self, pending: dict[str, Any]) -> bool:
+        """Watch this switch's pre-rebase arrivals at the affected mux sink pads.
+
+        See the U37 block comment above for the mechanism. These probes COUNT what
+        a pad put on the mux before its rebased segment crossed and then remove
+        themselves on that segment -- they change nothing about what airs. That is
+        deliberate: an arrival that precedes the rebased segment is still clipped
+        under the OLD segment and airs with its own correct running time, so
+        dropping it would discard legitimate outgoing tail (measured: a 1.024 s
+        audio hole). The load-bearing guard is the drain wait in
+        ``_defer_rebase_drain``; these probes are the evidence that says whether
+        the segment crossed inside its bound.
+
+        The deadline is armed FIRST, and the probes only if it could be armed: an
+        observer no timer can remove would outlive the transaction it describes,
+        so an unavailable timer degrades to today's un-observed behaviour with a
+        WARN instead.
+
+        Returns True when this switch has pads worth waiting for. Note that a pad
+        whose probe could not be installed still joins the drain set: waiting for
+        its queue to empty is the guard that actually protects it.
+        """
+        affected = self._rebase_affected_mux_pads(pending)
+        if not affected:
+            return False
+        bound_ms = round((_REBASE_DRAIN_DEADLINE_S + _REBASE_OBSERVER_DEADLINE_S) * 1000)
+        try:
+            deadline_id = GLib.timeout_add(bound_ms, self._on_rebase_observer_deadline, pending)
+        except Exception as exc:
+            print(
+                f"WARN: rebase arrival observer unavailable for reload {pending['txn_id']}: "
+                f"no observer deadline timer ({exc!r}); the drain wait still guards the "
+                "pads, but no arrival count will be reported",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+        pending["rebase_observer_deadline_id"] = deadline_id
+        pending["rebase_observer_pads"] = list(affected)
+        pending["rebase_observer_arrived"] = {}
+        armed: list[tuple[Any, Any, str]] = []
+        armed_names: list[str] = []
+        for stream, pad, pad_name in affected:
+            try:
+                probe_id = pad.add_probe(
+                    Gst.PadProbeType.BUFFER
+                    | Gst.PadProbeType.BUFFER_LIST
+                    | Gst.PadProbeType.EVENT_DOWNSTREAM,
+                    self._make_rebase_segment_observer(pending, pad_name, stream),
+                )
+            except Exception as exc:
+                print(
+                    f"WARN: rebase arrival observer not installed on mux pad {pad_name} "
+                    f"(stream={stream}) for reload {pending['txn_id']}: {exc!r}; the drain "
+                    f"wait still guards this pad, but its arrivals go uncounted",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                continue
+            armed.append((pad, probe_id, pad_name))
+            armed_names.append(pad_name)
+        pending["rebase_observer_probes"] = armed
+        print(
+            f"CTRL reload diagnostic: stage=rebase-observer-armed "
+            f"pads={','.join(pad_name for _s, _p, pad_name in affected)} "
+            f"observed={','.join(armed_names) if armed_names else 'none'} "
+            f"reload_id={pending['txn_id']}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return True
+
+    def _make_rebase_segment_observer(
+        self, pending: dict[str, Any], pad_name: str, stream: str
+    ) -> Any:
+        """A per-pad observer of the rebase arrival window (see the armer).
+
+        Keyed by PAD NAME in the arrival tally for the same reason the counters
+        are: one recorder per pad, written from that pad's own streaming thread."""
+
+        def _observe_rebase_arrivals(_pad: Any, info: Any) -> Any:
+            try:
+                if info.type & (Gst.PadProbeType.BUFFER | Gst.PadProbeType.BUFFER_LIST):
+                    # U37 H1: counted, NOT dropped. An arrival that precedes the
+                    # rebased segment on this pad is still clipped under the OLD
+                    # segment and therefore airs with its own correct running
+                    # time; dropping it discards legitimate outgoing tail.
+                    arrived = pending.setdefault("rebase_observer_arrived", {})
+                    arrived[pad_name] = arrived.get(pad_name, 0) + 1
+                    return Gst.PadProbeReturn.OK
+                event = info.get_event()
+                if event is not None and event.type == Gst.EventType.SEGMENT:
+                    # The rebased leg's own segment: every buffer after it is
+                    # dated by the new base, so the window this observer watches
+                    # has closed. REMOVE (not DROP) -- the segment itself must
+                    # reach the mux.
+                    pending.setdefault("rebase_observer_removed", set()).add(pad_name)
+                    with contextlib.suppress(Exception):
+                        print(
+                            f"CTRL reload diagnostic: stage=rebase-observer-disarmed "
+                            f"pad={pad_name} stream={stream} "
+                            f"arrived={(pending.get('rebase_observer_arrived') or {}).get(pad_name, 0)} "
+                            f"reload_id={pending.get('txn_id')}",
+                            file=sys.stderr,
+                            flush=True,
+                        )
+                    return Gst.PadProbeReturn.REMOVE
+            except Exception:
+                # A probe callback that raises is a per-buffer stderr flood on the
+                # streaming thread. This observer's failure mode must be "stops
+                # counting", never "takes the mux's streaming thread with it".
+                return Gst.PadProbeReturn.OK
+            return Gst.PadProbeReturn.OK
+
+        return _observe_rebase_arrivals
+
+    def _rebase_drain_held(self, pending: dict[str, Any]) -> list[str]:
+        """``pad=level`` for each affected mux sink pad STILL holding a buffer.
+
+        ``current-level-buffers`` is the aggregator pad's own queue depth -- a
+        readable ``GParamUInt64`` on the installed runtime, measured on a live pad
+        -- and it is the right predicate rather than a proxy: the aggregator
+        decrements it as it POPS a buffer, clipped buffer included, so zero means
+        this pad has handed over everything it had taken before the rebase.
+
+        A level that cannot be read is reported as ``unknown`` and is therefore
+        NOT proven empty; the caller waits and its deadline decides. Treating an
+        unreadable property as empty would silently reinstate the very re-dating
+        this guard exists to remove."""
+        held: list[str] = []
+        for _stream, pad, pad_name in pending.get("rebase_observer_pads") or ():
+            level: int | None = None
+            with contextlib.suppress(Exception):
+                level = int(pad.get_property("current-level-buffers"))
+            if level is None:
+                held.append(f"{pad_name}=unknown")
+            elif level > 0:
+                held.append(f"{pad_name}={level}")
+        return held
+
+    def _defer_rebase_drain(self, pending: dict[str, Any], held: list[str]) -> bool:
+        """Hand the commit to a main-loop poller until the pads empty (bounded).
+
+        Returns True when the poller took over -- the caller must return WITHOUT
+        switching -- and False when no poller could be scheduled, in which case
+        the caller proceeds now (today's behaviour) rather than waiting forever.
+
+        Asynchronous on purpose: a blocking wait here would take the main loop
+        with it -- no stall watchdog, no commit watchdog, no control-plane reader,
+        on a channel that is otherwise still on air."""
+        pending["rebase_drain_started_t"] = time.monotonic()
+        try:
+            timeout_id = GLib.timeout_add(_REBASE_DRAIN_POLL_MS, self._resume_rebase_drain, pending)
+        except Exception as exc:
+            print(
+                f"WARN: rebase drain could not be deferred for reload {pending['txn_id']} "
+                f"({exc!r}); switching with {', '.join(held)} still queued at the mux",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+        pending["rebase_drain_timeout_id"] = timeout_id
+        print(
+            f"CTRL reload diagnostic: stage=rebase-drain-wait pads={','.join(held)} "
+            f"reload_id={pending['txn_id']}",
+            file=sys.stderr,
+            flush=True,
+        )
+        return True
+
+    def _resume_rebase_drain(self, pending: dict[str, Any]) -> bool:
+        """Main-loop tick: switch once the pads have drained, or at the deadline."""
+        pending["rebase_drain_timeout_id"] = None
+        if (
+            self._pending_reload is not pending
+            or self._stopping
+            or not pending.get("commit_in_progress", False)
+            or pending.get("selector_handoff_started", False)
+        ):
+            # The transaction died, or the channel is stopping, between the last
+            # tick and this one: release and let whoever ended it own the rest.
+            self._release_rebase_observers(pending)
+            return False
+        held = self._rebase_drain_held(pending)
+        started = pending.get("rebase_drain_started_t")
+        waited = 0.0 if started is None else time.monotonic() - started
+        if held and waited < _REBASE_DRAIN_DEADLINE_S:
+            return True  # keep polling
+        if held:
+            print(
+                f"WARN: rebase drain did not empty within {_REBASE_DRAIN_DEADLINE_S:.1f}s "
+                f"for reload {pending['txn_id']} ({', '.join(held)} still queued at the mux); "
+                "switching anyway -- a stale buffer may still be re-dated by the segment",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                f"CTRL reload diagnostic: stage=rebase-drain-drained waited={waited:.3f}s "
+                f"reload_id={pending['txn_id']}",
+                file=sys.stderr,
+                flush=True,
+            )
+        try:
+            self._continue_reload_commit(pending)
+        except Exception as exc:
+            self._handle_commit_failure(pending, exc)
+        return False
+
+    def _on_rebase_observer_deadline(self, pending: dict[str, Any]) -> bool:
+        """Main-loop tick: the observer window closed without its segment -- report it."""
+        pending["rebase_observer_deadline_id"] = None
+        if not pending.get("rebase_observer_probes"):
+            return False
+        arrived = pending.get("rebase_observer_arrived") or {}
+        pairs = ", ".join(
+            f"{stream}:{pad_name}={arrived.get(pad_name, 0)}"
+            for stream, _pad, pad_name in pending.get("rebase_observer_pads") or ()
+        )
+        print(
+            f"WARN: rebase arrival observer window closed after "
+            f"{_REBASE_DRAIN_DEADLINE_S + _REBASE_OBSERVER_DEADLINE_S:.1f}s for reload "
+            f"{pending.get('txn_id')}: no rebased segment crossed the mux sink pads "
+            f"({pairs or 'no pads'}); removing the observers -- nothing is held off air",
+            file=sys.stderr,
+            flush=True,
+        )
+        self._release_rebase_observers(pending)
+        return False
+
+    def _release_rebase_observers(self, pending: dict[str, Any]) -> None:
+        """Remove the U37 observers and their timers; idempotent, best-effort."""
+        deadline_id = pending.get("rebase_observer_deadline_id")
+        if deadline_id is not None:
+            pending["rebase_observer_deadline_id"] = None
+            with contextlib.suppress(Exception):
+                GLib.source_remove(deadline_id)
+        drain_id = pending.get("rebase_drain_timeout_id")
+        if drain_id is not None:
+            pending["rebase_drain_timeout_id"] = None
+            with contextlib.suppress(Exception):
+                GLib.source_remove(drain_id)
+        # A probe that already saw the rebased segment removed ITSELF (REMOVE);
+        # removing that id again is a GStreamer-WARNING on the stderr of every
+        # clean switch. The pad name it reported is the record of that.
+        removed = pending.get("rebase_observer_removed") or set()
+        for pad, probe_id, pad_name in pending.get("rebase_observer_probes") or ():
+            if pad_name in removed:
+                continue
+            with contextlib.suppress(Exception):
+                pad.remove_probe(probe_id)
+        pending["rebase_observer_probes"] = []
 
     def _dispose_confirmed_old_leg(self, pending: dict[str, Any]) -> tuple[bool, str | None]:
         """Fence, detach, and retire old tails after confirmed selector handoff.
@@ -3998,6 +7748,40 @@ class GstPlayoutEngine:
             if node in old_elements:
                 return True
             node = node.get_parent() if hasattr(node, "get_parent") else None
+        return False
+
+    def _belongs_to_aborted_leg(self, src: object) -> bool:
+        """True when ``src`` is an element of a leg this engine has ALREADY aborted.
+
+        Item 3 (education, 2026-09-25 14:51:22; ``gst-worker.stdout.log`` 2649-2650):
+        ``_abort_pending_reload`` clears ``_pending_reload`` the moment it rejects
+        the new leg, but the leg is not gone -- its disposal runs on a worker thread
+        (``_start_aborted_leg_retirement``). Between those two instants the leg's
+        elements are still live and still post to the bus, and BOTH predicates above
+        return False for an element that provably IS the aborted leg's:
+        ``_belongs_to_pending_reload`` early-outs on the cleared slot, and
+        ``_belongs_to_retiring_reload`` needs a commit that an abort never had. So
+        the second error from the aborted leg's own decodebin fell through every
+        containment branch to the fatal tail, and the worker exited
+        (``WORKER_RESULT {'error': (gerror=... decodebin14 ... all streams without
+        buffers)}``, exit_code=1) on a channel that was still producing output.
+
+        Containing it is what the leg's own state already promises: before the
+        abort's holds are lifted it is DROP-fenced at its own src pads
+        (``_detach_leg_from_selectors``), so nothing it emits can reach the
+        selector, the mux, or the on-air output -- its errors are bookkeeping, not
+        airtime. Attributing by parent walk, exactly like the two predicates above,
+        so a decodebin-internal decoder is attributed to the leg that owns it.
+        """
+        if src is None:
+            return False
+        for record in self._abort_retire_legs:
+            elements = record["elements"]
+            node = src
+            while node is not None:
+                if node in elements:
+                    return True
+                node = node.get_parent() if hasattr(node, "get_parent") else None
         return False
 
     def _element_count(self) -> int:
@@ -4496,6 +8280,10 @@ class GstPlayoutEngine:
                 with contextlib.suppress(Exception):
                     pad.remove_probe(probe_id)
             self._release_hold_probes(pending)
+            # U37: an observer and its deadline timer must never outlive the
+            # transaction they belong to -- the timer holds a reference to
+            # ``pending`` and would fire against a torn-down pipeline.
+            self._release_rebase_observers(pending)
             for timeout_key in ("timeout_id", "defer_timeout_id"):
                 if pending[timeout_key] is not None:
                     with contextlib.suppress(Exception):
