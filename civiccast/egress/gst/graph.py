@@ -307,16 +307,31 @@ class GraphicsOverlayLeg:
 
 @dataclass(frozen=True)
 class AudioTapLeg:
-    """Raw program-audio fork consumed by the mandatory live-caption worker."""
+    """Raw program-audio fork consumed by the mandatory live-caption worker.
+
+    ``epoch`` is the writer-owned session identity. The writer publishes every
+    WAV under ``<tap_dir>/<epoch>/``; the tap worker can therefore isolate the
+    current session from older ones without inferring ownership from mtime or
+    PID. Empty/none preserves legacy flat-directory behavior.
+    """
 
     tap_dir: str
     segment_seconds: float = 5.0
+    epoch: str = ""
 
     def __post_init__(self) -> None:
         if not self.tap_dir.strip():
             raise ValueError("AudioTapLeg requires a tap_dir")
         if self.segment_seconds <= 0:
             raise ValueError("AudioTapLeg segment_seconds must be positive")
+        if self.epoch and (
+            len(self.epoch) != 32
+            or any(ch not in "0123456789abcdef" for ch in self.epoch)
+        ):
+            raise ValueError(
+                "AudioTapLeg epoch must be empty (legacy) or a lowercase "
+                "32-character hex string"
+            )
 
 
 @dataclass(frozen=True)
@@ -639,6 +654,7 @@ def graph_to_json(graph: PlayoutGraph) -> str:
                 {
                     "tap_dir": graph.audio_tap.tap_dir,
                     "segment_seconds": graph.audio_tap.segment_seconds,
+                    "epoch": graph.audio_tap.epoch,
                 }
                 if graph.audio_tap is not None
                 else None
@@ -679,6 +695,7 @@ def graph_from_json(text: str) -> PlayoutGraph:
             AudioTapLeg(
                 tap_dir=data["audio_tap"]["tap_dir"],
                 segment_seconds=float(data["audio_tap"]["segment_seconds"]),
+                epoch=str(data["audio_tap"].get("epoch", "")),
             )
             if data.get("audio_tap") is not None
             else None

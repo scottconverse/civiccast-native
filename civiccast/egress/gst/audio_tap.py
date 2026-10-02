@@ -58,6 +58,7 @@ the caption side-channel to take the channel off air.
 
 from __future__ import annotations
 
+import json
 import os
 import queue
 import re
@@ -323,12 +324,28 @@ class RollingWavSegmentWriter:
         sample_rate_hz: int = TAP_SAMPLE_RATE_HZ,
         queue_maxsize: int = _DEFAULT_QUEUE_MAXSIZE,
         fsync: Callable[[int], None] = os.fsync,
+        epoch: str = "",
     ) -> None:
         if segment_seconds <= 0:
             raise ValueError("caption audio tap segment_seconds must be positive")
         if sample_rate_hz <= 0:
             raise ValueError("caption audio tap sample_rate_hz must be positive")
         self.tap_dir = Path(tap_dir).expanduser()
+        self.epoch = str(epoch).strip()
+        if self.epoch:
+            if len(self.epoch) != 32 or any(
+                ch not in "0123456789abcdef" for ch in self.epoch
+            ):
+                raise ValueError(
+                    "caption audio tap epoch must be a lowercase 32-character hex string"
+                )
+            root = self.tap_dir
+            root.mkdir(parents=True, exist_ok=True)
+            self.tap_dir = root / self.epoch
+            # Create the target first, then publish the pointer. A reader may
+            # never observe an active pointer whose target directory is absent.
+            self.tap_dir.mkdir(parents=True, exist_ok=True)
+            self._publish_active_pointer(root, self.epoch)
         self.tap_dir.mkdir(parents=True, exist_ok=True)
         self.segment_seconds = float(segment_seconds)
         self.sample_rate_hz = int(sample_rate_hz)
@@ -355,6 +372,23 @@ class RollingWavSegmentWriter:
     def last_publish_error(self) -> str | None:
         """The most recent publish failure's ``repr()``, or ``None``."""
         return self._writer_thread.last_publish_error
+
+    @staticmethod
+    def _publish_active_pointer(root: Path, epoch: str) -> None:
+        """Atomically publish the authoritative active epoch before any WAV.
+
+        The tap worker must never infer the active epoch from directory-name
+        ordering or mtime. The writer publishes this pointer last-write-wins
+        under the channel-level tap directory, using tmp+replace so a reader
+        sees either the previous complete pointer or the new complete pointer.
+        """
+        pointer = root / "active-epoch.json"
+        tmp = pointer.with_name(pointer.name + ".tmp")
+        tmp.write_text(
+            json.dumps({"epoch": epoch}),
+            encoding="utf-8",
+        )
+        tmp.replace(pointer)
 
     def _discover_next_index(self) -> int:
         observed = -1

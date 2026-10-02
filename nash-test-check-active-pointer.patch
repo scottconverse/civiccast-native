@@ -1,0 +1,657 @@
+diff --git a/civiccast/captions/tap_worker.py b/civiccast/captions/tap_worker.py
+index 10fc4575..18f5cef4 100644
+--- a/civiccast/captions/tap_worker.py
++++ b/civiccast/captions/tap_worker.py
+@@ -52,6 +52,7 @@ import argparse
+ import concurrent.futures
+ import ctypes
+ import hashlib
++import json
+ import logging
+ import os
+ import re
+@@ -92,6 +93,7 @@ if TYPE_CHECKING:
+ _LOG = logging.getLogger(__name__)
+ 
+ _SEGMENT_RE = re.compile(r"^chunk-(\d+)\.wav$")
++_EPOCH_RE = re.compile(r"^[0-9a-f]{32}$")
+ 
+ TAP_MODE_OFF = "off"
+ TAP_MODE_INLINE = "inline"
+@@ -793,30 +795,38 @@ class CaptionTapWorker:
+         pending: list[tuple[str, Path, list[tuple[int, Path]], int]] = []
+         for channel_dir in sorted(p for p in self._tap_root.iterdir() if p.is_dir()):
+             channel_id = channel_dir.name
++            epoch_dir = self._active_epoch_dir(channel_dir)
++            # Legacy flat WAVs (or no epoch yet) are ambiguous. Preserve the
++            # existing max-2 behavior by treating the channel root as before;
++            # the reconciliation pass never moves them.
++            scan_dir = channel_dir if epoch_dir is None else epoch_dir
+             with self._session_lock(channel_id):
+                 if channel_id in self._failed_sessions:
+                     # The daemon inhibits this session's audio tap, but discard
+                     # any settled leftovers even if sidecar storage stays broken.
+-                    for _index, segment in self._settled_segments(channel_dir):
++                    for _index, segment in self._settled_segments(scan_dir):
+                         segment.unlink(missing_ok=True)
+                     continue
+                 with self._phase_timing.phase("scan_settle_and_backlog_gate", channel=channel_id):
+-                    segments = self._settled_segments(channel_dir)
++                    segments = self._settled_segments(scan_dir)
+                 if not segments:
+                     continue
+                 channels.append(channel_id)
+                 if self._backoff.is_paused(channel_id):
+-                    dropped += self._drain_paused_channel(channel_id, channel_dir, segments)
++                    dropped += self._drain_paused_channel(channel_id, scan_dir, segments)
+                     paused_channels.append(channel_id)
+                     continue
+                 if len(segments) > self._max_backlog_segments:
+-                    dropped += self._fail_closed_overload(channel_id, channel_dir, segments)
++                    # Legacy flat roots and explicit epochs share the existing
++                    # fail-closed overload behavior. Explicit epochs additionally
++                    # guarantee that older epochs never enter this gate at all.
++                    dropped += self._fail_closed_overload(channel_id, scan_dir, segments)
+                     overloaded_channels.append(channel_id)
+                     paused_channels.append(channel_id)
+                     continue
+                 # Bind the queued paths BEFORE runtime preparation/executor delay.
+                 pending.append(
+-                    (channel_id, channel_dir, segments, self._session_generation.get(channel_id, 0))
++                    (channel_id, scan_dir, segments, self._session_generation.get(channel_id, 0))
+                 )
+ 
+         if pending:
+@@ -1064,6 +1074,25 @@ class CaptionTapWorker:
+             expired_unconfirmed_cues=expired,
+         )
+ 
++    def _active_epoch_dir(self, channel_dir: Path) -> Path | None:
++        """Return the writer-published active epoch directory, or None.
++
++        The pointer is the authoritative identity. Missing, corrupt, or invalid
++        pointers fail closed to the legacy flat-root path; no directory-name
++        ordering, mtime, or PID is ever used to select an epoch.
++        """
++
++        pointer = channel_dir / "active-epoch.json"
++        try:
++            payload = json.loads(pointer.read_text(encoding="utf-8"))
++        except (OSError, ValueError):
++            return None
++        epoch = payload.get("epoch") if isinstance(payload, dict) else None
++        if not isinstance(epoch, str) or not _EPOCH_RE.fullmatch(epoch):
++            return None
++        candidate = channel_dir / epoch
++        return candidate if candidate.is_dir() else None
++
+     def _discard_settled_segments(self, channel_id: str) -> int:
+         """Discard a channel's leftover settled segments at session start.
+ 
+@@ -1112,6 +1141,8 @@ class CaptionTapWorker:
+         channel_id: str,
+         channel_dir: Path,
+         segments: list[tuple[int, Path]],
++        *,
++        discard: bool = True,
+     ) -> int:
+         self._clear_channel_captions(channel_id)
+         state = self._backoff.record_overload(channel_id)
+@@ -1148,8 +1179,9 @@ class CaptionTapWorker:
+         # could not keep up, with no retention clock on it at all. Audio that
+         # was never transcribed and can never be reviewed is not evidence; it
+         # is a disk leak wearing the word.
+-        for _index, segment in segments:
+-            segment.unlink(missing_ok=True)
++        if discard:
++            for _index, segment in segments:
++                segment.unlink(missing_ok=True)
+         return len(segments)
+ 
+     def _sweep_retention(self) -> None:
+diff --git a/civiccast/egress/gst/audio_tap.py b/civiccast/egress/gst/audio_tap.py
+index 18b73375..db9c83c4 100644
+--- a/civiccast/egress/gst/audio_tap.py
++++ b/civiccast/egress/gst/audio_tap.py
+@@ -58,6 +58,7 @@ the caption side-channel to take the channel off air.
+ 
+ from __future__ import annotations
+ 
++import json
+ import os
+ import queue
+ import re
+@@ -323,12 +324,25 @@ class RollingWavSegmentWriter:
+         sample_rate_hz: int = TAP_SAMPLE_RATE_HZ,
+         queue_maxsize: int = _DEFAULT_QUEUE_MAXSIZE,
+         fsync: Callable[[int], None] = os.fsync,
++        epoch: str = "",
+     ) -> None:
+         if segment_seconds <= 0:
+             raise ValueError("caption audio tap segment_seconds must be positive")
+         if sample_rate_hz <= 0:
+             raise ValueError("caption audio tap sample_rate_hz must be positive")
+         self.tap_dir = Path(tap_dir).expanduser()
++        self.epoch = str(epoch).strip()
++        if self.epoch:
++            if len(self.epoch) != 32 or any(
++                ch not in "0123456789abcdef" for ch in self.epoch
++            ):
++                raise ValueError(
++                    "caption audio tap epoch must be a lowercase 32-character hex string"
++                )
++            root = self.tap_dir
++            root.mkdir(parents=True, exist_ok=True)
++            self.tap_dir = root / self.epoch
++            self._publish_active_pointer(root, self.epoch)
+         self.tap_dir.mkdir(parents=True, exist_ok=True)
+         self.segment_seconds = float(segment_seconds)
+         self.sample_rate_hz = int(sample_rate_hz)
+@@ -356,6 +370,22 @@ class RollingWavSegmentWriter:
+         """The most recent publish failure's ``repr()``, or ``None``."""
+         return self._writer_thread.last_publish_error
+ 
++    @staticmethod
++    def _publish_active_pointer(root: Path, epoch: str) -> None:
++        """Atomically publish the authoritative active epoch before any WAV.
++
++        The tap worker must never infer the active epoch from directory-name
++        ordering or mtime. The writer publishes this pointer last-write-wins
++        under the channel-level tap directory, using tmp+replace so a reader\n        sees either the previous complete pointer or the new complete pointer.
++        """
++        pointer = root / "active-epoch.json"
++        tmp = pointer.with_name(pointer.name + ".tmp")
++        tmp.write_text(
++            json.dumps({"epoch": epoch}),
++            encoding="utf-8",
++        )
++        tmp.replace(pointer)
++
+     def _discover_next_index(self) -> int:
+         observed = -1
+         for path in self.tap_dir.rglob("chunk-*.wav*"):
+diff --git a/civiccast/egress/gst/engine.py b/civiccast/egress/gst/engine.py
+index be31cf9b..11afcdb2 100644
+--- a/civiccast/egress/gst/engine.py
++++ b/civiccast/egress/gst/engine.py
+@@ -1259,6 +1259,7 @@ class GstPlayoutEngine:
+         writer = RollingWavSegmentWriter(
+             leg.tap_dir,
+             segment_seconds=leg.segment_seconds,
++            epoch=leg.epoch,
+         )
+         specs = _audio_tap_element_specs()
+         elements = [self._make(spec) for spec in specs]
+diff --git a/civiccast/egress/gst/graph.py b/civiccast/egress/gst/graph.py
+index 690774fc..93cad47a 100644
+--- a/civiccast/egress/gst/graph.py
++++ b/civiccast/egress/gst/graph.py
+@@ -307,16 +307,31 @@ class GraphicsOverlayLeg:
+ 
+ @dataclass(frozen=True)
+ class AudioTapLeg:
+-    """Raw program-audio fork consumed by the mandatory live-caption worker."""
++    """Raw program-audio fork consumed by the mandatory live-caption worker.
++
++    ``epoch`` is the writer-owned session identity. The writer publishes every
++    WAV under ``<tap_dir>/<epoch>/``; the tap worker can therefore isolate the
++    current session from older ones without inferring ownership from mtime or
++    PID. Empty/none preserves legacy flat-directory behavior.
++    """
+ 
+     tap_dir: str
+     segment_seconds: float = 5.0
++    epoch: str = ""
+ 
+     def __post_init__(self) -> None:
+         if not self.tap_dir.strip():
+             raise ValueError("AudioTapLeg requires a tap_dir")
+         if self.segment_seconds <= 0:
+             raise ValueError("AudioTapLeg segment_seconds must be positive")
++        if self.epoch and (
++            len(self.epoch) != 32
++            or any(ch not in "0123456789abcdef" for ch in self.epoch)
++        ):
++            raise ValueError(
++                "AudioTapLeg epoch must be empty (legacy) or a lowercase "
++                "32-character hex string"
++            )
+ 
+ 
+ @dataclass(frozen=True)
+@@ -639,6 +654,7 @@ def graph_to_json(graph: PlayoutGraph) -> str:
+                 {
+                     "tap_dir": graph.audio_tap.tap_dir,
+                     "segment_seconds": graph.audio_tap.segment_seconds,
++                    "epoch": graph.audio_tap.epoch,
+                 }
+                 if graph.audio_tap is not None
+                 else None
+@@ -679,6 +695,7 @@ def graph_from_json(text: str) -> PlayoutGraph:
+             AudioTapLeg(
+                 tap_dir=data["audio_tap"]["tap_dir"],
+                 segment_seconds=float(data["audio_tap"]["segment_seconds"]),
++                epoch=str(data["audio_tap"].get("epoch", "")),
+             )
+             if data.get("audio_tap") is not None
+             else None
+diff --git a/civiccast/egress/gst/strategy.py b/civiccast/egress/gst/strategy.py
+index 481ac605..ff423d17 100644
+--- a/civiccast/egress/gst/strategy.py
++++ b/civiccast/egress/gst/strategy.py
+@@ -870,6 +870,7 @@ class GstPlayoutStrategy:
+             audio_tap=AudioTapLeg(
+                 tap_dir=str(plan.tap_dir),
+                 segment_seconds=plan.segment_seconds,
++                epoch=uuid.uuid4().hex,
+             ),
+         )
+ 
+diff --git a/tests/captions/test_caption_tap_worker.py b/tests/captions/test_caption_tap_worker.py
+index 068b457b..dc1edc88 100644
+--- a/tests/captions/test_caption_tap_worker.py
++++ b/tests/captions/test_caption_tap_worker.py
+@@ -2382,6 +2382,195 @@ class TestCaptionTapWorkerSettings:
+             )
+ 
+ 
++class TestWriterOwnedEpochContract:
++    """Supervisor/control-plane restart must not resurrect a prior epoch.
++
++    The writer owns its epoch directory. The tap scans the active epoch; older
++    explicit epoch directories are quarantined as a whole; legacy flat WAVs are
++    ambiguous and remain under the existing max-2 gate.
++    """
++
++    EPOCH_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
++    EPOCH_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
++
++    def test_current_epoch_wavs_written_before_worker_construction_are_never_discarded(
++        self, tmp_path: Path
++    ) -> None:
++        tap_root = tmp_path / "tap"
++        channel = tap_root / "public"
++        epoch_dir = channel / self.EPOCH_B
++        for index in range(2):
++            _write_wav(epoch_dir / f"chunk-{index:06d}.wav", seconds=1.0)
++        (channel / "active-epoch.json").write_text(
++            json.dumps({"epoch": self.EPOCH_B}), encoding="utf-8"
++        )
++
++        worker = _worker(
++            tap_root,
++            _ScriptedRuntime(),
++            InMemoryCaptionReviewStore(),
++            atomic_segments=True,
++        )
++        result = worker.run_once()
++
++        assert result.consumed_segments == 2
++        assert (epoch_dir / "processed" / "chunk-000000.wav").is_file()
++        assert (epoch_dir / "processed" / "chunk-000001.wav").is_file()
++
++    def test_old_epoch_is_isolated_and_does_not_trip_the_current_epoch_gate(
++        self, tmp_path: Path
++    ) -> None:
++        tap_root = tmp_path / "tap"
++        channel = tap_root / "public"
++        old_epoch = channel / self.EPOCH_A
++        current_epoch = channel / self.EPOCH_B
++        for index in range(4):
++            _write_wav(old_epoch / f"chunk-{index:06d}.wav", seconds=1.0)
++        for index in range(2):
++            _write_wav(current_epoch / f"chunk-{index:06d}.wav", seconds=1.0)
++        (channel / "active-epoch.json").write_text(
++            json.dumps({"epoch": self.EPOCH_B}), encoding="utf-8"
++        )
++
++        worker = _worker(
++            tap_root,
++            _ScriptedRuntime(),
++            InMemoryCaptionReviewStore(),
++            atomic_segments=True,
++        )
++        result = worker.run_once()
++
++        assert result.overloaded_channels == ()
++        assert result.consumed_segments == 2
++        # The coordinator-safe contract: a non-active epoch is never moved
++        # without proven writer death. It is simply not scanned.
++        assert old_epoch.is_dir()
++        assert (old_epoch / "chunk-000000.wav").is_file()
++
++    def test_unknown_legacy_flat_wavs_remain_fail_closed_and_untouched(
++        self, tmp_path: Path
++    ) -> None:
++        tap_root = tmp_path / "tap"
++        channel = tap_root / "public"
++        for index in range(3):
++            _write_wav(channel / f"chunk-{index:06d}.wav", seconds=1.0)
++
++        worker = _worker(
++            tap_root,
++            _ScriptedRuntime(),
++            InMemoryCaptionReviewStore(),
++            atomic_segments=True,
++        )
++        result = worker.run_once()
++
++        assert result.overloaded_channels == ("public",)
++        assert "public" in result.paused_channels
++        assert not (channel / "chunk-000000.wav").exists()
++        assert not (channel / "quarantine").exists()
++
++    def test_crash_restart_leaves_the_old_epoch_isolated_from_the_new_one(
++        self, tmp_path: Path
++    ) -> None:
++        tap_root = tmp_path / "tap"
++        old_epoch = tap_root / "public" / self.EPOCH_A
++        for index in range(3):
++            _write_wav(old_epoch / f"chunk-{index:06d}.wav", seconds=1.0)
++
++        first = _worker(
++            tap_root,
++            _ScriptedRuntime(),
++            InMemoryCaptionReviewStore(),
++            atomic_segments=True,
++        )
++        channel = tap_root / "public"
++        (channel / "active-epoch.json").write_text(
++            json.dumps({"epoch": self.EPOCH_A}), encoding="utf-8"
++        )
++        first.run_once()
++        assert (channel / self.EPOCH_A).is_dir()
++
++        new_epoch = channel / self.EPOCH_B
++        _write_wav(new_epoch / "chunk-000000.wav", seconds=1.0)
++        (channel / "active-epoch.json").write_text(
++            json.dumps({"epoch": self.EPOCH_B}), encoding="utf-8"
++        )
++        second = _worker(
++            tap_root,
++            _ScriptedRuntime(),
++            InMemoryCaptionReviewStore(),
++            atomic_segments=True,
++        )
++        result = second.run_once()
++
++        assert result.overloaded_channels == ()
++        assert result.consumed_segments == 1  # the new epoch is scanned independently
++
++
++class TestExplicitActiveEpochPointer:
++    """The active epoch is an explicit writer-published pointer, never a sort."""
++
++    OLD_EPOCH = "ffffffffffffffffffffffffffffffff"
++    NEW_EPOCH = "00000000000000000000000000000000"
++
++    def test_reversed_uuid_order_scans_only_the_pointer_target(
++        self, tmp_path: Path
++    ) -> None:
++        tap_root = tmp_path / "tap"
++        channel = tap_root / "public"
++        for index in range(4):
++            _write_wav(channel / self.OLD_EPOCH / f"chunk-{index:06d}.wav", seconds=1.0)
++        _write_wav(channel / self.NEW_EPOCH / "chunk-000000.wav", seconds=1.0)
++        (channel / "active-epoch.json").write_text(
++            json.dumps({"epoch": self.NEW_EPOCH}), encoding="utf-8"
++        )
++
++        worker = _worker(
++            tap_root,
++            _ScriptedRuntime(),
++            InMemoryCaptionReviewStore(),
++            atomic_segments=True,
++        )
++        result = worker.run_once()
++
++        assert result.overloaded_channels == ()
++        assert result.consumed_segments == 1
++        assert (channel / self.OLD_EPOCH / "chunk-000000.wav").is_file()
++
++    def test_missing_pointer_fails_closed_to_legacy_root(self, tmp_path: Path) -> None:
++        tap_root = tmp_path / "tap"
++        channel = tap_root / "public"
++        for index in range(4):
++            _write_wav(channel / f"chunk-{index:06d}.wav", seconds=1.0)
++        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
++        result = worker.run_once()
++        assert result.overloaded_channels == ("public",)
++
++    def test_corrupt_pointer_fails_closed_without_moving_epochs(self, tmp_path: Path) -> None:
++        tap_root = tmp_path / "tap"
++        channel = tap_root / "public"
++        epoch = channel / self.NEW_EPOCH
++        _write_wav(epoch / "chunk-000000.wav", seconds=1.0)
++        (channel / "active-epoch.json").write_text("{not-json", encoding="utf-8")
++        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
++        result = worker.run_once()
++        assert result.consumed_segments == 0
++        assert epoch.is_dir()
++
++    def test_old_writer_epoch_is_never_moved(self, tmp_path: Path) -> None:
++        tap_root = tmp_path / "tap"
++        channel = tap_root / "public"
++        old = channel / self.OLD_EPOCH
++        _write_wav(old / "chunk-000000.wav", seconds=1.0)
++        (channel / "active-epoch.json").write_text(
++            json.dumps({"epoch": self.NEW_EPOCH}), encoding="utf-8"
++        )
++        (channel / self.NEW_EPOCH).mkdir(parents=True)
++        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
++        worker.run_once()
++        assert old.is_dir()
++        assert (old / "chunk-000000.wav").is_file()
++
++
+ class TestFirstRetentionSweepIsBounded:
+     """beta.9 N=3 field defect (Blackwell 2026-09-18, three channels ON_AIR).
+ 
+diff --git a/tests/egress/test_daemon.py b/tests/egress/test_daemon.py
+index 422835b2..7732c376 100644
+--- a/tests/egress/test_daemon.py
++++ b/tests/egress/test_daemon.py
+@@ -282,6 +282,58 @@ def test_failed_caption_reset_does_not_read_stale_sidecar(tmp_path: Path) -> Non
+     assert "captions disabled" in (store.read_state("gov").last_error or "")
+ 
+ 
++def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_session(tmp_path: Path) -> None:
++    """A distinct second START is delivered as a no-op, not a session reset.
++
++    The store dedupes repeated command ids.  A genuinely distinct second START
++    id must therefore be delivered while the first process is still tracked.
++    That delivery must NOT run the session-start hook or discard the live
++    session's audio: the guard intentionally leaves the existing writer
++    running, and the hook's session-scoped cleanup would delete its audio.
++    """
++
++    store = InMemoryEgressStore()
++    store.upsert_config(_config())
++    hook_calls: list[str] = []
++    process = _FakeProcess(pid=4242)
++
++    daemon = EgressDaemon(
++        store,
++        work_dir=tmp_path,
++        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
++        ffmpeg_starter=lambda _args: process,
++        channel_start_hook=hook_calls.append,
++    )
++
++    store.enqueue_command(_command())
++    assert daemon.process_once("gov") == 1
++    assert hook_calls == ["gov"], "the initial start must run the session hook"
++    assert store.read_state("gov").pid == 4242
++
++    # A repeated command id is correctly consumed and dropped by the store's
++    # dedupe before it can be delivered a second time.
++    store.enqueue_command(_command())
++    assert store.peek_pending_commands("gov") == []
++    assert daemon.process_once("gov") == 0
++
++    # A distinct command id reaches the daemon.  The live-process guard makes
++    # START a no-op: process identity and hook count must not change.
++    second = _command().model_copy(update={"command_id": "cmd-start-2"})
++    store.enqueue_command(second)
++    assert store.peek_pending_commands("gov") == [second]
++    assert daemon.process_once("gov") == 1
++
++    state = store.read_state("gov")
++    assert state is not None
++    assert state.pid == 4242
++    assert process.terminated is False
++    assert hook_calls == ["gov"], (
++        "a distinct START on a live tracked process must be delivered but "
++        "must not re-run the session-start hook; doing so would discard the "
++        "live writer's audio"
++    )
++
++
+ def test_daemon_processes_start_command_and_records_success_health(tmp_path: Path) -> None:
+     store = InMemoryEgressStore()
+     store.upsert_config(_config())
+diff --git a/tests/egress/test_gst_audio_tap.py b/tests/egress/test_gst_audio_tap.py
+index 0db1fdef..297a98b3 100644
+--- a/tests/egress/test_gst_audio_tap.py
++++ b/tests/egress/test_gst_audio_tap.py
+@@ -87,6 +87,60 @@ def test_writer_restart_never_overwrites_a_published_segment(tmp_path: Path) ->
+     assert _read_pcm(tmp_path / "chunk-000001.wav")[1] == b"\x03\x04"
+ 
+ 
++def test_writer_epoch_isolates_each_session_directory(tmp_path: Path) -> None:
++    first = RollingWavSegmentWriter(
++        tmp_path,
++        segment_seconds=0.01,
++        sample_rate_hz=1_000,
++        epoch="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
++    )
++    first.write_pcm_s16le(b"\x01\x02")
++    first.close()
++
++    second = RollingWavSegmentWriter(
++        tmp_path,
++        segment_seconds=0.01,
++        sample_rate_hz=1_000,
++        epoch="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
++    )
++    second.write_pcm_s16le(b"\x03\x04")
++    second.close()
++
++    assert _read_pcm(tmp_path / "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" / "chunk-000000.wav")[1] == b"\x01\x02"
++    assert _read_pcm(tmp_path / "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" / "chunk-000000.wav")[1] == b"\x03\x04"
++
++
++@pytest.mark.parametrize(
++    "bad_epoch",
++    ["../escape", "/absolute", "ABCDEF0123456789ABCDEF0123456789", "0" * 31, "g" * 32],
++)
++def test_writer_rejects_invalid_or_traversing_epoch(tmp_path: Path, bad_epoch: str) -> None:
++    with pytest.raises(ValueError):
++        RollingWavSegmentWriter(
++            tmp_path,
++            segment_seconds=0.01,
++            sample_rate_hz=1_000,
++            epoch=bad_epoch,
++        )
++    assert not (tmp_path.parent / "escape").exists()
++
++
++def test_writer_publishes_active_epoch_pointer_before_any_wav(tmp_path: Path) -> None:
++    epoch = "00000000000000000000000000000000"
++    writer = RollingWavSegmentWriter(
++        tmp_path,
++        segment_seconds=0.01,
++        sample_rate_hz=1_000,
++        epoch=epoch,
++    )
++    writer.close()
++
++    import json
++
++    pointer = json.loads((tmp_path / "active-epoch.json").read_text(encoding="utf-8"))
++    assert pointer == {"epoch": epoch}
++
++
+ def test_writer_rejects_non_s16le_frame_alignment(tmp_path: Path) -> None:
+     writer = RollingWavSegmentWriter(tmp_path)
+     with pytest.raises(ValueError, match="whole 16-bit samples"):
+diff --git a/tests/egress/test_gst_strategy.py b/tests/egress/test_gst_strategy.py
+index 92bb68ba..cef63f4e 100644
+--- a/tests/egress/test_gst_strategy.py
++++ b/tests/egress/test_gst_strategy.py
+@@ -148,6 +148,59 @@ def test_graph_json_round_trip_playlist() -> None:
+     assert restored.encoder[0].props["bitrate"] == 4000
+ 
+ 
++def test_graph_json_round_trip_with_audio_tap_epoch() -> None:
++    from civiccast.egress.gst.graph import audio_encode_specs
++
++    graph = PlayoutGraph(
++        sources=(SourceLeg("s", (ElementSpec("videotestsrc"),)),),
++        encoder=(ElementSpec("x264enc"),),
++        audio_encoder=audio_encode_specs(),
++        audio_tap=AudioTapLeg(
++            tap_dir="/var/lib/civiccast/tap/ch1",
++            segment_seconds=5.0,
++            epoch="0123456789abcdef0123456789abcdef",
++        ),
++        mux=ElementSpec("mpegtsmux", name="mux"),
++        sinks=((ElementSpec("filesink", props={"location": "/tmp/o.ts"}),),),
++    )
++
++    restored = graph_from_json(graph_to_json(graph))
++
++    assert restored.audio_tap == AudioTapLeg(
++        tap_dir="/var/lib/civiccast/tap/ch1",
++        segment_seconds=5.0,
++        epoch="0123456789abcdef0123456789abcdef",
++    )
++
++
++@pytest.mark.parametrize(
++    "bad_epoch",
++    ["../escape", "/absolute", "ABCDEF0123456789ABCDEF0123456789", "0" * 31, "g" * 32],
++)
++def test_audio_tap_rejects_invalid_or_traversing_epoch(bad_epoch: str) -> None:
++    with pytest.raises(ValueError):
++        AudioTapLeg(tap_dir="/tmp/tap", epoch=bad_epoch)
++
++
++def test_legacy_audio_tap_json_without_epoch_rehydrates_empty_epoch() -> None:
++    from civiccast.egress.gst.graph import audio_encode_specs
++
++    graph = PlayoutGraph(
++        sources=(SourceLeg("s", (ElementSpec("videotestsrc"),)),),
++        encoder=(ElementSpec("x264enc"),),
++        audio_encoder=audio_encode_specs(),
++        audio_tap=AudioTapLeg(tap_dir="/old/tap/ch1", segment_seconds=5.0),
++        mux=ElementSpec("mpegtsmux", name="mux"),
++        sinks=((ElementSpec("filesink", props={"location": "/tmp/o.ts"}),),),
++    )
++    import json
++
++    data = json.loads(graph_to_json(graph))
++    data["audio_tap"].pop("epoch")  # simulate a pre-epoch serialized graph
++    restored = graph_from_json(json.dumps(data))
++    assert restored.audio_tap == AudioTapLeg(tap_dir="/old/tap/ch1", segment_seconds=5.0)
++
++
+ def test_graph_json_round_trip_with_audio() -> None:
+     from civiccast.egress.gst.graph import audio_encode_specs
+ 
+@@ -945,10 +998,11 @@ def test_strategy_builds_the_live_caption_audio_tap_into_the_gstreamer_graph(
+     result = strategy.start(_start_request(tmp_path))
+ 
+     graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
+-    assert graph.audio_tap == AudioTapLeg(
+-        tap_dir=str(tap_root / "ch1"),
+-        segment_seconds=4.5,
+-    )
++    assert graph.audio_tap is not None
++    assert graph.audio_tap.tap_dir == str(tap_root / "ch1")
++    assert graph.audio_tap.segment_seconds == 4.5
++    assert len(graph.audio_tap.epoch) == 32
++    assert all(ch in "0123456789abcdef" for ch in graph.audio_tap.epoch)
+ 
+ 
+ def test_strategy_omits_the_audio_tap_when_live_captions_are_disabled(

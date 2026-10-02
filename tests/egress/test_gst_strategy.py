@@ -148,6 +148,59 @@ def test_graph_json_round_trip_playlist() -> None:
     assert restored.encoder[0].props["bitrate"] == 4000
 
 
+def test_graph_json_round_trip_with_audio_tap_epoch() -> None:
+    from civiccast.egress.gst.graph import audio_encode_specs
+
+    graph = PlayoutGraph(
+        sources=(SourceLeg("s", (ElementSpec("videotestsrc"),)),),
+        encoder=(ElementSpec("x264enc"),),
+        audio_encoder=audio_encode_specs(),
+        audio_tap=AudioTapLeg(
+            tap_dir="/var/lib/civiccast/tap/ch1",
+            segment_seconds=5.0,
+            epoch="0123456789abcdef0123456789abcdef",
+        ),
+        mux=ElementSpec("mpegtsmux", name="mux"),
+        sinks=((ElementSpec("filesink", props={"location": "/tmp/o.ts"}),),),
+    )
+
+    restored = graph_from_json(graph_to_json(graph))
+
+    assert restored.audio_tap == AudioTapLeg(
+        tap_dir="/var/lib/civiccast/tap/ch1",
+        segment_seconds=5.0,
+        epoch="0123456789abcdef0123456789abcdef",
+    )
+
+
+@pytest.mark.parametrize(
+    "bad_epoch",
+    ["../escape", "/absolute", "ABCDEF0123456789ABCDEF0123456789", "0" * 31, "g" * 32],
+)
+def test_audio_tap_rejects_invalid_or_traversing_epoch(bad_epoch: str) -> None:
+    with pytest.raises(ValueError):
+        AudioTapLeg(tap_dir="/tmp/tap", epoch=bad_epoch)
+
+
+def test_legacy_audio_tap_json_without_epoch_rehydrates_empty_epoch() -> None:
+    from civiccast.egress.gst.graph import audio_encode_specs
+
+    graph = PlayoutGraph(
+        sources=(SourceLeg("s", (ElementSpec("videotestsrc"),)),),
+        encoder=(ElementSpec("x264enc"),),
+        audio_encoder=audio_encode_specs(),
+        audio_tap=AudioTapLeg(tap_dir="/old/tap/ch1", segment_seconds=5.0),
+        mux=ElementSpec("mpegtsmux", name="mux"),
+        sinks=((ElementSpec("filesink", props={"location": "/tmp/o.ts"}),),),
+    )
+    import json
+
+    data = json.loads(graph_to_json(graph))
+    data["audio_tap"].pop("epoch")  # simulate a pre-epoch serialized graph
+    restored = graph_from_json(json.dumps(data))
+    assert restored.audio_tap == AudioTapLeg(tap_dir="/old/tap/ch1", segment_seconds=5.0)
+
+
 def test_graph_json_round_trip_with_audio() -> None:
     from civiccast.egress.gst.graph import audio_encode_specs
 
@@ -945,10 +998,11 @@ def test_strategy_builds_the_live_caption_audio_tap_into_the_gstreamer_graph(
     result = strategy.start(_start_request(tmp_path))
 
     graph = graph_from_json(result.concat_plan_path.read_text(encoding="utf-8"))
-    assert graph.audio_tap == AudioTapLeg(
-        tap_dir=str(tap_root / "ch1"),
-        segment_seconds=4.5,
-    )
+    assert graph.audio_tap is not None
+    assert graph.audio_tap.tap_dir == str(tap_root / "ch1")
+    assert graph.audio_tap.segment_seconds == 4.5
+    assert len(graph.audio_tap.epoch) == 32
+    assert all(ch in "0123456789abcdef" for ch in graph.audio_tap.epoch)
 
 
 def test_strategy_omits_the_audio_tap_when_live_captions_are_disabled(

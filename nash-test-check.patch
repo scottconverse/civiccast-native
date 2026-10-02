@@ -1,0 +1,63 @@
+diff --git a/tests/egress/test_daemon.py b/tests/egress/test_daemon.py
+index 422835b2..7732c376 100644
+--- a/tests/egress/test_daemon.py
++++ b/tests/egress/test_daemon.py
+@@ -282,6 +282,58 @@ def test_failed_caption_reset_does_not_read_stale_sidecar(tmp_path: Path) -> Non
+     assert "captions disabled" in (store.read_state("gov").last_error or "")
+ 
+ 
++def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_session(tmp_path: Path) -> None:
++    """A distinct second START is delivered as a no-op, not a session reset.
++
++    The store dedupes repeated command ids.  A genuinely distinct second START
++    id must therefore be delivered while the first process is still tracked.
++    That delivery must NOT run the session-start hook or discard the live
++    session's audio: the guard intentionally leaves the existing writer
++    running, and the hook's session-scoped cleanup would delete its audio.
++    """
++
++    store = InMemoryEgressStore()
++    store.upsert_config(_config())
++    hook_calls: list[str] = []
++    process = _FakeProcess(pid=4242)
++
++    daemon = EgressDaemon(
++        store,
++        work_dir=tmp_path,
++        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
++        ffmpeg_starter=lambda _args: process,
++        channel_start_hook=hook_calls.append,
++    )
++
++    store.enqueue_command(_command())
++    assert daemon.process_once("gov") == 1
++    assert hook_calls == ["gov"], "the initial start must run the session hook"
++    assert store.read_state("gov").pid == 4242
++
++    # A repeated command id is correctly consumed and dropped by the store's
++    # dedupe before it can be delivered a second time.
++    store.enqueue_command(_command())
++    assert store.peek_pending_commands("gov") == []
++    assert daemon.process_once("gov") == 0
++
++    # A distinct command id reaches the daemon.  The live-process guard makes
++    # START a no-op: process identity and hook count must not change.
++    second = _command().model_copy(update={"command_id": "cmd-start-2"})
++    store.enqueue_command(second)
++    assert store.peek_pending_commands("gov") == [second]
++    assert daemon.process_once("gov") == 1
++
++    state = store.read_state("gov")
++    assert state is not None
++    assert state.pid == 4242
++    assert process.terminated is False
++    assert hook_calls == ["gov"], (
++        "a distinct START on a live tracked process must be delivered but "
++        "must not re-run the session-start hook; doing so would discard the "
++        "live writer's audio"
++    )
++
++
+ def test_daemon_processes_start_command_and_records_success_health(tmp_path: Path) -> None:
+     store = InMemoryEgressStore()
+     store.upsert_config(_config())

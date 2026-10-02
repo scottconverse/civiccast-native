@@ -52,6 +52,7 @@ import argparse
 import concurrent.futures
 import ctypes
 import hashlib
+import json
 import logging
 import os
 import re
@@ -92,6 +93,7 @@ if TYPE_CHECKING:
 _LOG = logging.getLogger(__name__)
 
 _SEGMENT_RE = re.compile(r"^chunk-(\d+)\.wav$")
+_EPOCH_RE = re.compile(r"^[0-9a-f]{32}$")
 
 TAP_MODE_OFF = "off"
 TAP_MODE_INLINE = "inline"
@@ -793,30 +795,42 @@ class CaptionTapWorker:
         pending: list[tuple[str, Path, list[tuple[int, Path]], int]] = []
         for channel_dir in sorted(p for p in self._tap_root.iterdir() if p.is_dir()):
             channel_id = channel_dir.name
+            epoch_dir = self._active_epoch_dir(channel_dir)
+            if epoch_dir is None and self._has_epoch_directories(channel_dir):
+                # Epoch directories exist but the authoritative pointer is
+                # missing/corrupt/invalid. Refuse this channel rather than
+                # falling back to flat root WAVs or selecting by name.
+                continue
+            # Pre-upgrade legacy channels with no epoch directories retain the
+            # existing flat-root max-2 behavior unchanged.
+            scan_dir = channel_dir if epoch_dir is None else epoch_dir
             with self._session_lock(channel_id):
                 if channel_id in self._failed_sessions:
                     # The daemon inhibits this session's audio tap, but discard
                     # any settled leftovers even if sidecar storage stays broken.
-                    for _index, segment in self._settled_segments(channel_dir):
+                    for _index, segment in self._settled_segments(scan_dir):
                         segment.unlink(missing_ok=True)
                     continue
                 with self._phase_timing.phase("scan_settle_and_backlog_gate", channel=channel_id):
-                    segments = self._settled_segments(channel_dir)
+                    segments = self._settled_segments(scan_dir)
                 if not segments:
                     continue
                 channels.append(channel_id)
                 if self._backoff.is_paused(channel_id):
-                    dropped += self._drain_paused_channel(channel_id, channel_dir, segments)
+                    dropped += self._drain_paused_channel(channel_id, scan_dir, segments)
                     paused_channels.append(channel_id)
                     continue
                 if len(segments) > self._max_backlog_segments:
-                    dropped += self._fail_closed_overload(channel_id, channel_dir, segments)
+                    # Legacy flat roots and explicit epochs share the existing
+                    # fail-closed overload behavior. Explicit epochs additionally
+                    # guarantee that older epochs never enter this gate at all.
+                    dropped += self._fail_closed_overload(channel_id, scan_dir, segments)
                     overloaded_channels.append(channel_id)
                     paused_channels.append(channel_id)
                     continue
                 # Bind the queued paths BEFORE runtime preparation/executor delay.
                 pending.append(
-                    (channel_id, channel_dir, segments, self._session_generation.get(channel_id, 0))
+                    (channel_id, scan_dir, segments, self._session_generation.get(channel_id, 0))
                 )
 
         if pending:
@@ -1064,6 +1078,32 @@ class CaptionTapWorker:
             expired_unconfirmed_cues=expired,
         )
 
+    @staticmethod
+    def _has_epoch_directories(channel_dir: Path) -> bool:
+        return any(
+            path.is_dir() and _EPOCH_RE.fullmatch(path.name)
+            for path in channel_dir.iterdir()
+        )
+
+    def _active_epoch_dir(self, channel_dir: Path) -> Path | None:
+        """Return the writer-published active epoch directory, or None.
+
+        The pointer is the authoritative identity. Missing, corrupt, or invalid
+        pointers never trigger name/mtime/PID selection. If epoch directories
+        exist, the caller fails closed rather than scanning flat root WAVs.
+        """
+
+        pointer = channel_dir / "active-epoch.json"
+        try:
+            payload = json.loads(pointer.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        epoch = payload.get("epoch") if isinstance(payload, dict) else None
+        if not isinstance(epoch, str) or not _EPOCH_RE.fullmatch(epoch):
+            return None
+        candidate = channel_dir / epoch
+        return candidate if candidate.is_dir() else None
+
     def _discard_settled_segments(self, channel_id: str) -> int:
         """Discard a channel's leftover settled segments at session start.
 
@@ -1112,6 +1152,8 @@ class CaptionTapWorker:
         channel_id: str,
         channel_dir: Path,
         segments: list[tuple[int, Path]],
+        *,
+        discard: bool = True,
     ) -> int:
         self._clear_channel_captions(channel_id)
         state = self._backoff.record_overload(channel_id)
@@ -1148,8 +1190,9 @@ class CaptionTapWorker:
         # could not keep up, with no retention clock on it at all. Audio that
         # was never transcribed and can never be reviewed is not evidence; it
         # is a disk leak wearing the word.
-        for _index, segment in segments:
-            segment.unlink(missing_ok=True)
+        if discard:
+            for _index, segment in segments:
+                segment.unlink(missing_ok=True)
         return len(segments)
 
     def _sweep_retention(self) -> None:

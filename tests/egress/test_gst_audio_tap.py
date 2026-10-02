@@ -87,6 +87,78 @@ def test_writer_restart_never_overwrites_a_published_segment(tmp_path: Path) -> 
     assert _read_pcm(tmp_path / "chunk-000001.wav")[1] == b"\x03\x04"
 
 
+def test_writer_epoch_isolates_each_session_directory(tmp_path: Path) -> None:
+    first = RollingWavSegmentWriter(
+        tmp_path,
+        segment_seconds=0.01,
+        sample_rate_hz=1_000,
+        epoch="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    )
+    first.write_pcm_s16le(b"\x01\x02")
+    first.close()
+
+    second = RollingWavSegmentWriter(
+        tmp_path,
+        segment_seconds=0.01,
+        sample_rate_hz=1_000,
+        epoch="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    )
+    second.write_pcm_s16le(b"\x03\x04")
+    second.close()
+
+    assert _read_pcm(tmp_path / "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" / "chunk-000000.wav")[1] == b"\x01\x02"
+    assert _read_pcm(tmp_path / "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" / "chunk-000000.wav")[1] == b"\x03\x04"
+
+
+@pytest.mark.parametrize(
+    "bad_epoch",
+    ["../escape", "/absolute", "ABCDEF0123456789ABCDEF0123456789", "0" * 31, "g" * 32],
+)
+def test_writer_rejects_invalid_or_traversing_epoch(tmp_path: Path, bad_epoch: str) -> None:
+    with pytest.raises(ValueError):
+        RollingWavSegmentWriter(
+            tmp_path,
+            segment_seconds=0.01,
+            sample_rate_hz=1_000,
+            epoch=bad_epoch,
+        )
+    assert not (tmp_path.parent / "escape").exists()
+
+
+def test_writer_publishes_active_epoch_pointer_before_any_wav(tmp_path: Path) -> None:
+    epoch = "00000000000000000000000000000000"
+    writer = RollingWavSegmentWriter(
+        tmp_path,
+        segment_seconds=0.01,
+        sample_rate_hz=1_000,
+        epoch=epoch,
+    )
+    writer.close()
+
+    import json
+
+    pointer = json.loads((tmp_path / "active-epoch.json").read_text(encoding="utf-8"))
+    assert pointer == {"epoch": epoch}
+
+
+def test_writer_creates_epoch_directory_before_publishing_pointer(tmp_path: Path) -> None:
+    epoch = "00000000000000000000000000000000"
+    writer = RollingWavSegmentWriter(
+        tmp_path,
+        segment_seconds=0.01,
+        sample_rate_hz=1_000,
+        epoch=epoch,
+    )
+    try:
+        import json
+
+        pointer = json.loads((tmp_path / "active-epoch.json").read_text(encoding="utf-8"))
+        target = tmp_path / pointer["epoch"]
+        assert target.is_dir(), "pointer target must exist before pointer publication"
+    finally:
+        writer.close()
+
+
 def test_writer_rejects_non_s16le_frame_alignment(tmp_path: Path) -> None:
     writer = RollingWavSegmentWriter(tmp_path)
     with pytest.raises(ValueError, match="whole 16-bit samples"):

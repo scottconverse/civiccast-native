@@ -1259,6 +1259,7 @@ class GstPlayoutEngine:
         writer = RollingWavSegmentWriter(
             leg.tap_dir,
             segment_seconds=leg.segment_seconds,
+            epoch=leg.epoch,
         )
         specs = _audio_tap_element_specs()
         elements = [self._make(spec) for spec in specs]

@@ -870,6 +870,7 @@ class GstPlayoutStrategy:
             audio_tap=AudioTapLeg(
                 tap_dir=str(plan.tap_dir),
                 segment_seconds=plan.segment_seconds,
+                epoch=uuid.uuid4().hex,
             ),
         )
 

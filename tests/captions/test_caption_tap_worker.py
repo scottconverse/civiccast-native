@@ -2382,6 +2382,227 @@ class TestCaptionTapWorkerSettings:
             )
 
 
+class TestWriterOwnedEpochContract:
+    """Supervisor/control-plane restart must not resurrect a prior epoch.
+
+    The writer owns its epoch directory. The tap scans the active epoch; older
+    explicit epoch directories are quarantined as a whole; legacy flat WAVs are
+    ambiguous and remain under the existing max-2 gate.
+    """
+
+    EPOCH_A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    EPOCH_B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+    def test_current_epoch_wavs_written_before_worker_construction_are_never_discarded(
+        self, tmp_path: Path
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        epoch_dir = channel / self.EPOCH_B
+        for index in range(2):
+            _write_wav(epoch_dir / f"chunk-{index:06d}.wav", seconds=1.0)
+        (channel / "active-epoch.json").write_text(
+            json.dumps({"epoch": self.EPOCH_B}), encoding="utf-8"
+        )
+
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+        result = worker.run_once()
+
+        assert result.consumed_segments == 2
+        assert (epoch_dir / "processed" / "chunk-000000.wav").is_file()
+        assert (epoch_dir / "processed" / "chunk-000001.wav").is_file()
+
+    def test_old_epoch_is_isolated_and_does_not_trip_the_current_epoch_gate(
+        self, tmp_path: Path
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        old_epoch = channel / self.EPOCH_A
+        current_epoch = channel / self.EPOCH_B
+        for index in range(4):
+            _write_wav(old_epoch / f"chunk-{index:06d}.wav", seconds=1.0)
+        for index in range(2):
+            _write_wav(current_epoch / f"chunk-{index:06d}.wav", seconds=1.0)
+        (channel / "active-epoch.json").write_text(
+            json.dumps({"epoch": self.EPOCH_B}), encoding="utf-8"
+        )
+
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+        result = worker.run_once()
+
+        assert result.overloaded_channels == ()
+        assert result.consumed_segments == 2
+        # The coordinator-safe contract: a non-active epoch is never moved
+        # without proven writer death. It is simply not scanned.
+        assert old_epoch.is_dir()
+        assert (old_epoch / "chunk-000000.wav").is_file()
+
+    def test_unknown_legacy_flat_wavs_remain_fail_closed_and_untouched(
+        self, tmp_path: Path
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        for index in range(3):
+            _write_wav(channel / f"chunk-{index:06d}.wav", seconds=1.0)
+
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+        result = worker.run_once()
+
+        assert result.overloaded_channels == ("public",)
+        assert "public" in result.paused_channels
+        assert not (channel / "chunk-000000.wav").exists()
+        assert not (channel / "quarantine").exists()
+
+    def test_crash_restart_leaves_the_old_epoch_isolated_from_the_new_one(
+        self, tmp_path: Path
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        old_epoch = tap_root / "public" / self.EPOCH_A
+        for index in range(3):
+            _write_wav(old_epoch / f"chunk-{index:06d}.wav", seconds=1.0)
+
+        first = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+        channel = tap_root / "public"
+        (channel / "active-epoch.json").write_text(
+            json.dumps({"epoch": self.EPOCH_A}), encoding="utf-8"
+        )
+        first.run_once()
+        assert (channel / self.EPOCH_A).is_dir()
+
+        new_epoch = channel / self.EPOCH_B
+        _write_wav(new_epoch / "chunk-000000.wav", seconds=1.0)
+        (channel / "active-epoch.json").write_text(
+            json.dumps({"epoch": self.EPOCH_B}), encoding="utf-8"
+        )
+        second = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+        result = second.run_once()
+
+        assert result.overloaded_channels == ()
+        assert result.consumed_segments == 1  # the new epoch is scanned independently
+
+
+class TestExplicitActiveEpochPointer:
+    """The active epoch is an explicit writer-published pointer, never a sort."""
+
+    OLD_EPOCH = "ffffffffffffffffffffffffffffffff"
+    NEW_EPOCH = "00000000000000000000000000000000"
+
+    def test_reversed_uuid_order_scans_only_the_pointer_target(
+        self, tmp_path: Path
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        for index in range(4):
+            _write_wav(channel / self.OLD_EPOCH / f"chunk-{index:06d}.wav", seconds=1.0)
+        _write_wav(channel / self.NEW_EPOCH / "chunk-000000.wav", seconds=1.0)
+        (channel / "active-epoch.json").write_text(
+            json.dumps({"epoch": self.NEW_EPOCH}), encoding="utf-8"
+        )
+
+        worker = _worker(
+            tap_root,
+            _ScriptedRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+        )
+        result = worker.run_once()
+
+        assert result.overloaded_channels == ()
+        assert result.consumed_segments == 1
+        assert (channel / self.OLD_EPOCH / "chunk-000000.wav").is_file()
+
+    def test_missing_pointer_fails_closed_to_legacy_root(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        for index in range(4):
+            _write_wav(channel / f"chunk-{index:06d}.wav", seconds=1.0)
+        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+        result = worker.run_once()
+        assert result.overloaded_channels == ("public",)
+
+    def test_epoch_dirs_with_missing_pointer_refuse_flat_root_scan(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        for index in range(4):
+            _write_wav(channel / f"chunk-{index:06d}.wav", seconds=1.0)
+        (channel / self.NEW_EPOCH).mkdir(parents=True)
+
+        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert result.overloaded_channels == ()
+        assert result.channels == ()
+        assert (channel / "chunk-000000.wav").is_file()
+
+    def test_epoch_dirs_with_corrupt_pointer_refuse_flat_root_scan(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        for index in range(4):
+            _write_wav(channel / f"chunk-{index:06d}.wav", seconds=1.0)
+        (channel / self.NEW_EPOCH).mkdir(parents=True)
+        (channel / "active-epoch.json").write_text("{bad-json", encoding="utf-8")
+
+        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+        result = worker.run_once()
+
+        assert result.consumed_segments == 0
+        assert result.overloaded_channels == ()
+        assert result.channels == ()
+        assert (channel / "chunk-000000.wav").is_file()
+
+    def test_corrupt_pointer_fails_closed_without_moving_epochs(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        epoch = channel / self.NEW_EPOCH
+        _write_wav(epoch / "chunk-000000.wav", seconds=1.0)
+        (channel / "active-epoch.json").write_text("{not-json", encoding="utf-8")
+        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+        result = worker.run_once()
+        assert result.consumed_segments == 0
+        assert result.channels == ()
+        assert epoch.is_dir()
+
+    def test_old_writer_epoch_is_never_moved(self, tmp_path: Path) -> None:
+        tap_root = tmp_path / "tap"
+        channel = tap_root / "public"
+        old = channel / self.OLD_EPOCH
+        _write_wav(old / "chunk-000000.wav", seconds=1.0)
+        (channel / "active-epoch.json").write_text(
+            json.dumps({"epoch": self.NEW_EPOCH}), encoding="utf-8"
+        )
+        (channel / self.NEW_EPOCH).mkdir(parents=True)
+        worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+        worker.run_once()
+        assert old.is_dir()
+        assert (old / "chunk-000000.wav").is_file()
+
+
 class TestFirstRetentionSweepIsBounded:
     """beta.9 N=3 field defect (Blackwell 2026-09-18, three channels ON_AIR).
 
