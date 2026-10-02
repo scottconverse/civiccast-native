@@ -422,6 +422,78 @@ def _foreground_thread_cap() -> int:
     return max(1, cpu_count // 2)
 
 
+#: BETA.10 U68: the environment variable that turns the foreground
+#: preparation's lowered process priority OFF again. Set it to ``0`` to get
+#: back the pre-U68 behavior exactly (NORMAL priority, ``_foreground_thread_cap``
+#: threads). Two C's, matching the spelling the station's service registry
+#: writes -- see ``env_vars`` for the one-C trap this avoids.
+FOREGROUND_PREPARATION_LOW_PRIORITY_ENV = "CIVICAST_EGRESS_PREPARE_LOW_PRIORITY"
+
+#: U68 default: ON. The foreground preparation is the only conform that runs
+#: *while a channel is on air and the caption tap is transcribing*, so it is
+#: the only one that can push the tap past its backlog bound. See
+#: ``_foreground_preparation_low_priority``.
+_FOREGROUND_PREPARATION_LOW_PRIORITY_DEFAULT = True
+
+_FALSEY = frozenset({"0", "false", "no", "off"})
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+#: One-time-warning latch for the unparseable-value message below. A
+#: preparation runs many times per hour, so an operator typo must not become a
+#: log flood -- same reasoning as ``_RENAMED_ENV_WARNED``.
+_FOREGROUND_LOW_PRIORITY_WARNED: set[str] = set()
+
+
+def _foreground_preparation_low_priority() -> bool:
+    """Whether this process's foreground preparation ffmpeg children run one
+    scheduling step down (Windows ``BELOW_NORMAL_PRIORITY_CLASS``, POSIX
+    ``nice -n 10`` -- see ``civiccast.stream._ffmpeg.run_ffmpeg``).
+
+    U68. The live caption tap transcribes on a thread the tap itself drops to
+    ``BELOW_NORMAL``, but the conform ffmpeg the foreground preparation spawns
+    used to default to the process's own priority: NORMAL. On a cold
+    preparation that child -- decoder, filter graph and encoder alike, with
+    only the encoder bounded by ``_foreground_thread_cap`` -- competed on
+    equal terms with the tap, and the tap's own batch counter shows single
+    5-second segments taking up to 21s to transcribe on a station whose
+    conforms run at 95-98% CPU. Dropping the child one class removes the
+    asymmetry without touching a single emitted byte: process priority changes
+    *when* ffmpeg's threads run, never what they compute.
+
+    This is deliberately a separate decision from ``lower_priority`` (the
+    warm-only flag). U60 tied that flag to BOTH the priority and a
+    single-thread cap, which a warm wants and an on-demand conform does not:
+    the foreground path keeps ``_foreground_thread_cap()`` threads because
+    pinning it to one thread is measured at 6.4x slower (233s vs 36.6s for
+    300s of content, ``_foreground_thread_cap``'s own docstring) and a
+    preparation that outruns the channel's lead turns a caption shed into
+    dead air. Priority and thread count are two knobs here, not one.
+
+    Reads ``FOREGROUND_PREPARATION_LOW_PRIORITY_ENV``. Default ON. An
+    unrecognized value logs once and keeps the default rather than guessing.
+    """
+
+    raw = os.environ.get(FOREGROUND_PREPARATION_LOW_PRIORITY_ENV, "").strip().lower()
+    if not raw:
+        return _FOREGROUND_PREPARATION_LOW_PRIORITY_DEFAULT
+    if raw in _FALSEY:
+        return False
+    if raw in _TRUTHY:
+        return True
+    message = (
+        "%s=%r is not a boolean; keeping the default (%s). Use 1/true/yes/on or 0/false/no/off."
+    )
+    if raw not in _FOREGROUND_LOW_PRIORITY_WARNED:
+        _FOREGROUND_LOW_PRIORITY_WARNED.add(raw)
+        _LOG.warning(
+            message,
+            FOREGROUND_PREPARATION_LOW_PRIORITY_ENV,
+            raw,
+            "on" if _FOREGROUND_PREPARATION_LOW_PRIORITY_DEFAULT else "off",
+        )
+    return _FOREGROUND_PREPARATION_LOW_PRIORITY_DEFAULT
+
+
 def _describe_segment_window(segment: EgressSourceSegment | None) -> str:
     """Name the window a loudnorm pass measured, for operator-facing log lines.
 
@@ -2516,6 +2588,16 @@ class SourcePreparer:
         # down (a single thread) because it is the only whole-asset encode
         # that is allowed to run for many minutes beside a live channel.
         conform_threads = 1 if lower_priority else _foreground_thread_cap()
+        # U68: a second, independent local for the *priority* of every ffmpeg
+        # child this call spawns. ``lower_priority`` is the warm flag and still
+        # drives ``conform_threads`` above; this one adds the foreground
+        # default from ``_foreground_preparation_low_priority`` (ON unless the
+        # operator turned it off) so a cold preparation yields to the live
+        # caption tap instead of out-competing it. Read once here, like
+        # ``conform_threads``, so all four ffmpeg stages this call runs make the
+        # same decision. See that helper for why priority is decoupled from the
+        # thread count.
+        conform_lower_priority = lower_priority or _foreground_preparation_low_priority()
 
         # Cache HIT: the full-asset conform already exists — no re-encode, no
         # probing (#156: an aired-before program starts within seconds). Trim is
@@ -2913,7 +2995,7 @@ class SourcePreparer:
                 media_duration_seconds=media_duration,
                 cancel_event=cancel_event,
                 timeout_seconds=timeout_seconds,
-                lower_priority=lower_priority,
+                lower_priority=conform_lower_priority,
             )
             if full_asset_cached_ts is not None:
                 return self._emit_prepared_from_cache(
@@ -2996,7 +3078,7 @@ class SourcePreparer:
                 threads=conform_threads,
                 cancel_event=cancel_event,
                 timeout_seconds=timeout_seconds,
-                lower_priority=lower_priority,
+                lower_priority=conform_lower_priority,
             )
             if loudness_method != _LOUDNESS_METHOD_RIDE:
                 measured_loudness, loudness_method = self._measure_loudnorm_metadata(
@@ -3006,7 +3088,7 @@ class SourcePreparer:
                     threads=conform_threads,
                     cancel_event=cancel_event,
                     timeout_seconds=timeout_seconds,
-                    lower_priority=lower_priority,
+                    lower_priority=conform_lower_priority,
                 )
 
         if loudness_method != _LOUDNESS_METHOD_RIDE:
@@ -3024,7 +3106,7 @@ class SourcePreparer:
                     args,
                     cancel_event,
                     timeout_seconds=timeout_seconds,
-                    lower_priority=lower_priority,
+                    lower_priority=conform_lower_priority,
                 )
             except SourcePreparationCancelledError:
                 tmp_output_path.unlink(missing_ok=True)

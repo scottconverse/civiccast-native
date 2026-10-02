@@ -3853,14 +3853,42 @@ def test_long_asset_warm_uses_the_scaled_timeout_at_lower_priority(
     assert conforms[0]["lower_priority"] is True
 
 
-def test_on_demand_preparation_keeps_the_base_timeout_and_normal_priority(
+#: U68's knob, spelled out as a literal rather than imported from the module,
+#: so the tests below fail on the *behavior* they pin when run against the base
+#: revision instead of erroring on a missing module attribute.
+_U68_ENV = "CIVICAST_EGRESS_PREPARE_LOW_PRIORITY"
+
+
+def test_on_demand_preparation_keeps_the_base_timeout_and_the_foreground_thread_cap(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """U29 3a/3b's guard rail: the AIR path must not inherit either change.
-    An untrimmed-miss airing of a 3600 s asset -- a duration that WOULD scale
-    a warm's budget -- still runs both passes at the base timeout and at
-    normal process priority, because a late segment is a channel outage and a
-    busy box is not."""
+    """U29 3a/3b's guard rail, narrowed by U68.
+
+    The AIR path must not inherit the warm's *budget*: an untrimmed-miss airing
+    of a 3600 s asset -- a duration that WOULD scale a warm's budget -- still
+    runs both passes at the base timeout, because a late segment is a channel
+    outage and a busy box is not.
+
+    U68 moved the other half of that rail deliberately, and this is the record
+    of the decision rather than a silent break.  U29's original assertion also
+    pinned the air path to NORMAL process priority, on the reasoning that a cold
+    preparation must not be slowed.  U68 reverses that one clause on the
+    station's own evidence: the live caption tap transcribes on a thread it
+    drops to BELOW_NORMAL (``civiccast.captions.tap_worker``), so a
+    NORMAL-priority conform child is not a neutral party in that tie -- it is
+    the only party that can win it.  The tap lost it for 87 shed windows in the
+    retained logs, discarding up to 100 s of spoken audio at a time.
+
+    What U29 actually needed is preserved and still asserted below: the
+    *thread count*, which is still ``_foreground_thread_cap()``, not the warm's
+    single thread.  Demoting a process one scheduling class costs latency under
+    contention, not throughput -- see ``_foreground_preparation_low_priority``.
+    ``CIVICAST_EGRESS_PREPARE_LOW_PRIORITY=0`` restores the pre-U68 behavior
+    exactly, and ``test_foreground_preparation_priority_env_override_is_honored``
+    proves the escape hatch works.
+    """
+
+    monkeypatch.delenv(_U68_ENV, raising=False)
 
     calls: list[dict[str, object]] = []
     runner = _warm_kwargs_capturing_runner(calls)
@@ -3881,9 +3909,16 @@ def test_on_demand_preparation_keeps_the_base_timeout_and_normal_priority(
     assert preparer._preparation_timeout_seconds == 300.0
     assert len(calls) == 2, "the air path measured and conformed"
     for call in calls:
+        args = [str(token) for token in call["args"]]  # type: ignore[union-attr]
         # The BASE timeout -- the air path's own budget, exactly as before U29.
         assert call["timeout"] == 300.0
-        assert call["lower_priority"] is False
+        # The half of U29's rail that STILL holds, and the one that matters for
+        # keeping a preparation inside the channel's lead: the foreground path
+        # is thread-capped, but NOT pinned to the warm's single thread.
+        assert args[args.index("-threads") + 1] == str(preparer_module._foreground_thread_cap())
+        # U68: demoted one scheduling class.  See the docstring for why this
+        # clause moved rather than being dropped.
+        assert call["lower_priority"] is True
     # The same duration WOULD have been scaled had this asset gone to a warm.
     assert preparer_module.warm_preparation_timeout_seconds(3600.0, 300.0) > 300.0
     assert warm_jobs == []  # an untrimmed airing that populated the cache warms nothing
@@ -4277,3 +4312,191 @@ def test_full_asset_conform_rides_and_the_cache_meta_says_ride(tmp_path: Path) -
     assert len(metas) == 1
     assert metas[0]["loudness_method"] == "ride"
     assert metas[0]["full_asset_conform"] is True
+
+
+# ---------------------------------------------------------------------------
+# U68: the foreground preparation's process priority
+# ---------------------------------------------------------------------------
+#
+# The live caption tap transcribes on a thread it drops to BELOW_NORMAL, but the
+# conform ffmpeg a *foreground* (on-air, synchronous) preparation spawns
+# defaulted to the process's own priority -- NORMAL -- while the station's
+# conforms run at 95-98% CPU.  A cold preparation therefore out-competed the tap
+# on equal terms.  U68 demotes that child one class.
+#
+# These tests pin the three halves of that decision independently:
+#   * the new default (every foreground child is demoted),
+#   * the operator's escape hatch (``=0`` restores the old behavior exactly),
+#   * the deliberate NON-change (the thread count did not move with it).
+
+
+def _u68_air_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, label: str
+) -> list[dict[str, object]]:
+    """Run one untrimmed airing -- the cold-preparation path -- through a fake
+    ffmpeg, and return the keyword arguments every call was made with.
+
+    ``_warm_kwargs_capturing_runner`` is installed as BOTH ``ffmpeg_runner`` and
+    the module's ``run_ffmpeg``: the preparer only forwards
+    ``timeout``/``lower_priority``/``cancel_event`` when those two are the
+    identical object, so a test that wants to SEE the forwarding must satisfy
+    that identity check.
+
+    Each call gets its own ``work_dir``, so a second run of the same source
+    cannot short-circuit onto the first run's cache entry.
+    """
+
+    calls: list[dict[str, object]] = []
+    runner = _warm_kwargs_capturing_runner(calls)
+    monkeypatch.setattr(preparer_module, "run_ffmpeg", runner)
+    preparer = SourcePreparer(
+        work_dir=tmp_path / label,
+        ffmpeg_runner=runner,
+        # A failed gate -> the air path genuinely normalizes, so BOTH of its
+        # ffmpeg passes (measurement + conform) are visible here.
+        loudness_checker=lambda **_kwargs: _loudness(status="failed", measured_lufs=-18.0),
+        warm_scheduler=lambda _job: None,
+        playout_trim_supported=True,
+    )
+
+    preparer.prepare(_untrimmed_plan(tmp_path), _config())
+
+    assert calls, "the air path ran ffmpeg"
+    return calls
+
+
+def test_foreground_preparation_demotes_its_ffmpeg_below_normal_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U68: an airing that has to conform in the foreground starts every ffmpeg
+    child it spawns one scheduling class down.
+
+    On the base revision both of these calls arrive at NORMAL priority, tied
+    with the tap's own transcribe thread -- this is the RED this change is for.
+    """
+
+    monkeypatch.delenv(_U68_ENV, raising=False)
+
+    calls = _u68_air_calls(tmp_path, monkeypatch, "default")
+
+    assert len(calls) == 2, "the air path measured and conformed"
+    for call in calls:
+        assert call["lower_priority"] is True, (
+            "U68: every ffmpeg child the foreground preparation spawns must be "
+            "demoted, or the tap still ties with whichever one was not"
+        )
+
+
+def test_foreground_preparation_priority_env_override_is_honored(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U68: ``CIVICAST_EGRESS_PREPARE_LOW_PRIORITY=0`` restores the pre-U68
+    behavior exactly -- NORMAL priority, same threads, same bytes.
+
+    The interesting assertion is the last one: on the base revision both runs
+    return ``False`` and the two configurations are indistinguishable, which is
+    precisely the bug (a knob that is supposed to exist does not).
+    """
+
+    monkeypatch.setenv(_U68_ENV, "0")
+    off = _u68_air_calls(tmp_path, monkeypatch, "override-off")
+
+    monkeypatch.delenv(_U68_ENV, raising=False)
+    on = _u68_air_calls(tmp_path, monkeypatch, "override-default")
+
+    assert off and on, "both runs reached ffmpeg"
+    assert {call["lower_priority"] for call in off} == {False}, "the operator turned it off"
+    assert {call["lower_priority"] for call in on} == {True}, "the default is on"
+    assert off[0]["lower_priority"] != on[0]["lower_priority"], (
+        "the override must actually reach the child's creation flags, not merely be parsed"
+    )
+
+
+def test_foreground_preparation_keeps_its_thread_cap_when_demoted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """U68: priority moved; the thread count deliberately did not.
+
+    A warm pins its conform to ``-threads 1`` (6.4x slower -- 233 s vs 36.6 s for
+    300 s of content, ``_foreground_thread_cap``'s own docstring), which a warm
+    can afford and an on-demand conform cannot: a preparation that outruns the
+    channel's lead turns a caption shed into dead air.  This is the guard rail
+    against re-coupling the two knobs the way the warm flag ties them.
+
+    Note this test PASSES on the base revision too -- it is a regression guard
+    on a property U68 must not disturb, not a RED.
+    """
+
+    monkeypatch.delenv(_U68_ENV, raising=False)
+    expected = str(preparer_module._foreground_thread_cap())
+
+    calls = _u68_air_calls(tmp_path, monkeypatch, "threads")
+
+    seen = 0
+    for call in calls:
+        args = [str(token) for token in call["args"]]  # type: ignore[union-attr]
+        for index, token in enumerate(args):
+            if token == "-threads":
+                seen += 1
+                assert args[index + 1] == expected, (
+                    "U68 demotes priority only; the foreground conform must not "
+                    "inherit the warm's single-thread cap"
+                )
+    assert seen == len(calls), "every foreground pass is thread-capped somewhere"
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", " True ", "yes", "YES", "on"])
+def test_u68_low_priority_env_truthy_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """The knob's accepting spellings, case- and whitespace-insensitive."""
+
+    monkeypatch.setenv(_U68_ENV, value)
+    assert preparer_module._foreground_preparation_low_priority() is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "FALSE", "no", "NO", "off", " Off "])
+def test_u68_low_priority_env_falsey_values(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """...and its refusing ones.  ``=0`` in particular is the documented
+    rollback, so it must parse and not merely be accepted as a non-empty
+    string."""
+
+    monkeypatch.setenv(_U68_ENV, value)
+    assert preparer_module._foreground_preparation_low_priority() is False
+
+
+def test_u68_low_priority_env_unset_keeps_the_documented_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The default the brief asked to be documented is ON, and an unset variable
+    is the default -- not a third state."""
+
+    monkeypatch.delenv(_U68_ENV, raising=False)
+
+    assert preparer_module._FOREGROUND_PREPARATION_LOW_PRIORITY_DEFAULT is True
+    assert (
+        preparer_module._foreground_preparation_low_priority()
+        is preparer_module._FOREGROUND_PREPARATION_LOW_PRIORITY_DEFAULT
+    )
+
+
+def test_u68_low_priority_env_unrecognized_keeps_default_and_warns_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An operator typo must not silently mean "off", and must not become a log
+    flood: a preparation runs many times an hour on an on-air station."""
+
+    monkeypatch.setenv(_U68_ENV, "maybe")
+    preparer_module._FOREGROUND_LOW_PRIORITY_WARNED.discard("maybe")
+
+    try:
+        with caplog.at_level(logging.WARNING, logger=preparer_module._LOG.name):
+            results = [preparer_module._foreground_preparation_low_priority() for _ in range(3)]
+    finally:
+        preparer_module._FOREGROUND_LOW_PRIORITY_WARNED.discard("maybe")
+
+    assert results == [True, True, True], "an unparseable value keeps the default, never guesses"
+    warnings = [
+        record.getMessage() for record in caplog.records if "not a boolean" in record.getMessage()
+    ]
+    assert len(warnings) == 1, "the warning is latched per distinct bad value"
+    assert _U68_ENV in warnings[0]
+    assert "maybe" in warnings[0]
