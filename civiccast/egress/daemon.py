@@ -261,6 +261,10 @@ _SLOW_START_EXIT_CODES = frozenset(
 # treat the reload as lost and fall back to restart rather than wait forever.
 _PENDING_RELOAD_SETTLE_DEADLINE_S = 960.0
 _ROLLOVER_EXTENSION_TOLERANCE_S = 0.25
+# BETA.10 live finding: after a relay child is (re)spawned it needs a moment to
+# receive the UDP feed and cut its first segment before its window is judged.
+# Self-heal is suppressed inside this window so a fresh child is never killed.
+_HLS_RELAY_STARTUP_GRACE_S = 20.0
 _START_EXPIRED_FALLBACK_REASON = (
     "Scheduled source plan expired during preparation; aired fallback slate while "
     "automation resolves the current schedule."
@@ -2202,6 +2206,78 @@ class EgressDaemon:
                 "dead stream until this channel's next start/reload restarts it.",
                 channel_id,
             )
+            return
+        if not alive:
+            return
+        # BETA.10 live finding (2026-09-23): a STILL-RUNNING relay child can
+        # stop advancing ``playlist.m3u8`` (the live government channel froze at
+        # seg000001130.ts for minutes while the relay pid and the main encoder's
+        # CTRL output counters both kept running). Process liveness alone
+        # therefore reports that frozen window as healthy. Layer a served-window
+        # progress check on top, using the SAME ``_hls_relay_dead`` seam so
+        # ``_sink_connected`` tells the truth about a stalled-but-alive relay.
+        note_progress = getattr(self._hls_relay, "note_progress", None)
+        if not callable(note_progress):
+            return
+        now = self._monotonic()
+        try:
+            note_progress(channel_id, now=now)
+        except Exception:
+            _LOG.exception("channel %s: HLS relay progress observation failed.", channel_id)
+            return
+        progress_stale = getattr(self._hls_relay, "progress_stale", None)
+        stalled = progress_stale(channel_id, now=now) if callable(progress_stale) else None
+        if stalled is None:
+            # No readable window to judge. That is legitimate during
+            # STARTING/no-source, so it is only a fault when the daemon has
+            # ALREADY confirmed this channel is producing AND at least one live
+            # relay is past its own startup grace without ever writing a window
+            # (audit finding 3). Otherwise stay "unknown", never "stale".
+            never_emitted = getattr(self._hls_relay, "never_emitted", None)
+            if not (
+                callable(never_emitted)
+                and channel_id in self._on_air_confirmed_at
+                and never_emitted(channel_id, now=now, startup_grace_s=_HLS_RELAY_STARTUP_GRACE_S)
+            ):
+                return
+            if not was_already_flagged_dead:
+                _LOG.error(
+                    "HLS relay child for channel %s is running but has never written "
+                    "a live window while the channel is producing; residents are "
+                    "getting no HLS stream. Attempting a bounded relay self-heal.",
+                    channel_id,
+                )
+            self._hls_relay_dead[channel_id] = True
+        else:
+            self._hls_relay_dead[channel_id] = bool(stalled)
+            if not stalled:
+                return
+            if not was_already_flagged_dead:
+                _LOG.error(
+                    "HLS relay child for channel %s is still running but its live window "
+                    "has not advanced; residents are getting a frozen stream. Attempting "
+                    "a bounded relay self-heal.",
+                    channel_id,
+                )
+        # Bounded self-heal: ONLY when the channel is genuinely producing (the
+        # daemon's own on-air evidence latch, never mere process liveness), and
+        # ONLY after the relay child has had its startup grace. A STARTING /
+        # no-source channel can legitimately have a static or absent window and
+        # must never be restarted from here. ``maybe_self_heal_stalled`` is
+        # one-shot per stall episode, so this cannot become a restart storm.
+        maybe_heal = getattr(self._hls_relay, "maybe_self_heal_stalled", None)
+        if not callable(maybe_heal):
+            return
+        producing = channel_id in self._on_air_confirmed_at
+        try:
+            maybe_heal(
+                channel_id,
+                now=now,
+                producing=producing,
+                startup_grace_s=_HLS_RELAY_STARTUP_GRACE_S,
+            )
+        except Exception:
+            _LOG.exception("channel %s: HLS relay self-heal attempt failed.", channel_id)
 
     def _poll_process(self, channel_id: str) -> None:
         process = self._processes.get(channel_id)
