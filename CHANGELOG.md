@@ -11,18 +11,58 @@ from [`scottconverse/civiccast`](https://github.com/scottconverse/civiccast) at
 CHANGELOG; nothing was deleted there. See [`BRANCHES.md`](BRANCHES.md) for what
 came across and what deliberately did not.
 
-## [1.0.0-beta.9] - 2026-09-18
+## [Unreleased]
+
+Nothing yet.
+
+## [1.0.0-beta.10] - 2026-10-02
+
+Candidate identity: `v1.0.0-beta.10` (owner-held unpublished candidate; it will
+be published as a GitHub pre-release, not a production release, and
+`v1.0.0-beta.7` stays the published release until then). `v1.0.0-beta.8` and
+`v1.0.0-beta.9` were never published; their work is included here. Evidence and
+limits: [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
+
+### Summary
+
+Compared with the published `v1.0.0-beta.7`:
+
+- Program changes no longer leave a black or silent gap, and a watchdog ends a
+  program change that gets stuck (a stuck change once left the education
+  channel black and silent for about 34 hours).
+- Spoken programs are leveled toward -16 LUFS when prepared for air; a stretch
+  too quiet for the leveling ride is reported, not leveled.
+- Schedules set to loop now loop.
+- The conform cache (prepared copies of long programs) defaults to 60 GB
+  instead of 20 GB (`CIVICCAST_CONFORM_CACHE_GB`), and a metadata write by a
+  probe can no longer erase a finished conform.
+- New fault tolerance around reload and restart (details in the sections
+  below): orphaned relay processes are reaped, a frozen HLS window restarts the
+  worker, an A/V desync restarts the channel, and live captions catch up
+  instead of pausing.
+- Also in this release: the slate fill is one continuous file; the next plan is
+  warmed when the plan on air is shorter than the lead time; a fallback's
+  switch point and mux-tail fence are bounded; a short schedule tail is
+  resolved past instead of aired; the mux sink pads drain before a rebase
+  switch, and a stall is judged per pad and by airing running time; the
+  reload-stall watchdog (U67) re-resolves a plan that has run past its end.
+
+Proven by an eight-hour watched run on a three-channel lab station
+(`ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md`):
+one service process throughout, no slate or filler after startup, 40 of 41
+verify checks OK (the one raw FAIL adjudicated as a sampling blip), loudness
+16 of 16 240-second windows, 50 program changes scored with no holes.
+
+Known limits: live-caption audio can be dropped under heavy load (13 catch-up
+discard events in the run, about 160 seconds of audio on a quiet machine; the
+fix is the next work item); two government-channel program-change first
+attempts aborted and recovered in about 3 seconds; one single-frame (0.033 s)
+video drop at a part-to-part join; no Gate A run, no installer, and no human
+field-tester sign-off exist yet for this build.
 
 ### Changed
 
-- Product version bumped to `1.0.0-beta.9`; installer rebuilt from the merged
-  caption-runtime line.
-
-## [Unreleased]
-
-- `v1.0.0-beta.9`: version bump; installer rebuilt from the merged caption-runtime line.
-
-Candidate identity: `v1.0.0-beta.9` (unpublished).
+- Product version bumped to `1.0.0-beta.10`.
 
 ### A killed control plane left its relay ffmpegs holding the relays (U31, 2026-09-25)
 
@@ -390,6 +430,15 @@ reload had ALREADY prepared so the restart does not conform it a second time
   drain, service shutdown, a worker exit that takes no pending reload, or a
   newer attempt superseding it — has its directory released rather than left to
   the plan cache's own GC.
+
+## [1.0.0-beta.9] - 2026-09-18
+
+Never published; included in `1.0.0-beta.10`.
+
+### Changed
+
+- Product version bumped to `1.0.0-beta.9`; installer rebuilt from the merged
+  caption-runtime line.
 
 ## [1.0.0-beta.7] - 2026-09-15
 
