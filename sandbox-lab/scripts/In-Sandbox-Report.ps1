@@ -3752,7 +3752,7 @@ try {
                             "state_url=$stateUrl" | Add-Content -Path $t4notes -Encoding UTF8
                             "health_url=$healthUrl" | Add-Content -Path $t4notes -Encoding UTF8
 
-                            $pollBudgetSeconds = 60
+                            $pollBudgetSeconds = 600  # one-off Gate A run 2026-10-02: beta.10 prepares sources before air; cold prep in the Sandbox VM exceeds 60 s (see ops/beta10-oversight/evidence/gate-a-clean-lane-beta10-20261002)
                             $pollIntervalSeconds = 5
                             $pollElapsed = 0
                             $sinkConnected = $false
