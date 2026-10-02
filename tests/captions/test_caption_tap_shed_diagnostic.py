@@ -519,6 +519,92 @@ class TestShedDiagnosticCollector:
         _shed(diagnostic)
 
 
+class TestShedDiagnosticEnvSpelling:
+    """BETA.10 U71. U69 shipped the disable switch reading only the one-C
+    ``CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC``, so an operator who set it the way
+    the station's service registry writes variables -- the two-C
+    ``CIVICCAST_CAPTION_TAP_SHED_DIAGNOSTIC`` -- got a silently inert switch and
+    kept the diagnostic running.  The resolution now goes through
+    ``env_vars.resolve_renamed_env``: registry spelling primary, one-C still read
+    as a legacy fallback, two-C wins when both are set.
+    """
+
+    _PRIMARY = "CIVICCAST_CAPTION_TAP_SHED_DIAGNOSTIC"
+    _LEGACY = "CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC"
+    _LOGGER = "civiccast.captions.tap_shed_diagnostic"
+
+    @pytest.fixture(autouse=True)
+    def _fresh_one_time_latch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(tsd, "_RENAMED_ENV_WARNED", set(), raising=False)
+
+    def test_the_registry_spelling_is_the_two_c_one(self) -> None:
+        """Machine-checkable, since ``CIVICAST`` and ``CIVICCAST`` render almost
+        identically: the primary prefix is 9 characters, the legacy one's is 8."""
+
+        assert SHED_DIAGNOSTIC_ENV_VAR == self._PRIMARY
+        assert tsd.LEGACY_SHED_DIAGNOSTIC_ENV_VAR == self._LEGACY
+        assert len(SHED_DIAGNOSTIC_ENV_VAR.split("_", 1)[0]) == 9
+        assert len(tsd.LEGACY_SHED_DIAGNOSTIC_ENV_VAR.split("_", 1)[0]) == 8
+
+    def test_the_registry_spelling_disables_the_diagnostic(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """RED before this change: only the two-C name set, the switch was inert
+        and the real collector came back."""
+
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.setenv(self._PRIMARY, "0")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert isinstance(shed_diagnostic_from_env(), NullShedDiagnostic)
+
+        assert caplog.records == []
+
+    def test_the_legacy_spelling_still_disables_it_and_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.delenv(self._PRIMARY, raising=False)
+        monkeypatch.setenv(self._LEGACY, "0")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert isinstance(shed_diagnostic_from_env(), NullShedDiagnostic)
+            assert isinstance(shed_diagnostic_from_env(), NullShedDiagnostic)
+
+        deprecations = [record for record in caplog.records if self._LEGACY in record.getMessage()]
+        assert len(deprecations) == 1, [record.getMessage() for record in caplog.records]
+        assert self._PRIMARY in deprecations[0].getMessage()
+
+    def test_the_registry_spelling_wins_when_both_are_set(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv(self._LEGACY, "1")  # would keep the diagnostic on
+        monkeypatch.setenv(self._PRIMARY, "0")  # wins: off
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert isinstance(shed_diagnostic_from_env(), NullShedDiagnostic)
+
+        conflicts = [record for record in caplog.records if "both set" in record.getMessage()]
+        assert len(conflicts) == 1, [record.getMessage() for record in caplog.records]
+        assert self._PRIMARY in conflicts[0].getMessage()
+        assert self._LEGACY in conflicts[0].getMessage()
+
+    def test_a_whitespace_registry_value_falls_through_to_the_legacy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(self._PRIMARY, "   ")
+        monkeypatch.setenv(self._LEGACY, "0")
+
+        assert isinstance(shed_diagnostic_from_env(), NullShedDiagnostic)
+
+    def test_an_absent_pair_still_keeps_the_diagnostic_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(self._PRIMARY, raising=False)
+        monkeypatch.delenv(self._LEGACY, raising=False)
+
+        assert isinstance(shed_diagnostic_from_env(), ShedDiagnosticCollector)
+
+
 # ---------------------------------------------------------------------------
 # The phase forwarder.
 # ---------------------------------------------------------------------------

@@ -4500,3 +4500,114 @@ def test_u68_low_priority_env_unrecognized_keeps_default_and_warns_once(
     assert len(warnings) == 1, "the warning is latched per distinct bad value"
     assert _U68_ENV in warnings[0]
     assert "maybe" in warnings[0]
+
+
+class TestForegroundLowPriorityEnvSpelling:
+    """BETA.10 U71. U68 shipped ``_foreground_preparation_low_priority`` reading
+    only the one-C ``CIVICAST_EGRESS_PREPARE_LOW_PRIORITY``, so an operator who
+    set it the way the station's service registry writes variables -- the two-C
+    ``CIVICCAST_EGRESS_PREPARE_LOW_PRIORITY`` -- got a silently inert switch.
+    The resolution now goes through ``env_vars.resolve_renamed_env``: the
+    registry spelling is primary, the one-C spelling still reads as a legacy
+    fallback, and the two-C one wins when both are set. (The U68 tests above
+    exercise the legacy spelling throughout and must keep passing.)
+    """
+
+    _PRIMARY = "CIVICCAST_EGRESS_PREPARE_LOW_PRIORITY"
+    _LEGACY = "CIVICAST_EGRESS_PREPARE_LOW_PRIORITY"
+    _LOGGER = "civiccast.egress.preparer"
+
+    @pytest.fixture(autouse=True)
+    def _fresh_one_time_latch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The deprecation/conflict warnings are one-time per service lifetime,
+        # so the latch has to start clean for each test that asserts on them.
+        # raising=False so the same fixture also runs against the pre-U71
+        # module in the red-first demonstration, where this latch is absent.
+        monkeypatch.setattr(preparer_module, "_RENAMED_ENV_WARNED", set(), raising=False)
+
+    def test_the_registry_spelling_is_honoured(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """RED before this change: with only the two-C name set the reader fell
+        through to the ON default and never saw the ``=0`` rollback here."""
+
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.setenv(self._PRIMARY, "0")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert preparer_module._foreground_preparation_low_priority() is False
+
+        assert caplog.records == []
+
+    def test_the_legacy_spelling_still_works_and_warns_once(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.delenv(self._PRIMARY, raising=False)
+        monkeypatch.setenv(self._LEGACY, "0")
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert preparer_module._foreground_preparation_low_priority() is False
+            assert preparer_module._foreground_preparation_low_priority() is False
+
+        deprecations = [record for record in caplog.records if self._LEGACY in record.getMessage()]
+        assert len(deprecations) == 1, [record.getMessage() for record in caplog.records]
+        assert self._PRIMARY in deprecations[0].getMessage()
+
+    def test_the_registry_spelling_wins_and_both_values_are_named(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        monkeypatch.setenv(self._LEGACY, "1")  # would keep the demotion on
+        monkeypatch.setenv(self._PRIMARY, "0")  # wins: the demotion is off
+
+        with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+            assert preparer_module._foreground_preparation_low_priority() is False
+            assert preparer_module._foreground_preparation_low_priority() is False
+
+        conflicts = [record for record in caplog.records if "both set" in record.getMessage()]
+        assert len(conflicts) == 1, [record.getMessage() for record in caplog.records]
+        assert self._PRIMARY in conflicts[0].getMessage()
+        assert self._LEGACY in conflicts[0].getMessage()
+
+    def test_a_whitespace_registry_value_falls_through_to_the_legacy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A blank line in an env file must not beat a real legacy value."""
+
+        monkeypatch.setenv(self._PRIMARY, "   ")
+        monkeypatch.setenv(self._LEGACY, "0")
+
+        assert preparer_module._foreground_preparation_low_priority() is False
+
+    def test_an_invalid_registry_value_keeps_the_default_and_names_its_spelling(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The invalid-value warning must name the variable the operator can
+        actually go and fix -- here the registry spelling they set."""
+
+        monkeypatch.delenv(self._LEGACY, raising=False)
+        monkeypatch.setenv(self._PRIMARY, "maybe")
+        preparer_module._FOREGROUND_LOW_PRIORITY_WARNED.discard("maybe")
+
+        try:
+            with caplog.at_level(logging.WARNING, logger=self._LOGGER):
+                assert preparer_module._foreground_preparation_low_priority() is True
+        finally:
+            preparer_module._FOREGROUND_LOW_PRIORITY_WARNED.discard("maybe")
+
+        warnings = [
+            record.getMessage()
+            for record in caplog.records
+            if "not a boolean" in record.getMessage()
+        ]
+        assert len(warnings) == 1, warnings
+        assert self._PRIMARY in warnings[0]
+        assert "maybe" in warnings[0]
+
+    def test_the_registry_spelling_is_the_two_c_one(self) -> None:
+        """A machine-checkable guard, since ``CIVICAST`` and ``CIVICCAST`` render
+        nearly identically in most fonts: the primary name's prefix is 9
+        characters (two C's), the legacy one's is 8."""
+
+        assert self._PRIMARY == "CIVICCAST_EGRESS_PREPARE_LOW_PRIORITY"
+        assert len(self._PRIMARY.split("_", 1)[0]) == 9
+        assert len(self._LEGACY.split("_", 1)[0]) == 8

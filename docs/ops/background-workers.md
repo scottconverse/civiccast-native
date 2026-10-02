@@ -385,7 +385,7 @@ Caption tap shed diagnostic {"event": "catch-up-shed", "channel": "education",
 ```
 
 The line is bounded to one record per channel per event per 30 s, reads no
-audio, and never raises into the tap; `CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC=0`
+audio, and never raises into the tap; `CIVICCAST_CAPTION_TAP_SHED_DIAGNOSTIC=0`
 turns it off.
 
 **What you will see in the status file.** Each channel publishes

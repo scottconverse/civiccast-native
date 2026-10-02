@@ -427,7 +427,13 @@ def _foreground_thread_cap() -> int:
 #: back the pre-U68 behavior exactly (NORMAL priority, ``_foreground_thread_cap``
 #: threads). Two C's, matching the spelling the station's service registry
 #: writes -- see ``env_vars`` for the one-C trap this avoids.
-FOREGROUND_PREPARATION_LOW_PRIORITY_ENV = "CIVICAST_EGRESS_PREPARE_LOW_PRIORITY"
+#:
+#: BETA.10 U71: U68 shipped this reader with the one-C spelling as its ONLY
+#: name, so an operator setting it the station's way got a silently inert
+#: switch. The two-C name is now the primary one and the one-C name below is
+#: still read as a legacy fallback -- see ``env_vars.resolve_renamed_env``.
+FOREGROUND_PREPARATION_LOW_PRIORITY_ENV = "CIVICCAST_EGRESS_PREPARE_LOW_PRIORITY"
+LEGACY_FOREGROUND_PREPARATION_LOW_PRIORITY_ENV = "CIVICAST_EGRESS_PREPARE_LOW_PRIORITY"
 
 #: U68 default: ON. The foreground preparation is the only conform that runs
 #: *while a channel is on air and the caption tap is transcribing*, so it is
@@ -469,13 +475,23 @@ def _foreground_preparation_low_priority() -> bool:
     preparation that outruns the channel's lead turns a caption shed into
     dead air. Priority and thread count are two knobs here, not one.
 
-    Reads ``FOREGROUND_PREPARATION_LOW_PRIORITY_ENV``. Default ON. An
-    unrecognized value logs once and keeps the default rather than guessing.
+    Reads ``FOREGROUND_PREPARATION_LOW_PRIORITY_ENV`` (two C's -- the spelling
+    the station's service registry writes), falling back to the legacy one-C
+    ``LEGACY_FOREGROUND_PREPARATION_LOW_PRIORITY_ENV`` so a deployment that
+    already set the U68 spelling keeps working. Default ON. An unrecognized
+    value logs once and keeps the default rather than guessing.
     """
 
-    raw = os.environ.get(FOREGROUND_PREPARATION_LOW_PRIORITY_ENV, "").strip().lower()
-    if not raw:
+    resolved = resolve_renamed_env(
+        name=FOREGROUND_PREPARATION_LOW_PRIORITY_ENV,
+        legacy_name=LEGACY_FOREGROUND_PREPARATION_LOW_PRIORITY_ENV,
+        logger=_LOG,
+        warned=_RENAMED_ENV_WARNED,
+    )
+    if resolved is None:
         return _FOREGROUND_PREPARATION_LOW_PRIORITY_DEFAULT
+    env_name, raw = resolved
+    raw = raw.lower()
     if raw in _FALSEY:
         return False
     if raw in _TRUTHY:
@@ -487,7 +503,7 @@ def _foreground_preparation_low_priority() -> bool:
         _FOREGROUND_LOW_PRIORITY_WARNED.add(raw)
         _LOG.warning(
             message,
-            FOREGROUND_PREPARATION_LOW_PRIORITY_ENV,
+            env_name,
             raw,
             "on" if _FOREGROUND_PREPARATION_LOW_PRIORITY_DEFAULT else "off",
         )

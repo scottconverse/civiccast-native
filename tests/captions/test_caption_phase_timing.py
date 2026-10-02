@@ -57,6 +57,19 @@ def test_enabling_values_build_the_real_collector(monkeypatch, value):
     assert isinstance(phase_timing_from_env(), PhaseTimingCollector)
 
 
+def test_the_switch_is_spelled_the_way_the_registry_writes_it():
+    """U71: the station's service registry writes two-C names, and ``CIVICAST``
+    and ``CIVICCAST`` render nearly identically, so this is asserted by count
+    and prefix length rather than by eye.
+
+    Unlike the U68/U69/U70 switches in this same unit, phase timing was already
+    two-C in the code before this change, so it has no legacy alias to prove --
+    only stale comments that named the one-C spelling (now corrected)."""
+
+    assert pt.PHASE_TIMING_ENV_VAR == "CIVICCAST_CAPTION_TAP_PHASE_TIMING"
+    assert len(pt.PHASE_TIMING_ENV_VAR.split("_", 1)[0]) == 9
+
+
 def test_off_reads_no_clock(monkeypatch):
     """With the switch off, even the clock must not be consulted."""
 

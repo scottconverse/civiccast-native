@@ -727,7 +727,7 @@ class CaptionTapWorker:
         # shed windows with no instrumentation attached at all, because both
         # existing diagnostics self-exhaust. It is bounded and failure-proof
         # instead of opt-in, and an operator can still silence it with
-        # CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC=0. Built on the SAME clock as the
+        # CIVICCAST_CAPTION_TAP_SHED_DIAGNOSTIC=0. Built on the SAME clock as the
         # backoff and the heartbeat, so a fake-clock test drives the rate limit
         # with the hand that drives the pause ladder.
         self._shed_diagnostic = shed_diagnostic or shed_diagnostic_from_env(
@@ -736,7 +736,7 @@ class CaptionTapWorker:
         # The stabilize step happens inside the pipeline, where the tap cannot
         # time it. This forwarder sits between the per-channel worker and the
         # operator's collector: it passes every phase through unchanged (so an
-        # operator who opted INTO CIVICAST_CAPTION_TAP_PHASE_TIMING still gets
+        # operator who opted INTO CIVICCAST_CAPTION_TAP_PHASE_TIMING still gets
         # exactly the same records) and additionally reports caption_stabilize.
         # It is deliberately NOT assigned to ``self._phase_timing`` -- that
         # attribute must stay the collector the operator configured.

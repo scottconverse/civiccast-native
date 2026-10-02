@@ -707,6 +707,81 @@ class TestRuntimeBoundary:
             live = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
             assert live.decode_temperature == runtime_module.LIVE_TAP_DECODE_TEMPERATURE, value
 
+    def test_live_tap_temperature_fallback_registry_spelling_is_honoured(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """U71: the station's service registry writes two-C names.  Before this
+        change only the one-C spelling was read, so setting the new switch the
+        station's way left the decode bound in place -- inertly."""
+
+        monkeypatch.setattr(runtime_module, "_RENAMED_ENV_WARNED", set(), raising=False)
+        monkeypatch.delenv(
+            runtime_module.LEGACY_CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, raising=False
+        )
+        monkeypatch.setenv(runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, "1")
+
+        live = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        assert live.decode_temperature is None
+
+    def test_live_tap_temperature_fallback_legacy_spelling_still_works_and_warns_once(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A station already setting the one-C name keeps working, and is told
+        once to migrate rather than on every worker construction."""
+
+        monkeypatch.setattr(runtime_module, "_RENAMED_ENV_WARNED", set(), raising=False)
+        monkeypatch.delenv(runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, raising=False)
+        monkeypatch.setenv(runtime_module.LEGACY_CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, "1")
+
+        with caplog.at_level("WARNING", logger="civiccast.captions.runtime"):
+            for _ in range(3):
+                live = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+                assert live.decode_temperature is None
+
+        deprecations = [
+            record
+            for record in caplog.records
+            if runtime_module.LEGACY_CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR in record.getMessage()
+        ]
+        assert len(deprecations) == 1, [record.getMessage() for record in caplog.records]
+        assert (
+            runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR in deprecations[0].getMessage()
+        )
+
+    def test_live_tap_temperature_fallback_registry_spelling_wins_when_both_are_set(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(runtime_module, "_RENAMED_ENV_WARNED", set(), raising=False)
+        monkeypatch.setenv(
+            runtime_module.LEGACY_CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, "1"
+        )  # would restore faster-whisper's list
+        monkeypatch.setenv(
+            runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, "0"
+        )  # wins: the bound stays
+
+        with caplog.at_level("WARNING", logger="civiccast.captions.runtime"):
+            live = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+
+        assert live.decode_temperature == runtime_module.LIVE_TAP_DECODE_TEMPERATURE
+        conflicts = [record for record in caplog.records if "both set" in record.getMessage()]
+        assert len(conflicts) == 1, [record.getMessage() for record in caplog.records]
+
+    def test_live_tap_temperature_fallback_registry_spelling_is_the_two_c_one(self) -> None:
+        """Machine-checkable, since ``CIVICAST`` and ``CIVICCAST`` look alike:
+        the primary prefix is 9 characters, the legacy one's is 8."""
+
+        primary = runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR
+        legacy = runtime_module.LEGACY_CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR
+        assert primary == "CIVICCAST_WHISPER_LIVE_TEMPERATURE_FALLBACK"
+        assert legacy == "CIVICAST_WHISPER_LIVE_TEMPERATURE_FALLBACK"
+        assert len(primary.split("_", 1)[0]) == 9
+        assert len(legacy.split("_", 1)[0]) == 8
+
     def test_batch_cpu_threads_raises_on_unparseable_env_value(
         self,
         monkeypatch: pytest.MonkeyPatch,

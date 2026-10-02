@@ -379,11 +379,27 @@ def _live_tap_temperature_fallback_enabled() -> bool:
     so a mistyped value here must not take an activated station off air over
     a decode-time guard for a best-effort feature. An unrecognised value keeps
     the bound and says so.
+
+    BETA.10 U71: reads ``CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR`` (two C's,
+    the spelling the station's service registry writes), falling back to the
+    legacy one-C ``LEGACY_CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR`` that U70
+    shipped as the only name. The resolver is imported lazily here: importing
+    ``civiccast.egress.env_vars`` executes the whole ``civiccast.egress``
+    package, and this module is on that package's own import path.
     """
 
-    raw = os.environ.get(CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, "").strip().lower()
-    if not raw:
+    from civiccast.egress.env_vars import resolve_renamed_env
+
+    resolved = resolve_renamed_env(
+        name=CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR,
+        legacy_name=LEGACY_CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR,
+        logger=logger,
+        warned=_RENAMED_ENV_WARNED,
+    )
+    if resolved is None:
         return False
+    env_name, raw = resolved
+    raw = raw.lower()
     if raw in {"1", "true", "yes", "on"}:
         return True
     if raw in {"0", "false", "no", "off"}:
@@ -392,7 +408,7 @@ def _live_tap_temperature_fallback_enabled() -> bool:
         "%s value %r is not a boolean; keeping the bounded live decode "
         "(temperature=%s, no fallback list). Set it to 1 only to restore "
         "faster-whisper's multi-pass temperature list on the LIVE tap.",
-        CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR,
+        env_name,
         raw,
         LIVE_TAP_DECODE_TEMPERATURE,
     )
@@ -448,7 +464,16 @@ LIVE_TAP_DECODE_TEMPERATURE = 0.0
 #: LIVE tap. Unset, or ``0``/``false``/``no``/``off``, keeps the bounded
 #: single-pass decode; ``1``/``true``/``yes``/``on`` restores the pre-U70
 #: behaviour. Never read by the batch/VOD runtime.
-CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR = "CIVICAST_WHISPER_LIVE_TEMPERATURE_FALLBACK"
+#:
+#: BETA.10 U71: the two-C spelling above is primary -- the station's service
+#: registry writes two C's -- and the one-C name below is still read as a
+#: legacy fallback, because U70 shipped the one-C spelling as the only name.
+CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR = "CIVICCAST_WHISPER_LIVE_TEMPERATURE_FALLBACK"
+LEGACY_CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR = "CIVICAST_WHISPER_LIVE_TEMPERATURE_FALLBACK"
+
+#: One-time-warning latch for the legacy/conflict messages the shared resolver
+#: emits -- see ``civiccast.egress.env_vars.resolve_renamed_env``.
+_RENAMED_ENV_WARNED: set[str] = set()
 
 #: Files a tier's pinned inventory carries for PROVENANCE rather than for
 #: inference: CTranslate2/faster-whisper never opens them, and an upstream

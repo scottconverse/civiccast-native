@@ -72,7 +72,7 @@ DESIGN CONSTRAINTS (all deliberate, mirroring
 ``civiccast.captions.tap_batch_diagnostic``):
 
 * ALWAYS ON. ``shed_diagnostic_from_env`` returns the real collector unless
-  ``CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC`` is explicitly falsy (``0``,
+  ``CIVICCAST_CAPTION_TAP_SHED_DIAGNOSTIC`` is explicitly falsy (``0``,
   ``false``, ``no``, ``off``). An operator who needs the old silence sets it.
 * BOUNDED. At most one line per channel per event per
   ``min_interval_seconds`` (default 30 s -- the two events are one persistence
@@ -110,6 +110,7 @@ from typing import Any, Final
 __all__ = [
     "DEFAULT_MAX_BATCH_RECORDS",
     "DEFAULT_MIN_INTERVAL_SECONDS",
+    "LEGACY_SHED_DIAGNOSTIC_ENV_VAR",
     "SHED_DIAGNOSTIC_ENV_VAR",
     "NullShedDiagnostic",
     "PhaseSampleForwarder",
@@ -119,10 +120,21 @@ __all__ = [
 
 _LOG = logging.getLogger(__name__)
 
+#: One-time-warning latch for the legacy/conflict messages the shared resolver
+#: emits -- see ``civiccast.egress.env_vars.resolve_renamed_env``.
+_RENAMED_ENV_WARNED: set[str] = set()
+
 #: The disable switch. Anything not in :data:`_FALSE_VALUES` -- including an
 #: unset variable, the normal case -- leaves the diagnostic ON, because an
 #: opt-in diagnostic is what left 63 of 87 measured sheds with no evidence.
-SHED_DIAGNOSTIC_ENV_VAR: Final[str] = "CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC"
+#:
+#: BETA.10 U71: two C's, the spelling the station's service registry writes.
+#: U69 shipped this reader with the one-C spelling as its only name, so an
+#: operator setting it the station's way got a silently inert switch; the
+#: one-C ``LEGACY_SHED_DIAGNOSTIC_ENV_VAR`` below is still read as a legacy
+#: fallback -- see ``civiccast.egress.env_vars.resolve_renamed_env``.
+SHED_DIAGNOSTIC_ENV_VAR: Final[str] = "CIVICCAST_CAPTION_TAP_SHED_DIAGNOSTIC"
+LEGACY_SHED_DIAGNOSTIC_ENV_VAR: Final[str] = "CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC"
 
 #: Minimum wall-clock spacing between two lines for the same channel AND event.
 #: ``15`` persistence scans at the default 2 s poll is 30 s, so a streak start
@@ -604,7 +616,7 @@ class PhaseSampleForwarder:
     pipeline and is invisible from the tap. It is deliberately NOT installed as
     ``CaptionTapWorker._phase_timing``: that attribute must stay exactly the
     collector the operator configured (a test pins it to the inert one when
-    ``CIVICAST_CAPTION_TAP_PHASE_TIMING`` is unset). Every call is forwarded to
+    ``CIVICCAST_CAPTION_TAP_PHASE_TIMING`` is unset). Every call is forwarded to
     the real collector, so opting into phase timing still yields the same
     records; the only addition is the sampled duration.
 
@@ -671,9 +683,26 @@ def shed_diagnostic_from_env(
     Called once per tap worker at construction, matching how the tap reads its
     other settings. The tap passes its own clock so a fake-clock test drives
     the diagnostic's rate limit with the same hand it drives the backoff.
+
+    BETA.10 U71: reads ``SHED_DIAGNOSTIC_ENV_VAR`` (two C's, the spelling the
+    station's service registry writes), falling back to the legacy one-C
+    ``LEGACY_SHED_DIAGNOSTIC_ENV_VAR`` that U69 shipped as the only name. The
+    resolver is imported lazily here: importing ``civiccast.egress.env_vars``
+    executes the whole ``civiccast.egress`` package, and this module is on that
+    package's own import path.
     """
 
-    raw = os.environ.get(SHED_DIAGNOSTIC_ENV_VAR)
-    if raw is not None and raw.strip().lower() in _FALSE_VALUES:
+    from civiccast.egress.env_vars import resolve_renamed_env
+
+    resolved = resolve_renamed_env(
+        name=SHED_DIAGNOSTIC_ENV_VAR,
+        legacy_name=LEGACY_SHED_DIAGNOSTIC_ENV_VAR,
+        logger=_LOG,
+        warned=_RENAMED_ENV_WARNED,
+    )
+    if resolved is None:
+        return ShedDiagnosticCollector(monotonic=monotonic)
+    _, raw = resolved
+    if raw.lower() in _FALSE_VALUES:
         return NullShedDiagnostic()
     return ShedDiagnosticCollector(monotonic=monotonic)
