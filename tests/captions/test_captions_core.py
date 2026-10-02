@@ -1398,6 +1398,98 @@ class TestRuntimeBoundary:
         # decode" are different facts, and only the second may print null.
         assert metrics["max_segment_temperature"] is None
 
+    def test_a_raising_or_unrepresentable_duration_never_breaks_the_decode(self) -> None:
+        """U72 (M-1): ``info.duration_after_vad`` is the MODEL's attribute, not
+        ours. Reading the diagnostic must never fail the decode -- a property
+        that raises, or a value too large for ``float``, degrades to ``None``.
+        """
+
+        class _RaisingInfo:
+            @property
+            def duration_after_vad(self) -> float:
+                raise RuntimeError("the info object is broken")
+
+        def _segments(text: str) -> list[Any]:
+            return [
+                SimpleNamespace(
+                    start=0.0,
+                    end=1.0,
+                    text=text,
+                    avg_logprob=-0.1,
+                    no_speech_prob=0.1,
+                    temperature=0.0,
+                )
+            ]
+
+        runtime = self._live_runtime_with(
+            lambda *args, **kwargs: (_segments("still transcribed"), _RaisingInfo())
+        )
+        # Before U72 this raised the info object's RuntimeError out of the
+        # decode; the transcript never got a chance to land.
+        hypotheses = list(runtime.transcribe([self._audio_chunk()]))
+        assert [h.text for h in hypotheses] == ["still transcribed"]
+        metrics = runtime.last_decode_metrics()
+        assert metrics is not None
+        assert metrics["duration_after_vad"] is None
+
+        # The other shape M-1 named: an int too large for float. ``float(10**400)``
+        # overflows; a diagnostic that cannot be taken is ``None``, not an error.
+        oversize = self._live_runtime_with(
+            lambda *args, **kwargs: (
+                _segments("oversize info"),
+                SimpleNamespace(duration_after_vad=10**400),
+            )
+        )
+        assert [h.text for h in oversize.transcribe([self._audio_chunk()])] == ["oversize info"]
+        assert oversize.last_decode_metrics()["duration_after_vad"] is None
+
+    def test_a_batch_that_fails_before_its_decode_reports_no_metrics(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """U72 (M-2): the tap reads the runtime's per-thread record right after
+        ``process_batch``. A batch that fails BEFORE the decode must read
+        ``None`` -- not the previous batch's numbers, which would stamp a batch
+        that never decoded with someone else's ``transcribe_s``.
+        """
+
+        runtime = self._live_runtime_with(
+            lambda *args, **kwargs: (
+                [
+                    SimpleNamespace(
+                        start=0.0,
+                        end=1.0,
+                        text="decoded",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.1,
+                        temperature=0.0,
+                    )
+                ],
+                SimpleNamespace(duration_after_vad=1.0),
+            )
+        )
+        # Batch A decodes on this thread; the slot now holds its numbers.
+        list(runtime.transcribe([self._audio_chunk()]))
+        assert runtime.last_decode_metrics() is not None
+
+        # Batch B fails before the decode: a live chunk at any rate but 16 kHz
+        # is written to a temp WAV first, and that write is what fails here.
+        def _raise_on_write(*args: Any, **kwargs: Any) -> None:
+            raise OSError("the temp WAV write failed")
+
+        monkeypatch.setattr(runtime_module, "_write_pcm_chunk_wav", _raise_on_write)
+        non_16khz = AudioChunk(
+            chunk_id="chunk-2",
+            start_seconds=14.0,
+            end_seconds=18.0,
+            sample_rate_hz=48_000,
+            pcm_s16le=b"\x00\x00" * 160,
+        )
+        with pytest.raises(OSError, match="temp WAV write failed"):
+            list(runtime.transcribe([non_16khz]))
+
+        # The stale record from batch A must not leak onto the failed batch B.
+        assert runtime.last_decode_metrics() is None
+
     def test_live_runtime_hands_16khz_pcm_to_the_model_as_a_float32_array(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

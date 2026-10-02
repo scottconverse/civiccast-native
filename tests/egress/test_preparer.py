@@ -4606,8 +4606,16 @@ class TestForegroundLowPriorityEnvSpelling:
     def test_the_registry_spelling_is_the_two_c_one(self) -> None:
         """A machine-checkable guard, since ``CIVICAST`` and ``CIVICCAST`` render
         nearly identically in most fonts: the primary name's prefix is 9
-        characters (two C's), the legacy one's is 8."""
+        characters (two C's), the legacy one's is 8.
 
-        assert self._PRIMARY == "CIVICCAST_EGRESS_PREPARE_LOW_PRIORITY"
-        assert len(self._PRIMARY.split("_", 1)[0]) == 9
-        assert len(self._LEGACY.split("_", 1)[0]) == 8
+        U72: reads the module's own constants rather than test-local literals,
+        so it fails on the pre-U71 source where the primary constant did not
+        exist -- a literal-vs-literal assertion would pass on any code at all.
+        """
+
+        primary = preparer_module.FOREGROUND_PREPARATION_LOW_PRIORITY_ENV
+        legacy = preparer_module.LEGACY_FOREGROUND_PREPARATION_LOW_PRIORITY_ENV
+        assert primary == self._PRIMARY
+        assert legacy == self._LEGACY
+        assert len(primary.split("_", 1)[0]) == 9
+        assert len(legacy.split("_", 1)[0]) == 8

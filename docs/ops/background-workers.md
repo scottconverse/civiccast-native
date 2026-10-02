@@ -371,7 +371,12 @@ decode from a slow publish. `duration_after_vad` is the audio that survived the
 VAD — the honest denominator, since a long `transcribe_s` over almost no
 post-VAD audio is a stall, not a long file — and `max_segment_temperature`
 above `0.0` says faster-whisper walked its fallback temperature list (`0.0` is
-a single pass). All four are `null` when the runtime does not publish them. A
+a single pass). The four are `null` when the runtime does not publish them (a
+batch/VOD runtime reports none, and only the live tap fills them in), but a
+`null` is not always that fact: `persist_s` is a residual and is also `null`
+whenever either `asr_s` or `stabilize_s` is unknown, and
+`max_segment_temperature` is `null` when a chunk yielded no segments — which is
+a different fact from "the runtime publishes nothing". A
 shed with a large `asr_s` and a low `process.cpu_pct` is a
 stalled or serialized ASR call; a high `cpu_pct`, hundreds of threads and
 several `ffmpeg` processes at `NORMAL_PRIORITY_CLASS` is the box starved by
@@ -397,7 +402,11 @@ Caption tap shed diagnostic {"event": "catch-up-shed", "channel": "education",
 
 The line is bounded to one record per channel per event per 30 s, reads no
 audio, and never raises into the tap; `CIVICCAST_CAPTION_TAP_SHED_DIAGNOSTIC=0`
-turns it off.
+turns it off. The two-C `CIVICCAST_…` spelling is the primary name, the one the
+service registry writes; the older one-C spellings
+(`CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC`, `CIVICAST_EGRESS_PREPARE_LOW_PRIORITY`,
+`CIVICAST_WHISPER_LIVE_TEMPERATURE_FALLBACK`) still work as deprecated legacy
+fallbacks, with the two-C name winning when both are set.
 
 **What you will see in the status file.** Each channel publishes
 `<egress work dir>/<channel_id>/captions/runtime-status.json`:

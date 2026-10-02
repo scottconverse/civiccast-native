@@ -955,6 +955,17 @@ class FasterWhisperRuntime:
         chunks: Iterable[AudioChunk],
         vocabulary: CustomVocabulary | None = None,
     ) -> Iterable[CaptionHypothesis]:
+        # U72: clear this thread's decode record as the batch begins, so a batch
+        # that fails BEFORE its decode -- the temp-WAV write for a non-16 kHz
+        # chunk, say -- cannot be stamped with the PREVIOUS batch's numbers. The
+        # tap reads the slot right after ``process_batch`` returns; without this
+        # reset, a failure before the timed region leaves the last successful
+        # decode on this pooled executor thread in place, and the batch that
+        # never decoded is reported with someone else's ``transcribe_s``. A
+        # generator's body runs on the first ``next()``, which is how the
+        # pipeline consumes us (``list(...)``), so the reset still precedes the
+        # per-chunk work that can fail.
+        self._decode_metrics.last = None
         initial_prompt = _build_initial_prompt(vocabulary)
         for chunk in chunks:
             yield from self._transcribe_chunk(chunk, initial_prompt=initial_prompt)
@@ -963,7 +974,10 @@ class FasterWhisperRuntime:
         """The costs of the most recent decode ON THE CALLING THREAD (U71).
 
         Returns a plain, JSON-safe copy with three keys, or ``None`` when this
-        thread has not decoded since the runtime was built:
+        thread has not decoded since the runtime was built (or since the current
+        batch began -- U72 clears the slot as each batch starts, so a batch that
+        fails before its decode reads ``None``, never the previous batch's
+        numbers):
 
         * ``transcribe_s`` -- wall time inside the model call *and* the
           iteration of its lazy segment generator. faster-whisper returns a
@@ -1133,9 +1147,17 @@ class FasterWhisperRuntime:
             **temperature_kwargs,
         )
         if metrics is not None:
-            metrics["duration_after_vad"] = _optional_float(
-                getattr(info, "duration_after_vad", None)
-            )
+            # U72: ``info`` is the model's own object, not ours. Reading its
+            # diagnostic must never fail the decode: a missing attribute is
+            # already covered by the ``getattr`` default, but a property that
+            # RAISES, or a value whose ``float()`` overflows, must also degrade
+            # to ``None`` rather than surface as a decode error. See
+            # :func:`_optional_float`.
+            try:
+                duration_after_vad = getattr(info, "duration_after_vad", None)
+            except Exception:
+                duration_after_vad = None
+            metrics["duration_after_vad"] = _optional_float(duration_after_vad)
         return segments
 
     def _transcribe_chunk(
@@ -1298,16 +1320,20 @@ def _optional_float(value: object) -> float | None:
     """Coerce a model-reported number, or ``None`` when it is not one (U71).
 
     A diagnostic never fabricates: an absent value, a ``None``, a non-numeric
-    type or a NaN all become ``None``, which the shed diagnostic serialises as
-    JSON null. Mirrors the absent-safe discipline of
-    :mod:`civiccast.captions.tap_shed_diagnostic`.
+    type, a value too large for ``float`` or a NaN all become ``None``, which
+    the shed diagnostic serialises as JSON null. Mirrors the absent-safe
+    discipline of :mod:`civiccast.captions.tap_shed_diagnostic`.
+
+    ``OverflowError`` (U72) is caught alongside ``TypeError``/``ValueError``: a
+    model-reported int such as ``10**400`` is unrepresentable as a float, and
+    that is a diagnostic that cannot be taken, not a decode that must fail.
     """
 
     if value is None:
         return None
     try:
         number = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return number if isfinite(number) else None
 
