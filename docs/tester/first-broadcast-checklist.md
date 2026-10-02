@@ -5,7 +5,8 @@ Use this before the first real meeting and after major setup changes.
 ## Setup
 
 - [ ] Installer finished without a red required lane.
-- [ ] Operator console opened from installer handoff.
+- [ ] Operator console opened on the station (**Open operator console** or the
+      **CivicCast Operator Console** shortcut).
 - [ ] First admin exists.
 - [ ] Recovery kit was saved or printed.
 - [ ] Backup destination verifies.

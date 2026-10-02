@@ -15,8 +15,8 @@ upgrade-baseline kit.
 See [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for
 the authored release-state record.
 
-Beta.8 is an unpublished candidate. Its local caption-recovery and loaded-GPU
-checks do not replace testing the exact final installer. See
+`v1.0.0-beta.10` is the owner-held unpublished candidate. Its lab checks do
+not replace testing the exact final installer. See
 [Known Limitations](known-limitations.md#live-captions-published-release-and-next-candidate)
 for the current captions evidence boundary.
 

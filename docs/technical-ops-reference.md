@@ -24,8 +24,8 @@ toccolor: black
 > [User Manual](USER-MANUAL.md).
 >
 > **Release line.** This repository carries the native Windows product, whose
-> version is `1.0.0-beta.8` (`civiccast/_native_version.py`). It has not been
-> published. `docs/releases/release-truth.yaml` is the authored source for
+> version is `1.0.0-beta.10` (`civiccast/_native_version.py`). It has not been
+> published (`v1.0.0-beta.7` is the current published release). `docs/releases/release-truth.yaml` is the authored source for
 > release state -- read it rather than any version number quoted in prose,
 > including this one.
 >
@@ -747,9 +747,10 @@ audit trail.
 For live-tap concurrency, retained-audio sweep scheduling, overload pauses
 and the loaded CUDA/compute-type diagnostic, see
 [Live caption tap](ops/background-workers.md#live-caption-tap). Live captions
-remain off by default. The source fixes and short Blackwell recovery run do
-not establish long-duration or public-installer acceptance; consult the
-[beta.8 verification record](releases/v1.0.0-beta.8-verification.md).
+remain off by default. The beta.10 candidate's eight-hour lab run and its known
+limits (including some caption audio dropped under heavy load) do not establish
+public-installer or Gate A acceptance; consult the
+[beta.10 verification record](releases/v1.0.0-beta.10-verification.md).
 
 ## Run agenda import (vendor bridge + js_portal)
 

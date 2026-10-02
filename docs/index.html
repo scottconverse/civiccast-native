@@ -206,7 +206,7 @@ img { max-width: 100%; }
   gap: 14px;
   flex-wrap: wrap;
 }
-.btn-main {
+.btn-main, .button.primary {
   background: var(--accent);
   color: #000;
   padding: 14px 26px;
@@ -219,7 +219,7 @@ img { max-width: 100%; }
   gap: 8px;
   transition: opacity .2s, transform .18s;
 }
-.btn-main:hover { opacity: .87; transform: translateY(-2px); }
+.btn-main:hover, .button.primary:hover { opacity: .87; transform: translateY(-2px); }
 .btn-out {
   color: var(--text);
   padding: 14px 26px;
@@ -326,6 +326,9 @@ img { max-width: 100%; }
 }
 
 /* ── Hardware tiers ── */
+.status-grid { grid-template-columns: repeat(2, 1fr); }
+.status-note { color: var(--text-muted); font-size: 14px; max-width: 760px; margin-top: 18px; line-height: 1.7; }
+.status-note a { color: var(--accent); }
 .tier-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -528,6 +531,7 @@ img { max-width: 100%; }
 @media (max-width: 900px) {
   .feat-grid { grid-template-columns: repeat(2, 1fr); }
   .tier-grid { grid-template-columns: repeat(2, 1fr); }
+  .status-grid { grid-template-columns: 1fr; }
   .steps { grid-template-columns: 1fr; gap: 32px; }
   .step-num::after { display: none; }
 }
@@ -544,7 +548,7 @@ img { max-width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   .up { opacity: 1; transform: none; }
   .live-dot { animation: none; }
-  .btn-main:hover { transform: none; }
+  .btn-main:hover, .button.primary:hover { transform: none; }
 }
 </style>
 
@@ -566,9 +570,9 @@ img { max-width: 100%; }
     <li><a href="#setup">Setup</a></li>
     <li><a href="https://github.com/scottconverse/civiccast-native">GitHub</a></li>
     <li><a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7">Current release: v1.0.0-beta.7</a></li>
-    <li>Next candidate: v1.0.0-beta.9 (owner-held unpublished candidate)</li>
+    <li><a href="#status">Next candidate: v1.0.0-beta.10 (owner-held unpublished candidate)</a></li>
   </ul>
-  <a href="#download" class="nav-dl">Download Free</a>
+  <a href="install-windows.html" class="nav-dl">Install guide</a>
 </nav>
 
 <!-- ── Hero ── -->
@@ -577,7 +581,7 @@ img { max-width: 100%; }
   <div class="wrap hero-inner">
     <div class="hero-pill" role="note">
       <span class="live-dot" aria-hidden="true"></span>
-      Open Source · v1.0.0-beta.1 · MIT License
+      Open Source · Public beta · Apache 2.0 code
     </div>
     <h1 class="hero-h1">
       Broadcast<br>Without<br><em>Limits.</em>
@@ -586,9 +590,8 @@ img { max-width: 100%; }
       The AI-powered PEG station platform built for the hardware you already own. Free, open-source, and designed for the future of public access television.
     </p>
     <div class="hero-btns">
-      <a href="#download" class="btn-main">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 1v8M4 7l3 3 3-3M2 11h10"/></svg>
-        Download for Windows
+      <a href="install-windows.html" class="button primary">
+        Windows install guide
       </a>
       <a href="https://github.com/scottconverse/civiccast-native" class="btn-out">
         View on GitHub
@@ -603,7 +606,7 @@ img { max-width: 100%; }
   <div class="trust-row wrap">
     <div class="trust-item" role="listitem">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M7 1.5 2.5 4v4c0 2.8 2.1 4.8 4.5 5.5C9.4 12.8 11.5 10.8 11.5 8V4L7 1.5z"/></svg>
-      MIT Licensed
+      Apache 2.0 code
     </div>
     <div class="trust-item" role="listitem">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="2" width="10" height="10" rx="2"/><path d="M5 7l2 2 4-4"/></svg>
@@ -611,25 +614,65 @@ img { max-width: 100%; }
     </div>
     <div class="trust-item" role="listitem">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="5"/><path d="M7 4.5v3l2 1.2"/></svg>
-      Real-Time AI Captioning
+      Local AI Captioning
     </div>
     <div class="trust-item" role="listitem">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="4" width="10" height="6" rx="1"/><path d="M5 4V3a2 2 0 0 1 4 0v1"/></svg>
-      Runs on 8 GB GPU
+      Runs on CPU or GPU
     </div>
     <div class="trust-item" role="listitem">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="10" r="1.5"/><path d="M4.2 7.6A4.2 4.2 0 0 1 7 6.5a4.2 4.2 0 0 1 2.8 1.1M2 5.2A6.8 6.8 0 0 1 7 3.5a6.8 6.8 0 0 1 5 1.7"/></svg>
-      PEG Station Ready
+      Public Beta
     </div>
   </div>
 </div>
+
+<!-- ── Release status ── -->
+<section id="status" class="sec sec-alt">
+  <div class="wrap">
+    <p class="eyebrow up">Release status</p>
+    <h2 class="sec-h2 up">What is released, what is proven,<br>and what is not.</h2>
+    <p class="sec-lead up">CivicCast is a public beta. Read this before you put it on air.</p>
+    <p class="status-note up"><strong>Current release:</strong> <code>v1.0.0-beta.7</code>, a GitHub pre-release published 2026-09-15 (<a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7">release page</a>; <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.7-verification.md">v1.0.0-beta.7-verification.md</a> lists the Gate A run, checksums and the remaining acceptance boundary).</p>
+    <p class="status-note up"><strong>Next candidate:</strong> <code>v1.0.0-beta.10</code> is the owner-held unpublished candidate. It is not published and has no public installer yet; the beta.7 download above stays the install target until it is. When published it will be a beta pre-release, not a production release. It was held on air for eight hours on a three-channel lab station with one service process, no black or silent gaps at 50 scored program changes, and loudness in range in 16 of 16 windows. Its formal Gate A station acceptance has not been run, and no human field tester has signed off. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">beta.10 verification record</a>.</p>
+
+    <div class="tier-grid status-grid" role="list">
+      <div class="tier-card up" role="listitem">
+        <p class="tier-badge">Built and measured in the beta.10 candidate</p>
+        <h3 class="tier-name">What works today</h3>
+        <p class="tier-spec">Eight-hour lab run, three channels</p>
+        <ul class="tier-list">
+          <li>Recorded meeting-to-resident workflow with operator review</li>
+          <li>Offline captions with operator review</li>
+          <li>Scheduling, program logs, and explicit publishing</li>
+          <li>Seamless program changes, with a watchdog for stuck changes</li>
+          <li>Speech leveling toward -16 LUFS</li>
+          <li>Signed-pack install and data-preserving upgrades</li>
+        </ul>
+      </div>
+      <div class="tier-card up" role="listitem">
+        <p class="tier-badge">Needs station proof or further hardening</p>
+        <h3 class="tier-name">What is not proven</h3>
+        <p class="tier-spec">Known limits, stated plainly</p>
+        <ul class="tier-list">
+          <li>Live captions can skip some audio when the machine is busy (13 times in the eight-hour run, about 160 seconds on a quiet machine); a fix is the next work item</li>
+          <li>Physical DeckLink SDI capture and acceptance</li>
+          <li>Real cable-operator headend acceptance</li>
+          <li>Runs longer than eight hours, and human field-tester sign-off</li>
+          <li>Live provider proof for each station's Internet Archive and YouTube accounts</li>
+          <li>Sustained production use at a real PEG station</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
 
 <!-- ── Features ── -->
 <section id="features" class="sec">
   <div class="wrap">
     <p class="eyebrow up">Platform Features</p>
     <h2 class="sec-h2 up">Everything a modern<br>station needs.</h2>
-    <p class="sec-lead up">CivicCast is the only open-source broadcast platform with built-in AI captioning, hardware-tier auto-detection, and full live-to-archive workflows — built for real PEG station constraints.</p>
+    <p class="sec-lead up">CivicCast is an open-source broadcast platform with built-in AI captioning, hardware-tier auto-detection, and live-to-archive workflows — built for real PEG station constraints.</p>
 
     <div class="feat-grid" role="list">
       <div class="feat-cell up" role="listitem">
@@ -637,35 +680,35 @@ img { max-width: 100%; }
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 10h14M10 3v14M6 6l8 8M14 6l-8 8"/></svg>
         </div>
         <h3 class="feat-h">AI Captioning</h3>
-        <p class="feat-p">faster-whisper with whisper-large-v3 INT8 quantization. Real-time captions that meet FCC accessibility requirements — with zero cloud dependency.</p>
+        <p class="feat-p">faster-whisper running on your own hardware, with no cloud service required. The default caption model is <code>medium</code>, which runs on a CPU; the larger large-v3 model is optional and is chosen only when the hardware allows. Live captions are off by default and are turned on in Setup &gt; Station Profile. Some caption audio can be skipped when a station is overloaded; see Release status above.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2.5"/><path d="M3 10h4M13 10h4M10 3v4M10 13v4"/></svg>
         </div>
-        <h3 class="feat-h">Live Streaming</h3>
-        <p class="feat-p">Multi-output streaming to cable headend, YouTube Live, Facebook Live, and custom RTMP endpoints — simultaneously from one interface.</p>
+        <h3 class="feat-h">Channel Playout</h3>
+        <p class="feat-p">24/7 channel playout from a schedule, with transport-stream, SRT, RTMP, HLS, NDI, and SDI output options. Paths that depend on your equipment or provider (a cable headend, DeckLink SDI, NDI, YouTube uploads) are not proven at a station yet; see Release status above. Live capture-card ingest needs an integrator-supplied media probe.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 15l3.5-7 3.5 5 2.5-3.5L17 15"/></svg>
         </div>
         <h3 class="feat-h">Hardware Detection</h3>
-        <p class="feat-p">Run <span class="chip">civiccast doctor</span> to detect your GPU VRAM and assign the optimal processing tier — from iGPU to AI workstation.</p>
+        <p class="feat-p">Run <span class="chip">civiccast doctor</span> to see your CPU, memory, disk, and GPU, and the hardware tier it recommends — from CPU-only to a multi-channel AI workstation.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 10h6M10 7v6"/></svg>
         </div>
         <h3 class="feat-h">Archive & VOD</h3>
-        <p class="feat-p">Automatic recording and archival with searchable transcripts. Every broadcast becomes an accessible public record your community can reference.</p>
+        <p class="feat-p">Recorded meetings are packaged for the resident portal after staff review and an explicit publish approval, with captions and transcripts available for review. Nothing is published to residents automatically.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 6l7-3 7 3v8l-7 3-7-3V6z"/><path d="M10 3v14"/></svg>
         </div>
         <h3 class="feat-h">Open Source</h3>
-        <p class="feat-p">MIT licensed. No vendor lock-in, no recurring fees, no black box. Fork it, extend it, or contribute back — the way public infrastructure should work.</p>
+        <p class="feat-p">Apache 2.0 licensed code (documentation under CC BY 4.0). No vendor lock-in, no recurring fees, no black box. Fork it, extend it, or contribute back — the way public infrastructure should work.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
@@ -683,7 +726,7 @@ img { max-width: 100%; }
   <div class="wrap">
     <p class="eyebrow up">Hardware Requirements</p>
     <h2 class="sec-h2 up">Built for the hardware<br>you already own.</h2>
-    <p class="sec-lead up">CivicCast auto-detects your GPU via <span class="chip">civiccast doctor</span> and unlocks features in tiers. Most PEG stations qualify for Tier 1 or better — even Tier 0 handles full broadcast workflows.</p>
+    <p class="sec-lead up"><span class="chip">civiccast doctor</span> reports your CPU, memory, disk, and GPU and recommends a hardware tier. The tiers below describe what each hardware class is intended for; they are recommendations, not proven station results.</p>
 
     <div class="tier-grid" role="list">
       <div class="tier-card up" role="listitem">
@@ -691,10 +734,10 @@ img { max-width: 100%; }
         <h3 class="tier-name">Integrated</h3>
         <p class="tier-spec">&lt;8 GB VRAM · Ryzen 7 780M iGPU</p>
         <ul class="tier-list">
-          <li>Live streaming</li>
-          <li>Schedule management</li>
-          <li>Basic archive & VOD</li>
-          <li>Manual captioning</li>
+          <li>Channel playout and scheduling</li>
+          <li>Recorded-meeting archive</li>
+          <li>Captions and summaries on the CPU (slower)</li>
+          <li>The <code>medium</code> caption model</li>
         </ul>
       </div>
       <div class="tier-card rec up" role="listitem" aria-label="Recommended tier">
@@ -703,9 +746,9 @@ img { max-width: 100%; }
         <p class="tier-spec">8–16 GB VRAM · 2020-era GPU</p>
         <ul class="tier-list">
           <li>All Tier 0 features</li>
-          <li>AI auto-captioning</li>
-          <li>whisper-large-v3 INT8</li>
-          <li>Real-time transcription</li>
+          <li>GPU-accelerated captions and summaries</li>
+          <li>Optional large-v3 caption model</li>
+          <li>Summary and translation models swap in and out</li>
         </ul>
       </div>
       <div class="tier-card up" role="listitem">
@@ -714,9 +757,8 @@ img { max-width: 100%; }
         <p class="tier-spec">16–24 GB VRAM</p>
         <ul class="tier-list">
           <li>All Tier 1 features</li>
-          <li>Higher throughput</li>
-          <li>Multi-stream captioning</li>
-          <li>Extended search index</li>
+          <li>Captions, summary, and translation can stay loaded together</li>
+          <li>No model-swap delay</li>
         </ul>
       </div>
       <div class="tier-card up" role="listitem">
@@ -725,9 +767,8 @@ img { max-width: 100%; }
         <p class="tier-spec">24 GB+ VRAM</p>
         <ul class="tier-list">
           <li>All Tier 1+ features</li>
-          <li>RTX caption proof</li>
-          <li>Full-quality models</li>
-          <li>Multi-channel AI</li>
+          <li>Intended for several channels at once, each with its own AI</li>
+          <li>Multi-channel evidence so far is the three-channel lab run</li>
         </ul>
       </div>
     </div>
@@ -738,23 +779,23 @@ img { max-width: 100%; }
 <section id="setup" class="sec">
   <div class="wrap">
     <p class="eyebrow up">Getting Started</p>
-    <h2 class="sec-h2 up">Up and broadcasting<br>in three steps.</h2>
+    <h2 class="sec-h2 up">Getting started<br>in three steps.</h2>
 
     <div class="steps">
       <div class="step up">
         <div class="step-num" aria-hidden="true">01</div>
         <h3 class="step-h">Download & Install</h3>
-        <p class="step-p">The Windows installer runs in under two minutes. No virtual machine, no WSL, no manual configuration. CivicCast installs as a native Windows application.</p>
+        <p class="step-p">A signed Windows installer. No virtual machine, no WSL. CivicCast installs as a native Windows application. The installer is small; its large AI components are found on the computer or downloaded with a progress display, and a USB or LAN kit is the offline alternative.</p>
       </div>
       <div class="step up">
         <div class="step-num" aria-hidden="true">02</div>
         <h3 class="step-h">Run civiccast doctor</h3>
-        <p class="step-p">Hardware detection inspects your GPU, RAM, and storage, then configures CivicCast for your optimal tier. The full check completes in under 30 seconds.</p>
+        <p class="step-p">Hardware detection inspects your CPU, GPU, RAM, and storage and reports the hardware tier it recommends. It reports; it does not change any settings.</p>
       </div>
       <div class="step up">
         <div class="step-num" aria-hidden="true">03</div>
-        <h3 class="step-h">Go Live</h3>
-        <p class="step-p">Connect your capture card, configure stream destinations, and broadcast. AI captioning activates automatically based on your detected hardware tier.</p>
+        <h3 class="step-h">Start With Recorded Media</h3>
+        <p class="step-p">Upload or create a recorded meeting, review its captions, and explicitly approve it for the resident portal. Live capture-card ingest needs an integrator-supplied media probe; without one the console shows &ldquo;Source preview unavailable&rdquo; and keeps live start disabled. Live captions are off by default and are turned on in Setup &gt; Station Profile.</p>
       </div>
     </div>
   </div>
@@ -763,13 +804,12 @@ img { max-width: 100%; }
 <!-- ── CTA ── -->
 <section id="download" class="sec cta-sec sec-alt">
   <div class="wrap">
-    <p class="eyebrow up" style="text-align:center;">Free & Open Source · Forever</p>
+    <p class="eyebrow up" style="text-align:center;">Free &amp; Open Source</p>
     <h2 class="cta-h2 up">Your station deserves<br>better software.</h2>
-    <p class="cta-sub up">Stop paying for broadcast software that wasn't built for public access. CivicCast is free for every station, everywhere, always.</p>
+    <p class="cta-sub up">Stop paying for broadcast software that wasn't built for public access. CivicCast is free for every station: open-source code with no per-minute fees and no vendor lock-in.</p>
     <div class="cta-btns up">
-      <a href="#" class="btn-main">
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M7 1v8M4 7l3 3 3-3M2 11h10"/></svg>
-        Download for Windows
+      <a href="install-windows.html" class="button primary">
+        Windows install guide
       </a>
       <a href="https://github.com/scottconverse/civiccast-native" class="btn-out">
         GitHub Repository
@@ -784,10 +824,10 @@ img { max-width: 100%; }
   <div class="wrap foot-inner">
     <span class="foot-brand">CivicCast</span>
     <ul class="foot-links" role="list">
-      <li><a href="#">Documentation</a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md">Documentation</a></li>
       <li><a href="https://github.com/scottconverse/civiccast-native">GitHub</a></li>
-      <li><a href="#">MIT License</a></li>
-      <li><a href="#">Issues</a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/LICENSE">License</a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/issues">Issues</a></li>
     </ul>
     <span class="foot-copy">© 2026 CivicCast · Open Source Software</span>
   </div>

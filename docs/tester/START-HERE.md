@@ -34,14 +34,21 @@ upgrade-baseline kit, never a release a tester receives.
 available, check
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) first
 -- it is the single source of truth for which tag is current, and this page
-may not have been updated yet. The beta.8 candidate remains unpublished until
+may not have been updated yet. The beta.10 candidate remains unpublished until
 that record and the public release page say otherwise.**
 
-A first-time install on a station with no prior CivicCast install needs the
-complete signed native station bundle. The current bundle is about 21 GB and
-includes the signed runtime and model payloads; the installer verifies and
-stages those packs, then composes the local Ollama model store. Do not assume
-the installer will fetch models later in the background. **Upgrading from
+The installer itself is small; the large AI components (caption engine, local
+summary and translation model, and on capable hardware an optional
+higher-quality caption engine and GPU acceleration) are not inside it. During
+install the CivicCast Installer window explains each large component, uses a
+copy already on the computer (**Found locally - verified**, for example from a
+USB/LAN kit's `station\` folder or an earlier install), and downloads the rest
+with a progress display and a **Stop downloading** button. The complete signed
+USB/LAN kit (about 21 GB with its `station\` model bundle) is the offline
+alternative. A first install with no kit and no earlier install is not yet
+proven for beta.10: the setup step that activates the station fails closed
+when it cannot find the model packs, so use the kit your tester handoff
+names. **Upgrading from
 `v1.0.0-beta.1`:** copy the whole `beta.3` kit
 (`setup.exe` plus the `station\` folder beside it) to the station and run
 `setup.exe` over the existing install -- recordings, settings, database, and
@@ -53,7 +60,7 @@ is download-only (`setup.exe` plus the runtime packs, no `station\` folder
 needed) and keeps the station's existing recordings, database, and AI
 models. The published beta.7 release has download-only upgrade proof from
 beta.5; consult its exact verification record for that evidence. This is not
-advance acceptance of a beta.8 upgrade.
+advance acceptance of a beta.10 upgrade.
 
 ## Clean-Machine Test Rule
 
@@ -97,16 +104,18 @@ before clicking through it.
 1. Verify the release Windows proof kit or setup executable against its
    matching delivery manifest or, for a GitHub download, its sidecar and
    checksum (`SHA256SUMS.txt`).
-2. Run the Windows setup app. Plan enough disk space for the exact downloaded
-   station bundle and the installed runtime/model copy it produces, plus the
+2. Run the Windows setup app. Plan enough disk space for the large AI
+   components (whether they come in the USB/LAN kit or are downloaded by the
+   installer) and the installed runtime/model copy they produce, plus the
    recordings, media, and backups used by the station. The installer verifies
    the signed model packs and composes the local Ollama model store; it does
-   not automatically download missing models in the background after setup.
+   not run a further background model download after setup.
 3. Let it prepare local storage, runtime dependencies, and the CivicCast
    service when your handoff names a gate-cleared package (a package your
    tester handoff confirms has passed release review). Also provisions the
    local Ollama AI runtime and its standard model set.
-4. Open the operator console from the installer handoff.
+4. Open the operator console on the station itself (the **Open operator
+   console** button, or the **CivicCast Operator Console** shortcut).
 5. Create the first admin and save the recovery kit.
 6. Verify backup and run the database restore drill; record that media,
    configuration, and credentials remain separate recovery work.

@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "codex-auditor": {
-      "command": "${CODEX_CLI_PATH}",
-      "args": ["mcp-server"]
-    }
-  }
-}

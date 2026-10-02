@@ -14,12 +14,15 @@ with the release owner after the release gates and soak evidence are complete.
 > filename, size, hash, and Authenticode publisher against the active
 > handoff before running it.
 
-Beta.8 remains an unpublished candidate while its release checks run. Do not
+`v1.0.0-beta.10` is the owner-held unpublished candidate. Do not
 substitute source code or an older installer for an assigned candidate test.
 
 1. **For a first install**, use the complete signed USB/LAN kit named in your
    handoff: installer, runtime packs, and `station\` model bundle. A GitHub
-   `setup.exe` alone does not provide that bundle.
+   `setup.exe` alone does not carry the large AI components; the installer
+   window can download missing ones (with a progress display and a **Stop
+   downloading** button), but a first install that relies only on downloads is
+   not yet proven for beta.10.
 2. **For a GitHub download**, obtain `setup.exe`, its sidecar, and
    `SHA256SUMS.txt` from the exact published release. For USB/LAN, use the
    kit's hash-pinned delivery manifest; do not expect a GitHub sidecar on the USB.

@@ -1,8 +1,8 @@
 ---
 title: CivicCast User Manual
-subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.9 (native Windows line)
+subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.10 (native Windows line)
 author: The CivicCast Authors
-date: 2026-09-17
+date: 2026-10-02
 # Layout, fonts, and colours live in docs/assets/manual.pandoc.yaml so the
 # shell and Python renderers cannot drift. Keep this block to content
 # metadata only.
@@ -43,8 +43,10 @@ work (see
 [Comparative Capability Status](#comparative-capability-status) in
 Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
-production proof. This manual describes the `v1.0.0-beta.9` native-Windows
-software. A bundled manual does not itself establish publication or installation acceptance.
+production proof. This manual describes the `v1.0.0-beta.10` native-Windows
+software, which is a beta candidate: it has not been published, and its formal
+station acceptance (Gate A) has not been run. The latest published release is
+`v1.0.0-beta.7`. A bundled manual does not itself establish publication or installation acceptance.
 Before installing, check the exact
 [GitHub Release](https://github.com/scottconverse/civiccast-native/releases),
 its signed installer, checksums and candidate-specific verification record;
@@ -52,8 +54,10 @@ the current recommendation is recorded in
 [`release-truth.yaml`](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/release-truth.yaml).
 That release record can change after this immutable installer/manual is built.
 Downloadable upgrades preserve a beta.3-or-later station's cached AI models;
-first-time installations also require the approximately 21 GB `station` model
-bundle delivered by USB or LAN. See the Windows installation section below.
+first-time installations bring the large AI components in the approximately
+21 GB `station` model bundle delivered by USB or LAN (the offline
+alternative) or through the installer's own download screen. See the
+Windows installation section below.
 `v1.0.0-beta.2` was never published; it is an internal upgrade-baseline kit.
 This is a fresh, from-scratch native Windows product line -- its
 version numbers do not continue from, and are not comparable to, the older
@@ -74,6 +78,50 @@ window. This opts into encoder restarts at plan rollover and may interrupt
 output. Remove that override to restore the default. Each published beta
 requires its own signed-candidate installation and soak evidence; a version
 number or this manual is not a substitute for that evidence.
+
+**What beta.10 adds.** The beta.10 candidate (the next release; beta.8 and
+beta.9 were never published) makes program changes without a black or silent
+gap and adds a watchdog that ends a program change that gets stuck. It levels
+speech toward -16 LUFS (a standard loudness measure) when a program is
+prepared for air, repeats schedules that are set to loop, and keeps up to
+60 GB of prepared copies of long programs by default (the "conform cache";
+set `CIVICCAST_CONFORM_CACHE_GB` to change it, or `0` to turn it off). It
+recovers by itself in more fault situations, such as a stuck relay or a worker
+that falls behind.
+
+**What was measured, and what was not.** An eight-hour watched run on a
+three-channel lab station (education, government and public airing real
+programs at the same time) used one service process the whole time, with no
+restart, crash, slate or filler after startup. 40 of 41 verify checks passed
+(the one raw failure was judged a sampling blip), loudness passed in 16 of 16
+240-second windows, and 50 program changes were scored with no holes. This is
+lab evidence only: no human field tester has signed off on beta.10, and runs
+longer than eight hours, real stations, SDI hardware and cable headends have
+not been tested for it. See the beta.10 verification record,
+`docs/releases/v1.0.0-beta.10-verification.md`.
+
+**Known limits of beta.10.**
+
+- **Some spoken words can go without captions when the machine is busy.**
+  When a channel's live-caption worker falls behind (most often while the
+  station prepares a long program for the first time), it skips its oldest
+  audio to catch up instead of pausing. In the eight-hour run this happened
+  13 times: about 160 seconds of audio on two channels on a quiet machine.
+  Captions stay on the air, but those seconds have no caption. A fix is the
+  next work item and is not in beta.10. If your station must caption every
+  spoken word, check the captions during live meetings.
+- Twice in the eight-hour run a program change on one channel did not take on
+  its first try and corrected itself in about three seconds. Viewers saw
+  nothing.
+- One known single-frame (0.033 second) video drop can happen where two parts
+  of the same program join.
+- A stretch of a source that is too quiet for the speech leveling to reach the
+  target is reported in the log, not leveled.
+- Carried over from beta.9 and not re-tested in the beta.10 run: a channel
+  whose schedule runs out and does not repeat can stop and need a manual start;
+  `/api/health` can report healthy while a channel cannot air; and the built-in
+  decode-back check (it decodes the broadcast to confirm the captions) failed
+  on certain cue timings in beta.9.
 
 ![CivicCast system architecture](assets/architecture/civiccast-system-architecture.png)
 
@@ -368,7 +416,7 @@ When live captions are on, CivicCast writes captions as the meeting happens.
 On a supported CUDA graphics card it can transcribe up to three channels at
 the same time. On CPU-only stations it captions one channel at a time to keep
 playout responsive; additional channels may fall behind, pause captions, and
-discard stale audio rather than competing indefinitely with the broadcast.
+skip stale audio rather than competing indefinitely with the broadcast.
 Live captioning is hard work for the computer, especially without a suitable
 graphics card.
 
@@ -389,14 +437,17 @@ the switch does not restart an on-air channel automatically. Schedule the
 channel stop/start at a suitable time: it interrupts output. Until then, the
 caption check can show red because captions are expected but not yet present.
 
-**What changed in beta.8:** earlier testing saw repeated picture freezes with
-live captions on. Beta.8 includes repairs to caption processing, restart
-timing and background cleanup. A short Blackwell test matched captions after
-a controlled restart to text decoded from the outgoing video stream. A
-separate test verified that the speech-recognition model loaded on the GPU.
-These are bounded checks, not proof of uninterrupted all-day operation or
-proof that every caption is correct. Startup overload remains a risk to watch;
-the overload limit and two-minute initial pause have not been relaxed.
+**What changed since beta.7:** earlier testing saw repeated picture freezes with
+live captions on. The beta.10 candidate (which includes the unpublished beta.8
+and beta.9 work) repairs caption processing, restart timing and background
+cleanup, and a channel that falls behind now catches up by skipping its oldest
+audio instead of pausing for minutes. A short Blackwell test matched captions
+after a controlled restart to text decoded from the outgoing video stream, and
+a separate test verified that the speech-recognition model loaded on the GPU.
+In the eight-hour three-channel run the catch-up skipped caption audio 13
+times (about 160 seconds on a quiet machine). These are bounded lab checks,
+not proof of uninterrupted all-day operation or that every caption is
+correct.
 
 If a channel reports **captions disabled: session reset failed**, its picture
 and sound can continue, but captions stay off for that session to avoid showing
@@ -415,12 +466,15 @@ your station publishes captioned recordings to meet an accessibility
 requirement, that keeps working with this switch off.
 
 **If you leave it on and the station cannot keep up,** CivicCast does not
-simply grind: it stops captioning that channel for a while (two minutes, then
-four, then eight, up to fifteen), clears the captions that were on screen
-rather than showing stale ones, and tries again later. You will see one
-warning in the log each time that happens. Repeated warnings on the same
-channel mean the live caption path is not keeping up under its current
-conditions. Turn the switch off if necessary to protect the broadcast, retain
+simply grind: a channel that falls behind keeps captioning from the newest
+audio and skips only the oldest audio it could not have transcribed in time, so
+a few seconds of speech go without a caption. You will see one warning in the
+log each time that happens. A channel that has to do this three times in five
+minutes is judged unable to keep up, and then CivicCast stops captioning it for
+a while (two minutes, then four, then eight, up to fifteen), clears the
+captions that were on screen rather than showing stale ones, and tries again
+later. Repeated warnings on the same channel mean the live caption path is not
+keeping up under its current conditions. Turn the switch off if necessary to protect the broadcast, retain
 the logs, and have your technical admin investigate load, storage cleanup and
 the loaded caption model before assuming the graphics card is inadequate.
 
@@ -757,12 +811,22 @@ bounded recorded-media workflow described in Section A.
    files, and separate capacity for recordings, station media and backups.
    Five GB is not enough for a complete first installation.
 
-   **Local AI models.** A first install needs the signed `station` model
+   **Local AI models.** The installer itself is small; the large AI
+   components (the caption engine, the local summary and translation model,
+   and on capable hardware an optional higher-quality caption engine and GPU
+   acceleration) are not inside it. During install the CivicCast Installer
+   window explains each large component, uses a copy already on the computer
+   (**Found locally - verified**, for example from a USB/LAN kit's `station`
+   folder or an earlier install) and downloads the rest with a progress
+   display and a **Stop downloading** button. The signed `station` model
    bundle (about 21 GB), delivered by USB or LAN beside `setup.exe` and the
-   runtime packs. Setup verifies and activates those model components,
-   including the required caption floor and summary/translation models.
-   Do not rely on background internet downloads to complete a missing
-   model bundle. Upgrades from beta.3 or later reuse matching cached models.
+   runtime packs, is the offline alternative. A first install with no kit and
+   no earlier install is not yet proven for beta.10: the setup step that
+   activates the station fails closed when it cannot find the model packs, so
+   use the kit your handoff names. Setup verifies and activates the model
+   components, including the required caption floor and summary/translation
+   models; there is no further background download after setup. Upgrades from
+   beta.3 or later reuse matching cached models.
 
 2. **Source / `uv` (for developers and integrators).**
 
@@ -777,8 +841,10 @@ bounded recorded-media workflow described in Section A.
    prepares installer-managed durable SQLite storage. Set
    `DATABASE_URL` to use Postgres in production.
 
-After install, open the operator console at `http://localhost:8000/operator/`
-(or the installer-provided operator handoff URL), confirm **System Health**
+After install, open the operator console on the station at
+`http://localhost:8000/operator/` (or use the **CivicCast Operator Console**
+shortcut; first setup is only available from the station computer itself),
+confirm **System Health**
 is green, save the recovery kit (it stays on the First Setup screen until
 you confirm you have saved or printed it), and run a private
 first-broadcast rehearsal before the first public meeting. First Setup
@@ -888,6 +954,7 @@ station needs.
 
 - **`CIVICCAST_EGRESS_ENGINE`** — `gstreamer` (default, S15) or `ffmpeg-concat` (legacy fallback).
 - **`CIVICCAST_EGRESS_WORK_DIR`** — Per-channel temporary directory for egress plans.
+- **`CIVICCAST_CONFORM_CACHE_GB`** — Disk budget, in GB, for the conform cache (prepared copies of long programs kept under `conform-cache/` in the egress work directory so a program that has aired before starts within seconds). Default: `60` (it was `20` before beta.10); `0` disables the cache. Leave room on the data drive: one 4.4-hour program measured about 11 GB.
 - **`CIVICCAST_EGRESS_EMBED_CAPTIONS`** — Attempts the native GStreamer caption-SEI path when the required GStreamer elements are available. The Windows installer stages the CivicCast-bundled private GStreamer runtime under the install root's `runtime\dependencies\gstreamer` and verifies `cccombiner`, `ccconverter`, `h264ccinserter`, and `tttocea608` with the bundled `gst-inspect-1.0.exe`; if any required element remains unavailable, setup stops with an explicit native caption-SEI runtime error instead of claiming the embed path is ready.
 - **`CIVICCAST_GST_ALLOW_HARDWARE_DECODE`** — Optional expert override. By default, the GStreamer worker demotes GPU H.264/H.265 decoders so live UDP/SRT decode stays in system memory before the CPU conform/encode chain. Set to `1` only when the station has validated its hardware decode path end-to-end.
 - **`CIVICCAST_CHANNEL_AUTOMATION`** — Enable the channel automation driver and its poll cadence.
@@ -975,13 +1042,17 @@ station needs.
 - **`CIVICCAST_WHISPER_BEAM_SIZE`** — Live-tap decoder beam width (default 1 on
   CPU, 5 on a GPU). Does not affect recorded-file captioning.
 - **`CIVICCAST_CAPTION_FEED_POLL_SECONDS`** — Caption feed and decode-back proof cadence.
-- **`CIVICCAST_CAPTION_PROOF_POLL_SECONDS`** — Caption feed and decode-back proof cadence.
+- **`CIVICAST_CAPTION_PROOF_POLL_SECONDS`** — Decode-back proof cadence in
+  seconds (default 30). The station reads this variable under its legacy
+  one-C spelling `CIVICAST_...`; setting the two-C spelling
+  `CIVICCAST_CAPTION_PROOF_POLL_SECONDS` has no effect.
+- **`CIVICAST_CAPTION_PROOF_TIMEOUT_SECONDS`** — Time limit in seconds for one
+  caption proof capture and decode-back (default 15). Same one-C spelling.
 - **`CIVICCAST_EAS`** — EAS subsystem on/off and surface cadence.
 - **`CIVICCAST_EAS_AUTO_SURFACE`** — EAS subsystem on/off and surface cadence.
 - **`CIVICCAST_EAS_POLL_SECONDS`** — EAS subsystem on/off and surface cadence.
 - **`CIVICCAST_ALERTING`** — Master switch for the operational alerting service.
 - **`CIVICCAST_ALERT_CREDENTIALS_FILE`** — JSON file holding Twilio SMS credentials.
-- **`CIVICCAST_EVENTS`** — Event-bus on/off.
 
 #### CDN, public base URL, trusted proxies
 
@@ -1149,14 +1220,12 @@ secrets. It is for tests only and must never be enabled at a station.
   operator console's Remote Contribution screen (Diagnostics drawer,
   support_admin role) shows the currently-configured host/port, a **Test TURN
   connectivity** button that probes it right now, and the same guidance text
-  under "How to point this station at coturn." On Linux/macOS these still
-  work the same way if you'd rather point at an external server than run
-  coturn locally.
+  under "How to point this station at coturn."
 - **`CIVICCAST_COTURN_COMMAND`**\
-  Linux/macOS only — the local coturn launch command, if you're running
-  coturn on the station itself rather than pointing at an external server
-  (see `CIVICCAST_TURN_HOST` above). Leave unset on Windows; there is no
-  native Windows build.
+  The local coturn launch command, for an integrator who runs coturn on the
+  same machine rather than pointing at an external server (see
+  `CIVICCAST_TURN_HOST` above). Leave unset on a Windows station; coturn has
+  no native Windows build.
 - **`CIVICCAST_VDO_COMMAND`**\
   TURN/VDO co-process commands.
 - **`CIVICCAST_CONTROL_ROOM_TSR_URL`**\
@@ -1225,9 +1294,10 @@ civiccast installer plan \
     [--profile public-meetings] [--recommended-tier tier-1]
 civiccast installer health-check [--profile public-meetings]
 civiccast installer platform-plan [--os-family linux|macos]
-    # Generic Linux/macOS bootstrap planning only. Windows deployment
-    # readiness is decided separately by the native station's own
-    # activation state (civiccast.installer.service), not this plan.
+    # Development planning output only; CivicCast installs on Windows 11 and
+    # has no Linux or macOS install target. Windows deployment readiness is
+    # decided separately by the native station's own activation state
+    # (civiccast.installer.service), not this plan.
 civiccast installer verify-package --artifact PATH --sidecar PATH
 civiccast installer summary
 civiccast installer beta-handoff \
@@ -1243,7 +1313,12 @@ civiccast model set-provider-key ollama-cloud|openrouter \
 
 civiccast cert rotate IDENTITY
 
-civiccast token …               (managed by the operator console; see /api/tokens)
+civiccast token generate-env
+civiccast token issue --operator-id ID --display-name NAME \
+    [--scopes S] [--save-keyring]
+civiccast token list
+civiccast token revoke … [--reason TEXT]
+civiccast token rotate … [--save-keyring]
 
 civiccast cable package --asset-id ID --title T --media F \
     --captions F --output-dir D
@@ -1256,8 +1331,6 @@ civiccast activitypub …         (key + config helpers; see civiccast/activityp
 civiccast egress run --channel-id CH [--work-dir D] \
     [--poll-seconds 2] [--once]
 civiccast egress verify --channel-id CH [--seconds 10]
-civiccast egress recovery-proof --channel-id CH \
-    --measured-seconds N …
 civiccast egress continuity-proof --source-plan-json J \
     --config-json J \
     --output-path F
@@ -1266,6 +1339,8 @@ civiccast egress srt-continuity-proof \
     --sender-url U --receiver-url U \
     --receiver-output-path F
 civiccast egress caption-decode-proof --channel-id CH …
+civiccast egress verify-captions [--duration-seconds 8] [--muxrate-kbps 2000] \
+    [--work-dir D] [--caption-text T]
 civiccast egress trim-health [--older-than-days 30] [--dry-run]
 
 civiccast live-takeover …       (cut a channel to a live source and return it)
@@ -1307,13 +1382,13 @@ enabled — no admin rights, no system installer. NDI runtime/SDK, DeckLink
 hardware/drivers, app-store provider accounts, and live station headend
 equipment remain operator/provider supplied.
 
-**Local AI provisioning.** CivicCast also provisions the local Ollama runtime for
-on-station AI (reusing a healthy existing install if one is already present
-and installing a pinned version only when Ollama is absent), then ensures the
-same three-tag target set of standard summary and translation models,
-downloading only the tags still missing, in the background after the
-operator console is already reachable; a model-download failure is reported
-honestly without blocking the rest of the install.
+**Local AI provisioning.** CivicCast runs its own bundled local Ollama runtime
+for on-station AI. The standard summary and translation models arrive during
+install, from the USB/LAN kit or through the installer's download screen (see
+"Local AI models" in the Windows installation section above); setup does not
+start a further background download afterwards. A technical admin can fetch
+or import models later with `civiccast model download` or
+`civiccast model import-offline`.
 
 ### Cross-references
 

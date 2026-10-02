@@ -21,6 +21,7 @@ from typing import Any, Final
 ROOT: Final[Path] = Path(__file__).resolve().parent.parent
 LOCK_PATH: Final[Path] = ROOT / "native-windows-ollama-models.lock.json"
 DEFAULT_CACHE: Final[Path] = ROOT / "build" / "native-model-cache-ollama"
+PINNED_MANIFEST_DIR: Final[Path] = ROOT / "native-windows-ollama-manifests"
 DEFAULT_OUTPUT: Final[Path] = ROOT / "build" / "native-ollama-models"
 PROVENANCE_NAME: Final[str] = "MODEL-PROVENANCE.json"
 _CHUNK_BYTES: Final[int] = 1024 * 1024
@@ -294,6 +295,15 @@ def fetch_manifest(
         "sha256": model["manifest_sha256"],
     }
     if destination.exists():
+        _verify_file(destination, identity, label=f"{name} manifest")
+        return destination
+    pinned = PINNED_MANIFEST_DIR / f"{model['manifest_sha256']}.json"
+    if pinned.is_file():
+        # The registry tag is mutable and old manifests are not served by digest, so the
+        # reviewed bytes ship in the repo; they are verified against the lock before use.
+        _verify_file(pinned, identity, label=f"{name} pinned manifest")
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(pinned, destination)
         _verify_file(destination, identity, label=f"{name} manifest")
         return destination
     if offline:

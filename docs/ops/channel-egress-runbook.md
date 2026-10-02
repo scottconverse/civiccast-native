@@ -240,7 +240,9 @@ itself — no CLI worker needed. Posture for a three-channel station:
 - **Program-start speed and the conform cache (issue #156, fixed):** an asset
   that has aired before starts within seconds — its canonical conform is kept
   in a persistent cache (`CIVICCAST_EGRESS_WORK_DIR/conform-cache/`, bounded by
-  `CIVICCAST_CONFORM_CACHE_GB`, default 20; set `0` to disable). The **first-ever
+  `CIVICCAST_CONFORM_CACHE_GB`, default 60 since beta.10 -- it was 20, and a
+  4.4-hour asset measured about 11 GB, so a few long assets exceeded a 20 GB
+  cache and were rebuilt repeatedly; set `0` to disable). The **first-ever
   airing of a long asset still conforms at airtime** (same duration as before —
   schedule long premieres with that in mind, or air a short lead-in first); a
   join-in-progress first airing conforms only the remaining portion, exactly as
@@ -404,23 +406,23 @@ itself — no CLI worker needed. Posture for a three-channel station:
 ### Controlled soak settings
 
 The default schedule remains finite. For a controlled local soak, set
-`CIVICAST_SCHEDULE_LOOP=1` before starting the service. This repeats the
+`CIVICCAST_SCHEDULE_LOOP=1` before starting the service. This repeats the
 published sequence from its first item, preserving the schedule's assets and
 gaps; it does not invent filler or change the schedule in the database. Leave
 the variable unset (or set it to `0`) for normal finite-schedule behavior.
 
 Caption proof capture is bounded so a stalled ffmpeg invocation cannot hold the
 caption/control path indefinitely. `CIVICAST_CAPTION_PROOF_TIMEOUT_SECONDS`
-defaults to 15 seconds and applies to both capture and decode-back. In a
+(spelled with one C; the code reads exactly this name) defaults to 15 seconds and applies to both capture and decode-back. In a
 supervised service, proof work runs in a separately supervised child process by
-default (`CIVICAST_CAPTION_PROOF_PROCESS=process`); developer/unsupervised
+default (`CIVICCAST_CAPTION_PROOF_PROCESS=process`); developer/unsupervised
 launches keep the inline worker by default. Set the variable explicitly to
 `off`, `process`, or `inline` when a test needs a specific mode. `off` is only
 for a controlled diagnostic window and means no emitted-caption proof is
 collected. A proof timeout is a failed proof sample, not a caption-pass signal.
 
 Startup housekeeping is also bounded. Each one-shot startup hook gets a
-`CIVICAST_STARTUP_HOOK_TIMEOUT_SECONDS` budget (default 1 second); slow
+`CIVICCAST_STARTUP_HOOK_TIMEOUT_SECONDS` budget (default 1 second); slow
 housekeeping is allowed to finish in the background and must not hold the
 airing path. A warning is logged when a hook exceeds that budget so the cause
 can be investigated without making the station appear healthy while startup

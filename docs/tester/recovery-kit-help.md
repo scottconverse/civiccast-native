@@ -40,8 +40,9 @@ Do this first:
 
 **If the operator console is closed:**
 
-1. Reopen the CivicCast operator console from the installer handoff link if it
-   is still visible.
+1. Reopen the CivicCast operator console on the station itself, using the
+   **CivicCast Operator Console** shortcut (or `http://127.0.0.1:8000/operator/`
+   in a browser on the station).
 2. Look for the first admin or recovery-kit step.
 3. If CivicCast still shows the recovery kit, save or print it before doing
    anything else.

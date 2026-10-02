@@ -1,4 +1,4 @@
-# CivicCast beta.9 - Field-Test Quick Start
+# CivicCast beta.10 - Field-Test Quick Start
 
 This is a field-test guide for the native Windows beta. It is not a production
 cutover instruction. Use the exact beta release named in your tester handoff;
@@ -8,10 +8,15 @@ currently available.
 ## Before you begin
 
 1. Read the exact tester handoff and the Windows release-trust instructions.
-2. Use the complete signed beta.9 USB/LAN kit for a first install. The kit
+2. Use the complete signed beta.10 USB/LAN kit for a first install. The kit
    includes the installer, runtime packs, and the signed `station\` model
-   bundle (about 21 GB). A GitHub download by itself does not provide the model
-   bundle needed by a new station.
+   bundle (about 21 GB), the offline way to bring the large AI components. The
+   installer itself is small: its window also explains each large component,
+   uses a copy already on the computer (**Found locally - verified**) and
+   downloads the rest with a progress display and a **Stop downloading**
+   button. A first install that has no kit and no earlier install and relies
+   only on downloads is not yet proven for beta.10, so use the kit your
+   handoff names.
 3. If this is an upgrade from an already-installed beta.3-or-later station,
    use only the exact release assets the handoff names. Existing recordings,
    database data, settings, and cached AI models are retained by the supported
@@ -27,7 +32,7 @@ currently available.
 ## Install
 
 1. On the station computer, open the signed USB/LAN kit and run its branded
-   `CivicCast (Native)_1.0.0-beta.9_x64-setup.exe` installer. A GitHub download
+   `CivicCast (Native)_1.0.0-beta.10_x64-setup.exe` installer. A GitHub download
    uses the name `setup.exe`; its hash must identify the same approved release.
    Do not substitute a source ZIP, an older release, or a generic "latest"
    download.
@@ -49,7 +54,8 @@ currently available.
 ## First setup and recovery
 
 1. On the station itself, open **First setup** from the **CivicCast Operator
-   Console** shortcut or the installer handoff URL.
+   Console** shortcut, or by opening `http://127.0.0.1:8000/operator/` in a
+   browser on the station.
 2. Enter the station name and create the first administrator account.
 3. When CivicCast shows the one-time recovery codes, select **Print kit** or
    **Save kit** and store the result away from the computer. Do not put codes
@@ -89,73 +95,60 @@ is ready for public cutover.
   setup. Preserve the logs and consult your technical lead before retrying or
   rebooting to clear an unexplained failure.
 
-## Known limitations of this build (v1.0.0-beta.9) - read before operating a station
+## Known limitations of this build (v1.0.0-beta.10) - read before operating a station
 
-These are known, measured limitations of `v1.0.0-beta.9`. A **beta.10** release
-is coming soon that addresses the caption interruptions on program changes, the
-escalation behaviour, the end-of-schedule stop, and the playout worker stalls.
-**If you are running a station where captions must stay up unattended, wait for beta.10.**
+`v1.0.0-beta.10` is a beta candidate. It was held on air for eight hours on a
+three-channel lab station with no restart, no black or silent gaps at program
+changes, and loudness in range. The formal station acceptance (Gate A) has not
+been run for it, and no human field tester has signed off on it. These are the
+known, measured limits:
 
-**Caption reliability - two channels are clean, three are not.**
-- Captions run on the GPU, and caption text reaches the emitted output.
-- **One and two channels are clean and measured.** Across one-channel and
-  two-channel runs, per-segment latency stayed flat at about 5.3 seconds with
-  **zero** caption backlog trips.
-- **Three channels is the problem.** On the earlier code, three channels
-  produced four or more backlog trips in a measured window, with latency
-  spiking to 106 seconds. This is **not** a graphics-card limit: VRAM peaked at
-  about 52% (about 7.6 GB free) and GPU use averaged 19%.
-- With the caption-retention fix in this build, a **30-minute three-channel run
-  had zero trips** (against 111 trips in 103 minutes on the earlier code).
-- **Sustained three-channel operation is not proven.** The two-hour, four-hour,
-  eight-hour, 25-hour and 72-hour runs were **not** completed. Do not read the
-  30-minute result as a guarantee that three channels will stay healthy all day.
+**Some spoken words can go without captions when the machine is busy.**
+- Captions stay on the air on all three channels. When a channel's caption
+  worker falls behind (most often while the station is preparing a long program
+  for the first time), it skips its oldest audio to catch up instead of pausing
+  for minutes. Those skipped seconds have no caption.
+- In the eight-hour run this happened 13 times. On a quiet machine the total was
+  about 160 seconds of speech across two channels.
+- A fix is the next work item and is not in beta.10. **If your station must have
+  every spoken word captioned, tell your technical lead before relying on this
+  build, and check the captions during live meetings.**
 
-**Caption interruptions when the program changes.**
-- A scheduled program change can trigger a channel reload that times out,
-  restart the video worker, and clear captions. Caption blackouts on the three
-  captured occurrences were **2.3, 2.8 and 4.6 minutes**.
-- A worker can also exit cleanly (exit code 0) with no error and still clear
-  captions.
-- The escalation behaviour is **not fully characterised**. The wait **can** grow
-  beyond the base window (observed), but the rate at which it grows under a
-  chronic channel has **not been measured**. Earlier observations were
-  confounded by storage refusals that prevent the healthy-scan counter from
-  advancing at all, so a zero escalation count in those windows proves nothing.
-- A caption blackout per backlog trip is about **210 seconds** - not the 120
-  seconds the log message implies (120 seconds of pause plus about 90 seconds to
-  earn the recovery bar).
+**A program change can retry once.**
+- Twice in eight hours a program change on the government channel did not take
+  on its first try and corrected itself in about three seconds. Viewers saw
+  nothing.
 
-**Playout worker stalls.**
-- A playout worker can stall with "no output for 10s" and be relaunched by the
-  watchdog. The channel oscillates between STARTING, fallback slate and ON_AIR
-  instead of holding air, and captions do not accumulate while it does.
-- **This is frequent and long-standing, not rare.** In the retained five-day log
-  window it fired **68 times** (1 on 09-14, 7 on 09-15, 20 on 09-16, 28 on
-  09-17, 12 on 09-18).
-- **It is unevenly distributed across channels:** 55 of the 68 stalls were on
-  the public channel, 9 on government and 4 on education. A single channel can
-  carry the large majority of the failures.
-- A clean STOP then START does **not** clear it; the stall recurs on a fresh
-  launch. The channel with the heaviest source is the one most likely to be
-  stuck.
+**One single-frame video drop.**
+- One known one-frame (about 0.03 second) picture drop can happen where two
+  parts of the same program join. It was seen once in eight hours.
 
-**End-of-schedule behaviour.**
-- When a channel's scheduled programming runs out, the channel can be
-  **STOPPED** and require a **manual start**, with an error telling the operator
-  to check the program's media. That message is **misleading in this case** -
-  the media is fine; the schedule is empty.
+**Quiet recordings are not boosted without limit.**
+- Speech is leveled toward -16 LUFS (a standard loudness measure) when a program is prepared for air. A
+  stretch of a recording that is too quiet for the leveling to reach the target
+  is reported in the log, not boosted further, so it can sound quieter than
+  the rest.
 
-**Health endpoint.**
-- `/api/health` can report **healthy while a channel is unable to air**.
+**Carried over from beta.9 and not re-tested in the beta.10 run.**
+- When a channel's scheduled programming runs out and the schedule does not
+  repeat, the channel can stop and need a manual start. The error then tells you
+  to check the program's media even though the schedule is the problem.
+- `/api/health` can report healthy while a channel is unable to air.
+- The built-in decode-back check (it decodes the broadcast to confirm the
+  captions) failed on certain cue timings in beta.9 and was not re-tested.
 
-**Decode-back verification.**
-- There is **no working decode-back proof** in this build; the self-check
-  currently fails on certain decoded cue timings.
+**Not proven.**
+- Runs longer than eight hours, a real station, SDI hardware and a cable
+  headend have not been tested for this build.
+
+**Disk space.**
+- CivicCast now keeps up to 60 GB of prepared copies of long programs (the
+  default; it was 20 GB). Leave room on the data drive, or set
+  `CIVICCAST_CONFORM_CACHE_GB` to a smaller number.
 
 ## After a successful field test
 
 Keep the signed kit, hash manifest, installer log, recovery-kit confirmation,
 and candidate-bound tester evidence together. A successful local installation
 or soak is evidence for the named candidate only; it does not by itself make
-beta.9 the public current release.
+beta.10 the public current release.

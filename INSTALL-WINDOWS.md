@@ -24,9 +24,13 @@ other repository. See
 the authored release-state record -- it is the single source of truth for
 which tag is current.
 
-`v1.0.0-beta.9` is the next candidate and the current owner-held unpublished
+`v1.0.0-beta.10` is the next candidate and the current owner-held unpublished
 candidate. It has no installer asset yet; install beta.7 from the release link
-above until beta.8 completes its candidate gates.
+above until beta.10 completes its candidate gates (the formal Gate A station
+acceptance has not been run for it) and is published as a GitHub pre-release.
+`v1.0.0-beta.8` and `v1.0.0-beta.9` were never published. What was and was not
+proven for beta.10 is in
+[`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
 
 `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable release) are
 now superseded.
@@ -41,12 +45,25 @@ never a release a station receives.
 
 **First install vs. upgrade:**
 
-- **First-time install on a station with no prior CivicCast install** needs the
-  complete signed station bundle delivered by the approved handoff. The
-  current native bundle is about 21 GB and includes the signed runtime and
-  model payloads; the installer verifies and stages those packs, then composes
-  the Ollama model store it uses. Do not assume the installer will fetch these
-  models later in the background.
+- **First-time install on a station with no prior CivicCast install.** The
+  installer itself is small; the large AI components (the caption engine,
+  the local summary and translation AI model, and, on capable hardware, an
+  optional higher-quality caption engine and GPU acceleration) are not inside
+  it. During install the CivicCast Installer window lists each large
+  component with a plain-English explanation and its size, uses a copy that is
+  already on the computer (shown as **Found locally - verified**, for example
+  from the `station\` folder of a USB/LAN kit or from an earlier install), and
+  downloads the rest with a progress display and a **Stop downloading**
+  button. The complete signed USB/LAN kit (installer, runtime packs, and the
+  `station\` model bundle, about 21 GB) is the offline alternative for a
+  station without a reliable internet connection. **Not yet proven for
+  beta.10:** a first install on a clean machine that has neither a kit nor an
+  earlier install. The setup step that activates the station fails closed when
+  it cannot find the model packs in the kit or in an earlier install's cache
+  (see "Download-only lane" in [`docs/ops/gate-a.md`](docs/ops/gate-a.md)), so
+  use the kit your tester handoff names. After setup there is no further
+  background model download; a technical admin can fetch or import models later
+  with `civiccast model download` or `civiccast model import-offline`.
 - **Upgrade of an already-installed station** can be download-only starting
   with `v1.0.0-beta.3`: it reuses the AI models already on the machine. An
   upgrade keeps the station's existing recordings, database, and AI models --
@@ -97,7 +114,10 @@ checksum, or expected next step, stop and report the mismatch before installing.
   exact tagged GitHub Release at
   <https://github.com/scottconverse/civiccast-native/releases> -- never a
   draft, an older prerelease, or a generic "latest" link. A first-time
-  install on that station also needs the complete signed station bundle. An upgrade of an
+  install on that station also needs either the complete signed USB/LAN kit
+  (with its `station\` model bundle) or, once proven, installer-side
+  downloads of the large AI components (see "First install vs. upgrade"
+  above). An upgrade of an
   already-installed `beta.3`-or-later station does not need the station bundle --
   but a `beta.1` station upgrading to `beta.3` is the one exception: see
   "Upgrading from `v1.0.0-beta.1`" above, it needs the full `beta.3` kit
@@ -115,11 +135,17 @@ before running any downloaded installer. Verify `setup.exe` against
 `SHA256SUMS.txt` and its sidecar `.sidecar.json` file first -- the trust
 page has the exact PowerShell steps.
 
-Plan disk space for the exact downloaded station bundle and the installed
-runtime/model copy it produces, plus the recordings, media, and backups the
-station will retain. The installer composes the signed model components into
-the station's local Ollama store; it does not provide an automatic background
-model download after the base install.
+Plan disk space for the large AI components (whether they arrive in a USB/LAN
+kit or are downloaded by the installer) and the installed runtime/model copy
+they produce, plus the recordings, media, and backups the station will retain.
+The installer composes the signed model components into the station's local
+Ollama store; it does not run a further background model download after
+setup.
+
+Starting with the `v1.0.0-beta.10` candidate, the cache of prepared copies of
+long programs (the "conform cache") defaults to a 60 GB budget instead of
+20 GB. Leave room for it on the data drive, or set
+`CIVICCAST_CONFORM_CACHE_GB` to a smaller value.
 
 Windows may show a blue **Windows protected your PC** screen. Do not infer a
 signature from that screen. The approved handoff must state the exact file's
@@ -129,68 +155,37 @@ is `NotSigned` or differs from the handoff, stop. Read
 you run the installer so you know exactly what to click and why, plus how
 to independently verify the file yourself first if you want extra confidence.
 
-## If The Operator Console Says "Could Not Read Setup State"
+## If First Setup Will Not Open Or Says "Could Not Read Setup State"
 
 **This is the current, applicable content in this repository.** It covers
-the native Windows line's own install -- the paths and executables below
-(`CivicCast Native.exe`, `CivicCast (Native)`, `civiccast.native.runtime_cli`)
-only exist on a native-line install.
+the native Windows line's own install.
 
-The operator console's first setup page needs the one-time handoff URL the
-Windows installer creates -- a plain console URL with no `?nonce=` on the end
-cannot read setup state, cannot create the first administrator, and cannot
-sign in. If the console shows:
+First Setup (naming the station and creating the first administrator) is only
+available from the station computer itself. The operator console listens on
+the station's own loopback address (`127.0.0.1`, port 8000), and the setup
+screen accepts a request only from that same computer. There is no setup
+link, code, or password to copy, and there is nothing to restore: an older
+build used a one-time setup link (`?nonce=...`) and an administrator
+command to recover it, and both were retired. If a note you were given
+still mentions either one, ignore it.
 
-> Could not read setup state. Open the operator console from the CivicCast
-> installer handoff, then continue setup.
-
-...and reopening CivicCast Setup and pressing **Open operator console** produces
-the same result, the setup app could not read the handoff the installer stored.
-That handoff lives in a registry key restricted to SYSTEM and Administrators, so
-a setup app running without administrator rights cannot read it and opens the
-console without it.
-
-**Recover it on a native Windows station (no reinstall needed).** Either
-option below reads the same registry-stored handoff and requires
-administrator rights on the station -- use whichever is more convenient.
-
-**Option A -- restore it in CivicCast Setup (recommended):**
-
-1. Run, adjusting the path if you installed somewhere other than the default:
-
-   ```
-   "C:\Program Files\CivicCast (Native)\CivicCast Native.exe" --civiccast-restore-setup-handoff
-   ```
-
-2. Approve the Windows administrator prompt. CivicCast re-reads the stored
-   handoff and updates Setup's own cache -- no URL to copy.
-3. In CivicCast Setup, use **Open operator console** as normal.
-
-**Option B -- print the handoff URL directly (from an elevated terminal, or
-when the Setup app itself is not available):**
-
-1. Open **Command Prompt** or **PowerShell** with **Run as administrator**.
-2. Run, adjusting the path if you installed somewhere other than the default:
-
-   ```
-   "C:\Program Files\CivicCast (Native)\runtime\python.exe" -m civiccast.native.runtime_cli setup-handoff
-   ```
-
-   (From a checkout or a pip install, `civiccast runtime setup-handoff` is the
-   same command.)
-
-3. Copy the printed `http://127.0.0.1:8000/operator/?nonce=...` URL and open it
-   in a browser **on this same computer**. Setup and sign-in work from there.
-
-Treat that URL as a password. It authorizes creating the station's first
-administrator and it stays valid for the life of the installation, so do not
-put it in a screenshot, a support ticket, or a chat message. Setup is reachable
-only from this computer (`127.0.0.1`); the URL is useless from another machine.
-
-Either option refuses instead of prompting in a loop if you are not an
-administrator of the station. If it reports that no setup handoff is
-recorded, provisioning did not finish; check the provisioning journal under
-`%ProgramData%\CivicCast\provision` and ask for IT help.
+- **To open First Setup,** on the station computer use **Open operator
+  console** in CivicCast Setup, or the **CivicCast Operator Console**
+  shortcut (desktop and Start menu), or open
+  `http://127.0.0.1:8000/operator/` in a browser running on that same
+  computer.
+- **"First setup can only be done from the station computer itself."** The
+  browser you used is not running on the station -- for example the
+  window of a remote-desktop viewer's own computer, or another computer on
+  the network. Open the console in a browser on the station.
+- **"The station is cooling down after too many requests."** Wait a moment
+  and select **Try again**.
+- **"Could not read setup state."** followed by a reason means the console
+  reached the station but the station could not answer. Wait a moment and
+  reload the page. If it persists, check that the CivicCast service is
+  running, open **System Health** if you can reach it, and collect
+  `C:\ProgramData\CivicCast\install-progress.log`. Ask for IT help and do
+  not run the installer again until someone has read that log.
 
 ## When To Ask For IT Help
 

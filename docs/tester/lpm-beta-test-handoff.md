@@ -21,7 +21,7 @@ tag is current.
 `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
 now superseded but still run; see "Upgrading from `v1.0.0-beta.1`" below and
 "Release Build To Use" for the download-only path. Beta.7 has exact-package
-upgrade proof from beta.5; that evidence does not certify a future beta.8 kit.
+upgrade proof from beta.5; that evidence does not certify a future beta.10 kit.
 
 If Sergio/LPM is still on a USB-delivered `v1.0.0-beta.1` station, that
 install is also superseded but still runs; see "Upgrading from
@@ -35,11 +35,18 @@ upgrade-baseline kit and is never sent to Sergio/LPM.
 relying on this page -- it is the single source of truth for which tag is
 current, and this handoff may lag it.**
 
-A first-time install on a station with no prior CivicCast install needs the
-complete signed native station bundle. The current bundle is about 21 GB and
-includes the signed runtime and model payloads; the installer verifies and
-stages those packs, then composes the local Ollama model store. Do not assume
-the installer will fetch models later in the background. An upgrade of an
+The installer itself is small; the large AI components (caption engine, local
+summary and translation model, and on capable hardware an optional
+higher-quality caption engine and GPU acceleration) are not inside it. During
+install the CivicCast Installer window explains each large component, uses a
+copy already on the computer (**Found locally - verified**, for example from a
+USB/LAN kit's `station\` folder or an earlier install), and downloads the rest
+with a progress display and a **Stop downloading** button. The complete signed
+USB/LAN kit (about 21 GB with its `station\` model bundle) is the offline
+alternative. A first install with no kit and no earlier install is not yet
+proven for beta.10: the setup step that activates the station fails closed
+when it cannot find the model packs, so use the kit your handoff names. An
+upgrade of an
 already-installed `v1.0.0-beta.3`-or-later station
 is download-only (`setup.exe` plus the runtime packs, no `station\` folder
 needed) and keeps the station's existing recordings, database, and AI
@@ -69,8 +76,9 @@ staff, and anyone observing the first real station-side CivicCast runs.
 Use only the release-matched installer and manifest for the package you were
 actually handed. For a GitHub release, also use its sidecar and checksum; a
 USB/LAN kit may have only its own hash-pinned delivery manifest and need not contain
-the GitHub sidecar. Beta.8 remains unpublished while its release checks run
-(`v1.0.0-beta.2` is never handed to a tester).
+the GitHub sidecar. `v1.0.0-beta.10` is the owner-held unpublished candidate
+(`v1.0.0-beta.2`, `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published and
+are never handed to a tester).
 Preserve all logs and report any failure.
 
 ## What This Beta Is Meant To Exercise
@@ -93,8 +101,9 @@ The run is meant to answer:
 **Use the exact package named in your active handoff.** A USB/LAN field kit is
 verified against its own hash-pinned delivery manifest. A GitHub package is used
 only after its exact beta tag is published and is verified against that
-release's sidecar and checksum assets. Beta.8 remains an unpublished
-candidate until its exact installer and release checks pass and it is published.
+release's sidecar and checksum assets. `v1.0.0-beta.10` is the owner-held
+unpublished candidate until its exact installer and release checks pass and the
+owner publishes it.
 
 Expected SHA-256 and byte size must match the applicable package manifest.
 
@@ -128,11 +137,12 @@ Before starting:
 - Plug the machine into reliable power.
 - Disable sleep during the acceptance run.
 - Make sure outbound HTTPS is allowed to GitHub.
-- Plan disk space for the exact downloaded station bundle and the installed
-  runtime/model copy it produces, plus the short sample media, recordings, and
-  backups used in the test. The installer verifies the signed model packs and
-  composes the local Ollama model store; do not assume it will download missing
-  models automatically in the background after the base install.
+- Plan disk space for the large AI components (from the USB/LAN kit or
+  downloaded by the installer) and the installed runtime/model copy they
+  produce, plus the short sample media, recordings, and backups used in the
+  test. The installer verifies the signed model packs and composes the local
+  Ollama model store; it does not run a further background model download after
+  setup.
 - Have a place to save the recovery kit that is not a public folder.
 - Decide who is allowed to know the beta admin password.
 - Decide how LPM will send reports privately to Scott.
@@ -158,7 +168,7 @@ received; do not trust a hash copied from anywhere else.
    ```
 
    Historical filename example for a beta.5 USB/LAN kit (substitute the exact
-   filename from your current handoff, not a guessed beta.8 filename):
+   filename from your current handoff, not a guessed beta.10 filename):
 
    ```powershell
    Get-FileHash '.\CivicCast (Native)_1.0.0-beta.5_x64-setup.exe' -Algorithm SHA256

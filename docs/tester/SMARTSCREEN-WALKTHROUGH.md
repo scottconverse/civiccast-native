@@ -14,8 +14,9 @@ only as an internal Gate A upgrade-baseline kit. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
-Beta.8 remains an unpublished candidate. A familiar filename or a passing
-SmartScreen check is not evidence that its release checks have passed.
+`v1.0.0-beta.10` is the owner-held unpublished candidate. A familiar filename
+or a passing SmartScreen check is not evidence that its release checks have
+passed.
 
 When you open a CivicCast installer, Windows may show a blue SmartScreen page.
 That page alone does not prove the file is safe, signed, or approved. Verify the
