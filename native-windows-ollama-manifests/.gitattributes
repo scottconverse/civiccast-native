@@ -1,0 +1,2 @@
+# Pinned reviewed Ollama manifests: byte-exact, never rewrite line endings.
+*.json -text

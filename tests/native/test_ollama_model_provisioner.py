@@ -351,3 +351,38 @@ def test_manifest_redirect_cannot_use_blob_r2_exception(provisioner: object) -> 
             _official_r2_url(digest),
             expected_path="/v2/library/fixture/manifests/one",
         )
+
+
+def test_committed_pinned_manifests_match_the_lock_byte_for_byte(provisioner: object) -> None:
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    for name, model in lock["models"].items():
+        pinned = provisioner.PINNED_MANIFEST_DIR / f"{model['manifest_sha256']}.json"
+        data = pinned.read_bytes()
+        assert len(data) == model["manifest_bytes"], name
+        assert hashlib.sha256(data).hexdigest() == model["manifest_sha256"], name
+
+
+def test_pinned_manifest_is_used_without_the_network_when_the_registry_tag_has_moved(
+    provisioner: object, tmp_path: Path
+) -> None:
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    model = lock["models"]["gemma4-12b"]
+
+    def opener(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("the pinned manifest must be used before any network access")
+
+    result = provisioner.fetch_manifest("gemma4-12b", model, tmp_path, opener=opener)
+    assert hashlib.sha256(result.read_bytes()).hexdigest() == model["manifest_sha256"]
+
+
+def test_tampered_pinned_manifest_is_refused(
+    provisioner: object, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lock = json.loads(LOCK_PATH.read_text(encoding="utf-8"))
+    model = lock["models"]["gemma4-12b"]
+    pinned_dir = tmp_path / "pinned"
+    pinned_dir.mkdir()
+    (pinned_dir / f"{model['manifest_sha256']}.json").write_bytes(b"{}" + b" " * (model["manifest_bytes"] - 2))
+    monkeypatch.setattr(provisioner, "PINNED_MANIFEST_DIR", pinned_dir)
+    with pytest.raises(provisioner.ModelProvisionError):
+        provisioner.fetch_manifest("gemma4-12b", model, tmp_path / "cache")
