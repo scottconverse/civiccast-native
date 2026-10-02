@@ -1,8 +1,8 @@
 ---
 title: CivicCast User Manual
-subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.9 (native Windows line)
+subtitle: For station operators, clerks, and IT staff - v1.0.0-beta.10 (native Windows line)
 author: The CivicCast Authors
-date: 2026-09-17
+date: 2026-10-02
 # Layout, fonts, and colours live in docs/assets/manual.pandoc.yaml so the
 # shell and Python renderers cannot drift. Keep this block to content
 # metadata only.
@@ -43,8 +43,10 @@ work (see
 [Comparative Capability Status](#comparative-capability-status) in
 Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
-production proof. This manual describes the `v1.0.0-beta.9` native-Windows
-software. A bundled manual does not itself establish publication or installation acceptance.
+production proof. This manual describes the `v1.0.0-beta.10` native-Windows
+software, which is a beta candidate: it has not been published, and its formal
+station acceptance (Gate A) has not been run. The latest published release is
+`v1.0.0-beta.7`. A bundled manual does not itself establish publication or installation acceptance.
 Before installing, check the exact
 [GitHub Release](https://github.com/scottconverse/civiccast-native/releases),
 its signed installer, checksums and candidate-specific verification record;
@@ -74,6 +76,50 @@ window. This opts into encoder restarts at plan rollover and may interrupt
 output. Remove that override to restore the default. Each published beta
 requires its own signed-candidate installation and soak evidence; a version
 number or this manual is not a substitute for that evidence.
+
+**What beta.10 adds.** The beta.10 candidate (the next release; beta.8 and
+beta.9 were never published) makes program changes without a black or silent
+gap and adds a watchdog that ends a program change that gets stuck. It levels
+speech toward -16 LUFS (a standard loudness measure) when a program is
+prepared for air, repeats schedules that are set to loop, and keeps up to
+60 GB of prepared copies of long programs by default (the "conform cache";
+set `CIVICCAST_CONFORM_CACHE_GB` to change it, or `0` to turn it off). It
+recovers by itself in more fault situations, such as a stuck relay or a worker
+that falls behind.
+
+**What was measured, and what was not.** An eight-hour watched run on a
+three-channel lab station (education, government and public airing real
+programs at the same time) used one service process the whole time, with no
+restart, crash, slate or filler after startup. 40 of 41 verify checks passed
+(the one raw failure was judged a sampling blip), loudness passed in 16 of 16
+240-second windows, and 50 program changes were scored with no holes. This is
+lab evidence only: no human field tester has signed off on beta.10, and runs
+longer than eight hours, real stations, SDI hardware and cable headends have
+not been tested for it. See the beta.10 verification record,
+`docs/releases/v1.0.0-beta.10-verification.md`.
+
+**Known limits of beta.10.**
+
+- **Some spoken words can go without captions when the machine is busy.**
+  When a channel's live-caption worker falls behind (most often while the
+  station prepares a long program for the first time), it skips its oldest
+  audio to catch up instead of pausing. In the eight-hour run this happened
+  13 times: about 160 seconds of audio on two channels on a quiet machine.
+  Captions stay on the air, but those seconds have no caption. A fix is the
+  next work item and is not in beta.10. If your station must caption every
+  spoken word, check the captions during live meetings.
+- Twice in the eight-hour run a program change on one channel did not take on
+  its first try and corrected itself in about three seconds. Viewers saw
+  nothing.
+- One known single-frame (0.033 second) video drop can happen where two parts
+  of the same program join.
+- A stretch of a source that is too quiet for the speech leveling to reach the
+  target is reported in the log, not leveled.
+- Carried over from beta.9 and not re-tested in the beta.10 run: a channel
+  whose schedule runs out and does not repeat can stop and need a manual start;
+  `/api/health` can report healthy while a channel cannot air; and the built-in
+  decode-back check (it decodes the broadcast to confirm the captions) failed
+  on certain cue timings in beta.9.
 
 ![CivicCast system architecture](assets/architecture/civiccast-system-architecture.png)
 
@@ -368,7 +414,7 @@ When live captions are on, CivicCast writes captions as the meeting happens.
 On a supported CUDA graphics card it can transcribe up to three channels at
 the same time. On CPU-only stations it captions one channel at a time to keep
 playout responsive; additional channels may fall behind, pause captions, and
-discard stale audio rather than competing indefinitely with the broadcast.
+skip stale audio rather than competing indefinitely with the broadcast.
 Live captioning is hard work for the computer, especially without a suitable
 graphics card.
 
@@ -389,14 +435,17 @@ the switch does not restart an on-air channel automatically. Schedule the
 channel stop/start at a suitable time: it interrupts output. Until then, the
 caption check can show red because captions are expected but not yet present.
 
-**What changed in beta.8:** earlier testing saw repeated picture freezes with
-live captions on. Beta.8 includes repairs to caption processing, restart
-timing and background cleanup. A short Blackwell test matched captions after
-a controlled restart to text decoded from the outgoing video stream. A
-separate test verified that the speech-recognition model loaded on the GPU.
-These are bounded checks, not proof of uninterrupted all-day operation or
-proof that every caption is correct. Startup overload remains a risk to watch;
-the overload limit and two-minute initial pause have not been relaxed.
+**What changed since beta.7:** earlier testing saw repeated picture freezes with
+live captions on. The beta.10 candidate (which includes the unpublished beta.8
+and beta.9 work) repairs caption processing, restart timing and background
+cleanup, and a channel that falls behind now catches up by skipping its oldest
+audio instead of pausing for minutes. A short Blackwell test matched captions
+after a controlled restart to text decoded from the outgoing video stream, and
+a separate test verified that the speech-recognition model loaded on the GPU.
+In the eight-hour three-channel run the catch-up skipped caption audio 13
+times (about 160 seconds on a quiet machine). These are bounded lab checks,
+not proof of uninterrupted all-day operation or that every caption is
+correct.
 
 If a channel reports **captions disabled: session reset failed**, its picture
 and sound can continue, but captions stay off for that session to avoid showing
@@ -415,12 +464,15 @@ your station publishes captioned recordings to meet an accessibility
 requirement, that keeps working with this switch off.
 
 **If you leave it on and the station cannot keep up,** CivicCast does not
-simply grind: it stops captioning that channel for a while (two minutes, then
-four, then eight, up to fifteen), clears the captions that were on screen
-rather than showing stale ones, and tries again later. You will see one
-warning in the log each time that happens. Repeated warnings on the same
-channel mean the live caption path is not keeping up under its current
-conditions. Turn the switch off if necessary to protect the broadcast, retain
+simply grind: a channel that falls behind keeps captioning from the newest
+audio and skips only the oldest audio it could not have transcribed in time, so
+a few seconds of speech go without a caption. You will see one warning in the
+log each time that happens. A channel that has to do this three times in five
+minutes is judged unable to keep up, and then CivicCast stops captioning it for
+a while (two minutes, then four, then eight, up to fifteen), clears the
+captions that were on screen rather than showing stale ones, and tries again
+later. Repeated warnings on the same channel mean the live caption path is not
+keeping up under its current conditions. Turn the switch off if necessary to protect the broadcast, retain
 the logs, and have your technical admin investigate load, storage cleanup and
 the loaded caption model before assuming the graphics card is inadequate.
 
@@ -888,6 +940,7 @@ station needs.
 
 - **`CIVICCAST_EGRESS_ENGINE`** — `gstreamer` (default, S15) or `ffmpeg-concat` (legacy fallback).
 - **`CIVICCAST_EGRESS_WORK_DIR`** — Per-channel temporary directory for egress plans.
+- **`CIVICCAST_CONFORM_CACHE_GB`** — Disk budget, in GB, for the conform cache (prepared copies of long programs kept under `conform-cache/` in the egress work directory so a program that has aired before starts within seconds). Default: `60` (it was `20` before beta.10); `0` disables the cache. Leave room on the data drive: one 4.4-hour program measured about 11 GB.
 - **`CIVICCAST_EGRESS_EMBED_CAPTIONS`** — Attempts the native GStreamer caption-SEI path when the required GStreamer elements are available. The Windows installer stages the CivicCast-bundled private GStreamer runtime under the install root's `runtime\dependencies\gstreamer` and verifies `cccombiner`, `ccconverter`, `h264ccinserter`, and `tttocea608` with the bundled `gst-inspect-1.0.exe`; if any required element remains unavailable, setup stops with an explicit native caption-SEI runtime error instead of claiming the embed path is ready.
 - **`CIVICCAST_GST_ALLOW_HARDWARE_DECODE`** — Optional expert override. By default, the GStreamer worker demotes GPU H.264/H.265 decoders so live UDP/SRT decode stays in system memory before the CPU conform/encode chain. Set to `1` only when the station has validated its hardware decode path end-to-end.
 - **`CIVICCAST_CHANNEL_AUTOMATION`** — Enable the channel automation driver and its poll cadence.
