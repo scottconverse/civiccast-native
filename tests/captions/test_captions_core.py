@@ -603,6 +603,110 @@ class TestRuntimeBoundary:
         gpu = FasterWhisperRuntime(live=True, device="cuda", compute_type="float16")
 
         assert gpu.beam_size == 5
+
+    def _record_transcribe_kwargs(
+        self,
+        runtime: FasterWhisperRuntime,
+    ) -> list[dict[str, Any]]:
+        """Drive one chunk through ``runtime`` and return the model kwargs."""
+
+        calls: list[dict[str, Any]] = []
+
+        def transcribe(*_args: Any, **kwargs: Any) -> tuple[list[Any], object]:
+            calls.append(kwargs)
+            return [], object()
+
+        runtime._model = SimpleNamespace(transcribe=transcribe)
+        list(runtime.transcribe([self._audio_chunk()]))
+        assert calls, "the runtime never reached the model"
+        return calls
+
+    def test_live_tap_bounds_decode_to_one_temperature_pass(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """U70: the live tap decodes once at temperature 0.0; batch/VOD does not.
+
+        faster-whisper's ``generate_with_fallback`` re-decodes a window once
+        per entry of its ``temperature`` list (six by default) until the
+        result clears the compression-ratio and log-probability thresholds.
+        Passing no ``temperature`` -- which is what this runtime did -- leaves
+        the whole list in place on the LIVE tap, whose budget is a 5 s segment
+        cadence it must not miss. Measured on real station audio, that list
+        costs 4.191 s / 9.516 s / 6.381 s against 0.070 s for a single pass.
+
+        Fails if the live tap stops bounding the decode, or if the bound
+        leaks onto the batch/VOD path, which has no cadence to miss and must
+        keep the library's own defaults.
+        """
+
+        monkeypatch.delenv(runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, raising=False)
+
+        live = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        batch = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=False)
+
+        assert runtime_module.LIVE_TAP_DECODE_TEMPERATURE == 0.0
+        live_calls = self._record_transcribe_kwargs(live)
+        batch_calls = self._record_transcribe_kwargs(batch)
+
+        assert live_calls[0]["temperature"] == 0.0, (
+            "the live tap must decode once, not walk faster-whisper's temperature list"
+        )
+        assert live_calls[0]["word_timestamps"] is True
+        assert "temperature" not in batch_calls[0], (
+            "batch/VOD must keep faster-whisper's own temperature defaults"
+        )
+        assert "word_timestamps" not in batch_calls[0]
+
+    def test_live_tap_temperature_fallback_env_override_restores_the_list(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The bound is overridable, and only on the live path."""
+
+        monkeypatch.setenv(runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, "1")
+
+        live = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        batch = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=False)
+
+        assert live.decode_temperature is None
+        assert "temperature" not in self._record_transcribe_kwargs(live)[0]
+        assert "temperature" not in self._record_transcribe_kwargs(batch)[0]
+
+    def test_live_tap_temperature_fallback_env_clamps_a_bad_value(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A mistyped override keeps the bound instead of taking the station off air.
+
+        ``FasterWhisperRuntime`` is constructed UNGUARDED during control-plane
+        startup for the live tap, so this one warns and stays bounded rather
+        than raising the way ``_env_int`` does.
+        """
+
+        monkeypatch.setenv(runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, "maybe")
+
+        with caplog.at_level("WARNING", logger="civiccast.captions.runtime"):
+            live = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+
+        assert live.decode_temperature == runtime_module.LIVE_TAP_DECODE_TEMPERATURE
+        assert any(
+            runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR in record.message
+            for record in caplog.records
+        )
+
+    def test_live_tap_temperature_fallback_env_accepts_an_explicit_off(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """``0``/``false`` is the documented default, stated rather than implied."""
+
+        for value in ("0", "false", "no", "off"):
+            monkeypatch.setenv(runtime_module.CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, value)
+            live = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+            assert live.decode_temperature == runtime_module.LIVE_TAP_DECODE_TEMPERATURE, value
+
     def test_batch_cpu_threads_raises_on_unparseable_env_value(
         self,
         monkeypatch: pytest.MonkeyPatch,

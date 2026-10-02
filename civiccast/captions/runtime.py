@@ -369,10 +369,86 @@ def _resolved_whisper_cpu_threads_env(default: int, *, live: bool) -> int:
     return value
 
 
+def _live_tap_temperature_fallback_enabled() -> bool:
+    """Whether the LIVE tap keeps faster-whisper's temperature fallback list.
+
+    ``False`` by default -- see :data:`LIVE_TAP_DECODE_TEMPERATURE`. CLAMPED
+    rather than fatal, for the same reason
+    :func:`_clamped_caption_tap_cpu_threads_env` is: ``FasterWhisperRuntime``
+    is constructed UNGUARDED during control-plane startup for the live tap,
+    so a mistyped value here must not take an activated station off air over
+    a decode-time guard for a best-effort feature. An unrecognised value keeps
+    the bound and says so.
+    """
+
+    raw = os.environ.get(CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR, "").strip().lower()
+    if not raw:
+        return False
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    logger.warning(
+        "%s value %r is not a boolean; keeping the bounded live decode "
+        "(temperature=%s, no fallback list). Set it to 1 only to restore "
+        "faster-whisper's multi-pass temperature list on the LIVE tap.",
+        CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR,
+        raw,
+        LIVE_TAP_DECODE_TEMPERATURE,
+    )
+    return False
+
+
 #: Greedy decoding for the live tap on CPU: beam search costs roughly its
 #: width in decoder passes, and the live tap has a hard real-time budget that
 #: a VOD pass does not. Overridable with ``CIVICCAST_WHISPER_BEAM_SIZE``.
 LIVE_TAP_CPU_BEAM_SIZE = 1
+
+#: The single decode temperature the LIVE tap uses, and the name of the env
+#: override that restores faster-whisper's own fallback list on the live path.
+#:
+#: faster-whisper's ``generate_with_fallback`` re-decodes a window once per
+#: entry in ``temperature`` until the result clears ``compression_ratio_threshold``
+#: (2.4) and ``log_prob_threshold`` (-1.0). Its default list is six values
+#: (0.0, 0.2, 0.4, 0.6, 0.8, 1.0), and every pass after the first is a
+#: sampling decode with ``best_of=5``. ``FasterWhisperRuntime`` passed no
+#: ``temperature`` at all, so the LIVE tap carried that list.
+#:
+#: MEASURED, U70, on this station's own model (``medium``/float16, RTX 5070 Ti)
+#: over real program audio from the HLS fixtures (measurement and raw output
+#: are the U70 slice's, held outside this repository). On windows the live VAD
+#: passes, the list is never actually walked -- the only threshold lines it
+#: logs are cancelled by the silence bypass, and 20/20 real windows decoded to
+#: byte-identical text with and without the list (arm A p50 0.360 s, max
+#: 0.859 s, vs arm B p50 0.362 s, max 0.543 s). But on the windows the LIVE
+#: VAD is the only thing standing between the decoder and the list -- the four
+#: real "captionquiet" music/ambience windows -- forcing the gate open walks
+#: the whole list and costs 4.191 s / 9.516 s / 6.381 s against 0.070 s with the
+#: gate shut, which brackets the 7.875 s ASR batch in the one live U69
+#: shed-diagnostic event. Whether the live tap's Silero VAD ever passes such a
+#: window is NOT measured and cannot be measured from outside the running
+#: service.
+#:
+#: So the list is a real, priced tail on real station audio whose incidence on
+#: the live path is unknown, and the live tap has a hard 5 s segment cadence it
+#: must not miss. Bounding it to a single pass at ``temperature=0.0`` removes
+#: the one mechanism measured to produce a multi-second decode on this box
+#: while changing nothing at all on every window that was measured: the text
+#: was identical in all 20. The cost of the bound is the text of a window that
+#: the first pass already failed a threshold on; in every walk observed, that
+#: text was either empty or a hallucination ("Thanks for watching!"). The
+#: batch/VOD pass keeps the list -- it has no cadence to miss and is not
+#: constructed unguarded at control-plane startup.
+#:
+#: Scoped to the live tap deliberately, and overridable, for the same reason
+#: :data:`CAPTION_TAP_CPU_THREADS_ENV_VAR` is.
+LIVE_TAP_DECODE_TEMPERATURE = 0.0
+
+#: Env override restoring faster-whisper's own temperature fallback list on the
+#: LIVE tap. Unset, or ``0``/``false``/``no``/``off``, keeps the bounded
+#: single-pass decode; ``1``/``true``/``yes``/``on`` restores the pre-U70
+#: behaviour. Never read by the batch/VOD runtime.
+CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR = "CIVICAST_WHISPER_LIVE_TEMPERATURE_FALLBACK"
 
 #: Files a tier's pinned inventory carries for PROVENANCE rather than for
 #: inference: CTranslate2/faster-whisper never opens them, and an upstream
@@ -789,6 +865,22 @@ class FasterWhisperRuntime:
         self.language = language
         self.task = task
         self.vad_filter = vad_filter
+        # U70: the decode temperature handed to faster-whisper, or ``None`` to
+        # leave its own multi-pass temperature list in place. Resolved once,
+        # here, at the same seam as ``beam_size`` and ``cpu_threads`` -- this
+        # constructor is the only place the live tap's decode settings are
+        # stated, and it is where a requested CUDA runtime already degrades to
+        # CPU mid-flight. ``None`` for every batch/VOD runtime, always: the
+        # list is priced and bounded here, not in finalization.
+        self.decode_temperature: float | None = None
+        if live and not _live_tap_temperature_fallback_enabled():
+            self.decode_temperature = LIVE_TAP_DECODE_TEMPERATURE
+            logger.info(
+                "Live caption tap ASR decode: temperature=%s, single pass "
+                "(no faster-whisper fallback list). %s=1 restores the list.",
+                LIVE_TAP_DECODE_TEMPERATURE,
+                CAPTION_TAP_TEMPERATURE_FALLBACK_ENV_VAR,
+            )
         self._model: Any | None = None
         self._model_lock = threading.Lock()
 
@@ -947,6 +1039,13 @@ class FasterWhisperRuntime:
         live chunk that is (:func:`_pcm_s16le_to_whisper_audio`).
         """
 
+        # U70: the single-pass temperature that bounds this call on the live
+        # tap; empty for a batch/VOD runtime, which keeps faster-whisper's own
+        # multi-pass list. See :data:`LIVE_TAP_DECODE_TEMPERATURE`.
+        temperature_kwargs: dict[str, Any] = (
+            {"temperature": self.decode_temperature} if self.decode_temperature is not None else {}
+        )
+
         segments: Iterable[Any]
         segments, _info = self._model_instance().transcribe(
             source,
@@ -956,6 +1055,7 @@ class FasterWhisperRuntime:
             vad_filter=self.vad_filter,
             initial_prompt=initial_prompt,
             **({"word_timestamps": True} if self._live else {}),
+            **temperature_kwargs,
         )
         return segments
 
