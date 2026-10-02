@@ -1,0 +1,1 @@
+﻿Get-CimInstance Win32_Process -Filter "Name='ffmpeg.exe'" | ForEach-Object { "{0} start={1} :: {2}" -f $_.ProcessId, $_.CreationDate, $_.CommandLine } | Set-Content C:\dev\civiccast-trial\relay-cmdlines.txt -Encoding utf8

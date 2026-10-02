@@ -274,3 +274,26 @@ civiccast/apps/ott-native/webos-out/
 .claude/worktrees/
 .devwalk/
 UsersscottAppDataLocalTemp*
+
+# --- File hygiene (2026-10-02): scratch, evidence blobs and media never go in git ---
+/work/
+/outputs/
+/work_*.py
+*.bak-*
+/scratch/
+/runs/
+**/coder-config/
+*.ccpack
+*.ts
+!tests/fixtures/media/README*
+*.jsonl
+*.mp4
+*.wav
+*.mkv
+*.gguf
+*.bin
+*.onnx
+ops/**/evidence/**
+!ops/**/evidence/**/VERDICT*
+!ops/**/evidence/**/ADJUDICATION*
+!ops/**/evidence/**/INCIDENT*
