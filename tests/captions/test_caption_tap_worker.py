@@ -486,21 +486,21 @@ class TestCaptionTapWorker:
     def test_retention_cleanup_latency_does_not_cause_a_false_overload(
         self, tmp_path: Path
     ) -> None:
-        """Cleanup latency must not manufacture the backlog that trips the gate.
+        """A MID-SESSION cleanup sweep must not manufacture a false overload.
 
-        Isolates the MEASURED field defect (Blackwell 2026-09-16) without touching
-        the max-2 contract:
+        Isolates the measured field defect (Blackwell 2026-09-16, 89 s after
+        ON_AIR) without touching the max-2 contract:
 
-          - the operator threshold stays max_backlog_segments=2, unchanged
-          - a backlog of 2 at gate time is perfectly legal and must NOT overload
-          - the defect is that cleanup ran ~5 s inline BEFORE the gate, so a third
-            segment arrived DURING cleanup and tipped a legal backlog over the line
-            -- fail-closing on a backlog cleanup itself created
+          - max_backlog_segments stays 2; a backlog of 2 at gate time is legal
+          - the FIRST sweep is synchronous by design (it establishes the retention
+            verdict before any ASR -- the original safety guarantee), so the
+            dangerous sweep is a LATER one, on the 60 s cadence, with captions
+            already live.  The defect was that a later sweep also ran inline and
+            blocked ~5 s, so a third segment arrived during cleanup and tipped a
+            legal backlog over the line.
 
-        So this test starts with a legal 2-segment backlog, makes cleanup slow, and
-        has a third segment LAND WHILE CLEANUP RUNS.  If cleanup is off the scan
-        path, the scan proceeds with what it can see and the legal pass is not
-        punished by maintenance work it had no control over.
+        Models that: sweep once (synchronous, establishing the verdict), then make
+        the NEXT sweep slow and land a third segment while it would be running.
         """
 
         tap_root = tmp_path / "tap"
@@ -508,6 +508,7 @@ class TestCaptionTapWorker:
         (tap_root / channel).mkdir(parents=True)
         store = InMemoryCaptionReviewStore()
         slow = _SlowRetentionPolicy(delay_seconds=5.0)  # > 2 scan intervals
+        clock = _FakeClock()
 
         worker = CaptionTapWorker(
             tap_root=tap_root,
@@ -517,9 +518,18 @@ class TestCaptionTapWorker:
             segment_seconds=5.0,
             atomic_segments=True,
             retention_policy=slow,
+            monotonic=clock,
         )
 
-        # A live cue is on air when cleanup begins.
+        # First scan: the verdict is established before any ASR (whatever the
+        # implementation, this must hold).  Assert the OBSERVABLE consequence --
+        # one sweep ran and the store was accepted -- not a new internal flag, so
+        # this regression stays behavioural and can run against older code.
+        _write_wav(tap_root / channel / "chunk-000000.wav", seconds=5.0)
+        worker.run_once()
+        assert slow.calls == 1, "the first scan must verify retention before ASR"
+
+        # A live cue is on air now.
         worker._publisher_for(channel).publish(
             [
                 CaptionCue(
@@ -534,29 +544,29 @@ class TestCaptionTapWorker:
         )
         sidecar = _active_vtt(tap_root, channel)
 
-        # A LEGAL backlog (== the threshold, not over it).
-        _write_wav(tap_root / channel / "chunk-000000.wav", seconds=5.0)
+        # Advance past the sweep cadence so the NEXT scan re-sweeps -- and that
+        # sweep is slow.  A legal 2-segment backlog exists when it starts.
+        clock.advance(61.0)
         _write_wav(tap_root / channel / "chunk-000001.wav", seconds=5.0)
+        _write_wav(tap_root / channel / "chunk-000002.wav", seconds=5.0)
 
-        # A third segment arrives WHILE the slow cleanup would be running.  With
-        # cleanup inline this tips the count to 3 and fails closed; with cleanup on
-        # its own thread it cannot punish the caption pass.
+        # A third segment lands WHILE the slow mid-session sweep would be running.
         def _land_third() -> None:
             threading.Event().wait(0.2)
-            _write_wav(tap_root / channel / "chunk-000002.wav", seconds=5.0)
+            _write_wav(tap_root / channel / "chunk-000003.wav", seconds=5.0)
 
         lander = threading.Thread(target=_land_third, daemon=True)
         lander.start()
         result = worker.run_once()
-        lander.join(timeout=5.0)
+        lander.join(timeout=10.0)
 
         assert result.dropped_overload_segments == 0, (
-            "cleanup latency manufactured a fail-closed overload"
+            "a mid-session cleanup sweep manufactured a fail-closed overload"
         )
         assert "public" not in result.overloaded_channels
         assert "public" not in result.paused_channels
         text = sidecar.read_text(encoding="utf-8")
-        assert text.strip() != "WEBVTT", "cleanup latency cleared the live captions"
+        assert text.strip() != "WEBVTT", "a mid-session cleanup sweep cleared live captions"
 
     def test_real_overload_still_fails_closed_when_cleanup_is_off_path(
         self, tmp_path: Path
