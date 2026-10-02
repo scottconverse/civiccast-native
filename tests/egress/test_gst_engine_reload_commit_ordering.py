@@ -2727,7 +2727,11 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
 
     Arming there is what makes the observation race-free: the leg's first buffer
     cannot flow until ``_release_hold_probes`` lifts the block, so every buffer
-    the probe can see already carries the rebase offset."""
+    the probe can see already carries the rebase offset.
+
+    The offset is 1.000 s, not the 1.100 s of the outgoing AUDIO: round 4 takes
+    the switch point from the SHORTER outgoing leg, which on this fixture -- and
+    on 291 of the 295 live boundaries in the U56 census -- is the video."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
     pending, new_video_src, new_audio_src = _u16_pending(recorder)
@@ -2737,8 +2741,8 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
     engine._begin_reload_commit(pending)
 
     calls = recorder.calls
-    video_offset = _index_of(calls, "set_offset:new-video-src:1100000000")
-    audio_offset = _index_of(calls, "set_offset:new-audio-src:1100000000")
+    video_offset = _index_of(calls, "set_offset:new-video-src:1000000000")
+    audio_offset = _index_of(calls, "set_offset:new-audio-src:1000000000")
     arm_video = _index_of(calls, "add_probe:new-video-src:1:_report_new_leg_first_buffer")
     arm_audio = _index_of(calls, "add_probe:new-audio-src:1:_report_new_leg_first_buffer")
     release_video = _index_of(calls, "remove_probe:new-video-src:video-hold")
@@ -2750,7 +2754,7 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
     assert (
         "CTRL reload diagnostic: rebase-reference reload_id=28 mode=immediate "
         "streams=2 fallback=no ends=[video=1.000,audio=1.100] "
-        "pipeline_running_time=none switch_running_time=1.100"
+        "pipeline_running_time=none switch_running_time=1.000"
     ) in err
 
     # Fire each recorded new-leg probe the way the leg's own streaming thread
@@ -2766,7 +2770,7 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
         )
         assert (
             f"CTRL reload diagnostic: new-leg-first-buffer stream={label} reload_id=28 "
-            f"applied_offset=1.100 pts=5.000 {running} segment_base=1.100"
+            f"applied_offset=1.000 pts=5.000 {running} segment_base=1.100"
         ) in capsys.readouterr().err
 
 
@@ -2878,8 +2882,8 @@ def test_u16_commit_arms_the_selector_side_observation_in_the_same_window(
         _index_of(calls, "remove_probe:new-audio-src:audio-hold"),
     ]
     offsets = [
-        _index_of(calls, "set_offset:new-video-src:1100000000"),
-        _index_of(calls, "set_offset:new-audio-src:1100000000"),
+        _index_of(calls, "set_offset:new-video-src:1000000000"),
+        _index_of(calls, "set_offset:new-audio-src:1000000000"),
     ]
     assert max(offsets) < min(arms), calls
     assert max(arms) < min(releases), calls
@@ -2895,7 +2899,7 @@ def test_u16_commit_arms_the_selector_side_observation_in_the_same_window(
         )
         assert (
             f"CTRL reload diagnostic: new-leg-selector-first-buffer stream={label} "
-            f"pad=new-{label}-selector reload_id=28 applied_offset=1.100 pts=5.000 "
+            f"pad=new-{label}-selector reload_id=28 applied_offset=1.000 pts=5.000 "
             "running_time=6.100 segment_base=1.100"
         ) in capsys.readouterr().err
 
@@ -4767,11 +4771,15 @@ def test_u37_deferred_rebase_switch_waits_for_the_mux_pad_to_drain(
 
     assert "video_sel.set_property:active-pad=new-video" not in recorder.calls, recorder.calls
 
-    # The observer deadline is armed FIRST, at the summed bound, and the poller
-    # only because that succeeded: an observer no timer could remove would
-    # outlive the transaction it describes.
+    # The observer deadline is armed FIRST, at ``_REBASE_HOLD_BOUND_S`` -- the
+    # longer of the two waits a deferral can hold (the U37 drain, the U56 tail
+    # catch-up), plus the observers' own window -- and the poller only because
+    # that succeeded: an observer no timer could remove would outlive the
+    # transaction it describes, and a bound that expired inside a hold would
+    # remove the poller and take the hold with it.
+    assert engine_module._REBASE_HOLD_BOUND_S == 6.0, engine_module._REBASE_HOLD_BOUND_S
     assert [(ms, callback.__name__) for ms, callback, _args in armed] == [
-        (4000, "_on_rebase_observer_deadline"),
+        (6000, "_on_rebase_observer_deadline"),
         (20, "_resume_rebase_drain"),
     ], armed
     assert pending["rebase_drain_timeout_id"] == 2
@@ -5007,7 +5015,7 @@ def test_u37_observer_window_close_reports_what_it_counted(
     assert engine._on_rebase_observer_deadline(pending) is False
 
     assert (
-        "WARN: rebase arrival observer window closed after 4.0s for reload 7: "
+        "WARN: rebase arrival observer window closed after 6.0s for reload 7: "
         "no rebased segment crossed the mux sink pads "
         "(video:sink_65=3, audio:sink_66=0); removing the observers -- nothing is "
         "held off air"
@@ -5030,9 +5038,9 @@ def test_u37_observer_window_close_reports_what_it_counted(
 # -- 1.900 s of programme between two segment heads where the previous segment
 # held 1.200 s of video. That 0.7 s is a VIDEO hole: audio plays on, no picture.
 #
-# Mechanism, from 285 ``rebase-reference`` samples across all three channels:
+# Mechanism, from a ~290-sample ``rebase-reference`` census across all three channels:
 # every seamless changeover logs ends=[video=X,audio=X+delta] with delta at a
-# median of +0.643 s (98.2% inside +0.5..+0.9 s), and the rebase reference is
+# median of +0.642 s (98.3% inside +0.5..+0.9 s), and the rebase reference is
 # ``switch_running_time = max(observed)`` = the AUDIO end.  ``_begin_reload_commit``
 # then gives BOTH new-leg streams that one offset, so the incoming video can never
 # start earlier than the audio end -- correctly -- while ``_arm_old_selector_cutoff``
@@ -5043,9 +5051,27 @@ def test_u37_observer_window_close_reports_what_it_counted(
 #
 # The fix is to bound the fence by VALUE instead of by time: drop what the
 # retiring leg produces PAST the switch point, and let everything at or before it
-# through.  Nothing past the switch point can ever pass, so
-# ``max(observed outgoing ends)`` -- taken before the fence is armed -- is still
-# the bound, and the new leg's offset is still the number the fence enforces.
+# through.  Nothing past the switch point can ever pass, so the observed outgoing
+# ends -- taken before the fence is armed -- are the bound, and the new leg's
+# offset is still the number the fence enforces.
+#
+# Round 4 moved WHICH end that is. The value fence above still cut at the audio
+# end, so the picture the video owned between its own end and the audio's was
+# passed but never produced. The live log shows why no wait can recover it:
+#
+#   85464: CTRL reload: outgoing EOS observed stream=video (1/2 stream(s))
+#   85465: rebase-reference reload_id=5 ... ends=[video=8998.836,audio=8999.467]
+#          switch_running_time=8999.467
+#   85470: stage=rebase-drain-drained waited=1.265s reload_id=5
+#
+# The retiring video is COMPLETE (EOS'd) before the reference line is printed,
+# and the emitted hole was exactly the media end asymmetry -- 0.631 s, which is
+# 8999.467 - 8998.836 (keeper copy ``seg000004499.ts``). So the switch point is
+# now the END OF THE SHORTER LEG (``min`` of the two FINAL ends, either EOS
+# order), and the longer leg's tail past it is dropped by the same value fence,
+# moved. The bound stays 2.0 s: past that the longer leg's end stands and the
+# caller WARNs, because a truly broken asset must stay visible rather than be cut
+# to a stream that never existed.
 
 
 def _u56_fence_probe(
@@ -5081,12 +5107,13 @@ def _u56_armed_pending(
     video_end: int = 1_050_000_000,
     video_running: int = 1_040_000_000,
 ) -> tuple[dict[str, Any], _FakeOldPad, _FakeOldPad]:
-    """A committed reload whose OUTGOING VIDEO END sits BEHIND the switch point.
+    """A committed reload whose OUTGOING VIDEO END IS the switch point.
 
     ``_u16_pending`` already models the live disparity: the outgoing video ends at
-    1.000 s and the outgoing audio at 1.100 s, so the switch point -- the max --
-    is 1.100 s.  Live, that disparity is the ~0.64 s the two streaming threads
-    were apart when the fence was armed.
+    1.000 s and the outgoing audio at 1.100 s.  Since round 4 the switch point is
+    the SHORTER leg's end, so on this shape it is the video's -- 1.050 s here,
+    where the outgoing video's own delivery point is put.  The audio's last
+    0.050 s is the trimmed tail.
     """
     pending, _new_video_src, _new_audio_src = _u16_pending(recorder)
     old_video_pad = pending["old_video_pad"]
@@ -5106,15 +5133,19 @@ def _u56_armed_pending(
 
 
 def test_u56_a_bound_is_published_that_matches_the_switch_point(engine_module) -> None:
-    """The fence and the rebase offset are ONE number, taken from one snapshot."""
+    """The fence and the rebase offset are ONE number, taken from one snapshot.
+
+    Round 4 moved the number, not the invariant: it is the shorter outgoing leg's
+    end (the video's, 1.050 s) rather than the longer one's (the audio's, 1.100 s),
+    and both readers moved together because they read the same field."""
     recorder = _Recorder()
     pending, _old_video, _old_audio = _u56_armed_pending(engine_module, recorder)
 
-    assert pending["old_tail_cutoff_ns"] == 1_100_000_000
+    assert pending["old_tail_cutoff_ns"] == 1_050_000_000
     offsets = {call for call in recorder.calls if call.startswith("set_offset:new-")}
     assert offsets == {
-        "set_offset:new-video-src:1100000000",
-        "set_offset:new-audio-src:1100000000",
+        "set_offset:new-video-src:1050000000",
+        "set_offset:new-audio-src:1050000000",
     }, recorder.calls
 
 
@@ -5122,8 +5153,9 @@ def test_u56_outgoing_tail_below_the_switch_point_still_airs(engine_module) -> N
     """THE HOLE. A buffer the retiring leg produced at or before the switch point
     is legitimate outgoing tail: dropping it is what leaves audio without video.
 
-    Live shape: the switch point is the audio end (1.100 s here); the outgoing
-    video's next buffer ends at 1.040 s -- 60 ms short of it. It must PASS."""
+    Live shape: the switch point is the video's own end (1.050 s here); the
+    outgoing video's next buffer ends at 1.040 s -- 10 ms short of it. It must
+    PASS."""
     recorder = _Recorder()
     pending, old_video_pad, _old_audio = _u56_armed_pending(engine_module, recorder)
     fence = _u56_fence_probe(old_video_pad, engine_module, pending)
@@ -5135,14 +5167,16 @@ def test_u56_outgoing_tail_below_the_switch_point_still_airs(engine_module) -> N
 
 
 def test_u56_outgoing_tail_past_the_switch_point_is_still_dropped(engine_module) -> None:
-    """The other half of the bound: the new leg owns everything after the switch
-    point, so nothing the retiring leg produces past it may reach the selector."""
+    """The other half of the bound, and the TRIM: the new leg owns everything after
+    the switch point, so nothing the retiring leg produces past it may reach the
+    selector -- not even the longer leg's, whose last 0.050 s sits past a switch
+    point taken from the shorter one."""
     recorder = _Recorder()
     pending, _old_video, old_audio_pad = _u56_armed_pending(engine_module, recorder)
     fence = _u56_fence_probe(old_audio_pad, engine_module, pending)
 
     # to_running_time(5.000) == 1.060 s, duration 80 ms -> end 1.140 s: past the
-    # 1.100 s switch point.
+    # 1.050 s switch point.
     result = fence(
         old_audio_pad,
         _FakeProbeInfo(_FakeProbeBuffer(pts=5_000_000_000, duration=80_000_000)),
@@ -5158,12 +5192,12 @@ def test_u56_the_bound_is_inclusive_at_the_switch_point(engine_module) -> None:
     pending, _old_video, old_audio_pad = _u56_armed_pending(engine_module, recorder)
     fence = _u56_fence_probe(old_audio_pad, engine_module, pending)
 
-    # to_running_time(5.000) == 1.060 s, duration 40 ms -> end exactly 1.100 s.
+    # to_running_time(5.000) == 1.010 s, duration 40 ms -> end exactly 1.050 s.
     pending["outgoing_end"][old_audio_pad] = {
-        "end": 1_100_000_000,
+        "end": 1_050_000_000,
         "segment": _FakeSegment(
             base=1_000_000_000,
-            running_time_for_pts={5_000_000_000: 1_060_000_000},
+            running_time_for_pts={5_000_000_000: 1_010_000_000},
         ),
     }
 
@@ -5275,7 +5309,8 @@ def test_u56_the_fence_is_installed_before_the_snapshot_it_is_bound_to(
     engine_module,
 ) -> None:
     """Ordering is the invariant, not an accident: a buffer is either already
-    represented in the snapshot ``max()`` reads, or it is behind the fence.
+    represented in the snapshot the switch point is chosen from, or it is behind
+    the fence.
 
     Sampling FIRST and arming after would let a buffer through that the switch
     point does not account for -- content the new leg would then overlay."""
@@ -5291,8 +5326,8 @@ def test_u56_the_fence_is_installed_before_the_snapshot_it_is_bound_to(
     fence_video = _index_of(calls, "add_probe:old-video:7:_drop_past_switch_point_probe")
     fence_audio = _index_of(calls, "add_probe:old-audio:7:_drop_past_switch_point_probe")
     offsets = [
-        _index_of(calls, "set_offset:new-video-src:1100000000"),
-        _index_of(calls, "set_offset:new-audio-src:1100000000"),
+        _index_of(calls, "set_offset:new-video-src:1000000000"),
+        _index_of(calls, "set_offset:new-audio-src:1000000000"),
     ]
     assert max(fence_video, fence_audio) < min(offsets), calls
 
@@ -5311,3 +5346,610 @@ def test_u56_the_fence_leaves_the_abort_path_drop_everything_probe_alone(
 
     installed = [call for call in recorder.calls if call.startswith("add_probe:")]
     assert installed and all("_drop_everything_probe" in call for call in installed), recorder.calls
+
+
+# ---------------------------------------------------------------------------
+# U56 round 3: an EMPTY mux queue is not a finished retiring leg.
+#
+# The U37 drain gate above releases on the first 20 ms tick where every affected
+# mux sink pad reads ``current-level-buffers == 0``. Live, that reading arrives
+# while the retiring video leg still owes media: measured on the installed
+# candidate (``7509ed0a``) at the 2026-09-27 00:35 commits, both pads read empty
+# with the retiring video still short of the switch point, and the emitted hole
+# was that shortfall -- 0.403 s of audio with no picture in ``seg899``
+# (government), 0.136 s in ``seg900`` (public). Nothing at or before the switch
+# point was dropped: the C4 fence is value-bounded and passes it. The switch
+# simply did not wait for the tail to arrive.
+#
+# So the gate asks a second question. ``_retiring_tail_gap`` reads the same
+# ``outgoing_end`` snapshot the fence is bound to and reports how far the
+# retiring VIDEO's delivered end sits below the switch point; the poller holds
+# the switch until it catches up, or until the leg EOSes on its own pad, or
+# stops advancing, or the catch-up deadline expires. It is a WAIT -- no frame is
+# invented, and the audio path is untouched.
+#
+# Round 4 changed where that question can still be asked. The switch point is now
+# the shorter leg's end, and on the common boundary that IS the retiring video's
+# own delivered end -- so ``behind`` is zero at the boundary the wait was written
+# for, and the fix lands as a switch point rather than a restart (the owner's
+# ruling on ``staging\U56b``: its wait cannot help when the video leg has already
+# EOS'd). What is left for the wait is the boundary where the video's end was NOT
+# yet measured when the switch point was taken: then the point is the audio's, the
+# video's tail arrives afterwards, and the wait holds the switch until it lands.
+# Those two states are pinned below, and the first test is the common boundary
+# switching immediately with nothing trimmed.
+
+
+def _u56_gated_pending(
+    engine_module: types.ModuleType,
+    recorder: _Recorder,
+    *,
+    txn_id: int = 51,
+    video_end: int | None = 1_050_000_000,
+    video_eos: bool = False,
+    video_segment: Any = None,
+) -> tuple[Any, dict[str, Any], _FakeDrainPad, _FakeDrainPad]:
+    """A commit the gate may hold: both mux pads empty, the retiring video behind.
+
+    ``_u16_pending`` already models the live disparity -- outgoing video ends at
+    1.000 s, outgoing audio at 1.100 s -- so the switch point is the SHORTER of
+    the two ends the snapshot saw. With the default ``video_end`` the video's own
+    delivered end IS that point, which is the common live shape since round 4:
+    the queue is empty, the leg is finished at the switch point, and there is
+    nothing to wait for.
+
+    Pass ``video_end=None`` (with ``video_segment=None``, since an unplaceable
+    buffer is not a measurement) to reach the state the wait still serves: the
+    snapshot sees only the audio's end, publishes it as the switch point, and the
+    video's tail then arrives BELOW it. The tests below set that tail by hand.
+    """
+    pending, _new_video_src, _new_audio_src = _u16_pending(recorder, txn_id=txn_id)
+    pending["commit_watchdog"] = None
+    pending["commit_completed"] = None
+    pending["retirement_result"] = None
+    state: dict[str, Any] = {
+        "end": video_end,
+        "segment": video_segment
+        if video_segment is not None
+        else _FakeSegment(
+            base=1_000_000_000,
+            running_time_for_pts={5_000_000_000: 1_040_000_000},
+        ),
+    }
+    if video_eos:
+        state["eos"] = True
+    pending["outgoing_end"][pending["old_video_pad"]] = state
+    # Named selector request pads (``_unready_reload``'s convention) rather than
+    # ``_u16_pending``'s anonymous objects: the handoff the gate releases into is
+    # asserted by the string the selector records.
+    pending["new_video_pad"] = _FakeHoldPad("new-video", recorder)
+    pending["new_audio_pad"] = _FakeHoldPad("new-audio", recorder)
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    video_mux = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
+    audio_mux = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
+    engine._mux_input_pads = {"sink_65": video_mux, "sink_66": audio_mux}
+    engine._pending_reload = pending
+    engine._prepare_reload_handoff(pending)
+    engine._begin_reload_commit(pending)
+    return engine, pending, video_mux, audio_mux
+
+
+def _u56_hand_set_video_tail(pending: dict[str, Any], end_ns: int) -> None:
+    """Give the retiring video an end measured AFTER the switch point was taken.
+
+    ``_u56_gated_pending(video_end=None)`` publishes the switch point from the
+    audio alone; this is the video's own tail arriving below it, which is the one
+    shape since round 4 on which the gate still has something to wait for.
+    """
+    state = pending["outgoing_end"][pending["old_video_pad"]]
+    state["segment"] = _FakeSegment(
+        base=1_000_000_000, running_time_for_pts={5_000_000_000: end_ns - 10_000_000}
+    )
+    state["end"] = end_ns
+
+
+def test_u56_the_common_boundary_switches_at_the_shorter_leg_not_by_a_wait(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """THE ROUND-3 HOLE, CLOSED BY THE SWITCH POINT. Both mux pads read empty
+    while the retiring video's delivered end sits 0.050 s below the outgoing
+    audio's -- the live reading. Under round 3 that meant the gate had to hold the
+    switch until the tail arrived; the owner's ruling on ``staging\\U56b`` is that
+    the hold cannot help when the video leg has already EOS'd, and round 4 makes
+    it unnecessary: the switch point IS the shorter (video) end, the new leg is
+    offset to it, and the audio's own last 0.050 s is the trimmed tail.
+
+    So the commit must run straight through: one deferral for nothing would cost a
+    restart, and the boundary would still have no picture for the wait to recover."""
+    recorder = _Recorder()
+    armed = _u37_timeout_adds(monkeypatch, engine_module)
+    engine, pending, _video_mux, _audio_mux = _u56_gated_pending(engine_module, recorder)
+
+    assert pending["old_tail_cutoff_ns"] == 1_050_000_000
+    assert recorder.calls.count("set_offset:new-video-src:1050000000") == 1, recorder.calls
+    assert recorder.calls.count("set_offset:new-audio-src:1050000000") == 1, recorder.calls
+    # No drain poller: the queue was empty AND the tail was already at the switch
+    # point, so there was nothing to defer for.
+    assert [(ms, callback.__name__) for ms, callback, _args in armed] == [
+        (6000, "_on_rebase_observer_deadline")
+    ], armed
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+    err = capsys.readouterr().err
+    assert "rebase-drain-wait" not in err, err
+    assert "rebase-tail" not in err, err
+    # The line that says which leg the switch point came from, and what it cost
+    # the other one: the same format the round-3 wait line uses for its three
+    # numbers, so the two are readable side by side in one log.
+    assert (
+        "CTRL reload diagnostic: switch-at-shorter-leg reload_id=51 video_end=1.050 "
+        "audio_end=1.100 trimmed=audio:0.050 spread=0.050 bound=2.000 "
+        "bound_exceeded=no switch_running_time=1.050"
+    ) in err, err
+
+
+def test_u56_a_tail_that_arrives_after_the_snapshot_is_waited_for(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """What the round-3 wait still serves: a video tail measured AFTER the switch
+    point was taken.
+
+    The snapshot saw only the audio's end (the video pad had taken nothing
+    placeable yet), so the switch point is the audio's 1.100 s. The video's tail
+    then arrives -- 1.050 s and climbing -- and every millisecond of it is
+    picture the outgoing programme owns. The gate defers on the tail, with no pad
+    named in ``pads=``, and completes only once the delivered end reaches the
+    switch point."""
+    recorder = _Recorder()
+    armed = _u37_timeout_adds(monkeypatch, engine_module)
+    engine, pending, _video_mux, _audio_mux = _u56_gated_pending(
+        engine_module, recorder, video_end=None, video_segment=None
+    )
+
+    # Only one end was measured, so there was nothing to compare: the switch point
+    # is that single end and nothing is reported as trimmed.
+    assert pending["old_tail_cutoff_ns"] == 1_100_000_000
+    assert "video_sel.set_property:active-pad=new-video" not in recorder.calls, recorder.calls
+    assert [(ms, callback.__name__) for ms, callback, _args in armed] == [
+        (6000, "_on_rebase_observer_deadline"),
+        (20, "_resume_rebase_drain"),
+    ], armed
+    err = capsys.readouterr().err
+    assert (
+        "CTRL reload diagnostic: stage=rebase-drain-wait "
+        "pads=video=unmeasured cutoff=1.100 reload_id=51"
+    ) in err, err
+    assert (
+        "trimmed=none spread=0.000 bound=2.000 bound_exceeded=no switch_running_time=1.100"
+    ) in err, err
+
+    # The tail arrives, below the switch point: now there is a number to wait for,
+    # and it is the same number the fence is bound to.
+    _u56_hand_set_video_tail(pending, 1_050_000_000)
+
+    # A tick while the tail is still behind keeps polling, and says so once.
+    assert engine._resume_rebase_drain(pending) is True
+    waited_lines = [
+        line
+        for line in capsys.readouterr().err.splitlines()
+        if line.startswith("CTRL reload diagnostic: stage=rebase-tail-catchup-wait")
+    ]
+    assert len(waited_lines) == 1, waited_lines
+    assert "gap=video=1.050 cutoff=1.100 behind=0.050 waited=" in waited_lines[0]
+    assert waited_lines[0].endswith("s reload_id=51"), waited_lines[0]
+    assert "video_sel.set_property:active-pad=new-video" not in recorder.calls, recorder.calls
+
+    # More of the tail, still short, and now quiet: progress is progress until the
+    # switch point is reached.
+    _u56_hand_set_video_tail(pending, 1_080_000_000)
+    assert engine._resume_rebase_drain(pending) is True
+    assert "rebase-tail-catchup-wait" not in capsys.readouterr().err
+    assert "video_sel.set_property:active-pad=new-video" not in recorder.calls, recorder.calls
+
+    # Caught up: the commit completes, and the release is legible as a release.
+    _u56_hand_set_video_tail(pending, 1_100_000_000)
+    assert engine._resume_rebase_drain(pending) is False
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+    err = capsys.readouterr().err
+    assert "CTRL reload diagnostic: stage=rebase-tail-caught-up waited=" in err, err
+    assert "CTRL reload diagnostic: stage=rebase-drain-drained waited=" in err, err
+
+
+def test_u56_the_switch_point_is_the_shorter_leg_video_first(engine_module) -> None:
+    """The live shape, off the log line that opened this round.
+
+    85464/85465: ``ends=[video=8998.836,audio=8999.467]``. The video EOS'd first
+    and its end is the LOWER one, so the switch point is the video's 8998.836 s
+    and the audio's own last 0.631 s is what the fence trims -- not a wait, and
+    not the audio's end."""
+    select = engine_module.GstPlayoutEngine._select_switch_running_time
+
+    switch, trim, spread, exceeded = select(
+        [("video", 8_998_836_000_000), ("audio", 8_999_467_000_000)],
+        max_trim_ns=2_000_000_000,
+    )
+
+    assert switch == 8_998_836_000_000
+    assert trim == ("audio", 631_000_000)
+    assert spread == 631_000_000
+    assert exceeded is False
+
+
+def test_u56_the_switch_point_is_the_shorter_leg_audio_first(engine_module) -> None:
+    """The reversed shape: the AUDIO is the shorter leg, so the video is trimmed.
+
+    Which leg EOS'd first is not what decides this -- the education seam EOS'd its
+    audio first and the live seam its video, and the rule reads the ENDS, not the
+    order the ends arrived in. The longer leg's end is then NOT the switch point,
+    which is the half of the rule round 3 got wrong."""
+    select = engine_module.GstPlayoutEngine._select_switch_running_time
+
+    switch, trim, spread, exceeded = select(
+        [("video", 8_999_467_000_000), ("audio", 8_998_836_000_000)],
+        max_trim_ns=2_000_000_000,
+    )
+
+    assert switch == 8_998_836_000_000
+    assert trim == ("video", 631_000_000)
+    assert spread == 631_000_000
+    assert exceeded is False
+
+
+def test_u56_the_shorter_leg_is_named_by_pad_identity_not_dict_order(engine_module) -> None:
+    """``outgoing_end`` is filled in first-BUFFER order, which is not the order a
+    leg declares its streams. Insert the audio first and the labels must still
+    come back video-first -- otherwise the trim would name the wrong stream on a
+    boundary where the two are only 0.6 s apart."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _video, _audio = _u16_pending(recorder)
+    pending["outgoing_end"] = {
+        pending["old_audio_pad"]: {"end": 1_050_000_000, "segment": None},
+        pending["old_video_pad"]: {"end": 1_000_000_000, "segment": None},
+    }
+
+    ends = engine._reload_outgoing_ends_in_order(pending)
+    assert ends == [("video", 1_000_000_000), ("audio", 1_050_000_000)], ends
+
+    switch, trim, _spread, _exceeded = engine_module.GstPlayoutEngine._select_switch_running_time(
+        ends, max_trim_ns=2_000_000_000
+    )
+    assert switch == 1_000_000_000
+    assert trim == ("audio", 50_000_000)
+
+
+def test_u56_too_great_a_spread_keeps_the_longer_leg_and_trims_nothing(
+    engine_module,
+) -> None:
+    """A truly broken asset must stay visible. Past the 2.0 s bound the longer
+    leg's end stands -- today's pre-round-4 answer -- and nothing is cut."""
+    select = engine_module.GstPlayoutEngine._select_switch_running_time
+    bound = int(engine_module._SWITCH_SHORTER_LEG_MAX_TRIM_S * 1_000_000_000)
+
+    switch, trim, spread, exceeded = select(
+        [("video", 8_998_836_000_000), ("audio", 9_001_000_000_000)],
+        max_trim_ns=bound,
+    )
+
+    assert switch == 9_001_000_000_000  # the LONGER end, not the shorter
+    assert trim is None
+    assert spread == 2_164_000_000
+    assert exceeded is True
+
+    # The bound is inclusive at the value the line prints: 2.000 s exactly trims.
+    switch, trim, spread, exceeded = select(
+        [("video", 8_998_000_000_000), ("audio", 9_000_000_000_000)],
+        max_trim_ns=bound,
+    )
+    assert switch == 8_998_000_000_000
+    assert trim == ("audio", 2_000_000_000)
+    assert spread == 2_000_000_000
+    assert exceeded is False
+
+
+def test_u56_one_measured_end_is_the_switch_point_with_nothing_trimmed(
+    engine_module,
+) -> None:
+    """Nothing to compare against, so nothing is cut: the single end is the switch
+    point and the line reports a zero spread rather than a phantom trim."""
+    select = engine_module.GstPlayoutEngine._select_switch_running_time
+
+    assert select([("video", None), ("audio", 1_100_000_000)], max_trim_ns=2_000_000_000) == (
+        1_100_000_000,
+        None,
+        0,
+        False,
+    )
+    assert select([("video", 1_000_000_000), ("audio", None)], max_trim_ns=2_000_000_000) == (
+        1_000_000_000,
+        None,
+        0,
+        False,
+    )
+
+
+def test_u56_two_ends_that_agree_trim_nothing(engine_module) -> None:
+    """The legs ended together: the choice is a no-op and must not name a stream
+    that lost nothing."""
+    select = engine_module.GstPlayoutEngine._select_switch_running_time
+
+    assert select([("video", 1_000_000_000), ("audio", 1_000_000_000)], max_trim_ns=2_000_000_000) == (
+        1_000_000_000,
+        None,
+        0,
+        False,
+    )
+
+
+def test_u56_the_switch_point_never_comes_from_the_shorter_leg_it_cannot_see(
+    engine_module,
+) -> None:
+    """No end measured at all is a programming error, not a boundary: the caller
+    takes the pipeline-time fallback instead of calling this."""
+    with pytest.raises(ValueError):
+        engine_module.GstPlayoutEngine._select_switch_running_time(
+            [("video", None), ("audio", None)], max_trim_ns=2_000_000_000
+        )
+
+
+def test_u56_the_bound_exceeded_boundary_warns_and_keeps_the_longer_end(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The WARN the bound owes: the commit still runs, at the longer leg's end.
+
+    A spread over 2.0 s means the two legs disagree about where the programme
+    ended by more than a switch point can absorb; cutting to the shorter one would
+    delete a picture the station never got to show."""
+    recorder = _Recorder()
+    armed = _u37_timeout_adds(monkeypatch, engine_module)
+    # The audio's end is the default 1.100 s and the video's is 5.000 s: a 3.9 s
+    # spread, so the LONGER leg is the video and the audio's 1.100 s is what a
+    # trim would have cut.
+    engine, pending, _video_mux, _audio_mux = _u56_gated_pending(
+        engine_module, recorder, txn_id=57, video_end=5_000_000_000
+    )
+
+    err = capsys.readouterr().err
+    assert (
+        "WARN: reload switch-at-shorter-leg bound exceeded reload_id=57 "
+        "spread=3.900s > 2.000s; keeping the longer-leg end (no trim) -- "
+        "a truly broken asset must stay visible"
+    ) in err, err
+    assert (
+        "trimmed=none spread=3.900 bound=2.000 bound_exceeded=yes switch_running_time=5.000"
+    ) in err, err
+    assert pending["old_tail_cutoff_ns"] == 5_000_000_000
+    assert recorder.calls.count("set_offset:new-video-src:5000000000") == 1, recorder.calls
+    assert recorder.calls.count("set_offset:new-audio-src:5000000000") == 1, recorder.calls
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+    assert [(ms, callback.__name__) for ms, callback, _args in armed] == [
+        (6000, "_on_rebase_observer_deadline")
+    ], armed
+
+
+def test_u56_a_retiring_tail_that_stops_advancing_ends_the_wait(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A guard whose premise has failed must say so and switch anyway.
+
+    A leg that is done but never EOS'd its probed pad reads the same as a starved
+    one -- zero queued, still short -- so the wait would otherwise run to its
+    deadline while nothing more can ever arrive. The tail is the shape the wait is
+    still reachable on since round 4: the video's end was not in the snapshot, so
+    the switch point is the audio's 1.100 s, and the video's delivered tail --
+    1.050 s, an estimate that stopped moving -- is short of it."""
+    recorder = _Recorder()
+    _u37_timeout_adds(monkeypatch, engine_module)
+    engine, pending, _video_mux, _audio_mux = _u56_gated_pending(
+        engine_module, recorder, txn_id=52, video_end=None, video_segment=None
+    )
+    _u56_hand_set_video_tail(pending, 1_050_000_000)
+    capsys.readouterr()
+
+    assert engine._resume_rebase_drain(pending) is True  # first sight: progress
+    pending["rebase_tail_progress_t"] = time.monotonic() - engine_module._REBASE_TAIL_STALL_S - 0.2
+    assert engine._resume_rebase_drain(pending) is False
+
+    err = capsys.readouterr().err
+    assert (
+        "WARN: retiring tail stopped advancing with video=1.050 cutoff=1.100 behind=0.050 "
+        "still owed (1.200s without progress) for reload 52; switching anyway -- "
+        "no more of it is coming"
+    ) in err, err
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+
+
+def test_u56_a_tail_still_behind_at_the_catch_up_deadline_switches_and_warns(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The hold is bounded. Whatever has not arrived by the deadline airs as a
+    picture gap -- that is the pre-U56 outcome, and it must stay reachable.
+
+    The bound must also fit inside the observer window: ``_release_rebase_observers``
+    removes the drain poller with the deadline timer, so a window that closed
+    first would take the hold with it. The tail is the round-4 reachable shape --
+    the switch point came from the audio, the video's 1.050 s arrived below it."""
+    assert engine_module._REBASE_TAIL_CATCHUP_DEADLINE_S < engine_module._REBASE_HOLD_BOUND_S, (
+        engine_module._REBASE_TAIL_CATCHUP_DEADLINE_S,
+        engine_module._REBASE_HOLD_BOUND_S,
+    )
+    recorder = _Recorder()
+    _u37_timeout_adds(monkeypatch, engine_module)
+    engine, pending, _video_mux, _audio_mux = _u56_gated_pending(
+        engine_module, recorder, txn_id=53, video_end=None, video_segment=None
+    )
+    _u56_hand_set_video_tail(pending, 1_050_000_000)
+    capsys.readouterr()
+
+    pending["rebase_drain_started_t"] = (
+        time.monotonic() - engine_module._REBASE_TAIL_CATCHUP_DEADLINE_S - 0.5
+    )
+    assert engine._resume_rebase_drain(pending) is False
+
+    err = capsys.readouterr().err
+    assert (
+        "WARN: retiring tail still video=1.050 cutoff=1.100 behind=0.050 at the 5.0s "
+        "catch-up deadline for reload 53; switching anyway -- what has not arrived by "
+        "now airs as a picture gap"
+    ) in err, err
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+
+
+def test_u56_a_retiring_leg_that_has_already_eosed_is_done(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """EOS on the retiring leg's own pad is that leg's last word: an empty queue
+    plus EOS is a finished leg, so the gate does not defer at all -- no timer is
+    even armed, and the switch happens synchronously as before.
+
+    The fixture is the shape that WOULD be waited on (an unmeasured video end
+    against the audio's switch point), so EOS is the only reason there is no
+    wait: this is the live case the owner's ruling on ``staging\\U56b`` turns on."""
+    recorder = _Recorder()
+    armed = _u37_timeout_adds(monkeypatch, engine_module)
+    engine, pending, _video_mux, _audio_mux = _u56_gated_pending(
+        engine_module, recorder, txn_id=54, video_end=None, video_segment=None, video_eos=True
+    )
+
+    err = capsys.readouterr().err
+    assert "stage=rebase-drain-wait" not in err, err
+    # The observer deadline is not a wait: only the drain poller would be one.
+    assert [(ms, callback.__name__) for ms, callback, _args in armed] == [
+        (6000, "_on_rebase_observer_deadline")
+    ], armed
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+    assert engine._retiring_tail_gap(pending) is None
+
+
+def test_u56_an_unmeasured_retiring_tail_is_not_proven_finished(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No end observed is not an end reached: the same reading that makes the
+    fence fail closed makes the wait keep waiting. It cannot be proven finished,
+    and the deadline is what ends it -- never a guess."""
+    recorder = _Recorder()
+    _u37_timeout_adds(monkeypatch, engine_module)
+    engine, pending, _video_mux, _audio_mux = _u56_gated_pending(
+        engine_module, recorder, txn_id=55, video_end=None, video_segment=None
+    )
+
+    err = capsys.readouterr().err
+    assert (
+        "CTRL reload diagnostic: stage=rebase-drain-wait "
+        "pads=video=unmeasured cutoff=1.100 reload_id=55"
+    ) in err, err
+    capsys.readouterr()
+    assert engine._resume_rebase_drain(pending) is True
+    assert "gap=video=unmeasured cutoff=1.100 waited=" in capsys.readouterr().err
+    assert "video_sel.set_property:active-pad=new-video" not in recorder.calls, recorder.calls
+
+
+def test_u56_a_retiring_tail_at_the_switch_point_is_not_waited_for(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The other half: when the retiring video is already at or past the switch
+    point the gate has nothing to wait for, defers nothing, arms no timer, and
+    the commit runs exactly as it did before U56."""
+    recorder = _Recorder()
+    armed = _u37_timeout_adds(monkeypatch, engine_module)
+    engine, pending, _video_mux, _audio_mux = _u56_gated_pending(
+        engine_module, recorder, txn_id=56, video_end=1_100_000_000
+    )
+
+    err = capsys.readouterr().err
+    assert "stage=rebase-drain-wait" not in err, err
+    assert "rebase-tail" not in err, err
+    # No drain poller was armed: the commit did not defer at all.
+    assert [(ms, callback.__name__) for ms, callback, _args in armed] == [
+        (6000, "_on_rebase_observer_deadline")
+    ], armed
+    assert engine._retiring_tail_gap(pending) is None
+    assert "video_sel.set_property:active-pad=new-video" in recorder.calls, recorder.calls
+
+
+def test_u56_only_the_retiring_video_bounds_the_wait(engine_module) -> None:
+    """Which leg is judged is not a detail.
+
+    The audio ends LAST on 291 of the 295 boundaries in this slice's census of the
+    three copied worker logs (98.6%). Round 3 put the switch point at that larger
+    end, so the audio sat ON the switch point and could never be behind it; round
+    4 puts it at the video's, and it is the video that then owes the tail. Under
+    either rule the leg with something left to deliver is the video, and the
+    VIDEO's end is what is read here. The cutoff is hand-set above both ends --
+    the shape a snapshot taken before the video was placeable produces -- and the
+    audio is lower still, so this pins that a lagging audio is not a reason to
+    hold the switch."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _new_video_src, _new_audio_src = _u16_pending(recorder)
+    pending["old_tail_cutoff_ns"] = 1_200_000_000
+    pending["outgoing_end"][pending["old_audio_pad"]]["end"] = 1_050_000_000
+
+    gap = engine._retiring_tail_gap(pending)
+
+    assert gap is not None
+    behind, label = gap
+    assert behind == pytest.approx(0.2)
+    assert label == "video=1.000 cutoff=1.200 behind=0.200"
+
+
+def test_u56_the_tail_wait_needs_a_bound_and_a_pad(engine_module) -> None:
+    """Both inputs are optional at the call site -- ``_begin_reload_commit`` runs
+    this on every rebase commit, including the ones that have no observed per-pad
+    ends at all. Absent either, there is nothing to wait for."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _new_video_src, _new_audio_src = _u16_pending(recorder)
+
+    pending["old_tail_cutoff_ns"] = None
+    assert engine._retiring_tail_gap(pending) is None
+
+    del pending["old_tail_cutoff_ns"]
+    assert engine._retiring_tail_gap(pending) is None
+
+    pending["old_tail_cutoff_ns"] = 1_100_000_000
+    pending["old_video_pad"] = None
+    assert engine._retiring_tail_gap(pending) is None
+
+
+def test_u56_the_mux_probe_records_that_the_retiring_leg_has_ended(
+    engine_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Where the EOS flag comes from: the same probe that drops the retiring leg's
+    EOS (so it can never reach the mux) records it first -- in its own guard,
+    ahead of the diagnostic, so the wait's escape never depends on a log line."""
+    recorder = _Recorder()
+    engine = _bare_engine_for_commit(engine_module, recorder)
+    pending, _new_video_src, _new_audio_src = _u16_pending(recorder, txn_id=57)
+    engine._pending_reload = pending
+    queued: list[Any] = []
+    monkeypatch.setattr(engine_module.GLib, "idle_add", lambda fn, *a: queued.append(fn))
+    old_video_pad = pending["old_video_pad"]
+
+    result = engine._on_outgoing_pad_data(
+        old_video_pad, _FakeEventProbeInfo(_FakeProbeEvent(_FakeEventType.EOS)), 57
+    )
+
+    assert result == engine_module.Gst.PadProbeReturn.DROP, result
+    assert pending["outgoing_end"][old_video_pad]["eos"] is True
+    assert engine._retiring_tail_gap(pending) is None
+    assert queued == [engine._on_old_leg_eos], queued
+    err = capsys.readouterr().err
+    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=old-video pending_txn=57" in err, err

@@ -410,11 +410,11 @@ def _drop_past_switch_point_probe(
     ``_arm_old_selector_cutoff`` installs this on both outgoing pads. It used to
     install the unbounded ``_drop_everything_probe`` above, so the retiring leg's
     output stopped dead at the instant the probe was armed. The rebase reference
-    that same commit is built from is ``max(observed outgoing ends)`` -- the
-    LATER of the two streams, because the new leg may never start EARLIER than
+    that same commit is built from is the two observed outgoing ends: the LATER
+    of them under the old rule, because the new leg may never start EARLIER than
     where either stream stopped. On the live station the outgoing video's
-    delivery point trails the outgoing audio's by ~0.64 s (285
-    ``rebase-reference`` samples, all three channels: median +0.643 s, 98.2%
+    delivery point trails the outgoing audio's by ~0.64 s (a ~290-sample
+    ``rebase-reference`` census of the three channels: median +0.642 s, 98.3%
     within +0.5..+0.9 s), so an unbounded fence threw away the video that should
     have carried the picture from the video end up to the switch point. Audio
     playout continued and the mux got no video for ~0.64 s; the emitted HLS
@@ -423,7 +423,11 @@ def _drop_past_switch_point_probe(
     Bounding the fence by the switch point passes exactly the outgoing tail the
     rebase reference already accounts for, and still drops everything past it --
     so the new leg's offset is unchanged: nothing beyond the bound can ever
-    cross, which keeps ``max(observed)`` the bound it was computed as.
+    cross. Under the old rule the bound was ``max(observed)``; round 4 moves that
+    same bound to the SHORTER leg's end (``_SWITCH_SHORTER_LEG_MAX_TRIM_S``), so
+    this probe now cuts the longer leg's tail as well. It needs no change to do
+    that: it reads one published number, and the invariant is that the number it
+    reads is the one the offsets were set to.
 
     Everything that is not a single BUFFER -- an event, a buffer list -- is
     still dropped whole. That is not incidental: the retiring leg's EOS crossing
@@ -611,13 +615,76 @@ _MAX_COMMIT_TIMEOUT_S = 120.0
 # overlap. It bounds only the observers' own bookkeeping: they no longer change
 # what airs, so an expired one costs nothing. Raising the drain bound reduces the
 # margin the observer deadline has over the drain poller it removes at expiry, so
-# the two must stay summed above ``_REBASE_DRAIN_DEADLINE_S``.
+# it must stay summed above the LONGEST wait this switch can be deferred by --
+# ``_REBASE_DRAIN_DEADLINE_S`` or ``_REBASE_TAIL_CATCHUP_DEADLINE_S`` below; see
+# ``_REBASE_HOLD_BOUND_S``, which both the armed deadline and its WARN read.
 _REBASE_DRAIN_DEADLINE_S = 3.0
 _REBASE_OBSERVER_DEADLINE_S = 1.0
 # 20ms: fine enough that a drain is seen within a frame of the pad emptying, and
 # that the wait added to a real switch is its own duration and no more; coarse
 # enough not to spin.
 _REBASE_DRAIN_POLL_MS = 20
+
+# U56: the third bound, and the one the live hole needed. The drain wait above --
+# and ``_rebase_drain_held``'s predicate -- ask whether the mux has consumed what
+# the retiring leg has SENT. On the live station that is not the same question as
+# whether the retiring leg has finished sending, and the two answers differ by
+# hundreds of milliseconds: measured 2026-09-27 with the value-bounded fence
+# installed, the affected pads read empty while the outgoing video's delivered end
+# still sat 0.403s (government) and 0.136s (public) below the switch point, and
+# exactly that much picture never aired -- no fence can pass a buffer that was
+# never delivered. ``_retiring_tail_gap`` asks the second question and
+# ``_retiring_tail_wait`` holds the switch (on this same poller, off the main
+# loop's critical path) until the retiring video has caught up to the switch point,
+# EOS'd, or stood still for ``_REBASE_TAIL_STALL_S``.
+#
+# The deadline is what keeps that safe, and it is the whole hold: it is measured
+# from the deferral, exactly like ``_REBASE_DRAIN_DEADLINE_S``, so the two waits
+# overlap rather than add, and no switch can be held past this bound even if the
+# leg never delivers another byte. 5.0s is above the worst drain measured for this
+# guard (2.140s, the maximum of the 156 drains this slice's live census recorded)
+# and above the catch-up the live station did achieve (1.234s for 0.182s of tail),
+# and far enough below ``_DEFAULT_COMMIT_TIMEOUT_S`` (15.0s) that the wait can
+# never be mistaken for the commit watchdog firing.
+_REBASE_TAIL_CATCHUP_DEADLINE_S = 5.0
+# How long the delivered end may stand still before the wait calls the retiring leg
+# finished. Sized from the same measurement: the tail was STILL advancing a second
+# after the pads read empty, so this is what separates "still arriving, slowly"
+# from "done". It can only ever SHORTEN the wait above.
+_REBASE_TAIL_STALL_S = 1.0
+# The longest a rebase commit can be deferred, plus the observers' own window. The
+# two waits above overlap -- both are measured from the deferral, and either one
+# ends the deferral -- so this is the longer of them, never their sum. The armed
+# observer deadline and the WARN it prints both read this one number.
+_REBASE_HOLD_BOUND_S = (
+    max(_REBASE_DRAIN_DEADLINE_S, _REBASE_TAIL_CATCHUP_DEADLINE_S) + _REBASE_OBSERVER_DEADLINE_S
+)
+
+# U56 round 4: the switch point at a seamless change is the end of the SHORTER
+# outgoing leg, and this is the bound on how much of the LONGER leg it may throw
+# away. The value-bounded fence above passes the outgoing tail the switch point
+# already accounts for; taking the MAX of the two ends (the rule until now)
+# accounts for the longer leg only, so on the shorter stream's own timeline the
+# new leg starts later than the outgoing one stopped and the difference never
+# airs. Measured live 2026-09-27, the emitted hole IS that difference: 0.631s at
+# the education seam, video end 8998.836 vs audio end 8999.467, and the audio was
+# clean at every one of the 14 boundaries the coordinator tallied -- because the
+# audio is the longer leg on 291 of the 295 boundaries in this slice's census
+# above. Switching at the shorter leg's end instead cuts the longer leg's tail at
+# that value, which is exactly what the same fence already did with it, and
+# neither stream then has a gap: the shorter one has nothing left to deliver, the
+# longer one is cut where the new leg's offset covers it.
+#
+# The bound is what keeps that trade from silencing a broken asset. It is right
+# only for the media's own A/V end offset; far above it the asymmetry is not a
+# boundary, and trimming would silently discard seconds of a programme to cover
+# for it. Past the bound today's max-based answer stands and the WARN in
+# ``_begin_reload_commit`` names the spread -- a truly broken asset must stay
+# visible. 2.0s sits above every healthy boundary in that census (98.3% within
+# +0.5..+0.9s, the extremes 0.033s and 2.781s) and far below the ~9.4s a
+# collapsed stream was measured to run behind, so it separates the two shapes by
+# a wide margin on both sides.
+_SWITCH_SHORTER_LEG_MAX_TRIM_S = 2.0
 
 # U37: how far behind another stream's AIRING running time one required stream may
 # fall before the per-stream judge calls it stalled (``_check_stream_stalls``).
@@ -4094,6 +4161,10 @@ class GstPlayoutEngine:
           committed (``_pending_reload`` back to None) but the old leg has not
           finished being disposed: an audio EOS arriving in THAT window is the
           one that would otherwise still take the channel off air.
+          U56: the same tick also records ``outgoing_end[pad]["eos"] = True``.
+          That flag is the only place the commit's tail wait can learn the
+          retiring leg has finished sending -- from the mux pad an empty queue and
+          a starved one are the same reading (see ``_retiring_tail_gap``).
         * anything else -- untouched.
         """
         pending = self._pending_reload
@@ -4123,6 +4194,17 @@ class GstPlayoutEngine:
             # The pad name is resolved with a fallback rather than inside the
             # blanket guard: this line's ABSENCE is itself evidence (see above), so
             # nothing but the write may be allowed to eat the whole line.
+            # U56: and before that, the tail wait's last word. ``_resume_rebase_drain``
+            # cannot tell a starved pad from a finished leg -- both read zero -- but
+            # this probe can: EOS crossing the retiring leg's OWN selector pad is
+            # that leg saying it has delivered every buffer it will ever deliver.
+            # Recorded in its own guard, ahead of the diagnostic, so the wait's
+            # escape never depends on whether that line could be written.
+            if pending is not None:
+                with contextlib.suppress(Exception):
+                    pending["outgoing_end"].setdefault(pad, {"end": None, "segment": None})[
+                        "eos"
+                    ] = True
             try:
                 pad_name = pad.get_name()
             except Exception:
@@ -4190,12 +4272,14 @@ class GstPlayoutEngine:
 
         Printed to stderr beside the existing ``finite switch rebased to running
         time ...`` stdout line. ``ends=[video=..,audio=..]`` are the two numbers
-        the shared ``max`` was taken over -- the per-pad values that U16 could
-        not recover from the live logs -- and ``fallback`` says whether the
-        pipeline's own running time stood in for them. Both are needed to
-        decompose a step: two ends ~109s apart indict the shared max, while two
-        agreeing ends whose shared value still lands far from the output's own
-        position indict the reference basis instead.
+        the switch point is chosen from (round 4: the SHORTER of them; the
+        ``switch-at-shorter-leg`` line names which one won and what was trimmed)
+        -- the per-pad values that U16 could not recover from the live logs --
+        and ``fallback`` says whether the pipeline's own running time stood in
+        for them. Both are needed to decompose a step: two ends ~109s apart
+        indict the ends themselves, while two agreeing ends whose shared value
+        still lands far from the output's own position indict the reference
+        basis instead.
         """
         ends = ",".join(
             f"{label}={_seconds_or_none(end)}"
@@ -4212,6 +4296,82 @@ class GstPlayoutEngine:
             f"mode={mode} streams={len(pending['new_src_pads'])} "
             f"fallback={'yes' if rebase_fallback else 'no'} ends=[{ends}] "
             f"pipeline_running_time={pipeline} "
+            f"switch_running_time={_seconds_or_none(switch_running_time)}"
+        )
+
+    @staticmethod
+    def _select_switch_running_time(
+        measured_ends: list[tuple[str, int | None]],
+        *,
+        max_trim_ns: int,
+    ) -> tuple[int, tuple[str, int] | None, int, bool]:
+        """The switch point, from the two FINAL outgoing ends (U56 round 4).
+
+        Returns ``(switch_running_time, trim, spread_ns, bound_exceeded)``:
+
+        * ``switch_running_time`` -- the value BOTH new-leg pads are offset to and
+          the value ``old_tail_cutoff_ns`` publishes to the fence. One number, two
+          readers, and it has to stay that way: the fence exists to cut the
+          retiring leg exactly where the offset stops accounting for it.
+        * ``trim`` -- ``(longer_stream, spread_ns)`` when the SHORTER leg's end was
+          chosen and the longer leg's tail past it is therefore cut, else ``None``.
+          ``None`` covers three different situations on purpose -- the two ends
+          agree (nothing to cut), only one stream was measured (nothing to compare
+          against), and the spread was over the bound -- because in all three the
+          answer is the same single end and the diagnostic names which one it was.
+        * ``spread_ns`` -- the difference between the two ends, ``0`` when fewer
+          than two were measured. Reported even when nothing was trimmed, so the
+          bound's own decision is readable from the log line.
+        * ``bound_exceeded`` -- the spread was over ``max_trim_ns``. The longer
+          leg's end stands (today's pre-round-4 answer) and the caller WARNs.
+
+        ``measured_ends`` is ``(label, end)`` in leg order, video first, from
+        ``_reload_outgoing_ends_in_order`` -- labelled by PAD IDENTITY, so the
+        shorter/longer naming cannot be swapped by dict iteration order.
+        """
+        ends = [(label, end) for label, end in measured_ends if end is not None]
+        if not ends:
+            raise ValueError("no outgoing end measured")
+        longest = max(ends, key=lambda item: item[1])
+        shortest = min(ends, key=lambda item: item[1])
+        spread_ns = longest[1] - shortest[1]
+        if len(ends) == 1:
+            return longest[1], None, 0, False
+        if spread_ns > max_trim_ns:
+            return longest[1], None, spread_ns, True
+        if spread_ns <= 0:
+            # The two legs ended together: the choice is a no-op and says so by
+            # reporting no trim, rather than naming a stream that lost nothing.
+            return longest[1], None, 0, False
+        return shortest[1], (longest[0], spread_ns), spread_ns, False
+
+    @staticmethod
+    def _switch_shorter_leg_diagnostic(
+        pending: dict[str, Any],
+        *,
+        measured_ends: list[tuple[str, int | None]],
+        switch_running_time: int,
+        trim: tuple[str, int] | None,
+        spread_ns: int,
+        bound_exceeded: bool,
+    ) -> str:
+        """One line naming which leg the switch point came from (U56 round 4).
+
+        ``trimmed`` names the LONGER stream and how much of its delivered tail the
+        fence cut; ``none`` when the two legs ended together, only one was
+        measured, or the spread was over the bound -- ``bound_exceeded`` tells the
+        last of those apart from the first two. ``spread`` is reported alongside
+        so a boundary at 0.9s and one at 3.0s differ in more than their verdict.
+        """
+        ends = dict(measured_ends)
+        trimmed = _DIAGNOSTIC_NONE if trim is None else f"{trim[0]}:{trim[1] / Gst.SECOND:.3f}"
+        return (
+            f"CTRL reload diagnostic: switch-at-shorter-leg reload_id={pending['txn_id']} "
+            f"video_end={_seconds_or_none(ends.get('video'))} "
+            f"audio_end={_seconds_or_none(ends.get('audio'))} "
+            f"trimmed={trimmed} spread={_seconds_or_none(spread_ns)} "
+            f"bound={_SWITCH_SHORTER_LEG_MAX_TRIM_S:.3f} "
+            f"bound_exceeded={'yes' if bound_exceeded else 'no'} "
             f"switch_running_time={_seconds_or_none(switch_running_time)}"
         )
 
@@ -4888,27 +5048,46 @@ class GstPlayoutEngine:
             self._arm_old_selector_cutoff(pending)
             # Rebase the held leg onto the outgoing leg's end BEFORE anything of it
             # crosses the selector (mechanism 3 in reload_program's docstring).
-            # ONE offset for both streams -- the max of the two outgoing ends -- so
-            # neither video nor audio can start EARLIER than where its own stream
-            # stopped: a backwards step is what breaks PCR/CC.
+            # ONE offset for both streams, so neither video nor audio can start
+            # EARLIER than where its own stream stopped: a backwards step is what
+            # breaks PCR/CC.
             #
-            # U56: the forward step that same choice creates is NOT sub-frame. On
-            # the live station the two outgoing streams are ~0.64 s apart at this
-            # snapshot (median over 285 samples), so taking the max leaves a real
-            # gap on the SHORTER stream's own timeline -- which is exactly why the
-            # fence above has to be value-bounded rather than instantaneous. The
-            # gap the emitted output sees is the part no outgoing buffer covers.
-            observed = [
-                state["end"]
-                for state in pending["outgoing_end"].values()
-                if state["end"] is not None
-            ]
+            # U56 round 4: that one offset is the SHORTER of the two outgoing ends,
+            # not the max. The max cannot start either stream early, but it starts
+            # the shorter one LATE by the whole A/V end offset -- and the emitted
+            # hole is exactly that offset, because the shorter stream has nothing
+            # left to cover it with (measured live 2026-09-27: hole 0.631s =
+            # audio end 8999.467 - video end 8998.836, picture only). The shorter
+            # end costs the longer leg its tail past that point, which the fence
+            # above has already been dropping since U56 -- so the value the fence
+            # cuts at and the value the offsets are set to are still ONE number,
+            # and that is the invariant to keep when changing either. See
+            # ``_SWITCH_SHORTER_LEG_MAX_TRIM_S`` for the bound on the trim and why
+            # a spread over it keeps the max instead.
+            #
+            # The ends read here are the FINAL ones: ``outgoing_end`` is updated by
+            # the outgoing pad probe as the leg delivers and stops being updated
+            # once it EOSes, and this snapshot is taken after the deferral has
+            # waited for the end of the current programme -- so a leg that EOSed
+            # is read at its true end whether it EOSed before or after the other
+            # one (live, 2026-09-27: video first at the round-3 education seam,
+            # audio first at the reload_id=6 one).
+            measured_ends = self._reload_outgoing_ends_in_order(pending)
+            observed = [end for _label, end in measured_ends if end is not None]
             # U16: the pipeline-time read happens ONCE, in the branch that uses
             # it, and both the applied value and the report come from that one
             # read -- a second read a tick later would print a reference that is
             # not the one the offset was actually set to.
             if observed:
-                switch_running_time = max(observed)
+                (
+                    switch_running_time,
+                    switch_trim,
+                    switch_spread_ns,
+                    switch_trim_bound_exceeded,
+                ) = self._select_switch_running_time(
+                    measured_ends,
+                    max_trim_ns=int(_SWITCH_SHORTER_LEG_MAX_TRIM_S * Gst.SECOND),
+                )
                 pipeline_running_time_ms: int | None = None
             else:
                 # No buffer was ever observed on the outgoing pads (a leg that
@@ -4918,6 +5097,24 @@ class GstPlayoutEngine:
                 # per-stream bound to read, the fence stays unbounded.
                 pipeline_running_time_ms = self._pipeline_running_time_ms()
                 switch_running_time = pipeline_running_time_ms * int(Gst.MSECOND)
+                # Nothing was measured, so there are no two ends to compare and
+                # nothing to trim: the reference is the pipeline's own position,
+                # which is not a per-stream end at all.
+                switch_trim = None
+                switch_spread_ns = 0
+                switch_trim_bound_exceeded = False
+            # U56 round 4: over the bound the max stands and the spread is named,
+            # so a boundary that was NOT trimmed never looks like one that was.
+            if switch_trim_bound_exceeded:
+                print(
+                    f"WARN: reload switch-at-shorter-leg bound exceeded "
+                    f"reload_id={pending['txn_id']} "
+                    f"spread={switch_spread_ns / Gst.SECOND:.3f}s "
+                    f"> {_SWITCH_SHORTER_LEG_MAX_TRIM_S:.3f}s; keeping the longer-leg end "
+                    "(no trim) -- a truly broken asset must stay visible",
+                    file=sys.stderr,
+                    flush=True,
+                )
             # U56: Publish the bound the fence reads. This is the SAME value the
             # offsets below are set to, from the SAME snapshot -- one number, so
             # the retiring leg can never air content the new leg's offset does
@@ -4938,9 +5135,9 @@ class GstPlayoutEngine:
                 f"streams={len(pending['new_src_pads'])} reload_id={pending['txn_id']}",
                 flush=True,
             )
-            # U16: the same switch, decomposed -- the per-pad ends the shared max
-            # was taken over, whether the pipeline-time fallback stood in for
-            # them, and the value actually applied. Guarded: a diagnostic must
+            # U16: the same switch, decomposed -- the per-pad ends the shared
+            # reference was taken over, whether the pipeline-time fallback stood in
+            # for them, and the value actually applied. Guarded: a diagnostic must
             # never be able to abort a commit.
             with contextlib.suppress(Exception):
                 print(
@@ -4949,6 +5146,24 @@ class GstPlayoutEngine:
                         switch_running_time=switch_running_time,
                         rebase_fallback=pipeline_running_time_ms is not None,
                         pipeline_running_time_ms=pipeline_running_time_ms,
+                    ),
+                    file=sys.stderr,
+                    flush=True,
+                )
+            # U56 round 4: which leg the reference came from, and what that cost
+            # the other one. Printed at EVERY boundary, not only a trimmed one:
+            # which branch this took is the fact that makes the next live change
+            # decomposable, and a boundary that trimmed 0.6s and one that trimmed
+            # nothing are otherwise indistinguishable in the emitted output.
+            with contextlib.suppress(Exception):
+                print(
+                    self._switch_shorter_leg_diagnostic(
+                        pending,
+                        measured_ends=measured_ends,
+                        switch_running_time=switch_running_time,
+                        trim=switch_trim,
+                        spread_ns=switch_spread_ns,
+                        bound_exceeded=switch_trim_bound_exceeded,
                     ),
                     file=sys.stderr,
                     flush=True,
@@ -4972,7 +5187,14 @@ class GstPlayoutEngine:
             # path.
             if self._arm_rebase_segment_observers(pending):
                 held = self._rebase_drain_held(pending)
-                if held and self._defer_rebase_drain(pending, held):
+                # U56: an empty queue is necessary but not sufficient. See
+                # ``_retiring_tail_gap``: the pads read empty as soon as the mux
+                # catches up with a leg that is itself still behind, and the part
+                # of the tail that has not been delivered yet is exactly the hole.
+                # Wait for either -- one deferral, two reasons, one bound.
+                tail = self._retiring_tail_gap(pending)
+                waiting = list(held) + ([tail[1]] if tail is not None else [])
+                if waiting and self._defer_rebase_drain(pending, waiting):
                     return
         self._continue_reload_commit(pending)
 
@@ -5479,7 +5701,11 @@ class GstPlayoutEngine:
         The deadline is armed FIRST, and the probes only if it could be armed: an
         observer no timer can remove would outlive the transaction it describes,
         so an unavailable timer degrades to today's un-observed behaviour with a
-        WARN instead.
+        WARN instead. It must cover the WHOLE deferral -- the drain wait, and since
+        U56 the tail catch-up after it -- because ``_release_rebase_observers``
+        removes the drain poller as well: a bound that expired inside a hold would
+        kill the hold and take the switch with it. That is what
+        ``_REBASE_HOLD_BOUND_S`` is for.
 
         Returns True when this switch has pads worth waiting for. Note that a pad
         whose probe could not be installed still joins the drain set: waiting for
@@ -5488,7 +5714,7 @@ class GstPlayoutEngine:
         affected = self._rebase_affected_mux_pads(pending)
         if not affected:
             return False
-        bound_ms = round((_REBASE_DRAIN_DEADLINE_S + _REBASE_OBSERVER_DEADLINE_S) * 1000)
+        bound_ms = round(_REBASE_HOLD_BOUND_S * 1000)
         try:
             deadline_id = GLib.timeout_add(bound_ms, self._on_rebase_observer_deadline, pending)
         except Exception as exc:
@@ -5579,6 +5805,142 @@ class GstPlayoutEngine:
 
         return _observe_rebase_arrivals
 
+    def _retiring_tail_gap(self, pending: dict[str, Any]) -> tuple[float, str] | None:
+        """``(seconds of retiring video still owed, label)``, or None if it owes none.
+
+        The U37 drain wait asks whether the mux has consumed what the retiring leg
+        has SENT; this asks the half of the question that the live station actually
+        failed -- has the retiring leg finished SENDING? Both affected pads read
+        empty while the outgoing video was still hundreds of milliseconds behind
+        them, because the pad empties as soon as the mux catches up with a leg that
+        is itself behind, and every millisecond of tail that had not arrived by the
+        switch aired as a hole. See the U56 constant block for the measured numbers.
+
+        Only the VIDEO leg is judged. The switch point was the max over the observed
+        ends until round 4 and is now the SHORTER of them, and under EITHER rule the
+        audio is the leg that ends LAST on 291 of the 295 live boundaries in this
+        slice's census of the three copied worker logs (98.6%; the four exceptions
+        trail it by 0.033-2.781 s). So on a boundary of the common shape the
+        retiring audio has nothing left at or below the switch point while the video
+        has the whole A/V end offset still to deliver, and this wait is aimed at
+        exactly that: it holds the switch until the VIDEO catches up. Under round
+        4's rule the video end IS the switch point, so the common boundary no longer
+        has anything to wait for -- the wait stays for the reversed boundary (a
+        video that ends last, and so is the longer leg and is trimmed) and for a
+        video whose end was still an estimate when the switch point was taken. On
+        the four reversed boundaries the roles are reversed and this wait does not
+        judge the audio: the drain gate still covers what the mux is queueing, but a
+        starved AUDIO tail on such a boundary is not waited for. Video-only is the
+        scope that matches the measured defect -- every hole this slice has evidence
+        for, live and on the harness, is pictures.
+
+        The bound waited on is the same one the fence enforces,
+        ``old_tail_cutoff_ns`` (published in ``_begin_reload_commit`` from the very
+        snapshot the switch point was chosen from), so no wait here can air a buffer
+        the new leg's offset does not account for. Three states owe nothing:
+
+        * no cutoff -- nothing was observed, so there is no per-stream bound and the
+          fence is unbounded too; a wait would have no target;
+        * ``eos`` -- the leg's own last word on that pad (see
+          ``_on_outgoing_pad_data``);
+        * the delivered end is already at or past the cutoff.
+
+        A pad armed but never measured is reported as UNBOUNDED (``inf``): it has
+        taken a buffer the running-time computation could not place, which is the
+        same answer the fence gives it. Only the deadline makes that safe, which is
+        why the deadline exists. The key is the pad OBJECT, because that is what
+        ``outgoing_end`` is keyed by (``_reload_outgoing_ends_in_order``).
+        """
+        cutoff = pending.get("old_tail_cutoff_ns")
+        pad = pending.get("old_video_pad")
+        if cutoff is None or pad is None:
+            return None
+        state = pending["outgoing_end"].get(pad)
+        if state is None or state.get("eos"):
+            return None
+        end = state.get("end")
+        if end is None:
+            return float("inf"), f"video=unmeasured cutoff={cutoff / Gst.SECOND:.3f}"
+        behind = (cutoff - end) / Gst.SECOND
+        if behind <= 0:
+            return None
+        return (
+            behind,
+            f"video={end / Gst.SECOND:.3f} cutoff={cutoff / Gst.SECOND:.3f} behind={behind:.3f}",
+        )
+
+    def _retiring_tail_wait(self, pending: dict[str, Any], waited: float) -> bool:
+        """Main-loop tick: hold the switch while the retiring video is still behind.
+
+        Returns True to keep polling. This is a WAIT on the leg's own delivery, not
+        a fabrication: nothing here creates, re-dates, duplicates or re-orders a
+        buffer -- the tail that arrives is aired under the OLD segment with its own
+        running time, exactly as it would have been had the commit never been
+        deferred. The only thing the hold costs is the delay itself.
+
+        Four exits, three of them the leg's own answer:
+
+        * CAUGHT UP -- ``_retiring_tail_gap`` returns None. Reported once, only if
+          this tick had previously reported a wait, so a switch that was never
+          behind stays as quiet as it was before U56.
+        * DEADLINE -- ``_REBASE_TAIL_CATCHUP_DEADLINE_S`` from the deferral, which
+          is where the whole hold is bounded. WARN, then switch anyway: the picture
+          that has not arrived by now is a gap, and lying about it would be worse.
+        * STALL -- ``_REBASE_TAIL_STALL_S`` without the delivered end moving: the
+          leg is done but never EOS'd (a starved chain, a leg whose EOS the
+          boundary probe dropped on the other stream first). WARN, then switch.
+        * anything else -- keep polling.
+        """
+        gap = self._retiring_tail_gap(pending)
+        if gap is None:
+            if pending.pop("rebase_tail_wait_reported", False):
+                print(
+                    f"CTRL reload diagnostic: stage=rebase-tail-caught-up "
+                    f"waited={waited:.3f}s reload_id={pending['txn_id']}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            pending.pop("rebase_tail_last_behind", None)
+            pending.pop("rebase_tail_progress_t", None)
+            return False
+        behind, label = gap
+        now = time.monotonic()
+        previous = pending.get("rebase_tail_last_behind")
+        if previous is None or behind < previous - 1e-6:
+            # First sight, or real progress: the leg is still delivering.
+            pending["rebase_tail_last_behind"] = behind
+            pending["rebase_tail_progress_t"] = now
+        if not pending.get("rebase_tail_wait_reported"):
+            # Once per commit, not once per 20ms tick: this can hold for seconds.
+            pending["rebase_tail_wait_reported"] = True
+            print(
+                f"CTRL reload diagnostic: stage=rebase-tail-catchup-wait gap={label} "
+                f"waited={waited:.3f}s reload_id={pending['txn_id']}",
+                file=sys.stderr,
+                flush=True,
+            )
+        if waited >= _REBASE_TAIL_CATCHUP_DEADLINE_S:
+            print(
+                f"WARN: retiring tail still {label} at the "
+                f"{_REBASE_TAIL_CATCHUP_DEADLINE_S:.1f}s catch-up deadline for reload "
+                f"{pending['txn_id']}; switching anyway -- what has not arrived by "
+                "now airs as a picture gap",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+        stalled = now - pending.get("rebase_tail_progress_t", now)
+        if stalled >= _REBASE_TAIL_STALL_S:
+            print(
+                f"WARN: retiring tail stopped advancing with {label} still owed "
+                f"({stalled:.3f}s without progress) for reload {pending['txn_id']}; "
+                "switching anyway -- no more of it is coming",
+                file=sys.stderr,
+                flush=True,
+            )
+            return False
+        return True
+
     def _rebase_drain_held(self, pending: dict[str, Any]) -> list[str]:
         """``pad=level`` for each affected mux sink pad STILL holding a buffer.
 
@@ -5605,6 +5967,11 @@ class GstPlayoutEngine:
 
     def _defer_rebase_drain(self, pending: dict[str, Any], held: list[str]) -> bool:
         """Hand the commit to a main-loop poller until the pads empty (bounded).
+
+        ``held`` is what this deferral is waiting FOR, and it is only ever printed
+        -- since U56 it can name either the mux pads still queueing the outgoing
+        tail or the retiring video's own undelivered tail (``_retiring_tail_gap``),
+        because an empty queue is not the same as a finished leg.
 
         Returns True when the poller took over -- the caller must return WITHOUT
         switching -- and False when no poller could be scheduled, in which case
@@ -5634,7 +6001,8 @@ class GstPlayoutEngine:
         return True
 
     def _resume_rebase_drain(self, pending: dict[str, Any]) -> bool:
-        """Main-loop tick: switch once the pads have drained, or at the deadline."""
+        """Main-loop tick: switch once the pads have drained AND the retiring video
+        has caught up to the switch point -- or at the deadline for either."""
         pending["rebase_drain_timeout_id"] = None
         if (
             self._pending_reload is not pending
@@ -5651,6 +6019,10 @@ class GstPlayoutEngine:
         waited = 0.0 if started is None else time.monotonic() - started
         if held and waited < _REBASE_DRAIN_DEADLINE_S:
             return True  # keep polling
+        if not held and self._retiring_tail_wait(pending, waited):
+            # The queue is empty but the retiring leg is still behind it -- see
+            # ``_retiring_tail_gap``. An empty queue is not the end of the tail.
+            return True
         if held:
             print(
                 f"WARN: rebase drain did not empty within {_REBASE_DRAIN_DEADLINE_S:.1f}s "
@@ -5684,7 +6056,7 @@ class GstPlayoutEngine:
         )
         print(
             f"WARN: rebase arrival observer window closed after "
-            f"{_REBASE_DRAIN_DEADLINE_S + _REBASE_OBSERVER_DEADLINE_S:.1f}s for reload "
+            f"{_REBASE_HOLD_BOUND_S:.1f}s for reload "
             f"{pending.get('txn_id')}: no rebased segment crossed the mux sink pads "
             f"({pairs or 'no pads'}); removing the observers -- nothing is held off air",
             file=sys.stderr,
