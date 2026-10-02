@@ -361,9 +361,18 @@ because the older opt-in diagnostics expire before most episodes and 63 of 87
 measured sheds had no evidence attached at all. Two events:
 `over-limit-streak-start` (first scan over the maximum — the episode's
 beginning, before any shed) and `catch-up-shed` (the shed actually fired).
-`batches` splits one segment's cost four ways — `wait_s` (session lock),
-`feed_s` (reading and overlap-joining the WAV), `asr_s` (the transcribe call),
-`stabilize_s`. A shed with a large `asr_s` and a low `process.cpu_pct` is a
+`batches` splits one segment's cost — `wait_s` (session lock), `feed_s`
+(reading and overlap-joining the WAV), `asr_s` (the transcribe call),
+`stabilize_s` — and since U71 splits `asr_s` itself into `transcribe_s` (the
+ASR decode proper: the model call plus the consumption of its lazy segment
+generator) and `persist_s` (HLS publish and review persistence, derived as
+`asr_s - transcribe_s - stabilize_s`). `transcribe_s` is what separates a slow
+decode from a slow publish. `duration_after_vad` is the audio that survived the
+VAD — the honest denominator, since a long `transcribe_s` over almost no
+post-VAD audio is a stall, not a long file — and `max_segment_temperature`
+above `0.0` says faster-whisper walked its fallback temperature list (`0.0` is
+a single pass). All four are `null` when the runtime does not publish them. A
+shed with a large `asr_s` and a low `process.cpu_pct` is a
 stalled or serialized ASR call; a high `cpu_pct`, hundreds of threads and
 several `ffmpeg` processes at `NORMAL_PRIORITY_CLASS` is the box starved by
 preparation. `asr_in_call`/`asr_call_s` say whether the transcribe thread was
@@ -379,7 +388,9 @@ Caption tap shed diagnostic {"event": "catch-up-shed", "channel": "education",
   "pid": 8123, "queue_depth": 7, "oldest_queue_age_s": 31.4,
   "max_backlog_segments": 2, "overload_streak": 15, "shed": {"count": 5,
   "kept": 2, "skipped_s": 25.0}, "batches": [{"wait_s": 0.0, "feed_s": 0.012,
-  "asr_s": 5.833, "stabilize_s": 0.041}], "asr_in_call": true, "asr_call_s":
+  "asr_s": 5.833, "stabilize_s": 0.041, "transcribe_s": 5.771,
+  "persist_s": 0.021, "duration_after_vad": 4.988,
+  "max_segment_temperature": 0.0}], "asr_in_call": true, "asr_call_s":
   3.21, "suppressed_since_last": 0, "process": {"cpu_pct": 21.5, "threads":
   47, "priority_class": "NORMAL_PRIORITY_CLASS"}, "ffmpeg": {"count": 2}}
 ```

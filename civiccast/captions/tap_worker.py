@@ -62,7 +62,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from civiccast.captions.live_sidecar import (
     CaptionRuntimeState,
@@ -1766,12 +1766,27 @@ class CaptionTapWorker:
                 # exists to make visible. The exception itself still propagates.
                 asr_seconds = self._monotonic() - asr_started
                 self._note_shed_diagnostic("asr_finished", channel=channel_id)
+                # U71: the runtime times the decode itself (the model call plus
+                # the consumption of its lazy segment generator), which the tap
+                # cannot see from out here. Read on THIS thread, right after
+                # ``process_batch`` returned, because the runtime keeps its
+                # record per thread; ``None`` for a batch/VOD runtime or a
+                # fake that does not publish one, and the diagnostic then emits
+                # explicit nulls rather than guessing.
+                decode = self._last_decode_metrics()
                 self._note_shed_diagnostic(
                     "record_batch",
                     channel=channel_id,
                     wait_seconds=wait_seconds,
                     feed_seconds=feed_seconds,
                     asr_seconds=asr_seconds,
+                    transcribe_seconds=decode.get("transcribe_s") if decode else None,
+                    duration_after_vad_seconds=(
+                        decode.get("duration_after_vad") if decode else None
+                    ),
+                    max_segment_temperature=(
+                        decode.get("max_segment_temperature") if decode else None
+                    ),
                 )
             committed += len(result.committed_review_items)
             expired += len(result.expired_unconfirmed_cues)
@@ -1985,6 +2000,26 @@ class CaptionTapWorker:
             getattr(self._shed_diagnostic, method)(**kwargs)
         except Exception:
             _LOG.debug("Caption tap shed diagnostic hook %s failed.", method, exc_info=True)
+
+    def _last_decode_metrics(self) -> dict[str, Any] | None:
+        """The runtime's per-thread decode record, or ``None`` (U71).
+
+        The live :class:`~civiccast.captions.runtime.FasterWhisperRuntime`
+        publishes one; a batch/VOD runtime and the test fakes do not, and a
+        batch/VOD runtime is not what this diagnostic measures. A getter that
+        raises is treated as absent -- like every other diagnostic hook here, a
+        broken measurement must cost the tap nothing.
+        """
+
+        getter = getattr(self._runtime, "last_decode_metrics", None)
+        if not callable(getter):
+            return None
+        try:
+            record = getter()
+        except Exception:
+            _LOG.debug("Caption tap decode metrics unavailable.", exc_info=True)
+            return None
+        return record if isinstance(record, dict) else None
 
     def _begin_batch(
         self,

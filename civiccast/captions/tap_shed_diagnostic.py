@@ -43,7 +43,9 @@ Fields, and how to read them::
       "persistence_scans": 15,         # the configured window
       "shed": {"count": 5, "kept": 2, "skipped_s": 25.0},
       "batches": [{"wait_s": 0.0, "feed_s": 0.012, "asr_s": 5.833,
-                   "stabilize_s": 0.041}, ...],   # last 8 segment batches
+                   "stabilize_s": 0.041, "transcribe_s": 5.771,
+                   "persist_s": 0.021, "duration_after_vad": 4.988,
+                   "max_segment_temperature": 0.0}, ...],   # last 8 batches
       "batches_total": 412, "batches_retained": 8,
       "asr_in_call": true, "asr_call_s": 3.21,   # transcribe thread state NOW
       "suppressed_since_last": 0,
@@ -54,13 +56,26 @@ Fields, and how to read them::
       "gpu": {"available": true, "devices": [{"name": "NVIDIA RTX 4070",
                   "util_pct": 88, "mem_used_mb": 4096, "mem_total_mb": 8192}]}}
 
-Reading it: ``batches`` separates the four costs of one segment -- waiting for
+Reading it: ``batches`` separates the costs of one segment -- waiting for
 the channel's session lock (``wait_s``), reading and overlap-joining the WAV
-(``feed_s``), the ASR call itself (``asr_s``) and the two-window stabilization
-(``stabilize_s``). A shed with a large ``asr_s`` and a low ``process.cpu_pct``
-is a stalled/serialized ASR call; a shed with a high ``cpu_pct``, a thread count
-in the hundreds and several ``ffmpeg`` processes at ``NORMAL`` priority is the
-box being starved by preparation. ``asr_in_call``/``asr_call_s`` say whether the
+(``feed_s``), the ASR call itself (``asr_s``), the two-window stabilization
+(``stabilize_s``) -- and, since U71, splits ``asr_s`` into the decode proper
+(``transcribe_s``: the model call plus the consumption of its lazy segment
+generator) and everything else in the call (``persist_s``: HLS publish and
+review persistence, derived as ``asr_s - transcribe_s - stabilize_s``).
+``transcribe_s`` is the number that tells a slow decode from a slow publish: a
+5.8 s ``asr_s`` that is 5.77 s ``transcribe_s`` is a stalled decode, while one
+that is 0.3 s ``transcribe_s`` and 5.4 s ``persist_s`` is a stalled publish.
+``duration_after_vad`` is how much audio survived the VAD -- the honest
+denominator for the decode, since a long ``transcribe_s`` over almost no
+post-VAD audio is a stall and not a long file -- and
+``max_segment_temperature`` above ``0.0`` says faster-whisper walked its
+fallback temperature list (``0.0`` is a single pass). All four are ``null``
+when the runtime does not publish them. A shed with a large ``asr_s`` and a low
+``process.cpu_pct`` is a stalled/serialized ASR call; a shed with a high
+``cpu_pct``, a thread count in the hundreds and several ``ffmpeg`` processes at
+``NORMAL`` priority is the box being starved by preparation.
+``asr_in_call``/``asr_call_s`` say whether the
 channel's transcribe thread was inside the ASR call when this line was written,
 and for how long -- a value that only grows across consecutive lines is a hung
 call. ``process.priority_class`` is what the whole service process runs at
@@ -172,6 +187,23 @@ def _round(value: object) -> float:
         return 0.0
 
 
+def _optional_rounded(value: object) -> float | None:
+    """Round an optional measurement, or ``None`` (U71).
+
+    Unlike :func:`_round`, this does not clamp at zero and does not turn a
+    missing value into ``0.0``: the U71 batch fields are either a real number
+    or an explicit "not measured", and the two must stay distinguishable in the
+    emitted line. Absent-safe by construction -- the record shape is stable.
+    """
+
+    if value is None:
+        return None
+    try:
+        return round(float(value), 3)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _priority_class_name(psutil: Any, nice: object) -> str:
     """Name a Windows priority class from the value psutil reports as ``nice``."""
 
@@ -269,8 +301,36 @@ class ShedDiagnosticCollector:
         wait_seconds: float,
         feed_seconds: float,
         asr_seconds: float,
+        transcribe_seconds: float | None = None,
+        duration_after_vad_seconds: float | None = None,
+        max_segment_temperature: float | None = None,
     ) -> None:
-        """Keep one segment's four measured durations for the next emission."""
+        """Keep one segment batch's measured costs for the next emission.
+
+        ``wait_s``/``feed_s``/``asr_s``/``stabilize_s`` are unchanged. U71 adds
+        the decode's own split, which the tap cannot see from outside the
+        pipeline (the runtime times it -- see
+        ``FasterWhisperRuntime.last_decode_metrics``):
+
+        * ``transcribe_s`` -- time inside the model ``transcribe()`` and the
+          consumption of its lazy segment generator, i.e. the ASR decode
+          proper, as distinct from everything else ``asr_s`` covers;
+        * ``persist_s`` -- DERIVED here as ``asr_s - transcribe_s -
+          stabilize_s``: the share of ``asr_s`` that was neither decode nor
+          stabilization, i.e. the HLS publish and ``review_persist`` work. It
+          stays ``None`` when either term is unknown, because a residual with a
+          missing term is a wrong number, not a smaller one;
+        * ``duration_after_vad`` -- the audio that survived the VAD, the honest
+          denominator for the decode cost: a long ``transcribe_s`` over almost
+          no post-VAD audio is a stall, not a long file;
+        * ``max_segment_temperature`` -- the highest per-segment decode
+          temperature; above ``0.0`` means faster-whisper's fallback list was
+          walked.
+
+        A caller that has none of the new numbers (a batch/VOD runtime, a test
+        fake) omits them and gets JSON ``null``: the record shape is stable and
+        the field is never simply absent.
+        """
 
         with contextlib.suppress(Exception), self._lock:
             records = self._batches.get(channel)
@@ -280,12 +340,21 @@ class ShedDiagnosticCollector:
                 records = deque(maxlen=max(1, int(self.max_batch_records)))
                 self._batches[channel] = records
             stabilize = self._last_stabilize.pop(channel, None)
+            asr_rounded = _round(asr_seconds)
+            transcribe_rounded = _optional_rounded(transcribe_seconds)
+            persist_rounded: float | None = None
+            if transcribe_rounded is not None and stabilize is not None:
+                persist_rounded = _round(asr_rounded - transcribe_rounded - stabilize)
             records.append(
                 {
                     "wait_s": _round(wait_seconds),
                     "feed_s": _round(feed_seconds),
-                    "asr_s": _round(asr_seconds),
+                    "asr_s": asr_rounded,
                     "stabilize_s": _round(stabilize) if stabilize is not None else None,
+                    "transcribe_s": transcribe_rounded,
+                    "persist_s": persist_rounded,
+                    "duration_after_vad": _optional_rounded(duration_after_vad_seconds),
+                    "max_segment_temperature": _optional_rounded(max_segment_temperature),
                 }
             )
             self._batch_counts[channel] = self._batch_counts.get(channel, 0) + 1

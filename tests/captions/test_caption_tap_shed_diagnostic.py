@@ -206,13 +206,14 @@ def _tap(
     *,
     clock: _FakeClock,
     diagnostic: object,
+    runtime: object | None = None,
     overload_persistence_scans: int = 3,
     max_backlog_segments: int = 2,
 ) -> CaptionTapWorker:
     return CaptionTapWorker(
         tap_root=tap_root,
         caption_work_dir=tap_root.parent / "egress",
-        runtime=_ScriptedRuntime(),  # type: ignore[arg-type]
+        runtime=(runtime if runtime is not None else _ScriptedRuntime()),  # type: ignore[arg-type]
         review_store=InMemoryCaptionReviewStore(),
         segment_seconds=1.0,
         atomic_segments=False,
@@ -519,6 +520,116 @@ class TestShedDiagnosticCollector:
         _shed(diagnostic)
 
 
+class TestTheDecodeSplitFields:
+    """BETA.10 U71. ``asr_s`` said how long the whole call took, but not where
+    the time went: a slow decode and a slow publish looked identical, and a
+    faster-whisper fallback pass (which re-decodes at a higher temperature) was
+    invisible. Each batch record now also carries the decode proper
+    (``transcribe_s``, measured by the runtime), the remainder of the call
+    (``persist_s``), the audio the VAD actually kept
+    (``duration_after_vad``) and the highest decode temperature the model
+    returned (``max_segment_temperature``, above ``0.0`` exactly when the
+    fallback list was walked).
+    """
+
+    def test_the_decode_fields_are_recorded_and_persist_is_derived(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        collector = _collector(_FakeClock())
+        collector.note_stabilize("education", 0.4)
+        collector.record_batch(
+            channel="education",
+            wait_seconds=0.1,
+            feed_seconds=0.2,
+            asr_seconds=5.833,
+            transcribe_seconds=5.3,
+            duration_after_vad_seconds=4.988,
+            max_segment_temperature=0.32,
+        )
+        _shed(collector)
+
+        record = _payloads(caplog)[0]["batches"][0]
+        assert record["asr_s"] == 5.833
+        assert record["transcribe_s"] == 5.3
+        assert record["duration_after_vad"] == 4.988
+        # Above zero: the model walked its temperature fallback list.
+        assert record["max_segment_temperature"] == 0.32
+        # persist_s is exactly asr - transcribe - stabilize.
+        assert record["persist_s"] == round(5.833 - 5.3 - 0.4, 3)
+        # The whole payload must survive the JSON round trip the emitter does.
+        assert json.loads(json.dumps(_payloads(caplog)[0]))["batches"][0] == record
+
+    def test_a_single_pass_decode_reports_a_zero_not_an_absent_temperature(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        collector = _collector(_FakeClock())
+        collector.note_stabilize("education", 0.25)
+        collector.record_batch(
+            channel="education",
+            wait_seconds=0.0,
+            feed_seconds=0.0,
+            asr_seconds=3.0,
+            transcribe_seconds=2.5,
+            max_segment_temperature=0.0,
+        )
+        _shed(collector)
+
+        record = _payloads(caplog)[0]["batches"][0]
+        # ``0.0`` is the meaningful "one pass" value; collapsing it to null
+        # would make the common case indistinguishable from "no segments".
+        assert record["max_segment_temperature"] == 0.0
+        assert record["persist_s"] == round(3.0 - 2.5 - 0.25, 3)
+
+    def test_a_batch_without_the_decode_numbers_still_serialises_with_nulls(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.INFO)
+        collector = _collector(_FakeClock())
+        collector.note_stabilize("education", 0.5)
+        collector.record_batch(
+            channel="education", wait_seconds=0.0, feed_seconds=0.1, asr_seconds=2.0
+        )
+        _shed(collector)
+
+        payload = _payloads(caplog)[0]
+        record = payload["batches"][0]
+        for field_name in (
+            "transcribe_s",
+            "persist_s",
+            "duration_after_vad",
+            "max_segment_temperature",
+        ):
+            assert field_name in record, field_name
+            assert record[field_name] is None, field_name
+        # The pre-U71 fields keep their old values and shape.
+        assert record["wait_s"] == 0.0
+        assert record["feed_s"] == 0.1
+        assert record["asr_s"] == 2.0
+        assert record["stabilize_s"] == 0.5
+        assert json.loads(json.dumps(payload))["batches"][0] == record
+
+    def test_persist_is_unknown_unless_both_of_its_terms_are_known(self) -> None:
+        collector = _collector(_FakeClock())
+        # transcribe known, stabilize never sampled -> a residual would be wrong.
+        collector.record_batch(
+            channel="a",
+            wait_seconds=0.0,
+            feed_seconds=0.0,
+            asr_seconds=2.0,
+            transcribe_seconds=1.5,
+        )
+        # stabilize sampled, transcribe unknown -> same.
+        collector.note_stabilize("b", 0.25)
+        collector.record_batch(channel="b", wait_seconds=0.0, feed_seconds=0.0, asr_seconds=2.0)
+
+        assert collector._batches["a"][0]["transcribe_s"] == 1.5
+        assert collector._batches["a"][0]["persist_s"] is None
+        assert collector._batches["b"][0]["transcribe_s"] is None
+        assert collector._batches["b"][0]["persist_s"] is None
+
+
 class TestShedDiagnosticEnvSpelling:
     """BETA.10 U71. U69 shipped the disable switch reading only the one-C
     ``CIVICAST_CAPTION_TAP_SHED_DIAGNOSTIC``, so an operator who set it the way
@@ -768,6 +879,86 @@ class TestTapShedDiagnostic:
             assert field_name in record, field_name
             assert record[field_name] is not None, field_name
             assert record[field_name] >= 0.0, field_name
+
+    def test_the_decode_split_reaches_the_batch_record(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The runtime's numbers must survive the tap's hot path to the line."""
+
+        caplog.set_level(logging.INFO)
+        tap_root = tmp_path / "tap"
+        channel = "education"
+        (tap_root / channel).mkdir(parents=True)
+
+        clock = _FakeClock()
+
+        class _DecodingRuntime(_ScriptedRuntime):
+            def transcribe(
+                self,
+                chunks: Iterable[AudioChunk],
+                vocabulary: CustomVocabulary | None = None,
+            ) -> Iterable[CaptionHypothesis]:
+                # Burn six wall seconds in the decode so the tap's own ``asr_s``
+                # is larger than the decode it contains, as on the real path.
+                clock.advance(6.0)
+                yield from super().transcribe(chunks, vocabulary=vocabulary)
+
+            def last_decode_metrics(self) -> dict[str, object]:
+                return {
+                    "transcribe_s": 5.3,
+                    "duration_after_vad": 4.988,
+                    "max_segment_temperature": 0.4,
+                }
+
+        collector = _collector(clock)
+        worker = _tap(tap_root, clock=clock, diagnostic=collector, runtime=_DecodingRuntime())
+
+        _write_wav(tap_root / channel / "chunk-000000.wav")
+        _write_wav(tap_root / channel / "chunk-000001.wav")
+        worker.run_once()
+
+        collector.asr_finished(channel=channel)
+        _shed(collector)
+
+        record = _payloads(caplog)[0]["batches"][0]
+        assert record["transcribe_s"] == 5.3
+        assert record["duration_after_vad"] == 4.988
+        assert record["max_segment_temperature"] == 0.4
+        # persist_s is derived inside the collector from the tap's own numbers.
+        assert record["persist_s"] == pytest.approx(
+            record["asr_s"] - 5.3 - record["stabilize_s"], abs=1e-3
+        )
+
+    def test_a_metrics_getter_that_raises_does_not_break_the_tap(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        tap_root = tmp_path / "tap"
+        channel = "education"
+        (tap_root / channel).mkdir(parents=True)
+
+        class _ExplodingGetterRuntime(_ScriptedRuntime):
+            def last_decode_metrics(self) -> None:
+                raise RuntimeError("the metrics getter blew up")
+
+        clock = _FakeClock()
+        collector = _collector(clock)
+        worker = _tap(
+            tap_root, clock=clock, diagnostic=collector, runtime=_ExplodingGetterRuntime()
+        )
+
+        _drive_over_limit_episode(worker, tap_root, channel, scans=3)
+
+        payloads = _payloads(caplog)
+        assert payloads, "a broken metrics getter must not suppress the shed line"
+        records = payloads[-1]["batches"]
+        assert records, "the batch records must still be emitted"
+        # The measurement is absent, and it says so rather than inventing zeros.
+        for record in records:
+            assert record["transcribe_s"] is None
+            assert record["persist_s"] is None
+            assert record["duration_after_vad"] is None
+            assert record["max_segment_temperature"] is None
 
     def test_the_queue_age_is_measured_once_per_event_not_per_batch(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch

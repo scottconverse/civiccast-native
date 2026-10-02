@@ -1244,6 +1244,160 @@ class TestRuntimeBoundary:
             (w.text, w.start_seconds, w.end_seconds, w.confidence) for w in hypothesis.words
         ] == [(" motion", 10.25, 11.2, 0.8), (" carries", 11.2, 12.5, 0.7)]
 
+    # ------------------------------------------------------------------
+    # U71: the decode's own split costs, published for the tap's diagnostic.
+    # ------------------------------------------------------------------
+    def _live_runtime_with(self, transcribe: Any) -> FasterWhisperRuntime:
+        runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        runtime._model = SimpleNamespace(transcribe=transcribe)
+        return runtime
+
+    def test_the_decode_split_times_the_whole_lazy_generator(self) -> None:
+        """faster-whisper returns a generator: timing the call alone is a lie.
+
+        The fake sleeps *between* its two yields, so a ``transcribe_s`` that
+        stopped at the call would come back near zero and fail this.
+        """
+
+        def transcribe(*args: Any, **kwargs: Any) -> tuple[Any, Any]:
+            def segments() -> Any:
+                yield SimpleNamespace(
+                    start=0.25,
+                    end=1.5,
+                    text="motion carries",
+                    avg_logprob=-0.1,
+                    no_speech_prob=0.2,
+                    temperature=0.0,
+                )
+                time.sleep(0.03)
+                yield SimpleNamespace(
+                    start=1.5,
+                    end=2.5,
+                    text="next agenda item",
+                    avg_logprob=-0.1,
+                    no_speech_prob=0.4,
+                    temperature=0.4,
+                )
+
+            return segments(), SimpleNamespace(duration_after_vad=4.988)
+
+        runtime = self._live_runtime_with(transcribe)
+        list(runtime.transcribe([self._audio_chunk()]))
+
+        metrics = runtime.last_decode_metrics()
+        assert metrics is not None
+        assert set(metrics) == {
+            "transcribe_s",
+            "duration_after_vad",
+            "max_segment_temperature",
+        }
+        # The consumption, not just the call, is inside the span.
+        assert metrics["transcribe_s"] >= 0.02
+        assert metrics["duration_after_vad"] == 4.988
+        # 0.4 is above 0.0: the fallback temperature list was walked.
+        assert metrics["max_segment_temperature"] == 0.4
+        # JSON-safe and free of the audio/segment objects it was measured from.
+        assert json.loads(json.dumps(metrics)) == metrics
+
+    def test_no_decode_yet_reads_as_none_and_each_decode_replaces_the_last(self) -> None:
+        runtime = self._live_runtime_with(
+            lambda *args, **kwargs: (
+                [
+                    SimpleNamespace(
+                        start=0.0,
+                        end=1.0,
+                        text="first",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.1,
+                        temperature=0.0,
+                    )
+                ],
+                SimpleNamespace(duration_after_vad=1.0),
+            )
+        )
+        assert runtime.last_decode_metrics() is None
+
+        list(runtime.transcribe([self._audio_chunk()]))
+        first_read = runtime.last_decode_metrics()
+        assert first_read is not None
+        assert first_read["max_segment_temperature"] == 0.0
+
+        runtime._model = SimpleNamespace(
+            transcribe=lambda *args, **kwargs: (
+                [
+                    SimpleNamespace(
+                        start=0.0,
+                        end=1.0,
+                        text="second",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.1,
+                        temperature=0.6,
+                    )
+                ],
+                SimpleNamespace(duration_after_vad=2.0),
+            )
+        )
+        list(runtime.transcribe([self._audio_chunk()]))
+
+        # The reader holds a snapshot: the second decode must not rewrite it.
+        assert first_read["max_segment_temperature"] == 0.0
+        assert first_read["duration_after_vad"] == 1.0
+        assert runtime.last_decode_metrics()["max_segment_temperature"] == 0.6
+        assert runtime.last_decode_metrics()["duration_after_vad"] == 2.0
+
+    def test_the_decode_record_is_thread_local(self) -> None:
+        """One runtime serves every channel, each on its own worker thread."""
+
+        runtime = self._live_runtime_with(
+            lambda *args, **kwargs: (
+                [
+                    SimpleNamespace(
+                        start=0.0,
+                        end=1.0,
+                        text="here",
+                        avg_logprob=-0.1,
+                        no_speech_prob=0.1,
+                        temperature=0.0,
+                    )
+                ],
+                SimpleNamespace(duration_after_vad=1.0),
+            )
+        )
+        list(runtime.transcribe([self._audio_chunk()]))
+        assert runtime.last_decode_metrics() is not None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            elsewhere = pool.submit(runtime.last_decode_metrics).result()
+
+        assert elsewhere is None, "a thread that has not decoded must read nothing"
+
+    def test_a_failing_decode_still_reports_its_elapsed_time(self) -> None:
+        def transcribe(*args: Any, **kwargs: Any) -> tuple[Any, Any]:
+            raise RuntimeError("the model fell over")
+
+        runtime = self._live_runtime_with(transcribe)
+        with pytest.raises(RuntimeError, match="fell over"):
+            list(runtime.transcribe([self._audio_chunk()]))
+
+        metrics = runtime.last_decode_metrics()
+        assert metrics is not None
+        assert metrics["transcribe_s"] >= 0.0
+        assert metrics["duration_after_vad"] is None
+        assert metrics["max_segment_temperature"] is None
+
+    def test_a_zero_segment_decode_reports_no_temperature(self) -> None:
+        runtime = self._live_runtime_with(
+            lambda *args, **kwargs: ([], SimpleNamespace(duration_after_vad=0.5))
+        )
+        assert list(runtime.transcribe([self._audio_chunk()])) == []
+
+        metrics = runtime.last_decode_metrics()
+        assert metrics is not None
+        assert metrics["duration_after_vad"] == 0.5
+        # No segments: "no fallback was walked" and "there was nothing to
+        # decode" are different facts, and only the second may print null.
+        assert metrics["max_segment_temperature"] is None
+
     def test_live_runtime_hands_16khz_pcm_to_the_model_as_a_float32_array(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

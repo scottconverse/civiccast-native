@@ -9,10 +9,11 @@ import logging
 import os
 import subprocess
 import threading
+import time
 import wave
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from math import exp
+from math import exp, isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
@@ -908,6 +909,15 @@ class FasterWhisperRuntime:
             )
         self._model: Any | None = None
         self._model_lock = threading.Lock()
+        # U71: the live tap's shed diagnostic records the decode's own split
+        # costs (decode vs persistence), which it cannot see from outside the
+        # pipeline. This holds the most recent decode's measurements, read back
+        # on the SAME thread immediately after ``process_batch`` returns. It is
+        # ``threading.local`` on purpose: one runtime is shared by every
+        # channel, each decoding on its own executor thread, so a plain
+        # attribute would let one channel's numbers land on another channel's
+        # batch record. See :meth:`last_decode_metrics`.
+        self._decode_metrics = threading.local()
 
     def on_cuda(self) -> bool:
         """Whether this runtime will actually decode on a GPU.
@@ -948,6 +958,36 @@ class FasterWhisperRuntime:
         initial_prompt = _build_initial_prompt(vocabulary)
         for chunk in chunks:
             yield from self._transcribe_chunk(chunk, initial_prompt=initial_prompt)
+
+    def last_decode_metrics(self) -> dict[str, Any] | None:
+        """The costs of the most recent decode ON THE CALLING THREAD (U71).
+
+        Returns a plain, JSON-safe copy with three keys, or ``None`` when this
+        thread has not decoded since the runtime was built:
+
+        * ``transcribe_s`` -- wall time inside the model call *and* the
+          iteration of its lazy segment generator. faster-whisper returns a
+          generator, so the call itself returns almost immediately and timing
+          the call alone would report a decode that took no time; the decode is
+          the call plus the consumption.
+        * ``duration_after_vad`` -- faster-whisper's ``info.duration_after_vad``,
+          the audio that survived the VAD. It is the honest denominator for the
+          decode cost: a long ``transcribe_s`` over almost no post-VAD audio is
+          a stall, not a long file. ``None`` when the model reports none.
+        * ``max_segment_temperature`` -- the highest per-segment decode
+          ``temperature`` seen. faster-whisper's first pass runs at ``0.0`` and
+          each fallback retry runs hotter, so a value above ``0.0`` says the
+          fallback list was walked and ``0.0`` says a single pass. ``None`` when
+          the chunk yielded no segments.
+
+        Nothing here holds a reference to the audio or the segment objects; the
+        tap copies the numbers out and the record is replaced by the next
+        decode. Only this per-thread slot is written, so concurrent channels do
+        not see each other's numbers.
+        """
+
+        record = getattr(self._decode_metrics, "last", None)
+        return dict(record) if record is not None else None
 
     def prepare(self) -> None:
         """Resolve and load the model before a live multi-channel dispatch.
@@ -1054,7 +1094,13 @@ class FasterWhisperRuntime:
             _write_pcm_chunk_wav(chunk, wav_path)
             yield str(wav_path)
 
-    def _transcribe_source(self, source: Any, *, initial_prompt: str | None) -> Iterable[Any]:
+    def _transcribe_source(
+        self,
+        source: Any,
+        *,
+        initial_prompt: str | None,
+        metrics: dict[str, Any] | None = None,
+    ) -> Iterable[Any]:
         """Hand one audio source to the model; return its segment iterator.
 
         The single place the live and batch/VOD paths state their model
@@ -1062,6 +1108,10 @@ class FasterWhisperRuntime:
         path for the batch/VOD path and for a live chunk that is not at
         :data:`LIVE_TAP_PCM_PASSTHROUGH_RATE_HZ`, or a float32 PCM array for a
         live chunk that is (:func:`_pcm_s16le_to_whisper_audio`).
+
+        When ``metrics`` is given, it is filled in with the model's own
+        ``duration_after_vad`` (U71) -- absent, or non-numeric, becomes
+        ``None``; a diagnostic never fabricates a number.
         """
 
         # U70: the single-pass temperature that bounds this call on the live
@@ -1072,7 +1122,7 @@ class FasterWhisperRuntime:
         )
 
         segments: Iterable[Any]
-        segments, _info = self._model_instance().transcribe(
+        segments, info = self._model_instance().transcribe(
             source,
             beam_size=self.beam_size,
             language=self.language,
@@ -1082,6 +1132,10 @@ class FasterWhisperRuntime:
             **({"word_timestamps": True} if self._live else {}),
             **temperature_kwargs,
         )
+        if metrics is not None:
+            metrics["duration_after_vad"] = _optional_float(
+                getattr(info, "duration_after_vad", None)
+            )
         return segments
 
     def _transcribe_chunk(
@@ -1091,40 +1145,65 @@ class FasterWhisperRuntime:
         initial_prompt: str | None,
     ) -> Iterable[CaptionHypothesis]:
         with self._chunk_audio_source(chunk) as source:
-            segments = self._transcribe_source(source, initial_prompt=initial_prompt)
-
-            live_segments: list[CaptionHypothesis] = []
-            live_words: list[CaptionWord] = []
-            for index, segment in enumerate(segments):
-                text = str(getattr(segment, "text", "")).strip()
-                if not text:
-                    continue
-
-                start_seconds = chunk.start_seconds + float(getattr(segment, "start", 0.0))
-                end_seconds = chunk.start_seconds + float(getattr(segment, "end", 0.0))
-                if end_seconds <= start_seconds:
-                    continue
-
-                hypothesis = CaptionHypothesis(
-                    source_id=_segment_source_id(chunk.chunk_id, index),
-                    start_seconds=start_seconds,
-                    end_seconds=end_seconds,
-                    text=text,
-                    confidence=_segment_confidence(segment),
+            # U71: measure the decode's own split costs for the tap's shed
+            # diagnostic. ``transcribe_s`` wraps the model call AND the
+            # iteration of its lazy segment generator -- the decode is the call
+            # plus the consumption, not the call alone. The record is written in
+            # a ``finally`` so a decode that RAISES still reports how long it
+            # burned, matching the tap's own shed diagnostic, which keeps a
+            # raised batch's numbers. The audio-source preparation above (the
+            # WAV round trip, when there is one) is deliberately outside the
+            # timer: the tap measures that as its ``feed_s``.
+            metrics: dict[str, Any] = {
+                "transcribe_s": 0.0,
+                "duration_after_vad": None,
+                "max_segment_temperature": None,
+            }
+            decode_started = time.perf_counter()
+            try:
+                segments = self._transcribe_source(
+                    source, initial_prompt=initial_prompt, metrics=metrics
                 )
-                if self._live:
-                    live_segments.append(hypothesis)
-                    for word in getattr(segment, "words", None) or []:
-                        live_words.append(
-                            CaptionWord(
-                                text=str(word.word),
-                                start_seconds=chunk.start_seconds + float(word.start),
-                                end_seconds=chunk.start_seconds + float(word.end),
-                                confidence=float(word.probability),
+
+                live_segments: list[CaptionHypothesis] = []
+                live_words: list[CaptionWord] = []
+                for index, segment in enumerate(segments):
+                    metrics["max_segment_temperature"] = _higher_temperature(
+                        metrics["max_segment_temperature"],
+                        getattr(segment, "temperature", None),
+                    )
+                    text = str(getattr(segment, "text", "")).strip()
+                    if not text:
+                        continue
+
+                    start_seconds = chunk.start_seconds + float(getattr(segment, "start", 0.0))
+                    end_seconds = chunk.start_seconds + float(getattr(segment, "end", 0.0))
+                    if end_seconds <= start_seconds:
+                        continue
+
+                    hypothesis = CaptionHypothesis(
+                        source_id=_segment_source_id(chunk.chunk_id, index),
+                        start_seconds=start_seconds,
+                        end_seconds=end_seconds,
+                        text=text,
+                        confidence=_segment_confidence(segment),
+                    )
+                    if self._live:
+                        live_segments.append(hypothesis)
+                        for word in getattr(segment, "words", None) or []:
+                            live_words.append(
+                                CaptionWord(
+                                    text=str(word.word),
+                                    start_seconds=chunk.start_seconds + float(word.start),
+                                    end_seconds=chunk.start_seconds + float(word.end),
+                                    confidence=float(word.probability),
+                                )
                             )
-                        )
-                else:
-                    yield hypothesis
+                    else:
+                        yield hypothesis
+            finally:
+                metrics["transcribe_s"] = time.perf_counter() - decode_started
+                self._decode_metrics.last = metrics
             if live_segments:
                 # Segment boundaries vary between overlapping ASR windows.
                 # Confirm one window against another, not two fragments from
@@ -1213,6 +1292,44 @@ def _segment_confidence(segment: Any) -> float:
         speech_confidence = 1.0
 
     return round(max(0.0, min(1.0, acoustic_confidence * speech_confidence)), 4)
+
+
+def _optional_float(value: object) -> float | None:
+    """Coerce a model-reported number, or ``None`` when it is not one (U71).
+
+    A diagnostic never fabricates: an absent value, a ``None``, a non-numeric
+    type or a NaN all become ``None``, which the shed diagnostic serialises as
+    JSON null. Mirrors the absent-safe discipline of
+    :mod:`civiccast.captions.tap_shed_diagnostic`.
+    """
+
+    if value is None:
+        return None
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number if isfinite(number) else None
+
+
+def _higher_temperature(current: float | None, candidate: object) -> float | None:
+    """Running max of a segment's decode ``temperature`` (U71).
+
+    faster-whisper's per-segment ``temperature`` is ``0.0`` on the first pass
+    and rises with each fallback retry, so the max over one chunk's segments is
+    exactly "the fallback list was walked" when it is above ``0.0``, and
+    exactly "one pass, no retry" when it is ``0.0``. ``None`` in means no
+    segment has been seen yet, so a chunk that yields nothing keeps ``None``
+    rather than a fabricated ``0.0``; a segment with no (or a non-numeric)
+    ``temperature`` is skipped rather than coerced.
+    """
+
+    number = _optional_float(candidate)
+    if number is None:
+        return current
+    if current is None:
+        return number
+    return max(current, number)
 
 
 def _validate_whisper_cpp_large_v3_identity(payload: object) -> None:
