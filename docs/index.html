@@ -614,15 +614,15 @@ img { max-width: 100%; }
     </div>
     <div class="trust-item" role="listitem">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="5"/><path d="M7 4.5v3l2 1.2"/></svg>
-      Real-Time AI Captioning
+      Local AI Captioning
     </div>
     <div class="trust-item" role="listitem">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="4" width="10" height="6" rx="1"/><path d="M5 4V3a2 2 0 0 1 4 0v1"/></svg>
-      Runs on 8 GB GPU
+      Runs on CPU or GPU
     </div>
     <div class="trust-item" role="listitem">
       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="10" r="1.5"/><path d="M4.2 7.6A4.2 4.2 0 0 1 7 6.5a4.2 4.2 0 0 1 2.8 1.1M2 5.2A6.8 6.8 0 0 1 7 3.5a6.8 6.8 0 0 1 5 1.7"/></svg>
-      PEG Station Ready
+      Public Beta
     </div>
   </div>
 </div>
@@ -680,28 +680,28 @@ img { max-width: 100%; }
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 10h14M10 3v14M6 6l8 8M14 6l-8 8"/></svg>
         </div>
         <h3 class="feat-h">AI Captioning</h3>
-        <p class="feat-p">faster-whisper with whisper-large-v3 INT8 quantization. Real-time captions generated on your own hardware, with zero cloud dependency. Some caption audio can be skipped when a station is overloaded; see Release status below.</p>
+        <p class="feat-p">faster-whisper running on your own hardware, with no cloud service required. The default caption model is <code>medium</code>, which runs on a CPU; the larger large-v3 model is optional and is chosen only when the hardware allows. Live captions are off by default and are turned on in Setup &gt; Station Profile. Some caption audio can be skipped when a station is overloaded; see Release status above.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2.5"/><path d="M3 10h4M13 10h4M10 3v4M10 13v4"/></svg>
         </div>
-        <h3 class="feat-h">Live Streaming</h3>
-        <p class="feat-p">Multi-output streaming to cable headend, YouTube Live, Facebook Live, and custom RTMP endpoints — simultaneously from one interface.</p>
+        <h3 class="feat-h">Channel Playout</h3>
+        <p class="feat-p">24/7 channel playout from a schedule, with transport-stream, SRT, RTMP, HLS, NDI, and SDI output options. Paths that depend on your equipment or provider (a cable headend, DeckLink SDI, NDI, YouTube uploads) are not proven at a station yet; see Release status above. Live capture-card ingest needs an integrator-supplied media probe.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 15l3.5-7 3.5 5 2.5-3.5L17 15"/></svg>
         </div>
         <h3 class="feat-h">Hardware Detection</h3>
-        <p class="feat-p">Run <span class="chip">civiccast doctor</span> to detect your GPU VRAM and assign the optimal processing tier — from iGPU to AI workstation.</p>
+        <p class="feat-p">Run <span class="chip">civiccast doctor</span> to see your CPU, memory, disk, and GPU, and the hardware tier it recommends — from CPU-only to a multi-channel AI workstation.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 10h6M10 7v6"/></svg>
         </div>
         <h3 class="feat-h">Archive & VOD</h3>
-        <p class="feat-p">Automatic recording and archival with searchable transcripts. Every broadcast becomes an accessible public record your community can reference.</p>
+        <p class="feat-p">Recorded meetings are packaged for the resident portal after staff review and an explicit publish approval, with captions and transcripts available for review. Nothing is published to residents automatically.</p>
       </div>
       <div class="feat-cell up" role="listitem">
         <div class="feat-icon" aria-hidden="true">
@@ -726,7 +726,7 @@ img { max-width: 100%; }
   <div class="wrap">
     <p class="eyebrow up">Hardware Requirements</p>
     <h2 class="sec-h2 up">Built for the hardware<br>you already own.</h2>
-    <p class="sec-lead up">CivicCast auto-detects your GPU via <span class="chip">civiccast doctor</span> and unlocks features in tiers. Most PEG stations qualify for Tier 1 or better — even Tier 0 handles full broadcast workflows.</p>
+    <p class="sec-lead up"><span class="chip">civiccast doctor</span> reports your CPU, memory, disk, and GPU and recommends a hardware tier. The tiers below describe what each hardware class is intended for; they are recommendations, not proven station results.</p>
 
     <div class="tier-grid" role="list">
       <div class="tier-card up" role="listitem">
@@ -734,10 +734,10 @@ img { max-width: 100%; }
         <h3 class="tier-name">Integrated</h3>
         <p class="tier-spec">&lt;8 GB VRAM · Ryzen 7 780M iGPU</p>
         <ul class="tier-list">
-          <li>Live streaming</li>
-          <li>Schedule management</li>
-          <li>Basic archive & VOD</li>
-          <li>Manual captioning</li>
+          <li>Channel playout and scheduling</li>
+          <li>Recorded-meeting archive</li>
+          <li>Captions and summaries on the CPU (slower)</li>
+          <li>The <code>medium</code> caption model</li>
         </ul>
       </div>
       <div class="tier-card rec up" role="listitem" aria-label="Recommended tier">
@@ -746,9 +746,9 @@ img { max-width: 100%; }
         <p class="tier-spec">8–16 GB VRAM · 2020-era GPU</p>
         <ul class="tier-list">
           <li>All Tier 0 features</li>
-          <li>AI auto-captioning</li>
-          <li>whisper-large-v3 INT8</li>
-          <li>Real-time transcription</li>
+          <li>GPU-accelerated captions and summaries</li>
+          <li>Optional large-v3 caption model</li>
+          <li>Summary and translation models swap in and out</li>
         </ul>
       </div>
       <div class="tier-card up" role="listitem">
@@ -757,9 +757,8 @@ img { max-width: 100%; }
         <p class="tier-spec">16–24 GB VRAM</p>
         <ul class="tier-list">
           <li>All Tier 1 features</li>
-          <li>Higher throughput</li>
-          <li>Multi-stream captioning</li>
-          <li>Extended search index</li>
+          <li>Captions, summary, and translation can stay loaded together</li>
+          <li>No model-swap delay</li>
         </ul>
       </div>
       <div class="tier-card up" role="listitem">
@@ -768,9 +767,8 @@ img { max-width: 100%; }
         <p class="tier-spec">24 GB+ VRAM</p>
         <ul class="tier-list">
           <li>All Tier 1+ features</li>
-          <li>RTX caption proof</li>
-          <li>Full-quality models</li>
-          <li>Multi-channel AI</li>
+          <li>Intended for several channels at once, each with its own AI</li>
+          <li>Multi-channel evidence so far is the three-channel lab run</li>
         </ul>
       </div>
     </div>
@@ -781,23 +779,23 @@ img { max-width: 100%; }
 <section id="setup" class="sec">
   <div class="wrap">
     <p class="eyebrow up">Getting Started</p>
-    <h2 class="sec-h2 up">Up and broadcasting<br>in three steps.</h2>
+    <h2 class="sec-h2 up">Getting started<br>in three steps.</h2>
 
     <div class="steps">
       <div class="step up">
         <div class="step-num" aria-hidden="true">01</div>
         <h3 class="step-h">Download & Install</h3>
-        <p class="step-p">A signed Windows installer. No virtual machine, no WSL. CivicCast installs as a native Windows application; a first install also needs the signed station model bundle delivered by USB or LAN.</p>
+        <p class="step-p">A signed Windows installer. No virtual machine, no WSL. CivicCast installs as a native Windows application. The installer is small; its large AI components are found on the computer or downloaded with a progress display, and a USB or LAN kit is the offline alternative.</p>
       </div>
       <div class="step up">
         <div class="step-num" aria-hidden="true">02</div>
         <h3 class="step-h">Run civiccast doctor</h3>
-        <p class="step-p">Hardware detection inspects your GPU, RAM, and storage, then configures CivicCast for your optimal tier. The full check completes in under 30 seconds.</p>
+        <p class="step-p">Hardware detection inspects your CPU, GPU, RAM, and storage and reports the hardware tier it recommends. It reports; it does not change any settings.</p>
       </div>
       <div class="step up">
         <div class="step-num" aria-hidden="true">03</div>
-        <h3 class="step-h">Go Live</h3>
-        <p class="step-p">Connect your capture card, configure stream destinations, and broadcast. AI captioning activates automatically based on your detected hardware tier.</p>
+        <h3 class="step-h">Start With Recorded Media</h3>
+        <p class="step-p">Upload or create a recorded meeting, review its captions, and explicitly approve it for the resident portal. Live capture-card ingest needs an integrator-supplied media probe; without one the console shows &ldquo;Source preview unavailable&rdquo; and keeps live start disabled. Live captions are off by default and are turned on in Setup &gt; Station Profile.</p>
       </div>
     </div>
   </div>
