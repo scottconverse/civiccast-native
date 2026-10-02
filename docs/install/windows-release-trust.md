@@ -16,8 +16,12 @@ page, not `scottconverse/civiccast` (the retired, separate WSL2-line
 repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
 repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
-authored release-state record. Beta.8 is being prepared; do not substitute
-its development-runtime evidence for verification of a published installer.
+authored release-state record. `v1.0.0-beta.10` is the next candidate and the
+current owner-held unpublished candidate (`v1.0.0-beta.8` and `v1.0.0-beta.9`
+were never published). Its lab evidence is recorded in
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md);
+do not substitute that lab evidence for verification of a published installer.
+No beta.10 installer or checksum exists yet.
 
 `v1.0.0-beta.3`, the first downloadable release, is now superseded.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.

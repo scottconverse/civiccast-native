@@ -39,32 +39,46 @@ for the authored release-state record,
 for the release's verification record (Gate A run, asset/hash/signature
 checks, the physical-machine soak, and the remaining acceptance boundary).
 
-`v1.0.0-beta.9` is the next candidate and the current owner-held unpublished candidate.
-It includes three-channel CUDA caption throughput and additional repairs to
-live speech stabilization, restart timing, session cleanup and retention work
-that could delay caption processing. It has no published installer yet and
-does not change the beta.7 download above.
+**Next release: `v1.0.0-beta.10`** is the next candidate and the current
+owner-held unpublished candidate. It has not been published and has no public
+installer yet; until it is, `v1.0.0-beta.7` above stays the public download.
+When it is published it will be a GitHub pre-release ("Beta Candidate"), not a
+production release. `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published;
+their work is included in beta.10.
 
-**Beta.8 caption evidence is bounded:** a local Blackwell run captured caption
-text in the outgoing stream and matched a preserved first post-restart cue to
-decoded output. A separate run logged the loaded CUDA/float16 model identity.
-The recovery capture lasted about 7.5 minutes; it is not a long-duration soak
-or acceptance of a newly built public installer. Startup overload remains an
-operational risk to monitor, and the existing two-segment backlog limit and
-initial two-minute pause remain unchanged. See the
-[caption investigation report](work/BLACKWELL-CAPTION-FIX-REPORT-v9.md) for
-the separate source revisions, evidence and limitations.
+Compared with the published beta.7, beta.10 changes the following:
 
-The active local reliability repair addresses preparation blocking, reload
-acknowledgements, scheduled programme labels and caption-failure visibility.
-It also preserves reload-abort evidence, alerts on worker faults before recovery,
-and hides unverified worker PIDs in operator responses. UDP status distinguishes
-local sending from receiver verification.
-The observed old-leg retirement hang is repaired and included in beta.7.
-Its local results are recorded in
-[the local verification note](docs/evidence/f2-local-2026-09-11/VERIFICATION.md).
-The signed beta.7 candidate subsequently passed Gate A and the eight-hour
-physical-machine soak recorded in the release verification record.
+- **Program changes without gaps.** A change from one program to the next no
+  longer leaves a black or silent gap, and a watchdog now ends a program
+  change that gets stuck. (Before this fix the education channel once sat
+  black and silent for about 34 hours.)
+- **Speech leveling.** Spoken programs are leveled toward -16 LUFS (a standard loudness measure) when they
+  are prepared for air. A stretch of a source that is too quiet for the leveling
+  to reach the target is reported, not leveled.
+- **Schedules that loop.** A schedule that is set to repeat now repeats.
+- **Larger prepared-program cache.** The disk space CivicCast keeps for
+  prepared copies of long programs (the "conform cache") now defaults to
+  60 GB instead of 20 GB. Set `CIVICCAST_CONFORM_CACHE_GB` to change it.
+- **More fault tolerance.** Reloads, restarts and stuck relays recover on
+  their own in more situations, and the station reports what it did.
+- **Live captions catch up instead of pausing.** A channel that falls behind
+  now keeps captioning from the newest audio instead of stopping for minutes
+  (see the limit below for what that costs).
+
+**What was measured.** An eight-hour watched run on a three-channel lab
+station (education, government and public airing real programs at the same
+time) kept one service process for the whole eight hours, with no restart, no
+crash, and no slate or filler after startup. Of 41 verify checks, 40 passed
+and one raw failure was judged a sampling blip. Loudness passed in 16 of 16
+240-second windows (target -16 LUFS, plus or minus 1). Fifty program changes
+were scored with no holes (picture gap at most 0.033 s, sound gap at most
+0.041 s). Details, the evidence paths and the adjudication are in the
+[beta.10 verification record](docs/releases/v1.0.0-beta.10-verification.md).
+
+**What is not proven.** The formal three-lane station acceptance (Gate A) has
+not been run for beta.10, and no human field tester has signed off on it.
+That is why it remains a beta candidate and not a production release. The
+measured limits are listed in "Known limitations of this build" below.
 
 `v1.0.0-beta.7` carries in-place schedule rollover enabled by default.
 This lets the playout worker load the next plan without a planned encoder
@@ -184,84 +198,61 @@ candidate. They are either partially built, lab-only, or dependent on
 things outside this repository's control:
 
 
-### Known limitations of this build (v1.0.0-beta.9) — read before operating a station
+### Known limitations of this build (v1.0.0-beta.10) — read before operating a station
 
-These are known, measured limitations of `v1.0.0-beta.9`. A **beta.10** release
-is coming soon that addresses the caption interruptions on program changes, the
-escalation behaviour, the end-of-schedule stop, and the playout worker stalls.
-**If you are running a station where captions must stay up unattended, wait for beta.10.**
+These are the known, measured limitations of the `v1.0.0-beta.10` candidate,
+taken from its eight-hour three-channel run (see the
+[verification record](docs/releases/v1.0.0-beta.10-verification.md)). It is a
+beta candidate: the formal Gate A station acceptance has not been run for it
+and no human field tester has signed off on it.
 
-The escalation change is the caption-tap **catch-up** below: a channel whose
-backlog no longer clears now keeps captioning from the newest audio and discards
-only the oldest settled segments it could not have transcribed in time, instead
-of pausing for 2–8 minutes after a GPU stall. The pause ladder is retained for a
-channel that genuinely cannot hold the cadence. See
-[docs/ops/background-workers.md](docs/ops/background-workers.md#live-caption-tap).
+**Live captions can lose some spoken audio under heavy load.**
+- Captions stay on the air on all three channels. When a
+  channel's caption worker falls behind, it now catches up by dropping its
+  oldest audio instead of pausing for minutes (see
+  [docs/ops/background-workers.md](docs/ops/background-workers.md#live-caption-tap)).
+- In the eight-hour run this happened 13 times. On a quiet machine the total
+  was about 160 seconds of audio on two channels; the rest were small events
+  that coincided with disk scans run on the lab machine. For those seconds,
+  the speech has no caption.
+- The cause is the caption worker falling behind during long first-time media
+  preparations. A fix is the next work item and is **not** in beta.10.
+- **If your station must have loss-free captions on every program, treat this
+  as a blocker and do not rely on beta.10 unattended for that requirement.**
+- Not proven: runs longer than eight hours (the 25-hour and 72-hour runs were
+  not done).
 
-**Caption reliability — two channels are clean, three are not.**
-- Captions run on the GPU (`cuda`/`float16`), and caption text reaches the
-  emitted output.
-- **One and two channels are clean and measured.** Across 1-channel and
-  2-channel runs, per-segment latency stayed flat at ~5.3 s with **zero**
-  caption backlog trips.
-- **Three channels is the problem.** On the pre-fix code, three channels
-  produced 4 or more backlog trips in a measured window, with latency spiking
-  to 106 s. This is **not** a GPU limit: VRAM peaked at ~52% (about 7.6 GB
-  free) and GPU utilization averaged 19%.
-- With the retention fix in this build, a **30-minute three-channel run had
-  zero trips** (against 111 trips in 103 minutes on the pre-fix code).
-- **Not proven: sustained three-channel operation.** The 2-hour, 4-hour,
-  8-hour, 25-hour and 72-hour runs were **not** completed. Do not read the
-  30-minute result as a sustained-operation guarantee.
+**Program changes.**
+- Two program-change first attempts on the government channel aborted and
+  recovered on their own in about 3 seconds with no on-air effect.
+- One known single-frame (0.033 s) video drop happened at a part-to-part join
+  inside a program.
 
-**Caption interruptions on program changes.**
-- A scheduled program change can trigger a reload that times out, restart the
-  video worker, and clear captions. Measured caption blackouts on the three
-  captured occurrences were **2.3, 2.8 and 4.6 minutes**.
-- A worker can also exit cleanly (exit code 0) with no error and still clear
-  captions.
-- The escalation behaviour is **not fully characterised**. The wait **can** grow
-  beyond the base window (observed), but the rate at which it grows under a
-  chronic channel has **not been measured**. Earlier observations were
-  confounded by storage refusals that prevent the healthy-scan counter from
-  advancing at all, so a zero escalation count in those windows proves nothing.
-- Caption blackout per backlog trip is about **210 seconds** — not the 120 s
-  the log message implies (120 s pause plus about 90 s to earn the recovery
-  bar).
+**Leveling.**
+- A stretch of a source that is too quiet for the leveling ride is reported,
+  not leveled. Speech leveling targets -16 LUFS; a worst four-minute stretch
+  was off by 1.94 LU on one program even though the whole program was within
+  0.02 LU.
 
-**Playout worker stalls (GStreamer).**
-- A playout worker can stall with "no output for 10s" and be relaunched by the
-  watchdog. The channel oscillates between STARTING, fallback slate and ON_AIR
-  instead of holding air, and captions do not accumulate while it does.
-- **This is frequent and long-standing, not rare.** In the retained five-day log
-  window it fired **68 times** (1 on 09-14, 7 on 09-15, 20 on 09-16, 28 on 09-17,
-  12 on 09-18).
-- **It is unevenly distributed across channels:** 55 of the 68 stalls were on the
-  public channel, 9 on government and 4 on education. A single channel can carry
-  the large majority of the failures.
-- A clean STOP then START does **not** clear it; the stall recurs on a fresh launch.
-  The channel with the heaviest source is the one most likely to be stuck.
+**Carried over from beta.9 and not re-tested in the beta.10 run.**
+- When a channel's scheduled programming runs out and the schedule does not
+  repeat, the channel can stop and need a manual start, and the error message
+  then tells the operator to check the media even though the schedule is the
+  problem.
+- `/api/health` can report healthy while a channel is unable to air.
+- The station's own decode-back self-check (it decodes the broadcast to
+  confirm the captions) failed on certain cue timings in beta.9 and was not
+  re-tested in the beta.10 run, which used a separate lab verify script.
 
-**End-of-schedule behaviour.**
-- When a channel's scheduled programming runs out, the channel can be
-  **STOPPED** and require a **manual start**, with an error telling the
-  operator to check the program's media. That message is **misleading in this
-  case** — the media is fine; the schedule is empty.
-
-**Health endpoint.**
-- `/api/health` can report **healthy while a channel is unable to air**.
-
-**Decode-back verification.**
-- There is **no working decode-back proof** in this build; the self-check
-  currently fails on certain decoded cue timings.
-
+**Not proven at all, for beta.10 or earlier releases.**
 - **No full cable/SDI broadcast headend acceptance.** DeckLink SDI output
   is contract-tested against the GStreamer element it wires to
   (`decklinkvideosink`); it has not been proven against physical SDI
   hardware or a real cable-operator headend.
-- **No multi-channel simultaneous operation proof.** The engine's design
-  supports multiple channels; a multi-channel, simultaneous, unattended
-  production run has not been exercised end to end in this candidate.
+- **Multi-channel operation is proven only for eight hours on one lab
+  machine.** Three channels aired at the same time for eight hours in the
+  beta.10 run; no 24-hour or longer run, and no run at a real station, has
+  been done for this candidate.
 - **Internet Archive and YouTube syndication need station-provided
   accounts and credentials.** These integrations ship real adapters, gated
   off by default, and are contract-tested without live external calls. A

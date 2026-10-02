@@ -24,9 +24,13 @@ other repository. See
 the authored release-state record -- it is the single source of truth for
 which tag is current.
 
-`v1.0.0-beta.9` is the next candidate and the current owner-held unpublished
+`v1.0.0-beta.10` is the next candidate and the current owner-held unpublished
 candidate. It has no installer asset yet; install beta.7 from the release link
-above until beta.8 completes its candidate gates.
+above until beta.10 completes its candidate gates (the formal Gate A station
+acceptance has not been run for it) and is published as a GitHub pre-release.
+`v1.0.0-beta.8` and `v1.0.0-beta.9` were never published. What was and was not
+proven for beta.10 is in
+[`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
 
 `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable release) are
 now superseded.
@@ -120,6 +124,11 @@ runtime/model copy it produces, plus the recordings, media, and backups the
 station will retain. The installer composes the signed model components into
 the station's local Ollama store; it does not provide an automatic background
 model download after the base install.
+
+Starting with the `v1.0.0-beta.10` candidate, the cache of prepared copies of
+long programs (the "conform cache") defaults to a 60 GB budget instead of
+20 GB. Leave room for it on the data drive, or set
+`CIVICCAST_CONFORM_CACHE_GB` to a smaller value.
 
 Windows may show a blue **Windows protected your PC** screen. Do not infer a
 signature from that screen. The approved handoff must state the exact file's

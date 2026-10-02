@@ -8,10 +8,11 @@
 > now superseded.
 > `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also
 > superseded. `v1.0.0-beta.2` was never published -- it exists only as an
-> internal Gate A upgrade-baseline kit. `v1.0.0-beta.9` is the next
-> candidate and the current owner-held unpublished candidate; it does not
-> change the beta.7 install story above. Community support does not turn
-> this beta into a supported, SLA'd field release.
+> internal Gate A upgrade-baseline kit. `v1.0.0-beta.10` is the next
+> candidate and the current owner-held unpublished candidate (`v1.0.0-beta.8`
+> and `v1.0.0-beta.9` were never published); it does not change the beta.7
+> install story above. Community support does not turn this beta into a
+> supported, SLA'd field release.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -76,13 +77,16 @@ development.
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
 is a **public beta**, not a finished production release. Its current
-release, `v1.0.0-beta.5`, is downloadable (setup.exe and the runtime packs
-on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5)),
-a download-only upgrade for stations already on `v1.0.0-beta.4` (now
+release, `v1.0.0-beta.7`, is downloadable (setup.exe and the runtime packs
+on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7)),
+a download-only upgrade for stations already on `v1.0.0-beta.5` (now
 superseded), but there is still no dedicated, SLA'd support intake for it --
-the same community-driven, no-SLA posture above applies. `v1.0.0-beta.9` is
+the same community-driven, no-SLA posture above applies. `v1.0.0-beta.10` is
 the next candidate and the current owner-held unpublished candidate; it has
-no installer asset and does not change the beta.7 install story above.
+no installer asset and does not change the beta.7 install story above. When
+it is published it will be a GitHub pre-release (a beta candidate), not a
+production release; its known limits are in
+[docs/tester/known-limitations.md](docs/tester/known-limitations.md).
 
 If you are working on, evaluating, or running the native line:
 
