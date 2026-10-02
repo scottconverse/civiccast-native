@@ -20,7 +20,7 @@ Preparation now keeps a **persistent conform cache** under
   the old behavior — and *warm-behind* conforms the full asset into the cache
   on a background thread so the next airing hits. First-ever airing latency is
   therefore unchanged and documented in the runbook rather than hidden;
-* the cache is bounded (``CIVICCAST_CONFORM_CACHE_GB``, default 20; ``<= 0``
+* the cache is bounded (``CIVICCAST_CONFORM_CACHE_GB``, default 60; ``<= 0``
   disables caching entirely) with oldest-first eviction, hits refreshing the
   entry's clock.
 """
@@ -88,7 +88,7 @@ WarmScheduler = Callable[[Callable[[], None]], None]
 WindowLeveler = Callable[..., LeveledWindow]
 
 _CACHE_DIR_NAME = "conform-cache"
-_DEFAULT_CACHE_GB = 20.0
+_DEFAULT_CACHE_GB = 60.0
 _DEFAULT_PREPARATION_TIMEOUT_SECONDS = 300.0
 
 #: BETA.10 U29: the conform-cache warm is a WHOLE-ASSET conform, but it used

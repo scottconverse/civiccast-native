@@ -335,6 +335,33 @@ _SCHEDULE_TAIL_FLOOR_SECONDS = 30.0
 # durations were floored), so the margin keeps the resolution inside the next
 # item rather than on a boundary instant.
 _SCHEDULE_TAIL_BOUNDARY_MARGIN_S = 1.0
+# U67: the deployed rollover lead, restated (automation.py derives it as
+# ``2 * 300s preparation timeout + 30s + 60s = 690s``; see
+# ``ChannelAutomationService._rollover_lead_seconds``). Restated rather than
+# imported on purpose: the daemon must not take a live dependency on the
+# automation module's internals, and this watchdog has to hold on a daemon that
+# is draining already-queued commands with no automation in the process at all.
+_TRANSITIONING_WATCHDOG_LEAD_SECONDS = 690.0
+# U67: how long a ``_pending_reloads`` pin may stand before the daemon stops
+# trusting it. The pin is armed only by a reload that DECLINED or by a wedge
+# (see ``_pending_reloads``), and every one of its arms hands the channel's
+# recovery to a worker EXIT -- so its honest lifetime is "the rest of the plan
+# on air, then a restart", and a bound derived from plan length + lead is the
+# right shape. Flat part: one lead (the automation never dispatches a rollover
+# with more than a lead of plan left, and inside the lead the channel is
+# *meant* to be waited on) plus ``_PENDING_RELOAD_SETTLE_DEADLINE_S`` for any
+# accepted-but-unsettled reload still outstanding -- 1650s, 2.4x the worst
+# legitimate pin. ``_reload_stall_bound_seconds`` extends it from the
+# rollover's own recorded horizon when that is further out, so a declined
+# reload against a long plan is never judged early.
+_TRANSITIONING_WATCHDOG_SECONDS = (
+    _TRANSITIONING_WATCHDOG_LEAD_SECONDS + _PENDING_RELOAD_SETTLE_DEADLINE_S
+)
+# U67: after the watchdog re-issues the rollover once, how long the pin may
+# survive before the channel is restarted instead. One preparation timeout --
+# the longest a re-issue can take to arm something -- so a pin still standing
+# after it has declined a second time, with nothing in flight, is a dead end.
+_TRANSITIONING_WATCHDOG_REISSUE_GRACE_SECONDS = 300.0
 # U36 item 7: how many times a boundary reload the worker ABORTED pre-commit is
 # re-resolved and re-armed before the channel gives up on the seamless path and
 # arms the fallback slate at the boundary instead. Two, because the abort's
@@ -1138,6 +1165,15 @@ class EgressDaemon:
         # ``_poll_reload_settlement`` observes it (or its deadline lapses).
         # See ``_try_content_reload``'s docstring for the full design.
         self._pending_reload_settle: dict[str, _PendingReloadSettlement] = {}
+        # U67: the reload-stall watchdog's own bookkeeping for the
+        # ``_pending_reloads`` pin -- when that pin was armed, the bound it is
+        # judged against (extended by the rollover horizon it was armed with),
+        # and which recovery rung it has already been given. All three are
+        # cleared the moment the pin clears; see ``_arm_pending_reload`` and
+        # ``_poll_reload_stall_watchdog``.
+        self._reload_stall_since: dict[str, float] = {}
+        self._reload_stall_bound_s: dict[str, float] = {}
+        self._reload_stall_rungs: dict[str, int] = {}
         # F3 fix: the per-plan prepared/ directory (SourcePreparationReport.
         # plan_dir) backing the CURRENTLY on-air plan for each channel, if the
         # configured source_preparer reports one. Updated when a reload
@@ -1407,6 +1443,15 @@ class EgressDaemon:
             # this way means a heal performed this tick is observable by the
             # escalation immediately rather than a tick late.
             self._poll_freeze_escalation,
+            # BETA.10 U67: the reload-stall watchdog goes after everything else,
+            # for the same reason the A/V guard and the freeze escalation do --
+            # it judges the settled state row (it needs ``_poll_process``'s
+            # TRANSITIONING write from this same tick to have already happened)
+            # and nothing downstream may be left looking at a channel it just
+            # decided to restart. It is a no-op unless the channel is carrying a
+            # ``_pending_reloads`` pin -- i.e. unless a seamless hand-off has
+            # already failed -- so a normal 690s-lead rollover never reaches it.
+            self._poll_reload_stall_watchdog,
         ):
             try:
                 poll(channel_id)
@@ -5316,6 +5361,50 @@ class EgressDaemon:
                     )
                     return True
                 target_state = "FALLBACK_SLATE"
+        # U67 (live, education, 2026-09-30 03:44:10 -- 34 hours of black and
+        # silent air). A ``None`` from the boundary provider on the seamless arm
+        # is the SAME degenerate answer the automation's own U63 defect-A rule
+        # exists to repair (``_resolve_rollover_tail``): the schedule item test
+        # is the half-open ``starts_at <= t < ends_at``, so the boundary this
+        # reload was dispatched against -- the closing item's own DERIVED end,
+        # never a measured instant -- can land exactly ON that item's slot end
+        # and resolve to no plan at all. Automation re-asks one margin past it,
+        # finds the next item genuinely due, and logs "resolved to a 0.0s tail
+        # ... using the plan due where that tail ends instead (1800.0s)"; this
+        # method asked the same instant, got the same ``None``, and declined --
+        # silently. Where the two processes look at the same boundary they must
+        # give the same answer, so take the same second look before treating the
+        # rollover as unplannable.
+        #
+        # A RECOVERY, not a new selection rule: it can only turn a decline into
+        # the plan the schedule already has due immediately after the boundary
+        # -- which is the plan the automation recorded the horizon for. The tail
+        # floor and the horizon downstream are unchanged.
+        if (
+            source_plan is None
+            and not force_fallback
+            and boundary_provider is not None
+            and boundary_at is not None
+            and not self.has_manual_override(channel_id)
+        ):
+            try:
+                source_plan = boundary_provider(
+                    channel_id,
+                    boundary_at + timedelta(seconds=_SCHEDULE_TAIL_BOUNDARY_MARGIN_S),
+                    **horizon_kwargs,
+                )
+            except SourcePrepareError:
+                source_plan = None
+            if source_plan is not None and source_plan.channel_id == channel_id:
+                _LOG.warning(
+                    "Content-reload for %s: the boundary at %s resolves to no plan, but the "
+                    "instant one margin past it (%s) resolves to %s; using that plan rather "
+                    "than declining into a restart.",
+                    channel_id,
+                    boundary_at.isoformat(),
+                    (boundary_at + timedelta(seconds=_SCHEDULE_TAIL_BOUNDARY_MARGIN_S)).isoformat(),
+                    source_plan.segments[0].label if source_plan.segments else "an empty plan",
+                )
         # U53 item 1: this is a filler rollover -- if the schedule has a programme
         # due when the filler's gap closes, trim the filler to that gap and chain
         # the programme into the same plan, so the programme is prepared now (with
@@ -5342,6 +5431,20 @@ class EgressDaemon:
                 boundary_at=rollover_plan_end_at,
             )
         if source_plan is None or source_plan.channel_id != channel_id:
+            # U67: this used to be a bare ``return False``, and that silence is
+            # what made the 2026-09-30 education incident take 34 hours to
+            # explain: the reload was declined right here, the caller fell back
+            # to terminate+restart, and under the U41 plan-EOS hold the worker
+            # never exited, so the channel pinned TRANSITIONING with an empty
+            # ``last_error`` and no line anywhere naming the cause.
+            _LOG.warning(
+                "Content-reload for %s resolved no plan (boundary=%s, force_fallback=%s, "
+                "resolved_from=%s); declining into the terminate+restart fallback.",
+                channel_id,
+                boundary_at.isoformat() if boundary_at is not None else "-",
+                force_fallback,
+                "boundary" if boundary_provider is not None and boundary_at is not None else "now",
+            )
             return False
         if not force_fallback:
             # U26 defect 2 applied where U26 deliberately skipped it.
@@ -5575,8 +5678,10 @@ class EgressDaemon:
                 # what ``_fall_back_to_restart_reload`` (called next, by
                 # ``_request_reload``, once this method returns False) sets --
                 # setting it here first closes the window; that later call
-                # harmlessly re-sets the same value.
-                self._pending_reloads[channel_id] = (state.state, state.current_source_label)
+                # harmlessly re-sets the same value. U67: both arms now go
+                # through ``_arm_pending_reload`` so the reload-stall watchdog
+                # gets its clock and bound at the same instant.
+                self._arm_pending_reload(channel_id, state, plan_end_at=rollover_plan_end_at)
                 self._note_deliberate_kill(
                     channel_id,
                     "reload ack timed out on a live pid: the worker is wedged on a "
@@ -5592,6 +5697,21 @@ class EgressDaemon:
             self._discard_pending_reload_settlement(
                 channel_id, reason="superseded by a newer reload attempt"
             )
+        # U67: the seamless path has just TAKEN OVER this channel's recovery, so a
+        # ``_pending_reloads`` pin left by an earlier declined attempt is obsolete
+        # -- drop it. The pin means "no seamless hand-off happened; wait for the
+        # worker to reach plan EOS and exit, then restart onto the prepared plan",
+        # and this reload is now settling under ``_pending_reload_settle``
+        # instead; its own abort/failure re-arms a pin through
+        # ``_fall_back_to_restart_reload``. Left in place it was NOT harmless:
+        # under the U41 plan-EOS hold the worker no longer exits at a boundary, so
+        # nothing would ever pop it, and ``_poll_process`` would keep rewriting
+        # TRANSITIONING over the channel for the whole settlement and then
+        # permanently -- including after this reload lands its new program on air.
+        # Measured on the candidate build: the reload-stall watchdog's own re-issue
+        # succeeds exactly this way, and a pin that outlived its own recovery would
+        # make the watchdog re-fire against a channel that is already on air.
+        self._pending_reloads.pop(channel_id, None)
         # Armed, not yet settled: record it and return. _poll_reload_settlement
         # finishes the target-state bookkeeping once reload-status.json confirms
         # "applied" (or falls back to restart on "aborted:<reason>"/deadline).
@@ -5841,7 +5961,9 @@ class EgressDaemon:
                     self._discard_pending_reload_settlement(
                         channel_id, reason="worker exited before settlement could be committed"
                     )
-                    self._fall_back_to_restart_reload(channel_id)
+                    self._fall_back_to_restart_reload(
+                        channel_id, plan_end_at=pending.rollover_plan_end_at
+                    )
                     return
                 # NOTE: a plain pop here, not _discard_pending_reload_settlement --
                 # this attempt is COMMITTING, not being discarded; its plan_dir
@@ -5867,6 +5989,7 @@ class EgressDaemon:
                 self._fall_back_to_restart_reload(
                     channel_id,
                     failure_reason=f"Seamless content reload failed: {result}",
+                    plan_end_at=pending.rollover_plan_end_at,
                 )
                 return
             # Unrecognized result value -- see the docstring note above.
@@ -5880,7 +6003,7 @@ class EgressDaemon:
             self._discard_pending_reload_settlement(
                 channel_id, reason=f"unrecognized settlement result {result!r}"
             )
-            self._fall_back_to_restart_reload(channel_id)
+            self._fall_back_to_restart_reload(channel_id, plan_end_at=pending.rollover_plan_end_at)
             return
         if self._monotonic() - pending.since >= _PENDING_RELOAD_SETTLE_DEADLINE_S:
             _LOG.warning(
@@ -5893,7 +6016,7 @@ class EgressDaemon:
             self._discard_pending_reload_settlement(
                 channel_id, reason=f"no settlement within {_PENDING_RELOAD_SETTLE_DEADLINE_S:.0f}s"
             )
-            self._fall_back_to_restart_reload(channel_id)
+            self._fall_back_to_restart_reload(channel_id, plan_end_at=pending.rollover_plan_end_at)
 
     def _read_reload_status(self, channel_id: str) -> dict[str, Any] | None:
         """Best-effort read of ``<work>/<channel_id>/reload-status.json``
@@ -5908,12 +6031,163 @@ class EgressDaemon:
             return None
         return data if isinstance(data, dict) else None
 
+    def _arm_pending_reload(
+        self,
+        channel_id: str,
+        state: EgressStateRow | None,
+        *,
+        plan_end_at: datetime | None = None,
+    ) -> None:
+        """U67: arm the ``_pending_reloads`` pin AND start the reload-stall
+        watchdog's clock for it.
+
+        Every writer of ``_pending_reloads`` goes through here --
+        ``_fall_back_to_restart_reload`` (a declined or lost reload) and
+        ``_reload_steps``' ack-timeout wedge branch -- so the bound is always
+        recorded at the instant the pin appears, from whatever rollover horizon
+        the caller still has in hand (``plan_end_at``; ``None`` when the reload
+        carried no recorded horizon). See ``_poll_reload_stall_watchdog``."""
+        self._pending_reloads[channel_id] = (
+            state.state if state else None,
+            state.current_source_label if state else None,
+        )
+        self._reload_stall_since[channel_id] = self._monotonic()
+        self._reload_stall_bound_s[channel_id] = _reload_stall_bound_seconds(plan_end_at)
+        self._reload_stall_rungs.pop(channel_id, None)
+
+    def _poll_reload_stall_watchdog(self, channel_id: str) -> None:
+        """U67: recover a channel whose ``_pending_reloads`` pin has outlived
+        any honest reason to be there.
+
+        The pin IS the daemon's "a reload declined; wait for the worker to reach
+        plan EOS and exit, then restart onto the prepared plan" state, and both
+        of its arms (``_fall_back_to_restart_reload``, and ``_reload_steps``'
+        ack-timeout wedge branch) hand the channel's recovery to a worker EXIT.
+        That was a safe assumption until U41's plan-EOS hold shipped: under it
+        the engine drops the plan-EOS so the worker never exits at a plan
+        boundary, and a pin whose only exit route is gone is permanent.
+        Measured 2026-09-30 on the education channel: TRANSITIONING rewritten
+        every ~2s with an unchanged pid and an empty ``last_error`` from
+        03:44:13 until the log rolled -- 34 hours of black and silent air, with
+        no line anywhere naming the cause.
+
+        So: bound the pin (``_TRANSITIONING_WATCHDOG_SECONDS``, "plan length +
+        lead", stretched by the rollover's own recorded horizon where that is
+        further out). On expiry, log an ERROR and recover with no human, in two
+        rungs: re-issue the reload once (the one that declined may well arm on a
+        second look -- e.g. once the schedule's next item is genuinely due), and
+        if the pin survives that by one more re-issue grace, restart the
+        channel's egress by terminating the worker exactly as the Item 85 wedge
+        branch does, so ``_poll_process``'s crash-relaunch re-resolves and
+        starts a fresh plan.
+
+        A NORMAL rollover can never reach this: nothing on the healthy path ever
+        writes ``_pending_reloads``, so the clock only ever starts on a channel
+        that has already failed a seamless hand-off. While a preparation or an
+        accepted-but-unsettled reload is genuinely in flight the watchdog stands
+        down entirely -- those carry their own deadlines (the preparation
+        timeout / ``_PENDING_RELOAD_SETTLE_DEADLINE_S``) and are not this one's
+        business."""
+        if channel_id not in self._pending_reloads:
+            # The pin cleared (the worker exited and the restart took it, a
+            # fresh start, a drain, a stop): this supervision is over.
+            self._reload_stall_since.pop(channel_id, None)
+            self._reload_stall_bound_s.pop(channel_id, None)
+            self._reload_stall_rungs.pop(channel_id, None)
+            return
+        now = self._monotonic()
+        if self.has_pending_reload_settlement(channel_id):
+            # Real work is outstanding: a preparation is running, or a reload
+            # this daemon accepted is still settling. The pin is being driven,
+            # not stuck. Restart the clock for whatever comes after it.
+            self._reload_stall_since[channel_id] = now
+            self._reload_stall_rungs.pop(channel_id, None)
+            return
+        since = self._reload_stall_since.get(channel_id)
+        if since is None:
+            # First sighting of a pin this watchdog did not arm itself (armed
+            # before this process started, or between two ticks): measure from
+            # here rather than never.
+            self._reload_stall_since[channel_id] = now
+            self._reload_stall_bound_s.setdefault(channel_id, _TRANSITIONING_WATCHDOG_SECONDS)
+            return
+        rung = self._reload_stall_rungs.get(channel_id, 0)
+        bound = (
+            _TRANSITIONING_WATCHDOG_REISSUE_GRACE_SECONDS
+            if rung > 0
+            else self._reload_stall_bound_s.get(channel_id, _TRANSITIONING_WATCHDOG_SECONDS)
+        )
+        elapsed = now - since
+        if elapsed < bound:
+            return
+        self._reload_stall_since[channel_id] = now
+        state = self._store.read_state(channel_id)
+        process = self._processes.get(channel_id)
+        if rung == 0:
+            self._reload_stall_rungs[channel_id] = 1
+            _LOG.error(
+                "Channel %s: reload stall -- pinned TRANSITIONING for %.0fs with nothing in "
+                "flight (state=%s, source=%s, pid=%s, last_error=%s). The reload was declined "
+                "and its only recovery is a worker exit that has not come. Re-issuing the "
+                "rollover now; a channel still pinned %.0fs from here is restarted.",
+                channel_id,
+                elapsed,
+                state.state if state else "UNKNOWN",
+                state.current_source_label if state else "-",
+                _process_pid(process),
+                (state.last_error if state and state.last_error else "-"),
+                _TRANSITIONING_WATCHDOG_REISSUE_GRACE_SECONDS,
+            )
+            self._request_reload(channel_id)
+            # A re-issue that declines again comes back through
+            # ``_arm_pending_reload``, which resets this pin's clock and clears its
+            # rung -- correct for a NEW stall, wrong here: this is still the SAME
+            # stall, and without restoring the rung the grace below would never
+            # apply and the channel would simply re-issue forever at the full
+            # bound instead of ever reaching the restart. (A re-issue that
+            # SUCCEEDS leaves no pin at all -- ``_reload_steps`` drops it when the
+            # reload arms -- so the first branch above ends the episode.)
+            if channel_id in self._pending_reloads:
+                self._reload_stall_since[channel_id] = now
+                self._reload_stall_rungs[channel_id] = 1
+            return
+        self._reload_stall_rungs[channel_id] = rung + 1
+        _LOG.error(
+            "Channel %s: reload stall not cleared by the re-issue (pinned TRANSITIONING a "
+            "further %.0fs, state=%s, source=%s, pid=%s, last_error=%s). Restarting the "
+            "channel's egress: terminating the worker so the crash-relaunch re-resolves and "
+            "starts a fresh plan.",
+            channel_id,
+            elapsed,
+            state.state if state else "UNKNOWN",
+            state.current_source_label if state else "-",
+            _process_pid(process),
+            (state.last_error if state and state.last_error else "-"),
+        )
+        # Drop the pin BEFORE terminating: the pin is precisely what tells
+        # ``_poll_process``'s exit branch that the exit it is about to observe
+        # was "honor the pending reload" rather than a crash to relaunch from,
+        # and this watchdog is terminating a channel whose pending reload it has
+        # just judged untrustworthy -- the crash-relaunch is the recovery.
+        self._pending_reloads.pop(channel_id, None)
+        if process is None or _process_poll(process) is not None:
+            # No live worker left to restart; the pin was simply stale. Dropping
+            # it is the whole fix -- the next tick publishes the real state.
+            return
+        self._note_deliberate_kill(
+            channel_id,
+            "reload stall watchdog: the channel stayed TRANSITIONING past its bound with "
+            "nothing in flight, and the re-issue did not clear it",
+        )
+        _process_terminate_bounded(process)
+
     def _fall_back_to_restart_reload(
         self,
         channel_id: str,
         *,
         failure_reason: str | None = None,
         prepared_reload: _ReusePreparedPlan | None = None,
+        plan_end_at: datetime | None = None,
     ) -> None:
         """The terminate+restart reload path a declined/aborted/lost content-
         reload always falls through to -- factored out of ``_request_reload``
@@ -5931,16 +6205,19 @@ class EgressDaemon:
         swap. Held for the restart ``_poll_process`` performs when this
         method's worker exit arrives, so that restart reuses it instead of
         conforming it again. Every other caller passes nothing and behaves
-        exactly as before."""
+        exactly as before.
+
+        ``plan_end_at`` (U67, default ``None``): the rollover horizon this
+        reload was dispatched against, when the caller still has it. Recorded on
+        the ``_pending_reloads`` pin so the reload-stall watchdog's bound can be
+        derived from the plan that is actually left rather than only from its
+        flat floor -- see ``_arm_pending_reload``."""
         self._discard_pending_reload_settlement(channel_id, reason="falling back to restart")
         if prepared_reload is not None:
             self._stash_prepared_restart_plan(channel_id, prepared_reload)
         state = self._store.read_state(channel_id)
         process = self._processes.get(channel_id)
-        self._pending_reloads[channel_id] = (
-            state.state if state else None,
-            state.current_source_label if state else None,
-        )
+        self._arm_pending_reload(channel_id, state, plan_end_at=plan_end_at)
         proof_event_id = state.current_proof_event_id if state else None
         if failure_reason is not None:
             source_label = (
@@ -6124,7 +6401,22 @@ class EgressDaemon:
                 # helper, keyed off the pending preparation's ``slate_first``.
                 self._keep_slate_after_failed_hand_off(channel_id)
                 return
-        self._fall_back_to_restart_reload(channel_id)
+            # U67: the seamless path was available and DECLINED this reload.
+            # This used to be completely silent, and that silence is what made
+            # the 2026-09-30 education incident (34 hours of black and silent
+            # air) take so long to explain: the only trace anywhere was the
+            # TRANSITIONING row the fallback below writes -- with ``last_error``
+            # empty, because this path passes no ``failure_reason``. Name it.
+            _LOG.warning(
+                "Seamless content-reload for %s did not arm (state=%s, source=%s, pid=%s); "
+                "falling back to terminate+restart. The channel stays TRANSITIONING on a "
+                "pending reload until the worker exits at the end of the plan it is airing.",
+                channel_id,
+                state.state if state else "UNKNOWN",
+                state.current_source_label if state else "-",
+                _process_pid(process),
+            )
+        self._fall_back_to_restart_reload(channel_id, plan_end_at=rollover_plan_end_at)
 
     def _drain(self, channel_id: str) -> None:
         self._cancel_preparation(channel_id)
@@ -6563,6 +6855,30 @@ def _default_orphan_terminator(pid: int, created_at: float) -> None:
 
 def _process_pid(process: object) -> int | None:
     return getattr(process, "pid", None)
+
+
+def _reload_stall_bound_seconds(plan_end_at: datetime | None) -> float:
+    """U67: the reload-stall watchdog's bound for a pin armed against
+    ``plan_end_at`` -- the rollover horizon automation recorded for this reload,
+    or ``None`` when the reload carried none.
+
+    ``_TRANSITIONING_WATCHDOG_SECONDS`` covers every pin with a lead or less of
+    plan left, which is every pin automation itself can dispatch. When the
+    recorded horizon is FURTHER out than that, the pin's honest lifetime really
+    is longer -- the worker cannot reach plan EOS before then -- so the bound is
+    stretched to "the plan that is left, plus the lead and settle window the
+    restart behind it costs" rather than firing early against a channel that is
+    still airing correctly. A horizon already in the past (the incident's own
+    shape: the recorded boundary was 554s away when the reload was dispatched,
+    and long past by the time anyone looked at it) leaves the flat bound
+    standing."""
+    if plan_end_at is None:
+        return _TRANSITIONING_WATCHDOG_SECONDS
+    remaining = (plan_end_at - datetime.now(UTC)).total_seconds()
+    return max(
+        _TRANSITIONING_WATCHDOG_SECONDS,
+        remaining + _TRANSITIONING_WATCHDOG_LEAD_SECONDS + _PENDING_RELOAD_SETTLE_DEADLINE_S,
+    )
 
 
 def _stderr_log_size(path: Path) -> int:
