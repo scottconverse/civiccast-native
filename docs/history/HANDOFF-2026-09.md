@@ -1,0 +1,940 @@
+> **Historical - not current guidance.** This is the beta.5 to beta.8 era handoff log, kept for the record. Its instructions, local paths, kit-server commands and any dated release authorization do not apply to beta.10. Current status: ../../PROJECT-STATUS.md. Current handoff: ../../ops/beta10-oversight/HANDOFF-2026-10-01.md.
+
+# HANDOFF
+
+## 2026-10-02 current: beta.10 is the owner-held unpublished candidate
+
+`v1.0.0-beta.10` (branch `release/beta10`) is the next release; beta.7 is still
+the published tag, and beta.8 and beta.9 were never published. See
+`PROJECT-STATUS.md` and `docs/releases/v1.0.0-beta.10-verification.md`. The
+beta.8 section below is historical.
+
+## 2026-09-17 (historical): beta.8 release preparation and PR 231
+
+This section supersedes the older status sections below.
+Current branch: `fix/blackwell-caption-runtime`.
+Current HEAD: `904a8453cd77e259b7e8a34bcc48bb1f047c7a2e` (test synchronization correction).
+Current reviewed product HEAD: `d89e7e930c914f85f357024e5f2fef4bc7596801`.
+Initial pushed checkpoint: `005cd33595d2b72f5507c44e98e04c08d3c43563`.
+Resolve current HEAD with Git; the follow-up repair commit supersedes that
+checkpoint and requires its own CI and installed-runtime validation.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/231.
+Current public tag: `v1.0.0-beta.7`; beta.8 is NOT published.
+
+PR follow-up: DO NOT MERGE until fresh CI and required validation pass.
+The restart-PTS, retention-permission, failed-reset/stale-caption and
+stabilization repairs were independently reviewed and pushed at d89e7e93.
+The first stricter lexical stabilizer produced only five cues from 120 seconds
+of preserved real speech (51 ASR hypotheses); that is insufficient functional
+acceptance. Grouped hypotheses improved that to 13 cues but retained a 17s
+speech gap. The reviewed repair uses actual recognizer word timestamps;
+both final replays yielded 23 cues/24 windows and were independently re-derived.
+No confirmation or overload policy is relaxed. Preserve this
+negative replay and the preceding silence-only replays; do not report only
+nonzero cues as success. Raw receipts are under the local Temp directory as
+blackwell-lexical-replay-*.json. No installed service has been changed.
+
+CI at 005cd335: browser request-arrival race failed operator a11y; two-line
+wait fix passes exact repeat20 and suite11. Mutation baseline failed an
+unsynchronized retention test before mutants were evaluated; deterministic
+ordering fix has a failing synchronous-sweep negative control. Reproducibility
+passed. Randomized seed 1764308419 failed 20 tests (10213 passed, 71 skipped):
+stale claims bindings/front-door documents/adoption tag plus retention race.
+Source-tripwire bindings were explicitly reviewed, not promoted as installed
+proof. Claims tests now pass; front-door/adoption tests pass after correcting
+Architecture, Support, install HTML and the hardcoded beta.5 policy link.
+Independent affected tap/daemon/strategy tests: 311 passed, 6 POSIX skips.
+The Python 3.14 exploratory caption tests hit SQLite finalizer warnings;
+the configured .venv Python 3.12 migration/CDN checks pass (10 tests).
+Timed-word flush/review fanout is repaired. Independent review re-derived both
+23-cue GPU replays exactly and found no remaining source blocker. Combined
+checks passed 660 tests, 8 skips; proportional feed timing then passed 11
+focused tests and independent boundary review. Ruff/scoped pre-commit/manual
+freshness pass; mypy passes all 11 changed product modules. Source is ready
+and pushed, NOT release acceptance. Shared-model three-channel capacity
+completed 72/72 tasks within 5s deadlines (max2.093s); installed output and signed kit remain
+unverified. Evidence/report: work/release-beta8-word-replay/.
+Re-run final combined checks against frozen source after all owners finish;
+intermediate 637passed8skipped is not an exact final candidate receipt.
+
+Owner authorized push, merge, tag and public beta.8, then final-public-
+distributable GPU captions-ON soak. Do not reuse old development captures
+as installer/soak acceptance. HALO-gate-a is offline; asked Scott to bring it
+online while local work continues. Do not skip exact-source installer gates.
+
+Release review found and fixed atomic session-reset/publication and reused
+audio-file races. Six regressions; affected suite602passed8skipped, independent
+worker/native-pipe90passed1skipped, randomized worker57passed, app subset32passed.
+Mypy6changed modules pass. Full PR CI is running, not yet green.
+Candidate docs/manuals updated, public beta7 status retained until publication.
+See docs/releases/v1.0.0-beta.8-verification.md and local human report
+`C:\Users\scott\Documents\Codex\2026-08-12\tes\CivicCast Beta 8 - Release Progress - v1.md`.
+
+Installed-validation preparation: work/release-beta8-installed-validation/.
+Stage helper independently approved after interrupted-copy and orphan-process
+fixes (17 fixtures). Read-only baseline only at 12:06 p.m. MDT under
+`C:\Users\scott\Documents\Codex\2026-08-12\tes\Beta 8 Installed Validation - 2026-09-17 v1`.
+Thirteen source modules match5754747e, twelve installed differ; product modules
+are unchanged by904a8453. No service/config/schedule/staging changes made.
+Staff GET returns401; no shell token. Browser CUA failed twice initializing
+kernel assets. Scott was asked for an existing token-file path or temporary
+test-token authorization; no credentials were changed or exposed. Observer
+missing-graph port guard corrected and independently approved; all28 helper
+fixtures passed (root0.93s, reviewer0.92s). Helpers frozen, no real capture.
+HALO remains offline.
+Public-artifact soak defaults to24h unless Scott chooses otherwise before
+start; missing optional duration reply is not a blocker. Freeze before run.
+
+Fresh 904a8453 CI: ci-test35257352469, deterministic35257352393,
+lint35257352380, docs35257352523, a11y35257352370, reproducibility35257352371.
+Mutation baseline FAILED at904a8453: job105324533420, asynchronous fallback
+test assumed its first future could not complete within process_once. Four
+test synchronization corrections passed independent review and await push;
+no behavior assertions removed, no product code changed. Root affected run:
+233 passed in9.89s; independent233passed9.80s plus controlled timing probes.
+Unit/randomized still pending; Windows reproducibility
+passed. Startup overload remains an OPEN investigation, not an accepted
+residual risk. See work/release-beta8-startup-investigation/ and corrected
+work/CURRENT-REPORTS.txt; v9 is historical, not current release acceptance.
+Historical 5754747e CI:
+ci-test35256412145, deterministic35256412156,
+lint35256412075, docs35256412158, a11y35256412039, reproducibility35256412134.
+Mutation job105321050393 failed on a different unmutated-baseline race:
+the retention cadence test read its periodic background result without waiting.
+The generator patch ran successfully. Independent event-controlled reproduction
+confirmed the race; explicit completion wait preserves the original cadence
+assertion and passes the delayed case, while suppressed dispatch still fails.
+Tap module:68passed5.45s. Test-only follow-up prepared; no product change.
+Other results pending; no green-CI or installed-acceptance claim. Historical d89e7e93
+CI: ci-test35253853483, deterministic35253853480,
+lint35253853525, docs35253853508, a11y35253853488, reproducibility35253853530.
+At 11:48 a.m. MDT the mutation baseline failed before evaluating mutants:
+test_seamless_content_reload_records_a_transition expected2 rows, found1;
+2277 passed,24 skipped,8 deselected. Root cause: mutmut 3.6.0's generator
+wrapper discards StopIteration.value, changing successful reload into fallback.
+The exact failure reproduced under real generated instrumentation; preserving
+the return value passed all 15 as-run tests. The version/template-checked CI
+compatibility helper passed independent review; 27 focused tests passed locally
+in 1.45s. It changes no product code, assertions or test selections. Full Linux
+mutation execution still requires fresh CI. Unit/randomized remain running;
+Windows reproducibility passed. Both browser
+accessibility jobs, lint, docs, security and Windows dual-runtime probes passed.
+
+Historical 005cd335 run IDs: ci-test35248836044, lint35248835876,
+docs35248835948, detectors35248835819, security35248835834,
+reproducibility35248835895. Refresh before making any PASS/merge claim.
+The full pre-commit sweep has inherited historical-evidence hygiene failures;
+24changed-file hooks pass. No archive bytes were rewritten to hide those failures.
+
+Next: resolve CI/review findings; merge only green; build exact merged source
+with native-beta-candidate-artifacts self-hosted lane, then Gate A three lanes;
+publisher dry-run then publish; update release truth/public docs; download and
+verify public bytes and install for soak. Soak duration question outstanding
+(recommended24hours). Upgrade baseline currently beta5; check beta7 kit identity
+and repin before claiming beta7-to-beta8 upgrade proof. No forced tags/cleanups.
+
+## 2026-09-15 current: beta.8 candidate identity after captions repair merge
+
+Current branch: `release/beta8-candidate-identity`.
+Base `main`: `b0f123957b414db19263138a5e8005992c14a954`.
+Merged repair: PR #229, three-channel CUDA live-caption throughput.
+Current published tag: `v1.0.0-beta.7` at source
+`3e117ff1fa9e06873ecec5b5b07f1360bc8b228d`.
+
+This branch advances the source, installer, API, operator display, and bundled
+manual identity to unpublished `v1.0.0-beta.8`. No beta.8 installer exists yet.
+After identity CI merges, build from the exact merge commit, run the required
+candidate gates, and use the Blackwell captions-ON test before accepting live
+captions.
+
+## 2026-09-15 current: beta.7 published captions-off; captions-on GPU throughput repair
+
+Current branch: `fix/captions-cuda-three-channel-throughput`.
+Base `main`: `cc02cf11bf00685eff1c9c4cae5809a46ca05ed2`.
+Implementation and local-proof anchor: `17878682128490a8cfc5d11ea5e483cb482c6b9b`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/229.
+Initial pushed branch head: `f9c2a30256ca34e77dcfe877cfc92409462817b8`.
+This status update follows that head; use PR #229 for the live head and matching
+CI run IDs.
+Current published tag: `v1.0.0-beta.7` at source `3e117ff1fa9e06873ecec5b5b07f1360bc8b228d`.
+
+The published beta.7 installer is the captions-OFF release. Its Blackwell
+captions-ON diagnostic exposed deterministic throughput overload: one GPU
+transcription took about 2.75 seconds, but beta.7 serialized three channel
+segments, producing about 8.25 seconds of work every five seconds. The next
+candidate repair gives a live CUDA faster-whisper runtime three workers and
+lets the caption tap submit up to three channels concurrently. CPU live
+captions remain at one worker.
+
+Before the first multi-channel scan, the tap lowers the supervisor thread
+priority and prepares the model. If CUDA initialization falls back to CPU,
+both runtime and tap capacity become one before the channel executor is
+created. Explicit operator tap-concurrency overrides remain authoritative.
+
+Local verification: 365 relevant tests passed with one expected external
+Postgres skip; Ruff, format, mypy, diff, and added-line ASCII checks passed.
+Independent hostile review is PASS after the first-scan fallback and priority
+ordering findings were fixed. Evidence is under
+`.agent-runs/native-windows/beta8-caption-gpu-throughput/evidence/`.
+
+This is source proof, not a captions-ON release verdict. Required sequence:
+push and open the PR, pass required CI, merge, build the next exact-merge
+candidate, run local Sandbox/Gate A as required, then run the real Blackwell
+captions-ON test before accepting captions ON.
+
+The corrected unchanged-beta.7 30-minute diagnostic prompt is on the USB at
+`D:\RUN-THIS-BLACKWELL-BETA7-30MIN-CAPTIONS-ON.md`, 27,040 bytes, SHA-256
+`04644F50BB03AB535DB5CE9C2E83B5A1EE2AEAC52AEAFB241937B5E4702F43A0`.
+It gives CivicCast one start attempt and then observes passively for all 1,800
+monotonic seconds; it does not restart, repair, clear, or otherwise help the
+product during measurement.
+## 2026-09-13 current: rejected ad17971 candidate and selector handoff repair
+
+Current branch: `fix/beta7-quiescence-deadlock`.
+Base `main`: `ad17971df5360c87ed10f52f3d2978f9da2dcf53`.
+Implementation and local-proof anchor:
+`ffbc1bdaa157ca4f1c9f20af79e6e45e2b83e899`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/228.
+Initial pushed evidence head: `c81cc62605e02e426c0aaace0f53bd24d1cc7f17`.
+This handoff/status correction follows that head, so use PR #228 for the live
+branch HEAD and matching CI run IDs.
+Current published tag: `v1.0.0-beta.5`; beta.7 has no tag. No replacement
+installer or kit exists.
+
+The exact signed `ad17971` beta.7 candidate is rejected. Build run
+`34751773391` produced installer SHA-256
+`d10157ab7ba37fb7cb761b30f264f77e86f97706dfdb19f9f6814fa6ab555110`.
+The byte-verified kit is quarantined at
+`C:\CivicCastTester\kit-safe\ad17971df5360c87ed10f52f3d2978f9da2dcf53`.
+Its captions-OFF Sandbox passed, but the captions-ON Sandbox failed with three
+post-start worker exits/relaunches across public and education, including two
+nonzero exits, one clean exit, and a 41.2 second maximum gap. Do not Gate A,
+soak, reuse, or publish this kit. Compact verdict evidence is copied under
+`.agent-runs/native-windows/beta7-r7-quiescence/evidence/rejected-ad17971/`.
+
+The failed path matches GStreamer 1.28.5's two-phase `input-selector` switch.
+Setting `active-pad` can leave a pending pad until a later buffer or serialized
+event commits it. The prior protocol could block both outgoing A/V tails while
+both replacement tails remained held, removing every trigger and wedging the
+coupled A/V and mux path. The repair requests both selectors while the old leg
+still flows, releases both replacement holds, requires notification and exact
+readback for both active pads, and only then publishes the replacement role and
+retires the old leg.
+
+Finite replacements first install nonblocking DROP probes on both old selector
+sink pads, then sample the outgoing timestamp edge and apply one common offset.
+Any old buffer already past those probes has crossed the timestamp observer;
+later buffers are dropped before entering the selector. After confirmed
+handoff, source-peer DROP probes remain through release of both selector-owned
+request pads. The commit path has no IDLE barrier, manual peer unlink, or
+synchronous flush into `input-selector`.
+
+Final local verification on the implementation anchor:
+
+- 56 deterministic selector handoff and recovery tests passed.
+- 145 focused reload, timeout, worker, and daemon tests passed.
+- The immediate finite and three-channel captioned production-pressure native
+  GStreamer tests passed together in 80.10 seconds.
+- Public, education, and government each completed six reloads with six
+  `selector-handoff-confirmed` and six `old-tail-detached` receipts, constant
+  `elements=77`, zero errors, zero stalls, and clean teardown.
+- Two adjacent deferred native GStreamer tests passed in 15.59 seconds.
+- Ruff, format, mypy, compileall, claims drift, and diff checks passed.
+- Two independent read-only reviews returned GO with no release blocker.
+
+Evidence is under
+`.agent-runs/native-windows/beta7-r7-quiescence/evidence/`. This is local source
+and staged-runtime proof. It is not signed-installer, Sandbox, Gate A, physical
+tester, or publication proof.
+
+The PR #226 IDLE/quiescence protocol in the historical section below is
+superseded. Required sequence: push and open the PR, pass required CI, merge,
+build a fresh signed candidate from the exact merge SHA, run captions-OFF and
+captions-ON Sandbox qualifications from first start, run Gate A, then run the
+dedicated physical tester soak. Publish beta.7 only if every exact-candidate
+gate passes. Full owner authorization remains in force.
+
+## 2026-09-13 rejected 8bcf012 candidate and retiring old-leg error repair
+
+Current branch: `fix/beta7-immediate-finite-reload-error`.
+Base `main`: `8bcf012db69a306bf6e163322ed25f2c671e93e4`.
+Implementation and local-proof anchor:
+`be2854d52d4e125e73977bb54e7d336e4e86686d`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/227.
+This handoff/status commit follows the implementation anchor, so use PR #227
+for the current branch HEAD and final CI state. No replacement installer or kit
+exists.
+
+The exact signed `8bcf012` beta.7 kit is rejected. Build run `34745799145`
+produced installer SHA-256
+`11ed7e9bd63d627103f45bfdeb500840b991569793a939a15e303da024c4eb27`.
+The byte-verified kit is quarantined at
+`C:\CivicCastTester\kit-safe\8bcf012db69a306bf6e163322ed25f2c671e93e4`;
+its whole-kit `SHA256SUMS.txt` hash is
+`8cfa72de1f83509e15b89eeed0e4375f63793cfaac5537c5b9b6db735afcf1b2`.
+Its 15-minute Sandbox phase completed 93 reloads with stable PIDs, zero
+continuity errors, and no in-phase worker replacement, but the full log window
+showed one real worker error and relaunch on each channel before `SOAK-START`.
+The initial fallback-to-programme switch reached selector handoff, then a
+retiring fallback `tsdemux` reported flow error `-5`; the undifferentiated bus
+error path killed the worker before old-leg disposal and commit. The daemon
+recovered all three channels, but any worker replacement fails qualification.
+Do not Gate A, soak, reuse, or publish this kit. Raw evidence is under
+`sandbox-lab/soak-output/soak-8bcf012-20260913-081856Z/`.
+
+Production creates the fallback slate as a 12-subchain finite MPEG-TS
+playlist, so the observed `decodebin11`, `decodebin6`, and `decodebin4`
+families belong to the outgoing old leg. The repair contains and logs a bus
+error only when a reload commit is active, selector handoff has started, and
+the source's parent chain reaches that transaction's `old_elements`. Errors
+from the replacement leg, shared encoder/mux/output path, or the old leg before
+handoff remain fatal and retain worker recovery.
+
+The exact native 12-subchain reproduction failed before the repair and passes
+after it. One post-repair run contained nine retiring-leg flow errors, then
+logged old-leg disposal, hold release, commit, and `WORKER_RESULT` with
+`error: None` and clean teardown. Final checks: 52/52 deterministic bus and
+commit-ordering tests, 141/141 focused reload/timeout/worker tests, the exact
+native regression, two neighboring deferred native reload tests, Ruff, mypy,
+compileall, formatting, and diff checks pass. Independent hostile review is GO
+with no release-blocking correctness issue.
+
+Required sequence: pass required PR CI, merge, build a fresh exact-merge signed
+candidate, then run corrected captions-OFF and captions-ON Sandbox
+qualifications from first channel start,
+then Gate A and the dedicated 4h-ON plus 4h-OFF physical tester soak. Publish
+beta.7 only if all exact-candidate gates pass. Full owner authorization remains
+in force.
+
+## 2026-09-13 beta.7 selector-handoff retirement repair - PR #226
+
+Current branch: `fix/beta7-retirement-flush-deadlock`.
+Base `main`: `93f916871a5d22fc4fa149f158eab349052eb503`.
+Implementation and local-proof anchor:
+`691776072e1d8b4ffe21bcb730014924d0446d4b`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/226.
+This handoff/status commit follows the implementation anchor, so use PR #226
+for the current branch HEAD and final CI state.
+
+The signed `93f9168` beta.7 kit is rejected. Its fresh 15-minute Sandbox run
+completed 94 reload commits, but the public worker relaunched once. At buffer
+49184 the first outgoing EOS was audio, the commit reached
+`stage=switching-selector`, and the retirement thread blocked inside
+`peer.push_event(Gst.Event.new_flush_start())` while the other stream remained
+active. The commit watchdog exited nonzero and the daemon restored the channel
+in 21.4 seconds. Recovery worked, but the release gate permits no worker
+replacement. Do not reuse or publish that installer or kit.
+
+The replacement quiesces both outgoing A/V tail pads with GStreamer IDLE probes
+before selector mutation, installs local DROP fences while those blocks are
+held, switches the selectors, detaches the old request pads while their
+producers cannot race, then removes the IDLE blocks and NULLs the isolated old
+leg. No synchronous flush event enters `input-selector` on this commit path.
+Partial probe/thread setup, a failed first selector setter, and stop before
+handoff remove the temporary fences and preserve the current programme. Once a
+first selector mutation succeeds, an unexpected partial A/V failure remains
+owned by the existing nonzero commit watchdog because it cannot be rolled back
+atomically.
+
+Local verification against the exact proof-anchor tree: 124 focused tests pass;
+Ruff, format, compileall, and `uv run mypy civiccast` pass, with mypy checking
+676 source files. A real Windows GStreamer 1.28.5 multisegment rollover passed
+in 7.90 seconds. The final three-worker production-pressure test passed in
+69.35 seconds: all 18 reloads committed, every commit logged
+`stage=old-tail-quiesced`, every worker stayed at `elements=77` for all six
+cycles, no worker logged `ERROR:`, and all three reported `error: None` with
+clean teardown. Independent hostile review returned GO with no remaining
+correctness, deadlock, or continuity blocker.
+
+On head `cd8546a42a97bf98d44a3795e13e2c042342a0f4`, Windows reproducibility run
+`34742208268`, native Windows in unit run `34742208227`, lint/type
+`34742208250`, virtual headend `34742208238`, docs `34742208235`, operator
+build `34742208243`, accessibility `34742208246`, security `34742208233`, and
+policy `34742208240` passed. The Linux unit job in `34742208227` ran 10,260
+tests: 10,171 passed, 70 skipped, and all 19 failures were claims-registry D2
+blob drift for the changed engine/test plus pre-existing `graph.py` registry
+drift. The current tree rebinds those exact blobs while explicitly preserving
+the historical-claim boundary. Direct blob-drift count is zero and the full
+focused claims policy suite passes 125/125. This handoff/status commit follows
+the proof anchor; use PR #226 for the current branch HEAD and final CI results.
+
+Required sequence: pass current PR CI, merge, build a fresh signed kit from the
+exact merged SHA, run a fresh 15-minute Sandbox, Gate A, and the dedicated
+physical overnight soak, then publish beta.7 only if every exact-candidate gate
+passes. Full owner authorization remains in force.
+
+## 2026-09-12 beta.7 physical R6 immediate finite switch repair
+
+Current branch: `fix/beta7-zero-held-preroll`.
+Base `main`: `a963c39cc44e2643065a818aac0206b110d515d4`.
+Source and local-proof anchor:
+`d5c9eb4827be2cb6bc8a40049dfc733d0cd579cd`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/225.
+This post-push status commit follows the source anchor, so use PR #225 for the
+current branch HEAD and exact CI state. No replacement build, installer, or kit
+exists yet.
+
+The exact `a963c39` beta.7 kit is rejected. On the dedicated tester, all three
+channels failed while switching from their fallback slate to an immediate
+finite MPEG-TS programme. That path logged `held_streams=0`, proving the finite
+replacement was selected without held preroll or a running-time rebase. The
+adjacent GStreamer flow error `-5` was originally attributed specifically to
+the incoming programme. Later production-topology proof invalidated that source
+attribution: the fallback slate is itself a 12-subchain finite MPEG-TS playlist
+and therefore also owns `decodebin` / `tsdemux` elements. The held-preroll defect
+and its repair remain valid; the source of that historical `-5` is unproven.
+
+The repair applies CivicCast's existing finite held-preroll and running-time
+rebase transaction to immediate switches as well as deferred switches. Both new
+streams are blocked before first buffer, the outgoing A/V edge supplies one
+common offset, both selectors change while the replacement remains held, and
+the holds are released only after the proven `NULL`-before-unlink/release old-leg
+retirement completes. Clock-timed live replacements remain unheld and
+unrebased.
+
+The reload receipt now records finite versus clock-timed input and immediate
+versus deferred mode. The soak grader fails a finite commit without matching
+hold and rebase proof instead of accepting the old R6 `held_streams=0` shape.
+
+Local verification: 83 GI-free checks passed; the exact native Windows
+live-slate to four-segment `filesrc` / `decodebin` MPEG-TS programme regression
+passed; immediate-live and deferred-finite compatibility passed; and the exact
+R6 regression passed five additional consecutive runs. Evidence:
+`.agent-runs/native-windows/beta7-r6-immediate-finite/evidence/LOCAL-VERIFICATION.md`.
+
+The first source-head CI runs started for `d5c9eb48`: ci-test `34734767498`,
+deterministic-detectors `34734767465`, Windows reproducibility `34734767475`,
+lint `34734767466`, docs `34734767520`, operator build `34734767486`, and
+accessibility `34734767500`. Some fast policy and security lanes have already
+passed; the required cycle is still in progress.
+
+Required sequence: pass PR CI, merge, exact signed build, fresh 15-minute
+Sandbox, Gate A, dedicated overnight physical tester soak, and publication only
+after all exact-candidate gates pass. Full owner authorization remains in force.
+Do not publish beta.5, beta.6, `99705005`, `cd54767`, or `a963c39`.
+
+## 2026-09-12 rejected cd54767 candidate and startup readiness repair
+
+Current branch: `fix/beta7-control-ready-v2`.
+Current source proof anchor: `362fc48ed8dff20f41dde703285d8773ff6326c5`,
+based on merged `main` at `cd54767bc3c3cd3fcacf6aa5642f1df459a4fdea`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/224.
+The first pushed PR head is `bc0e998898478eec43cc3d58d2861e28a905d80b`;
+this post-push status commit follows it, so use `git rev-parse HEAD` and
+PR #224 for the exact current branch head and CI runs. No replacement
+build, installer, or kit exists yet.
+
+The `cd54767` beta.7 candidate is rejected. Build run `34699190826` succeeded,
+but its fresh 15-minute Windows Sandbox soak failed with one education reload
+abort before the worker's initial control connection and one planned restart.
+The replacement worker recovered in 20.4 seconds, followed by 94 successful
+reload commits, zero stalls, and zero unplanned relaunches. Exact installer
+SHA-256 is `b9a327094706f7dc07a75432ffa3875e84339b78afeb6e2d8eb9422df9dced08`;
+manifest SHA-256 is
+`d28e74b41bb0cfdc22631fac5a14322e746cc819b76fb52ba129c3e73bf16d8c`.
+This kit is not a release candidate and must not be reused or published.
+
+The repair rejects an initial scheduled plan when resolution and preparation
+consume the originally selected first programme segment's remaining lifetime.
+It releases the unused prepared directory and starts one separately prepared
+fallback operation. Both fallback replanning and ordinary finite-plan rollover
+wait for the worker's initial Windows control connection before provider lookup
+or latch/cooldown mutation. Focused result: 336 passed, 7 expected skips; Ruff,
+format, mypy, diff checks, and independent adversarial review pass. Evidence is
+in `.agent-runs/native-windows/beta7-control-ready/evidence/`.
+
+Required sequence: pass required PR CI, merge, build a fresh candidate
+from the new exact `main`, pass fresh Sandbox and Gate A, run the dedicated
+physical tester overnight soak, then publish only on passing evidence. beta.5,
+beta.6, `99705005`, and `cd54767` must not be published. Full owner authorization
+remains in force. Older entries below are historical.
+
+## 2026-09-12 rejected beta.7 candidate and schedule-rollover repair
+
+Current branch: `fix/beta7-stale-horizon-reload`.
+Current source proof anchor: `6697c40048a0488b0fb7998088366f5110b95121`,
+based on `main` at `99705005d63c5d9e23b6aca3bbb18654d2b5db3f`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/223.
+The first pushed branch head was
+`348f3693e6307857e70e36c7896c104c82f47b79`; this post-push status commit
+follows it, so use `git rev-parse HEAD` and PR #223 for the current branch HEAD
+and CI run IDs. No replacement build exists yet.
+
+The beta.7 candidate built from `99705005` is rejected. Its exact identity is
+build run `34691600770`, installer SHA-256
+`dd7fbe8051301f98f73ec72e6e267eb4fc0af8b8f17ce2856bdfe54a3bff03cf`,
+and manifest SHA-256
+`43d615c1b96a6bc37b7e7216e5063f6f8873ea1a51095a835f3b4e475f4f0e65`.
+It failed the local 15-minute Sandbox gate with clean worker exits and
+relaunches after short schedule-boundary races. It is not a publication
+candidate, and none of its test results may be carried to the replacement.
+
+The source repair starts one-item rollover preparation at the beginning of
+short programme windows and turns an expired live horizon into one immediate
+reload bound to the original boundary. Focused verification is 75 passing
+automation tests plus Ruff, format, mypy, and diff checks. Independent review
+found the final automation delta clean. Evidence and exact limits are in
+`.agent-runs/native-windows/beta7-schedule-rollover/evidence/LOCAL-VERIFICATION.md`.
+
+Required sequence: required PR CI, merge, fresh signed build from the new `main`
+SHA, fresh Sandbox, Gate A, physical tester soak, and publish only on passing
+evidence. beta.5, beta.6, and the rejected `99705005` beta.7 candidate must not
+be published. Full owner authorization remains in force. Older entries below
+are historical.
+
+## 2026-09-12 beta.7 GStreamer repair - PR #221
+
+Current branch: `fix/f1-stall-recovery-20260912`.
+Current source/proof anchor:
+`ead9adda6f0573bc60333ce8f48a9863c248e6bb`, based on green `main`
+`5e8551a0b8983b8a3b2f54f7cb1641f55bec54cc`. Current PR:
+https://github.com/scottconverse/civiccast-native/pull/221. This post-push
+status commit follows the proof anchor; use `git rev-parse HEAD` and PR #221
+for the exact current branch HEAD and CI run IDs. The proof-anchor commit
+contains the beta.7 version surfaces, generated OpenAPI/manual artifacts, and
+the pre-push handoff/status state.
+
+beta.5 and beta.6 are rejected. Do not reuse or publish either beta.6 build or
+kit. The beta.7 repair handles the dedicated tester's reproduced failure: a
+fully prerolled deferred replacement waits for outgoing EOS, output stalls,
+and the ordinary 10-second watchdog kills the worker before the 900-second
+defer watchdog can force the switch. The engine now admits only the current,
+fully ready, hold-free deferred transaction to the existing lock-safe forced
+boundary and commit path; incomplete or stale transactions retain normal stall
+handling. The tester diagnostic is commit `b500789a` on
+`tester/soak8-e1acfe6-DESKTOP-VBMA6O5` and reports `station_changes: false`.
+
+Local candidate verification passes: 143 focused tests, including 79 affected
+GStreamer ordering/watchdog tests; release identity, candidate-boundary,
+generated OpenAPI, rendered-manual, and diff checks pass. Independent review
+caught and corrected a downloader default-pair mismatch before push. The
+downloader now uses beta.7/beta.7 consistently and explains the explicit
+beta.5/beta.5 pair while beta.7 is unpublished. No beta.7 artifact has been
+built. Remaining sequence: fresh required PR CI, merge, signed beta.7 build,
+Sandbox, Gate A, dedicated-tester soak, then publish only on passing evidence.
+Full owner authorization remains in force. Older entries below are historical.
+
+First CI head `c11cafddb9a49b4365e73456df67d20f1e5aa369` exposed one missing
+generated set: docs run `34680422499` failed because the tracked PDF/DOCX manual
+manifest still named the earlier source hash. The PDF, DOCX, and manifest are
+regenerated in the follow-up commit; local `render_user_manual.py --check-current`
+passes. Replacement head `4274e3eac5eae45bad73e5b359fe893e2df10bd6`
+passed that manual gate. Its deterministic-detectors run `34680753672` then
+exposed a real pre-cancellation ordering defect in `run_ffmpeg()`: an already
+cancelled job tried to locate host FFmpeg before raising cancellation. The
+narrow correction checks the event before executable discovery and strengthens
+the regression to reject any discovery call. All 60 FFmpeg wrapper tests and
+Ruff pass locally. The same run's randomized job failed because the two
+historical GStreamer claims still bound `engine.py` to its pre-repair blob.
+Their current-source tripwires now bind blob
+`3c1d1ef21b22d8f5840c9353551a43d8e370ddd4`; the historical observations remain
+historical. A native Windows regression against the worktree source and bundled
+GStreamer dependencies passed in 63.48s, forcing one guarded commit after an
+outgoing live source froze without EOS, resuming TS output, preserving commit
+ordering and continuity, and tearing down cleanly. Fresh replacement CI remains
+outstanding. Local evidence and limits are in
+`docs/evidence/beta7-repair-2026-09-12/LOCAL-VERIFICATION.md`.
+
+## 2026-09-11 candidate built; harness corrections for Gate A
+
+Branch: fix/beta-harness-auth-20260911, based on merged main39e7ec3c.
+Candidate build34633364038 passed; its exact source remains
+39e7ec3cbb4ccbeb3009ff3257dfc314010151f3. The two-hour Sandbox run is accepted
+after a reproduced, independently reviewed empty-array grading correction:
+723 raw commits have matching preroll and zero worker exits/timeouts.
+Original FAIL evidence is preserved. Gate A34651334966 failed only T4 because
+schema discovery omitted the staff token and used the rejected FFmpeg fallback.
+This harness-only branch corrects both schema calls and the soak array capture.
+Rerun full Gate A against original build34633364038 with this harness revision;
+do not rebuild unchanged installer bytes. Physical-host ON/OFF soak and release
+remain pending. Full owner authorization persists. Details and checks are in
+docs/evidence/beta-harness-2026-09-11.md. Older entries below are historical.
+
+## 2026-09-11 operator fault visibility delta
+
+After source head fe9ed3c5, root confirmed remaining original soak-report
+defects: an aborted reload's error was log-only, and operator APIs could show
+a dead persisted PID. The integrated correction records aborted-reload errors
+in live state and durable proof history, invokes fault alerts before recovery
+changes state, and verifies PIDs at the API boundary. UDP send-health labels
+now distinguish local sending from receiver verification. Source regressions
+and limits are in docs/evidence/f2-local-2026-09-11/OPERATOR-FAULTS.md.
+Root's affected Python 3.12 run passed299 tests. Required CI must pass on the
+new combined head before candidate build. Main remains d77b634e and the old
+795cdab5 kit remains blocked. Full delivery authorization remains in force.
+
+## 2026-09-11 full delivery authorization and source checkpoint
+
+CI on51ab78cd found one stale end-to-end caption-label assertion in the broader
+operator Playwright gate (34621933713:253 passed,1 failed). The assertion now
+matches the F5 production label. No product code changed in this correction.
+Root then ran the full existing operator browser gate:254 passed in1.0minute.
+
+Candidate preflight also corrected the beta.5 Gate A baseline index pin: 48608252
+is the retained148c8d21 build index; the previous044a9c8b belongs to earlier39d852e5.
+No retained bytes were regenerated or re-signed. Provenance is recorded in
+docs/evidence/f2-local-2026-09-11/BASELINE-IDENTITY.md. This removes a concrete
+dirty/download-only gate mismatch; it does not claim a new Gate A pass.
+
+PR219 advanced to 88935dccb9ece46d3b7e8b7e210fb128257382d3. Its first headend
+gate (34621294908) found Ruff RUF036: place None last in a type union. This
+annotation-only correction follows that push; runtime logic and native proof
+are unchanged. Required CI on the next pushed HEAD remains pending.
+
+Scott explicitly authorized everything needed to finish the beta release, with
+no further permission stops. This supersedes older per-action restrictions for
+this release. Advance PR219, merge on required CI, build a fresh candidate,
+complete Sandbox/Gate A and the tester soak, then publish after passing results.
+The old 795cdab5 kit remains blocked. No speculative hardening or extra test
+campaign is authorized by this scope; fix actual release failures and continue.
+
+Source proof anchor: c4d70243546be321a1eef71e4c34c77ec4a36029.
+Current branch: fix/f2-release-readiness-20260911. Existing PR: #219.
+This documentation commit follows that source anchor; the exact pushed HEAD
+and CI run IDs are recorded in the PR and external release checkpoint.
+Local public portal lint/build and all 61 tests also pass. Local frontend
+runtime was Node 25.9.0; CI/candidate must use pinned Node 24.15.0.
+Earlier authorization and progress entries below are historical checkpoints.
+
+## 2026-09-11 active beta repair
+
+Scott directed beta delivery and rejected speculative hardening/testing polish.
+Current local branch: fix/f2-release-readiness-20260911, base b2593a50.
+F2 preparation isolation, early pipe acceptance and boundary-aware one-programme
+plans are implemented locally. The observed old-leg retirement hang is fixed
+and all 7 affected native checks pass, including three workers / 18 rollovers.
+Caption FAIL visibility is fixed. Final affected Python: 2265 passed, 72 skips;
+operator UI: 1035 passed; accessibility/contrast: 18 passed. Static checks and
+OpenAPI check pass. Candidate CI/build/Sandbox/Gate A/hardware soak remain open.
+Nothing has been published,
+no new build/gate/service has started, and the old beta.6 kit remains blocked.
+See docs/evidence/f2-local-2026-09-11/VERIFICATION.md. Earlier entries below
+are historical. Current remote PR219 remains8653b56f; main remainsd77b634e.
+
+## 2026-09-10 third CI cycle finished: count fix passes, mutation timed out
+
+Current remote PR / CI HEAD: `8653b56f8623cb5fa8e3855f26b64296e814526f`.
+Branch: `fix/f1-reload-readiness-20260910`. PR #219 is OPEN.
+This local documentation checkpoint follows the pushed SHA; use
+`git rev-parse HEAD` for its own checkout HEAD. Last published version is beta.5.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+All 12 workflows finished: 11 success, 1 cancelled. PR checks: 20 success,
+3 skipped, 1 cancelled (mutation appears as fail in the check UI).
+ci-test 34558549832 and Windows reproducibility 34558549734 PASS.
+deterministic-detectors 34558549841: randomized PASS; mutation job exceeded
+GitHub's two-hour limit at 2026-09-11T05:28:31Z (11:28 PM Mountain September 10).
+Its clean-test and forced-fail phases completed and mutation execution began;
+last partial status counter was 8932/9795. No complete result set or score.
+
+Unit: 10145 passed / 68 skipped / 5 deselected, coverage 80.15%; native pure:
+1823 passed / 201 deselected. Windows: 2021 passed / zero skipped / 3 deselected.
+Claims verifier PASS; all 125 claims-policy and 7 state-guard cases passed.
+Randomized: 10149 passed / 69 skipped, then native pure 1823 passed /
+201 deselected; seed 2673792843. Reproducibility: 9633 matching files /
+482655736 bytes, clean pushed source. These are CI checks, not kit acceptance.
+
+Full evidence and limitations: `docs/evidence/f1-ci-repair-2026-09-10/CI-THIRD-RESULT.md`.
+Local exact-count proof anchor: `104e722f9e15d19828736a10090e8b508778faef`.
+Local full policy: 1935 passed, 5 skipped; counts 1823 / 2024 / 2021.
+The authorized single push/cycle is complete. No further push or rerun is
+authorized. The monitor finished; no CI, tests or agent work remains in flight.
+Next proposed local ticket is the existing F-2 three-channel blocked-prepare
+regression, subject to the owner's next per-action authorization. F-2 is unstarted.
+No merge, candidate, Gate A, soak, service restart, tag or publication occurred.
+The old 795cdab5 beta.6 kit is blocked. Older checkpoints below are historical.
+
+## 2026-09-10 third push: CI in progress
+
+Current HEAD / remote PR / CI SHA: `8653b56f8623cb5fa8e3855f26b64296e814526f`.
+Branch: `fix/f1-reload-readiness-20260910`. PR #219 remains OPEN.
+Scott's authorized single third push succeeded. New runs started at
+2026-09-11T03:28:10Z (2026-09-10 Mountain): ci-test 34558549832,
+deterministic-detectors 34558549841, Windows reproducibility 34558549734.
+ci-test and Windows reproducibility PASS. Randomized suite PASS. Only mutation-report
+remains pending. Unit 10145 passed / 68 skipped / 5 deselected (coverage 80.15%);
+native pure1823 passed / 201 deselected; Windows2021 passed / 3 deselected, zero
+skips. Claims verifier PASS. Randomized10149 passed / 69 skipped plus native
+pure1823 passed / 201 deselected, seed2673792843. Reproducibility matches9633
+files /482655736 bytes. All receipts identify pushed SHA8653b56f. No mutation
+score or final verdict is claimed. Local proof anchor is104e722f; details in
+`docs/evidence/f1-ci-repair-2026-09-10/COUNT-LOCAL-VERIFICATION.md`.
+The task monitor is read-only and will capture the complete cycle. No further
+push/rerun is authorized. F-2, candidate, Gate A, soak and release gates remain
+open; no merge, services, tag or publication. The 795cdab5 kit remains blocked.
+This local post-push status update is not pushed. Earlier entries are historical.
+
+## 2026-09-10 authorized exact-count repair: local checks passed
+
+Current source/proof HEAD: `104e722f9e15d19828736a10090e8b508778faef`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+This following documentation checkpoint changes no tested source; its own HEAD
+is available with `git rev-parse HEAD`. Last published version remains beta.5.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+Scott approved the previously proposed one-file collection-count correction,
+fresh collections/full policy verification and one conditional push/CI cycle.
+The patch is now applied: exact counts (1823, 2024). Full policy suite:
+1935 passed, 5 skipped. Separate actual collections: pure 1823, unfiltered 2024,
+Windows not-integration 2021. Ruff and mypy passed; Sol independently accepted
+the source diff. See `docs/evidence/f1-ci-repair-2026-09-10/COUNT-LOCAL-VERIFICATION.md`
+for raw evidence, skip reasons, proof anchor and five-lens review.
+
+The approved next push will start the third cycle. Until then, remote HEAD is
+2dd9287c with the second cycle's 17 passed, 4 failed and 3 skipped checks.
+No further permission is needed for that one conditional push. Follow the cycle
+to completion and update exact pushed SHA/run IDs; no extra push or rerun is
+authorized. F-2 remains unimplemented. No merge, candidate, Gate A, soak, service
+restart, tag or publication is authorized. The old 795cdab5 beta.6 kit is blocked.
+All older checkpoints below are historical and their next-action requests are
+superseded by this explicit authorization.
+
+## 2026-09-10 second push / completed CI checkpoint
+
+Current remote PR / CI HEAD: `2dd9287c8426f21a0464f6d13fb5d5e76cb724fb`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Main remains clean and unchanged at `d77b634e3685de8fb077956b8099fc92c3927243`.
+This local documentation checkpoint follows the pushed SHA; use
+`git rev-parse HEAD` in `work/f1-integration` for its own checkout HEAD.
+The local correction proof anchor remains `59ef1be6498e5a4eced081d7c412df1176fefdb0`.
+
+Scott authorized one second push and CI cycle. All 12 workflows completed:
+17 checks passed, 4 failed, 3 skipped. Runs 34547036834 (ci-test) and
+34547036853 (deterministic-detectors) failed. Windows reproducibility run
+34547036679 passed for this exact SHA. The remote PR body now records these
+actual results. Full evidence: `docs/evidence/f1-ci-repair-2026-09-10/CI-SECOND-RESULT.md`.
+
+All observed test failures have one cause: the four new native launcher tests
+changed exact collection counts to (1823, 2024), but
+`tests/policy/test_native_caption_workflow_policy.py:1179` still expects
+(1819, 2020). The lead missed that dependency in the pre-push review. The
+workflow minimum floors remain valid; no workflow change is proposed.
+
+Unit: 1 failed / 10144 passed / 68 skipped / 5 deselected, coverage 80.12%.
+Randomized: 1 failed / 10148 passed / 69 skipped, seed 2179285722.
+Mutation baseline: 1 failed / 7790 passed / 289 skipped / 8 deselected; no score.
+The claims verifier failed closed with 9 violations from the failed producer
+and missing accepted observations, with no stale-source blob violations.
+
+All 125 claims-policy and all 7 state-guard tests passed in the ordinary Linux
+unit run. Windows: 2021 passed / 3 deselected on uv 0.12.13; the actual launcher
+test and all four new cleanup cases executed and passed. Two Windows payload
+builds matched 9633 files. Neither result proves an installed kit or a soak.
+The corrected guard in the instrumented mutation run remains unverified because
+the baseline stopped earlier on the inventory assertion.
+
+An independently reviewed, unapplied one-file correction is in task outputs:
+`F1-CI-floor-correction-PROPOSED.patch`. A copy is committed as evidence, not
+applied source: `docs/evidence/f1-ci-repair-2026-09-10/count-correction-PROPOSED.patch.txt`.
+`git apply --check` passed. **Next owner action: authorize applying this exact
+count correction, fresh native collection and full policy verification, then
+one further push/CI cycle.** No code repair or new local tests were performed
+after the second push; no third push or rerun occurred.
+
+The monitor finished; no CI or test process remains in flight. No merge,
+release kit, Gate A, soak, service restart, tag or publication occurred. F-2
+remains unimplemented. The 795cdab5 beta.6 kit is unchanged and blocked.
+Older checkpoints below are historical snapshots, not current action authority.
+
+## 2026-09-10 local CI repairs checkpoint (historical pre-second-push snapshot)
+
+Current branch: `fix/f1-reload-readiness-20260910`.
+Local correction source/proof HEAD: `59ef1be6498e5a4eced081d7c412df1176fefdb0`.
+This following documentation checkpoint changes no tested source; obtain the
+current checkout HEAD with `git rev-parse HEAD` in the integration worktree.
+Remote PR / CI HEAD: `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Main: `d77b634e3685de8fb077956b8099fc92c3927243`, unchanged.
+Current public tag remains `v1.0.0-beta.5`. No new tag or release was created.
+
+Integration worktree:
+`C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration`.
+Scott approved local correction and testing of the three first-cycle CI issues.
+The four current-source claims bindings are corrected; the state-guard child
+imports its actual fixture without unrelated application fixtures; the builder
+now clears retained old script ZIPs that could still execute with uv 0.12.13.
+The repair verifies both PE resources and whole-file ZIP script selection.
+
+Local verification: 213 passed across all three affected test files; Ruff check
+and format passed (1541 files), mypy passed (675 source files). The lead's actual
+uv 0.12.12/0.12.13 executable matrix reproduces the old uv 0.12.13 failure and
+passes each corrected launcher twice with a relative interpreter and no fixture
+bytecode. Sol independently reviewed the integrated changes and ran 88 passing
+guard/native-builder tests. Luna completed the claims slice; Terra supplied
+launcher diagnosis and drafts; the lead finished the reviewed corrections.
+
+Evidence: `docs/evidence/f1-ci-repair-2026-09-10/VERIFICATION.md`, source hashes,
+red/green receipts, matrix script/output and independent review. Earlier F-1
+proof at `7a468cd2` is historical source/runtime evidence, not candidate acceptance.
+First PR CI remains red: 16 passed, 5 failed, 3 skipped. No actual Linux mutation
+score or fresh successful CI producer/verifier evidence exists yet.
+
+**Next owner action: approve a second push to the existing PR and one new CI
+cycle.** No second push or rerun, merge, candidate build, Gate A, soak, service
+restart or publication has occurred. F-2 is unimplemented. The beta.6 kit at
+`795cdab5065e3b1b1d9df69c6fc06658f481c8d4` is unchanged, unsoaked, ungated and must
+not be published. The LAN server and Gate A runner were not restarted.
+
+Agent worktrees `work/ci-claims` and `work/ci-launcher` retain their task-owned
+uncommitted submissions as review history; they are not the integration source.
+The launcher submission is also preserved as
+`work/ci-repair-notes/launcher/terra-submitted.patch`. No test process remains
+running. No main checkout changes were made.
+
+## 2026-09-10 post-push / CI checkpoint (historical first-cycle snapshot)
+
+Current HEAD (remote PR / CI): `f9b5e1aa71e8860e8fff41c1cb572b80bbbc8e2b`.
+Current branch: `fix/f1-reload-readiness-20260910`.
+Current PR: https://github.com/scottconverse/civiccast-native/pull/219 (OPEN).
+Current public tag remains `v1.0.0-beta.5`; no new tag or release was created.
+Main remains `d77b634e3685de8fb077956b8099fc92c3927243`.
+
+Scott approved the branch push and one PR. The first CI cycle completed with
+16 passing, 5 failing and 3 skipped checks. Runs 34530877832 (ci-test) and
+34530877848 (deterministic-detectors) failed. Windows app reproducibility run
+34530877710 passed. Full results: `docs/evidence/f1-local-2026-09-10/CI-RESULT.md`.
+
+The F-1 change omitted four claims-registry blob updates. Both ordinary and
+randomized suites failed 18 policy tests on those bindings; the dependent
+claims verifier also failed. The pre-push all-pass audit missed this and is
+superseded by the finding. A separate Windows launcher-normalization test
+failed after CI's uv selector advanced from 0.12.12 to 0.12.13. The mutation
+baseline failed in a nested process importing instrumented code without its
+configuration; no mutation score was produced.
+
+An independently reviewed, unapplied claims correction is in the task outputs.
+Further local correction/reproduction and any second push await the owner's
+next action. No merge, candidate build, Gate A, soak, service restart or
+publication has occurred. F-2 remains unimplemented; the old beta.6 kit is blocked.
+
+This local documentation checkpoint follows the pushed source; obtain its own
+local SHA with `git rev-parse HEAD`. The remote PR/CI SHA above remains the source
+identity for this cycle. Prior proof anchors remain historical, not new acceptance.
+
+## 2026-09-10 local F-1 implementation update (pre-push snapshot)
+
+Scott authorized GO following the cold takeover. Active branch:
+`fix/f1-reload-readiness-20260910`, base `d77b634e3685de8fb077956b8099fc92c3927243`.
+Local worktree:
+`C:\Users\scott\Documents\Codex\2026-09-10\openai-multi-agent-c-users-scott\work\f1-integration`.
+Implementation/proof anchor: `7a468cd2e9018775926d384ac1b25ebe07ebd18d`.
+The following documentation checkpoint cites that anchor; it changes no code.
+Read `git rev-parse HEAD` in this worktree for the current documentation HEAD.
+Scott subsequently authorized pushing this branch and opening one F-1 PR. The
+pre-push audit clarified that the existing deferred-boundary watchdog can force
+a switch only after current all-stream preroll. Code and checked hashes are unchanged.
+Local checks: 2106 passed / 72 skipped (egress/live/policy); seven targeted native
+tests passed, 24 commits graded; mypy 675 files, Ruff lint/format, and independent
+Terra review accepted. F-1 release acceptance remains open.
+No PR, push, merge, tag, publication, station service start, Gate A, or sandbox soak
+has been performed for this work. See `docs/evidence/f1-local-2026-09-10/VERIFICATION.md`
+for the current implementation/review evidence and remaining release gates.
+
+F-1 changes bind preroll callbacks to their reload, require every replacement
+stream before retirement, and recover unexpected clean worker exits while honoring
+Stop/Drain. F-4 exit and fire logging is included. F-2 remains unstarted. The
+existing `795cdab5` beta.6 kit is unchanged and still must not be published.
+
+Older task lists below are historical; they do not authorize starting old work
+or publishing the existing kit. The current owner per-action authority governs.
+
+> **2026-09-10 11:10 AM — READ `PROJECT-STATUS.md` FIRST.** It is tracked in git (this file is
+> gitignored) and it is the full cold-start handoff: where the project is, both overnight soak
+> results with independent verification, the blocker that stops beta.6 shipping, every fix with its
+> definition of done, the test gates, and the location of every file on this machine and on GitHub.
+> **The built beta.6 kit must not be published** — the 2026-09-09 soaks found a blocker it does not
+> fix.
+
+
+Any session, on any plan or tool, continues from this file. Times below are Mountain (America/Denver).
+Rules in force: no new features; finish and test what exists; commit after each task; update this file after each task; stop at a clean state.
+
+## Task list, most important first
+
+1. DONE 10:14 PM: **v1.0.0-beta.5 PUBLISHED** https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.5 (8 assets, prerelease, target 148c8d21; Gate A 34423542177 all three lanes PASS). First attempt was refused (body > 125,000 chars, HTTP 422); the renderer fix is PR #210. release-truth.yaml flipped by the publisher and committed. Command used:
+   `python scripts/release/publish_beta_candidate.py --kit-dir C:\CivicCastTester\kit-mirror\148c8d2172dd6b63cbbb856b429b68aa020dc421 --source-sha 148c8d2172dd6b63cbbb856b429b68aa020dc421 --build-run-id 34405681086 --gate-a-run-id 34423542177 --tag v1.0.0-beta.5 --truth-status current`
+   The dry run already passed layout, version and Authenticode. The publisher updates docs/releases/release-truth.yaml; commit that.
+2. DONE 12:53 AM: **PR #165 merged** (main 76817e3d) -- release notes + the beta.4->beta.5 surface flip + the release-truth dedupe. Main is green.
+2b. old note: (branch docs/release-beta5, worktree cc-docs165): all tokens filled, headers PUBLISHED, known issues 99/100 added, duplicate release-truth entry fixed. Being rebased onto main after #206/#210; merge on green.
+3. DONE 11:06 PM: PR #206 merged (journal tolerant of legacy NATS keys; item 99).
+4. DONE 10:14 PM: PR #207 (docs/INSTALL-HELPER-PROMPT.md) merged.
+5. **Ownership-check fix = PR #209** (round 4 running 12:25 AM: the NSIS dialog budget really is blown -- static text measures 580/579 chars, so the 420 cap yields 1029/1028 against `assert total < 1023`; max safe cap 413. Also OWNERSHIP-RECOVERY.md says exit 127 where the code is 135, and the PresentInert rule can misfire when the owner hive is not loaded.)
+5b. old note: (branch fix/runtime-ownership-claim-diagnosable, worktree cc-ownership-claim, head d6d5ea2f): hostile review said MERGE with follow-ups; round 2 in progress (5 s bound on `sc query`, dialog wording on upgrades, const assert, skip-predicate pin). Merge on green after round 2. Item 101 (forward the provisioning CLI's stderr into install-progress.log) is NOT in this PR: it needs a file handoff like ownership-observation.txt plus a policy test that no stderr line can carry the database URL; do it as its own PR later.
+6. DONE 10:20 PM: PR #208 merged (main a2ccfc98): product version is now 1.0.0-beta.6; Gate A baseline repinned to the beta.5 kit.
+7. **PR #202** (reload wedge off-air retirement, crash at stop; head 399c4618, draft, rebased on 148c8d21): needs a sandbox soak proving on every rollover that `stage=holds-released` precedes `stage=old-leg-disposed`, zero `reload-commit-timeout`, then 20+ loaded runs at 100% CPU (only when the box is otherwise idle), then a delta review, then merge.
+7b. **PR #212** (slate boundary relaunch instead of STOPPED; branch fix/slate-boundary-relaunch-not-stopped, worktree cc-boundary-stop): round 2 of the hostile review landed (consecutive-relaunch counter, crash-latch/streak honoured, queued stop wins, `peek_pending_commands`, label to TRANSITIONING, "Preparing source" row). Sandbox soak brief: commit a program 2-3 min after a slate start so the slate's finite plan ends at the boundary, then GRADE THE BOUNDARY FROM `control_plane-app.log` (the `_write_state` STARTING -> TRANSITIONING -> ON_AIR lines with the program's label), not from the RestartClassifier ring alone -- the ring can miss the post-prepare TRANSITIONING sample (pre-existing gap) and would count the pid change as unplanned. Expect exactly one relaunch per boundary and zero `stopped instead of looping` last_errors; with a deliberately unplayable asset expect ONE relaunch then STOPPED with that last_error and no further worker every ~2 min.
+8. **beta.6 kit**: after 3-7, build with `scratchpad\build-chain.sh <main sha>`, cancel the auto Gate A, kill the orphan sandbox VM via the elevated helper, soak 15 min (captions OFF default, seamless ON), dispatch Gate A full, publish `--tag v1.0.0-beta.6`. Never run anything I/O or CPU heavy during Gate A (two attempts failed tonight from host load).
+9. **Captions root cause** (item 96): with live captions ON, video holds 25-30 s then bursts, every 1-2 min. Needs a `GST_DEBUG=cccombiner:6,aggregator:5` discriminator soak. Not before 1-8.
+
+## Added 10:35 PM from the clean-machine walkthrough (tester report, beta.5)
+Three fix PRs are being built in parallel; each gets a hostile review, then merges on green, then joins the beta.6 kit:
+- cc-boundary-stop / fix/slate-boundary-relaunch-not-stopped: a finite slate plan reaching EOS relaunches onto the due program instead of STOPPED; STARTING written before prepare; Channels elapsed-time polling. (items 105, 110)
+- cc-portal-live / fix/portal-live-follows-egress-and-hls-truth: resident /api/public/live/current follows egress when an hls sink exists; Channels shows the real HLS URL or says web output is off; local rehearsal HLS preset. (item 104)
+- cc-setup-session / fix/first-setup-recovery-kit-signout-autofill: recovery kit survives navigation until confirmed; Sign out control + route; no browser autofill on first setup. (items 102, 103, 97)
+Not started (beta.6 or later): 106 startup page, 107 state authority, 109 sample live source, 112-115 copy/mobile/docs. Full list: Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md items 102-135.
+
+- DONE 11:08 PM: PR #210 merged (release-body bound under GitHub's 125k limit).
+
+## Added 10:55 PM from the upgrade-machine walkthrough (Blackwell, 5070 Ti; items 120-135)
+- PR #212 (slate boundary relaunch): review CHANGES (relaunch bypasses the crash-escalation latch; the 30 s cap can never fire because the slate plan is 120 s; STOP race; stale stamp). Round 2 in progress in cc-boundary-stop.
+- cc-setup-auth / fix/setup-api-no-secrets-unauthenticated: CRITICAL item 120 -- /api/setup/storage served the PostgreSQL URL with password unauthenticated; setup endpoints require the staff token after setup. Builder running.
+- cc-honesty / fix/publish-default-portal-and-channel-honesty: Publish defaults to Portal only (121); Channels drops fabricated sample rows (122); Start refuses without egress (123); readiness separates rehearsal result from the gate (124). Builder running.
+- PR #209 round 3 (cc-ownership-claim): the real cause on the Blackwell box was a PRESENT per-user ARP entry for the WSL-era "CivicCast Installer 3.0.0-beta1" (inert), not an Unknown probe; adding a PresentInert -> claim-native rule with a warning and a product-naming refusal. Builder running.
+- PR #211 also carries docs/SOAK-PROMPT.md (overnight soak brief for a station PC). Copies on the USB root and the owner's Desktop.
+- Still open from that report: 125 Live screen has no controls / manual names a missing button; 126 CLI/env-var copy on operator screens; 127 scheduled premiere not visible to residents; 128 media under the SYSTEM profile vs docs saying ProgramData; 129 responsive tables; 130 sign-in UX (recovery confirm, username hint, code format, landing page); 131-135 minor.
+
+## Done tonight (2026-09-09 to 09-10)
+- Merged: #199 reload/caption-flow (39d852e5), #178 seamless default proof (8920a6c7), #203 live captions OFF by default (508e637a), #204 rollover horizon race (7891109b), #205 manual note + tolerant resolver (148c8d21).
+- Kit 148c8d21 built (run 34405681086), verified, mirrored; installer sha256 775b9a3e63a94183f1c065bb4168d03c0aeb2d72d608c1dbed5c875a94e05842, Authenticode Valid.
+- USB stick D: (CIVICCAST-BETA5) holds the verified kit, README-START-HERE.txt and INSTALL-HELPER-PROMPT.md.
+- Sandbox soaks: candidate 1 (39d852e5) x3 FAIL led to #203/#204; candidate 2 soak: 0 stalls, 11/12 seamless rollovers, one reload-commit-timeout relaunch (20 s) = known issue.
+- Gate A: attempts 34412708089 and 34419203610 failed at activation after ~30 min from host load; attempt 34423542177 lanes 1 and 2 PASS.
+- Open PRs: #165 notes, #202 draft, #206, #207, #208.
+
+## Not done
+- MAIN IS GREEN AGAIN (12:53 AM). #165 MERGED as main 76817e3d. Two causes, both fixed there: (a) release-truth.yaml carried DUPLICATE v1.0.0-beta.5 entries (publisher `current` + leftover `staging`) so check_release_truth.py reported DRIFT; (b) README.md / INSTALL-WINDOWS.md / docs/index.html / docs/install-windows.html still named v1.0.0-beta.4 as the current download. Verified on main after the merge: `pytest tests/policy/test_release_truth.py tests/policy/test_windows_release_downloader.py tests/test_audit_protocol_docs.py -p no:randomly` = 29 passed. Every other PR had inherited this; they are all merged with main and re-pushed.
+- CHANGELOG merge shape you WILL hit on every remaining branch: the branch carries a duplicate of #206's "beta.5.1: provisioning tolerates legacy journal fields" entry inside the released `## [1.0.0-beta.5]` -> `### Fixed` section, while main now has that entry once in `## [Unreleased]` -> `### Fixed`. Resolution: delete the duplicated #206 entry from the conflict block entirely, and move the branch's OWN entries into `## [Unreleased]` -> `### Fixed` after main's. Done that way for #212 (233e8e18) and #213 (c47b0c18).
+- PROCESS LESSON (cost a false public claim): a subagent reporting `status: completed` is often NOT finished -- it stops while waiting on a background command and then resumes itself. I took over #214's and #215's worktrees on that signal; #215 had already made a real extra fix commit I had publicly dismissed as "test order pollution" and I had to post a correction on the PR. Check the agent's own last line before touching its worktree.
+- Shared-state hazard: concurrent pytest runs in different worktrees all write `%LOCALAPPDATA%\CivicCast\installer-state.json` and the managed-storage sqlite, which produces phantom teardown ERRORs in whichever run loses. Re-run the named tests in isolation before believing them.
+- **ALL SEVEN FIX PRs ARE MERGED. Main is 2d7fd65b.** In order: #211 74e3d7c5 (install-helper screen names + SOAK-PROMPT), #212 bc32dfa3 (a finite slate plan reaching EOS relaunches onto the due program instead of writing STOPPED; STARTING before prepare), #215 184398d9 (CRITICAL item 120 -- the setup API never serves the database credential, and POST /storage, /first-admin, /recovery-kit/acknowledge require `setup_admin` after setup), #213 24894218 (recovery kit survives navigation; Sign out; no autofill on first setup), #209 91ebe7c7 (the runtime-ownership claim runs first, gathers machine-wide evidence, records why it refused), #216 0cc34881 (Publish defaults to Portal only; Channels shows real state not sample rows; Start refuses without egress; readiness separates rehearsal from the gate), #214 2d7fd65b (resident live state follows egress; the real HLS URL or an honest "web output is off"; local rehearsal preset).
+- Every one was hostile-reviewed to a MERGE verdict with delta rounds: #212 and #213 one round, #215 and #216 three, #214 five, #209 six. Reviewers executed rather than read -- 71 adversarial database URLs, all nine ARP state combinations compiled into the crate, ten now/next probes, a real `mklink /J` junction swapped in inside the resolver cache TTL, and mutation-reverts of every claimed fix.
+- MERGE-ORDER HAZARD, learned the hard way: every PR carries `[Unreleased]` CHANGELOG entries, so each merge invalidates the next and costs a full CI round. #209, #213, #214 and #216 each needed a re-merge after an earlier one landed. Resolve with `python "<scratchpad>\opus-changelog-resolve.py"` run from the worktree root: main's entries first, then the branch's, and it prints every bullet it kept. Scratchpad path is in "Where things are" below.
+- SILENT-COLLISION HAZARD: #214's merge with #216 broke `tests/cable/test_channel_contracts.py` WITHOUT a conflict -- both PRs had added a module-level `_client_with_egress_store` in different places, git kept both, and the later definition shadowed the earlier one. `git merge` reported success. Only running the tests caught it. After merging two PRs that touch the same test module, grep for duplicate top-level definitions.
+- INSTRUMENT TRAP: this box's global ruff (0.16.4) and global mypy (2.3.1) both disagree with the repo's locked versions (ruff 0.15.12, mypy 2.0.0). The global mypy reports 2440 errors in 376 files where the locked one is clean. Always gate with `uv run --frozen`.
+- FOLLOW-UPS FILED, none blocking beta.6: (a) the FALLBACK_SLATE Start watchdog can never fire because the daemon rewrites that row's `updated_at` every 2 s, and the test that pins it freezes `updated_at` (full reproduction in #216's round-2 review); (b) withhold `current_source_label` on the unauthenticated `GET /api/public/egress/channels/{id}/now`; (c) SetupScreen renders the sign-in form twice on a 429; (d) the "Recovery kit never confirmed" button swallows a 403; (e) a resolver-cache TTL window can advertise a `manifest_url` the router then 404s.
+- Then the beta.6 kit pipeline (task 8); #202 soak; captions root cause (9).
+- Full fix list: C:\Users\scott\Desktop\floatsom\CIVICCAST-BATCH-FIX-LIST-2026-09-03.md (items 93-135); run log: CIVICCAST-RESUME-STATE.md.
+- Both tester machines started 8-hour soaks of beta.5 at 11:00 PM (docs/SOAK-PROMPT.md); reports due ~7 AM as Desktop\SOAK-<pc>-<date>.zip on each machine.
+
+## Where things are
+- Main checkout: C:\Users\scott\Desktop\Code\civiccast-native. Worktrees: cc-docs165 (#165), cc-journal-tolerant (#206), cc-install-helper (#207), cc-ownership-claim (ownership fix), cc-beta6-bump (#208), cc-item66 (#202), cc-sbsoak-run (sandbox lane, detached at origin/main).
+- Session scratchpad with build-chain.sh, after-build.ps1, sbsoak-launch.ps1: C:\Users\scott\AppData\Local\Temp\claude\C--Users-scott-Desktop-Code\9e39825a-17bf-473c-8ada-72211a0f3e03\scratchpad
+- Gate A runner: C:\actions-runner-gate-a (start run.cmd after a reboot). Evidence: C:\actions-runner-gate-a\_work\civiccast-native\civiccast-native\sandbox-lab\evidence\<sha>\.
+- Elevated helper: queue JSON {job_id, action: RunTrustedPowerShellScript, scriptPath} in C:\dev\ClaudeElevatedHelper\queue, then Start-ScheduledTask ClaudeElevatedDevHelper; kill-orphan-sandbox.ps1 clears a leftover vmmemWindowsSandbox.
+- Shared git stash must stay at exactly 1 entry. Never `git stash`.
+
+## Verification ledger
+VERIFIED: all seven fix PRs are merged and main is 2d7fd65b | gh pr list --state open (only #202, #175, #155, #138 remain, all pre-existing) + git log origin/main (2026-09-10 4:05 AM MT)
+VERIFIED: #214's final gates at b7613b61 -- 3379 passed / 101 skipped, mypy clean on 675 files, ruff clean, 1033 + 61 portal tests, 254 a11y checks including the new dark-mode axe scans | builder report + required CI green before I merged
+VERIFIED: #211, #212 and #215 are merged; main is 184398d9 | git log --oneline origin/main (2026-09-10 2:05 AM MT)
+VERIFIED: #215's own gates at 65abe704 were 2416 passed / 10 skipped (pytest tests/policy tests/installer) and 958 operator-portal tests, and its required CI checks were all green before I merged | builder report + gh pr checks 215
+UNVERIFIED: the delta-review findings for #214 round 3, #216 round 2 and #209 round 5 - read from the reviewers' PR comments, not independently re-measured by this session
+VERIFIED: after #165 merged, main 76817e3d passes the three previously-red doc/release tests -- 29 passed | pytest tests/policy/test_release_truth.py tests/policy/test_windows_release_downloader.py tests/test_audit_protocol_docs.py -p no:randomly (2026-09-10 12:56 AM MT)
+VERIFIED: #213's own failure was `POST /api/staff/auth/sign-out` having no role dependency; the route's own docstring says any role may call it, so it is recorded in ALLOWED_UNGUARDED_STAFF_MUTATION_ROUTES with the reason -- 2 passed | tests/policy/test_staff_mutation_role_policy.py at 4288ffa2
+VERIFIED: #212 at 233e8e18 passes its own suites -- 151 passed | pytest tests/egress/test_daemon.py tests/egress/test_store.py -p no:randomly
+UNVERIFIED: the delta-review findings for #209 round 4, #214 round 2 and #215 round 2 - read from the reviewers' PR comments, not independently re-measured by this session
+VERIFIED: main 27dfc076's docs/releases/release-truth.yaml had two `v1.0.0-beta.5` entries and check_release_truth.py reported `DRIFT: manifest: duplicate tags in entries` | docs/releases/release-truth.yaml:39-63 + checker run 2026-09-10 12:10 AM MT
+VERIFIED: the four required-check failures shared by #211/#165/#209/#213/#212 are the release-truth + current-release doc tests, not per-PR breakage | gh run view --job 102753825811 --log-failed (PR #213 Unit tests)
+VERIFIED: on #165 head cd50c3d4 the whole tests/policy suite is 1920 passed, 5 skipped and check_release_truth.py prints `release-truth: PASS` | local pytest run 2026-09-10 12:18 AM MT
+VERIFIED: `tests/policy/test_staff_mutation_role_policy.py` passes on #165's tree, so #213's failure of that test is #213's own | same local run
+VERIFIED: the upgrade routing accepts only `<major>.<minor>.<patch>[-<label>.?<number>]`, so `beta.5.1` is not a legal version and the follow-up is `1.0.0-beta.6` | civiccast/native/upgrade/routing.py:150
+VERIFIED: Gate A is dispatched with inputs `run_id` (build run id) and `lane` (full | cross-version-only | download-only-only) | .github/workflows/gate-a-station-acceptance.yml:75-89
+VERIFIED: the publisher requires --kit-dir, --source-sha, --build-run-id, --gate-a-run-id, --tag, --truth-status and refuses without Gate A verdict artifacts (dry run output 2026-09-09) | scripts/release/publish_beta_candidate.py:1 (--help)
+VERIFIED: the Gate A cross-version baseline pin schema (schema_version 2, source_sha, run_id, gate_a_run_id, installer_sha256, station_index_sha256, product_version, notes) | sandbox-lab/upgrade-baseline.json:1-11
+VERIFIED: HANDOFF.md is gitignored in this repo and must be force-added | .gitignore:146
+VERIFIED: 1.0.0-beta.5 is the product version on main 148c8d21 | civiccast/_native_version.py:34
+VERIFIED: the sandbox soak lane's Run-SandboxSoak.ps1 takes -SeamlessReload, -OnAirBoundMinutes, -CaptionsOff, -WorkerEnv | sandbox-lab/Run-SandboxSoak.ps1:105-135
+UNVERIFIED: the builder-reported line numbers for PRs #202, #206, #208, #209 - taken from builder and reviewer reports, not re-read by this session
+VERIFIED: Gate A run 34423542177 concluded success with all three lanes PASS; v1.0.0-beta.5 release exists with 8 assets, isDraft=false | gh run view 34423542177 / gh release view v1.0.0-beta.5 (2026-09-10 04:14Z)
