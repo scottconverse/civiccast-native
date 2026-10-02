@@ -37,8 +37,12 @@ Carried over only if it belongs to a native Windows product:
 * the Linux GStreamer container build (1.28.4) — native Windows uses the
   pinned `gstreamer-*` **1.28.5** PyPI wheels instead
 * the installer's WSL2 bootstrap lane
-* `docs/audits/`, `docs/releases/`, `docs/research/`, `tester-handoff/`,
-  `.agent-runs/` scratch, and the dated handoff memos
+* `docs/audits/`, `docs/research/`, `tester-handoff/`, the retired line's
+  dated handoff memos, and its scratch runs. (This repository does have its
+  own `docs/releases/` -- the native beta verification records plus some
+  earlier evidence notes -- and a committed `.agent-runs/native-windows/`
+  audit-evidence tree; those are native-line records, not carried-over
+  scratch.)
 
 The six design specs that lived under `.agent-runs/native-windows/specs/` were
 hand-carried into [`docs/design/`](docs/design/) — they are real design records,
