@@ -516,7 +516,7 @@ class ShedDiagnosticCollector:
     def _refresh_environment(self) -> None:
         with contextlib.suppress(Exception):
             note_executing("collector", sys._getframe().f_code, self)
-        snapshot = None
+        snapshot: dict[str, object] | None = None
         completed = None
         elapsed = None
         try:
@@ -614,8 +614,8 @@ class ShedDiagnosticCollector:
                 result: dict[str, object] = {"available": supplied.get("available") is True}
                 if "reason" in supplied:
                     result["reason"] = str(supplied["reason"])[:160]
-                devices = supplied.get("devices")
-                if isinstance(devices, (tuple, list)):
+                supplied_devices = supplied.get("devices")
+                if isinstance(supplied_devices, (tuple, list)):
                     result["devices"] = [
                         {
                             "name": str(device.get("name", ""))[:160],
@@ -623,7 +623,7 @@ class ShedDiagnosticCollector:
                             "mem_used_mb": _optional_rounded(device.get("mem_used_mb")),
                             "mem_total_mb": _optional_rounded(device.get("mem_total_mb")),
                         }
-                        for device in devices[:8]
+                        for device in supplied_devices[:8]
                         if isinstance(device, Mapping)
                     ]
                 return result
