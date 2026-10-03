@@ -1,0 +1,24 @@
+flowchart TB
+    subgraph L1["Live: capture audio"]
+        direction LR
+        AUD["Program audio<br/>in the worker"] -->|tee| TEE["Audio tap<br/>leaky queue,<br/>drops oldest"]
+        TEE --> WR["Segment writer<br/>queue of 8,<br/>drops oldest"]
+        WR --> DIR[("caption-tap/channel<br/>5-second WAV chunks")]
+    end
+    subgraph L2["Live: recognize and publish"]
+        direction LR
+        TW["Tap worker<br/>scans every 2 s,<br/>backlog gate"] --> ASR["faster-whisper<br/>CPU: 1 call at a time<br/>CUDA: up to 3"]
+        ASR --> ST["Stabilizer<br/>words must appear<br/>in 2 windows"]
+        ST --> OUT["active.vtt and<br/>CEA-708 embed"]
+    end
+    subgraph L3["After the meeting"]
+        direction LR
+        PUB["Publish approval"] --> JOB["Offline caption job<br/>polls every 60 s"]
+        JOB --> REV["Review queue<br/>English, then Spanish"]
+        REV --> ATT["Attach to<br/>VOD package"]
+    end
+    L1 --> L2
+    L2 --> L3
+    style TEE stroke:#c00,stroke-width:3px
+    style WR stroke:#c00,stroke-width:3px
+    style TW stroke:#c00,stroke-width:3px

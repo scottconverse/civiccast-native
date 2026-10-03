@@ -1,0 +1,25 @@
+[
+  {
+    "name": "operator-health-support",
+    "path": "/operator/#/health",
+    "wait_ms": 3000,
+    "full_page": true,
+    "dark": false,
+    "note": "Chapter 14. The Readiness screen with the machine-health rows (Database, Media space, Backup space) and the support bundle control visible. Needs a support_admin-capable or admin token. Only reference it in the chapter if captured."
+  },
+  {
+    "name": "operator-federation-off",
+    "path": "/operator/#/activitypub",
+    "wait_ms": 3000,
+    "dark": false,
+    "note": "Chapter 15. The ActivityPub screen on a station where federation is not configured (the default), showing the status text and no switch to turn it on. Needs an admin token."
+  },
+  {
+    "name": "operator-channels-headend",
+    "path": "/operator/#/channels",
+    "wait_ms": 3000,
+    "full_page": true,
+    "dark": false,
+    "note": "Chapter 15. The Channels screen with a channel that has a udp-ts output selected, showing the Verify stream (TSDuck) button. Needs a setup_admin-capable token and a channel with a udp-ts output."
+  }
+]

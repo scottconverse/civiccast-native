@@ -1,0 +1,7 @@
+stateDiagram-v2
+    [*] --> Scheduled: you add it
+    [*] --> Published: Auto-schedule adds it
+    Scheduled --> Published: Publish to residents
+    Scheduled --> Cancelled: Cancel
+    Published --> Cancelled: Take off air
+    Published --> Cancelled: Disable slot

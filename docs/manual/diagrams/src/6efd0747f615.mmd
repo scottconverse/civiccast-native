@@ -1,0 +1,22 @@
+flowchart LR
+    Staff["Staff<br/>(browser)"]
+    Res["Residents<br/>(browser)"]
+    Src["Video sources<br/>capture cards, network streams,<br/>watch folders, uploads"]
+    Alerts["Public-safety feeds<br/>(CAP, NWS)"]
+    Stn["CivicCast station<br/>(one Windows PC)"]
+    Head["Cable headend or appliance<br/>UDP-TS, SRT, SDI, NDI"]
+    Reach["Archive and reach<br/>Internet Archive, NAS,<br/>YouTube, ActivityPub"]
+    Notify["Email, SMS,<br/>webhooks"]
+    CDN["Optional CDN<br/>(off by default)"]
+    Dl["Install-time downloads<br/>GitHub, Hugging Face,<br/>Ollama registry"]
+
+    Staff -->|operator console| Stn
+    Res -->|resident portal and video| Stn
+    Src --> Stn
+    Alerts --> Stn
+    Stn --> Head
+    Stn --> Reach
+    Stn --> Notify
+    Stn -.-> CDN
+    CDN -.-> Res
+    Dl -.->|first-run wizard only| Stn

@@ -1,0 +1,17 @@
+stateDiagram-v2
+    [*] --> STOPPED
+    STOPPED --> STARTING : start command
+    STARTING --> ON_AIR : worker on air
+    STARTING --> FALLBACK_SLATE : plan expired or no source
+    STARTING --> ERROR : bad config, missing secret
+    ON_AIR --> ON_AIR : seamless reload
+    ON_AIR --> TRANSITIONING : reload declined, restart route
+    TRANSITIONING --> ON_AIR : new worker on air
+    ON_AIR --> FALLBACK_SLATE : source keeps failing, forced slate
+    FALLBACK_SLATE --> ON_AIR : due program found
+    ON_AIR --> STARTING : worker crash, relaunch with backoff
+    ON_AIR --> DRAINING : drain command
+    DRAINING --> STOPPED : worker exited
+    ON_AIR --> STOPPING : stop command
+    STOPPING --> STOPPED
+    ERROR --> STARTING : start command

@@ -1,0 +1,10 @@
+flowchart TB
+  SCM[Windows Service Control Manager] --> SUP[CivicCastSupervisor service]
+  SUP --> PG[Postgres database]
+  SUP --> CP[Control plane, port 8000]
+  SUP -.-> OL[Ollama, port 11434]
+  CP --> PLAY[Playout workers]
+  CP --> TSR[TS relay]
+  CP --> HLS[HLS relay]
+  CP --> CAP[Caption tap]
+  PLAY --> ENG[GStreamer or ffmpeg]

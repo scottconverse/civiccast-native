@@ -1,0 +1,18 @@
+flowchart TB
+    subgraph R1["Before the change"]
+        direction LR
+        S["Newer setup.exe<br/>over existing install"] --> P["Stop the service<br/>(keep registration)"]
+        P --> X["Extract and verify<br/>new program files"]
+        X --> L["Engine takes the<br/>maintenance interlock"]
+        L --> Q["Drain writers,<br/>verify station is quiet"]
+    end
+    subgraph R2["The change, and what happens if it fails"]
+        direction LR
+        K["Back up database,<br/>restore into scratch copy"] --> M["Run schema migrations<br/>(alembic upgrade head)"]
+        M --> H["Start read-only,<br/>health check"]
+        H -->|green| OK["Release interlock;<br/>service back to normal"]
+        M -->|failure| RB["Restore database<br/>from the backup"]
+        H -->|failure| RB
+        RB --> ST["Setup exits 124.<br/>Service stopped.<br/>New files stay"]
+    end
+    R1 --> R2

@@ -1,0 +1,16 @@
+flowchart TB
+    subgraph R1["Prepare"]
+        direction LR
+        A[Approve UAC] --> B["Pre-install checks<br/>stop any old service"]
+        B --> C["Copy files,<br/>install VC++ runtime"]
+        C --> D["Stage packs from packs folder<br/>and re-check signatures"]
+        D --> E["Upgrade engine<br/>skipped on fresh install"]
+    end
+    subgraph R2["Install and start"]
+        direction LR
+        F[Create database] --> G["Activate station<br/>extract models, self-test"]
+        G --> H["Register service,<br/>open firewall port"]
+        H --> I[Record version]
+        I --> J[First-run window]
+    end
+    R1 --> R2

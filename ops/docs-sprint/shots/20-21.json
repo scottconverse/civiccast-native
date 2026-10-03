@@ -1,0 +1,32 @@
+[
+  {
+    "name": "operator-setup-firstadmin",
+    "path": "/operator/#/setup",
+    "wait_ms": 3500,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "auth": false,
+    "note": "Chapter 10, step 6. Needs a station that has NOT been set up (the lab station is configured and shows the sign-in page instead). Use a throw-away station, or start a second control plane with CIVICCAST_STATION_STATE_PATH pointing at an empty file; do not touch the live station. Storage must show ready (or click Prepare storage) so the first-admin form appears with the fields Station name, Admin display name, Admin username, Admin password, Confirm admin password, Where will you keep the recovery kit?, Resident portal URL and the button Create first admin. Capture before submitting."
+  },
+  {
+    "name": "operator-setup-signin",
+    "path": "/operator/#/setup",
+    "wait_ms": 3500,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "auth": false,
+    "note": "Chapter 10, step 6. Lab station, signed out (no token). Must show the Setup complete card, the First-run defaults card, the Admin sign-in form and the Use recovery code form. Do not type a password or code."
+  },
+  {
+    "name": "operator-health-ready",
+    "path": "/operator/#/health",
+    "wait_ms": 5000,
+    "full_page": false,
+    "width": 1440,
+    "height": 900,
+    "auth": true,
+    "note": "Chapter 10, Verify the install. Lab station with a staff token (--token-env). Must show the page headed Safe to broadcast under the eyebrow System Health."
+  }
+]

@@ -1,0 +1,19 @@
+sequenceDiagram
+    participant B as Operator console (browser on the station)
+    participant S as /api/setup (station computer only)
+    participant M as Staff auth middleware
+    participant T as Token check
+    participant R as Route with role check
+    B->>S: POST /api/setup/login (admin name and password)
+    S-->>B: console token (starts with ccst_)
+    Note over B: token kept in browser storage as civiccast.staffToken
+    B->>M: GET /api/staff/... with Authorization: Bearer token
+    alt no Authorization header
+        M-->>B: 401 (costs nothing against the rate limit)
+    else token present
+        M->>T: verify (database tokens, then console tokens,<br/>then environment tokens only if no database<br/>store or the fallback setting is on)
+        T-->>M: identity with scopes, or invalid
+        Note over M: invalid costs one of 10 failures per 60 s per address, then 429
+        M->>R: scopes expand to roles
+        R-->>B: 200, or 403 naming the roles required
+    end

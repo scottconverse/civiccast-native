@@ -1,0 +1,19 @@
+flowchart TB
+    Br["Browsers and API clients"]
+    MW["Middleware<br/>security headers, staff auth,<br/>maintenance guard"]
+    RT["Routers<br/>staff, public, setup,<br/>media, federation, health"]
+    SV["Services and stores<br/>schedule, recording, captions,<br/>summary, publish, reports"]
+    DB[("PostgreSQL")]
+    BUS["In-process event bus"]
+    WK1["Channel automation<br/>and egress daemon"]
+    WK2["Caption workers<br/>live tap, offline, feed"]
+    WK3["Job workers<br/>finalization, summary,<br/>scheduled recording"]
+    WK4["Housekeeping workers<br/>retention, media checks,<br/>retries, alerts"]
+
+    Br --> MW --> RT --> SV --> DB
+    SV --> BUS
+    WK1 --> SV
+    WK2 --> SV
+    WK3 --> SV
+    WK4 --> SV
+    WK1 -->|spawns| WRK["GStreamer workers"]

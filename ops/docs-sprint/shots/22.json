@@ -1,0 +1,105 @@
+[
+  {
+    "name": "operator-setup-first-admin",
+    "path": "/operator/#/setup",
+    "wait_ms": 3000,
+    "width": 1440,
+    "height": 900,
+    "must_show": "The First setup page on a brand-new station: the Durable storage card with its Prepare storage button, then the first-admin form with Station name, Admin display name, Admin username, Admin password with the (n/12) counter, Confirm admin password, 'Where will you keep the recovery kit?', Resident portal URL and the Create first admin button.",
+    "setup": "Needs a station with no first admin yet (a freshly installed lab station, or a throwaway lab station whose station-state.json was removed). Capture from a browser on the station computer itself. Do NOT use the live station."
+  },
+  {
+    "name": "operator-setup-signed-in-tools",
+    "path": "/operator/#/setup",
+    "wait_ms": 3500,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "A signed-in First setup page: the green 'Signed in' (or 'Setup complete') card, the First-run defaults card showing Mode 'Test mode', then the tools block: Camera or test media, Backup destination with its Verify backup button, Storage and viewing estimate, and Provider setup cards.",
+    "setup": "Lab station that has completed First Setup, signed in with the admin password on the station computer. Leave the backup folder blank so the 'Not set up yet' state shows."
+  },
+  {
+    "name": "operator-station-profile-admin",
+    "path": "/operator/#/station-profile",
+    "wait_ms": 4000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "Station Profile as setup_admin: the Station identity card (Station name, Timezone, Default channel id, Public base URL, the three storage-folder fields with Copy path buttons, the Show live captions on air checkbox, Save), the Station box profile card with its readiness badge and rows, and the Security card with Sign out other sessions and Regenerate recovery kit.",
+    "setup": "Lab station signed in as the first admin. Do not click Save or either Security button."
+  },
+  {
+    "name": "operator-channels-headend-delivery",
+    "path": "/operator/#/channels",
+    "wait_ms": 4000,
+    "clicks": ["text=\"Cable headend delivery\""],
+    "width": 1440,
+    "height": 1400,
+    "must_show": "The Cable headend delivery card on the Channels screen with the Headend preset drop-down, the destination field, the optional Mux rate override, the 'Keep the channel's other outputs alongside the headend feed' checkbox and the Apply headend preset button.",
+    "setup": "Lab station, setup_admin. Choose 'Local rehearsal (web preview, HLS)' or leave the preset unselected; do NOT click Apply on a station that is on air."
+  },
+  {
+    "name": "operator-channels-automation-card",
+    "path": "/operator/#/channels",
+    "wait_ms": 4000,
+    "clicks": ["text=\"Run this channel 24/7\""],
+    "width": 1440,
+    "height": 1400,
+    "must_show": "The 'Run this channel 24/7' card with 'Keep this channel on air', 'Allow software (CPU) encoding fallback', the 'Between programs, show' choices (Station slate, Community bulletins), Slate message, NDI output name, SDI output device and Save automation settings.",
+    "setup": "Lab station with a channel that already has an outgoing-feed configuration (apply the local rehearsal preset first), signed in as setup_admin."
+  },
+  {
+    "name": "operator-ai-models-defaults",
+    "path": "/operator/#/ai-models",
+    "wait_ms": 4000,
+    "width": 1440,
+    "height": 900,
+    "must_show": "The AI Models page with the Captions, Summary and Translation cards each showing a Local badge, the Current model line and the Choose a model drop-down.",
+    "setup": "Lab station, setup_admin, all three features left on their defaults. Do not change any selection and do not enter a provider key."
+  },
+  {
+    "name": "operator-commissioning-start",
+    "path": "/operator/#/commissioning",
+    "wait_ms": 3500,
+    "width": 1440,
+    "height": 900,
+    "must_show": "Cable Commissioning with 'Screen 8: First-run cable checks' enabled (Station name box and Run cable checks button) and the Screen 9, 10 and 11 cards showing their grey locked sentences.",
+    "setup": "Lab station, setup_admin, nothing run yet on the commissioning wizard."
+  },
+  {
+    "name": "operator-controlroomsetup-blocked",
+    "path": "/operator/#/control-room-setup",
+    "wait_ms": 3500,
+    "width": 1440,
+    "height": 1100,
+    "must_show": "Control Room - setup on a station that has no control service configured: the readiness panel with a blocked 'TSR control service' card, then the Devices section with 'No devices registered yet.' and the registration form.",
+    "setup": "Lab station where CIVICCAST_CONTROL_ROOM_TSR_URL is not set and no device is registered, signed in as setup_admin."
+  },
+  {
+    "name": "operator-custom-fields-form",
+    "path": "/operator/#/custom-fields",
+    "wait_ms": 3500,
+    "width": 1440,
+    "height": 1000,
+    "must_show": "Custom Fields with the 'Define a new field' form (Field key, Label, Type, List options, Required, Searchable, Exposed to public API, Order) and the Defined fields list below it.",
+    "setup": "Lab station, setup_admin. Create one example field first (key meeting_type, label Meeting type, type List with three options) so the list has a row with its tags and arrows."
+  },
+  {
+    "name": "operator-paywall-off",
+    "path": "/operator/#/paywall",
+    "wait_ms": 3500,
+    "width": 1440,
+    "height": 1000,
+    "must_show": "The Subscription paywall page on a fresh station: the blue 'Paywall is OFF' banner, the Config card with Enable paywall unticked, and the greyed Tiers and Comp access grants cards.",
+    "setup": "Lab station, setup_admin, nothing saved. Do not enter a signing secret or any Stripe value."
+  },
+  {
+    "name": "operator-medialifecycle-cards",
+    "path": "/operator/#/media-lifecycle",
+    "wait_ms": 3500,
+    "width": 1440,
+    "height": 1100,
+    "must_show": "Media Lifecycle Settings with its three cards: Watch folders, Retention automation and Storage budget (with the 'No budget configured' text if the budget variable is not set).",
+    "setup": "Lab station, signed in with the first admin token (all roles). Leave all three cards empty."
+  }
+]

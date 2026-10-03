@@ -1,0 +1,21 @@
+sequenceDiagram
+    actor Staff
+    participant R as Recording intake<br/>(live session, scheduled capture, upload)
+    participant F as Finalization worker
+    participant A as Assets and packages
+    participant P as Publish service
+    participant C as Offline caption worker
+    participant W as Resident portal
+    Staff->>R: meeting ends or file arrives
+    R->>F: live session ended
+    Note over R,A: scheduled captures and uploads become asset rows directly and are packaged on request
+    F->>A: one transaction: event, asset, session recorded
+    F->>A: package as HLS, upload to CDN if on, set manifest_url
+    Staff->>P: approve publish (publish operator)
+    P->>C: queue offline caption job
+    P->>A: set published_at, portal surface on
+    W->>A: reads /api/public/assets and /media/vod
+    C->>C: transcribe, file cues for review
+    Staff->>C: records clerk reviews English, then Spanish
+    C->>A: attach caption tracks to the package
+    Note over Staff,C: Summary and signed record are a separate clerk-driven step, not part of publish
