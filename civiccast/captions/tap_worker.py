@@ -1791,6 +1791,8 @@ class CaptionTapWorker:
                     feed_seconds=feed_seconds,
                     asr_seconds=asr_seconds,
                     transcribe_seconds=decode.get("transcribe_s") if decode else None,
+                    model_call_seconds=decode.get("model_call_s") if decode else None,
+                    lazy_next_seconds=decode.get("lazy_next_s") if decode else None,
                     duration_after_vad_seconds=(
                         decode.get("duration_after_vad") if decode else None
                     ),

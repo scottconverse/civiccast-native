@@ -851,6 +851,8 @@ class FasterWhisperRuntime:
 
         transcribe_s covers the model call and each lazy next(), not model
         loading, audio preparation, hypothesis conversion or consumer pauses.
+        model_call_s and lazy_next_s split that same interval; lazy_next_s
+        includes terminal and failing next attempts, not only yielded segments.
         Reading metadata never changes transcript or runtime exceptions.
         """
         record = getattr(self._decode_metrics, "last", None)
@@ -974,6 +976,8 @@ class FasterWhisperRuntime:
         model = self._model_instance()
         metrics: dict[str, float | None] = {
             "transcribe_s": 0.0,
+            "model_call_s": 0.0,
+            "lazy_next_s": 0.0,
             "duration_after_vad": None,
             "max_segment_temperature": None,
         }
@@ -990,7 +994,9 @@ class FasterWhisperRuntime:
                 **({"word_timestamps": True} if self._live else {}),
             )
         finally:
-            metrics["transcribe_s"] = time.perf_counter() - started
+            elapsed = time.perf_counter() - started
+            metrics["model_call_s"] = elapsed
+            metrics["transcribe_s"] = elapsed
         metrics["duration_after_vad"] = _diagnostic_number(info, "duration_after_vad")
         return self._measured_segments(segments, metrics)
 
@@ -1005,9 +1011,9 @@ class FasterWhisperRuntime:
             except StopIteration:
                 return
             finally:
-                metrics["transcribe_s"] = (metrics["transcribe_s"] or 0.0) + (
-                    time.perf_counter() - started
-                )
+                elapsed = time.perf_counter() - started
+                metrics["lazy_next_s"] = (metrics["lazy_next_s"] or 0.0) + elapsed
+                metrics["transcribe_s"] = (metrics["transcribe_s"] or 0.0) + elapsed
             temperature = _diagnostic_number(segment, "temperature")
             if temperature is not None:
                 previous = metrics["max_segment_temperature"]

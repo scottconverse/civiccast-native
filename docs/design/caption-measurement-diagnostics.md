@@ -21,6 +21,12 @@ asr_s covers the complete process_batch call, not just ASR decoding. New fields:
 - transcribe_s: wall time in the model call plus each lazy generator next(). It
   excludes model loading, audio preparation, hypothesis conversion and consumer
   pauses (including VOD consumer pauses).
+- model_call_s / lazy_next_s (U85): the initial model call and all attempted
+  lazy next operations, including terminal exhaustion and failing attempts.
+  These use the existing timing deltas without additional clock reads and split
+  transcribe_s; the residual does not subtract them again. Partial consumption
+  reports only attempted work. Other runtimes/unknown measurements emit nulls.
+  Individually rounded components may differ slightly from the rounded total.
 - duration_after_vad: optional model-reported audio duration after VAD.
 - max_segment_temperature: maximum valid non-negative segment temperature,
   not a changed decode setting or an unconditional diagnosis of retries.

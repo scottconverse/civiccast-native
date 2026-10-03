@@ -60,8 +60,12 @@ def test_model_call_and_lazy_consumption_exclude_consumer_pause(monkeypatch):
     assert next(stream).text == "motion carries"
     now[0] += 100
     assert list(stream) == []
+    assert metrics(runtime).get("model_call_s") == 2.0
+    assert metrics(runtime).get("lazy_next_s") == 7.0
     assert metrics(runtime) == {
         "transcribe_s": 9.0,
+        "model_call_s": 2.0,
+        "lazy_next_s": 7.0,
         "duration_after_vad": 3.5,
         "max_segment_temperature": 0.4,
     }
@@ -77,6 +81,159 @@ def test_reset_before_predecode_failure(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="wav"):
         list(runtime.transcribe([chunk(8000)]))
+    assert metrics(runtime) is None
+
+
+def test_split_includes_terminal_attempt_without_extra_clock_reads(monkeypatch):
+    now, ticks = [0.0], []
+
+    def clock():
+        ticks.append(now[0])
+        return now[0]
+
+    monkeypatch.setattr(module, "time", SimpleNamespace(perf_counter=clock))
+    runtime = module.FasterWhisperRuntime(device="cpu", live=False)
+    item, audio, prompt = object(), object(), object()
+    calls = []
+
+    def transcribe(source, **kwargs):
+        calls.append((source, kwargs))
+        now[0] += 2
+
+        def segments():
+            now[0] += 3
+            yield item
+            now[0] += 5
+
+        return segments(), None
+
+    runtime._model = SimpleNamespace(transcribe=transcribe)
+    stream = iter(runtime._transcribe_source(audio, initial_prompt=prompt))
+    assert next(stream) is item
+    assert metrics(runtime)["lazy_next_s"] == 3
+    now[0] += 100
+    assert list(stream) == []
+    assert metrics(runtime)["model_call_s"] == 2
+    assert metrics(runtime)["lazy_next_s"] == 8
+    assert metrics(runtime)["transcribe_s"] == 10
+    assert len(ticks) == 6  # call, yield attempt, exhaustion: two reads each
+    assert calls == [
+        (
+            audio,
+            {
+                "beam_size": 5,
+                "language": None,
+                "task": "transcribe",
+                "vad_filter": True,
+                "initial_prompt": prompt,
+            },
+        )
+    ]
+    copy = metrics(runtime)
+    copy["lazy_next_s"] = 999
+    assert metrics(runtime)["lazy_next_s"] == 8
+
+
+@pytest.mark.parametrize("where", ["call", "next"])
+def test_split_retains_original_failure_and_attempt_elapsed(monkeypatch, where):
+    now = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(perf_counter=lambda: now[0]))
+    runtime = module.FasterWhisperRuntime(device="cpu", live=False)
+    error = RuntimeError("original decode error")
+
+    def transcribe(*args, **kwargs):
+        now[0] += 2
+        if where == "call":
+            raise error
+
+        def segments():
+            now[0] += 4
+            raise error
+            yield  # make the failure lazy
+
+        return segments(), None
+
+    runtime._model = SimpleNamespace(transcribe=transcribe)
+    with pytest.raises(RuntimeError) as caught:
+        list(runtime._transcribe_source(object(), initial_prompt=None))
+    assert caught.value is error
+    assert metrics(runtime)["model_call_s"] == 2
+    assert metrics(runtime)["lazy_next_s"] == (4 if where == "next" else 0)
+    assert metrics(runtime)["transcribe_s"] == (6 if where == "next" else 2)
+
+
+def test_partial_close_does_not_invent_terminal_work(monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(perf_counter=lambda: now[0]))
+    runtime = module.FasterWhisperRuntime(device="cpu", live=False)
+
+    def segments():
+        now[0] += 3
+        yield object()
+        now[0] += 4
+        yield object()
+
+    runtime._model = SimpleNamespace(transcribe=lambda *a, **k: (segments(), None))
+    stream = runtime._transcribe_source(object(), initial_prompt=None)
+    next(stream)
+    now[0] += 100
+    stream.close()
+    assert metrics(runtime)["model_call_s"] == 0
+    assert metrics(runtime)["lazy_next_s"] == 3
+    assert metrics(runtime)["transcribe_s"] == 3
+
+
+@pytest.mark.parametrize("call_s,next_s", [(2, 0), (0, 3), (0, 0)])
+def test_call_only_next_only_and_empty_decode(monkeypatch, call_s, next_s):
+    now = [0.0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(perf_counter=lambda: now[0]))
+    runtime = module.FasterWhisperRuntime(device="cpu", live=False)
+
+    def transcribe(*args, **kwargs):
+        now[0] += call_s
+
+        def segments():
+            now[0] += next_s
+            if next_s:
+                yield object()
+
+        return segments(), None
+
+    runtime._model = SimpleNamespace(transcribe=transcribe)
+    assert len(list(runtime._transcribe_source(object(), initial_prompt=None))) == bool(next_s)
+    assert metrics(runtime)["model_call_s"] == call_s
+    assert metrics(runtime)["lazy_next_s"] == next_s
+    assert metrics(runtime)["transcribe_s"] == call_s + next_s
+
+
+def test_split_is_latest_chunk_not_previous_chunk_or_running_total(monkeypatch):
+    now, calls = [0.0], [0]
+    monkeypatch.setattr(module, "time", SimpleNamespace(perf_counter=lambda: now[0]))
+    runtime = module.FasterWhisperRuntime(device="cpu", live=False)
+
+    @contextmanager
+    def source(_):
+        yield object()
+
+    monkeypatch.setattr(runtime, "_chunk_audio_source", source)
+
+    def transcribe(*args, **kwargs):
+        calls[0] += 1
+        duration = calls[0]
+        now[0] += duration
+
+        def segments():
+            now[0] += duration + 2
+            yield segment()
+
+        return segments(), None
+
+    runtime._model = SimpleNamespace(transcribe=transcribe)
+    assert len(list(runtime.transcribe([chunk(), chunk()]))) == 2
+    assert metrics(runtime)["model_call_s"] == 2
+    assert metrics(runtime)["lazy_next_s"] == 4
+    assert metrics(runtime)["transcribe_s"] == 6
+    list(runtime.transcribe([]))
     assert metrics(runtime) is None
 
 

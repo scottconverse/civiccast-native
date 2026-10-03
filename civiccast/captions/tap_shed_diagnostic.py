@@ -249,6 +249,8 @@ class ShedDiagnosticCollector:
         feed_seconds: float,
         asr_seconds: float,
         transcribe_seconds: float | None = None,
+        model_call_seconds: float | None = None,
+        lazy_next_seconds: float | None = None,
         duration_after_vad_seconds: float | None = None,
         max_segment_temperature: float | None = None,
         batch_id: str | None = None,
@@ -265,6 +267,9 @@ class ShedDiagnosticCollector:
         * ``transcribe_s`` -- time inside the model ``transcribe()`` and the
           consumption of its lazy segment generator, i.e. the ASR decode
           proper, as distinct from everything else ``asr_s`` covers;
+        * ``model_call_s`` / ``lazy_next_s`` -- the initial call and all
+          attempted lazy next operations (including exhaustion and errors).
+          These split transcribe_s; they are not subtracted again below;
         * ``other_process_batch_s`` -- DERIVED here as ``asr_s - transcribe_s -
           stabilize_s``: the share of ``asr_s`` that was neither decode nor
           stabilization. It includes other process_batch work; it cannot identify
@@ -312,6 +317,8 @@ class ShedDiagnosticCollector:
                     "asr_s": asr_rounded,
                     "stabilize_s": _round(stabilize) if stabilize is not None else None,
                     "transcribe_s": transcribe_rounded,
+                    "model_call_s": _optional_rounded(model_call_seconds),
+                    "lazy_next_s": _optional_rounded(lazy_next_seconds),
                     "other_process_batch_s": other_rounded,
                     "duration_after_vad": _optional_rounded(duration_after_vad_seconds),
                     "max_segment_temperature": _optional_rounded(max_segment_temperature),

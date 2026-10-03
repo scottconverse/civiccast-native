@@ -562,6 +562,8 @@ class TestTheDecodeSplitFields:
             feed_seconds=0.2,
             asr_seconds=5.833,
             transcribe_seconds=5.3,
+            model_call_seconds=2.1114,
+            lazy_next_seconds=3.1886,
             duration_after_vad_seconds=4.988,
             max_segment_temperature=0.32,
         )
@@ -570,6 +572,8 @@ class TestTheDecodeSplitFields:
         record = _payloads(caplog)[0]["batches"][0]
         assert record["asr_s"] == 5.833
         assert record["transcribe_s"] == 5.3
+        assert record["model_call_s"] == 2.111
+        assert record["lazy_next_s"] == 3.189
         assert record["duration_after_vad"] == 4.988
         # Above zero: the model walked its temperature fallback list.
         assert record["max_segment_temperature"] == 0.32
@@ -615,6 +619,8 @@ class TestTheDecodeSplitFields:
         record = payload["batches"][0]
         for field_name in (
             "transcribe_s",
+            "model_call_s",
+            "lazy_next_s",
             "other_process_batch_s",
             "duration_after_vad",
             "max_segment_temperature",
@@ -972,6 +978,8 @@ class TestTapShedDiagnostic:
             def last_decode_metrics(self) -> dict[str, object]:
                 return {
                     "transcribe_s": 5.3,
+                    "model_call_s": 2.0,
+                    "lazy_next_s": 3.3,
                     "duration_after_vad": 4.988,
                     "max_segment_temperature": 0.4,
                 }
@@ -988,6 +996,8 @@ class TestTapShedDiagnostic:
 
         record = _payloads(caplog)[0]["batches"][0]
         assert record["transcribe_s"] == 5.3
+        assert record.get("model_call_s") == 2.0
+        assert record.get("lazy_next_s") == 3.3
         assert record["duration_after_vad"] == 4.988
         assert record["max_segment_temperature"] == 0.4
         # other_process_batch_s is derived inside the collector from the tap's own numbers.
@@ -1022,6 +1032,8 @@ class TestTapShedDiagnostic:
         # The measurement is absent, and it says so rather than inventing zeros.
         for record in records:
             assert record["transcribe_s"] is None
+            assert record["model_call_s"] is None
+            assert record["lazy_next_s"] is None
             assert record["other_process_batch_s"] is None
             assert record["duration_after_vad"] is None
             assert record["max_segment_temperature"] is None
@@ -1158,12 +1170,16 @@ def test_invalid_optional_fields_emit_finite_json_null(caplog, bad):
         feed_seconds=bad,
         asr_seconds=bad,
         transcribe_seconds=bad,
+        model_call_seconds=bad,
+        lazy_next_seconds=bad,
         duration_after_vad_seconds=bad,
         max_segment_temperature=bad,
     )
     _shed(collector)
     record = _payloads(caplog)[0]["batches"][0]
     assert record["transcribe_s"] is None
+    assert record["model_call_s"] is None
+    assert record["lazy_next_s"] is None
     assert record["duration_after_vad"] is None
     assert record["max_segment_temperature"] is None
     assert record["other_process_batch_s"] is None
@@ -1175,6 +1191,8 @@ def test_invalid_optional_fields_emit_finite_json_null(caplog, bad):
         "asr_s",
         "stabilize_s",
         "transcribe_s",
+        "model_call_s",
+        "lazy_next_s",
         "duration_after_vad",
         "max_segment_temperature",
         "other_process_batch_s",
@@ -1258,7 +1276,12 @@ class TestBatchTimingIdentity:
 
         class Runtime(_ScriptedRuntime):
             def last_decode_metrics(self):
-                return {"transcribe_s": 2.0, "duration_after_vad": 0.5}
+                return {
+                    "transcribe_s": 2.0,
+                    "model_call_s": 0.5,
+                    "lazy_next_s": 1.5,
+                    "duration_after_vad": 0.5,
+                }
 
         collector = _collector(clock)
         worker = _tap(tmp_path / "tap", clock=clock, diagnostic=collector, runtime=Runtime())
@@ -1281,6 +1304,8 @@ class TestBatchTimingIdentity:
         assert [row.get("generation") for row in rows] == [generation, generation]
         assert [row.get("segment_indices") for row in rows] == [[7], [11]]
         assert [row["transcribe_s"] for row in rows] == [2.0, 2.0]
+        assert [row["model_call_s"] for row in rows] == [0.5, 0.5]
+        assert [row["lazy_next_s"] for row in rows] == [1.5, 1.5]
 
     def test_old_generation_partial_completion_keeps_origin(self, tmp_path):
         clock = _FakeClock()
@@ -1382,6 +1407,8 @@ class TestBatchTimingIdentity:
             "asr_s",
             "stabilize_s",
             "transcribe_s",
+            "model_call_s",
+            "lazy_next_s",
             "other_process_batch_s",
             "duration_after_vad",
             "max_segment_temperature",
