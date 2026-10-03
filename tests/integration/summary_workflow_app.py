@@ -5,7 +5,7 @@
 import os
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from importlib import import_module
 from pathlib import Path
 
@@ -18,10 +18,13 @@ from sqlalchemy.orm import Session
 
 from civiccast.auth.middleware import staff_auth_middleware
 from civiccast.auth.router import staff_router as auth_router
+from civiccast.captions import CaptionCue
 from civiccast.records.router import get_record_store
 from civiccast.records.router import staff_router as records_router
 from civiccast.records.store import InMemoryRecordStore
-from civiccast.summary.router import get_summary_store
+from civiccast.summary.job import SummaryGenerationJobRecord
+from civiccast.summary.persistence import PostgresSummaryGenerationJobStore
+from civiccast.summary.router import get_summary_job_store, get_summary_store
 from civiccast.summary.router import staff_router as summary_router
 from civiccast.summary.store import PostgresSummaryStore
 from tests.summary.test_summary_persistence import _summary
@@ -32,6 +35,7 @@ sqlite3.register_adapter(datetime, lambda value: value.isoformat())
 engine = create_engine(f"sqlite:///{state_root / 'summaries.sqlite3'}")
 with engine.begin() as connection, Operations.context(MigrationContext.configure(connection)):
     import_module("civiccast.summary.migrations.versions.0011_summary_v06").upgrade()
+    import_module("civiccast.summary.migrations.versions.0081_summary_generation_jobs").upgrade()
 
 
 @contextmanager
@@ -42,6 +46,17 @@ def sessions():
 
 store = PostgresSummaryStore(sessions)
 store.create_summary(_summary())
+jobs = PostgresSummaryGenerationJobStore(sessions)
+for job_id, meeting_id, summary_id, text in (
+    ("original-generation", "meeting-1", "summary-1", "The original caption says: two voted yes and one voted no."),
+    ("newer-other-summary", "meeting-1", "different-summary", "Different generation words must not appear."),
+    ("other-meeting", "another-meeting", "summary-1", "Wrong meeting words must not appear."),
+):
+    jobs.enqueue(SummaryGenerationJobRecord(
+        job_id=job_id, meeting_id=meeting_id, summary_id=summary_id, state="complete",
+        cues=[CaptionCue(cue_id="cue-1", start_seconds=18, end_seconds=24, text=text, confidence=1)],
+        created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
+    ))
 records = InMemoryRecordStore()
 app = FastAPI()
 app.middleware("http")(staff_auth_middleware)
@@ -55,6 +70,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type"],
 )
 app.dependency_overrides[get_summary_store] = lambda: store
+app.dependency_overrides[get_summary_job_store] = lambda: jobs
 app.dependency_overrides[get_record_store] = lambda: records
 
 

@@ -1,9 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ApiError, approveSummary, downloadSignedRecord, exportSignedRecord, getStaffIdentity, listSummaryReviewItems, verifySignedRecord } from '../api/client'
 import { hasOperatorRole } from '../auth/roles'
 import { SourcedClaimList } from '../components/review/SourcedClaimList'
-import { TranscriptCuePlayer } from '../components/review/TranscriptCuePlayer'
+import { SummarySourceEvidence } from '../components/review/TranscriptCuePlayer'
 import type { RecordExportResponse, SummaryApprovalRequest, SummaryDraft, TranscriptRange } from '../types/api.generated'
 import { SUMMARY_STATUS_META } from '../types/summary'
 
@@ -111,10 +111,8 @@ function PartialState({ summaries }: { summaries: SummaryDraft[] }) {
 
 function SummaryCard({
   summary,
-  activeCueId,
   exportResult,
   busy,
-  onSeek,
   onApprove,
   onExport,
   onDownload,
@@ -123,10 +121,8 @@ function SummaryCard({
   approvalRequired,
 }: {
   summary: SummaryDraft
-  activeCueId: string | null
   exportResult: RecordExportResponse | null
   busy: boolean
-  onSeek: (cueId: string) => void
   onApprove: (summary: SummaryDraft) => void
   onExport: (summary: SummaryDraft) => void
   onDownload: (record: RecordExportResponse) => void
@@ -134,10 +130,7 @@ function SummaryCard({
   canReview: boolean
   approvalRequired: boolean
 }) {
-  const ranges = useMemo<TranscriptRange[]>(
-    () => (summary.sourced_claims ?? []).flatMap((claim) => claim.transcript_ranges ?? []),
-    [summary.sourced_claims],
-  )
+  const [selectedRange, setSelectedRange] = useState<TranscriptRange | null>(null)
   const hasEvidence = (summary.sourced_claims ?? []).length > 0 && (summary.sourced_claims ?? []).every((claim) => (claim.transcript_ranges ?? []).length > 0)
   const canApprove = (summary.status === 'pending_review' || (summary.status === 'approved' && approvalRequired)) && hasEvidence
   const canExport = summary.status === 'approved' && hasEvidence && !approvalRequired
@@ -171,8 +164,8 @@ function SummaryCard({
       </p>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <SourcedClaimList claims={summary.sourced_claims ?? []} onSeek={onSeek} />
-        <TranscriptCuePlayer ranges={ranges} activeCueId={activeCueId} />
+        <SourcedClaimList claims={summary.sourced_claims ?? []} onSource={setSelectedRange} />
+        <SummarySourceEvidence meetingId={summary.meeting_id} summaryId={summary.summary_id} selectedRange={selectedRange} />
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -227,7 +220,6 @@ function SummaryCard({
 }
 
 export function SummaryReviewScreen() {
-  const [activeCueId, setActiveCueId] = useState<string | null>(null)
   const [exportResult, setExportResult] = useState<RecordExportResponse | null>(null)
   const queryClient = useQueryClient()
 
@@ -330,10 +322,8 @@ export function SummaryReviewScreen() {
             <SummaryCard
               key={summary.summary_id}
               summary={summary}
-              activeCueId={activeCueId}
               exportResult={exportResult}
               busy={busy}
-              onSeek={setActiveCueId}
               onApprove={(target) => approveMutation.mutate(target)}
               onExport={(target) => exportMutation.mutate(target)}
               onDownload={(record) => downloadMutation.mutate(record)}

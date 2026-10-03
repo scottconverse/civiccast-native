@@ -107,10 +107,12 @@ support Arrow, Home, and End navigation.
 While focus is in an `<input>` or `<textarea>`, single-letter shortcuts are
 suppressed. Arrow keys and Escape still work for the dialog itself.
 
-In Summary review, sourced-claim timestamp buttons seek the inline transcript
-player without stealing focus from review/export actions. If **Approve summary**
-has focus and the operator activates a timestamp link, focus returns to
-**Approve summary** after the transcript target updates.
+In Summary review, **Source:** timestamp buttons load retained caption words
+from the completed generation job matching that meeting and summary, without
+stealing focus from review/export actions. The source panel is not an audio
+player. It labels full-cue wording when a claim cites a shorter range, and
+reports missing, empty or ambiguous retained evidence rather than substituting
+current edited captions or claim text.
 
 ## Mobile
 
@@ -166,7 +168,7 @@ CI: `ci-operator-build` runs lint and build on every push and PR.
 - Signed-record export screenshot: `../../../docs/releases/evidence/v0.6-signed-record-export-desktop.png`
 - Browser gate: `npx playwright test e2e/summary-review.spec.ts e2e/signed-records.spec.ts`
   covers loading, success, empty, error, partial/refusal, sourced-claim
-  navigation, transcript seeking, focus preservation, actionable copy, browser
+  navigation, source-caption selection, focus preservation, actionable copy, browser
   console cleanliness in success flows, signed-record export, and
   serious/critical axe scan states.
 

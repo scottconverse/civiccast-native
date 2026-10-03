@@ -46,6 +46,10 @@ function backend(options: { approved?: boolean; approvalRequired?: boolean; iden
       const includeApproved = url.includes('include_approved=true')
       return response({ items: summary.status !== 'approved' || includeApproved ? [summary] : [], next_cursor: null, approval_required_summary_ids: options.approvalRequired ? [summary.summary_id] : [] })
     }
+    if (url.includes('/summaries/jobs?')) return response([
+      { job_id: 'wrong-meeting', meeting_id: 'another-meeting', summary_id: draft.summary_id, state: 'complete', cues: [{ cue_id: 'cue', start_seconds: 1, end_seconds: 2, text: 'Wrong meeting words.', confidence: 1 }] },
+      { job_id: 'original-job', meeting_id: draft.meeting_id, summary_id: draft.summary_id, state: 'complete', cues: [{ cue_id: 'cue', start_seconds: 1, end_seconds: 2, text: 'Original caption words used for generation.', confidence: 1 }] },
+    ])
     if (url.endsWith('/approve')) {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>
       requests.push({ url, body })
@@ -79,6 +83,13 @@ function screen(cachedIdentity = false) {
 }
 
 describe('summary approval real serialized client contract', () => {
+  it('shows original generation caption words, not claim text or another meeting with the same cue ID', async () => {
+    backend()
+    const view = screen()
+    fireEvent.click(await view.findByRole('button', { name: /cue 0:01-0:02/ }))
+    await view.findByText('Original caption words used for generation.')
+    expect(view.queryByText('Wrong meeting words.')).toBeNull()
+  })
   it('requires explicit authenticated reapproval for an orphan approved summary before export', async () => {
     const api = backend({ approved: true, approvalRequired: true })
     const view = screen()

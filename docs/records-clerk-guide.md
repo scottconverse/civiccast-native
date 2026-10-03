@@ -114,6 +114,20 @@ return to their export action.
 
 ## Signed Records
 
+In Summary review, choose a **Source:** cue-and-time button to read the caption
+words retained with the completed generation job for that exact meeting and
+summary. The source panel is text evidence, not an audio player. When a claim
+cites only part of a cue, the panel labels and displays the full cue; it does
+not pretend to align individual words to the shorter time range.
+
+Loading, request failure (with **Retry source captions**), missing input, empty
+captions, and conflicting jobs or cue ranges are shown explicitly. Legacy
+summaries without a retained matching job have no original source snapshot
+available here. CivicCast does not substitute current edited captions or the
+claim itself. Do not approve an uncertain claim; check the recording and
+source captions through your station's review workflow. The summary audit
+fingerprint is not proof that today's caption wording matches generation input.
+
 A signed record is a CivicCast export with integrity metadata and approval
 history. It is not automatically a jurisdiction-specific legal record; check
 with your station's records officer or legal counsel for what your
