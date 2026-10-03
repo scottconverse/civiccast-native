@@ -33,6 +33,13 @@ v0.6 Summary module for sourced meeting summaries.
 provenance, operator messages, and audit fingerprints using the v0.6 Alembic
 migration tables.
 
+New generated claim IDs are scoped to their fresh summary ID, so regenerating
+corrected cues cannot collide with a prior model-local ID such as `claim-1`.
+Existing summaries, claim IDs, approvals and exported records are not rewritten.
+A completed generation job must link a persisted draft; an insert conflict is
+recoverable only when that exact draft is already stored. Other conflicts use the
+normal bounded retry/failure state, not a successful completion.
+
 ## Review and export discovery
 
 `GET /api/staff/summaries/review-items` still lists only pending and refused

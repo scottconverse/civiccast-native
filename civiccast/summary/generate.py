@@ -167,6 +167,19 @@ class SummaryGenerationPipeline:
             generated_at=datetime.now(UTC),
         )
         summary_id = f"summary-{uuid4().hex}"
+        # Model-local IDs (often "claim-1") are not globally unique, but the
+        # existing SQL schema uses a global claim primary key. Namespace only
+        # new generated claims, before fingerprinting; never rewrite old records.
+        # An ordinal also distinguishes repeated model IDs and preserves SQL
+        # load order. A digest keeps maximum-length IDs within the 160-char limit.
+        sourced_claims = [
+            claim.model_copy(
+                update={
+                    "claim_id": f"{summary_id}:{index:08x}:{sha256_fingerprint({'claim_id': claim.claim_id})[7:]}"
+                }
+            )
+            for index, claim in enumerate(sourced_claims)
+        ]
         fingerprint = sha256_fingerprint(
             {
                 "meeting_id": meeting_id,

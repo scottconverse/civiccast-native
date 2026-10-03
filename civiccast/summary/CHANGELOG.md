@@ -2,6 +2,11 @@
 
 ## Unreleased - 2026-10-03
 
+- Namespace new generated claim IDs by summary before fingerprinting, avoiding
+  durable SQL collisions during corrected regeneration without rewriting old
+  claims or approvals. Reject false job completion on unrelated insert conflicts;
+  recovery now requires the identical persisted draft.
+
 - Require a real matching persisted approval before fresh record export.
   Orphan approved summaries now require explicit authenticated reapproval;
   existing stored-record integrity verification is unchanged.
