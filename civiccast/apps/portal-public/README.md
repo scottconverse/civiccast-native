@@ -13,8 +13,11 @@ premieres, published recordings, and adaptive HLS playback for civic meetings.
 
 ## Prerequisites
 
-- Node 20 or newer.
-- npm 10 or newer.
+- Node 24.15.0 and npm 11.12.1, matching the package manifest and portal CI.
+- Use `npm ci` to reproduce the reviewed lockfile. The portal test-tool lock
+  includes patched Vitest/mocker and brace-expansion; the public test DOM's
+  HTTP dependency is also updated. These are development dependencies, not
+  a claim that the installed station's Python dependencies were audited.
 - For the a11y test gate: a Chromium browser is downloaded by Playwright on
   first run. Run `npx playwright install chromium` once.
 

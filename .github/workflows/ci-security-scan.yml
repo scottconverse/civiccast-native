@@ -100,7 +100,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6.4.0
         with:
-          node-version: "20"
+          node-version: "24.15.0"
 
       - name: npm ci
         run: npm ci --no-audit --no-fund
@@ -125,7 +125,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6.4.0
         with:
-          node-version: "20"
+          node-version: "24.15.0"
 
       - name: npm ci
         run: npm ci --no-audit --no-fund
