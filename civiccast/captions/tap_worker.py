@@ -62,7 +62,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from civiccast.captions.live_sidecar import (
     CaptionRuntimeState,
@@ -91,6 +91,12 @@ from civiccast.captions.tap_batch_diagnostic import (
     BatchDiagnosticCollector,
     NullBatchDiagnostic,
     batch_diagnostic_from_env,
+)
+from civiccast.captions.tap_shed_diagnostic import (
+    NullShedDiagnostic,
+    PhaseSampleForwarder,
+    ShedDiagnosticCollector,
+    shed_diagnostic_from_env,
 )
 from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker, ReviewPersistenceMode
 
@@ -600,6 +606,7 @@ class CaptionTapWorker:
         is_enabled: Callable[[], bool] | None = None,
         monotonic: Callable[[], float] | None = None,
         batch_diagnostic: BatchDiagnosticCollector | NullBatchDiagnostic | None = None,
+        shed_diagnostic: ShedDiagnosticCollector | NullShedDiagnostic | None = None,
     ) -> None:
         self._tap_root = tap_root
         self._caption_work_dir = caption_work_dir.expanduser().resolve()
@@ -715,6 +722,31 @@ class CaptionTapWorker:
         # (CIVICCAST_CAPTION_TAP_BATCH_DIAGNOSTIC=1). Inert unless enabled:
         # no clock read and no record kept when the switch is off.
         self._batch_diagnostic = batch_diagnostic or batch_diagnostic_from_env()
+        # ALWAYS-ON shed/over-limit diagnostic (U69), unlike the two opt-in
+        # collectors above: the 8 h field read that motivated it found 63 of 87
+        # shed windows with no instrumentation attached at all, because both
+        # existing diagnostics self-exhaust. It is bounded and failure-proof
+        # instead of opt-in, and an operator can still silence it with
+        # CIVICCAST_CAPTION_TAP_SHED_DIAGNOSTIC=0. Built on the SAME clock as the
+        # backoff and the heartbeat, so a fake-clock test drives the rate limit
+        # with the hand that drives the pause ladder.
+        self._shed_diagnostic = shed_diagnostic or shed_diagnostic_from_env(
+            monotonic=self._monotonic
+        )
+        # The stabilize step happens inside the pipeline, where the tap cannot
+        # time it. This forwarder sits between the per-channel worker and the
+        # operator's collector: it passes every phase through unchanged (so an
+        # operator who opted INTO CIVICCAST_CAPTION_TAP_PHASE_TIMING still gets
+        # exactly the same records) and additionally reports caption_stabilize.
+        # It is deliberately NOT assigned to ``self._phase_timing`` -- that
+        # attribute must stay the collector the operator configured.
+        self._worker_phase_timing: object = self._phase_timing
+        if self._shed_diagnostic.samples_phases:
+            self._worker_phase_timing = PhaseSampleForwarder(
+                self._phase_timing,
+                lambda channel, seconds: self._shed_diagnostic.note_stabilize(channel, seconds),
+                monotonic=self._monotonic,
+            )
         self._retention_policy = retention_policy or CaptionEvidenceRetentionPolicy.from_system(
             storage_root=self._caption_work_dir
         )
@@ -885,7 +917,13 @@ class CaptionTapWorker:
         with self._channel_executor_lock:
             return bool(self._channel_inflight.get(channel_id))
 
-    def _note_backlog_depth(self, channel_id: str, depth: int) -> bool:
+    def _note_backlog_depth(
+        self,
+        channel_id: str,
+        depth: int,
+        *,
+        segments: list[tuple[int, Path]] | None = None,
+    ) -> bool:
         """Count this scan for/against the overload persistence window.
 
         Returns True when the backlog has been over ``max_backlog_segments`` on
@@ -893,6 +931,10 @@ class CaptionTapWorker:
         enough to be a collapse rather than a transient (U11 B2). Any scan at or
         under the limit clears the streak, so a single overshoot followed by a
         drained queue never pauses a channel.
+
+        ``segments`` is evidence for the U69 diagnostic ONLY -- it lets the
+        streak-start line carry the age of the oldest queued segment. It is
+        never consulted for the decision, which is unchanged.
         """
 
         if depth <= self._max_backlog_segments:
@@ -900,6 +942,25 @@ class CaptionTapWorker:
             return False
         streak = self._overload_scan_streak.get(channel_id, 0) + 1
         self._overload_scan_streak[channel_id] = streak
+        if streak == 1 and self._shed_diagnostic_active:
+            # The 0 -> 1 transition: the FIRST scan over the limit. Emitted
+            # here (not at the shed) because the interesting question is what
+            # the box looked like when the episode STARTED -- by the time a
+            # shed fires the persistence window has already elapsed. Gated on
+            # the enable switch because the age measurement stats every queued
+            # segment, and the disabled diagnostic must cost the scan path
+            # nothing.
+            self._note_shed_diagnostic(
+                "note_streak_start",
+                channel=channel_id,
+                queue_depth=depth,
+                oldest_queue_age_seconds=(
+                    self._oldest_queue_age_seconds(segments) if segments is not None else 0.0
+                ),
+                max_backlog_segments=self._max_backlog_segments,
+                overload_streak=streak,
+                persistence_scans=self._overload_persistence_scans,
+            )
         return streak >= self._overload_persistence_scans
 
     def _reset_overload_persistence(self, channel_id: str) -> None:
@@ -1018,6 +1079,13 @@ class CaptionTapWorker:
         # audio that was not discarded. The order here is what makes the number
         # in the operator's log the truth about this channel's real segments.
         skipped_seconds = sum(max(0.0, self._chunk_span_seconds(path)) for _index, path in shed)
+        # Same ordering reason as ``skipped_seconds`` above: the U69 line must
+        # report the age of the backlog that was actually there when the shed
+        # fired, and a deleted segment stats to nothing. Measured only when the
+        # diagnostic is on, so the disable switch adds no stat to the shed path.
+        oldest_queue_age_seconds = (
+            self._oldest_queue_age_seconds(queued_segments) if self._shed_diagnostic_active else 0.0
+        )
         for _index, segment in shed:
             segment.unlink(missing_ok=True)
         now = self._monotonic()
@@ -1045,6 +1113,22 @@ class CaptionTapWorker:
             self._catch_up_shed_limit,
             self._catch_up_shed_window_seconds,
         )
+        # The U69 evidence line. Deliberately AFTER the warning and after the
+        # unlink: it is evidence about a shed that already happened, and the
+        # streak is still set here (the caller resets it when it returns).
+        if self._shed_diagnostic_active:
+            self._note_shed_diagnostic(
+                "note_shed",
+                channel=channel_id,
+                queue_depth=len(queued_segments),
+                oldest_queue_age_seconds=oldest_queue_age_seconds,
+                shed_count=len(shed),
+                kept=len(kept),
+                skipped_seconds=skipped_seconds,
+                max_backlog_segments=self._max_backlog_segments,
+                overload_streak=self._overload_scan_streak.get(channel_id, 0),
+                persistence_scans=self._overload_persistence_scans,
+            )
         return kept, len(shed)
 
     def _chunk_span_seconds(self, path: Path) -> float:
@@ -1324,7 +1408,9 @@ class CaptionTapWorker:
                     # Preserve per-channel ordering and the stateful
                     # stabilizer.  The current batch owns its paths; new
                     # arrivals remain queued for the next scan after it ends.
-                    self._note_backlog_depth(channel_id, len(queued_segments))
+                    self._note_backlog_depth(
+                        channel_id, len(queued_segments), segments=queued_segments
+                    )
                     continue
                 if not queued_segments:
                     self._note_backlog_depth(channel_id, 0)
@@ -1344,7 +1430,9 @@ class CaptionTapWorker:
                     paused_channels.append(channel_id)
                     continue
                 if len(queued_segments) > self._max_backlog_segments:
-                    if not self._note_backlog_depth(channel_id, len(queued_segments)):
+                    if not self._note_backlog_depth(
+                        channel_id, len(queued_segments), segments=queued_segments
+                    ):
                         # TRANSIENT, not a collapse (U11 B2): the overshoot has
                         # not persisted for the whole window, so captions keep
                         # flowing.  Only the OLDEST ``max_backlog_segments`` are
@@ -1613,7 +1701,11 @@ class CaptionTapWorker:
             if generation is None:
                 generation = self._session_generation.get(channel_id, 0)
         for index, segment in segments:
+            wait_started = self._monotonic()
             with self._timed_session_lock(channel_id):
+                # U69 evidence: how long this segment waited for the channel's
+                # session lock -- the queue-wait half of the ASR call's cost.
+                wait_seconds = self._monotonic() - wait_started
                 if (
                     generation != self._session_generation.get(channel_id, 0)
                     or channel_id in self._failed_sessions
@@ -1636,6 +1728,7 @@ class CaptionTapWorker:
                             segment.unlink(missing_ok=True)
                     quarantined += 1
                     continue
+            feed_started = self._monotonic()
             raw_chunk = self._read_chunk(channel_id, index, segment)
             with self._session_lock(channel_id):
                 if generation != self._session_generation.get(channel_id, 0):
@@ -1651,15 +1744,52 @@ class CaptionTapWorker:
                     continue
                 chunk = self._with_overlap(channel_id, index, raw_chunk)
                 worker = self._worker_for(channel_id)
-            with self._phase_timing.phase(
-                "asr_process_batch",
-                channel=channel_id,
-                generation=generation,
-                index=index,
-            ):
-                result = worker.process_batch(
-                    [chunk],
-                    audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
+                # U69 evidence: read + overlap-join, the feed/decode half.
+                feed_seconds = self._monotonic() - feed_started
+            asr_started = self._monotonic()
+            self._note_shed_diagnostic("asr_started", channel=channel_id)
+            try:
+                # Clear before phase entry and evidence-factory evaluation,
+                # either of which can fail before runtime.transcribe starts.
+                self._reset_decode_metrics()
+                with self._phase_timing.phase(
+                    "asr_process_batch",
+                    channel=channel_id,
+                    generation=generation,
+                    index=index,
+                ):
+                    result = worker.process_batch(
+                        [chunk],
+                        audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
+                    )
+            finally:
+                # In a ``finally`` so a RAISED ASR call still clears the
+                # in-call state and still reports how long it burned before it
+                # failed -- a hang or a crash is exactly what this diagnostic
+                # exists to make visible. The exception itself still propagates.
+                asr_seconds = self._monotonic() - asr_started
+                self._note_shed_diagnostic("asr_finished", channel=channel_id)
+                # U71: the runtime times the decode itself (the model call plus
+                # the consumption of its lazy segment generator), which the tap
+                # cannot see from out here. Read on THIS thread, right after
+                # ``process_batch`` returned, because the runtime keeps its
+                # record per thread; ``None`` for a runtime or a fake that
+                # does not publish one, and the diagnostic then emits
+                # explicit nulls rather than guessing.
+                decode = self._last_decode_metrics()
+                self._note_shed_diagnostic(
+                    "record_batch",
+                    channel=channel_id,
+                    wait_seconds=wait_seconds,
+                    feed_seconds=feed_seconds,
+                    asr_seconds=asr_seconds,
+                    transcribe_seconds=decode.get("transcribe_s") if decode else None,
+                    duration_after_vad_seconds=(
+                        decode.get("duration_after_vad") if decode else None
+                    ),
+                    max_segment_temperature=(
+                        decode.get("max_segment_temperature") if decode else None
+                    ),
                 )
             committed += len(result.committed_review_items)
             expired += len(result.expired_unconfirmed_cues)
@@ -1847,6 +1977,63 @@ class CaptionTapWorker:
 
     def _oldest_queue_age_seconds(self, segments: list[tuple[int, Path]]) -> float:
         return max((self._queue_age_seconds(path) for _index, path in segments), default=0.0)
+
+    @property
+    def _shed_diagnostic_active(self) -> bool:
+        """Whether event sampling is on; disabled skips queue-age statistics.
+
+        The tap gates its queue-age measurement -- which stats every queued
+        segment -- behind this, so the inert collector spends no I/O on the scan
+        path. Unknown objects default to active, exactly as before this method
+        existed.
+        """
+
+        return bool(getattr(self._shed_diagnostic, "enabled", True))
+
+    def _note_shed_diagnostic(self, method: str, **kwargs: object) -> None:
+        """Call one U69 diagnostic hook, never letting it disturb the tap.
+
+        The collector suppresses its own errors; this is the layer that matters
+        most, because this diagnostic MEASURES the scan path and therefore runs
+        inside it. A bug in it must cost one log line at debug level and nothing
+        else -- never a shed, a pause, or a skipped segment.
+        """
+
+        try:
+            getattr(self._shed_diagnostic, method)(**kwargs)
+        except Exception:
+            with suppress(Exception):
+                _LOG.debug("Caption tap shed diagnostic hook %s failed.", method, exc_info=True)
+
+    def _last_decode_metrics(self) -> dict[str, Any] | None:
+        """The runtime's per-thread decode record, or ``None`` (U71).
+
+        The live :class:`~civiccast.captions.runtime.FasterWhisperRuntime`
+        publishes one; other runtimes and test fakes may not. A getter that
+        raises is treated as absent -- like every other diagnostic hook here, a
+        broken measurement must cost the tap nothing.
+        """
+
+        try:
+            getter = getattr(self._runtime, "last_decode_metrics", None)
+            if not callable(getter):
+                return None
+            record = getter()
+            return dict(record) if isinstance(record, dict) else None
+        except Exception:
+            with suppress(Exception):
+                _LOG.debug("Caption tap decode metrics unavailable.", exc_info=True)
+            return None
+
+    def _reset_decode_metrics(self) -> None:
+        """Clear current-thread diagnostics without altering batch failures."""
+        try:
+            reset = getattr(self._runtime, "reset_decode_metrics", None)
+            if callable(reset):
+                reset()
+        except Exception:
+            with suppress(Exception):
+                _LOG.debug("Caption tap decode metric reset unavailable.", exc_info=True)
 
     def _begin_batch(
         self,
@@ -2346,11 +2533,11 @@ class CaptionTapWorker:
                 pipeline=CaptionPipeline(
                     self._runtime,
                     stabilizer=CaptionStabilizer(live=True),
-                    phase_timing=self._phase_timing,
+                    phase_timing=self._worker_phase_timing,
                     phase_timing_channel=channel_id,
                 ),
                 persistence_guard=self._review_persistence_guard,
-                phase_timing=self._phase_timing,
+                phase_timing=self._worker_phase_timing,
                 phase_timing_channel=channel_id,
             )
             self._channel_workers[channel_id] = worker

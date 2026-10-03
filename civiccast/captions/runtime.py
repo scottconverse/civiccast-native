@@ -9,10 +9,11 @@ import logging
 import os
 import subprocess
 import threading
+import time
 import wave
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from math import exp
+from math import exp, isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
@@ -791,6 +792,9 @@ class FasterWhisperRuntime:
         self.vad_filter = vad_filter
         self._model: Any | None = None
         self._model_lock = threading.Lock()
+        # One runtime serves concurrent channels; measurements belong to the
+        # caller thread, never to the shared model or the previous batch.
+        self._decode_metrics = threading.local()
 
     def on_cuda(self) -> bool:
         """Whether this runtime will actually decode on a GPU.
@@ -828,9 +832,25 @@ class FasterWhisperRuntime:
         chunks: Iterable[AudioChunk],
         vocabulary: CustomVocabulary | None = None,
     ) -> Iterable[CaptionHypothesis]:
+        self.reset_decode_metrics()
         initial_prompt = _build_initial_prompt(vocabulary)
         for chunk in chunks:
+            self.reset_decode_metrics()
             yield from self._transcribe_chunk(chunk, initial_prompt=initial_prompt)
+
+    def reset_decode_metrics(self) -> None:
+        """Clear only this thread before work that can fail before decoding."""
+        self._decode_metrics.last = None
+
+    def last_decode_metrics(self) -> dict[str, float | None] | None:
+        """Copy the latest chunk's metrics on this thread, or null before decode.
+
+        transcribe_s covers the model call and each lazy next(), not model
+        loading, audio preparation, hypothesis conversion or consumer pauses.
+        Reading metadata never changes transcript or runtime exceptions.
+        """
+        record = getattr(self._decode_metrics, "last", None)
+        return dict(record) if record is not None else None
 
     def prepare(self) -> None:
         """Resolve and load the model before a live multi-channel dispatch.
@@ -947,17 +967,51 @@ class FasterWhisperRuntime:
         live chunk that is (:func:`_pcm_s16le_to_whisper_audio`).
         """
 
-        segments: Iterable[Any]
-        segments, _info = self._model_instance().transcribe(
-            source,
-            beam_size=self.beam_size,
-            language=self.language,
-            task=self.task,
-            vad_filter=self.vad_filter,
-            initial_prompt=initial_prompt,
-            **({"word_timestamps": True} if self._live else {}),
-        )
-        return segments
+        model = self._model_instance()
+        metrics: dict[str, float | None] = {
+            "transcribe_s": 0.0,
+            "duration_after_vad": None,
+            "max_segment_temperature": None,
+        }
+        self._decode_metrics.last = metrics
+        started = time.perf_counter()
+        try:
+            segments, info = model.transcribe(
+                source,
+                beam_size=self.beam_size,
+                language=self.language,
+                task=self.task,
+                vad_filter=self.vad_filter,
+                initial_prompt=initial_prompt,
+                **({"word_timestamps": True} if self._live else {}),
+            )
+        finally:
+            metrics["transcribe_s"] = time.perf_counter() - started
+        metrics["duration_after_vad"] = _diagnostic_number(info, "duration_after_vad")
+        return self._measured_segments(segments, metrics)
+
+    def _measured_segments(
+        self, segments: Iterable[Any], metrics: dict[str, float | None]
+    ) -> Iterator[Any]:
+        iterator = iter(segments)
+        while True:
+            started = time.perf_counter()
+            try:
+                segment = next(iterator)
+            except StopIteration:
+                return
+            finally:
+                metrics["transcribe_s"] = (metrics["transcribe_s"] or 0.0) + (
+                    time.perf_counter() - started
+                )
+            temperature = _diagnostic_number(segment, "temperature")
+            if temperature is not None:
+                previous = metrics["max_segment_temperature"]
+                metrics["max_segment_temperature"] = (
+                    temperature if previous is None else max(previous, temperature)
+                )
+            # Timer is stopped before yielding: VOD callers can pause here.
+            yield segment
 
     def _transcribe_chunk(
         self,
@@ -1016,6 +1070,15 @@ class FasterWhisperRuntime:
                     audio_window_end_seconds=chunk.end_seconds,
                     words=live_words,
                 )
+
+
+def _diagnostic_number(value: object, name: str) -> float | None:
+    """Read optional model metadata without introducing a decode failure."""
+    try:
+        number = float(getattr(value, name))
+        return number if isfinite(number) and number >= 0 else None
+    except Exception:
+        return None
 
 
 def _load_whisper_model_class() -> Any:

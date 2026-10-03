@@ -285,12 +285,20 @@ def test_default_off_never_stats_segments(tmp_path: Path, monkeypatch: pytest.Mo
 
     A hot-path ``Path.stat``/clock read per batch is exactly the overhead the
     default-off contract promises not to add.
+
+    U69 note: the separate shed diagnostic (``tap_shed_diagnostic``) is
+    default-ON by the owner's brief, and it DOES stat a channel's queued
+    segments -- once when an over-limit streak starts and once when a shed
+    fires, each a rare per-episode event rather than per batch. This test is
+    about the per-batch contract, so it disables the shed diagnostic and
+    asserts the per-batch path is stat-free with both diagnostics off.
     """
 
     import wave
 
     from civiccast.captions.review import InMemoryCaptionReviewStore
     from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
+    from civiccast.captions.tap_shed_diagnostic import NullShedDiagnostic
     from civiccast.captions.tap_worker import CaptionTapWorker
 
     stat_calls: list[str] = []
@@ -325,6 +333,7 @@ def test_default_off_never_stats_segments(tmp_path: Path, monkeypatch: pytest.Mo
         atomic_segments=True,
         max_backlog_segments=2,
         # default: no batch_diagnostic -> inert collector
+        shed_diagnostic=NullShedDiagnostic(),
     )
     worker._sweep_retention()
     assert worker.wait_for_retention_sweep(timeout=5.0)
