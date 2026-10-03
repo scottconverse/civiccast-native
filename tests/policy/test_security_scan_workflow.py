@@ -6,9 +6,12 @@ and never runs unallowlisted findings without failing."""
 from __future__ import annotations
 
 import json
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 
 
@@ -98,11 +101,24 @@ def test_pip_audit_allowlist_checker_fails_on_unlisted_findings(tmp_path: Path) 
         encoding="utf-8",
     )
 
+    (tmp_path / "inventory.json").write_text(
+        '[{"name":"totally-made-up-package","version":"0.0.1"}]', encoding="utf-8"
+    )
+
     result = subprocess.run(
-        [sys.executable, "scripts/check_pip_audit_allowlist.py", str(report)],
+        [
+            sys.executable,
+            "scripts/check_pip_audit_allowlist.py",
+            str(report),
+            "--inventory",
+            str(tmp_path / "inventory.json"),
+            "--scanner-exit-code",
+            "1",
+        ],
         capture_output=True,
         text=True,
         check=False,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     )
     assert result.returncode == 1
     assert "totally-made-up-package" in result.stderr
@@ -131,10 +147,127 @@ def test_pip_audit_allowlist_checker_passes_on_known_findings(tmp_path: Path) ->
         encoding="utf-8",
     )
 
+    (tmp_path / "inventory.json").write_text(
+        json.dumps([{"name": entry["package"], "version": "0.0.0"}]), encoding="utf-8"
+    )
+
     result = subprocess.run(
-        [sys.executable, "scripts/check_pip_audit_allowlist.py", str(report)],
+        [
+            sys.executable,
+            "scripts/check_pip_audit_allowlist.py",
+            str(report),
+            "--inventory",
+            str(tmp_path / "inventory.json"),
+            "--scanner-exit-code",
+            "1",
+        ],
         capture_output=True,
         text=True,
         check=False,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     )
     assert result.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "clean",
+        "dated-finding",
+        "omitted",
+        "scanner-error",
+        "error-one-clean",
+        "inventory-error",
+        "native",
+    ],
+)
+def test_actual_workflow_shell_binds_independent_graph_and_status(
+    tmp_path: Path, case: str
+) -> None:
+    """Execute actual workflow run body with offline collector shims + real checker."""
+    import subprocess
+    import sys
+
+    repo = Path(__file__).resolve().parents[2]
+    bash = (
+        Path("C:/Program Files/Git/bin/bash.exe")
+        if os.name == "nt"
+        else Path(shutil.which("bash") or "")
+    )
+    assert bash.is_file(), "the actual shell integration requires Bash"
+    steps = _load_workflow()["jobs"]["pip-audit"]["steps"]
+    run = next(
+        step["run"]
+        for step in steps
+        if step["name"].startswith("Audit native" if case == "native" else "pip-audit (")
+    )
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "security").mkdir()
+    shutil.copyfile(
+        repo / "scripts/check_pip_audit_allowlist.py",
+        tmp_path / "scripts/check_pip_audit_allowlist.py",
+    )
+    shutil.copyfile(
+        repo / "security/pip-audit-allowlist.json", tmp_path / "security/pip-audit-allowlist.json"
+    )
+    # Defined independently, never derived from the fake scanner's receipt.
+    inventory = [{"name": "nltk", "version": "3.10.3"}, {"name": "other", "version": "2"}]
+    dependencies = [dict(item, vulns=[]) for item in inventory]
+    status = 0
+    if case == "dated-finding":
+        allowed = json.loads((repo / "security/pip-audit-allowlist.json").read_text())["allowed"][0]
+        assert allowed["package"] == "nltk"
+        dependencies[0]["vulns"] = [{"id": allowed["id"]}]
+        status = 1
+    if case == "omitted":
+        dependencies.pop()
+    if case in {"scanner-error", "error-one-clean"}:
+        status = 2 if case == "scanner-error" else 1
+    if case == "native":
+        dependencies = [{"name": "native-only", "version": "18.0.0", "vulns": []}]
+        (tmp_path / "requirements-native-app.txt").write_text("native-only==18.0.0\n")
+    (tmp_path / "independent.json").write_text(json.dumps(inventory))
+    (tmp_path / "scanner.json").write_text(json.dumps({"dependencies": dependencies}))
+    binary = tmp_path / "bin"
+    binary.mkdir()
+    shim = binary / "uv"
+    shim.write_text(
+        """#!/bin/bash
+case "$*" in
+  *" -m pip list "*) cat "$TEST_INVENTORY"; exit "$TEST_INVENTORY_EXIT";;
+  *" -m pip_audit "*) echo called > "$TEST_CALLED"; cat "$TEST_RECEIPT"; exit "$TEST_SCANNER_EXIT";;
+  *"scripts/check_pip_audit_allowlist.py"*) shift 3; exec "$TEST_PYTHON" "$@";;
+  *) exit 99;;
+esac
+""",
+        encoding="utf-8",
+    )
+    shim.chmod(0o755)
+    env = dict(os.environ)
+    env.update(
+        TEST_BIN=str(binary),
+        TEST_INVENTORY=str(tmp_path / "independent.json"),
+        TEST_RECEIPT=str(tmp_path / "scanner.json"),
+        TEST_PYTHON=sys.executable,
+        TEST_CALLED=str(tmp_path / "audit-called"),
+        TEST_SCANNER_EXIT=str(status),
+        TEST_INVENTORY_EXIT="2" if case == "inventory-error" else "0",
+    )
+    prefix = (
+        'export PATH="$(cygpath -u "$TEST_BIN"):/usr/bin:/bin:$PATH"\n'
+        if os.name == "nt"
+        else 'export PATH="$TEST_BIN:$PATH"\n'
+    )
+    result = subprocess.run(
+        [str(bash), "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", prefix + run],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    expected = 0 if case in {"clean", "dated-finding", "native"} else 2
+    assert result.returncode == expected, result.stdout + result.stderr
+    if case == "inventory-error":
+        assert not (tmp_path / "audit-called").exists()

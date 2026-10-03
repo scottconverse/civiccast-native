@@ -243,8 +243,11 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: own embedded `FFMPEG-PROVENANCE.json` now also records the PyAV sdist's
 #: identity, which deterministically changes the reviewed wheel's bytes).
 #: Nothing else in the lock changed.
+#: Re-pinned 2026-10-03 for the reviewed pypdf6.19.0 and urllib3 2.8.0
+#: security updates. Only those two requirement blocks changed; the custom
+#: LGPL-only PyAV wheel authorization and every other pin remain unchanged.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "5538f0e6b35a10a7e4bcff969397cf731d49fcc0a4366842f8a611fcd2817e9c"
+    "b844cc479dec77bea3cc0280958f737b05ede1946dad6091b1cfebd074bf2adc"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).

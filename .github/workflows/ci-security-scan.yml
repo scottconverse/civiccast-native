@@ -48,13 +48,22 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install project (dev)
-        run: uv sync --all-extras --group dev
+      - name: Install frozen third-party dependencies (dev)
+        # Local first-party source is checked by bandit, not a PyPI advisory lookup.
+        run: uv sync --frozen --all-extras --group dev --no-install-project
 
       - name: pip-audit (fail on any un-allowlisted vulnerability)
         run: |
-          uv run pip-audit --format json > pip-audit-report.json || true
-          python scripts/check_pip_audit_allowlist.py pip-audit-report.json
+          uv run --no-sync python -m pip list --format=json --disable-pip-version-check > pip-audit-inventory.json
+          scanner_status=0
+          uv run --no-sync python -m pip_audit --format json > pip-audit-report.json || scanner_status=$?
+          uv run --no-sync python scripts/check_pip_audit_allowlist.py pip-audit-report.json --inventory pip-audit-inventory.json --scanner-exit-code "$scanner_status"
+
+      - name: Audit native exact-pin graph (advisories only; no native install)
+        run: |
+          scanner_status=0
+          uv run --no-sync python -m pip_audit -r requirements-native-app.txt --no-deps --disable-pip --format json > pip-audit-native-report.json || scanner_status=$?
+          uv run --no-sync python scripts/check_pip_audit_allowlist.py pip-audit-native-report.json --requirements requirements-native-app.txt --scanner-exit-code "$scanner_status"
 
   bandit:
     name: bandit (service code static analysis)
