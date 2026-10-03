@@ -68,24 +68,58 @@ GPU device lists are capped at eight and names/reasons at160 characters.
 
 psutil/NVML still have no cancellation; a GIL-holding native call can affect other
 Python threads. This is nonwaiting probe isolation, not hard real-time process
-protection or zero overhead. Watch scan/heartbeat and playout health; stop sampling
-if completed probe time, inflight age or diagnostic sampling latency exceeds100ms,
-a new heartbeat/playout stall appears, or required metadata is missing/non-finite.
+protection or zero overhead. Background completed probe time/inflight age is WATCH
+evidence, not proof the caller waited. Stop an authorized measurement trial when
+consumer sampling or measured proof capture/dispatch exceeds100ms, a new
+heartbeat/playout stall appears, or exercised required metadata is missing/non-finite.
 Disabling skips future collector work, but cannot interrupt a running native probe;
 recovery/rollback remains separately authorized.
 Preserve exact pre-install file backups and restore them under separate
 authority; the existing installed collector is restored, not deleted. No
 installed file is presumed absent from this repository's add-file status.
 
-## Selected executable-code receipt (U75)
+## Optional selected executable-code receipt (U75/U79)
 
-The actual running tap _process_channel, runtime transcribe (first generator next)
-and collector probe refresh each emit at most one process-wide fixed-key INFO line:
+Proof receipts default OFF. Set `CIVICCAST_CAPTION_EXECUTABLE_PROOF` in the process
+startup environment before importing this helper: `1/true/yes/on` enable it;
+case/whitespace normalize, all other/absent values disable. This new flag has no
+historically deployed one-C alias; `CIVICAST_CAPTION_EXECUTABLE_PROOF` is not read.
+The flag is captured once at helper import, not refreshed per batch or promised to
+follow later dotenv/config edits. Normal disabled hooks perform no snapshot,
+clock, reservation, thread or logging work. Existing shed-switch legacy behavior
+is unchanged. Proof must be explicitly enabled in an authorized trial; missing or
+disabled receipts never count as code confirmation.
+
+When enabled, actual tap _process_channel, runtime transcribe (first generator next)
+and collector probe refresh each capture at most one process-wide fixed-key receipt:
 `Caption diagnostic executable receipt <json>`. PID/process nonce join the three
-receipts. `executing` hashes the caller's actual frame code; `selected` hashes fixed
-looked-up methods, not a claim that every selected method was exercised. A replaced
-lookup differing from the executing anchor reports mismatch, not ok. Failures are
-latched unavailable (or logging unavailable), never retried per batch.
+receipts. Caller captures its immutable executing CodeType and fixed selected
+CodeTypes at that boundary, without executing owner property getters; background
+work never looks up a later owner. No owner, frame, bound method, audio or model is
+handed to a worker. `executing` hashes actual frame code; `selected` hashes captured
+anchors, not a claim every selected method was exercised. A replaced lookup at
+capture reports mismatch/unavailable, not ok; a later patch cannot relabel capture.
+
+At most three one-shot daemon threads/process (one per fixed key), no general
+executor, queue, periodic monitor or replacement while stuck. Caller never joins
+hash, receipt clock, JSON or logger work. Constructor/start failure reserves its
+key permanently; unavailable or absent confirmation is not acceptance. A contended
+nonblocking reservation can return unconfirmed until a later natural invocation.
+Worker waits at most2s for a bounded Event/single-scalar dispatch-completion handoff;
+timeout yields no receipt/confirmation, never a consumer wait. A stuck worker may
+retain its bounded immutable code snapshot, not product owner/audio. Thread.start,
+trusted builtin clock, GIL and OS scheduling are not cancellable/hard-real-time.
+
+`caller_capture_dispatch_elapsed_s` measures enabled hook capture through actual
+Thread.start completion with the trusted builtin perf_counter. Its final scalar/
+Event publication is outside that stopwatch; external whole-call checks cover it.
+`background_fingerprint_elapsed_s` independently measures worker receipt/hash work
+after completion handoff, before JSON/logger. Both finite/nonnegative or null on
+clock faults. The old synchronous `elapsed_s` field is not relabelled as caller
+time. Worker-injected clock/hash/logger delays cannot force caller waiting; a
+trusted builtin caller clock that genuinely hangs can, so no hard latency guarantee.
+Caller timing>100ms/exercised missing timing stops a proof trial; background duration
+is WATCH and not a caption-delay cause. Exceptions preserve decode/errors unchanged.
 
 selected-code-v1 hashes semantic bytecode, exception tables, typed constants/nested
 code, names and argument/closure/flags metadata. It excludes filenames and line
@@ -95,7 +129,8 @@ selected qualified names without executing source. Commit identity belongs in th
 offline artifact manifest, not a self-referential embedded source hash. Origin and
 co_filename are bounded location metadata, never loaded-code proof by themselves.
 Hash work has fixed256KiB/4096-node/depth32 budgets; only digests are logged, not
-constants, audio or transcripts. Receipt elapsed time measures one-shot hashing.
+constants, audio or transcripts. Async receipt timing does not diagnose scheduler,
+GIL or cold-start behavior and does not fix caption drops.
 
 This proves selected executable anchors only: not entire modules, mutable globals,
 model weights, native DLLs, or changes after the receipt. Missing confirmation or

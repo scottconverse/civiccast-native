@@ -10,6 +10,7 @@ Only hashes and fixed metadata are logged, never constants, audio or transcript.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import os
@@ -17,11 +18,18 @@ import sys
 import threading
 import time
 from contextlib import suppress
-from types import CodeType
+from dataclasses import dataclass
+from math import isfinite
+from time import perf_counter as _caller_clock
+from types import CodeType, FunctionType, MethodType
 
 _LOG = logging.getLogger(__name__)
 _LOCK = threading.Lock()
 _SEEN: set[str] = set()
+_THREADS: dict[str, threading.Thread] = {}
+_FAILED: set[str] = set()
+PROOF_ENV = "CIVICCAST_CAPTION_EXECUTABLE_PROOF"
+_PROOF_ENABLED = os.environ.get(PROOF_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 _NONCE = "unavailable"
 with suppress(Exception):
     _NONCE = os.urandom(8).hex()
@@ -128,26 +136,67 @@ def compiled_anchors(code: CodeType) -> dict[str, CodeType]:
     return result
 
 
-def note_executing(module: str, code: CodeType, owner: object) -> None:
-    """One fail-open receipt per fixed module key; caller supplies its frame code."""
+def _selected_code(owner: object, name: str) -> CodeType:
+    """Capture plain callable code without executing arbitrary owner descriptors."""
+    selected = inspect.getattr_static(owner, name)
+    if type(selected) is MethodType:
+        return selected.__func__.__code__
+    if type(selected) is FunctionType:
+        return selected.__code__
+    function = inspect.getattr_static(selected, "__func__")
+    code = inspect.getattr_static(function, "__code__")
+    if not isinstance(code, CodeType):
+        raise ValueError("unsupported-anchor")
+    return code
+
+
+@dataclass(frozen=True)
+class _Captured:
+    module: str
+    executing: CodeType
+    selected: tuple[CodeType, ...]
+    capture_ok: bool
+    pid: int
+    nonce: str
+    cache_tag: str
+    version: tuple[int, int, int]
+    optimize: int
+
+
+def _finite_elapsed(start: float | None, end: float | None) -> float | None:
     with suppress(Exception):
-        if module not in _ANCHORS:
+        value = end - start
+        if isfinite(value) and value >= 0:
+            return value
+    return None
+
+
+def _caller_now() -> float | None:
+    with suppress(Exception):
+        value = _caller_clock()
+        if isfinite(value) and value >= 0:
+            return value
+    return None
+
+
+def _emit_captured(snapshot: _Captured, done: threading.Event, timing: list[float | None]) -> None:
+    """Worker-only callback work; immutable codes/scalars, never owner or frame."""
+    with suppress(Exception):
+        if not done.wait(2):
             return
-        with _LOCK:
-            if module in _SEEN:
-                return
-            _SEEN.add(module)
         started = time.perf_counter()
         payload: dict[str, object] = {
             "schema": "selected-code-v1",
-            "module": module,
-            "pid": os.getpid(),
-            "process_nonce": _NONCE,
-            "python_cache_tag": sys.implementation.cache_tag,
-            "python_version": list(sys.version_info[:3]),
-            "optimize": sys.flags.optimize,
+            "module": snapshot.module,
+            "pid": snapshot.pid,
+            "process_nonce": snapshot.nonce,
+            "python_cache_tag": snapshot.cache_tag,
+            "python_version": list(snapshot.version),
+            "optimize": snapshot.optimize,
             "status": "unavailable",
-            "origin": code.co_filename[:512],
+            "origin": snapshot.executing.co_filename[:512],
+            "caller_capture_dispatch_elapsed_s": timing[0],
+            "timing_scope": "background-fingerprint",
         }
 
         def descriptor(anchor: CodeType) -> dict[str, str]:
@@ -158,17 +207,63 @@ def note_executing(module: str, code: CodeType, owner: object) -> None:
             }
 
         with suppress(Exception):
-            payload["executing"] = descriptor(code)
-            payload["selected"] = [
-                descriptor(getattr(owner, name).__func__.__code__) for name in _ANCHORS[module]
-            ]
+            payload["executing"] = descriptor(snapshot.executing)
+            payload["selected"] = [descriptor(anchor) for anchor in snapshot.selected]
             matches = any(
                 anchor["sha256"] == payload["executing"]["sha256"]
                 and anchor["qualname"] == payload["executing"]["qualname"]
                 for anchor in payload["selected"]
             )
             payload["executing_matches_selected"] = matches
-            payload["status"] = "ok" if matches else "mismatch"
-        elapsed = time.perf_counter() - started
-        payload["elapsed_s"] = elapsed if 0 <= elapsed < float("inf") else None
+            if snapshot.capture_ok:
+                payload["status"] = "ok" if matches else "mismatch"
+        payload["background_fingerprint_elapsed_s"] = _finite_elapsed(started, time.perf_counter())
         _LOG.info("Caption diagnostic executable receipt %s", json.dumps(payload, allow_nan=False))
+
+
+def note_executing(module: str, code: CodeType, owner: object) -> None:
+    """Proof-only, at most three one-shot workers; caller never joins callbacks."""
+    with suppress(Exception):
+        if module not in _ANCHORS or not _PROOF_ENABLED:
+            return
+        started = _caller_now()
+        if not _LOCK.acquire(blocking=False):
+            return
+        try:
+            if module in _SEEN:
+                return
+            _SEEN.add(module)
+        finally:
+            _LOCK.release()
+        selected: tuple[CodeType, ...] = ()
+        capture_ok = False
+        with suppress(Exception):
+            selected = tuple(_selected_code(owner, name) for name in _ANCHORS[module])
+            capture_ok = True
+        snapshot = _Captured(
+            module,
+            code,
+            selected,
+            capture_ok,
+            os.getpid(),
+            _NONCE,
+            sys.implementation.cache_tag,
+            tuple(sys.version_info[:3]),
+            sys.flags.optimize,
+        )
+        done = threading.Event()
+        timing: list[float | None] = [None]
+        try:
+            worker = threading.Thread(
+                target=_emit_captured,
+                args=(snapshot, done, timing),
+                name="caption-proof-" + module,
+                daemon=True,
+            )
+            _THREADS[module] = worker
+            worker.start()
+        except Exception:
+            _FAILED.add(module)
+        finally:
+            timing[0] = _finite_elapsed(started, _caller_now())
+            done.set()

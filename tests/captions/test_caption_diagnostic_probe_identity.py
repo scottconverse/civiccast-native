@@ -32,6 +32,28 @@ def identity():
         return None
 
 
+@pytest.fixture(autouse=True)
+def proof_enabled_and_owned_teardown(monkeypatch):
+    helper = identity()
+    if helper and hasattr(helper, "_PROOF_ENABLED"):
+        monkeypatch.setattr(helper, "_PROOF_ENABLED", True)
+        monkeypatch.setattr(helper, "_THREADS", {})
+        monkeypatch.setattr(helper, "_SEEN", set())
+    yield
+    if helper and hasattr(helper, "_THREADS"):
+        for thread in helper._THREADS.values():
+            if thread.ident is not None:
+                thread.join(2)
+                assert not thread.is_alive(), "test-owned identity thread not released"
+
+
+def wait_receipts(helper):
+    for thread in getattr(helper, "_THREADS", {}).values():
+        if thread.ident is not None:
+            thread.join(2)
+            assert not thread.is_alive()
+
+
 def test_event_probe_never_waits_and_is_single_flight(caplog):
     caplog.set_level(logging.INFO)
     entered, release, returned = (threading.Event() for _ in range(3))
@@ -108,6 +130,9 @@ def test_actual_tap_runtime_and_collector_emit_once(tmp_path, monkeypatch, caplo
     tap.run_once()
     tap.run_once()
     _streak_start(collector)
+    if collector._probe_thread:
+        collector._probe_thread.join(2)
+    wait_receipts(helper)
     receipts = [
         json.loads(r.getMessage().split(" ", 4)[4])
         for r in caplog.records
@@ -193,6 +218,7 @@ def test_receipt_latch_bounded_across_instances(monkeypatch, caplog):
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(work, range(32)))
+    wait_receipts(helper)
     records = [
         r
         for r in caplog.records
@@ -296,6 +322,7 @@ def test_actual_frame_and_replaced_lookup_report_mismatch(monkeypatch, caplog):
         SimpleNamespace(__func__=SimpleNamespace(__code__=(lambda: "changed").__code__)),
     )
     list(old_bound([]))
+    wait_receipts(helper)
     receipt = json.loads(
         next(
             r.getMessage().split(" ", 4)[4]
