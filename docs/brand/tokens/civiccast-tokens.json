@@ -1,0 +1,59 @@
+{
+  "name": "CivicCast",
+  "tagline": "Public meetings, on the air.",
+  "colors": {
+    "chamberInk": {
+      "hex": "#1D1F20",
+      "use": "Mark, body type"
+    },
+    "agendaPaper": {
+      "hex": "#F2F2F3",
+      "use": "Default background"
+    },
+    "signalSteel": {
+      "hex": "#5980A6",
+      "use": "Broadcast arcs, icons, large accents"
+    },
+    "recordSteel": {
+      "hex": "#416180",
+      "use": "Wordmark CAST, links, accent text"
+    },
+    "nightSession": {
+      "hex": "#1D2D3D",
+      "use": "Dark / reversed field"
+    },
+    "onAirLight": {
+      "hex": "#94BCE3",
+      "use": "Arcs and CAST on dark"
+    },
+    "slate": {
+      "hex": "#424244",
+      "use": "Tagline / secondary text on light"
+    },
+    "mist": {
+      "hex": "#D6EBFF",
+      "use": "Tagline / secondary text on dark"
+    }
+  },
+  "fonts": {
+    "display": {
+      "family": "Barlow Condensed",
+      "weights": [
+        400,
+        600
+      ],
+      "source": "https://fonts.google.com/specimen/Barlow+Condensed",
+      "license": "OFL-1.1"
+    },
+    "body": {
+      "family": "Barlow",
+      "weights": [
+        400,
+        500,
+        700
+      ],
+      "source": "https://fonts.google.com/specimen/Barlow",
+      "license": "OFL-1.1"
+    }
+  }
+}

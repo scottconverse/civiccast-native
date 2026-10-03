@@ -1,0 +1,13 @@
+/* CivicCast brand colors. Import once; reference the variables. */
+:root {
+  --cc-chamber-ink: #1D1F20;   /* mark, body type */
+  --cc-agenda-paper: #F2F2F3;  /* default background */
+  --cc-signal-steel: #5980A6;  /* broadcast arcs, icons, large accents */
+  --cc-record-steel: #416180;  /* "CAST" in the wordmark, links, accent text */
+  --cc-night-session: #1D2D3D; /* dark / reversed field */
+  --cc-on-air-light: #94BCE3;  /* arcs and "CAST" on dark */
+  --cc-slate: #424244;         /* tagline, secondary text on light */
+  --cc-mist: #D6EBFF;          /* tagline, secondary text on dark */
+  --cc-font-display: "Barlow Condensed", system-ui, sans-serif;
+  --cc-font-body: "Barlow", system-ui, sans-serif;
+}
