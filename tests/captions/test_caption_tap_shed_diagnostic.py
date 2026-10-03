@@ -923,6 +923,66 @@ class TestTapShedDiagnostic:
         assert shed["batches_total"] >= 1
         assert any(record["asr_s"] is not None for record in shed["batches"])
 
+    def test_real_catch_up_shed_retains_prior_decode_cost_and_origin(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A real worker shed, not a direct collector call, carries prior cost."""
+        caplog.set_level(logging.INFO)
+        tap_root = tmp_path / "tap"
+        channel = "education"
+        (tap_root / channel).mkdir(parents=True)
+        clock = _FakeClock()
+
+        class _DecodingRuntime(_ScriptedRuntime):
+            def transcribe(
+                self,
+                chunks: Iterable[AudioChunk],
+                vocabulary: CustomVocabulary | None = None,
+            ) -> Iterable[CaptionHypothesis]:
+                clock.advance(6.0)
+                yield from super().transcribe(chunks, vocabulary=vocabulary)
+
+            def last_decode_metrics(self) -> dict[str, object]:
+                return {
+                    "transcribe_s": 5.3,
+                    "model_call_s": 2.0,
+                    "lazy_next_s": 3.3,
+                }
+
+        collector = _collector(clock)
+        worker = _tap(
+            tap_root,
+            clock=clock,
+            diagnostic=collector,
+            runtime=_DecodingRuntime(),
+            overload_persistence_scans=1,
+        )
+        # The highest non-atomic file is unsettled: only index 0 runs here.
+        _write_wav(tap_root / channel / "chunk-000000.wav")
+        _write_wav(tap_root / channel / "chunk-000001.wav")
+        first = worker.run_once()
+        assert first.consumed_segments == 1
+        assert not _payloads(caplog)
+
+        _drive_over_limit_episode(worker, tap_root, channel, scans=1, first_index=2)
+        payloads = _payloads(caplog)
+        assert [payload["event"] for payload in payloads] == [
+            "over-limit-streak-start",
+            "catch-up-shed",
+        ]
+        shed = payloads[1]
+        assert shed["shed"]["count"] > 0
+        assert shed["shed"]["kept"] == 2
+        assert 1 <= len(shed["batches"]) <= 8
+        prior = next(row for row in shed["batches"] if row["segment_indices"] == [0])
+        assert prior["batch_id"] == "education-g0-b000000-n1"
+        assert prior["generation"] == 0
+        assert prior["asr_s"] == pytest.approx(6.0)
+        assert prior["transcribe_s"] == pytest.approx(5.3)
+        assert prior["model_call_s"] == pytest.approx(2.0)
+        assert prior["lazy_next_s"] == pytest.approx(3.3)
+        assert "preceding_batch_seconds" not in prior
+
     def test_the_tap_records_the_four_batch_durations(
         self, tmp_path: Path, caplog: pytest.LogCaptureFixture
     ) -> None:
