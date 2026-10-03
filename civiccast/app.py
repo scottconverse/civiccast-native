@@ -19,6 +19,7 @@ from __future__ import annotations
 import builtins
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
@@ -41,6 +42,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 from starlette.types import Receive, Scope, Send
 
+from civiccast import health_provenance
 from civiccast._version import __version__
 from civiccast.activitypub.config import load_activitypub_config
 from civiccast.activitypub.rate_limit import InboxRateLimiter
@@ -2426,6 +2428,9 @@ def create_app() -> FastAPI:
           cannot serve a recording, and reporting "healthy" for it told an
           operator the opposite of the truth.
         """
+        if health_provenance.ENABLED:
+            with suppress(Exception):
+                health_provenance.note_health(sys._getframe().f_code, app)
         # An expired verdict cannot attest readiness/revisions. Refresh and
         # cross-process storage pickup are owned work, never HTTP waits.
         schema_status = _maybe_refresh_schema_status(app)

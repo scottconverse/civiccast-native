@@ -181,3 +181,35 @@ other-process-batch stage, against the unchanged control, justifies proposing a
 behavior change. A large residual, high temperature or busy ffmpeg list alone
 is insufficient. Offline source rollback is this unit's c7492118 base; live
 rollback is outside this unit because nothing was installed.
+
+## Separate loaded health-code receipt (U87)
+
+The same default-off `CIVICCAST_CAPTION_EXECUTABLE_PROOF` flag also enables a
+separate one-shot `Health diagnostic executable receipt <json>` at the actual
+health handler. Its schema is `health-selected-code-v1`; it does not extend or
+replace the three caption receipts above. `/health` and `/api/health` share the
+handler. The hook captures selected immutable code objects and starts at most
+one additional daemon worker per process. It does not import support modules,
+read storage, hash code, join a worker or log from the request caller.
+
+The receipt covers 27 selected anchors from 11 modules, including the executing
+health handler, schema owner, durable-store wiring and startup support. It is
+not evidence that every selected function executed or that all module bytes,
+native libraries or station outputs are correct. A missing support module, such
+as an outbox not assembled in an ephemeral configuration, makes the receipt
+unavailable. The first attempted capture is not retried, even if setup later
+converges. HTTP 200 alone is neither loaded-code attestation nor healthy readiness.
+
+Acceptance needs an independent, same-interpreter compiled source oracle and
+trusted process PID, birth time, executable, origin and fresh log window. A
+receipt's own identity fields cannot establish those facts. Reject missing,
+malformed, duplicate, stale, mismatched or unavailable evidence, including caller
+capture/dispatch time above 100ms. Validation must remain active under Python
+optimization and reject Boolean/float values in integer identity fields.
+
+The worker hashes in the background with the existing bounded fingerprint
+algorithm and emits at most 16KiB of metadata. It never retains the request,
+frame, app, transcript or credentials. Missing or stuck work is not replaced
+with another thread. Default-off, caller isolation, changed-code, privacy and
+durable/ephemeral cases have isolated tests; this document does not claim an
+installed station trial, package acceptance or a caption-drop repair.
