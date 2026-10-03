@@ -10,8 +10,8 @@ from the PDF/DOCX or from docs/USER-MANUAL.md itself. See docs/docsite-sync.md
 for the full staleness-proof explanation.
 
 Unlike the PDF/DOCX renderer, this script's only markdown engine is also
-pandoc (kept identical on purpose -- one rendering engine, one set of
-markdown-syntax quirks to reason about) but the *output* is a single
+pandoc, with raw HTML and interactive task lists disabled to preserve prose
+through the HTML sanitizer. The *output* is a single
 sanitized HTML fragment plus an id/level/title table of contents, written as
 civiccast/docsite/manual.json -- inside the civiccast/ package tree so the
 existing `packages = ["civiccast"]` wheel rule picks it up with no packaging
@@ -66,15 +66,28 @@ def render_docsite_manual() -> Path:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     raw_html = subprocess.run(
-        ["pandoc", str(SOURCE), "-t", "html5", "--wrap=none"],
+        [
+            "pandoc",
+            str(SOURCE),
+            "-f",
+            "markdown-raw_html-task_lists",
+            "-t",
+            "html5",
+            "--wrap=none",
+        ],
         check=True,
         cwd=ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        timeout=120,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     ).stdout
 
-    # Embed local images (e.g. the two architecture diagrams) as data: URIs
+    # Keep placeholders such as <time> as text, not raw HTML. Checklists
+    # remain readable list text rather than form controls removed by sanitizing.
+    # Embed local images (diagrams and screenshots) as data: URIs
+    # and reject local non-image Pandoc media before it can be silently dropped
     # BEFORE sanitizing: sanitize_html's allowlist only ever accepts an
     # already-absolute/data/http(s) src, by design (relative paths don't
     # resolve to anything once this HTML is served from manual.json with no

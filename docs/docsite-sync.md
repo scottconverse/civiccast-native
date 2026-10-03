@@ -13,20 +13,28 @@ demand.
 1. `docs/USER-MANUAL.md` is the single source of truth (per `CLAUDE.md`).
 2. `scripts/render_docsite_manual.py` renders it to HTML with the same
    `pandoc` binary `scripts/render_user_manual.py` already requires for the
-   PDF/DOCX artifacts (one rendering engine, not two), then:
-   - embeds every local image (currently the two architecture diagrams,
-     referenced relative to `docs/`) as a base64 `data:` URI
+   PDF/DOCX artifacts. The HTML reader uses `markdown-raw_html-task_lists`:
+   angle-bracket placeholders remain text, and checklist text does not become
+   form controls that the sanitizer would discard. Definition lists retain
+   their terms and descriptions. Then the build:
+   - embeds every local image (diagrams and screenshots referenced relative
+     to `docs/`) as a base64 `data:` URI
      (`civiccast/docsite/render.py::embed_local_images`) — a relative path
      doesn't resolve to anything once this HTML is served from
      `manual.json` with no filesystem underneath it, so embedding once at
      render time keeps the manual fully self-contained and working with no
-     internet connection,
+     internet connection. Missing, unsupported or escaping local image paths
+     fail the build; add the real image or correct its reference before retrying.
+     Local non-image targets emitted by Pandoc as embed, object, video or audio
+     markup also fail before sanitization and before either artifact is written;
+     they are not silently reduced to captions. Use a supported image instead.
+     External image URLs, if authored, still require internet,
    - sanitizes the HTML through an allowlist parser
      (`civiccast/docsite/render.py::sanitize_html`) so no raw-HTML block in
      the source and no future pandoc extension can smuggle a `<script>` or
      an event-handler attribute into the operator console,
    - extracts a flat table of contents from every `id`-bearing heading
-     (`civiccast/docsite/render.py::extract_toc`) — every `##`/`###`/`####`
+     (`civiccast/docsite/render.py::extract_toc`) — every level-one through level-six
      heading in the manual gets one, whether from an explicit `{#anchor}`
      tag or pandoc's own GitHub-style auto-slug,
    - writes both as `civiccast/docsite/manual.json`, plus a companion hash
@@ -81,15 +89,13 @@ and commit the resulting changes to `civiccast/docsite/manual.json` and
 
 ## Why not parse markdown (or read the .md file) at runtime
 
-- **Offline-first.** The Windows installer is explicitly no-internet-at-setup
-  (see `civiccast/app.py`'s `lan_only_station` handling for `/docs`/`/redoc`
-  for the same reasoning). A build-time artifact has no runtime dependency
+- **Offline-first manual.** A build-time artifact has no runtime dependency
   on `docs/` even being present in the installed payload.
 - **No new pinned runtime dependency.** The native app's dependency surface
   is deliberately narrow (see `pyproject.toml`'s `dependencies` comments).
   `pandoc` is already a required build/CI tool for the PDF/DOCX pipeline;
   reusing it at build time avoids adding a markdown-parsing library
   (`markdown`, `mistune`, `markdown-it-py`, ...) to the shipped runtime.
-- **One rendering engine.** Using `pandoc` for both the PDF/DOCX and the
-  in-product HTML means there is exactly one markdown-syntax interpretation
-  to reason about across every rendered artifact.
+- **One rendering engine.** PDF/DOCX and in-product HTML use `pandoc`.
+  Their output-specific options differ: in-product HTML disables raw HTML and
+  interactive task-list controls to preserve text through sanitization.
