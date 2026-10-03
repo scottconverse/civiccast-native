@@ -2,21 +2,25 @@
 
 ## Release State
 
-`v1.0.0-beta.7` is the current release, a download-only upgrade proven for
-stations already on `v1.0.0-beta.5` (now superseded, as are beta.4 and `v1.0.0-beta.3`,
-the first downloadable release): `setup.exe`, `.ccpack` runtime packs, and
-`SHA256SUMS.txt`,
-published as a **prerelease** at
-<https://github.com/scottconverse/civiccast-native/releases>.
+`v1.0.0-beta.10` is the current published release (published 2026-10-02), a
+GitHub **pre-release** (a "Beta Candidate", not a production release) at
+<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>:
+`setup.exe`, `.ccpack` runtime packs, `SHA256SUMS.txt`, and
+`setup.exe.sidecar.json`. `v1.0.0-beta.7` is superseded history (as are beta.5,
+beta.4, and `v1.0.0-beta.3`, the first downloadable release); beta.8 and beta.9
+were never published and their work is inside beta.10.
 `v1.0.0-beta.1` (USB-delivered, no GitHub download) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists
 only as an internal Gate A upgrade-baseline kit. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
-`v1.0.0-beta.10` is the owner-held unpublished candidate. A familiar filename
-or a passing SmartScreen check is not evidence that its release checks have
-passed.
+`v1.0.0-beta.10` is still a beta candidate: its clean-install automated check
+passed, upgrade paths were not run for it, and the human/station acceptance
+pass is not done (see
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)).
+A familiar filename or a passing SmartScreen check is not evidence that its
+release checks have passed.
 
 When you open a CivicCast installer, Windows may show a blue SmartScreen page.
 That page alone does not prove the file is safe, signed, or approved. Verify the

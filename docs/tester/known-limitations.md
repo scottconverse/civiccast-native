@@ -2,11 +2,13 @@
 
 ## Release State
 
-`v1.0.0-beta.7` is the current release, a download-only upgrade proven for
-stations already on `v1.0.0-beta.5` (now superseded, as are beta.4 and `v1.0.0-beta.3`,
-the first downloadable release):
-`setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a
-prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
+`v1.0.0-beta.10` is the current published release (published 2026-10-02):
+`setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a GitHub
+pre-release (a "Beta Candidate", not a production release) at
+<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>.
+`v1.0.0-beta.7` is superseded history (as are beta.5, beta.4, and
+`v1.0.0-beta.3`, the first downloadable release); `v1.0.0-beta.8` and
+`v1.0.0-beta.9` were never published.
 `v1.0.0-beta.1` (USB-delivered, no GitHub download) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
 upgrade-baseline kit.
@@ -15,22 +17,26 @@ the authored release-state record.
 
 These limits are intentional for the current early-adopter line.
 
-## Live Captions: Published Release And Next Candidate
+## Live Captions: Current Release And Earlier Evidence
 
-The published beta.7's eight-hour physical-machine soak ran with live captions
-off. It is not captions-ON endurance proof. Live captions remain off by default
-on new installations; an explicitly saved setting survives upgrades.
+Beta.7's eight-hour physical-machine soak (beta.7 is now superseded) ran with
+live captions off. It is not captions-ON endurance proof. Live captions remain
+off by default on new installations; an explicitly saved setting survives
+upgrades.
 
-`v1.0.0-beta.10` is the next candidate and the current owner-held unpublished
-candidate (`v1.0.0-beta.8` and `v1.0.0-beta.9` were never published, and their
-work is included in it). When it is published it will be a GitHub pre-release,
-not a production release. Its lab evidence is an eight-hour watched run on a
-three-channel lab station; see
+`v1.0.0-beta.10` is the current published release (`v1.0.0-beta.8` and
+`v1.0.0-beta.9` were never published, and their work is included in it). It is
+a GitHub pre-release, not a production release. Its lab evidence is an
+eight-hour watched run on a three-channel lab station; see
 [`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md).
-The formal Gate A station acceptance has not been run for it, and no human
-field tester has signed off on it.
+Gate A (automated station acceptance) for beta.10: the clean-install lane
+passed, 10 of 10 criteria, run locally in Windows Sandbox on 2026-10-02 against
+exactly this build. The cross-version (upgrade) lane and the download-only lane
+were not run; the owner waived them for this publication. The human/station
+acceptance pass has not been done, and no human field tester has signed off on
+it.
 
-Known limits of the beta.10 candidate:
+Known limits of beta.10:
 
 - **Live-caption audio can be dropped under heavy load.** A caption worker that
   falls behind now catches up by skipping its oldest audio instead of pausing

@@ -7,9 +7,10 @@ This file is a pointer, not a log.
   [`ops/beta10-oversight/HANDOFF-2026-10-01.md`](ops/beta10-oversight/HANDOFF-2026-10-01.md).
 - Release evidence: [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
 
-`v1.0.0-beta.10` is the owner-held unpublished candidate; `v1.0.0-beta.7` is
-the last published release; `v1.0.0-beta.8` and `v1.0.0-beta.9` were never
-published.
+`v1.0.0-beta.10` is the current published release (a GitHub pre-release,
+published 2026-10-02; Gate A clean-install lane passed 10 of 10, upgrade and
+download-only lanes not run, waived by the owner); `v1.0.0-beta.7` is
+superseded; `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published.
 
 The long beta.5 to beta.8 handoff log that used to live here is kept, for the
 record only, in

@@ -1,10 +1,11 @@
 # CivicCast Roadmap
 
-> **Current release:** `v1.0.0-beta.7`, a download-only upgrade for
-> stations already on `v1.0.0-beta.5` (now superseded, as are
-> `v1.0.0-beta.4` and `v1.0.0-beta.3`, the first downloadable release).
-> `v1.0.0-beta.10` is the next candidate and the current owner-held
-> unpublished candidate. `v1.0.0-beta.1`
+> **Current release:** `v1.0.0-beta.10`, published 2026-10-02 as a GitHub
+> pre-release (a beta candidate, not a production release).
+> `v1.0.0-beta.7`, a download-only upgrade for
+> stations already on `v1.0.0-beta.5`, is superseded, as are
+> `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable
+> release). `v1.0.0-beta.1`
 > (USB-delivered) is also superseded.
 > `v1.0.0-beta.2` was never published -- it exists only as an internal
 > Gate A upgrade-baseline kit. See

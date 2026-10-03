@@ -1,17 +1,19 @@
 # CivicCast Architecture
 
-> **Release state: `v1.0.0-beta.7` is the current release** -- `setup.exe` and the
+> **Release state: `v1.0.0-beta.10` is the current release** (published
+> 2026-10-02 as a GitHub pre-release) -- `setup.exe` and the
 > runtime `.ccpack` packs are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7).
-> It is still a beta, not a finished production release; it describes the
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10).
+> It is still a beta candidate, not a finished production release; it describes the
 > state a technical reviewer finds by checking out `main` today. See
 > [BRANCHES.md](BRANCHES.md) for release identity and status.
 >
-> `v1.0.0-beta.10` is the next candidate and the current owner-held
-> unpublished candidate (`v1.0.0-beta.8` and `v1.0.0-beta.9` were never
-> published); it does not change the beta.7 install story above. It was held
-> on air for eight hours on a three-channel lab station; its Gate A station
-> acceptance has not been run. See
+> `v1.0.0-beta.7` is superseded (`v1.0.0-beta.8` and `v1.0.0-beta.9` were never
+> published; their work is inside beta.10). Beta.10 was held
+> on air for eight hours on a three-channel lab station. Its Gate A clean-install
+> lane passed (10 of 10 criteria, Windows Sandbox, 2026-10-02); the upgrade and
+> download-only lanes were not run (waived by the owner) and the human/station
+> acceptance pass has not been done. See
 > [its verification record](docs/releases/v1.0.0-beta.10-verification.md).
 >
 > Treat the repository state as bounded source and local contract-lab proof,

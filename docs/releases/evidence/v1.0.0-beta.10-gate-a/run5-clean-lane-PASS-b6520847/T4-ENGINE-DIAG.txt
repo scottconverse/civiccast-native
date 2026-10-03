@@ -1,0 +1,322 @@
+﻿snapshot_before_capture_utc=2026-10-02T22:37:19.1590562Z
+
+
+ProcessId : 1984
+Name      : pythonservice.exe
+Cmd       : "C:\CivicCastHostStore\install\runtime\pythonservice.exe"
+
+ProcessId : 16460
+Name      : python.exe
+Cmd       : C:\CivicCastHostStore\install\runtime\python.exe -I -u -m uvicorn 
+            civiccast.app:create_app --factory --host 127.0.0.1 --port 8000
+
+ProcessId : 17348
+Name      : python.exe
+Cmd       : C:\CivicCastHostStore\install\runtime\python.exe -m 
+            civiccast.egress.caption_proof_process --worker-poll-seconds 30.0 
+            --capture-seconds 6.0 --timeout-seconds 15.0
+
+ProcessId : 10112
+Name      : tsp.exe
+Cmd       : C:\CivicCastHostStore\install\packs\native-server-binaries\payload\
+            tsduck\bin\tsp.exe --realtime -I ip 17800 --local-address 
+            127.0.0.1 --buffer-size 16777216 -P continuity --fix -P pcradjust 
+            -O ip 127.0.0.1:19003 --local-port 18800
+
+ProcessId : 5304
+Name      : ollama.exe
+Cmd       : C:\CivicCastHostStore\install\dependencies\ollama\ollama.exe serve
+
+ProcessId : 1836
+Name      : ollama.exe
+Cmd       : C:\CivicCastHostStore\install\dependencies\ollama\ollama.exe 
+            gpu-discover --lib-dir 
+            C:\CivicCastHostStore\install\dependencies\ollama\lib\ollama 
+            --lib-dir C:\CivicCastHostStore\install\dependencies\ollama\lib\oll
+            ama\cuda_v13
+
+ProcessId : 12760
+Name      : ffmpeg.EXE
+Cmd       : C:\CivicCastHostStore\install\dependencies\ffmpeg\bin\ffmpeg.EXE 
+            -y -hide_banner -loglevel warning -i C:\ProgramData\CivicCast\data\
+            egress\government\slate-fill-1038cbc65522acf4d094c203.ts -vf scale=
+            1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/
+            2:(oh-ih)/2,fps=30,format=yuv420p 
+
+ProcessId : 13224
+Name      : python.exe
+Cmd       : C:\CivicCastHostStore\install\runtime\python.exe C:\CivicCastHostSt
+            ore\install\runtime\Lib\site-packages\civiccast\egress\gst\worker.p
+            y 
+            C:\ProgramData\CivicCast\data\egress\government\playout-graph.json 
+            \\.\pipe\civiccast-worker-government
+
+
+
+
+
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  UDP    0.0.0.0:5050           *:*                                    13848
+  UDP    127.0.0.1:1900         *:*                                    820
+  UDP    127.0.0.1:17800        *:*                                    10112
+  UDP    127.0.0.1:49664        127.0.0.1:49664                        13668
+  UDP    127.0.0.1:50347        *:*                                    820
+
+
+FullName                                                                                                                                   Length LastWriteTime       
+--------                                                                                                                                   ------ -------------       
+C:\ProgramData\CivicCast\install-progress.log                                                                                                7233 10/2/2026 4:32:34 PM
+C:\ProgramData\CivicCast\data\egress\conform-cache\3fe91d30228719645ad5934b4e210bee.json                                                      167 10/2/2026 4:35:18 PM
+C:\ProgramData\CivicCast\data\egress\conform-cache\3fe91d30228719645ad5934b4e210bee.ts.tmp                                                      0 10/2/2026 4:37:18 PM
+C:\ProgramData\CivicCast\data\egress\government\playout-graph.json                                                                           4075 10/2/2026 4:37:18 PM
+C:\ProgramData\CivicCast\data\egress\government\slate-e7a1d6a8d1db06368628e3b2.ts                                                          702368 10/2/2026 4:35:08 PM
+C:\ProgramData\CivicCast\data\egress\government\captions\active.vtt                                                                             7 10/2/2026 4:35:06 PM
+C:\ProgramData\CivicCast\data\egress\government\logs\gst-worker.stderr.log                                                                      0 10/2/2026 4:37:18 PM
+C:\ProgramData\CivicCast\data\egress\government\logs\gst-worker.stdout.log                                                                      0 10/2/2026 4:37:18 PM
+C:\ProgramData\CivicCast\data\pgdata\postmaster.opts                                                                                          157 10/2/2026 4:30:33 PM
+C:\ProgramData\CivicCast\data\pgdata\postmaster.pid                                                                                            80 10/2/2026 4:30:33 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\1259                                                                                           114688 10/2/2026 4:35:43 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\2619                                                                                           221184 10/2/2026 4:36:00 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\2619_fsm                                                                                        24576 10/2/2026 4:36:00 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\2619_vm                                                                                          8192 10/2/2026 4:36:01 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\2696                                                                                            40960 10/2/2026 4:36:06 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\2840                                                                                            32768 10/2/2026 4:36:07 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\2840_fsm                                                                                        24576 10/2/2026 4:36:07 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\2840_vm                                                                                          8192 10/2/2026 4:36:07 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\2841                                                                                            16384 10/2/2026 4:36:08 PM
+C:\ProgramData\CivicCast\data\pgdata\base\1\pg_internal.init                                                                               160932 10/2/2026 4:33:34 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\1247                                                                                       163840 10/2/2026 4:35:33 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\1249                                                                                       917504 10/2/2026 4:35:40 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\1249_fsm                                                                                    24576 10/2/2026 4:35:40 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\1249_vm                                                                                      8192 10/2/2026 4:35:40 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\1255                                                                                       876544 10/2/2026 4:35:42 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\1259                                                                                       237568 10/2/2026 4:35:45 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\1259_fsm                                                                                    24576 10/2/2026 4:35:45 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\1259_vm                                                                                      8192 10/2/2026 4:35:46 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\16386                                                                                        8192 10/2/2026 4:36:08 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\16386_fsm                                                                                   24576 10/2/2026 4:36:08 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\16386_vm                                                                                     8192 10/2/2026 4:36:08 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\16389                                                                                       16384 10/2/2026 4:36:09 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17053                                                                                        8192 10/2/2026 4:36:09 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17063                                                                                       16384 10/2/2026 4:36:09 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17065                                                                                       16384 10/2/2026 4:36:09 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17100                                                                                        8192 10/2/2026 4:36:09 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17106                                                                                       16384 10/2/2026 4:36:09 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17144                                                                                        8192 10/2/2026 4:36:10 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17149                                                                                       16384 10/2/2026 4:36:10 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17182                                                                                        8192 10/2/2026 4:36:10 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17187                                                                                       16384 10/2/2026 4:36:10 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17249                                                                                        8192 10/2/2026 4:36:10 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17258                                                                                       16384 10/2/2026 4:36:10 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17260                                                                                        8192 10/2/2026 4:36:11 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17268                                                                                       16384 10/2/2026 4:36:11 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17270                                                                                        8192 10/2/2026 4:36:11 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17274                                                                                       16384 10/2/2026 4:36:11 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17276                                                                                        8192 10/2/2026 4:36:11 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17282                                                                                       16384 10/2/2026 4:36:11 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17321                                                                                       49152 10/2/2026 4:36:12 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17321_fsm                                                                                   24576 10/2/2026 4:36:12 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17330                                                                                       16384 10/2/2026 4:36:12 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17332                                                                                       16384 10/2/2026 4:36:13 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17413                                                                                        8192 10/2/2026 4:36:13 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17435                                                                                        8192 10/2/2026 4:36:13 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17444                                                                                       16384 10/2/2026 4:36:13 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17446                                                                                       16384 10/2/2026 4:36:13 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17458                                                                                        8192 10/2/2026 4:36:13 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17459                                                                                        8192 10/2/2026 4:36:14 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17466                                                                                       16384 10/2/2026 4:36:14 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17468                                                                                       16384 10/2/2026 4:36:14 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17469                                                                                        8192 10/2/2026 4:36:14 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17477                                                                                       16384 10/2/2026 4:36:14 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\17479                                                                                       16384 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18021                                                                                       16384 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18105                                                                                        8192 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18109                                                                                        8192 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18122                                                                                       16384 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18124                                                                                       16384 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18125                                                                                       16384 10/2/2026 4:36:16 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18176                                                                                        8192 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18185                                                                                       16384 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18187                                                                                       16384 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18188                                                                                       16384 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18189                                                                                        8192 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18198                                                                                       16384 10/2/2026 4:36:15 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18230                                                                                        8192 10/2/2026 4:36:16 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18237                                                                                       16384 10/2/2026 4:36:16 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\18239                                                                                       16384 10/2/2026 4:36:16 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2224                                                                                         8192 10/2/2026 4:35:46 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2602                                                                                        73728 10/2/2026 4:35:46 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2603                                                                                        49152 10/2/2026 4:35:46 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2604                                                                                        73728 10/2/2026 4:35:47 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2606                                                                                       229376 10/2/2026 4:35:50 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2608                                                                                       278528 10/2/2026 4:35:53 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2608_fsm                                                                                    24576 10/2/2026 4:35:53 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2608_vm                                                                                      8192 10/2/2026 4:35:53 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2610                                                                                        98304 10/2/2026 4:35:55 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2616                                                                                        32768 10/2/2026 4:35:55 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2617                                                                                       122880 10/2/2026 4:35:55 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2619                                                                                       229376 10/2/2026 4:36:00 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2619_fsm                                                                                    24576 10/2/2026 4:36:00 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2619_vm                                                                                      8192 10/2/2026 4:36:00 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2620                                                                                         8192 10/2/2026 4:36:01 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2656                                                                                        16384 10/2/2026 4:36:01 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2658                                                                                       229376 10/2/2026 4:36:02 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2659                                                                                       155648 10/2/2026 4:36:03 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2662                                                                                        40960 10/2/2026 4:36:03 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2663                                                                                        90112 10/2/2026 4:36:04 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2665                                                                                        40960 10/2/2026 4:36:04 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2673                                                                                       196608 10/2/2026 4:36:04 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2674                                                                                       147456 10/2/2026 4:36:05 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2690                                                                                        98304 10/2/2026 4:36:05 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2696                                                                                        40960 10/2/2026 4:36:06 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2840                                                                                        24576 10/2/2026 4:36:07 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2840_vm                                                                                      8192 10/2/2026 4:36:07 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\2841                                                                                        16384 10/2/2026 4:36:07 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\3455                                                                                        40960 10/2/2026 4:36:08 PM
+C:\ProgramData\CivicCast\data\pgdata\base\16384\pg_internal.init                                                                           160932 10/2/2026 4:33:00 PM
+C:\ProgramData\CivicCast\data\pgdata\base\5\pg_internal.init                                                                               160932 10/2/2026 4:32:54 PM
+C:\ProgramData\CivicCast\data\pgdata\global\config_exec_params                                                                               1386 10/2/2026 4:30:33 PM
+C:\ProgramData\CivicCast\data\pgdata\global\pg_control                                                                                       8192 10/2/2026 4:36:16 PM
+C:\ProgramData\CivicCast\data\pgdata\global\pg_internal.init                                                                                28724 10/2/2026 4:33:34 PM
+C:\ProgramData\CivicCast\data\pgdata\pg_logical\replorigin_checkpoint                                                                           8 10/2/2026 4:35:33 PM
+C:\ProgramData\CivicCast\data\pgdata\pg_multixact\offsets\0000                                                                               8192 10/2/2026 4:35:33 PM
+C:\ProgramData\CivicCast\data\pgdata\pg_subtrans\0000                                                                                        8192 10/2/2026 4:35:33 PM
+C:\ProgramData\CivicCast\data\pgdata\pg_wal\000000010000000000000001                                                                     16777216 10/2/2026 4:31:34 PM
+C:\ProgramData\CivicCast\data\pgdata\pg_wal\000000010000000000000002                                                                     16777216 10/2/2026 4:30:33 PM
+C:\ProgramData\CivicCast\data\pgdata\pg_xact\0000                                                                                            8192 10/2/2026 4:35:33 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\playlist.m3u8                                             518 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\240p\playlist.m3u8                                        337 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\240p\seg000.ts                                          76704 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\240p\seg001.ts                                          91556 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\240p\seg002.ts                                          90804 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\240p\seg003.ts                                          89676 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\240p\seg004.ts                                          89864 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\240p\seg005.ts                                          89488 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\240p\seg006.ts                                          62040 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\playlist.m3u8                                        421 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg000.ts                                          69184 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg001.ts                                          85540 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg002.ts                                          87796 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg003.ts                                          83096 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg004.ts                                          83472 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg005.ts                                          86292 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg006.ts                                          83472 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg007.ts                                          83472 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg008.ts                                          84036 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\360p\seg009.ts                                          84224 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\playlist.m3u8                                       421 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg000.ts                                         19552 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg001.ts                                         18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg002.ts                                         18800 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg003.ts                                         18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg004.ts                                         18800 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg005.ts                                         18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg006.ts                                         18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg007.ts                                         18800 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg008.ts                                         18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sample-welcome-dd1a080dd0\slate\seg009.ts                                         18800 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\playlist.m3u8                                       518 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\playlist.m3u8                                  785 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg000.ts                                   173524 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg001.ts                                   255868 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg002.ts                                   172960 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg003.ts                                   194392 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg004.ts                                   176344 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg005.ts                                   171268 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg006.ts                                   201912 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg007.ts                                   161304 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg008.ts                                   166380 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg009.ts                                   169576 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg010.ts                                   171644 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg011.ts                                   394612 10/2/2026 4:33:26 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg012.ts                                    86104 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg013.ts                                   157168 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg014.ts                                   137428 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg015.ts                                   169012 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg016.ts                                   165816 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg017.ts                                   134420 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg018.ts                                   264704 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg019.ts                                   103212 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg020.ts                                   156228 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg021.ts                                   186496 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\240p\seg022.ts                                    59032 10/2/2026 4:33:27 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\playlist.m3u8                                 1093 10/2/2026 4:33:25 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg000.ts                                   197964 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg001.ts                                   260192 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg002.ts                                   418676 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg003.ts                                   206424 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg004.ts                                   301552 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg005.ts                                   278616 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg006.ts                                   246280 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg007.ts                                   281812 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg008.ts                                   262824 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg009.ts                                   319036 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg010.ts                                   310764 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg011.ts                                   291776 10/2/2026 4:33:23 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg012.ts                                   245904 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg013.ts                                   271284 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg014.ts                                   196272 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg015.ts                                   186872 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg016.ts                                   645404 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg017.ts                                   438040 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg018.ts                                   129156 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg019.ts                                   250604 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg020.ts                                   229360 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg021.ts                                   243084 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg022.ts                                   267900 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg023.ts                                   319224 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg024.ts                                   292528 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg025.ts                                   314148 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg026.ts                                   261132 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg027.ts                                   718348 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg028.ts                                   247784 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg029.ts                                   159236 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg030.ts                                   223720 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg031.ts                                   334640 10/2/2026 4:33:24 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg032.ts                                   243084 10/2/2026 4:33:25 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\360p\seg033.ts                                   159424 10/2/2026 4:33:25 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\captions\evidence\25ddd3ece1848c412f2c5e43.wav   960044 10/2/2026 4:34:45 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\captions\evidence\6e4cb59ddf3c989699302a20.wav   225196 10/2/2026 4:34:48 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\captions\evidence\a536f238edbb7d7aed6a4541.wav   960044 10/2/2026 4:34:47 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\playlist.m3u8                                 421 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg000.ts                                   19552 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg001.ts                                   18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg002.ts                                   18800 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg003.ts                                   18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg004.ts                                   18800 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg005.ts                                   18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg006.ts                                   18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg007.ts                                   18800 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg008.ts                                   18988 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\.civiccast-packages\sandbox-proof-261002163317-dbpo\slate\seg009.ts                                   18800 10/2/2026 4:33:22 PM
+C:\ProgramData\CivicCast\data\uploads\sample-welcome-dd1a080dd0\civiccast-welcome-sample.mp4                                               621671 10/2/2026 4:33:19 PM
+C:\ProgramData\CivicCast\data\uploads\sandbox-proof-261002163317-dbpo\t3-test-asset.mp4                                                   3848667 10/2/2026 4:33:18 PM
+C:\ProgramData\CivicCast\data\uploads\sandbox-proof-261002163317-dbpo\thumbnail.jpg                                                         25721 10/2/2026 4:33:18 PM
+C:\ProgramData\CivicCast\logs\control_plane-app.log                                                                                          8311 10/2/2026 4:37:18 PM
+C:\ProgramData\CivicCast\logs\control_plane.log                                                                                               874 10/2/2026 4:33:01 PM
+C:\ProgramData\CivicCast\logs\ollama.log                                                                                                    15373 10/2/2026 4:35:36 PM
+C:\ProgramData\CivicCast\logs\postgres-launcher.log                                                                                            55 10/2/2026 4:30:33 PM
+C:\ProgramData\CivicCast\logs\postgres.log                                                                                                    406 10/2/2026 4:30:33 PM
+C:\ProgramData\CivicCast\logs\supervisor.log                                                                                                  789 10/2/2026 4:32:23 PM
+
+
+
+=== TAIL C:\ProgramData\CivicCast\data\egress\government\logs\gst-worker.stderr.log
+
+=== TAIL C:\ProgramData\CivicCast\data\egress\government\logs\gst-worker.stdout.log
+
+snapshot_after_capture_utc=2026-10-02T22:39:00.5443326Z
+
+Active Connections
+
+  Proto  Local Address          Foreign Address        State           PID
+  UDP    0.0.0.0:5050           *:*                                    13848
+  UDP    0.0.0.0:18800          *:*                                    10112
+  UDP    0.0.0.0:56804          *:*                                    13224
+  UDP    127.0.0.1:1900         *:*                                    820
+  UDP    127.0.0.1:17800        *:*                                    10112
+  UDP    127.0.0.1:49664        127.0.0.1:49664                        13668
+  UDP    127.0.0.1:50347        *:*                                    820
+

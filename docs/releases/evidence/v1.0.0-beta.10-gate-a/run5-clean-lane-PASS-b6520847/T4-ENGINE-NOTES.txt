@@ -1,0 +1,125 @@
+﻿checked_utc=2026-10-02T22:35:02.8565001Z
+Get http://127.0.0.1:8000/openapi.json -> status:200 ok:True err:
+discovered_egress_paths_count=24
+  /api/public/egress/channels/{channel_id}/now
+  /api/staff/egress/channels
+  /api/staff/egress/channels/{channel_id}
+  /api/staff/egress/channels/{channel_id}/caption-proofs
+  /api/staff/egress/channels/{channel_id}/caption-status
+  /api/staff/egress/channels/{channel_id}/commands
+  /api/staff/egress/channels/{channel_id}/compliance-probe
+  /api/staff/egress/channels/{channel_id}/config
+  /api/staff/egress/channels/{channel_id}/config/headend-profile
+  /api/staff/egress/channels/{channel_id}/graphics-overlay
+  /api/staff/egress/channels/{channel_id}/health
+  /api/staff/egress/channels/{channel_id}/loudness-plan
+  /api/staff/egress/channels/{channel_id}/proof
+  /api/staff/egress/channels/{channel_id}/schema-currency
+  /api/staff/egress/channels/{channel_id}/state
+  /api/staff/egress/channels/{channel_id}/takeover
+  /api/staff/egress/channels/{channel_id}/takeover-audit
+  /api/staff/egress/channels/{channel_id}/takeover-state
+  /api/staff/egress/headend-device-probe
+  /api/staff/egress/headend-profiles
+  /api/staff/egress/headend-readiness
+  /api/staff/egress/ndi-readiness
+  /api/staff/egress/repair-gstreamer
+  /api/staff/egress/sdi-readiness
+config_url=http://127.0.0.1:8000/api/staff/egress/channels/government/config
+commands_url=http://127.0.0.1:8000/api/staff/egress/channels/government/commands
+Put http://127.0.0.1:8000/api/staff/egress/channels/government/config -> status:200 ok:True err:
+Post http://127.0.0.1:8000/api/staff/egress/channels/government/commands -> status:202 ok:True err:
+state_url=http://127.0.0.1:8000/api/staff/egress/channels/government/state
+health_url=http://127.0.0.1:8000/api/staff/egress/channels/government/health
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=5s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=10s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=15s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=20s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=25s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=30s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=35s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=40s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=45s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=50s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=55s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=60s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=65s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=70s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=75s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=80s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=85s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=90s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=95s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=100s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=105s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=110s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=115s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=120s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=125s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/state -> status:200 ok:True err:
+poll t=130s engine_state=FALLBACK_SLATE last_error=No valid source plan is available; generated fallback slate.
+Get http://127.0.0.1:8000/api/staff/egress/channels/government/health?limit=1 -> status:200 ok:True err:
+poll t=130s health_state=FALLBACK_SLATE sink_connected={"sandbox-proof-engine":true}
+poll t=130s: sink reported connected -- opening tsp capture window now
+poll_timeline_seconds=130 sink_connected_before_capture=True
+engine_state=FALLBACK_SLATE
+engine_last_error=No valid source plan is available; generated fallback slate.
+capture_attempt=1 start_utc=2026-10-02T22:37:20.2796202Z
+capture_attempt=1 end_utc=2026-10-02T22:38:20.3515224Z verdict=fail-timed-out packets=
+capture_attempt=2 start_utc=2026-10-02T22:38:20.3655723Z
+capture_attempt=2 end_utc=2026-10-02T22:39:00.5443326Z verdict=pass packets=5445
+engine_tsp_verdict=pass invalid_syncs=0 transport_errors=0 discontinuities=0
+Post http://127.0.0.1:8000/api/staff/egress/channels/government/commands -> status:202 ok:True err:
+t4_engine_path_succeeded=True

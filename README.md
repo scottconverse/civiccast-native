@@ -1,9 +1,11 @@
 # CivicCast
 
-`v1.0.0-beta.7` was published as a GitHub prerelease on 2026-09-15 after
-all three Gate A installation lanes passed and an eight-hour captions-off
-physical-machine soak passed. It remains a beta candidate pending human and
-station-specific acceptance; see the [verification record](docs/releases/v1.0.0-beta.7-verification.md).
+`v1.0.0-beta.10` was published as a GitHub pre-release on 2026-10-02. Its
+Gate A clean-install lane passed (10 of 10 criteria, run locally in Windows
+Sandbox on 2026-10-02 against exactly this build); the upgrade and download-only
+lanes were not run, and the owner waived them for this publication. It remains
+a beta candidate pending human and station-specific acceptance; see the
+[verification record](docs/releases/v1.0.0-beta.10-verification.md).
 
 **CivicCast is an open-source, self-hostable civic broadcast platform for
 PEG/local-government stations** — record a meeting, generate offline
@@ -21,30 +23,28 @@ See [BRANCHES.md](BRANCHES.md) for the full explanation, including where an
 earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
 repository, not this one).
 
-**Current version: `v1.0.0-beta.7`** (published 2026-09-15) -- a
-download-only upgrade for stations already on `v1.0.0-beta.5`. `setup.exe`
+**Current version: `v1.0.0-beta.10`** (published 2026-10-02) -- a GitHub
+pre-release ("Beta Candidate"), not a production release. `setup.exe`
 and the five runtime `.ccpack` packs are attached to the
-[`v1.0.0-beta.7` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7),
+[`v1.0.0-beta.10` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10),
 with `SHA256SUMS.txt` and installer sidecar metadata for checksum checks;
 the installer itself carries the Authenticode signature. The ~21 GB AI-model
 `station\` bundle (the offline alternative to the installer's own download
-screen) is deliberately not a release asset (see "Install and run" below). `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable public
+screen) is deliberately not a release asset (see "Install and run" below). `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable public
 release) are now superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable
 assets) remains superseded; `v1.0.0-beta.2` was never published -- it exists
 only as an internal Gate A upgrade-baseline kit (see
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
 See [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml)
 for the authored release-state record,
-[`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md)
-for the release's verification record (Gate A run, asset/hash/signature
-checks, the physical-machine soak, and the remaining acceptance boundary).
+[`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md)
+for the release's verification record.
 
-**Next release: `v1.0.0-beta.10`** is the next candidate and the current
-owner-held unpublished candidate. It has not been published and has no public
-installer yet; until it is, `v1.0.0-beta.7` above stays the public download.
-When it is published it will be a GitHub pre-release ("Beta Candidate"), not a
-production release. `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published;
-their work is included in beta.10.
+**Previous release: `v1.0.0-beta.7`** (published 2026-09-15) is now superseded
+history; its [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7)
+and [verification record](docs/releases/v1.0.0-beta.7-verification.md) stay
+available for the record. `v1.0.0-beta.8` and `v1.0.0-beta.9` were never
+published; their work is included in beta.10.
 
 Compared with the published beta.7, beta.10 changes the following:
 
@@ -75,8 +75,12 @@ were scored with no holes (picture gap at most 0.033 s, sound gap at most
 0.041 s). Details, the evidence paths and the adjudication are in the
 [beta.10 verification record](docs/releases/v1.0.0-beta.10-verification.md).
 
-**What is not proven.** The formal three-lane station acceptance (Gate A) has
-not been run for beta.10, and no human field tester has signed off on it.
+**What is not proven.** Of the three Gate A lanes, only the clean-install lane
+was run for beta.10 (it passed, 10 of 10 criteria). The cross-version
+(upgrade) lane and the download-only lane were not run; the owner waived them
+for this publication, so an upgrade of a station from beta.7 to beta.10 and a
+download-only install are not proven for beta.10. The human/station acceptance
+pass has not been done, and no human field tester has signed off on it.
 That is why it remains a beta candidate and not a production release. The
 measured limits are listed in "Known limitations of this build" below.
 
@@ -89,7 +93,7 @@ as soon as a handoff completes.
 Setting `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` explicitly selects the
 restart fallback for diagnosis and can interrupt output. Live captions are
 **off by default** in beta.7; the release notes explain how to turn them on
-and what to expect. The soak history that led to the published candidate is
+and what to expect. The soak history that led to the published beta.7 is
 in the [recovery record](docs/releases/beta5-recovery-2026-09-08.md) and the
 verification record linked above.
 The bundled beta.7 manual describes operation without freezing a mutable
@@ -106,8 +110,8 @@ bounds unchanged. An overlapping commit request is explicitly declined and
 uses the existing full-graph restart recovery path; there is no latest-request
 queue and no capability is disabled. Ten clean runs bounds the failure rate; it
 is not proof of absence. This is source/diagnostic evidence only; the
-published candidate's own sandbox-soak and Gate A evidence, and the known
-issues it ships with, are recorded in
+published beta.7's own sandbox-soak and Gate A evidence, and the known
+issues it shipped with, are recorded in
 [`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md).
 
 Live-caption timing now uses a separate forwarding queue. During intervals
@@ -156,13 +160,14 @@ pipeline proofs against the real bundled GStreamer runtime (not mocks):
   the running app over an unauthenticated endpoint, specifically so an
   operator stuck mid-setup or mid-error — including on the pre-login First
   Setup screen — can reach it without needing to already be signed in.
-- **Signed-pack install, and a proven upgrade path.** The native installer
+- **Signed-pack install, and an upgrade path proven for earlier releases.** The native installer
   verifies Ed25519-signed component packs against the running installer's
   expected product/version identity before trusting them. The
-  uninstall → reinstall upgrade path is exercised by an automated "dirty
-  lane" acceptance run: install, plant real data, uninstall, reinstall, and
-  verify the same Postgres data cluster and the same uploaded files survive
-  the full cycle byte-for-byte.
+  uninstall → reinstall upgrade path was exercised for earlier releases (most recently beta.7) by
+  an automated "dirty lane" acceptance run: install, plant real data,
+  uninstall, reinstall, and verify the same Postgres data cluster and the same
+  uploaded files survive the full cycle byte-for-byte. That lane was not run
+  for beta.10.
 
 ## New this candidate: on-air graphics and live broadcast
 
@@ -203,8 +208,9 @@ things outside this repository's control:
 These are the known, measured limitations of the `v1.0.0-beta.10` candidate,
 taken from its eight-hour three-channel run (see the
 [verification record](docs/releases/v1.0.0-beta.10-verification.md)). It is a
-beta candidate: the formal Gate A station acceptance has not been run for it
-and no human field tester has signed off on it.
+beta candidate: only the Gate A clean-install lane was run for it (it passed),
+the upgrade and download-only lanes were not run, and no human field tester
+has signed off on it.
 
 **Live captions can lose some spoken audio under heavy load.**
 - Captions stay on the air on all three channels. When a
@@ -364,12 +370,12 @@ and no human field tester has signed off on it.
   see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
   [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
   for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.7` is the current release, a download-only upgrade
-  for stations already on `v1.0.0-beta.5`: `setup.exe`, the five runtime
+  model. `v1.0.0-beta.10` is the current release (published 2026-10-02, a
+  GitHub pre-release): `setup.exe`, the five runtime
   `.ccpack` packs, `SHA256SUMS.txt`, and installer sidecar metadata are
   attached to the
-  [`v1.0.0-beta.7` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7).
-  `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first **downloadable** release)
+  [`v1.0.0-beta.10` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10).
+  `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first **downloadable** release)
   are superseded.
   `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
   `v1.0.0-beta.2` was never published -- it exists only as an internal
@@ -378,7 +384,8 @@ and no human field tester has signed off on it.
   USB/LAN-delivered model bundle (~21 GB, the offline alternative) or, for
   components the installer can download, through the installer window's
   download screen -- the GitHub download alone does not include them. A first
-  install that relies only on downloads is not yet proven for beta.10; see
+  install that relies only on downloads is not proven for beta.10 (the
+  download-only lane was not run); see
   [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md).
   **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
   (`setup.exe` + packs + `station\` folder) to the station and run
@@ -392,7 +399,9 @@ and no human field tester has signed off on it.
   AI models -- this is the path proven for `v1.0.0-beta.5` -> `v1.0.0-beta.7`
   (as it was for earlier downloadable releases): run
   `setup.exe` (with the runtime packs) over the existing install, no
-  `station\` folder and no re-downloading the AI-model bundle. See
+  `station\` folder and no re-downloading the AI-model bundle. That
+  upgrade path was not run for beta.10 (the upgrade lane was waived by the
+  owner for this publication). See
   [BRANCHES.md](BRANCHES.md) for release identity and status.
   Slow setup must remain visibly active: the installer reports its current
   phase and updates a progress heartbeat instead of appearing frozen.
@@ -478,7 +487,7 @@ status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
 candidate — the "What's proven in this candidate" and "Honestly scoped"
 sections above are the accurate summary for a reader deciding whether to
-run beta.7 today.
+run beta.10 today.
 
 Proprietary-appliance capabilities are **out of scope** for V1 by explicit
 decision, documented in

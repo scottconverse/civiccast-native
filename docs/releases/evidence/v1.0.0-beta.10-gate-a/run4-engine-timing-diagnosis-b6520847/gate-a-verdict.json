@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "source_sha": "b652084707367d45913807ed2a525f15a9a1e4a4",
+  "run_id": "37039304786",
+  "verdict": "FAIL",
+  "harness_error": null,
+  "checks": {
+    "install": {
+      "status": "PASS",
+      "detail": "installer_exit_code=0, station_set_json_found=C:\\CivicCastHostStore\\install\\station-set.json"
+    },
+    "activation": {
+      "status": "PASS",
+      "detail": "activation_self_test_json_found=C:\\CivicCastHostStore\\install\\activation-self-test.json, ACTIVATION-RESULT.txt confirms station-set staged"
+    },
+    "runtime": {
+      "status": "PASS",
+      "detail": "health=200, operator_console=200, resident_portal=200"
+    },
+    "t2_render": {
+      "status": "PASS",
+      "detail": "T2_RENDER=PASS; both T2_portal and T2_operator result=PASS"
+    },
+    "t3_loop": {
+      "status": "PASS",
+      "detail": "T3_RESULT=PASS (T3T5-RESULT.txt), T3_LOOP=PASS (T3-LOOP.txt) -- clerk loop completed"
+    },
+    "captions": {
+      "status": "PASS",
+      "detail": "CAPTIONS=PASS, cue_count=21"
+    },
+    "t4_engine": {
+      "status": "FAIL",
+      "detail": "T4_RESULT=PASS_FFMPEG_FALLBACK -- the ffmpeg synthetic-encoder fallback proved egress, but GStreamer is the shipped default engine (S15); Gate A requires PASS_PRODUCT_ENGINE"
+    },
+    "t5_soak": {
+      "status": "PASS",
+      "detail": "T5_RESULT=PASS beats=1 unhealthy=0"
+    },
+    "install_progress": {
+      "status": "PASS",
+      "detail": "postinstall reached SUCCESS with 0 ALERTs, no nonzero d2/d3/d4 step, D4_ACTIVATE_EXIT=0"
+    },
+    "completion": {
+      "status": "PASS",
+      "detail": "DONE.json present, harness_completed=true, step_seq=46, run_end_utc recorded, last_completed_step='finally-block'"
+    }
+  },
+  "station_up": true,
+  "station_boot_seconds": 25,
+  "station_first_healthy_utc": "2026-10-02T21:39:20.0538602Z",
+  "evidence_dir": "C:\\Users\\scott\\Documents\\Codex\\2026-09-16\\re\\civiccast-gatea-t4\\sandbox-lab\\evidence\\b652084707367d45913807ed2a525f15a9a1e4a4\\20261002-215600Z",
+  "judged_utc": "2026-10-02T21:56:02.609130+00:00"
+}

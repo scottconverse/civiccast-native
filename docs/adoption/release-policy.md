@@ -1,12 +1,11 @@
 # CivicCast Release Policy
 
-> **Release state:** `v1.0.0-beta.7` is the current release, a
-> download-only upgrade for stations already on `v1.0.0-beta.5` -- `setup.exe`
+> **Release state:** `v1.0.0-beta.10` is the current release, published
+> 2026-10-02 as a GitHub pre-release (a beta candidate) -- `setup.exe`
 > and the runtime `.ccpack` packs are
 > attached to its GitHub Release, verified by `SHA256SUMS.txt` and a signed
-> sidecar. `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable
-> release) are now superseded. `v1.0.0-beta.10` is the next candidate and the
-> current owner-held unpublished candidate. `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also
+> sidecar. `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable
+> release) are now superseded. `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also
 > superseded. `v1.0.0-beta.2` was never published -- it exists only as an
 > internal Gate A upgrade-baseline kit. See
 > [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the

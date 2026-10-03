@@ -9,13 +9,15 @@ with the release owner after the release gates and soak evidence are complete.
 
 ## Install
 
-> **The current published release is `v1.0.0-beta.7`** (2026-09-15),
-> recorded as `current` in the release-truth record. Confirm the exact
-> filename, size, hash, and Authenticode publisher against the active
-> handoff before running it.
+> **The current published release is `v1.0.0-beta.10`** (published
+> 2026-10-02, a GitHub pre-release), recorded as `current` in the
+> release-truth record. Confirm the exact filename, size, hash, and
+> Authenticode publisher against the active handoff before running it.
 
-`v1.0.0-beta.10` is the owner-held unpublished candidate. Do not
-substitute source code or an older installer for an assigned candidate test.
+`v1.0.0-beta.10` is still a beta candidate: its automated clean-install check
+passed, upgrade paths were not run for it, and the human/station acceptance
+pass is not done. `v1.0.0-beta.7` is superseded. Do not substitute source code
+or an older installer for an assigned candidate test.
 
 1. **For a first install**, use the complete signed USB/LAN kit named in your
    handoff: installer, runtime packs, and `station\` model bundle. A GitHub

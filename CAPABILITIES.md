@@ -1,13 +1,14 @@
 # CivicCast - Capability Matrix
 
-> **Release state:** `v1.0.0-beta.7` is the current release, a download-only
-> upgrade for stations already on `v1.0.0-beta.5` (now superseded, as is
-> `v1.0.0-beta.3`, the first downloadable release). `v1.0.0-beta.1`
+> **Release state:** `v1.0.0-beta.10` is the current release, published
+> 2026-10-02 as a GitHub pre-release (a beta candidate, not a production
+> release). `v1.0.0-beta.7`, a download-only
+> upgrade for stations already on `v1.0.0-beta.5`, is superseded (as are
+> `v1.0.0-beta.5` and `v1.0.0-beta.3`, the first downloadable release). `v1.0.0-beta.1`
 > (USB-delivered) is also superseded. `v1.0.0-beta.2` was never published -- it exists only as an
-> internal Gate A upgrade-baseline kit. `v1.0.0-beta.10` is the next candidate
-> and the current owner-held unpublished candidate (`v1.0.0-beta.8` and
-> `v1.0.0-beta.9` were never published); rows marked "beta.10 candidate"
-> below describe that unpublished build. See
+> internal Gate A upgrade-baseline kit. `v1.0.0-beta.8` and
+> `v1.0.0-beta.9` were never published; rows marked "beta.10 candidate"
+> below describe the build published as beta.10. See
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
 > the authored release-state record.
 
@@ -29,10 +30,13 @@ describes the retired WSL2 line (historical, kept as record -- see the
 banner above) unless a row explicitly says otherwise. The native Windows
 product this repository ships is tracked under
 [ADR 0021](docs/adr/0021-native-windows-runtime.md); its own development
-release evidence is recorded separately for the published native beta.7.
+release evidence is recorded separately for the published native beta.10
+(and, for the superseded beta.7, in its own verification record).
 Beta.10 lab evidence (an eight-hour three-channel run) does not establish
-public beta.10 installer acceptance, and its Gate A station acceptance has not
-been run; see its [verification record](docs/releases/v1.0.0-beta.10-verification.md).
+human/station acceptance. Its Gate A clean-install lane passed (10 of 10
+criteria, Windows Sandbox, 2026-10-02); the upgrade and download-only lanes
+were not run (waived by the owner), and the human/station acceptance pass has
+not been done; see its [verification record](docs/releases/v1.0.0-beta.10-verification.md).
 _This matrix was first written as a baseline observed at `v2.0.10` (commit `02c9e6c`), 2026-06-09, a pre-reset internal build-ladder version (used through June 2026, before the public version reset) on a separate numbering track from this repository's `v1.0.0-beta.N` releases. Rows have been updated in-commit since; only rows that name the beta.10 candidate or a beta.N release were written against this product line, and the other rows' evidence was not re-verified against beta.10 when this note was revised - see git history per row. On the retired WSL2 line (repository `scottconverse/civiccast`, not this repository), the last published release was `v1.0.0-rc18` (controlled beta); rc17 was the rollback target; the full recorded-media product path was last proven against rc17's exact published installer via a full clean-host walkthrough on 2026-07-20, and that full-path proof was never repeated against rc18's exact bytes before the line was retired. (Neither that release page nor its verification record is present in this repository.) Local 3.2 LPM contract-lab work is development proof only until its own gates pass and station-device evidence is attached._
 
 ---

@@ -1,0 +1,16 @@
+﻿{
+    "channel_id":  "government",
+    "sampled_at":  "2026-10-02T21:43:50.965635Z",
+    "state":  "FALLBACK_SLATE",
+    "sink_connected":  {
+                           "sandbox-proof-engine":  true
+                       },
+    "encoder_fps":  null,
+    "encoder_bitrate_kbps":  null,
+    "dropped_frames":  0,
+    "seconds_on_air":  0,
+    "last_loudness_lufs":  -70.0,
+    "caption_status":  "not-verified",
+    "schema_version":  1,
+    "proof_events_appended_since_last_sample":  1
+}

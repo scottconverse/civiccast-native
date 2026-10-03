@@ -9,14 +9,13 @@
 
 ## Current Release
 
-`v1.0.0-beta.7` is the current release (published 2026-09-15), a
-download-only upgrade for stations already on `v1.0.0-beta.5`:
+`v1.0.0-beta.10` is the current release (published 2026-10-02), a GitHub
+pre-release ("Beta Candidate"), not a production release:
 `setup.exe`, per-pack runtime `.ccpack` assets, and a `SHA256SUMS.txt`
 checksum file (each asset under GitHub's 2 GB/file cap) are published as a
-prerelease at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7>.
-Its verification record (Gate A run, asset/hash/signature checks, known
-issues) is
-[`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md).
+prerelease at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>.
+Its verification record (what was and was not proven) is
+[`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
 Watch that page, not `scottconverse/civiccast` (the retired, separate
 WSL2-line repository) and not any `v1.0.0-rcNN` tag, which belongs to that
 other repository. See
@@ -24,20 +23,26 @@ other repository. See
 the authored release-state record -- it is the single source of truth for
 which tag is current.
 
-`v1.0.0-beta.10` is the next candidate and the current owner-held unpublished
-candidate. It has no installer asset yet; install beta.7 from the release link
-above until beta.10 completes its candidate gates (the formal Gate A station
-acceptance has not been run for it) and is published as a GitHub pre-release.
-`v1.0.0-beta.8` and `v1.0.0-beta.9` were never published. What was and was not
-proven for beta.10 is in
+What Gate A (automated station acceptance) proved for beta.10: the
+clean-install lane passed 10 of 10 criteria, run locally in Windows Sandbox on
+2026-10-02 against exactly this build. The cross-version (upgrade) lane and
+the download-only lane were **not run**; the owner waived them for this
+publication. An upgrade of a station from beta.7 to beta.10 and a
+download-only install are therefore not proven for beta.10. The human/station
+acceptance pass has not been done, so it remains a beta candidate.
+`v1.0.0-beta.8` and `v1.0.0-beta.9` were never published; their work is in
+beta.10. See
 [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
 
+`v1.0.0-beta.7` (published 2026-09-15; its record is
+[`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md)),
 `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable release) are
 now superseded.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
 If you already have a USB-delivered `v1.0.0-beta.1` station, or a
-`v1.0.0-beta.3` station, it still runs, and the upgrade instructions below
-get it to the current release without wiping it.
+`v1.0.0-beta.3` station, it still runs. The upgrade instructions below
+describe the path that was proven for earlier releases; the upgrade lane was
+not run for `v1.0.0-beta.10`, so back up your station data before upgrading.
 
 `v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
 upgrade-baseline kit used to prove the download-only install/upgrade lanes,
@@ -68,8 +73,10 @@ never a release a station receives.
   with `v1.0.0-beta.3`: it reuses the AI models already on the machine. An
   upgrade keeps the station's existing recordings, database, and AI models --
   nothing already on the station is discarded by an upgrade install. This is
-  the proven path for `v1.0.0-beta.5` -> `v1.0.0-beta.7`: run `setup.exe` (with the
-  runtime packs) over the existing install, no `station\` folder needed.
+  the path that was proven for `v1.0.0-beta.5` -> `v1.0.0-beta.7`: run `setup.exe` (with the
+  runtime packs) over the existing install, no `station\` folder needed. The
+  upgrade lane was not run for beta.10 (waived by the owner for this
+  publication).
 
 **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit --
 `setup.exe`, the runtime packs, and the `station\` folder beside them (USB
@@ -142,7 +149,7 @@ The installer composes the signed model components into the station's local
 Ollama store; it does not run a further background model download after
 setup.
 
-Starting with the `v1.0.0-beta.10` candidate, the cache of prepared copies of
+Starting with `v1.0.0-beta.10`, the cache of prepared copies of
 long programs (the "conform cache") defaults to a 60 GB budget instead of
 20 GB. Leave room for it on the data drive, or set
 `CIVICCAST_CONFORM_CACHE_GB` to a smaller value.

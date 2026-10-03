@@ -2,14 +2,14 @@
 
 ## Current Release
 
-`v1.0.0-beta.7` is the current published release (2026-09-15), recorded as
-`current` in `release-truth.yaml`; do not treat a tester handoff or USB kit
-as a public release. For the current published beta.7 release,
+`v1.0.0-beta.10` is the current published release (published 2026-10-02),
+recorded as `current` in `release-truth.yaml`; do not treat a tester handoff or
+USB kit as a public release. For the current published beta.10 release,
 `setup.exe`, the five per-pack runtime `.ccpack` assets, a
 `SHA256SUMS.txt` checksum file, and `setup.exe.sidecar.json` metadata are
 attached to the
-[`v1.0.0-beta.7` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7)
-as a **prerelease** -- watch
+[`v1.0.0-beta.10` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10)
+as a **pre-release** (a "Beta Candidate", not a production release) -- watch
 <https://github.com/scottconverse/civiccast-native/releases> for Sergio's
 next check, not `scottconverse/civiccast` (the retired, separate WSL2-line
 repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
@@ -18,10 +18,18 @@ repository. See
 authored release-state record -- it is the single source of truth for which
 tag is current.
 
-`v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
-now superseded but still run; see "Upgrading from `v1.0.0-beta.1`" below and
-"Release Build To Use" for the download-only path. Beta.7 has exact-package
-upgrade proof from beta.5; that evidence does not certify a future beta.10 kit.
+`v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first
+downloadable release) are now superseded but still run; see "Upgrading from
+`v1.0.0-beta.1`" below and "Release Build To Use" for the download-only path.
+Beta.7 had exact-package upgrade proof from beta.5; that evidence does not
+certify beta.10. Upgrade paths were not run for beta.10.
+
+`v1.0.0-beta.10` is still a beta candidate. Gate A (automated station
+acceptance): the clean-install lane passed, 10 of 10 criteria, run locally in
+Windows Sandbox on 2026-10-02 against exactly this build; the cross-version
+(upgrade) lane and the download-only lane were not run (waived by the owner for
+this publication). The human/station acceptance pass is not done. See
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md).
 
 If Sergio/LPM is still on a USB-delivered `v1.0.0-beta.1` station, that
 install is also superseded but still runs; see "Upgrading from
@@ -51,7 +59,7 @@ already-installed `v1.0.0-beta.3`-or-later station
 is download-only (`setup.exe` plus the runtime packs, no `station\` folder
 needed) and keeps the station's existing recordings, database, and AI
 models. Beta.7's verification record documents the tested beta.5-to-beta.7
-upgrade; there is no need to re-fetch the complete model bundle for that step.
+upgrade (history; not run for beta.10).
 
 **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit -- `setup.exe`
 plus the `station\` folder beside it (USB or a LAN copy) -- to the station
@@ -66,7 +74,7 @@ download-only upgrade in place: your recordings, settings, and AI models are
 kept. Details:
 [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](../releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
 
-Last updated: 2026-09-17.
+Last updated: 2026-10-02.
 
 Audience: Longmont Public Media beta testers, station operators, technical
 staff, and anyone observing the first real station-side CivicCast runs.
@@ -76,9 +84,9 @@ staff, and anyone observing the first real station-side CivicCast runs.
 Use only the release-matched installer and manifest for the package you were
 actually handed. For a GitHub release, also use its sidecar and checksum; a
 USB/LAN kit may have only its own hash-pinned delivery manifest and need not contain
-the GitHub sidecar. `v1.0.0-beta.10` is the owner-held unpublished candidate
-(`v1.0.0-beta.2`, `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published and
-are never handed to a tester).
+the GitHub sidecar. `v1.0.0-beta.10` is the current published release, a GitHub
+pre-release (`v1.0.0-beta.2`, `v1.0.0-beta.8` and `v1.0.0-beta.9` were never
+published and are never handed to a tester).
 Preserve all logs and report any failure.
 
 ## What This Beta Is Meant To Exercise
@@ -101,9 +109,10 @@ The run is meant to answer:
 **Use the exact package named in your active handoff.** A USB/LAN field kit is
 verified against its own hash-pinned delivery manifest. A GitHub package is used
 only after its exact beta tag is published and is verified against that
-release's sidecar and checksum assets. `v1.0.0-beta.10` is the owner-held
-unpublished candidate until its exact installer and release checks pass and the
-owner publishes it.
+release's sidecar and checksum assets. The current published release is
+[`v1.0.0-beta.10`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10)
+(a GitHub pre-release, published 2026-10-02); its `setup.exe` is 242,367,640
+bytes, to be checked against that release's `SHA256SUMS.txt` and sidecar.
 
 Expected SHA-256 and byte size must match the applicable package manifest.
 

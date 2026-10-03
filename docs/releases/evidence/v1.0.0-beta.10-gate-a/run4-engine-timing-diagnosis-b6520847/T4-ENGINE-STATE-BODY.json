@@ -1,0 +1,9 @@
+﻿{
+    "channel_id":  "government",
+    "state":  "FALLBACK_SLATE",
+    "current_source_label":  "CivicCast slate",
+    "current_proof_event_id":  "egress-proof-722f4f69-c5ab-4a9a-b333-26a27ac3b874",
+    "updated_at":  "2026-10-02T21:43:50.961603Z",
+    "pid":  16548,
+    "last_error":  "No valid source plan is available; generated fallback slate."
+}

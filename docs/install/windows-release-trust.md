@@ -7,23 +7,26 @@
 
 ## Current Release State
 
-`v1.0.0-beta.7` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.5`: `setup.exe`, per-pack runtime
-`.ccpack` assets, and a `SHA256SUMS.txt` checksum file, published as a
+`v1.0.0-beta.10` is the current release, published 2026-10-02: `setup.exe`
+(signed), per-pack runtime `.ccpack` assets, a `SHA256SUMS.txt` checksum file
+and a `setup.exe.sidecar.json`, published as a
 **prerelease** at
-<https://github.com/scottconverse/civiccast-native/releases> -- watch that
+<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>
+(all releases: <https://github.com/scottconverse/civiccast-native/releases>) -- watch that
 page, not `scottconverse/civiccast` (the retired, separate WSL2-line
 repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
 repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
-authored release-state record. `v1.0.0-beta.10` is the next candidate and the
-current owner-held unpublished candidate (`v1.0.0-beta.8` and `v1.0.0-beta.9`
-were never published). Its lab evidence is recorded in
-[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md);
-do not substitute that lab evidence for verification of a published installer.
-No beta.10 installer or checksum exists yet.
+authored release-state record. `v1.0.0-beta.8` and `v1.0.0-beta.9` were never
+published; their work is inside beta.10. Its verification record, including
+the Gate A status (clean-install lane passed 10 of 10 in Windows Sandbox; the
+upgrade and download-only lanes were not run and were waived by the owner), is
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md).
+Verify the downloaded installer yourself using the steps below; lab evidence is
+not a substitute for verifying the exact bytes you downloaded.
 
-`v1.0.0-beta.3`, the first downloadable release, is now superseded.
+`v1.0.0-beta.7` (a download-only upgrade for stations on `v1.0.0-beta.5`) and
+`v1.0.0-beta.3`, the first downloadable release, are now superseded.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
 upgrade-baseline kit.

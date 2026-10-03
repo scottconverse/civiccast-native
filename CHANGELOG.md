@@ -17,11 +17,10 @@ Nothing yet.
 
 ## [1.0.0-beta.10] - 2026-10-02
 
-Candidate identity: `v1.0.0-beta.10` (owner-held unpublished candidate; it will
-be published as a GitHub pre-release, not a production release, and
-`v1.0.0-beta.7` stays the published release until then). `v1.0.0-beta.8` and
-`v1.0.0-beta.9` were never published; their work is included here. Evidence and
-limits: [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
+Release identity: `v1.0.0-beta.10`, published 2026-10-02 as a GitHub
+pre-release (not a production release); it supersedes `v1.0.0-beta.7`.
+`v1.0.0-beta.8` and `v1.0.0-beta.9` were never published; their work is included
+here. Evidence and limits: [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
 
 ### Summary
 
@@ -57,8 +56,10 @@ Known limits: live-caption audio can be dropped under heavy load (13 catch-up
 discard events in the run, about 160 seconds of audio on a quiet machine; the
 fix is the next work item); two government-channel program-change first
 attempts aborted and recovered in about 3 seconds; one single-frame (0.033 s)
-video drop at a part-to-part join; no Gate A run, no installer, and no human
-field-tester sign-off exist yet for this build.
+video drop at a part-to-part join. Gate A ran for the clean-install lane only
+(10 of 10, 2026-10-02); the upgrade and download-only lanes were not run and
+were waived by the owner; no human field-tester sign-off exists yet for this
+build.
 
 ### Changed
 

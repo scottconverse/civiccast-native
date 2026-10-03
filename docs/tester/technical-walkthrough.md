@@ -2,22 +2,30 @@
 
 ## Release State
 
-`v1.0.0-beta.7` is the current published release (2026-09-15), recorded as
-`current` in `release-truth.yaml`; use only the exact release named in the
-handoff. The published beta.7 release is a download-only upgrade proven for
-stations already on `v1.0.0-beta.5` (now superseded, as are beta.4 and `v1.0.0-beta.3`,
-the first downloadable release):
-`setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a
-prerelease at <https://github.com/scottconverse/civiccast-native/releases>.
+`v1.0.0-beta.10` is the current published release (published 2026-10-02),
+recorded as `current` in `release-truth.yaml`; use only the exact release named
+in the handoff. It is `setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`
++ `setup.exe.sidecar.json`, published as a GitHub pre-release (a "Beta
+Candidate", not a production release) at
+<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>.
+`v1.0.0-beta.7` was a download-only upgrade proven for stations already on
+`v1.0.0-beta.5`; it is now superseded history, as are beta.5, beta.4 and
+`v1.0.0-beta.3` (the first downloadable release).
 `v1.0.0-beta.1` (USB-delivered, no GitHub download) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
 upgrade-baseline kit.
 See [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for
 the authored release-state record.
 
-`v1.0.0-beta.10` is the owner-held unpublished candidate. Its lab checks do
-not replace testing the exact final installer. See
-[Known Limitations](known-limitations.md#live-captions-published-release-and-next-candidate)
+`v1.0.0-beta.10` is still a beta candidate. Gate A (automated station
+acceptance): the clean-install lane passed, 10 of 10 criteria, run locally in
+Windows Sandbox on 2026-10-02 against exactly this build; the cross-version
+(upgrade) lane and the download-only lane were not run (waived by the owner for
+this publication). The human/station acceptance pass is not done. Its lab
+checks do not replace testing the exact installer you downloaded. See
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)
+and
+[Known Limitations](known-limitations.md#live-captions-current-release-and-earlier-evidence)
 for the current captions evidence boundary.
 
 Use this path if you are validating the installer package, runtime bootstrap,

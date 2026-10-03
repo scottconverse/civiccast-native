@@ -44,9 +44,11 @@ work (see
 Section C). These source capabilities and their lab evidence are not stock
 acceptance claims and do not establish station-device, provider, app-store, or
 production proof. This manual describes the `v1.0.0-beta.10` native-Windows
-software, which is a beta candidate: it has not been published, and its formal
-station acceptance (Gate A) has not been run. The latest published release is
-`v1.0.0-beta.7`. A bundled manual does not itself establish publication or installation acceptance.
+software, which is a beta candidate published 2026-10-02 as a GitHub
+pre-release. Its automated station acceptance (Gate A) passed the clean-install
+lane (10 of 10 criteria); the upgrade and download-only lanes were not run
+(waived by the owner), and the human/station acceptance pass has not been done.
+The previous release, `v1.0.0-beta.7`, is superseded. A bundled manual does not itself establish publication or installation acceptance.
 Before installing, check the exact
 [GitHub Release](https://github.com/scottconverse/civiccast-native/releases),
 its signed installer, checksums and candidate-specific verification record;

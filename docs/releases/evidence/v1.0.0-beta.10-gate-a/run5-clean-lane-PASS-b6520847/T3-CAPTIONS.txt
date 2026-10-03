@@ -1,0 +1,12 @@
+﻿asset_id=sandbox-proof-261002163317-dbpo
+caption_endpoint=/api/staff/captions/offline-jobs
+caption_enqueue_endpoint=/api/staff/captions/offline-jobs/{job_id}/retry
+---- poll #1 2026-10-02T22:33:32.5339513Z status=200 (first=True changed=True) ----
+[{"job_id":"ocj_BvGo9mMqf2d3yElyjbrvA","asset_id":"sandbox-proof-261002163317-dbpo","source_path":"C:\\ProgramData\\CivicCast\\data\\uploads\\sandbox-proof-261002163317-dbpo\\t3-test-asset.mp4","package_dir":"C:\\ProgramData\\CivicCast\\data\\uploads\\.civiccast-packages\\sandbox-proof-261002163317-dbpo","state":"pending","attempts":0,"next_attempt_at":"2026-10-02T22:33:27.877974Z","cue_count":0,"published_cue_count":0,"last_error":"","created_at":"2026-10-02T22:33:27.877974Z","updated_at":"2026-10-02T22:33:27.877974Z"}]
+manual_enqueue_request: POST http://127.0.0.1:8000/api/staff/captions/offline-jobs/{job_id}/retry body={"asset_id":"sandbox-proof-261002163317-dbpo"}
+manual_enqueue_response: status=404 body=
+---- poll #4 2026-10-02T22:35:02.7654319Z status=200 (first=False changed=True) ----
+[{"job_id":"ocj_BvGo9mMqf2d3yElyjbrvA","asset_id":"sandbox-proof-261002163317-dbpo","source_path":"C:\\ProgramData\\CivicCast\\data\\uploads\\sandbox-proof-261002163317-dbpo\\t3-test-asset.mp4","package_dir":"C:\\ProgramData\\CivicCast\\data\\uploads\\.civiccast-packages\\sandbox-proof-261002163317-dbpo","state":"awaiting_review","attempts":0,"next_attempt_at":"2026-10-02T22:34:16.243268Z","cue_count":21,"published_cue_count":0,"last_error":"","created_at":"2026-10-02T22:33:27.877974Z","updated_at":"2026-10-02T22:34:16.243268Z"}]
+---- poll #4 (FINAL) 2026-10-02T22:35:02.8093145Z ----
+[{"job_id":"ocj_BvGo9mMqf2d3yElyjbrvA","asset_id":"sandbox-proof-261002163317-dbpo","source_path":"C:\\ProgramData\\CivicCast\\data\\uploads\\sandbox-proof-261002163317-dbpo\\t3-test-asset.mp4","package_dir":"C:\\ProgramData\\CivicCast\\data\\uploads\\.civiccast-packages\\sandbox-proof-261002163317-dbpo","state":"awaiting_review","attempts":0,"next_attempt_at":"2026-10-02T22:34:16.243268Z","cue_count":21,"published_cue_count":0,"last_error":"","created_at":"2026-10-02T22:33:27.877974Z","updated_at":"2026-10-02T22:34:16.243268Z"}]
+CAPTIONS=PASS

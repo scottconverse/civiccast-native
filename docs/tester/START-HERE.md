@@ -8,24 +8,25 @@
 
 ## Current Release
 
-`v1.0.0-beta.7` is the current published release (2026-09-15), recorded as
-`current` in the release-truth record. Do not describe any later candidate as
-a public download until the release owner publishes the exact candidate and
-updates that record. For a published GitHub release, use its `setup.exe`, runtime
+`v1.0.0-beta.10` is the current published release (published 2026-10-02),
+recorded as `current` in the release-truth record. It is a GitHub
+**pre-release** (a "Beta Candidate"), not a production release. For a published
+GitHub release, use its `setup.exe`, runtime
 `.ccpack` packs, `SHA256SUMS.txt`, and `setup.exe.sidecar.json` metadata from the
 exact release page. For a USB/LAN field kit, use the complete kit's own hash-pinned
 delivery manifest and do not require a GitHub sidecar that is not present. The
 current published release is the
-[`v1.0.0-beta.7` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7)
-as a **prerelease** -- watch
+[`v1.0.0-beta.10` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10)
+-- watch
 <https://github.com/scottconverse/civiccast-native/releases>, not
 `scottconverse/civiccast` (the retired, separate WSL2-line repository) and
 not any `v1.0.0-rcNN` tag, which belongs to that other repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
-`v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable release) are
-now superseded.
+`v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first
+downloadable release) are now superseded. `v1.0.0-beta.8` and `v1.0.0-beta.9`
+were never published; their work is inside beta.10.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
 upgrade-baseline kit, never a release a tester receives.
@@ -34,12 +35,19 @@ upgrade-baseline kit, never a release a tester receives.
 available, check
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) first
 -- it is the single source of truth for which tag is current, and this page
-may not have been updated yet. The beta.10 candidate remains unpublished until
-that record and the public release page say otherwise.**
+may not have been updated yet.**
 
-The installer itself is small; the large AI components (caption engine, local
+`v1.0.0-beta.10` is still a beta candidate. Its automated clean-install check
+passed (10 of 10 criteria, run locally in Windows Sandbox on 2026-10-02 against
+exactly this build). The upgrade (dirty) and download-only lanes were not run
+for it, and the human/station acceptance pass is not done. See
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md).
+
+The installer itself is small (`setup.exe` is about 242 MB); the large AI
+components (caption engine, local
 summary and translation model, and on capable hardware an optional
-higher-quality caption engine and GPU acceleration) are not inside it. During
+higher-quality caption engine and GPU acceleration) are not inside it, and the
+roughly 21 GB AI-model `station\` bundle is not a release asset. During
 install the CivicCast Installer window explains each large component, uses a
 copy already on the computer (**Found locally - verified**, for example from a
 USB/LAN kit's `station\` folder or an earlier install), and downloads the rest
@@ -58,9 +66,9 @@ from a `beta.1` install; see
 for why. From `v1.0.0-beta.3` on, an upgrade of an already-installed station
 is download-only (`setup.exe` plus the runtime packs, no `station\` folder
 needed) and keeps the station's existing recordings, database, and AI
-models. The published beta.7 release has download-only upgrade proof from
-beta.5; consult its exact verification record for that evidence. This is not
-advance acceptance of a beta.10 upgrade.
+models. Beta.7 had download-only upgrade proof from beta.5; consult its exact
+verification record for that evidence. Upgrade paths were not run for beta.10,
+so that evidence is not acceptance of a beta.10 upgrade.
 
 ## Clean-Machine Test Rule
 

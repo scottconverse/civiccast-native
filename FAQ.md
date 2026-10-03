@@ -1,12 +1,13 @@
 # CivicCast FAQ
 
-> **Release state:** `v1.0.0-beta.7` is the current release, a download-only
-> upgrade for stations already on `v1.0.0-beta.5` (now superseded, as are
-> `v1.0.0-beta.4` and `v1.0.0-beta.3`, the first downloadable release). `v1.0.0-beta.1`
+> **Release state:** `v1.0.0-beta.10` is the current release, published
+> 2026-10-02 as a GitHub pre-release (a beta candidate, not a production
+> release). `v1.0.0-beta.7` (a download-only upgrade for stations on
+> `v1.0.0-beta.5`) is superseded, as are `v1.0.0-beta.5`, `v1.0.0-beta.4` and
+> `v1.0.0-beta.3`, the first downloadable release. `v1.0.0-beta.1`
 > (USB-delivered) is also superseded. `v1.0.0-beta.2` was never published -- it exists only as an
-> internal Gate A upgrade-baseline kit. `v1.0.0-beta.10` is the next candidate and
-> the current owner-held unpublished candidate (`v1.0.0-beta.8` and
-> `v1.0.0-beta.9` were never published). See
+> internal Gate A upgrade-baseline kit. `v1.0.0-beta.8` and
+> `v1.0.0-beta.9` were never published; their work is inside beta.10. See
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
 > the authored release-state record.
 
@@ -35,12 +36,14 @@ public video without per-minute vendor fees or appliance lock-in.
 
 ## How do I install it?
 
-`v1.0.0-beta.7` is the current release, a download-only upgrade for
-stations already on `v1.0.0-beta.5` (now superseded, as are `v1.0.0-beta.4`
-and `v1.0.0-beta.3`, the first downloadable release). `v1.0.0-beta.1`
-(USB-delivered) is also superseded. `v1.0.0-beta.10` is the next candidate
-and the current owner-held unpublished candidate; it is not yet an install
-target.
+`v1.0.0-beta.10` is the current release, published 2026-10-02 as a GitHub
+pre-release with a signed `setup.exe`, five runtime packs, `SHA256SUMS.txt` and
+a sidecar. Its Gate A clean-install lane passed (10 of 10 criteria, in Windows
+Sandbox); the upgrade and download-only lanes were not run for beta.10 (waived
+by the owner), so upgrading an existing install to beta.10 is not proven. The
+earlier `v1.0.0-beta.7`, a download-only upgrade for stations already on
+`v1.0.0-beta.5`, is superseded, as are `v1.0.0-beta.4` and `v1.0.0-beta.3`, the
+first downloadable release. `v1.0.0-beta.1` (USB-delivered) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
 upgrade-baseline kit. Use
 `INSTALL-WINDOWS.md` and the active tester

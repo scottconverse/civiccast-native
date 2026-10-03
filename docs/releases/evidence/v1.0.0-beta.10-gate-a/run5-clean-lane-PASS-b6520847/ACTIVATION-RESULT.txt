@@ -1,0 +1,3 @@
+﻿installer_exit_code=0
+install_dir=C:\CivicCastHostStore\install
+station_set_json_found_after_install=1
