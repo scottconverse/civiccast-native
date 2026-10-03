@@ -70,6 +70,11 @@ _MAX_SECONDS: Final[float] = 600.0
 #: while staying bounded by the same event cap and window.
 DEFAULT_SUMMARY_INTERVAL_SECONDS: Final[float] = 30.0
 
+# Channel names come from the station configuration, not from untrusted input,
+# but keep this diagnostic bounded even if a malformed configuration creates a
+# large number of directories.  A normal station uses three channels.
+_MAX_CHANNELS: Final[int] = 16
+
 _TRUE_VALUES: Final[frozenset[str]] = frozenset({"1", "true", "yes", "on"})
 
 
@@ -97,6 +102,7 @@ class PhaseTimingCollector:
     _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
     _events: int = field(default=0, init=False)
     _aggregates: dict[str, _PhaseAggregate] = field(default_factory=dict, init=False)
+    _by_channel: dict[str, dict[str, _PhaseAggregate]] = field(default_factory=dict, init=False)
     _summarised: bool = field(default=False, init=False)
     _last_summary_ns: int = field(default=0, init=False)
 
@@ -113,7 +119,7 @@ class PhaseTimingCollector:
             time.monotonic_ns() - self._start_ns >= int(self.window_seconds * 1_000_000_000)
         )
 
-    def _record(self, phase: str, duration_ns: int) -> None:
+    def _record(self, phase: str, duration_ns: int, *, channel: str | None = None) -> None:
         # Timing is best effort: a bad value or a broken lock must never change
         # scan behaviour.
         with contextlib.suppress(Exception):
@@ -131,6 +137,19 @@ class PhaseTimingCollector:
                 agg.total_ns += duration_ns
                 if duration_ns > agg.max_ns:
                     agg.max_ns = duration_ns
+                channel_name = str(channel).strip() if channel is not None else ""
+                if channel_name and (
+                    channel_name in self._by_channel or len(self._by_channel) < _MAX_CHANNELS
+                ):
+                    channel_phases = self._by_channel.setdefault(channel_name, {})
+                    channel_agg = channel_phases.get(phase)
+                    if channel_agg is None:
+                        channel_agg = _PhaseAggregate()
+                        channel_phases[phase] = channel_agg
+                    channel_agg.count += 1
+                    channel_agg.total_ns += duration_ns
+                    if duration_ns > channel_agg.max_ns:
+                        channel_agg.max_ns = duration_ns
 
     @contextmanager
     def phase(
@@ -147,7 +166,11 @@ class PhaseTimingCollector:
         try:
             yield
         finally:
-            self._record(phase, time.monotonic_ns() - started)
+            self._record(
+                phase,
+                time.monotonic_ns() - started,
+                channel=channel,
+            )
 
     @contextmanager
     def wait(self, phase: str, *, channel: str | None = None) -> Iterator[None]:
@@ -157,9 +180,13 @@ class PhaseTimingCollector:
         try:
             yield
         finally:
-            self._record(phase, time.monotonic_ns() - started)
+            self._record(
+                phase,
+                time.monotonic_ns() - started,
+                channel=channel,
+            )
 
-    def summarise(self, *, force: bool = False) -> dict[str, dict[str, float]]:
+    def summarise(self, *, force: bool = False) -> dict[str, object]:
         """Return (and log) the per-phase cumulative summary.
 
         PERIODIC, not one-shot: at most one emission per
@@ -188,7 +215,20 @@ class PhaseTimingCollector:
                 }
                 for name, agg in sorted(self._aggregates.items())
             }
+            by_channel = {
+                channel: {
+                    name: {
+                        "count": agg.count,
+                        "total_ms": round(agg.total_ns / 1_000_000, 3),
+                        "max_ms": round(agg.max_ns / 1_000_000, 3),
+                    }
+                    for name, agg in sorted(phases.items())
+                }
+                for channel, phases in sorted(self._by_channel.items())
+            }
             events = self._events
+            if not snapshot and not by_channel:
+                return {}
         # A broken logging handler must never propagate out of timing code.
         with contextlib.suppress(Exception):
             _LOG.info(
@@ -199,9 +239,13 @@ class PhaseTimingCollector:
                         "pid": os.getpid(),
                         "window_s": self.window_seconds,
                         "phases": snapshot,
+                        "by_channel": by_channel,
                     }
                 ),
             )
+        # Preserve the long-standing phase-keyed return shape for callers while
+        # exposing the new attribution under a clearly non-phase key.
+        snapshot["by_channel"] = by_channel
         return snapshot
 
 
@@ -224,7 +268,7 @@ class NullPhaseTimingCollector:
     def wait(self, phase: str, **_: object) -> Iterator[None]:  # pragma: no cover
         yield
 
-    def summarise(self) -> dict[str, dict[str, float]]:
+    def summarise(self) -> dict[str, object]:
         return {}
 
 

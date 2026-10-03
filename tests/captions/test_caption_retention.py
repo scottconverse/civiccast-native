@@ -372,6 +372,58 @@ class TestSharedEvidenceCoalescing:
         assert Path(str(shared_path)).is_file()
 
 
+def test_discovery_uses_bulk_review_evidence_reader(tmp_path: Path) -> None:
+    """A bulk-capable store must not fall back to one lookup per review row."""
+
+    from civiccast.captions.models import CaptionCue
+    from civiccast.captions.review import CaptionReviewItemCreate, InMemoryCaptionReviewStore
+
+    evidence_path = _write_evidence_wav(tmp_path / "evidence" / "bulk.wav")
+    import hashlib
+
+    evidence = {
+        "source_path": str(evidence_path.resolve()),
+        "source_start_seconds": 0.0,
+        "source_sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+        "source_bytes": evidence_path.stat().st_size,
+    }
+    backing = InMemoryCaptionReviewStore()
+    from civiccast.captions.review import CaptionReviewAudioEvidence
+
+    backing.create(
+        CaptionReviewItemCreate(
+            review_item_id="asset:bulk-cue",
+            asset_id="asset",
+            cue=CaptionCue(
+                cue_id="bulk-cue",
+                start_seconds=0.0,
+                end_seconds=1.0,
+                text="bulk evidence",
+                confidence=0.9,
+            ),
+            audio_evidence=CaptionReviewAudioEvidence(**evidence),
+        )
+    )
+
+    class BulkOnlyStore:
+        def list_with_audio_evidence(self):
+            return backing.list_with_audio_evidence()
+
+        def list(self):
+            raise AssertionError("retention must not use the per-row list fallback")
+
+        def get_audio_evidence(self, _review_item_id):
+            raise AssertionError("retention must not issue per-row evidence lookups")
+
+    policy = _policy_type()(volume_bytes=500 * GIB, free_bytes=100 * GIB)
+    candidates = policy._discover_candidates(
+        tap_root=None, review_store=BulkOnlyStore(), segment_seconds=5.0
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["path"] == evidence_path.resolve()
+
+
 class TestUnverifiedRawChunkCannotLeakForever:
     """Live defect (measured 2026-09-17 on the Blackwell station): raw tap
 

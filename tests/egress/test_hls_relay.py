@@ -230,3 +230,23 @@ def test_is_alive_only_reports_on_the_named_channels_relays() -> None:
 
     assert sup.is_alive("gov") is False
     assert sup.is_alive("other") is True
+
+
+def test_udp_input_args_use_widened_analyze_and_probe_for_delayed_video() -> None:
+    """REGRESSION: a delayed-video UDP TS can lock the relay to audio-only when the
+    ffmpeg start-time probe window is too small. The isolated synthetic proof shows
+    2,000,000 locks to AAC-only while 6,000,000 retains H264/AAC. Pin BOTH options
+    to the widened value so the two never drift apart."""
+    from civiccast.egress.hls_relay import _UDP_INPUT_ARGS
+
+    args = tuple(_UDP_INPUT_ARGS)
+    # both flags must be present and identical
+    assert args.count("-analyzeduration") == 1
+    assert args.count("-probesize") == 1
+    ad = args[args.index("-analyzeduration") + 1]
+    ps = args[args.index("-probesize") + 1]
+    assert ad == ps, f"analyze/probe must move together: {ad} vs {ps}"
+    # widened value (2_000_000 is the known audio-only-lock baseline)
+    assert ad == "6000000", (
+        f"UDP input probe window must be widened to 6000000 for delayed video; got {ad}"
+    )

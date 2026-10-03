@@ -34,6 +34,7 @@ import logging
 import os
 import queue
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -68,6 +69,7 @@ WarmScheduler = Callable[[Callable[[], None]], None]
 
 _CACHE_DIR_NAME = "conform-cache"
 _DEFAULT_CACHE_GB = 20.0
+_DEFAULT_PREPARATION_TIMEOUT_SECONDS = 300.0
 #: F3 fix (hostile-review follow-up, 2026-09-06): the age-only GC this replaced
 #: had no size/count budget at all, so a channel doing frequent rollovers (the
 #: exact scenario H5 was fixed for) could accumulate an unbounded number of
@@ -224,6 +226,37 @@ def _cache_budget_bytes() -> float:
     return gb * 1e9
 
 
+def preparation_timeout_seconds_from_env() -> float:
+    """Return the fail-closed timeout for one source-preparation ffmpeg call.
+
+    Preparation is background work, but an ffmpeg child must still have a
+    finite lifetime so a corrupt input or stalled encoder cannot leave a
+    channel in ``STARTING`` forever.  The default is generous for a bounded
+    GStreamer segment and can be tuned for slower hardware without disabling
+    the bound.
+    """
+
+    raw = os.environ.get("CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_PREPARATION_TIMEOUT_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        _LOG.warning(
+            "Invalid CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS=%r; using %.1fs.",
+            raw,
+            _DEFAULT_PREPARATION_TIMEOUT_SECONDS,
+        )
+        return _DEFAULT_PREPARATION_TIMEOUT_SECONDS
+    if value <= 0:
+        _LOG.warning(
+            "CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS must be positive; using %.1fs.",
+            _DEFAULT_PREPARATION_TIMEOUT_SECONDS,
+        )
+        return _DEFAULT_PREPARATION_TIMEOUT_SECONDS
+    return value
+
+
 def _foreground_thread_cap() -> int:
     """Item 66 (point 2, Opus review, measured on HALO): conforming 300s of
     content at ``-threads 1`` took 233s vs 36.6s unthrottled -- the
@@ -284,6 +317,7 @@ class SourcePreparer:
         loudness_checker: LoudnessChecker = check_streaming_loudness,
         warm_scheduler: WarmScheduler = _default_warm_scheduler,
         playout_trim_supported: bool = False,
+        preparation_timeout_seconds: float | None = None,
     ) -> None:
         """``playout_trim_supported``: the consuming encoder honors per-segment
         ``inpoint``/``outpoint`` on prepared segments (true for the legacy
@@ -297,6 +331,13 @@ class SourcePreparer:
         self._loudness_checker = loudness_checker
         self._warm_scheduler = warm_scheduler
         self._playout_trim_supported = playout_trim_supported
+        if preparation_timeout_seconds is not None and preparation_timeout_seconds <= 0:
+            raise ValueError("preparation_timeout_seconds must be greater than zero when set.")
+        self._preparation_timeout_seconds = (
+            preparation_timeout_seconds
+            if preparation_timeout_seconds is not None
+            else preparation_timeout_seconds_from_env()
+        )
         self._warming_guard = threading.Lock()
         self._warming: set[str] = set()
         # ponytail: one Lock per cache key ever seen, never pruned -- bounded
@@ -352,6 +393,11 @@ class SourcePreparer:
                 config.canonical_profile.model_dump_json(),
                 f"{config.loudness_target_lufs:g}",
                 f"{config.loudness_tolerance_lufs:g}",
+                # Normalization-method version: bumping this invalidates every
+                # cached conform produced by an older method, so a switch from
+                # one-pass to two-pass loudnorm can never be served from a
+                # stale single-pass cache entry.
+                _LOUDNORM_METHOD_VERSION,
             ]
         )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
@@ -497,6 +543,33 @@ class SourcePreparer:
             cache_dir = self._cache_dir()
             cache_dir.mkdir(parents=True, exist_ok=True)
             tmp = cache_dir / f"{key}.ts.tmp"
+            measured_loudness: dict[str, str] | None = None
+            if normalized and config.loudness_target_lufs is not None:
+                probe_args = build_loudnorm_probe_args(
+                    source_path=source_path,
+                    segment=None,
+                    loudness_target_lufs=config.loudness_target_lufs,
+                    threads=threads,
+                )
+                try:
+                    probe_result = self._run_ffmpeg(probe_args, cancel_event)
+                except Exception:
+                    with contextlib.suppress(OSError):
+                        tmp.unlink(missing_ok=True)
+                    raise
+                parsed = (
+                    parse_loudnorm_measurement(probe_result.stderr)
+                    if probe_result.returncode == 0
+                    else None
+                )
+                if parsed is None:
+                    tmp.unlink(missing_ok=True)
+                    raise SourcePrepareError(
+                        f"Full-asset loudnorm measurement pass failed for "
+                        f"{source_path.name!r}; refusing to conform without a "
+                        "same-window measurement."
+                    )
+                measured_loudness = parsed
             args = build_conform_source_args(
                 source_path=source_path,
                 output_path=tmp,
@@ -504,11 +577,17 @@ class SourcePreparer:
                 profile=config.canonical_profile,
                 loudness_target_lufs=config.loudness_target_lufs if normalized else None,
                 threads=threads,
+                measured_loudness=measured_loudness,
             )
             try:
                 result = self._run_ffmpeg(args, cancel_event)
-            except SourcePreparationCancelledError:
-                tmp.unlink(missing_ok=True)
+            except Exception:
+                # A timeout or any other runner failure can leave a partial
+                # multi-gigabyte output behind.  Remove it before propagating
+                # the error so a failed warm cannot silently consume the
+                # conform-cache budget.
+                with contextlib.suppress(OSError):
+                    tmp.unlink(missing_ok=True)
                 raise
             if result.returncode != 0:
                 tmp.unlink(missing_ok=True)
@@ -1005,6 +1084,66 @@ class SourcePreparer:
                 self._warming.discard(key)
             _LOG.exception("Failed to queue conform-cache warm; next airing re-warms.")
 
+    @staticmethod
+    def _graph_referenced_plan_dirs(
+        channel_prepared_root: Path,
+    ) -> frozenset[Path]:
+        """Return per-plan dirs the channel's current graph still references.
+
+        The graph is the worker's durable read list and can outlive in-memory
+        daemon bookkeeping across a reload/start transition. It is only a
+        conservative backstop: absent, unreadable, or malformed graph data
+        protects nothing; a referenced path outside this channel's prepared
+        root is ignored so a graph cannot nominate an arbitrary sibling for
+        preservation. Graph staleness or incompleteness remains possible, so
+        this is not a substitute for daemon lifecycle correctness.
+        """
+
+        try:
+            graph_path = channel_prepared_root.parent / "playout-graph.json"
+            graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return frozenset()
+        if not isinstance(graph, dict):
+            return frozenset()
+        try:
+            resolved_root = channel_prepared_root.resolve()
+        except OSError:
+            return frozenset()
+        graph_paths: set[Path] = set()
+        sources = graph.get("sources")
+        if not isinstance(sources, list):
+            return frozenset()
+        for source in sources:
+            if not isinstance(source, dict):
+                continue
+            subchains = source.get("subchains")
+            if not isinstance(subchains, list):
+                continue
+            for subchain in subchains:
+                if not isinstance(subchain, list):
+                    continue
+                for element in subchain:
+                    if not isinstance(element, dict):
+                        continue
+                    props = element.get("props")
+                    if not isinstance(props, dict):
+                        continue
+                    location = props.get("location")
+                    if not isinstance(location, str):
+                        continue
+                    try:
+                        candidate = Path(location).resolve()
+                    except OSError:
+                        continue
+                    try:
+                        candidate.relative_to(resolved_root)
+                    except ValueError:
+                        continue
+                    if candidate.parent.parent == resolved_root:
+                        graph_paths.add(candidate.parent)
+        return frozenset(graph_paths)
+
     def release(self, plan_dir: Path | None) -> None:
         """F3 fix: immediately reclaim ONE specific per-plan directory the caller
         independently knows is safe to remove -- e.g. the daemon calls this for
@@ -1030,6 +1169,12 @@ class SourcePreparer:
         next real airing of that asset re-populates the cache normally.
         """
         if plan_dir is None:
+            return
+        # This is a direct deletion path, not GC: preserve an exact directory
+        # the current graph still names, then let the graph be replaced or the
+        # directory released by a later transition. A missing/unreadable graph
+        # protects nothing and preserves the prior release semantics.
+        if plan_dir in self._graph_referenced_plan_dirs(plan_dir.parent):
             return
         with contextlib.suppress(OSError):
             shutil.rmtree(plan_dir)
@@ -1081,6 +1226,12 @@ class SourcePreparer:
                 with contextlib.suppress(OSError):
                     entry.unlink()
         plan_dirs = [entry for entry in entries if entry.is_dir()]
+        # A graph can outlive in-memory daemon bookkeeping during a reload/start
+        # transition. Treat its filesrc locations as a final source of truth:
+        # never reclaim a prepared dir the worker may still open. The shared
+        # helper fails closed on absent/malformed/out-of-root graph data and
+        # leaves graph staleness/incompleteness as a documented limitation.
+        keep = keep | self._graph_referenced_plan_dirs(channel_prepared_root)
 
         def _mtime(path: Path) -> float:
             try:
@@ -1321,11 +1472,21 @@ class SourcePreparer:
         self._raise_if_cancelled(cancel_event)
         try:
             if self._ffmpeg_runner is run_ffmpeg:
-                result = self._ffmpeg_runner(args, cancel_event=cancel_event)
+                result = self._ffmpeg_runner(
+                    args,
+                    cancel_event=cancel_event,
+                    timeout=self._preparation_timeout_seconds,
+                )
             else:
                 result = self._ffmpeg_runner(args)
         except FfmpegCancelledError as exc:
             raise SourcePreparationCancelledError("Source preparation was cancelled.") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise SourcePrepareError(
+                "FFmpeg source preparation timed out after "
+                f"{self._preparation_timeout_seconds:g}s; the channel will use its "
+                "configured fallback until the source can be prepared."
+            ) from exc
         self._raise_if_cancelled(cancel_event)
         return result
 
@@ -1771,6 +1932,44 @@ class SourcePreparer:
         # comment in _emit_prepared_from_cache.
         output_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_output_path = output_path.with_name(output_path.name + ".tmp")
+
+        # Candidate A (two-pass loudnorm): when this segment is normalized,
+        # measure the SAME window first, then encode with the measured_*
+        # parameters so the single-pass loudnorm shortfall on high-LRA material
+        # is removed.  The probe pass is bounded by the identical -ss/-t as the
+        # encode, so its measurement describes exactly the audio being written.
+        # A probe that fails or yields unusable metadata FAILS CLOSED -- we
+        # never silently fall back to a one-pass encode that would ship an
+        # out-of-tolerance segment.
+        measured_loudness: dict[str, str] | None = None
+        if normalized and config.loudness_target_lufs is not None:
+            probe_args = build_loudnorm_probe_args(
+                source_path=source_path,
+                segment=segment,
+                loudness_target_lufs=config.loudness_target_lufs,
+                threads=_foreground_thread_cap(),
+            )
+            try:
+                probe_result = self._run_ffmpeg(probe_args, cancel_event)
+            except SourcePreparationCancelledError:
+                tmp_output_path.unlink(missing_ok=True)
+                raise
+            except SourcePrepareError:
+                tmp_output_path.unlink(missing_ok=True)
+                raise
+            parsed = (
+                parse_loudnorm_measurement(probe_result.stderr)
+                if probe_result.returncode == 0
+                else None
+            )
+            if parsed is None:
+                tmp_output_path.unlink(missing_ok=True)
+                raise SourcePrepareError(
+                    f"Egress source {segment.label!r} loudnorm measurement pass failed; "
+                    "refusing to conform without a same-window measurement."
+                )
+            measured_loudness = parsed
+
         args = build_conform_source_args(
             source_path=source_path,
             output_path=tmp_output_path,
@@ -1778,10 +1977,14 @@ class SourcePreparer:
             profile=config.canonical_profile,
             loudness_target_lufs=config.loudness_target_lufs if normalized else None,
             threads=_foreground_thread_cap(),
+            measured_loudness=measured_loudness,
         )
         try:
             result = self._run_ffmpeg(args, cancel_event)
         except SourcePreparationCancelledError:
+            tmp_output_path.unlink(missing_ok=True)
+            raise
+        except SourcePrepareError:
             tmp_output_path.unlink(missing_ok=True)
             raise
         if result.returncode != 0:
@@ -1922,6 +2125,104 @@ class SourcePreparer:
         )
 
 
+_LOUDNORM_MEASURED_KEYS = ("input_i", "input_tp", "input_lra", "input_thresh", "target_offset")
+
+#: Bump when the loudness normalization method changes so the conform
+#: cache cannot serve a stale artifact produced by an older method.
+_LOUDNORM_METHOD_VERSION = "loudnorm-v2-twopass"
+
+
+def parse_loudnorm_measurement(stderr: str) -> dict[str, str] | None:
+    """Parse the JSON block ffmpeg\'s ``loudnorm ...:print_format=json`` emits.
+
+    Returns a dict containing exactly the five measured keys, or ``None`` when
+    the block is absent/unparseable. Values are kept as strings; numeric
+    validation happens in :func:`_validated_measured_loudness`.
+    """
+
+    start = stderr.rfind("{")
+    end = stderr.rfind("}")
+    if start < 0 or end < 0 or end < start:
+        return None
+    try:
+        data = json.loads(stderr[start : end + 1])
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    out: dict[str, str] = {}
+    for key in _LOUDNORM_MEASURED_KEYS:
+        if key not in data:
+            return None
+        out[key] = str(data[key])
+    return out
+
+
+def _validated_measured_loudness(measured: dict[str, str]) -> dict[str, str]:
+    """Return a validated copy of measured loudnorm metadata, or raise.
+
+    Every value must be present and parse as a FINITE float.  Bad metadata must
+    fail loud (the caller refuses the conform) rather than silently fall back to
+    a one-pass encode that would ship an unnormalized or mis-normalized segment.
+    """
+
+    if not isinstance(measured, dict):
+        raise SourcePrepareError("loudnorm measurement metadata must be a mapping")
+    out: dict[str, str] = {}
+    for key in _LOUDNORM_MEASURED_KEYS:
+        if key not in measured:
+            raise SourcePrepareError(f"loudnorm measurement metadata missing {key!r}")
+        raw = measured[key]
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            raise SourcePrepareError(
+                f"loudnorm measurement metadata {key}={raw!r} is not numeric"
+            ) from None
+        if value != value or value in (float("inf"), float("-inf")):
+            raise SourcePrepareError(f"loudnorm measurement metadata {key}={raw!r} is not finite")
+        out[key] = str(raw)
+    return out
+
+
+def build_loudnorm_probe_args(
+    *,
+    source_path: Path,
+    segment: EgressSourceSegment | None,
+    loudness_target_lufs: float,
+    threads: int | None = None,
+) -> list[str]:
+    """First-pass args: measure the SAME window the encode will process.
+
+    ``threads`` mirrors ``build_conform_source_args``: ``None`` leaves ffmpeg's
+    default untouched; a value caps the decode.  Synchronous conforms pass
+    ``_foreground_thread_cap()`` so a three-channel simultaneous start cannot
+    each launch an unthrottled analysis pass; warm-behind conforms pass ``1``
+    exactly like their encode.  ``-threads`` is an INPUT/decoder option, so it
+    is placed before ``-i`` (same arg-grammar rule the encode path follows).
+    """
+
+    args = ["-hide_banner", "-loglevel", "info"]
+    if threads is not None:
+        args.extend(["-threads", str(threads)])
+    if segment is not None and segment.inpoint_seconds is not None:
+        args.extend(["-ss", f"{segment.inpoint_seconds:g}"])
+    args.extend(["-i", str(source_path)])
+    if segment is not None:
+        args.extend(["-t", f"{segment.duration_seconds:g}"])
+    args.extend(
+        [
+            "-vn",
+            "-af",
+            f"loudnorm=I={loudness_target_lufs:g}:LRA=11:TP=-1.5:print_format=json",
+            "-f",
+            "null",
+            "-",
+        ]
+    )
+    return args
+
+
 def build_conform_source_args(
     *,
     source_path: Path,
@@ -1930,6 +2231,7 @@ def build_conform_source_args(
     profile: CanonicalProfile,
     loudness_target_lufs: float | None = None,
     threads: int | None = None,
+    measured_loudness: dict[str, str] | None = None,
 ) -> list[str]:
     """Build FFmpeg args that conform one media source to the canonical profile.
 
@@ -1965,7 +2267,24 @@ def build_conform_source_args(
     ]
     args.extend(["-vf", ",".join(filters)])
     if loudness_target_lufs is not None:
-        args.extend(["-af", f"loudnorm=I={loudness_target_lufs:g}:LRA=11:TP=-1.5"])
+        if measured_loudness is None:
+            args.extend(["-af", f"loudnorm=I={loudness_target_lufs:g}:LRA=11:TP=-1.5"])
+        else:
+            measured = _validated_measured_loudness(measured_loudness)
+            args.extend(
+                [
+                    "-af",
+                    (
+                        f"loudnorm=I={loudness_target_lufs:g}:LRA=11:TP=-1.5"
+                        f":measured_I={measured['input_i']}"
+                        f":measured_LRA={measured['input_lra']}"
+                        f":measured_TP={measured['input_tp']}"
+                        f":measured_thresh={measured['input_thresh']}"
+                        f":offset={measured['target_offset']}"
+                        ":linear=true"
+                    ),
+                ]
+            )
     if threads is not None:
         args.extend(["-threads", str(threads)])
     args.extend(

@@ -18,6 +18,7 @@ Real Alembic runner against a temp SQLite DB -- no mocks.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -50,7 +51,7 @@ def _language_columns(database_url: str) -> list[str]:
 def _insert_pre_language_row(db_path: Path) -> None:
     """Insert a caption_review_items row as it looked at the 0082 head."""
 
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             """
             INSERT INTO caption_review_items (
@@ -76,7 +77,7 @@ def test_upgrade_adds_language_downgrade_removes_it_and_backfills_en(tmp_path: P
     # Upgrade one step: the column appears and the legacy row backfills to en.
     command.upgrade(cfg, _HEAD)
     assert "language" in _language_columns(url)
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         row = conn.execute(
             "SELECT language FROM caption_review_items WHERE review_item_id = 'legacy-1'"
         ).fetchone()
@@ -85,7 +86,7 @@ def test_upgrade_adds_language_downgrade_removes_it_and_backfills_en(tmp_path: P
     # Downgrade back to the parent: the column is gone, the row survives.
     command.downgrade(cfg, _PARENT)
     assert "language" not in _language_columns(url)
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         count = conn.execute(
             "SELECT COUNT(*) FROM caption_review_items WHERE review_item_id = 'legacy-1'"
         ).fetchone()
@@ -99,7 +100,7 @@ def test_new_rows_default_to_en_when_language_is_unspecified(tmp_path: Path) -> 
     url = f"sqlite:///{db_path}"
     command.upgrade(_cfg(url), _HEAD)
 
-    with sqlite3.connect(db_path) as conn:
+    with closing(sqlite3.connect(db_path)) as conn:
         conn.execute(
             """
             INSERT INTO caption_review_items (

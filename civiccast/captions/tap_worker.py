@@ -84,6 +84,11 @@ from civiccast.captions.tap_backoff import (
     DEFAULT_MAX_BACKOFF_SECONDS,
     CaptionBackoffPolicy,
 )
+from civiccast.captions.tap_batch_diagnostic import (
+    BatchDiagnosticCollector,
+    NullBatchDiagnostic,
+    batch_diagnostic_from_env,
+)
 from civiccast.captions.worker import AudioEvidenceFactory, LiveCaptionWorker, ReviewPersistenceMode
 
 if TYPE_CHECKING:
@@ -465,6 +470,7 @@ class CaptionTapWorker:
         backoff_policy: CaptionBackoffPolicy | None = None,
         is_enabled: Callable[[], bool] | None = None,
         monotonic: Callable[[], float] | None = None,
+        batch_diagnostic: BatchDiagnosticCollector | NullBatchDiagnostic | None = None,
     ) -> None:
         self._tap_root = tap_root
         self._caption_work_dir = caption_work_dir.expanduser().resolve()
@@ -483,6 +489,32 @@ class CaptionTapWorker:
         if max_backlog_segments < 1:
             raise ValueError("Caption tap max_backlog_segments must be at least 1.")
         self._max_channel_workers = max_channel_workers
+        # Production scans must not wait for ASR to finish.  Keep one bounded
+        # executor alive for the worker lifetime instead of constructing a
+        # pool per scan and waiting on ``pool.map``.  ``run_once`` remains
+        # synchronous by default for the external entry point and the existing
+        # unit-test seam; ``run_forever`` selects the non-blocking mode below.
+        self._channel_executor: concurrent.futures.ThreadPoolExecutor | None = None
+        self._channel_executor_workers: int | None = None
+        self._channel_executor_lock = threading.RLock()
+        # A token is (session generation, settled filename).  Generation is
+        # part of the token so a late result from a prior broadcast cannot make
+        # a same-numbered chunk in a new session look in-flight.
+        self._channel_inflight: dict[str, set[tuple[int, str]]] = {}
+        self._channel_futures: dict[
+            concurrent.futures.Future[_ChannelScanResult],
+            tuple[str, int, frozenset[str]],
+        ] = {}
+        #: channel -> duration (seconds) of the MOST RECENTLY COMPLETED batch.
+        #: Written only after a real batch finishes; read only to label a later
+        #: overload discard with the batch whose duration pushed the queue over
+        #: the max-2 gate.  The gate can only evaluate queued backlog AFTER the
+        #: in-flight batch ends, so a live in-flight age is necessarily gone by
+        #: then -- this is the only value that can still explain that queue.
+        self._channel_last_batch_seconds: dict[str, float] = {}
+        #: channel -> monotonic start of the batch currently running, used ONLY
+        #: to compute the completed duration above (diagnostic enabled).
+        self._channel_batch_started_at: dict[str, float] = {}
         self._backoff = backoff_policy or CaptionBackoffPolicy()
         # One clock for the whole worker, and the SAME clock the backoff policy
         # runs on, so a test that drives the backoff forward also drives the
@@ -531,6 +563,10 @@ class CaptionTapWorker:
         # Opt-in, default-off phase timing (CIVICCAST_CAPTION_TAP_PHASE_TIMING=1).
         # Inert -- no clock read, no counters -- unless explicitly enabled.
         self._phase_timing = phase_timing_from_env()
+        # Opt-in, default-off PER-BATCH diagnostic
+        # (CIVICCAST_CAPTION_TAP_BATCH_DIAGNOSTIC=1). Inert unless enabled:
+        # no clock read and no record kept when the switch is off.
+        self._batch_diagnostic = batch_diagnostic or batch_diagnostic_from_env()
         self._retention_policy = retention_policy or CaptionEvidenceRetentionPolicy.from_system(
             storage_root=self._caption_work_dir
         )
@@ -580,7 +616,12 @@ class CaptionTapWorker:
         try:
             while stop_event is None or not stop_event.is_set():
                 try:
-                    self.run_once()
+                    # The live station cannot let a slow ASR batch hold the
+                    # two-second scan loop hostage.  Results are committed by
+                    # these bounded channel workers; the next scan observes
+                    # completed files and queues only work that is not already
+                    # in flight.
+                    self.run_once(wait_for_results=False)
                 except Exception:
                     _LOG.exception("Caption tap scan failed; continuing.")
                 if stop_event is None:
@@ -609,6 +650,153 @@ class CaptionTapWorker:
                     "by the in-flight flag until it completes).",
                     self._retention_shutdown_timeout,
                 )
+            self._shutdown_channel_executor()
+
+    def _ensure_channel_executor(self) -> concurrent.futures.ThreadPoolExecutor:
+        """Return the bounded channel executor, creating it after sizing resolves."""
+
+        with self._channel_executor_lock:
+            workers = max(1, self._max_channel_workers)
+            if self._channel_executor is None or self._channel_executor_workers != workers:
+                previous = self._channel_executor
+                self._channel_executor = concurrent.futures.ThreadPoolExecutor(
+                    max_workers=workers,
+                    thread_name_prefix="civiccast-caption-channel",
+                )
+                self._channel_executor_workers = workers
+                if previous is not None:
+                    # No future is cancelled here: a runtime fallback or a
+                    # future operator override must not abandon a chunk that
+                    # already entered ASR.  The old pool drains independently;
+                    # generation checks still prevent stale publication.
+                    previous.shutdown(wait=False, cancel_futures=False)
+            return self._channel_executor
+
+    def _submit_channel(
+        self,
+        args: tuple[str, Path, list[tuple[int, Path]], int, str],
+    ) -> concurrent.futures.Future[_ChannelScanResult]:
+        """Submit one channel batch and mark its settled files in-flight."""
+
+        channel_id, _channel_dir, segments, generation, _batch_id = args
+        names = frozenset(path.name for _index, path in segments)
+        future = self._ensure_channel_executor().submit(
+            self._isolated_process_channel,
+            *args,
+        )
+        with self._channel_executor_lock:
+            tokens = self._channel_inflight.setdefault(channel_id, set())
+            tokens.update((generation, name) for name in names)
+            self._channel_futures[future] = (channel_id, generation, names)
+            if self._batch_diagnostic.enabled:
+                self._channel_batch_started_at[channel_id] = time.monotonic()
+        future.add_done_callback(self._channel_future_done)
+        return future
+
+    def _channel_future_done(
+        self,
+        future: concurrent.futures.Future[_ChannelScanResult],
+    ) -> None:
+        """Release in-flight tokens and surface unexpected worker failures."""
+
+        with self._channel_executor_lock:
+            metadata = self._channel_futures.pop(future, None)
+            if metadata is None:
+                return
+            channel_id, generation, names = metadata
+            tokens = self._channel_inflight.get(channel_id)
+            if tokens is not None:
+                tokens.difference_update((generation, name) for name in names)
+                if not tokens:
+                    self._channel_inflight.pop(channel_id, None)
+                    # Opt-in only: no clock read and no map mutation when off.
+                    if self._batch_diagnostic.enabled:
+                        started = self._channel_batch_started_at.pop(channel_id, None)
+                        if started is not None:
+                            self._channel_last_batch_seconds[channel_id] = max(
+                                0.0, time.monotonic() - started
+                            )
+        try:
+            future.result()
+        except Exception:
+            _LOG.exception("Caption tap channel %s future failed outside isolation.", channel_id)
+
+    def _forget_last_batch_duration(self, channel_id: str) -> None:
+        """Drop any retained completed-batch duration for a channel/session.
+
+        Called on every session reset and fail-closed caption clear so a later
+        cold overload cannot be attributed to a session that has already ended.
+        Inert when the diagnostic is disabled.
+        """
+
+        if not self._batch_diagnostic.enabled:
+            return
+        with self._channel_executor_lock:
+            self._channel_last_batch_seconds.pop(channel_id, None)
+            self._channel_batch_started_at.pop(channel_id, None)
+
+    def _last_batch_seconds(self, channel_id: str) -> float:
+        """Duration of the most recently COMPLETED batch for this channel.
+
+        Metadata only (a float, seconds); reads no files and no audio.  This is
+        what an overload discard reports: by the time the max-2 gate can count
+        queued backlog the in-flight batch has already ended, so the queue the
+        gate sees is exactly the work that piled up behind THIS batch.  0.0
+        means no batch has completed yet -- honest, not fabricated.
+
+        INERT when the diagnostic is disabled: returns 0.0 without taking the
+        executor lock or reading any retained value.
+        """
+
+        if not self._batch_diagnostic.enabled:
+            return 0.0
+        with self._channel_executor_lock:
+            return self._channel_last_batch_seconds.get(channel_id, 0.0)
+
+    def _inflight_names(self, channel_id: str) -> frozenset[str]:
+        """Return paths owned by any live ASR task for this channel."""
+
+        with self._channel_executor_lock:
+            return frozenset(
+                name for _generation, name in self._channel_inflight.get(channel_id, ())
+            )
+
+    def _channel_has_inflight(self, channel_id: str) -> bool:
+        """Return whether a channel already has a batch executing.
+
+        ``LiveCaptionWorker`` carries stabilization state across segments, so
+        two batches for the same channel must not run concurrently even when
+        their filenames differ.  Sibling channels still use the bounded pool
+        concurrently; a same-channel backlog waits for its current batch to
+        finish and is then evaluated by the normal fail-closed gate.
+        """
+
+        with self._channel_executor_lock:
+            return bool(self._channel_inflight.get(channel_id))
+
+    def _invalidate_inflight_for_overload(self, channel_id: str) -> None:
+        """Refuse stale ASR publication when a queued backlog trips fail-closed."""
+
+        if not self._inflight_names(channel_id):
+            return
+        with self._session_lock(channel_id):
+            self._session_generation[channel_id] = self._session_generation.get(channel_id, 0) + 1
+            self._previous_segments.pop(channel_id, None)
+        _LOG.warning(
+            "Caption tap channel %s had ASR work in flight when its queued "
+            "backlog exceeded the fail-closed limit; stale results will be dropped.",
+            channel_id,
+        )
+
+    def _shutdown_channel_executor(self) -> None:
+        """Stop accepting caption work without making service shutdown wait on ASR."""
+
+        with self._channel_executor_lock:
+            executor = self._channel_executor
+            self._channel_executor = None
+            self._channel_executor_workers = None
+        if executor is not None:
+            executor.shutdown(wait=False, cancel_futures=True)
 
     @contextmanager
     def _timed_session_lock(self, channel_id: str) -> Iterator[threading.RLock]:
@@ -676,6 +864,9 @@ class CaptionTapWorker:
         self._channel_workers.pop(channel_id, None)
         self._channel_publishers.pop(channel_id, None)
         self._previous_segments.pop(channel_id, None)
+        # The preceding-batch duration belongs to the session that just ended;
+        # a cold new session must not inherit it as its own overload cause.
+        self._forget_last_batch_duration(channel_id)
         self._backoff.forget(channel_id)
         LiveWebVttPublisher(active_caption_sidecar(self._caption_work_dir, channel_id)).reset()
         # Discard the channel's leftover segments: they belong to the PREVIOUS
@@ -723,7 +914,7 @@ class CaptionTapWorker:
             return CaptionTapScanResult(channels=(channel_id,))
         result = worker.flush()
         with self._session_lock(channel_id), self._retention_lock:
-            if self._retention_ready:
+            if self._retention_ready or self._retention_in_flight:
                 self._publish_cues(channel_id, generation, worker.committed_cues())
         return CaptionTapScanResult(
             committed_review_items=len(result.committed_review_items),
@@ -731,8 +922,14 @@ class CaptionTapWorker:
             channels=(channel_id,),
         )
 
-    def run_once(self) -> CaptionTapScanResult:
-        """Scan every channel directory once and consume settled segments."""
+    def run_once(self, *, wait_for_results: bool = True) -> CaptionTapScanResult:
+        """Scan every channel directory once and consume settled segments.
+
+        ``run_once`` remains synchronous by default for the external ``--once``
+        entry point and existing callers.  The long-lived station loop passes
+        ``wait_for_results=False`` so a slow ASR batch cannot hold the next
+        scan, channel rollover, or playout watchdog hostage.
+        """
 
         consumed = 0
         quarantined = 0
@@ -770,8 +967,9 @@ class CaptionTapWorker:
             return CaptionTapScanResult()
         with self._retention_lock:
             retention_ready = self._retention_ready
+            retention_in_flight = self._retention_in_flight
             retention_refusal = self._retention_refusal
-        if not retention_ready:
+        if not retention_ready and not retention_in_flight:
             channels = sorted(path.name for path in self._tap_root.iterdir() if path.is_dir())
             for channel_id in channels:
                 with self._session_lock(channel_id):
@@ -805,18 +1003,58 @@ class CaptionTapWorker:
                 if not segments:
                     continue
                 channels.append(channel_id)
+                if self._channel_has_inflight(channel_id):
+                    # Preserve per-channel ordering and the stateful
+                    # stabilizer.  The current batch owns its paths; new
+                    # arrivals remain queued for the next scan after it ends.
+                    continue
+                inflight_names = self._inflight_names(channel_id)
+                queued_segments = [item for item in segments if item[1].name not in inflight_names]
+                if not queued_segments:
+                    continue
                 if self._backoff.is_paused(channel_id):
-                    dropped += self._drain_paused_channel(channel_id, channel_dir, segments)
+                    self._record_discarded_batch(
+                        channel_id,
+                        queued_segments,
+                        outcome="discarded",
+                        reason="paused-drain",
+                        queue_depth=len(queued_segments),
+                    )
+                    dropped += self._drain_paused_channel(channel_id, channel_dir, queued_segments)
                     paused_channels.append(channel_id)
                     continue
-                if len(segments) > self._max_backlog_segments:
-                    dropped += self._fail_closed_overload(channel_id, channel_dir, segments)
+                if len(queued_segments) > self._max_backlog_segments:
+                    # A currently-running batch is not queued backlog.  Keep
+                    # the generation invalidation as a defensive race guard
+                    # for a session/reset that becomes visible between the
+                    # queue snapshot and this gate.
+                    self._record_discarded_batch(
+                        channel_id,
+                        queued_segments,
+                        outcome="overloaded",
+                        reason="max-backlog-exceeded",
+                        queue_depth=len(queued_segments),
+                        preceding_batch_seconds=self._last_batch_seconds(channel_id),
+                    )
+                    self._invalidate_inflight_for_overload(channel_id)
+                    dropped += self._fail_closed_overload(channel_id, channel_dir, queued_segments)
                     overloaded_channels.append(channel_id)
                     paused_channels.append(channel_id)
                     continue
                 # Bind the queued paths BEFORE runtime preparation/executor delay.
+                batch_id = self._begin_batch(
+                    channel_id,
+                    self._session_generation.get(channel_id, 0),
+                    queued_segments,
+                )
                 pending.append(
-                    (channel_id, channel_dir, segments, self._session_generation.get(channel_id, 0))
+                    (
+                        channel_id,
+                        channel_dir,
+                        queued_segments,
+                        self._session_generation.get(channel_id, 0),
+                        batch_id,
+                    )
                 )
 
         if pending:
@@ -865,25 +1103,13 @@ class CaptionTapWorker:
                         getattr(self._runtime, "num_workers", "n/a"),
                     )
                     self._max_channel_workers = effective_workers
-            # The executor bound is the ASR concurrency bound: channels beyond
-            # it are queued inside this same scan, never transcribed
-            # simultaneously. See ``default_max_channel_workers``.
-            with concurrent.futures.ThreadPoolExecutor(
-                max_workers=min(self._max_channel_workers, len(pending)),
-                thread_name_prefix="civiccast-caption-channel",
-            ) as pool:
-                # Per-channel isolation. A failure processing ONE channel (e.g.
-                # a transient WinError 5 publishing its active.vtt sidecar) must
-                # not unwind the whole pass and cost the other channels their
-                # cue publication, backlog accounting, or gate evaluation.
-                # ``_isolated_process_channel`` records the failure on that
-                # channel's runtime status and returns a degraded result.
-                results = list(
-                    pool.map(
-                        lambda args: self._isolated_process_channel(*args),
-                        pending,
-                    )
-                )
+            # The executor bound is the ASR concurrency bound.  It is retained
+            # across scans so a slow batch is visible as in-flight work rather
+            # than blocking the scan thread.  Per-channel isolation remains in
+            # ``_isolated_process_channel``; a failure in one future cannot
+            # unwind sibling channels.
+            futures = [self._submit_channel(args) for args in pending]
+            results = [future.result() for future in futures] if wait_for_results else []
             consumed += sum(result.consumed_segments for result in results)
             quarantined += sum(result.quarantined_segments for result in results)
             committed += sum(result.committed_review_items for result in results)
@@ -891,6 +1117,8 @@ class CaptionTapWorker:
         # Bounded, one-shot per-phase summary for this scan pass. The collector
         # gates this on its own event/window caps and emits at most once.
         self._phase_timing.summarise()
+        # Same opt-in/bounded contract for the per-batch diagnostic.
+        self._batch_diagnostic.summarise()
         return CaptionTapScanResult(
             consumed_segments=consumed,
             quarantined_segments=quarantined,
@@ -908,6 +1136,7 @@ class CaptionTapWorker:
         channel_dir: Path,
         segments: list[tuple[int, Path]],
         generation: int | None = None,
+        batch_id: str | None = None,
     ) -> _ChannelScanResult:
         """Run one channel's scan pass without letting its failure abort the pass.
 
@@ -920,14 +1149,42 @@ class CaptionTapWorker:
         swallowed: it is logged and written to the channel's runtime status.
         """
 
+        started = time.monotonic()
         try:
-            return self._process_channel(channel_id, channel_dir, segments, generation)
+            result = self._process_channel(channel_id, channel_dir, segments, generation)
+            if batch_id is not None:
+                # Outcome reflects whether cues were COMMITTED, not merely
+                # whether a segment was consumed: a consumed segment whose
+                # ASR returned nothing (or only expired hypotheses) must not
+                # be reported as a commit.
+                committed_items = result.committed_review_items
+                self._finish_batch(
+                    batch_id,
+                    outcome="committed" if committed_items else "no-commit",
+                    reason=(
+                        "asr-committed" if committed_items else "asr-completed-no-committed-items"
+                    ),
+                    consumed_segments=result.consumed_segments,
+                    committed_review_items=committed_items,
+                    expired_unconfirmed_cues=result.expired_unconfirmed_cues,
+                    elapsed_seconds=time.monotonic() - started,
+                )
+            return result
         except Exception:
             _LOG.exception(
                 "Caption tap channel %s failed this scan; isolating so the pass "
                 "continues for the other channels.",
                 channel_id,
             )
+            if batch_id is not None:
+                self._finish_batch(
+                    batch_id,
+                    outcome="failed",
+                    reason="channel-process-exception",
+                    consumed_segments=0,
+                    expired_unconfirmed_cues=0,
+                    elapsed_seconds=time.monotonic() - started,
+                )
             with suppress(Exception):
                 self._publish_status(
                     channel_id,
@@ -1010,7 +1267,9 @@ class CaptionTapWorker:
                     # Do not move it or restore the old session's overlap.
                     break
                 with self._retention_lock:
-                    if not self._retention_ready:
+                    retention_ready = self._retention_ready
+                    retention_in_flight = self._retention_in_flight
+                    if not retention_ready and not retention_in_flight:
                         for _index, stale_segment in segments:
                             stale_segment.unlink(missing_ok=True)
                         self._clear_channel_captions(channel_id)
@@ -1106,6 +1365,111 @@ class CaptionTapWorker:
                 channel_id,
             )
         return removed
+
+    # ------------------------------------------------------------------
+    # Per-batch diagnostic seams (opt-in; inert unless enabled).
+    # ------------------------------------------------------------------
+    def _queue_age_seconds(self, segment: Path) -> float:
+        """Age of a settled segment, from its mtime, bounded to >= 0.
+
+        Metadata only: this reads a timestamp, never audio. Best effort -- a
+        filesystem error yields 0.0 rather than disturbing the scan.
+        """
+
+        try:
+            return max(0.0, time.time() - segment.stat().st_mtime)
+        except OSError:
+            return 0.0
+
+    def _oldest_queue_age_seconds(self, segments: list[tuple[int, Path]]) -> float:
+        return max((self._queue_age_seconds(path) for _index, path in segments), default=0.0)
+
+    def _begin_batch(
+        self,
+        channel_id: str,
+        generation: int,
+        segments: list[tuple[int, Path]],
+        *,
+        preceding_batch_seconds: float = 0.0,
+    ) -> str:
+        """Open a per-batch record and return its id.
+
+        The id is deterministic from channel/generation/first segment index so
+        a log line and a record can be correlated without a side channel.
+
+        DEFAULT-OFF IS TRULY INERT: when the diagnostic is disabled this
+        returns the id and does NO ``Path.stat`` and NO clock read, so the hot
+        scan path pays nothing beyond building the string.
+        """
+
+        first_index = segments[0][0] if segments else -1
+        batch_id = f"{channel_id}-g{generation}-b{first_index:06d}-n{len(segments)}"
+        if not self._batch_diagnostic.enabled:
+            return batch_id
+        self._batch_diagnostic.begin_batch(
+            channel=channel_id,
+            generation=generation,
+            batch_id=batch_id,
+            segment_indices=[index for index, _path in segments],
+            segment_names=[path.name for _index, path in segments],
+            queue_depth=len(segments),
+            oldest_queue_age_seconds=self._oldest_queue_age_seconds(segments),
+            preceding_batch_seconds=preceding_batch_seconds,
+        )
+        return batch_id
+
+    def _finish_batch(
+        self,
+        batch_id: str,
+        *,
+        outcome: str,
+        reason: str,
+        consumed_segments: int,
+        expired_unconfirmed_cues: int,
+        elapsed_seconds: float,
+        committed_review_items: int = 0,
+    ) -> None:
+        self._batch_diagnostic.finish_batch(
+            batch_id=batch_id,
+            outcome=outcome,
+            reason=reason,
+            consumed_segments=consumed_segments,
+            committed_review_items=committed_review_items,
+            expired_unconfirmed_cues=expired_unconfirmed_cues,
+            elapsed_seconds=elapsed_seconds,
+        )
+
+    def _record_discarded_batch(
+        self,
+        channel_id: str,
+        segments: list[tuple[int, Path]],
+        *,
+        outcome: str,
+        reason: str,
+        queue_depth: int,
+        preceding_batch_seconds: float = 0.0,
+    ) -> None:
+        """Record a batch the gate discarded BEFORE any ASR ran.
+
+        Begun and finished immediately so a discard cannot appear as an
+        unfinished in-flight batch, while still carrying the queue depth and
+        age the gate actually saw.
+        """
+
+        batch_id = self._begin_batch(
+            channel_id,
+            self._session_generation.get(channel_id, 0),
+            segments,
+            preceding_batch_seconds=preceding_batch_seconds,
+        )
+        self._finish_batch(
+            batch_id,
+            outcome=outcome,
+            reason=reason,
+            consumed_segments=0,
+            expired_unconfirmed_cues=0,
+            elapsed_seconds=0.0,
+        )
 
     def _fail_closed_overload(
         self,
@@ -1439,6 +1803,7 @@ class CaptionTapWorker:
 
     def _clear_channel_captions_locked(self, channel_id: str) -> None:
         self._channel_workers.pop(channel_id, None)
+        self._forget_last_batch_duration(channel_id)
         publisher = self._channel_publishers.pop(channel_id, None)
         if publisher is None:
             publisher = LiveWebVttPublisher(
@@ -1506,8 +1871,12 @@ class CaptionTapWorker:
                 pipeline=CaptionPipeline(
                     self._runtime,
                     stabilizer=CaptionStabilizer(live=True),
+                    phase_timing=self._phase_timing,
+                    phase_timing_channel=channel_id,
                 ),
                 persistence_guard=self._review_persistence_guard,
+                phase_timing=self._phase_timing,
+                phase_timing_channel=channel_id,
             )
             self._channel_workers[channel_id] = worker
         return worker
@@ -1523,7 +1892,7 @@ class CaptionTapWorker:
         """
 
         with self._retention_lock:
-            if not self._retention_ready:
+            if not self._retention_ready and not self._retention_in_flight:
                 yield "refused"
             elif self._retention_in_flight:
                 yield "text-only"
@@ -1598,7 +1967,7 @@ class CaptionTapWorker:
             if (
                 generation != self._session_generation.get(channel_id, 0)
                 or channel_id in self._failed_sessions
-                or not self._retention_ready
+                or (not self._retention_ready and not self._retention_in_flight)
             ):
                 _LOG.info(
                     "channel %s: caption publish refused (generation %d, current %d, "

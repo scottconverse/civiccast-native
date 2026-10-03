@@ -19,11 +19,20 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 import pytest
 
-from civiccast.captions import phase_timing as pt
+from civiccast.captions import (
+    AudioChunk,
+    CaptionHypothesis,
+    InMemoryCaptionReviewStore,
+    LiveCaptionWorker,
+)
+from civiccast.captions import (
+    phase_timing as pt,
+)
 from civiccast.captions.phase_timing import (
     NullPhaseTimingCollector,
     PhaseTimingCollector,
@@ -75,6 +84,85 @@ def test_records_per_phase_count_total_and_max():
     assert summary["wait_session_lock"]["count"] == 1
     assert summary["asr_process_batch"]["total_ms"] >= 0.0
     assert summary["asr_process_batch"]["max_ms"] >= 0.0
+
+
+def test_records_bounded_per_channel_attribution_without_changing_aggregate():
+    collector = PhaseTimingCollector()
+    with collector.phase("asr_process_batch", channel="public"):
+        pass
+    with collector.phase("asr_process_batch", channel="government"):
+        pass
+    with collector.wait("wait_session_lock", channel="education"):
+        pass
+
+    summary = collector.summarise(force=True)
+    assert summary["asr_process_batch"]["count"] == 2
+    by_channel = summary["by_channel"]
+    assert by_channel["public"]["asr_process_batch"]["count"] == 1
+    assert by_channel["government"]["asr_process_batch"]["count"] == 1
+    assert by_channel["education"]["wait_session_lock"]["count"] == 1
+
+
+def test_live_worker_attribution_splits_decode_pipeline_and_persistence():
+    class RecordingTiming:
+        def __init__(self):
+            self.phases = []
+
+        @contextmanager
+        def phase(self, name, **_kwargs):
+            self.phases.append(name)
+            yield
+
+    class Runtime:
+        def transcribe(self, chunks, vocabulary=None):
+            for chunk in chunks:
+                yield CaptionHypothesis(
+                    source_id="timing-runtime",
+                    start_seconds=chunk.start_seconds,
+                    end_seconds=chunk.end_seconds,
+                    text="timing sample",
+                    confidence=0.9,
+                )
+
+    timing = RecordingTiming()
+    worker = LiveCaptionWorker(
+        Runtime(),
+        InMemoryCaptionReviewStore(),
+        asset_id="timing-asset",
+        phase_timing=timing,
+        phase_timing_channel="public",
+    )
+
+    worker.process_batch(
+        [
+            AudioChunk(
+                chunk_id="timing-chunk",
+                start_seconds=0.0,
+                end_seconds=3.8,
+                sample_rate_hz=16_000,
+                pcm_s16le=b"\x00\x00",
+            )
+        ]
+    )
+    worker.process_batch(
+        [
+            AudioChunk(
+                chunk_id="timing-chunk-2",
+                start_seconds=0.0,
+                end_seconds=3.8,
+                sample_rate_hz=16_000,
+                pcm_s16le=b"\x00\x00",
+            )
+        ]
+    )
+
+    assert {
+        "runtime_transcribe",
+        "caption_stabilize",
+        "pipeline_process",
+        "review_persist",
+        "review_store_create",
+    } <= set(timing.phases)
 
 
 def test_lock_wait_is_a_separate_phase_from_work():

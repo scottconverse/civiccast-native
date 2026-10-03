@@ -410,7 +410,10 @@ class TestDurability:
 
 class TestAppRestartSurvival:
     def test_review_items_survive_an_app_restart(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        close_app_owned_outboxes: list[object],
     ) -> None:
         """The exact failure the audit row describes: with durable storage
         active, a caption review decision must not vanish when the app

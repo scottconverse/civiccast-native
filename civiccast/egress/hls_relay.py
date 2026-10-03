@@ -48,6 +48,17 @@ hands the graph builder is invisible to every reader except the graph.
 Mirrors ``civiccast.egress.ts_relay.TsRelaySupervisor`` in shape (guarded
 per-channel supervised co-process dict, idempotent ``apply``/``stop_channel``/
 ``stop_all``) so the two relays read the same at a glance.
+
+**Beta.10 live finding (2026-09-23): process-alive != emitting.** A relay
+ffmpeg child can stay a live pid while its ``playlist.m3u8`` stops advancing
+(the live government channel froze at ``seg000001130.ts`` for minutes while
+both the relay pid and the main encoder's ``CTRL output`` counters kept
+running). ``is_alive`` alone cannot see that, so the daemon kept reporting the
+``hls`` sink ``connected`` off the MAIN encoder's UDP progress. The progress
+half below adds an mtime+segment-identity check and a bounded, opt-in
+self-heal. It deliberately does NOT diagnose the upstream UDP starvation that
+stops ffmpeg writing; it only makes a stalled-but-alive relay truthful and
+recoverable.
 """
 
 from __future__ import annotations
@@ -55,8 +66,10 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Lock
 from typing import Protocol
 
@@ -72,11 +85,25 @@ _PORT_RANGE = 500
 _UDP_INPUT_ARGS = (
     "-fflags",
     "+genpts",
+    # Widened start-time probe window (beta.10 HLS video-loss): with 2,000,000
+    # a relay that starts while its loopback UDP TS is audio-only can lock to an
+    # audio-only stream inventory and keep emitting AAC-only HLS even after
+    # H.264 video arrives (isolated synthetic A/B: 2M -> AAC-only; 6M -> H264/AAC).
+    # 6,000,000 is the smallest tested value that restores video; larger values
+    # also work but increase time-to-first-segment. NOTE: this is proven only in
+    # isolation on a synthetic delayed-video TS; it is NOT proof that live worker
+    # loopback input was audio-only at relay start, nor that it fixes the live
+    # symptom.
     "-analyzeduration",
-    "2000000",
+    "6000000",
     "-probesize",
-    "2000000",
+    "6000000",
 )
+#: How long a live relay may go with an UNCHANGED last segment + playlist
+#: before the window is reported (and optionally healed) as stalled. The live
+#: symptom was minutes, so 30s is far above a healthy 2s segment cadence and
+#: every real muxer hiccup, while still bounding a visible freeze.
+_DEFAULT_STALL_BOUND_S = 30.0
 
 
 def hls_relay_uri_for(sink_uri: str, *, base_port: int | None = None) -> str:
@@ -101,6 +128,34 @@ def hls_relay_uri_for(sink_uri: str, *, base_port: int | None = None) -> str:
     return f"udp://127.0.0.1:{base + offset}"
 
 
+def _playlist_path_for(sink_uri: str) -> Path:
+    """The manifest path this sink's relay writes (mirrors ``HlsSink``)."""
+    sink = HlsSink(EgressSinkSpec(kind="hls", label="_progress", uri=sink_uri))
+    return Path(sink.connect_target())
+
+
+def _last_segment(path: Path) -> str | None:
+    """The final ``.ts`` name in a playlist, or None if there is no window yet.
+
+    This is the ONLY signal used for progress. Manifest SIZE is deliberately
+    excluded: ``#EXT-X-MEDIA-SEQUENCE`` / ``PROGRAM-DATE-TIME`` / tag edits can
+    change the byte count while the last segment stays identical, and treating
+    that as progress would falsely reset the freshness clock on a frozen
+    window (audit finding 1). ``mtime`` is excluded for the same reason.
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    last_segment = ""
+    for line in reversed(text.splitlines()):
+        stripped = line.strip()
+        if stripped.endswith(".ts"):
+            last_segment = stripped
+            break
+    return last_segment or None
+
+
 class _Ffmpeg(Protocol):
     def poll(self) -> int | None: ...
     def terminate(self, *, grace_seconds: float = 5.0) -> int | None: ...
@@ -111,6 +166,32 @@ class _Relay:
     source_uri: str  # the hls sink's original directory URI (identity + restart-on-change key)
     relay_uri: str  # the local udp:// the GStreamer branch actually writes to
     process: _Ffmpeg
+    #: Last-observed last-segment NAME for THIS relay child, plus the monotonic
+    #: time it was observed. Only the segment name counts as progress (audit
+    #: finding 1); size/tag edits do not. Reset whenever the child is
+    #: (re)started so a new child is never judged against its predecessor.
+    progress_segment: str | None = None
+    progress_at: float | None = None
+    #: One-shot latch for the current stall episode. Set when a self-heal
+    #: restart is attempted so a second poll in the same episode cannot spawn
+    #: another child (no restart storm). It is cleared ONLY when the served
+    #: window genuinely advances BEYOND the pre-heal baseline (audit finding 4):
+    #: a frozen playlist left on disk must not read as progress just because the
+    #: replacement child started, or the heal would re-arm every bound and
+    #: become a restart storm.
+    heal_attempted: bool = False
+    #: The last-segment name observed at the moment a heal was attempted. The
+    #: latch above clears only once progress moves past THIS value.
+    heal_baseline_segment: str | None = None
+    #: Monotonic time this child was spawned. The startup grace is measured
+    #: from here -- NOT from ``progress_at`` -- so a relay that was healthy for
+    #: a long time and then stalled is still healable (its grace is long past),
+    #: while a just-(re)started child is never killed before it can write.
+    started_at: float | None = None
+    #: Monotonic time this child last had a readable playlist. Used by the
+    #: never-emitted path (audit finding 3): a producing channel whose relay has
+    #: never written a window past its startup grace must be reported unhealthy.
+    first_seen_at: float | None = None
 
 
 class HlsRelaySupervisor:
@@ -132,12 +213,18 @@ class HlsRelaySupervisor:
         *,
         starter: Callable[..., _Ffmpeg] | None = None,
         base_port: int | None = None,
+        stall_bound_s: float | None = None,
     ) -> None:
         self._starter = starter or _default_starter
         self._base_port = base_port
         self._guard = Lock()
         self._relays: dict[str, _Relay] = {}
         self._unavailable_logged = False
+        self._stall_bound_s = stall_bound_s if stall_bound_s is not None else _DEFAULT_STALL_BOUND_S
+        # Monotonic clock, injectable for tests. Must be the SAME clock domain
+        # the caller passes as ``now`` to note_progress/progress_stale/self-heal;
+        # the daemon uses its own ``_monotonic`` for exactly that reason.
+        self._clock: Callable[[], float] = time.monotonic
 
     def apply(self, config: EgressConfig) -> EgressConfig:
         """Return a config whose ``hls`` sinks point at their channel-lifetime relay.
@@ -178,44 +265,66 @@ class HlsRelaySupervisor:
             if relay is not None:
                 relay.process.terminate()
                 self._relays.pop(key, None)
-            args = [
-                *_UDP_INPUT_ARGS,
-                "-i",
-                f"{relay_uri}?overrun_nonfatal=1&fifo_size=50000000",
-                *HlsSink(sink).output_args(),
-            ]
-            try:
-                process = self._starter(args)
-            except FfmpegNotFoundError:
-                if not self._unavailable_logged:
-                    self._unavailable_logged = True
-                    _LOG.error(
-                        "HLS relay could not start for %s (sink %r -> %s): ffmpeg is not "
-                        "available. The channel still starts, but no live HLS window is "
-                        "served for this sink until ffmpeg is installed/repaired.",
-                        channel_id,
-                        sink.label,
-                        sink.uri,
-                    )
-                return None
-            except OSError:
-                _LOG.exception(
-                    "HLS relay failed to start for %s (sink %r -> %s); no live HLS window "
-                    "is served for this sink until the next start/reload.",
+            return self._start_relay_locked(key, channel_id, sink, relay_uri)
+
+    def _start_relay_locked(
+        self, key: str, channel_id: str, sink: EgressSinkSpec, relay_uri: str
+    ) -> str | None:
+        """Spawn one relay child and register it. Caller MUST hold ``self._guard``.
+
+        Every spawn path funnels through here so the process count for one
+        (channel, sink) key is structurally bounded at one: the caller has
+        already terminated any predecessor before reaching this helper.
+        """
+        args = [
+            *_UDP_INPUT_ARGS,
+            "-i",
+            f"{relay_uri}?overrun_nonfatal=1&fifo_size=50000000",
+            *HlsSink(sink).output_args(),
+        ]
+        try:
+            process = self._starter(args)
+        except FfmpegNotFoundError:
+            if not self._unavailable_logged:
+                self._unavailable_logged = True
+                _LOG.error(
+                    "HLS relay could not start for %s (sink %r -> %s): ffmpeg is not "
+                    "available. The channel still starts, but no live HLS window is "
+                    "served for this sink until ffmpeg is installed/repaired.",
                     channel_id,
                     sink.label,
                     sink.uri,
                 )
-                return None
-            self._relays[key] = _Relay(source_uri=sink.uri, relay_uri=relay_uri, process=process)
-            _LOG.info(
-                "HLS relay up for %s (sink %r): %s -> %s.",
+            return None
+        except OSError:
+            _LOG.exception(
+                "HLS relay failed to start for %s (sink %r -> %s); no live HLS window "
+                "is served for this sink until the next start/reload.",
                 channel_id,
                 sink.label,
-                relay_uri,
                 sink.uri,
             )
-            return relay_uri
+            return None
+        now = self._clock()
+        self._relays[key] = _Relay(
+            source_uri=sink.uri,
+            relay_uri=relay_uri,
+            process=process,
+            progress_segment=None,
+            progress_at=None,
+            heal_attempted=False,
+            heal_baseline_segment=None,
+            started_at=now,
+            first_seen_at=now,
+        )
+        _LOG.info(
+            "HLS relay up for %s (sink %r): %s -> %s.",
+            channel_id,
+            sink.label,
+            relay_uri,
+            sink.uri,
+        )
+        return relay_uri
 
     def is_alive(self, channel_id: str) -> bool | None:
         """Liveness of this channel's relay child(ren) (MAJOR M1).
@@ -236,6 +345,10 @@ class HlsRelaySupervisor:
         only "not applicable". Returns ``True``/``False`` (all-tracked-relays
         alive / at least one exited) when this channel has at least one
         tracked relay.
+
+        NOTE: this is process liveness ONLY. A relay that is alive but has
+        stopped writing segments is still ``True`` here -- see
+        :meth:`progress_stale` for the emitting check the daemon layers on top.
         """
         with self._guard:
             relays = [
@@ -244,6 +357,195 @@ class HlsRelaySupervisor:
             if not relays:
                 return None
             return all(relay.process.poll() is None for relay in relays)
+
+    def note_progress(self, channel_id: str, *, now: float) -> None:
+        """Anchor/refresh this channel's per-relay progress baseline.
+
+        Called by the daemon each tick. Idempotent and read-only with respect to
+        the child process. Progress is the last segment NAME only (audit
+        finding 1): a manifest whose size/tags changed but whose final ``.ts``
+        is identical is NOT progress.
+
+        The stall latch clears ONLY when the window advances past the segment
+        recorded at the last heal attempt (audit finding 4). Otherwise a frozen
+        playlist left on disk would read as "progress" the instant its
+        replacement child starts, re-arming the heal every bound.
+        """
+        with self._guard:
+            for key, relay in self._relays.items():
+                if not key.startswith(f"{channel_id}|"):
+                    continue
+                segment = _last_segment(_playlist_path_for(relay.source_uri))
+                if segment is None:
+                    # No readable window yet: never treated as progress.
+                    continue
+                if segment != relay.progress_segment:
+                    if relay.heal_attempted and segment != relay.heal_baseline_segment:
+                        # Genuinely advanced beyond the pre-heal baseline: the
+                        # episode is over and a future stall may heal again.
+                        relay.heal_attempted = False
+                        relay.heal_baseline_segment = None
+                    relay.progress_segment = segment
+                    relay.progress_at = now
+                elif relay.progress_at is None:
+                    # First observation of an already-static window: anchor the
+                    # baseline without claiming progress.
+                    relay.progress_at = now
+
+    def progress_stale(self, channel_id: str, *, now: float) -> bool | None:
+        """True when ANY live relay for this channel has stopped advancing.
+
+        Returns ``None`` only when the question genuinely does not apply: no
+        relay tracked for the channel, or every live relay has no readable
+        window yet AND has not yet exceeded its startup grace while the caller
+        has confirmed production (see :meth:`never_emitted`). Returns ``False``
+        while every live relay is fresh.
+
+        ANY-relay semantics (audit finding 2): with two HLS sinks, one stalled
+        and one advancing, the stalled sink must still be reported, so the
+        per-relay verdicts are OR-combined, never AND. A dead relay contributes
+        nothing here -- that is :meth:`is_alive`'s signal.
+        """
+        with self._guard:
+            relays = [
+                relay for key, relay in self._relays.items() if key.startswith(f"{channel_id}|")
+            ]
+            if not relays:
+                return None
+            saw_live_without_window = False
+            for relay in relays:
+                if relay.process.poll() is not None:
+                    continue
+                if relay.progress_segment is None or relay.progress_at is None:
+                    saw_live_without_window = True
+                    continue
+                if now - relay.progress_at > self._stall_bound_s:
+                    return True
+            if saw_live_without_window:
+                return None
+            # Every relay is alive with a window and none is stale.
+            return False
+
+    def never_emitted(self, channel_id: str, *, now: float, startup_grace_s: float) -> bool | None:
+        """True when ANY live relay has produced NO window past its OWN grace.
+
+        Audit finding 3: a relay that never writes its first ``playlist.m3u8``
+        used to stay ``None`` (unknown) forever, so a producing channel whose
+        relay never emitted was permanently invisible.
+
+        Audit follow-up (any-sink fault): with two HLS sinks, an early version
+        returned ``None`` as soon as ANY sibling had a window, hiding the sink
+        that never emitted. This is per-sink and ANY-based, mirroring
+        :meth:`progress_stale`: a single window-less live relay that is past
+        ITS OWN startup grace is a fault even while a sibling is healthy. Each
+        relay is judged against its own spawn time, so one young relay cannot
+        mask an old, never-emitting sibling (or vice versa).
+
+        Returns ``None`` only when no relay is tracked, or when every live
+        relay without a window is still inside its own grace (legitimate
+        STARTING/no-source), or when no live relay lacks a window.
+        """
+        with self._guard:
+            relays = [
+                relay for key, relay in self._relays.items() if key.startswith(f"{channel_id}|")
+            ]
+            if not relays:
+                return None
+            live = [relay for relay in relays if relay.process.poll() is None]
+            if not live:
+                return None
+            for relay in live:
+                if relay.progress_segment is not None:
+                    continue  # this sink has a readable window
+                anchor = relay.started_at if relay.started_at is not None else relay.first_seen_at
+                if anchor is None or now - anchor >= startup_grace_s:
+                    return True  # this sink never emitted and is past its grace
+            return None
+
+    def maybe_self_heal_stalled(
+        self,
+        channel_id: str,
+        *,
+        now: float,
+        producing: bool,
+        startup_grace_s: float,
+    ) -> bool:
+        """Restart a stalled-but-alive relay at most once per stall episode.
+
+        Conservative by construction -- returns True only when ALL hold:
+          * a relay is tracked and its child is still alive,
+          * ``producing`` is True (the caller has confirmed the channel is
+            actually emitting; a STARTING/no-source channel never heals),
+          * the window has been unchanged for longer than ``stall_bound_s``,
+          * the relay child has itself been running longer than
+            ``startup_grace_s`` (a just-(re)started child is never killed),
+          * no heal has already been attempted in THIS episode.
+
+        The replacement is spawned through the same single-slot path as every
+        other ``apply`` (predecessor terminated first), so one (channel, sink)
+        can never accumulate more than one child. Restarting DOES break viewer
+        continuity for that sink's window: the muxer restarts its segment
+        numbering from whatever ffmpeg chooses, so this is a deliberate
+        last-resort recovery, not a seamless splice -- the caller logs it.
+        """
+        with self._guard:
+            targets = [
+                (key, relay)
+                for key, relay in self._relays.items()
+                if key.startswith(f"{channel_id}|")
+            ]
+            if not targets:
+                return False
+            if not producing:
+                return False
+            healed = False
+            for key, relay in targets:
+                if relay.process.poll() is not None:
+                    continue
+                if relay.heal_attempted:
+                    continue
+                anchor = relay.started_at if relay.started_at is not None else relay.first_seen_at
+                if anchor is not None and now - anchor < startup_grace_s:
+                    continue
+                if relay.progress_segment is None or relay.progress_at is None:
+                    # Never emitted a window at all (audit finding 3): a
+                    # producing channel past its grace. Recover it the same way
+                    # a stalled window is recovered.
+                    baseline_segment = None
+                    reason = "has produced no live window"
+                elif now - relay.progress_at > self._stall_bound_s:
+                    baseline_segment = relay.progress_segment
+                    reason = f"has served no new segment for {now - relay.progress_at:.1f}s"
+                else:
+                    continue
+                sink = EgressSinkSpec(kind="hls", label=key.split("|", 1)[1], uri=relay.source_uri)
+                relay.process.terminate()
+                self._relays.pop(key, None)
+                relay_uri = hls_relay_uri_for(relay.source_uri, base_port=self._base_port)
+                _LOG.warning(
+                    "HLS relay for %s (sink %r) %s; restarting the relay child to "
+                    "re-establish its window (viewer discontinuity possible).",
+                    channel_id,
+                    sink.label,
+                    reason,
+                )
+                replacement = self._start_relay_locked(key, channel_id, sink, relay_uri)
+                if replacement is None:
+                    # Could not respawn (ffmpeg gone): report no heal and leave
+                    # the sink to the existing dead-relay/health path.
+                    healed = False
+                    continue
+                # Keep the episode latched on the NEW relay (audit finding 4):
+                # until the served window advances past the pre-heal baseline,
+                # a frozen playlist left on disk must not clear the latch.
+                new_relay = self._relays.get(key)
+                if new_relay is not None:
+                    new_relay.heal_attempted = True
+                    new_relay.heal_baseline_segment = baseline_segment
+                    new_relay.progress_segment = baseline_segment
+                    new_relay.progress_at = now
+                healed = True
+            return healed
 
     def stop_channel(self, channel_id: str) -> None:
         """Tear down a channel's HLS relay(s) (channel stop, not encoder relaunch)."""

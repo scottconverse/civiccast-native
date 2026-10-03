@@ -13,6 +13,8 @@ from civiccast.app import create_app
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.router import get_caption_review_store
 
+pytestmark = pytest.mark.usefixtures("deterministic_staff_token")
+
 
 @pytest.fixture
 def client() -> Iterator[TestClient]:
@@ -68,3 +70,31 @@ def test_external_caption_ingest_rejects_payload_without_timed_cues(client: Test
 
     assert response.status_code == 400
     assert "timed cues" in response.json()["detail"]
+
+
+def test_fixture_token_does_not_weaken_bearer_authorization() -> None:
+    """Negative control: the opt-in fixture must not blanket-accept.
+
+    The ``deterministic_staff_token`` fixture only *neutralizes the shadowing
+    env* so the documented fixture identity resolves. A wrong or absent bearer
+    must still be refused with the real staff-auth 401 -- proving the fixture
+    does not disable authorization.
+    """
+
+    app = create_app()
+    app.dependency_overrides[get_caption_review_store] = lambda: InMemoryCaptionReviewStore()
+
+    body = {
+        "request_id": "caption-neg-1",
+        "asset_id": "meeting-neg-1",
+        "appliance_id": "caption-appliance-neg",
+        "source_label": "Caption appliance negative",
+        "protocol": "webvtt",
+        "payload": "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nGood evening.\n",
+    }
+
+    with TestClient(app, headers={"Authorization": "Bearer not-the-fixture-token"}) as wrong:
+        assert wrong.post("/api/staff/captions/external-ingest", json=body).status_code == 401
+
+    with TestClient(app) as anonymous:
+        assert anonymous.post("/api/staff/captions/external-ingest", json=body).status_code == 401

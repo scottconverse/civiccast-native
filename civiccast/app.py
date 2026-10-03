@@ -784,6 +784,7 @@ def _maybe_start_background_supervisors(app: FastAPI) -> None:
         return
     if getattr(app.state, "supervisor_mode", _SUPERVISOR_MODE_NORMAL) in _SUPERVISOR_MODE_FROZEN:
         return
+    _prewarm_native_live_caption_runtime(app)
     for supervisor in getattr(app.state, "background_supervisors", []):
         supervisor.start()  # each no-ops unless its mode is "inline"
     # One-shot startup-condition hooks (e.g. the caption-tier degrade alert):
@@ -827,6 +828,56 @@ def _maybe_start_background_supervisors(app: FastAPI) -> None:
                 "thread so the control plane can finish startup.",
                 _startup_hook_timeout_seconds(),
             )
+
+
+def _prewarm_native_live_caption_runtime(app: FastAPI) -> None:
+    """Load the native live-caption model before channel automation can air.
+
+    Native stations start their channel-automation supervisor and their caption
+    tap from the same application lifespan. Starting automation first lets a
+    media writer produce settled audio while the first caption scan is still
+    loading CUDA/model state; at three channels that cold interval can trip the
+    existing fail-closed backlog gate. The native activation contract already
+    identifies the deployment where live captions are part of the station air
+    path, so prewarm only that path. A load error is logged and leaves the
+    existing lazy worker behavior intact; it must not turn a best-effort caption
+    feature into a control-plane startup outage.
+    """
+
+    if os.environ.get("CIVICCAST_NATIVE_STATION", "").strip() != "1":
+        return
+    if getattr(app.state, "caption_runtime_prewarmed", False):
+        return
+    worker = getattr(app.state, "caption_tap_worker", None)
+    runtime = getattr(worker, "_runtime", None) if worker is not None else None
+    prepare = getattr(runtime, "prepare", None)
+    if not callable(prepare):
+        return
+
+    started = time.monotonic()
+    try:
+        prepare()
+    except Exception:
+        _LOG.exception("Live caption runtime prewarm failed; continuing with lazy model loading.")
+        return
+
+    app.state.caption_runtime_prewarmed = True
+    from civiccast.captions.tap_worker import _resolved_runtime_identity
+
+    identity = _resolved_runtime_identity(runtime)
+    _LOG.info(
+        "Live caption runtime prewarmed before channel automation: "
+        "requested_device=%s requested_compute_type=%s loaded_device=%s "
+        "loaded_compute_type=%s on_cuda=%s num_workers=%s source=%s elapsed_ms=%.0f",
+        identity[0],
+        identity[1],
+        identity[2],
+        identity[3],
+        identity[4],
+        identity[5],
+        identity[6],
+        (time.monotonic() - started) * 1000.0,
+    )
 
 
 def _build_program_log_materializer(session_factory: Any) -> ProgramLogMaterializer:

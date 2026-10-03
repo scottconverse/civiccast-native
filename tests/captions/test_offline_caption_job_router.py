@@ -37,6 +37,8 @@ from civiccast.captions.vod_job import (
 )
 from civiccast.db import Base
 
+pytestmark = pytest.mark.usefixtures("deterministic_staff_token")
+
 _ASSET_ID = "council-2026-08-16"
 _NOW = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
 _STAFF_HEADERS = {"Authorization": "Bearer operator-token-a"}

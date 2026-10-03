@@ -234,6 +234,25 @@ class PostgresCaptionReviewStore:
                 source_bytes=row.audio_evidence_bytes,
             )
 
+    def list_with_audio_evidence(
+        self,
+    ) -> list[tuple[CaptionReviewItemResponse, CaptionReviewAudioEvidence | None]]:
+        """Read review rows and their private evidence in one database query.
+
+        Retention runs this at worker startup, where opening a new session for
+        every row turns a large review queue into an N+1 round-trip stall.  Keep
+        the response/evidence pair in memory only; the public review response
+        still omits the private evidence path.
+        """
+
+        with self._session_factory() as session:
+            rows = session.execute(
+                select(CaptionReviewItem).order_by(
+                    CaptionReviewItem.created_at.asc(), CaptionReviewItem.review_item_id.asc()
+                )
+            ).scalars()
+            return [(_to_response(row), _row_audio_evidence(row)) for row in rows]
+
     def list(
         self,
         *,

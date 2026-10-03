@@ -8,6 +8,7 @@ import contextlib
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 
+import pytest
 from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -22,6 +23,16 @@ from civiccast.egress.audio_router import (
     staff_router,
 )
 from civiccast.egress.audio_tracks import AudioProgramTrack, AudioTrackStore
+
+_engines_to_dispose: list[object] = []
+
+
+@pytest.fixture(autouse=True)
+def _dispose_audio_router_engines() -> Iterator[None]:
+    yield
+    while _engines_to_dispose:
+        engine = _engines_to_dispose.pop()
+        engine.dispose()  # type: ignore[attr-defined]
 
 
 def _build(scopes: tuple[str, ...] | None = ("setup_admin",), *, wire: bool = True):
@@ -45,6 +56,9 @@ def _build(scopes: tuple[str, ...] | None = ("setup_admin",), *, wire: bool = Tr
         finally:
             sess.close()
 
+    # Register this engine so the autouse fixture disposes it at the end of
+    # each test; the in-memory StaticPool connection must not outlive its test.
+    _engines_to_dispose.append(engine)
     store = AudioTrackStore(factory)
     app = FastAPI()
 
