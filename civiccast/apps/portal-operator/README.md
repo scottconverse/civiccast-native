@@ -114,6 +114,14 @@ player. It labels full-cue wording when a claim cites a shorter range, and
 reports missing, empty or ambiguous retained evidence rather than substituting
 current edited captions or claim text.
 
+On a recording's Assets page, **Generate again** queues a new summary after
+the previous job completes. It fetches the currently approved caption wording
+and permissions before submitting; an empty or failed refresh does not use
+cached input. Earlier summaries and approvals remain intact, and the new
+summary needs separate review. Active jobs prevent another generation action.
+Load errors have a retry action instead of being shown as an empty transcript.
+**Retry** on a failed job remains distinct: it retries that job's original cues.
+
 ## Mobile
 
 The shell switches to a single-column layout below 768px. The TopBar gains a

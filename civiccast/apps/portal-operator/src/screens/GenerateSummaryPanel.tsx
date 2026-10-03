@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) The CivicCast Authors
 import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
@@ -13,7 +15,7 @@ import type { CaptionCue, SummaryGenerationJobRecord } from '../types/api.genera
 import { hasRole } from './contribution-format'
 
 // records_clerk or support_admin can queue a job (mirrors the /generate role gate);
-// retry is records_clerk-only (mirrors captions.router.retry_offline_caption_job).
+// retry is records_clerk-only (mirrors summaries/jobs/{job_id}/retry).
 const GENERATE_ROLES = ['records_clerk', 'support_admin']
 const RETRY_ROLES = ['records_clerk']
 
@@ -47,6 +49,7 @@ export function GenerateSummaryView({
   retrying,
   generateError,
   retryError,
+  refreshing = false,
   onGenerate,
   onRetry,
 }: {
@@ -58,6 +61,7 @@ export function GenerateSummaryView({
   retrying: boolean
   generateError?: unknown
   retryError?: unknown
+  refreshing?: boolean
   onGenerate: () => void
   onRetry: (jobId: string) => void
 }) {
@@ -98,14 +102,16 @@ export function GenerateSummaryView({
         )}
       </div>
 
-      {noCuesYet && !latestJob && (
+      {refreshing && <p role="status" className="m-0 text-sm">Refreshing captions, jobs and permissions…</p>}
+
+      {noCuesYet && !active && (
         <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-3)' }}>
           No committed transcript cues yet. Approve caption review items for this
           recording first, then a summary can be generated from them.
         </p>
       )}
 
-      {!noCuesYet && !latestJob && (
+      {!noCuesYet && (!latestJob || latestJob.state === 'complete') && (
         <>
           <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
             Generate a sourced summary from the {committedCueCount} committed
@@ -114,6 +120,12 @@ export function GenerateSummaryView({
           <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
             {EXPECTED_DURATION_NOTE}
           </p>
+          {latestJob?.state === 'complete' && (
+            <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+              Generate again uses the currently approved caption lines. Earlier summaries
+              and approvals are kept; the new summary needs its own review and approval.
+            </p>
+          )}
           {Boolean(generateError) && (
             <div
               role="alert"
@@ -125,12 +137,12 @@ export function GenerateSummaryView({
           )}
           <button
             type="button"
-            disabled={!canGenerate || generating}
+            disabled={!canGenerate || generating || retrying || refreshing}
             onClick={onGenerate}
             className="w-fit rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
             style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
           >
-            {generating ? 'Queuing…' : 'Generate summary'}
+            {generating ? 'Queuing…' : latestJob?.state === 'complete' ? 'Generate again' : 'Generate summary'}
           </button>
           {!canGenerate && (
             <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
@@ -191,7 +203,7 @@ export function GenerateSummaryView({
           )}
           <button
             type="button"
-            disabled={!canRetry || retrying}
+            disabled={!canRetry || retrying || generating || refreshing}
             onClick={() => onRetry(latestJob.job_id)}
             className="w-fit rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
             style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
@@ -210,6 +222,11 @@ export function GenerateSummaryView({
 }
 
 export function GenerateSummaryPanel({ assetId }: { assetId: string }) {
+  // Navigation must not carry a previous recording's mutation/error state forward.
+  return <RecordingSummaryPanel key={assetId} assetId={assetId} />
+}
+
+function RecordingSummaryPanel({ assetId }: { assetId: string }) {
   const queryClient = useQueryClient()
 
   const identityQuery = useQuery({
@@ -217,8 +234,9 @@ export function GenerateSummaryPanel({ assetId }: { assetId: string }) {
     queryFn: getStaffIdentity,
     retry: false,
   })
-  const canGenerate = hasRole(identityQuery.data, GENERATE_ROLES)
-  const canRetry = hasRole(identityQuery.data, RETRY_ROLES)
+  const identityReady = identityQuery.isSuccess
+  const canGenerate = identityReady && hasRole(identityQuery.data, GENERATE_ROLES)
+  const canRetry = identityReady && hasRole(identityQuery.data, RETRY_ROLES)
 
   const committedCuesQuery = useQuery({
     queryKey: ['caption-review-items', assetId, 'approved'],
@@ -245,16 +263,33 @@ export function GenerateSummaryPanel({ assetId }: { assetId: string }) {
     // (pending -> running -> complete/failed) without refreshing the page.
     refetchInterval: (query) => {
       const rows = query.state.data
-      const latest = rows?.[rows.length - 1]
-      return isActive(latest) ? 5000 : false
+      return rows?.some(isActive) ? 5000 : false
     },
   })
-  const latestJob = jobsQuery.data?.[jobsQuery.data.length - 1]
+  const latestJob = jobsQuery.data?.find(isActive) ?? jobsQuery.data?.[jobsQuery.data.length - 1]
 
   const generateMutation = useMutation({
-    mutationFn: () => createSummaryJob({ meeting_id: assetId, cues: committedCues }),
-    onSuccess: () => {
+    mutationFn: async () => {
+      // Refresh permission and source input at the action boundary. Cached caption
+      // wording may have been corrected in Review queue since this page opened.
+      const identity = await getStaffIdentity()
+      queryClient.setQueryData(['staff-identity'], identity)
+      if (!hasRole(identity, GENERATE_ROLES)) {
+        throw new Error('Generating a summary requires the records clerk or support admin role.')
+      }
+      const items = await listCaptionReviewItems({ asset_id: assetId, status_filter: 'approved' })
+      const cues = items.filter((item) => item.asset_id === assetId && item.status === 'approved').map((item) => ({
+        ...item.cue, text: item.reviewed_text ?? item.cue.text,
+      }))
+      if (!cues.length) throw new Error('No approved caption lines remain. Review and approve captions first.')
+      return createSummaryJob({ meeting_id: assetId, cues })
+    },
+    onSuccess: (job) => {
+      queryClient.setQueryData<SummaryGenerationJobRecord[]>(['summary-jobs', assetId], (rows = []) => [
+        ...rows.filter((row) => row.job_id !== job.job_id), job,
+      ])
       void queryClient.invalidateQueries({ queryKey: ['summary-jobs', assetId] })
+      void queryClient.invalidateQueries({ queryKey: ['summary-review-items'] })
     },
   })
 
@@ -265,12 +300,31 @@ export function GenerateSummaryPanel({ assetId }: { assetId: string }) {
     },
   })
 
+  const queries = [identityQuery, committedCuesQuery, jobsQuery]
+  const failed = queries.find((query) => query.isError)
+  if (failed) {
+    return (
+      <section aria-label="Generate summary" className="rounded-md p-4">
+        <div role="alert">
+          Could not load summary generation. {apiMessage(failed.error, 'Request failed.')}
+        </div>
+        <button type="button" disabled={queries.some((query) => query.isFetching)} onClick={() => {
+          for (const query of queries) void query.refetch()
+        }}>Retry loading summary generation</button>
+      </section>
+    )
+  }
+  if (queries.some((query) => query.isPending)) {
+    return <section aria-label="Generate summary" role="status" className="p-4">Loading captions, summary jobs and permissions…</section>
+  }
+
   return (
     <GenerateSummaryView
       committedCueCount={committedCues.length}
       latestJob={latestJob}
       canGenerate={canGenerate}
       canRetry={canRetry}
+      refreshing={queries.some((query) => query.isFetching)}
       generating={generateMutation.isPending}
       retrying={retryMutation.isPending}
       generateError={generateMutation.error}

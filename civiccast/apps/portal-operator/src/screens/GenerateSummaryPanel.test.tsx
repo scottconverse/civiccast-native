@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import '@testing-library/jest-dom/vitest'
+import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router'
 
@@ -83,13 +84,15 @@ function job(overrides: Partial<SummaryGenerationJobRecord> = {}): SummaryGenera
 
 function renderPanel(assetId = 'asset-1') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  return render(
+  const view = (id: string) => (
     <MemoryRouter>
       <QueryClientProvider client={client}>
-        <GenerateSummaryPanel assetId={assetId} />
+        <GenerateSummaryPanel assetId={id} />
       </QueryClientProvider>
-    </MemoryRouter>,
+    </MemoryRouter>
   )
+  const result = render(view(assetId))
+  return { ...result, navigate: (id: string) => result.rerender(view(id)), client }
 }
 
 describe('GenerateSummaryView (presentational)', () => {
@@ -238,7 +241,127 @@ describe('GenerateSummaryView (presentational)', () => {
 
 describe('GenerateSummaryPanel (data-fetching)', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
+  })
+
+  it('generates again from freshly approved captions without retrying the old job', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listCaptionReviewItems)
+      .mockResolvedValueOnce([reviewItem({ reviewed_text: 'Old wording.' })])
+      .mockResolvedValue([reviewItem({ reviewed_text: 'Corrected wording.' })])
+    vi.mocked(listSummaryJobs).mockResolvedValue([
+      job({ state: 'complete', summary_id: 'old-approved' }),
+    ])
+    vi.mocked(createSummaryJob).mockResolvedValue(job({ job_id: 'new-job' }))
+    const { findByRole, getByRole } = renderPanel()
+    const button = await findByRole('button', { name: 'Generate again' })
+    fireEvent.click(button)
+    await waitFor(() => expect(createSummaryJob).toHaveBeenCalledOnce())
+    expect(vi.mocked(createSummaryJob).mock.calls[0][0]).toMatchObject({
+      meeting_id: 'asset-1', cues: [{ text: 'Corrected wording.' }],
+    })
+    expect(retrySummaryJob).not.toHaveBeenCalled()
+    expect(getByRole('link', { name: /review it in summary review/i })).toBeTruthy()
+  })
+
+  it.each(['captions', 'jobs', 'identity'])('shows %s load errors instead of offering generation', async (source) => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listCaptionReviewItems).mockResolvedValue([reviewItem()])
+    vi.mocked(listSummaryJobs).mockResolvedValue([])
+    const request = source === 'captions' ? listCaptionReviewItems : source === 'jobs' ? listSummaryJobs : getStaffIdentity
+    vi.mocked(request).mockRejectedValue(new Error('Request unavailable'))
+    const { findByRole, queryByRole } = renderPanel()
+    expect(await findByRole('alert')).toHaveTextContent('Request unavailable')
+    expect(queryByRole('button', { name: /generate summary|generate again/i })).toBeNull()
+    expect(createSummaryJob).not.toHaveBeenCalled()
+  })
+
+  it('does not submit stale captions if the submission refresh fails', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listCaptionReviewItems).mockResolvedValueOnce([reviewItem()]).mockRejectedValue(new Error('Caption refresh failed'))
+    vi.mocked(listSummaryJobs).mockResolvedValue([])
+    const { findByRole, getByRole } = renderPanel()
+    const button = await findByRole('button', { name: 'Generate summary' })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+    await waitFor(() => expect(getByRole('alert')).toHaveTextContent('Caption refresh failed'))
+    expect(createSummaryJob).not.toHaveBeenCalled()
+  })
+
+  it('does not submit after the operator loses permission during refresh', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValueOnce(identity(['records_clerk'])).mockResolvedValue(identity(['viewer']))
+    vi.mocked(listCaptionReviewItems).mockResolvedValue([reviewItem()])
+    vi.mocked(listSummaryJobs).mockResolvedValue([])
+    const { findByRole, getByRole } = renderPanel()
+    const button = await findByRole('button', { name: 'Generate summary' })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+    await waitFor(() => expect(getByRole('alert')).toHaveTextContent(/requires the records clerk or support admin role/i))
+    expect(createSummaryJob).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty refreshed caption set instead of generating from old cached lines', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listCaptionReviewItems).mockResolvedValueOnce([reviewItem()]).mockResolvedValue([])
+    vi.mocked(listSummaryJobs).mockResolvedValue([job({ state: 'complete', summary_id: 'older' })])
+    const { findByRole } = renderPanel()
+    fireEvent.click(await findByRole('button', { name: 'Generate again' }))
+    expect(await findByRole('alert')).toHaveTextContent('No approved caption lines remain')
+    expect(createSummaryJob).not.toHaveBeenCalled()
+  })
+
+  it('never queues another job while any job is active, even if the last row is completed', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listCaptionReviewItems).mockResolvedValue([reviewItem()])
+    vi.mocked(listSummaryJobs).mockResolvedValue([
+      job({ job_id: 'new-running', state: 'running' }),
+      job({ state: 'complete', summary_id: 'older' }),
+    ])
+    const { findByText, queryByRole } = renderPanel()
+    expect(await findByText('The local model is generating this summary now.')).toBeTruthy()
+    expect(queryByRole('button', { name: 'Generate again' })).toBeNull()
+    expect(createSummaryJob).not.toHaveBeenCalled()
+  })
+
+  it('keeps generation unavailable while caption or job queries are still loading', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listCaptionReviewItems).mockReturnValue(new Promise(() => {}))
+    vi.mocked(listSummaryJobs).mockResolvedValue([])
+    const { findByRole, queryByRole } = renderPanel()
+    expect(await findByRole('status')).toHaveTextContent('Loading captions')
+    expect(queryByRole('button', { name: 'Generate summary' })).toBeNull()
+  })
+
+  it('reloads failed inputs and can generate once they recover', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listCaptionReviewItems).mockRejectedValueOnce(new Error('Offline')).mockResolvedValue([reviewItem()])
+    vi.mocked(listSummaryJobs).mockResolvedValue([])
+    vi.mocked(createSummaryJob).mockResolvedValue(job())
+    const { findByRole } = renderPanel()
+    fireEvent.click(await findByRole('button', { name: 'Retry loading summary generation' }))
+    const button = await findByRole('button', { name: 'Generate summary' })
+    await waitFor(() => expect(button).not.toBeDisabled())
+    fireEvent.click(button)
+    await waitFor(() => expect(createSummaryJob).toHaveBeenCalledOnce())
+  })
+
+  it('does not leak an earlier recordings delayed action error into the next recording', async () => {
+    let failRequest!: (error: Error) => void
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listCaptionReviewItems).mockImplementation(async (params) => [reviewItem({ asset_id: params?.asset_id })])
+    vi.mocked(listSummaryJobs).mockResolvedValue([])
+    vi.mocked(createSummaryJob).mockReturnValue(new Promise((_, reject) => { failRequest = reject }))
+    const { findByRole, navigate, queryByRole } = renderPanel()
+    const firstButton = await findByRole('button', { name: 'Generate summary' })
+    await waitFor(() => expect(firstButton).not.toBeDisabled())
+    fireEvent.click(firstButton)
+    await waitFor(() => expect(createSummaryJob).toHaveBeenCalledOnce())
+    navigate('asset-2')
+    const nextButton = await findByRole('button', { name: 'Generate summary' })
+    await waitFor(() => expect(nextButton).not.toBeDisabled())
+    await act(async () => { failRequest(new Error('First recording failed')) })
+    expect(queryByRole('alert')).toBeNull()
+    expect(vi.mocked(createSummaryJob).mock.calls[0][0].meeting_id).toBe('asset-1')
   })
 
   it('queues a job using the committed, operator-edited cue text', async () => {

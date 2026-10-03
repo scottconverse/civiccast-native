@@ -2,6 +2,33 @@
 
 Console group: Review Records. The page label on screen is "Summary + signed records". Spec for the in-app help of AI summary review. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`. The part that makes a summary is the "AI summary" card on an asset page; see assets.md.
 
+## Current development integration (October 3, 2026)
+
+The inventory below is retained as the original beta.10 source audit, not a
+description of the repaired development branch or evidence about an installed
+station. Use these changes when integrating the next candidate's help:
+
+- HELP-01/02/07: approval sends only the approval note and uses the authenticated
+  clerk. Approved summaries remain discoverable, with export, download and
+  verification actions and separate action errors. An orphan approved status
+  needs explicit reapproval; it does not establish prior human approval.
+- HELP-03: **Source caption lines** displays retained words from the matching
+  completed meeting/summary job. Missing or ambiguous evidence is stated, not
+  replaced with claim text or current captions. It is not an audio player.
+- HELP-04/08: after a completed job, **Generate again** on the recording's
+  Assets page refreshes permissions and approved caption lines before queueing.
+  Save corrected wording and approve it first; Edited-only lines are excluded.
+  Earlier summaries and approvals are kept. The new summary needs separate
+  review. A failed job's **Retry** uses its original input instead.
+- Keep the test-timestamp limitation. Record verification checks integrity and
+  proof structure; it does not independently establish an external authority's
+  trust chain or retroactively attest approval for old exports.
+
+The generated in-app manual and the published beta.10 manual are not updated
+by this source specification alone. Their regeneration and rendered checks
+remain a separate delivery requirement. HELP-05 and full help-navigation polish
+are not closed by these workflow repairs.
+
 ## Where the help text lives now
 - `screens/SummaryReviewScreen.tsx`: label 255; heading 257; intro 259-261; role note 267; yellow evidence bar 108-110; card title (asset ID) 146; summary ID and model tag 148; operator message 159-160; Approve summary 185; Export signed record 197; export success 206-209; empty state 87-92; error box 61-67; error box also used after failed Approve or Export 273-281.
 - `components/review/SourcedClaimList.tsx`: heading 30; no-claims text 24-25.

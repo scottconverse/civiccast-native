@@ -97,14 +97,25 @@ For each important claim:
 
 1. Open the timestamp link.
 2. Confirm the transcript supports the claim.
-3. Correct the committed transcript cues if a claim is unsupported or too
-   strong, then ask support to generate a replacement summary. This screen
-   does not edit, reject, or regenerate claims.
+3. Correct the caption lines in Review queue and approve the saved corrections.
+   Open the recording in Assets and choose **Generate again** on its AI summary
+   card. Summary review itself does not edit or reject claims.
 4. Do not approve a claim you cannot verify.
 
 If a number does not appear in the transcript, correct the source cues and
-request a replacement before approval. Refused or rejected summaries, empty summaries,
+generate a replacement before approval. Refused or rejected summaries, empty summaries,
 and claims without timestamp-backed ranges cannot be approved.
+
+**Generate again** is available after the previous generation job finishes.
+It refreshes your permissions and the recording's approved caption lines before
+queuing another job. Lines marked only Edited are not included. If there are
+no approved lines or a request fails, correct the problem and try again; no
+replacement is queued from old cached wording. A running job must finish first.
+Generating requires records clerk or support admin; retrying a failed job
+requires records clerk and uses that failed job's original input.
+
+Earlier summaries and approvals are kept. The new summary must be checked and
+approved separately; generating again does not correct an earlier signed record.
 
 Approval and export require the **records clerk** role. The buttons stay
 disabled while CivicCast checks your identity or if that check fails. Approval
@@ -210,7 +221,7 @@ signed record.
 | Situation | Records Action |
 | --- | --- |
 | Captions are incomplete | Follow station policy: publish video first, hold captions, or publish auto-generated captions with a label. |
-| Summary claim is unsupported | Correct the committed source cues and ask support for a replacement summary; do not approve an unverified claim. |
+| Summary claim is unsupported | Correct and approve the source cues, then use Generate again on the recording's Assets page; do not approve an unverified claim. |
 | Archive target is unavailable | Ask an admin whether the meeting can publish now or must wait for the required archive. |
 | Subscriber notification fails | Publish the record if required surfaces are ready, then retry notification after the issue is fixed. |
 | Wrong meeting metadata | Correct the metadata before signed-record export. |
