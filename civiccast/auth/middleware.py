@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from fastapi import Request, Response, status
+from starlette.concurrency import run_in_threadpool
 from starlette.responses import JSONResponse
 
 from civiccast.auth.rate_limit import (
@@ -59,8 +60,8 @@ async def staff_auth_middleware(
     """
 
     syncer = getattr(request.app.state, "sync_durable_storage", None)
-    if callable(syncer):
-        syncer()
+    if callable(syncer) and request.url.path not in {"/health", "/api/health"}:
+        await run_in_threadpool(syncer)
     if not request.url.path.startswith("/api/staff/"):
         return await call_next(request)
 

@@ -1179,10 +1179,11 @@ schema matches the running code. Anything else reads `degraded`:
 
 | `schema` | `status` | What it means |
 | --- | --- | --- |
-| `current` | `healthy` | The station can do its job. |
+| `current` | `healthy` | Durable storage wiring is complete and a fresh schema revision matches the running code. Channel output needs separate proof. |
 | `not-configured` | `degraded` | No database yet — run **Prepare storage** in the console, or set `DATABASE_URL`. |
 | `behind` | `degraded` | The code is newer than the database. Run `alembic upgrade head`. |
-| `unknown` | `degraded` | CivicCast could not read the schema version — usually the database is unreachable. |
+| `ahead` | `degraded` | The database is newer than this code. Use the matching supported version or the documented backup/rollback procedure; do not casually downgrade the database. |
+| `unknown` | `degraded` | Storage activation or a fresh schema check is pending, or the schema could not be verified. |
 
 The response always carries `schema_db_revision` and `schema_expected_head` (not just when `behind`) — `"none"`/`"unknown"` when either could not be read. When `schema` is `current` the two values are, by definition, equal; a caller proving a post-upgrade migration actually landed (rather than trusting the `current` label alone) can compare them directly.
 
@@ -1190,11 +1191,36 @@ The response always carries `schema_db_revision` and `schema_expected_head` (not
 database returns `200` and cannot serve a single recording; on the retired
 line it
 also reported `"healthy"`, which told an uptime monitor the opposite of the
-truth. CivicCast never auto-migrates — `behind` is a state an operator resolves
-deliberately.
+truth. Schema verification itself is read-only. Supported managed-storage
+initialization can apply migrations during owned activation, including startup
+from persisted managed configuration; construction does not wait for that work.
+Owned activation also initializes the local as-run journal and, when live
+captioning is enabled, resolves the selected caption/translation adapters before
+storage readiness can attest completion. Journal-first writes and startup replay
+remain in place; a pending or failed initialization is not healthy readiness.
+An explicitly configured external database is not implicitly migrated. A
+`behind` external database is a state an operator resolves deliberately.
 
 Readiness is re-checked when storage is prepared, so a station flips from
 `degraded` to `healthy` without a restart.
+
+Both `/health` and `/api/health` answer without waiting for database work.
+At startup, during storage pickup, and when the five-second schema cache expires,
+they may temporarily return `degraded`/`unknown` with revision fields
+`"none"`/`"unknown"` while one owned refresh runs. They do not serve an expired
+healthy verdict as fresh proof. Keep the existing liveness timeout. When readiness
+is pending, follow up within the five-second freshness window (for example, once
+per second), within the existing finite setup/recovery budget, until a fresh
+`current` verdict arrives. A monitor polling only once after each cache expiry
+can repeatedly see `unknown`; that is not a verified failure or a fresh healthy
+attestation. A database operation that outlives its
+15-second caller guard retains its work slot rather than spawning retry threads.
+If that operation never finishes, readiness remains degraded; investigate the
+database rather than treating HTTP `200` as schema or broadcast proof.
+
+Health-only polling still discovers managed storage prepared by another worker.
+Changing `DATABASE_URL` inside a running process is not automatic store rewiring:
+use the supported storage activation path or restart with the intended setting.
 
 ### Offline model bundle
 
@@ -1247,7 +1273,7 @@ publish issues.
 
 | Symptom | Meaning | Operator action |
 | --- | --- | --- |
-| `/health` reports `"status":"degraded"` | The database schema does not match the running code — see the `schema` field for which case. | If `not-configured`, run **Prepare storage** in the operator console. If `behind`, run `alembic upgrade head`. If `unknown`, check that the database is reachable. |
+| `/health` reports `"status":"degraded"` | Storage or a fresh schema verdict is not ready — see the `schema` field. | If `not-configured`, run **Prepare storage** in the operator console. If `behind`, run `alembic upgrade head`. If `unknown`, allow the owned check to finish; if it persists, check database reachability. |
 | Clean Windows proof is blocked | The host did not provide an isolated target, or no install was exercised on it. | Rerun the proof on a fresh Hyper-V, Windows Sandbox, or VirtualBox Windows target. |
 | External provider lane is credential-gated | A secret may be missing or live proof has not been recorded. | Use approved credentials only, run the controlled provider proof, and store redacted evidence. |
 | Model lane is blocked | Required model hashes are unavailable. | Download or import the approved model bundle and verify hashes before captions or summaries. |

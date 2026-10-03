@@ -36,6 +36,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 from starlette.types import Receive, Scope, Send
@@ -165,6 +166,7 @@ from civiccast.egress.store import PostgresEgressStore
 from civiccast.egress.takeover_service import AlreadyLiveError, TakeoverService
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
 from civiccast.facility.router import staff_router as facility_staff_router
+from civiccast.health_schema import HealthSchemaOwner
 from civiccast.installer.commissioning_router import get_commissioning_egress_store
 from civiccast.installer.commissioning_router import staff_router as commissioning_staff_router
 from civiccast.installer.router import get_live_recording_finalizer
@@ -748,26 +750,14 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Audit ENG-004: schema-currency self-diagnosis runs HERE, not in
     # create_app - plain create_app() calls must never touch the database
     # (pinned by test_create_app_does_not_call_engine_connect).
-    from civiccast.schema_check import check_schema_currency
-
-    app.state.schema_status = check_schema_currency(os.environ.get("DATABASE_URL"))
-    # <fix/health-readiness-order-independence> This checkpoint used to be
-    # left unset here -- only `_refresh_schema_status` (mid-flight storage
-    # activation) set it. `_maybe_refresh_schema_status` treats an unset
-    # checkpoint as "definitely stale" (`last is None` skips the TTL
-    # comparison entirely), so EVERY `/health` call recomputed
-    # `check_schema_currency` from scratch instead of respecting
-    # SCHEMA_STATUS_TTL_SECONDS -- defeating the TTL's whole purpose (a hot
-    # liveness path opening a DB connection per request) and silently
-    # discarding any schema_status a caller set directly (e.g. a test fixture
-    # simulating the "unknown" state) on the very next `/health` request.
-    app.state.schema_status_checked_monotonic = time.monotonic()
-    _maybe_start_finalization_worker(app)
-    _maybe_start_background_supervisors(app)
+    # The owner's serialized callback also handles storage activated before
+    # lifespan. Never compete on supervisor preparation locks on this loop.
+    app.state.health_schema_owner.request(invalidate=True)
     try:
         yield
     finally:
         app.state.lifespan_started = False
+        await run_in_threadpool(app.state.health_schema_owner.close)
         # RAT-004: drain every live channel through its owner (observed exit,
         # escalating to a kill past the deadline) BEFORE background.stop()
         # halts the automation poll loop, so channels are drained on
@@ -797,6 +787,11 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
             supervisor.stop()
         for background in getattr(app.state, "background_supervisors", []):
             background.stop()
+        outbox = getattr(app.state, "as_run_outbox", None)
+        if outbox is not None:
+            # Channel drain/worker stop comes first so final as-run closes can
+            # still journal. A held opener closes its late handle on release.
+            outbox.close(wait=False)
 
 
 def _wire_finalization_worker(app: FastAPI, session_factory: Any) -> None:
@@ -819,14 +814,26 @@ def _maybe_start_finalization_worker(app: FastAPI) -> None:
     maintenance with a worker that publishes files)."""
 
     supervisor = getattr(app.state, "finalization_worker_supervisor", None)
-    if supervisor is None or not getattr(app.state, "lifespan_started", False):
+    if (
+        supervisor is None
+        or not getattr(app.state, "lifespan_started", False)
+        or not getattr(app.state, "durable_storage_active", False)
+    ):
         return
     if getattr(app.state, "supervisor_mode", _SUPERVISOR_MODE_NORMAL) in _SUPERVISOR_MODE_FROZEN:
         return
-    supervisor.start()  # no-op unless mode == "inline"
+    with app.state.health_schema_owner.operation() as allowed:
+        if allowed:
+            supervisor.start(admission=app.state.health_schema_owner.admission)
 
 
 def _maybe_start_background_supervisors(app: FastAPI) -> None:
+    with app.state.health_schema_owner.operation() as allowed:
+        if allowed:
+            _start_background_supervisors(app)
+
+
+def _start_background_supervisors(app: FastAPI) -> None:
     """RAT-001: in maintenance mode, start ONLY the (currently empty)
     read-path allow-list — concretely, this holds back ChannelAutomationService
     (the daemon-driving, encoder-spawning worker/write surface) along with
@@ -838,13 +845,15 @@ def _maybe_start_background_supervisors(app: FastAPI) -> None:
     the allow-list by name without changing this gate's shape.
     """
 
-    if not getattr(app.state, "lifespan_started", False):
+    if not getattr(app.state, "lifespan_started", False) or not getattr(
+        app.state, "durable_storage_active", False
+    ):
         return
     if getattr(app.state, "supervisor_mode", _SUPERVISOR_MODE_NORMAL) in _SUPERVISOR_MODE_FROZEN:
         return
     _prewarm_native_live_caption_runtime(app)
     for supervisor in getattr(app.state, "background_supervisors", []):
-        supervisor.start()  # each no-ops unless its mode is "inline"
+        supervisor.start(admission=app.state.health_schema_owner.admission)
     # One-shot startup-condition hooks (e.g. the caption-tier degrade alert):
     # drained so a hook runs exactly once whether durable storage was wired at
     # boot (lifespan reaches here first) or mid-flight ("Prepare storage" ->
@@ -878,7 +887,8 @@ def _maybe_start_background_supervisors(app: FastAPI) -> None:
             name="civiccast-startup-condition",
             daemon=True,
         )
-        thread.start()
+        if not app.state.health_schema_owner.start_hook(thread):
+            return
         thread.join(timeout=_startup_hook_timeout_seconds())
         if not finished.is_set():
             _LOG.warning(
@@ -1194,6 +1204,52 @@ def _build_ai_model_service(session_factory: Any) -> AiModelService:
     )
 
 
+def _wire_live_caption_tap(
+    app: FastAPI, session_factory: Any, tap_settings: CaptionTapWorkerSettings
+) -> None:
+    """Resolve selected adapters and construct the live worker during activation."""
+    # S13: the caption runtime loads the operator-selected model (faster-whisper
+    # ``large-v3`` by default; a selection swaps the loaded model id). The
+    # translation provider is likewise the operator-selected translation model
+    # (local TranslateGemma by default; a cloud selection routes through the cloud
+    # adapter) — T3/M4: translation is now wired, not just captions/summary.
+    ai_model_service = _build_ai_model_service(session_factory)
+    # live=True: this runtime is the LIVE tap's, sharing the box with
+    # playout, so it is sized conservatively (1-2 CTranslate2 intra-op
+    # threads, core-count-aware and capped -- see
+    # civiccast.captions.runtime.default_live_tap_cpu_threads -- and
+    # greedy decoding on CPU). The offline caption job below deliberately
+    # keeps the batch sizing -- it runs against a published file, not
+    # against the air signal.
+    caption_runtime = build_caption_runtime(ai_model_service, live=True)
+    from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
+
+    tap_worker = build_tap_worker(
+        tap_settings,
+        PostgresCaptionReviewStore(session_factory),
+        runtime=caption_runtime,
+        translation_provider=build_translator(ai_model_service),
+        # The operator's station-level switch
+        # (``StationProfile.live_captions_enabled``, default on), read on
+        # EVERY scan rather than once here: an activated native station
+        # forces ``CIVICCAST_CAPTION_TAP=inline`` into its environment, so
+        # this is the only way an operator can stop live captioning -- and
+        # it has to work without restarting a control plane that is on air.
+        is_enabled=resolve_live_captions_enabled_or_default,
+    )
+    # Exposed so app-factory wiring tests can assert the operator-selected
+    # translation/caption models reached the running worker (T3/T4).
+    app.state.caption_tap_worker = tap_worker
+    app.state.background_supervisors.append(
+        ThreadSupervisor(
+            name="civiccast-caption-tap-worker",
+            run_forever=tap_worker.run_forever,
+            poll_seconds=tap_settings.poll_seconds,
+            enabled=True,
+        )
+    )
+
+
 def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
     """Register the ActivityPub retry and retention workers (Stage F).
 
@@ -1449,6 +1505,7 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
     automation_settings = ChannelAutomationSettings.from_env()
     channel_automation = build_channel_automation(
         session_factory,
+        defer_storage=True,
         alert_evaluator_hook=_alert_evaluator_hook,
         channel_start_hook=lambda channel_id: (
             tap_worker.begin_channel_session(channel_id)
@@ -1459,6 +1516,8 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
     # RAT-004: the lifespan shutdown finally block drains this daemon (the
     # graceful drain-all owner) before background.stop() halts the poll loop.
     app.state.egress_daemon = channel_automation.daemon
+    app.state.channel_automation = channel_automation
+    app.state.as_run_outbox = channel_automation.as_run_outbox
     app.state.background_supervisors.append(
         ThreadSupervisor(
             name="civiccast-channel-automation",
@@ -1515,46 +1574,12 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
     # is only constructed when the tap is actually enabled inline.
     tap_settings = CaptionTapWorkerSettings.from_env()
     if tap_settings.mode == "inline":
-        # S13: the caption runtime loads the operator-selected model (faster-whisper
-        # ``large-v3`` by default; a selection swaps the loaded model id). The
-        # translation provider is likewise the operator-selected translation model
-        # (local TranslateGemma by default; a cloud selection routes through the cloud
-        # adapter) — T3/M4: translation is now wired, not just captions/summary.
-        ai_model_service = _build_ai_model_service(session_factory)
-        # live=True: this runtime is the LIVE tap's, sharing the box with
-        # playout, so it is sized conservatively (1-2 CTranslate2 intra-op
-        # threads, core-count-aware and capped -- see
-        # civiccast.captions.runtime.default_live_tap_cpu_threads -- and
-        # greedy decoding on CPU). The offline caption job below deliberately
-        # keeps the batch sizing -- it runs against a published file, not
-        # against the air signal.
-        caption_runtime = build_caption_runtime(ai_model_service, live=True)
-        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
-
-        tap_worker = build_tap_worker(
-            tap_settings,
-            PostgresCaptionReviewStore(session_factory),
-            runtime=caption_runtime,
-            translation_provider=build_translator(ai_model_service),
-            # The operator's station-level switch
-            # (``StationProfile.live_captions_enabled``, default on), read on
-            # EVERY scan rather than once here: an activated native station
-            # forces ``CIVICCAST_CAPTION_TAP=inline`` into its environment, so
-            # this is the only way an operator can stop live captioning -- and
-            # it has to work without restarting a control plane that is on air.
-            is_enabled=resolve_live_captions_enabled_or_default,
+        # Registry/translator reads complete under activation, not construction.
+        app.state.durable_storage_caption_wiring = lambda: _wire_live_caption_tap(
+            app, session_factory, tap_settings
         )
-        # Exposed so app-factory wiring tests can assert the operator-selected
-        # translation/caption models reached the running worker (T3/T4).
-        app.state.caption_tap_worker = tap_worker
-        app.state.background_supervisors.append(
-            ThreadSupervisor(
-                name="civiccast-caption-tap-worker",
-                run_forever=tap_worker.run_forever,
-                poll_seconds=tap_settings.poll_seconds,
-                enabled=True,
-            )
-        )
+    else:
+        app.state.durable_storage_caption_wiring = None
     # K3 offline caption job: captions on the PUBLISHED file, which is the
     # legal requirement (live captioning above is the accessibility one).
     # On by default -- the floor caption engine ships with every install --
@@ -2184,6 +2209,7 @@ def create_app() -> FastAPI:
         openapi_url=None if lan_only_station else "/openapi.json",
         lifespan=_app_lifespan,
     )
+    app.state.durable_storage_lock = threading.RLock()
     if lan_only_station:
         _LOG.info(
             "%s is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: "
@@ -2319,6 +2345,13 @@ def create_app() -> FastAPI:
         app, url, upload_dir=upload_dir
     )
     app.state.sync_durable_storage = lambda: _sync_durable_storage(app)
+    app.state.health_schema_owner = HealthSchemaOwner(
+        app.state,
+        sync_storage=lambda: _sync_health_storage(app),
+        source=lambda: os.environ.get("DATABASE_URL"),
+        ttl_seconds=SCHEMA_STATUS_TTL_SECONDS,
+    )
+    app.state.managed_storage_pending = bool(database_url and not os.environ.get("DATABASE_URL"))
 
     @app.middleware("http")
     async def public_analytics_body_limit_middleware(request: Any, call_next: Any) -> Any:
@@ -2369,13 +2402,13 @@ def create_app() -> FastAPI:
     @app.middleware("http")
     async def durable_storage_sync_middleware(request: Any, call_next: Any) -> Any:
         syncer = getattr(request.app.state, "sync_durable_storage", None)
-        if callable(syncer):
-            syncer()
+        if callable(syncer) and request.url.path not in {"/health", "/api/health"}:
+            await run_in_threadpool(syncer)
         return await call_next(request)
 
     @app.get("/api/health", include_in_schema=False)
     @app.get("/health", tags=["platform"], summary="Liveness plus station readiness")
-    def health() -> dict[str, str | bool | int]:
+    async def health() -> dict[str, str | bool | int]:
         """Liveness probe carrying a readiness verdict; no auth required.
 
         Spec §5.4 names this as the standard CivicSuite-shaped liveness path.
@@ -2393,25 +2426,9 @@ def create_app() -> FastAPI:
           cannot serve a recording, and reporting "healthy" for it told an
           operator the opposite of the truth.
         """
-        from civiccast.schema_check import SchemaStatus
-
-        # <installer-path-audit MA-13> The schema verdict used to be a
-        # BOOT-TIME snapshot that was never refreshed: computed once in the
-        # lifespan, with the only other write reachable solely from
-        # _install_durable_store_wiring. So a database unreachable at boot read
-        # `unknown` forever; an operator who then ran `alembic upgrade head`
-        # still saw `behind` until the service was bounced, and a monitor keyed
-        # on the (correct) status=="healthy" && schema=="current" rule alerted
-        # indefinitely. In the other direction a database changed under a
-        # running app kept reporting `current` -- and that is the exact field
-        # Gate A's post-upgrade guard and the installer's own D4 readiness gate
-        # now read. Recompute with a short TTL, reusing the existing 15s
-        # bounded read; the TTL keeps a hot liveness path from opening a
-        # connection per request.
-        _maybe_refresh_schema_status(app)
-        schema_status: SchemaStatus = getattr(
-            app.state, "schema_status", SchemaStatus(state="unknown")
-        )
+        # An expired verdict cannot attest readiness/revisions. Refresh and
+        # cross-process storage pickup are owned work, never HTTP waits.
+        schema_status = _maybe_refresh_schema_status(app)
         readiness = "healthy" if schema_status.state == "current" else "degraded"
         # Annotated to match the declared return type. Inferred from this
         # literal alone it is dict[str, str], which then rejects the bool and
@@ -2565,6 +2582,7 @@ def create_app() -> FastAPI:
             app,
             database_url,
             upload_dir=_managed_upload_dir_if_ready(),
+            initialize=False,
         )
 
     _install_staff_openapi_contract(app)
@@ -2944,17 +2962,21 @@ def _wire_durable_stores(app: FastAPI) -> None:
 
     # S14: durable Postgres-backed analytics store replaces the JSON file
     # (AnalyticsStore) whenever durable storage is active. One-time,
-    # idempotent backfill of any legacy analytics-events.json rows runs here
+    # idempotent backfill of any legacy analytics-events.json rows is registered here
     # (never inside the migration -- see 0076_analytics_viewership's
     # docstring) and is a fast no-op once viewership_events has any row.
     analytics_store: object = PostgresAnalyticsStore(_session_factory)
-    try:
-        backfill_json_events(_session_factory, default_analytics_state_path())
-    except Exception:
-        _LOG.exception(
-            "Legacy analytics JSON backfill failed; continuing with the durable "
-            "store (new events are unaffected)."
-        )
+
+    def _backfill_analytics() -> None:
+        try:
+            backfill_json_events(_session_factory, default_analytics_state_path())
+        except Exception:
+            _LOG.exception(
+                "Legacy analytics JSON backfill failed; continuing with the durable "
+                "store (new events are unaffected)."
+            )
+
+    app.state.durable_storage_backfill = _backfill_analytics
 
     app.state.store_bundle = AppStoreBundle(
         asset_store=_resolve_postgres_store,
@@ -3399,18 +3421,68 @@ def _install_durable_store_wiring(
     database_url: str,
     *,
     upload_dir: str | None = None,
+    initialize: bool = True,
 ) -> None:
     """Bind durable SQL stores into an already-running app instance."""
 
-    os.environ["DATABASE_URL"] = database_url
-    _configure_upload_dir(upload_dir=upload_dir or _managed_upload_dir_if_ready())
-    bind_engine(_create_database_engine(database_url))
-    app.state.durable_storage_error = None
-    app.state.durable_storage_active = True
+    with app.state.health_schema_owner.operation() as allowed:
+        if allowed:
+            _perform_durable_store_wiring(
+                app, database_url, upload_dir=upload_dir, initialize=initialize
+            )
 
-    _wire_durable_stores(app)
-    _ensure_default_local_recording_target(app)
-    _refresh_schema_status(app)
+
+def _perform_durable_store_wiring(
+    app: FastAPI, database_url: str, *, upload_dir: str | None = None, initialize: bool = True
+) -> None:
+
+    with app.state.durable_storage_lock:
+        if app.state.health_schema_owner.closed:
+            return
+        if (
+            getattr(app.state, "durable_storage_active", False)
+            and getattr(app.state, "durable_storage_url", None) == database_url
+        ):
+            return
+        app.state.health_schema_owner.invalidate()
+        app.state.durable_storage_active = False
+        os.environ["DATABASE_URL"] = database_url
+        _configure_upload_dir(upload_dir=upload_dir or _managed_upload_dir_if_ready())
+        try:
+            if getattr(app.state, "durable_storage_wired_url", None) != database_url:
+                bind_engine(_create_database_engine(database_url))
+                _wire_durable_stores(app)
+                app.state.durable_storage_wired_url = database_url
+            if not initialize:
+                # Preserve lazy constructor DI, but no target/backfill DB I/O.
+                # Lifespan's owner (or explicit setup/request pickup) completes
+                # this same serialized activation before active becomes true.
+                return
+            caption_wiring = getattr(app.state, "durable_storage_caption_wiring", None)
+            if caption_wiring is not None:
+                caption_wiring()
+                app.state.durable_storage_caption_wiring = None
+            if app.state.health_schema_owner.closed:
+                return
+            automation = getattr(app.state, "channel_automation", None)
+            if automation is not None:
+                try:
+                    automation.prepare_storage()
+                finally:
+                    if app.state.health_schema_owner.closed:
+                        outbox = automation.as_run_outbox
+                        if outbox is not None:
+                            outbox.close(wait=False)
+            app.state.durable_storage_backfill()
+            _ensure_default_local_recording_target(app)
+        except Exception:
+            app.state.durable_storage_error = "Durable storage wiring failed."
+            raise
+        if not app.state.health_schema_owner.publish_storage(database_url):
+            return
+        _maybe_start_finalization_worker(app)
+        _maybe_start_background_supervisors(app)
+        _refresh_schema_status(app)
 
 
 def _refresh_schema_status(app: FastAPI) -> None:
@@ -3429,10 +3501,7 @@ def _refresh_schema_status(app: FastAPI) -> None:
 
     if not getattr(app.state, "lifespan_started", False):
         return
-    from civiccast.schema_check import check_schema_currency
-
-    app.state.schema_status = check_schema_currency(os.environ.get("DATABASE_URL"))
-    app.state.schema_status_checked_monotonic = time.monotonic()
+    app.state.health_schema_owner.request(invalidate=True)
 
 
 #: <installer-path-audit MA-13> How long ``/health`` may serve a cached schema
@@ -3441,36 +3510,29 @@ def _refresh_schema_status(app: FastAPI) -> None:
 #: post-upgrade guards Gate A and the installer now key on cannot read a
 #: pre-upgrade snapshot; long enough that a liveness path a supervisor polls
 #: every second does not open a database connection per request. The read
-#: itself is already hard-bounded at 15s by
-#: ``schema_check._READ_DB_REVISION_CEILING_SECONDS``.
+#: caller is bounded at 15s by ``schema_check._READ_DB_REVISION_CEILING_SECONDS``;
+#: actual driver work may outlive that guard and retains the owner's slot.
 SCHEMA_STATUS_TTL_SECONDS = 5.0
 
 
-def _maybe_refresh_schema_status(app: FastAPI) -> None:
+def _maybe_refresh_schema_status(app: FastAPI) -> Any:
     """Recompute ``app.state.schema_status`` when the cached one is stale.
 
-    Never raises: ``check_schema_currency`` is itself total (it reports
-    ``unknown`` rather than propagating), and a failure to refresh must leave
-    the previous verdict rather than break the liveness path.
+    HTTP only reads a fresh verdict or schedules one owned background attempt.
+    Stale or unfinished work reports unknown, never stale verified readiness.
     """
 
+    from civiccast.schema_check import SchemaStatus
+
     if not getattr(app.state, "lifespan_started", False):
-        return
-    last = getattr(app.state, "schema_status_checked_monotonic", None)
-    now = time.monotonic()
-    if last is not None and (now - last) < SCHEMA_STATUS_TTL_SECONDS:
-        return
-    try:
-        _refresh_schema_status(app)
-    except Exception:  # pragma: no cover - defensive; the callee is total
-        _LOG.exception("Schema-status refresh failed; keeping the previous verdict.")
+        return SchemaStatus(state="unknown")
+    return app.state.health_schema_owner.request()
 
 
 def _ensure_default_local_recording_target(app: FastAPI) -> None:
     """Seed the production recording target when durable storage comes up.
 
-    Runs inside ``create_app`` on every durable-storage start, so nothing here
-    may stop the control plane from serving ``/health``: an unwritable or
+    Runs during owned activation, never inside ``create_app``. An unwritable or
     unavailable recording location is an operator-fixable condition, not a boot
     failure (the same posture ``_require_durable_or_explicit_ephemeral`` takes
     for storage that is not ready at all). Every filesystem and store call below
@@ -3564,10 +3626,54 @@ def _managed_upload_dir_if_ready() -> str | None:
         return None
 
 
+def _sync_health_storage(app: FastAPI) -> None:
+    """Complete activation/startup only on the accounted schema-owner thread.
+
+    Newly activated storage starts workers in its existing activation path.
+    Storage prepared before lifespan instead needs this first owned startup;
+    serialized re-entry preserves supervisor/prewarm once-only behavior.
+    """
+    with app.state.durable_storage_lock:
+        was_active = bool(getattr(app.state, "durable_storage_active", False))
+        _sync_durable_storage(app)
+        has_startup_work = (
+            getattr(app.state, "finalization_worker_supervisor", None) is not None
+            or bool(getattr(app.state, "background_supervisors", []))
+            or bool(getattr(app.state, "startup_condition_hooks", []))
+        )
+        if (
+            was_active
+            and has_startup_work
+            and getattr(app.state, "durable_storage_url", None) == os.environ.get("DATABASE_URL")
+        ):
+            _maybe_start_finalization_worker(app)
+            _maybe_start_background_supervisors(app)
+
+
 def _sync_durable_storage(app: FastAPI) -> None:
     """Let workers observe managed storage prepared by another worker."""
 
+    with app.state.health_schema_owner.operation() as allowed:
+        if allowed:
+            _sync_storage_impl(app)
+
+
+def _sync_storage_impl(app: FastAPI) -> None:
+
     if getattr(app.state, "durable_storage_active", False):
+        return
+    if getattr(app.state, "managed_storage_pending", False):
+        with app.state.durable_storage_lock:
+            if app.state.managed_storage_pending:
+                storage = ensure_managed_storage()
+                if not app.state.health_schema_owner.closed:
+                    _install_durable_store_wiring(app, storage.database_url)
+        return
+    database_url = os.environ.get("DATABASE_URL")
+    if database_url and getattr(app.state, "durable_storage_wired_url", None) == database_url:
+        # Explicit boot DATABASE_URL has already selected durable DI even in
+        # test/ephemeral mode; only its deferred initialization remains.
+        _install_durable_store_wiring(app, database_url)
         return
     if os.environ.get("CIVICCAST_ALLOW_EPHEMERAL_STORES") == "1":
         return
@@ -3591,17 +3697,9 @@ def _resolve_database_url() -> str | None:
         return database_url
     if os.environ.get("CIVICCAST_ALLOW_EPHEMERAL_STORES") == "1":
         return None
-    managed_url = load_managed_database_url()
-    if managed_url is None:
-        return None
-    try:
-        storage = ensure_managed_storage()
-    except ManagedStorageError:
-        raise
-    except Exception as exc:
-        raise ManagedStorageError(f"Could not prepare CivicCast managed storage: {exc}") from exc
-    os.environ["DATABASE_URL"] = storage.database_url
-    return storage.database_url
+    # Discovery is config/filesystem-only. Required managed preparation and
+    # migrations are deferred to the accounted activation operation.
+    return load_managed_database_url()
 
 
 def _create_database_engine(database_url: str) -> Engine:

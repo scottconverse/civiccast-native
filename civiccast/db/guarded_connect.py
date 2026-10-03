@@ -43,7 +43,28 @@ runtime dependency of this project on every platform (ADR 0008), so
 from __future__ import annotations
 
 import concurrent.futures
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
+from typing import Any
+
+_observed_work: ContextVar[list[concurrent.futures.Future[Any]] | None] = ContextVar(
+    "civiccast_bounded_work", default=None
+)
+
+
+@contextmanager
+def track_bounded_work(futures: list[concurrent.futures.Future[Any]]) -> Iterator[None]:
+    """Retain actual work, including work surviving its caller's timeout.
+
+    The owning thread finishes before another attempt inspects this list. This
+    does not cancel work or change any caller's hard ceiling.
+    """
+    token = _observed_work.set(futures)
+    try:
+        yield
+    finally:
+        _observed_work.reset(token)
 
 
 class DatabaseMissingError(RuntimeError):
@@ -113,6 +134,9 @@ def run_bounded[T](fn: Callable[[], T], ceiling_seconds: float) -> T:
     pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = pool.submit(fn)
     try:
+        observed = _observed_work.get()
+        if observed is not None:
+            observed.append(future)
         return future.result(timeout=ceiling_seconds)
     finally:
         # wait=False is load-bearing -- see the docstring above.
@@ -123,4 +147,5 @@ __all__ = [
     "DatabaseMissingError",
     "classify_missing_database",
     "run_bounded",
+    "track_bounded_work",
 ]

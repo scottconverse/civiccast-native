@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Real HTTP timeout possibility, not attribution of a station incident.
+"""Real HTTP responsiveness and retained slow-read ownership.
 
 The DB engine and migration metadata are fake; lifecycle state is test-configured.
-Production route, middleware, sync dispatch, schema refresh and bounded guard
+Production route, middleware, schema refresh and bounded guard
 remain intact. Lifespan is deliberately off: this is neither a startup nor an
 inactive-storage proof. Each case owns a hidden child.
 """
@@ -126,6 +126,7 @@ def _run_case(case: str) -> None:
     app.state.schema_status_checked_monotonic = None
     fake_url = "postgresql+psycopg://u83.invalid/database"
     patch.setenv("DATABASE_URL", fake_url)
+    app.state.durable_storage_url = fake_url
     patch.setattr(schema_check, "expected_migration_head", lambda: "u83-head")
     patch.setattr(schema_check, "known_revisions", lambda: frozenset({"u83-head"}))
     assert schema_check._READ_DB_REVISION_CEILING_SECONDS == 15.0
@@ -174,7 +175,6 @@ def _run_case(case: str) -> None:
     patch.setattr(sqlalchemy, "create_engine", fake_engine)
     health_route = next(route for route in app.routes if getattr(route, "path", None) == "/health")
     assert health_route.endpoint.__module__ == "civiccast.app"
-    assert not inspect.iscoroutinefunction(health_route.endpoint)
     response_events: list[tuple[float, int]] = []
 
     async def observed(scope: Any, receive: Any, send: Any) -> None:
@@ -207,6 +207,10 @@ def _run_case(case: str) -> None:
         assert server.started and not server_errors
         url = f"http://127.0.0.1:{port}/health"
         control = client.get(url)
+        deadline = time.monotonic() + 2
+        while control.json()["schema"] != "current" and time.monotonic() < deadline:
+            time.sleep(0.01)
+            control = client.get(url)
         assert control.status_code == 200
         assert control.json()["status"] == "healthy"
         assert control.json()["schema"] == "current"
@@ -218,11 +222,19 @@ def _run_case(case: str) -> None:
         response_events.clear()
         timings["client_start"] = time.monotonic()
         if case == "literal":
-            with pytest.raises(httpx.ReadTimeout):
-                client.get(url)
-            timings["client_timeout"] = time.monotonic()
-            assert entered.is_set(), "client expired before fake read entry"
-            assert timings["read_enter"] < timings["client_timeout"]
+            response = None
+            with suppress(httpx.ReadTimeout):
+                response = client.get(url, timeout=1)
+            assert response is not None, "health must not await the slow schema read"
+            timings["client_response"] = time.monotonic()
+            assert response.status_code == 200
+            assert response.json()["status"] == "degraded"
+            assert response.json()["schema_db_revision"] == "none"
+            assert response.json()["schema_expected_head"] == "unknown"
+            assert entered.wait(1)
+            for _ in range(3):
+                assert client.get(url, timeout=1).json()["status"] == "degraded"
+            assert count == 2
             remaining = timings["read_enter"] + 5.25 - time.monotonic()
             if remaining > 0:
                 time.sleep(remaining)
@@ -233,29 +245,38 @@ def _run_case(case: str) -> None:
             while not response_events and time.monotonic() < deadline:
                 time.sleep(0.01)
             assert response_events and response_events[0][1] == 200
-            assert timings["client_timeout"] < timings["release"] <= timings["read_exit"]
+            assert timings["client_response"] < timings["release"] <= timings["read_exit"]
             assert 5 < timings["read_exit"] - timings["read_enter"] < 15
-            assert response_events[0][0] >= timings["read_exit"]
+            assert response_events[0][0] < timings["release"]
             assert schema_check._READ_DB_REVISION_CEILING_SECONDS == 15.0
             cached = client.get(url)
+            deadline = time.monotonic() + 2
+            while cached.json()["schema"] != "current" and time.monotonic() < deadline:
+                time.sleep(0.01)
+                cached = client.get(url)
             assert cached.status_code == 200 and cached.json()["schema"] == "current"
             assert cached.json()["status"] == "healthy" and count == 2
         else:
-            response = None
-            with suppress(httpx.ReadTimeout):
-                response = client.get(url, timeout=2)
-            assert response is not None, "DB guard must finish before the 2-second client cutoff"
+            response = client.get(url, timeout=1)
             timings["guard_response"] = time.monotonic()
+            assert entered.wait(1)
             assert entered.is_set() and not release.is_set()
             assert response.status_code == 200
             assert response.json()["schema"] == "unknown"
             assert response.json()["status"] == "degraded"
             assert timings["guard_response"] - timings["read_enter"] < 2
+            # Outer timeout/TTL cannot create another actual blocked DB worker.
+            time.sleep(0.4)
+            for _ in range(3):
+                app.state.schema_status_checked_monotonic = None
+                assert client.get(url, timeout=1).json()["status"] == "degraded"
+            assert count == 2
         assert count == 2 and not forbidden and not server_errors
     finally:
         release.set()
         for worker_thread in fake_threads:
             worker_thread.join(timeout=2)
+        owner_stopped = app.state.health_schema_owner.close(timeout=2)
         workers_stopped = all(not worker.is_alive() for worker in fake_threads)
         client.close()
         server.should_exit = True
@@ -271,11 +292,13 @@ def _run_case(case: str) -> None:
                     "port": port,
                     "server_stopped": not thread.is_alive(),
                     "fake_workers_stopped": workers_stopped,
+                    "schema_owner_stopped": owner_stopped,
                 },
                 sort_keys=True,
             )
         )
         assert workers_stopped, "fake guarded worker failed to dispose"
+        assert owner_stopped, "schema owner failed to stop"
         assert not thread.is_alive(), "owned HTTP thread failed to stop"
     print(
         "U83_RECEIPT "

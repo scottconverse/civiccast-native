@@ -22,7 +22,7 @@ import os
 import threading
 import time
 from collections.abc import Callable
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -961,26 +961,29 @@ class FinalizationWorkerSupervisor:
         thread = self._thread
         return thread is not None and thread.is_alive()
 
-    def start(self) -> None:
+    def start(self, *, admission: Callable[[], AbstractContextManager[bool]] | None = None) -> None:
         if self.settings.mode != WORKER_MODE_INLINE:
             return
         with self._lock:
             if self.running:
                 return
-            self._stop_event.clear()
             worker = build_worker(
                 self._session_factory, self.settings, cdn_adapter=self.cdn_adapter
             )
-            self._thread = threading.Thread(
-                target=worker.run_forever,
-                kwargs={
-                    "poll_seconds": self.settings.poll_seconds,
-                    "stop_event": self._stop_event,
-                },
-                name="civiccast-finalization-worker",
-                daemon=True,
-            )
-            self._thread.start()
+            with admission() if admission is not None else nullcontext(True) as allowed:
+                if not allowed:
+                    return
+                self._stop_event.clear()
+                self._thread = threading.Thread(
+                    target=worker.run_forever,
+                    kwargs={
+                        "poll_seconds": self.settings.poll_seconds,
+                        "stop_event": self._stop_event,
+                    },
+                    name="civiccast-finalization-worker",
+                    daemon=True,
+                )
+                self._thread.start()
             _LOG.info(
                 "Finalization worker started (inline thread, poll=%ss, settle=%ss).",
                 self.settings.poll_seconds,

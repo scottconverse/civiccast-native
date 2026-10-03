@@ -158,7 +158,7 @@ def test_app_factory_summary_override_follows_a_cloud_selection(
 def test_app_factory_wires_translation_provider_into_tap_worker(
     durable_app_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from civiccast.app import create_app
+    from civiccast.app import _install_durable_store_wiring, create_app
     from civiccast.translate.ollama import OllamaSpanishTranslator
 
     tap_dir = durable_app_env / "captiontap"
@@ -167,8 +167,13 @@ def test_app_factory_wires_translation_provider_into_tap_worker(
     monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_dir))
 
     app = create_app()
+    assert getattr(app.state, "caption_tap_worker", None) is None
+    monkeypatch.setattr("civiccast.egress.automation._default_relay_scanner", lambda: [])
+    import os
+
+    _install_durable_store_wiring(app, os.environ["DATABASE_URL"])
     worker = getattr(app.state, "caption_tap_worker", None)
-    assert worker is not None, "create_app() must build the caption tap worker when inline"
+    assert worker is not None, "completed activation must build the inline tap worker"
     provider = worker._translation_provider
     # Translation is wired (T3): the worker got a service-built translator (the local
     # default here), not None.
@@ -233,7 +238,7 @@ def test_app_factory_wires_the_caption_cdn_republisher(durable_app_env: Path) ->
 def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
     durable_app_env: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from civiccast.app import create_app
+    from civiccast.app import _install_durable_store_wiring, create_app
     from civiccast.captions.runtime import REQUIRED_LOCAL_MODEL_FILES
 
     tap_dir = durable_app_env / "caption-tap"
@@ -253,6 +258,10 @@ def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
     monkeypatch.setenv("CIVICCAST_EGRESS_EMBED_CAPTIONS", "1")
 
     app = create_app()
+    monkeypatch.setattr("civiccast.egress.automation._default_relay_scanner", lambda: [])
+    import os
+
+    _install_durable_store_wiring(app, os.environ["DATABASE_URL"])
 
     names = {getattr(supervisor, "_name", None) for supervisor in app.state.background_supervisors}
     assert {
