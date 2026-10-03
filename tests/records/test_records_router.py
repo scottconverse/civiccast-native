@@ -4,8 +4,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Iterator
+from datetime import UTC, datetime
+from io import BytesIO
 
+import pikepdf
 import pytest
 from fastapi.testclient import TestClient
 
@@ -13,9 +18,11 @@ from civiccast.app import create_app
 from civiccast.auth.models import OperatorIdentity
 from civiccast.records.exporter import SignedRecordExporter
 from civiccast.records.models import RecordExportResponse
+from civiccast.records.pdfa import render_pdfa_record
 from civiccast.records.router import get_record_store
 from civiccast.records.store import InMemoryRecordStore
 from civiccast.records.timestamp import DeterministicTimestampAuthority
+from civiccast.summary.models import OperatorApproval
 from civiccast.summary.store import InMemorySummaryStore
 from tests.summary.test_summary_persistence import _summary
 
@@ -30,6 +37,14 @@ def _exported_record(summary_id: str = "summary-1") -> RecordExportResponse:
     summary = _summary().model_copy(update={"summary_id": summary_id, "status": "approved"})
     summary_store = InMemorySummaryStore()
     summary_store.create_summary(summary)
+    summary_store.approve_summary(
+        OperatorApproval(
+            summary_id=summary_id,
+            operator_id=_TEST_OPERATOR.operator_id,
+            operator_display_name=_TEST_OPERATOR.operator_display_name,
+            approved_at=datetime.now(UTC),
+        )
+    )
     exporter = SignedRecordExporter(
         summary_store=summary_store,
         timestamp_authority=DeterministicTimestampAuthority(),
@@ -56,6 +71,29 @@ def client_and_store() -> Iterator[tuple[TestClient, InMemoryRecordStore]]:
 
 
 class TestRecordsRouter:
+    def test_verify_preserves_structural_semantics_for_an_existing_legacy_record_without_approval(
+        self, client_and_store: tuple[TestClient, InMemoryRecordStore]
+    ) -> None:
+        client, store = client_and_store
+        record = _exported_record()
+        # Represent already-stored legacy bytes via the lower-level renderer,
+        # not a fresh export bypass. Verify remains an integrity/structure check.
+        legacy_bytes = render_pdfa_record(_summary(), approval=None)
+        with pikepdf.open(BytesIO(legacy_bytes)) as document:
+            assert json.loads(document.attachments["approval.json"].get_file().read_bytes()) is None
+        legacy = record.model_copy(
+            update={
+                "record_id": "legacy-record",
+                "pdf_bytes": legacy_bytes,
+                "artifact_digest": "sha256:" + hashlib.sha256(legacy_bytes).hexdigest(),
+                "timestamp_proof": DeterministicTimestampAuthority().timestamp(legacy_bytes),
+            }
+        )
+        store.create_record(legacy, artifact_bytes=legacy_bytes)
+        response = client.get("/api/staff/records/legacy-record/verify")
+        assert response.status_code == 200
+        assert response.json()["status"] == "verified"
+
     def test_export_rejects_unapproved_summary_actionably(self, client: TestClient) -> None:
         response = client.post(
             "/api/staff/records",

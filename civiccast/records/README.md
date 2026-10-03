@@ -4,7 +4,9 @@ v0.6 signed-record export module.
 
 ## Contract
 
-- Export requires a persisted, server-side approved summary.
+- Fresh export requires a persisted, server-side approved summary and separately
+  persisted approval metadata matching that summary ID. Missing/mismatched
+  approval requires explicit authenticated clerk reapproval, not backfill.
 - The staff route rejects missing or unapproved summaries before rendering.
 - `SignedRecordExporter.export(...)` renders a veraPDF-validated PDF/A-3B
   signed-record artifact, attaches sourced-claim, provenance, approval, and
@@ -14,6 +16,8 @@ v0.6 signed-record export module.
   without a configured and verified external authority.
 - Verification returns persisted record metadata when a record exists and a
   failed verification response for unknown record ids.
+  Existing archived-record verification retains its artifact-digest and proof-
+  structure meaning; it does not retroactively certify approval provenance.
 
 ## Persistence
 

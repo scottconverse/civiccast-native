@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="icon" href="data:,"><title>Isolated summary workflow test</title></head>
+  <body><div id="root"></div>
+    <script type="module">
+      import React from 'react'
+      import { createRoot } from 'react-dom/client'
+      import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+      import { SummaryReviewScreen } from '/src/screens/SummaryReviewScreen.tsx'
+      import '/src/index.css'
+      createRoot(document.getElementById('root')).render(React.createElement(QueryClientProvider, { client: new QueryClient() }, React.createElement(SummaryReviewScreen)))
+    </script>
+  </body>
+</html>

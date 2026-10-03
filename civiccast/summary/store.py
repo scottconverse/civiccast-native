@@ -27,10 +27,23 @@ class SummaryStoreNotFoundError(KeyError):
     """Raised when a summary id is missing."""
 
 
+def require_approvable_summary(summary: SummaryDraft) -> None:
+    """Require a reviewable draft with timestamp-backed evidence for each claim."""
+    if (
+        summary.status not in {"pending_review", "approved"}
+        or not summary.sourced_claims
+        or any(not claim.transcript_ranges for claim in summary.sourced_claims)
+    ):
+        raise SummaryStoreConflictError(
+            "This summary cannot be approved. Regenerate refused or rejected drafts, "
+            "and check timestamp-backed source ranges for every claim before approving."
+        )
+
+
 class SummaryStore(Protocol):
     def create_summary(self, summary: SummaryDraft) -> SummaryDraft: ...
     def get_summary(self, summary_id: str) -> SummaryDraft | None: ...
-    def list_review_items(self) -> list[SummaryDraft]: ...
+    def list_review_items(self, *, include_approved: bool = False) -> list[SummaryDraft]: ...
     def approve_summary(self, approval: OperatorApproval) -> SummaryDraft: ...
     def get_approval(self, summary_id: str) -> OperatorApproval | None: ...
 
@@ -51,17 +64,19 @@ class InMemorySummaryStore:
     def get_summary(self, summary_id: str) -> SummaryDraft | None:
         return self._summaries.get(summary_id)
 
-    def list_review_items(self) -> list[SummaryDraft]:
+    def list_review_items(self, *, include_approved: bool = False) -> list[SummaryDraft]:
         return [
             summary
             for summary in self._summaries.values()
             if summary.status in {"pending_review", "refused"}
+            or (include_approved and summary.status == "approved")
         ]
 
     def approve_summary(self, approval: OperatorApproval) -> SummaryDraft:
         summary = self._summaries.get(approval.summary_id)
         if summary is None:
             raise SummaryStoreNotFoundError(approval.summary_id)
+        require_approvable_summary(summary)
         approved = summary.model_copy(update={"status": "approved"})
         self._summaries[approval.summary_id] = approved
         self._approvals[approval.summary_id] = approval
@@ -138,7 +153,7 @@ class PostgresSummaryStore:
         with self._session_factory() as session:
             return self._load_summary(session, summary_id)
 
-    def list_review_items(self) -> list[SummaryDraft]:
+    def list_review_items(self, *, include_approved: bool = False) -> list[SummaryDraft]:
         with self._session_factory() as session:
             table = self._table_prefix(session)
             rows = session.execute(
@@ -146,8 +161,10 @@ class PostgresSummaryStore:
                     f"SELECT summary_id, meeting_id, status, narrative, provenance_json, "  # nosec B608
                     f"audit_fingerprint, operator_message FROM {table}summaries "
                     "WHERE status IN ('pending_review', 'refused') "
+                    "OR (:include_approved AND status = 'approved') "
                     "ORDER BY created_at ASC, summary_id ASC"
-                )
+                ),
+                {"include_approved": include_approved},
             ).fetchall()
             if not rows:
                 return []
@@ -175,6 +192,7 @@ class PostgresSummaryStore:
             summary = self._load_summary(session, approval.summary_id)
             if summary is None:
                 raise SummaryStoreNotFoundError(approval.summary_id)
+            require_approvable_summary(summary)
 
             session.execute(
                 text(

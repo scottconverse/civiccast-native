@@ -97,11 +97,20 @@ For each important claim:
 
 1. Open the timestamp link.
 2. Confirm the transcript supports the claim.
-3. Edit the summary if the claim is unsupported or too strong.
-4. Reject the claim if you cannot verify it.
+3. Correct the committed transcript cues if a claim is unsupported or too
+   strong, then ask support to generate a replacement summary. This screen
+   does not edit, reject, or regenerate claims.
+4. Do not approve a claim you cannot verify.
 
-If a number in the summary does not appear in the transcript, remove or rewrite
-the claim before approval.
+If a number does not appear in the transcript, correct the source cues and
+request a replacement before approval. Refused or rejected summaries, empty summaries,
+and claims without timestamp-backed ranges cannot be approved.
+
+Approval and export require the **records clerk** role. The buttons stay
+disabled while CivicCast checks your identity or if that check fails. Approval
+is recorded under your authenticated identity, not a name supplied by the page.
+Approved summaries remain on the screen after a refresh or reload so you can
+return to their export action.
 
 ## Signed Records
 
@@ -116,6 +125,29 @@ Before exporting:
 - Confirm approved captions and summary status match station policy.
 - Confirm the signer or approver shown by CivicCast is correct.
 - Keep the export with the station's retention records.
+
+An approved-status summary without matching persisted approval shows
+**Reapprove summary** and cannot export. Check the source evidence and explicitly
+reapprove as the authenticated clerk; CivicCast does not invent a prior approver.
+Existing archived records retain their integrity verification behavior, which
+does not retrospectively certify human approval provenance.
+After **Export signed record** succeeds, choose **Download PDF** to save the
+artifact. A download failure does not undo the export; its retry action tries
+the download again. Choose **Verify record** to check the stored artifact digest
+and timestamp proof structure. A failed result is not a verified record, even
+when the request itself succeeds; retry or contact support before relying on
+it. The console identifies deterministic test timestamps explicitly. This check
+does not independently validate an external authority's trust chain. Approval,
+export, download, and verification failures have their own retry messages.
+The displayed **PDF SHA-256** identifies the final downloaded file, not the
+earlier timestamp input. If an older response omits the final-file checksum,
+the console says it is unavailable rather than substituting another checksum.
+Retry buttons wait until other approval, export, download, or verification
+requests finish, to avoid overlapping actions.
+
+The default timestamp authority is deterministic, not a trusted external
+timestamp service. Do not treat a default export as independently timestamped
+unless your administrator has configured a real authority.
 
 ## Publish Approval
 
@@ -164,7 +196,7 @@ signed record.
 | Situation | Records Action |
 | --- | --- |
 | Captions are incomplete | Follow station policy: publish video first, hold captions, or publish auto-generated captions with a label. |
-| Summary claim is unsupported | Edit or reject the claim before approval. |
+| Summary claim is unsupported | Correct the committed source cues and ask support for a replacement summary; do not approve an unverified claim. |
 | Archive target is unavailable | Ask an admin whether the meeting can publish now or must wait for the required archive. |
 | Subscriber notification fails | Publish the record if required surfaces are ready, then retry notification after the issue is fixed. |
 | Wrong meeting metadata | Correct the metadata before signed-record export. |

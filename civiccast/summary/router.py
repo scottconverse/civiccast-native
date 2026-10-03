@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.ai_runtime.ollama_client import OllamaRuntimeUnavailableError
@@ -99,6 +100,7 @@ class SummaryReviewQueueResponse(BaseModel):
 
     items: list[SummaryDraft]
     next_cursor: str | None = None
+    approval_required_summary_ids: list[str] = Field(default_factory=list)
 
 
 class SummaryGenerateRequest(BaseModel):
@@ -120,9 +122,29 @@ class SummaryApprovalRequest(BaseModel):
     summary="List sourced summaries awaiting operator review",
 )
 def list_review_items(
+    include_approved: bool = False,
     store: SummaryStore = Depends(get_summary_store),
-) -> SummaryReviewQueueResponse:
-    return SummaryReviewQueueResponse(items=store.list_review_items(), next_cursor=None)
+) -> SummaryReviewQueueResponse | Response:
+    items = (
+        store.list_review_items(include_approved=True)
+        if include_approved
+        else store.list_review_items()
+    )
+    if not include_approved:
+        return JSONResponse(
+            SummaryReviewQueueResponse(items=items, next_cursor=None).model_dump(
+                mode="json", exclude={"approval_required_summary_ids"}
+            )
+        )
+    approval_required = []
+    for item in items:
+        if item.status == "approved":
+            approval = store.get_approval(item.summary_id)
+            if approval is None or approval.summary_id != item.summary_id:
+                approval_required.append(item.summary_id)
+    return SummaryReviewQueueResponse(
+        items=items, next_cursor=None, approval_required_summary_ids=approval_required
+    )
 
 
 @staff_router.post(
@@ -179,6 +201,8 @@ def approve_summary(
     )
     try:
         return store.approve_summary(approval)
+    except SummaryStoreConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except SummaryStoreNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

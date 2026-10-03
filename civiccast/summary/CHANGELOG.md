@@ -1,5 +1,25 @@
 # civiccast.summary Changelog
 
+## Unreleased - 2026-10-03
+
+- Require a real matching persisted approval before fresh record export.
+  Orphan approved summaries now require explicit authenticated reapproval;
+  existing stored-record integrity verification is unchanged.
+
+- Fixed summary approval requests to send only the supported note, leaving
+  approver identity bound to the authenticated staff token.
+- Added explicit approved-item discovery without changing the default review
+  queue, keeping export reachable after a refetch or reload in both stores.
+- Blocked refused, rejected, and unsourced approval, and applied the same
+  timestamp-evidence requirement to existing approved signed-record exports.
+- Disabled review actions until the current records-clerk role is confirmed,
+  including during a refresh of cached identity. Added authenticated PDF
+  download, visible existing-endpoint verification, and distinct approval,
+  export, download, and verification retry states, with test-timestamp limits.
+- Corrected the displayed checksum to identify the final downloaded PDF, with
+  an explicit unavailable state for older responses. Disabled failed-action
+  retries while another summary action is pending.
+
 ## Unreleased - 2026-08-29
 
 - Fixed: field evidence (candidate #17, 32GB CPU-only reference station) showed

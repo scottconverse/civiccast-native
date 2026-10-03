@@ -2196,8 +2196,10 @@ export function rejectCaptionReviewItem(
   )
 }
 
-export function listSummaryReviewItems(): Promise<SummaryReviewQueueResponse> {
-  return request<SummaryReviewQueueResponse>('/api/staff/summaries/review-items')
+export function listSummaryReviewItems(includeApproved = false): Promise<SummaryReviewQueueResponse & { approval_required_summary_ids?: string[] }> {
+  return request<SummaryReviewQueueResponse & { approval_required_summary_ids?: string[] }>(
+    `/api/staff/summaries/review-items${includeApproved ? '?include_approved=true' : ''}`,
+  )
 }
 
 export function approveSummary(
@@ -2217,6 +2219,14 @@ export function exportSignedRecord(
     method: 'POST',
     body: payload,
   })
+}
+
+export function downloadSignedRecord(recordId: string): Promise<Blob> {
+  return downloadStaffBlob(`/api/staff/records/${encodeURIComponent(recordId)}/download`)
+}
+
+export function verifySignedRecord(recordId: string): Promise<RecordExportResponse> {
+  return request<RecordExportResponse>(`/api/staff/records/${encodeURIComponent(recordId)}/verify`)
 }
 
 export function getActivityPubStatus(): Promise<ActivityPubStatusResponse> {
