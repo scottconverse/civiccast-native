@@ -3,11 +3,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router'
+import { HashRouter, MemoryRouter, useLocation, useNavigate } from 'react-router'
 
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  window.history.replaceState(null, '', '/')
 })
 
 vi.mock('../api/client', () => ({
@@ -45,18 +46,85 @@ function manual(overrides: Partial<ManualDocument> = {}): ManualDocument {
   }
 }
 
-function renderScreen(initialEntries: string[] = ['/help']) {
+function LocationMarker() {
+  const location = useLocation()
+  const navigate = useNavigate()
+  return <><div role="note" aria-label="Current route">{location.pathname}{location.hash}</div><button onClick={() => navigate(-1)}>Harness Back</button></>
+}
+
+function renderScreen(initialEntries: string[] = ['/help'], hashRouter = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const contents = <><ManualScreen /><LocationMarker /></>
+  if (hashRouter) window.history.replaceState(null, '', '/operator/#/help')
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={initialEntries}>
-        <ManualScreen />
-      </MemoryRouter>
+      {hashRouter ? <HashRouter>{contents}</HashRouter> :
+        <MemoryRouter initialEntries={initialEntries}>{contents}</MemoryRouter>}
     </QueryClientProvider>,
   )
 }
 
 describe('ManualScreen', () => {
+  it.each([false, true])('repeated body section clicks scroll again (hash=%s)', async (hashRouter) => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    const content = manual()
+    content.html += '<a href="#glossary">Read definitions</a>'
+    vi.mocked(getManual).mockResolvedValue(content)
+    renderScreen(['/help'], hashRouter)
+    const link = await screen.findByRole('link', { name: 'Read definitions' })
+    fireEvent.click(link)
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1))
+    scroll.mockClear() // user has scrolled away; a second action must scroll anew
+    fireEvent.click(screen.getByRole('link', { name: 'Read definitions' }))
+    await waitFor(() => expect(scroll).toHaveBeenCalledTimes(1))
+  })
+
+  it.each([false, true])('Back to unanchored manual clears current section (hash=%s)', async (hashRouter) => {
+    Element.prototype.scrollIntoView = vi.fn()
+    vi.mocked(getManual).mockResolvedValue(manual())
+    renderScreen(['/help'], hashRouter)
+    const nav = await screen.findByRole('navigation', { name: 'Manual contents' })
+    fireEvent.click(within(nav).getByText('Glossary'))
+    await waitFor(() => expect(within(nav).getByText('Glossary').closest('a')?.getAttribute('aria-current')).toBe('location'))
+    fireEvent.click(screen.getByRole('button', { name: 'Harness Back' }))
+    await waitFor(() => expect(screen.getByLabelText('Current route').textContent).toBe('/help'))
+    await waitFor(() => expect(nav.querySelector('[aria-current]')).toBeNull())
+  })
+  it.each([false, true])('body section links retain router navigation and native href (hash=%s)', async (hashRouter) => {
+    Element.prototype.scrollIntoView = vi.fn()
+    const content = manual()
+    content.html += '<a href="#glossary"><strong>Read definitions</strong></a>'
+    vi.mocked(getManual).mockResolvedValue(content)
+    renderScreen(['/help'], hashRouter)
+    const link = await screen.findByRole('link', { name: 'Read definitions' })
+    await waitFor(() => expect(link.getAttribute('href')).toBe(hashRouter ? '#/help#glossary' : '/help#glossary'))
+    // React must leave modified clicks native. Cancel only after observing that
+    // boundary so jsdom does not attempt its unsupported new-tab navigation.
+    const nativeClick = vi.fn((event: MouseEvent) => {
+      expect(event.defaultPrevented).toBe(false)
+      event.preventDefault()
+    })
+    document.addEventListener('click', nativeClick, { once: true })
+    fireEvent.click(link, { ctrlKey: true })
+    expect(nativeClick).toHaveBeenCalledOnce()
+    expect(screen.getByLabelText('Current route').textContent).toBe('/help')
+    fireEvent.click(within(link).getByText('Read definitions'))
+    await waitFor(() => expect(screen.getByLabelText('Current route').textContent).toBe('/help#glossary'))
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
+  })
+
+  it('external body links preserve the console with safe new-tab attributes', async () => {
+    const content = manual()
+    content.html += '<a href="https://example.org/guide">External guide</a><a href="mailto:staff@example.org">Email staff</a>'
+    vi.mocked(getManual).mockResolvedValue(content)
+    renderScreen()
+    const link = await screen.findByRole('link', { name: 'External guide' })
+    await waitFor(() => expect(link.getAttribute('target')).toBe('_blank'))
+    expect(link.getAttribute('rel')).toBe('noopener noreferrer')
+    expect(screen.getByRole('link', { name: 'Email staff' }).getAttribute('target')).toBeNull()
+  })
+
   it('shows a loading state before the manual arrives', () => {
     vi.mocked(getManual).mockReturnValue(new Promise(() => {}))
     renderScreen()

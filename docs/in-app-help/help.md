@@ -1,5 +1,18 @@
 # Manual (nav id: help)
 
+## Implementation update - 2026-10-03 (source, not installed acceptance)
+
+ManualScreen now gives body section links router-aware addresses, including
+HashRouter, while preserving modified clicks and copy/open-in-new-tab behavior.
+Ordinary body-link clicks navigate inside the console and scroll to the target.
+Repeated clicks on the same section scroll again after moving away. Back to the
+unanchored manual clears the contents list's current-section marker.
+HTTP(S) body links open a new tab with noopener/noreferrer; mail links retain their
+existing behavior. This addresses HELP-02 and the external-link part of HELP-08.
+The findings below describe the documentation handoff baseline. Regeneration,
+missing screenshots, old product anchor mappings, contents grouping and packaged
+browser acceptance remain open; this update does not mark the full manual done.
+
 Sidebar: Help > **Manual** (the section is collapsed by default). Page eyebrow "Help"; page H1 "Operator manual". Routes `#/help`, `#/docs`, `#/manual`. Manual authority: `docs/manual/src/11-signing-in.md` (find your way around; the Report a beta issue button) and `17-something-wrong.md` (section "Report a beta issue", `#report-a-beta-issue`).
 
 ## Where the help text lives now

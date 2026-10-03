@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (c) The CivicCast Authors
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useLocation } from 'react-router'
+import { Link, useHref, useLocation, useNavigate } from 'react-router'
 import { ApiError, getManual } from '../api/client'
 import { manualLink } from './manual-link'
 import type { ManualTocEntry } from '../types/api.generated'
@@ -45,6 +47,8 @@ function TocList({ entries, activeId }: { entries: ManualTocEntry[]; activeId: s
 
 export function ManualScreen() {
   const location = useLocation()
+  const navigate = useNavigate()
+  const manualHref = useHref('/help')
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [filter, setFilter] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -56,6 +60,22 @@ export function ManualScreen() {
   })
 
   const toc = manualQuery.data?.toc
+  const bodyHtml = useMemo(() => {
+    // Template content is inert. Transform only already-sanitized manual links,
+    // preserving real router-aware hrefs for copy, middle-click and new tabs.
+    const template = document.createElement('template')
+    template.innerHTML = manualQuery.data?.html ?? ''
+    for (const link of template.content.querySelectorAll('a[href]')) {
+      const href = link.getAttribute('href') ?? ''
+      if (href.startsWith('#') && href.length > 1) {
+        link.setAttribute('href', `${manualHref}${href}`)
+      } else if (/^https?:\/\//i.test(href)) {
+        link.setAttribute('target', '_blank')
+        link.setAttribute('rel', 'noopener noreferrer')
+      }
+    }
+    return template.innerHTML
+  }, [manualQuery.data?.html, manualHref])
   const filteredToc = useMemo(() => {
     const entries = toc ?? []
     const needle = filter.trim().toLowerCase()
@@ -73,19 +93,22 @@ export function ManualScreen() {
   useEffect(() => {
     if (!manualQuery.isSuccess) return
     const hash = location.hash.replace(/^#/, '')
-    if (!hash) return undefined
     // getElementById (not a CSS-selector query) so this needs no CSS.escape
     // polyfill and works for any id pandoc's slugger produces. Let the
     // injected HTML paint first.
     const raf = window.requestAnimationFrame(() => {
-      const target = contentRef.current && document.getElementById(hash)
-      if (target) {
+      const target = hash && contentRef.current && document.getElementById(hash)
+      if (target && contentRef.current?.contains(target)) {
         target.scrollIntoView({ behavior: 'smooth', block: 'start' })
         setActiveId(hash)
+      } else {
+        setActiveId(null)
       }
     })
     return () => window.cancelAnimationFrame(raf)
-  }, [manualQuery.isSuccess, location.hash])
+    // A new router entry may retain the same hash (a repeated section click).
+    // Its key still changes, so every navigation action can scroll again.
+  }, [manualQuery.isSuccess, location.hash, location.key])
 
   return (
     <div className="grid gap-4 px-6 py-5">
@@ -144,6 +167,16 @@ export function ManualScreen() {
 
           <div
             ref={contentRef}
+            onClick={(event) => {
+              if (event.defaultPrevented || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+              const link = event.target instanceof Element ? event.target.closest('a') : null
+              if (!link || !event.currentTarget.contains(link) || link.hasAttribute('download') || (link.target && link.target !== '_self')) return
+              const href = link.getAttribute('href') ?? ''
+              const prefix = `${manualHref}#`
+              if (!href.startsWith(prefix) || href.length === prefix.length) return
+              event.preventDefault()
+              navigate(manualLink(href.slice(prefix.length)))
+            }}
             className="cc-manual-prose rounded-md p-5"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
             // The HTML rendered here comes from civiccast/docsite/manual.json,
@@ -151,7 +184,7 @@ export function ManualScreen() {
             // allowlist sanitizer (civiccast/docsite/render.py::sanitize_html)
             // before it was committed -- see docs/docsite-sync.md. It is not
             // user input and is not sanitized again client-side.
-            dangerouslySetInnerHTML={{ __html: manualQuery.data.html }}
+            dangerouslySetInnerHTML={{ __html: bodyHtml }}
           />
         </div>
       )}
