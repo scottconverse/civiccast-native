@@ -1,4 +1,4 @@
-# Caption measurement diagnostics (U73)
+# Caption measurement diagnostics (U73/U75)
 
 This is instrumentation, not a caption-drop fix. Decoding configuration, model
 kwargs, transcript hypotheses, discard thresholds and scheduling are unchanged.
@@ -55,16 +55,54 @@ installed-only functionality that a blanket overwrite would remove. Derive a
 compatible measurement-only carry only after that comparison, preserving
 model/temperature/preparer behavior. Use a 20-minute observation window, then
 stop and review even if no
-shed occurred. Probes run synchronously at the rare event on the scan path:
-psutil/NVML calls have no timeout, so bounded record counts are not a wall-time
-latency guarantee. Watch scan/heartbeat latency and playout health; stop sampling
-if diagnostic latency exceeds 100 ms, a new heartbeat/playout stall appears, or
-metadata output becomes missing/non-finite. Disabling the diagnostic is the
-first stop action; a hung synchronous probe needs the separately authorized
-service recovery/rollback procedure and cannot be interrupted by that switch.
+shed occurred. U75 refreshes process/ffmpeg/GPU evidence on an event-triggered
+single-flight daemon per collector. The caller never joins or waits for native
+probes. No periodic monitor or replacement thread is created while a probe is
+stuck. Fresh cache lasts two seconds; stale/pending evidence is labelled explicitly.
+probe_status, probe_refresh_s (completed work), probe_inflight_s (ongoing age),
+probe_cache_age_s and sampling_elapsed_s (snapshot retrieval, excluding receipt
+hashing/JSON/logging) distinguish these boundaries. Optional invalid times are null.
+Initial evidence may be pending; later events report completion, not an invented
+sample. Thread-start failures retain their slot rather than retry every event.
+GPU device lists are capped at eight and names/reasons at160 characters.
+
+psutil/NVML still have no cancellation; a GIL-holding native call can affect other
+Python threads. This is nonwaiting probe isolation, not hard real-time process
+protection or zero overhead. Watch scan/heartbeat and playout health; stop sampling
+if completed probe time, inflight age or diagnostic sampling latency exceeds100ms,
+a new heartbeat/playout stall appears, or required metadata is missing/non-finite.
+Disabling skips future collector work, but cannot interrupt a running native probe;
+recovery/rollback remains separately authorized.
 Preserve exact pre-install file backups and restore them under separate
 authority; the existing installed collector is restored, not deleted. No
 installed file is presumed absent from this repository's add-file status.
+
+## Selected executable-code receipt (U75)
+
+The actual running tap _process_channel, runtime transcribe (first generator next)
+and collector probe refresh each emit at most one process-wide fixed-key INFO line:
+`Caption diagnostic executable receipt <json>`. PID/process nonce join the three
+receipts. `executing` hashes the caller's actual frame code; `selected` hashes fixed
+looked-up methods, not a claim that every selected method was exercised. A replaced
+lookup differing from the executing anchor reports mismatch, not ok. Failures are
+latched unavailable (or logging unavailable), never retried per batch.
+
+selected-code-v1 hashes semantic bytecode, exception tables, typed constants/nested
+code, names and argument/closure/flags metadata. It excludes filenames and line
+positions. Compare against offline compiled accepted source under the exact same
+Python version/cache tag and optimization mode; compiled_anchors discovers the
+selected qualified names without executing source. Commit identity belongs in the
+offline artifact manifest, not a self-referential embedded source hash. Origin and
+co_filename are bounded location metadata, never loaded-code proof by themselves.
+Hash work has fixed256KiB/4096-node/depth32 budgets; only digests are logged, not
+constants, audio or transcripts. Receipt elapsed time measures one-shot hashing.
+
+This proves selected executable anchors only: not entire modules, mutable globals,
+model weights, native DLLs, or changes after the receipt. Missing confirmation or
+unavailable/mismatch is not acceptance. A fresh separate-process import cannot
+substitute for station-process receipts. U75 adds diagnostic_identity.py to any
+later compatibility/file-manifest assessment; do not deploy using U74's old exact
+three-file carry. No live operations were performed for U75.
 
 Only repeated shed-correlated evidence that isolates a particular decode or
 other-process-batch stage, against the unchanged control, justifies proposing a

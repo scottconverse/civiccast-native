@@ -251,6 +251,24 @@ def _drive_over_limit_episode(
 # The collector's own contract.
 # ---------------------------------------------------------------------------
 class TestShedDiagnosticCollector:
+    @pytest.fixture(autouse=True)
+    def immediate_test_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Existing payload assertions use a deterministic completed fake probe.
+
+        Only these collector-schema tests run the probe inline. U75's consumer
+        and concurrency tests use real threads and assert first-pending behavior.
+        No production caller gains a join/wait or synchronous probe option.
+        """
+
+        class ImmediateThread:
+            def __init__(self, *, target: Callable[[], None], **_: object) -> None:
+                self.target = target
+
+            def start(self) -> None:
+                self.target()
+
+        monkeypatch.setattr(tsd, "threading", SimpleNamespace(Thread=ImmediateThread))
+
     def test_streak_start_emits_every_required_field(
         self, caplog: pytest.LogCaptureFixture
     ) -> None:

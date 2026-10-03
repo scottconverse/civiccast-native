@@ -55,6 +55,7 @@ import hashlib
 import logging
 import os
 import re
+import sys
 import threading
 import time
 import wave
@@ -64,6 +65,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from civiccast.captions.diagnostic_identity import note_executing
 from civiccast.captions.live_sidecar import (
     CaptionRuntimeState,
     LiveWebVttPublisher,
@@ -1692,6 +1694,8 @@ class CaptionTapWorker:
     ) -> _ChannelScanResult:
         # This thread is about to run ASR. Hint the scheduler that it must
         # yield to the playout workers when the box is saturated.
+        with suppress(Exception):
+            note_executing('tap', sys._getframe().f_code, self)
         _lower_current_thread_priority()
         consumed = 0
         quarantined = 0

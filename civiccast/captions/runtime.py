@@ -8,16 +8,18 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import threading
 import time
 import wave
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from math import exp, isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 
+from civiccast.captions.diagnostic_identity import note_executing
 from civiccast.captions.models import AudioChunk, CaptionHypothesis, CaptionWord, CustomVocabulary
 from civiccast.native.caption_tiers import (
     CAPTION_TIER_REGISTRY,
@@ -832,6 +834,8 @@ class FasterWhisperRuntime:
         chunks: Iterable[AudioChunk],
         vocabulary: CustomVocabulary | None = None,
     ) -> Iterable[CaptionHypothesis]:
+        with suppress(Exception):
+            note_executing('runtime', sys._getframe().f_code, self)
         self.reset_decode_metrics()
         initial_prompt = _build_initial_prompt(vocabulary)
         for chunk in chunks:

@@ -21,6 +21,7 @@ import contextlib
 import json
 import logging
 import os
+import sys
 import threading
 import time
 from collections import deque
@@ -29,6 +30,8 @@ from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass, field
 from math import isfinite
 from typing import Any, Final
+
+from civiccast.captions.diagnostic_identity import note_executing
 
 __all__ = [
     "DEFAULT_MAX_BATCH_RECORDS",
@@ -161,6 +164,10 @@ class ShedDiagnosticCollector:
     _cpu_baseline_at: float = field(default=0.0, init=False)
     _environment: dict[str, object] | None = field(default=None, init=False)
     _environment_at: float = field(default=0.0, init=False)
+    _probe_thread: threading.Thread | None = field(default=None, init=False)
+    _probe_started: float | None = field(default=None, init=False)
+    _probe_elapsed: float | None = field(default=None, init=False)
+    _probe_status: str = field(default="pending", init=False)
     _psutil_resolved: bool = field(default=False, init=False)
     _psutil_handle: Any | None = field(default=None, init=False)
     _nvml_resolved: bool = field(default=False, init=False)
@@ -188,8 +195,9 @@ class ShedDiagnosticCollector:
             self.monotonic = time.monotonic
         if self.process_time is None:
             self.process_time = time.process_time
-        self._cpu_baseline = self._cpu_now()
-        self._cpu_baseline_at = self._now()
+        with contextlib.suppress(Exception):
+            self._cpu_baseline = self._cpu_now()
+            self._cpu_baseline_at = self._now()
 
     # ------------------------------------------------------------------
     # Recording (called from the tap's scan and ASR threads).
@@ -397,24 +405,85 @@ class ShedDiagnosticCollector:
         return count
 
     def _environment_snapshot(self, now: float) -> dict[str, object]:
-        """Process/ffmpeg/GPU state, coalesced behind a short cache.
+        """Event-triggered single-flight refresh; caller never waits for probes.
 
-        Every channel's line inside one scan would otherwise re-walk the process
-        table and re-poll NVML; the cache makes that one refresh per couple of
-        seconds for the whole station.
+        A stuck daemon keeps its slot forever: no cancellation or replacement.
+        Cached results can be stale; explicit ages never imply a fresh sample.
         """
+        started = time.perf_counter()
+        dispatch = False
+        with self._lock:
+            age = _optional_rounded(now - self._environment_at) if self._environment else None
+            fresh = age is not None and age < _PROBE_CACHE_SECONDS
+            if not fresh and self._probe_started is None:
+                self._probe_started = now
+                self._probe_status = "pending"
+                dispatch = True
+        # Thread start (and every native call) must be outside the state lock.
+        if dispatch:
+            try:
+                worker = threading.Thread(
+                    target=self._refresh_environment, daemon=True, name="caption-diagnostic-probe"
+                )
+                with self._lock:
+                    self._probe_thread = worker
+                worker.start()
+            except Exception:
+                with self._lock:
+                    self._probe_status = "unavailable"
+                    # Retain the slot: no unbounded start/retry storm.
+        with self._lock:
+            age = _optional_rounded(now - self._environment_at) if self._environment else None
+            result = dict(
+                self._environment
+                or {
+                    "process": {"unavailable": "probe-pending"},
+                    "ffmpeg": {"unavailable": "probe-pending"},
+                    "gpu": {"available": False, "reason": "probe-pending"},
+                }
+            )
+            result.update(
+                {
+                    "probe_status": (
+                        "fresh" if age is not None and age < _PROBE_CACHE_SECONDS else "stale"
+                    )
+                    if self._environment
+                    else self._probe_status,
+                    "probe_refresh_s": self._probe_elapsed,
+                    "probe_inflight_s": _optional_rounded(now - self._probe_started)
+                    if self._probe_started is not None and self._probe_status == "pending"
+                    else None,
+                    "probe_cache_age_s": age,
+                }
+            )
+        result["sampling_elapsed_s"] = _optional_rounded(time.perf_counter() - started)
+        return result
 
-        cached = self._environment
-        if cached is not None and now - self._environment_at < _PROBE_CACHE_SECONDS:
-            return cached
-        snapshot: dict[str, object] = {
-            "process": self._process_snapshot(now),
-            "ffmpeg": self._ffmpeg_snapshot(),
-            "gpu": self._gpu_snapshot(),
-        }
-        self._environment = snapshot
-        self._environment_at = now
-        return snapshot
+    def _refresh_environment(self) -> None:
+        with contextlib.suppress(Exception):
+            note_executing("collector", sys._getframe().f_code, self)
+        snapshot = None
+        completed = None
+        elapsed = None
+        try:
+            started = self._now()
+            snapshot = {
+                "process": self._process_snapshot(started),
+                "ffmpeg": self._ffmpeg_snapshot(),
+                "gpu": self._gpu_snapshot(),
+            }
+            completed = self._now()
+            elapsed = _optional_rounded(completed - started)
+        except Exception:
+            snapshot = None
+        finally:
+            with self._lock:
+                if snapshot is not None and completed is not None and elapsed is not None:
+                    self._environment = snapshot
+                    self._environment_at = completed
+                self._probe_elapsed = elapsed
+                self._probe_status = "unavailable" if elapsed is None else "fresh"
+                self._probe_started = None
 
     def _process_snapshot(self, now: float) -> dict[str, object]:
         cpu_now = self._cpu_now()
@@ -468,7 +537,7 @@ class ShedDiagnosticCollector:
                     if len(processes) < _MAX_FFMPEG_PROCS:
                         processes.append(
                             {
-                                "name": name,
+                                "name": name[:160],
                                 "pid": int(process.pid),
                                 "priority_class": _priority_class_name(psutil, info.get("nice")),
                             }
@@ -487,20 +556,36 @@ class ShedDiagnosticCollector:
     def _gpu_snapshot(self) -> dict[str, object]:
         if self.gpu_probe is not None:
             with contextlib.suppress(Exception):
-                return dict(self.gpu_probe())
+                supplied = self.gpu_probe()
+                result: dict[str, object] = {"available": supplied.get("available") is True}
+                if "reason" in supplied:
+                    result["reason"] = str(supplied["reason"])[:160]
+                devices = supplied.get("devices")
+                if isinstance(devices, (tuple, list)):
+                    result["devices"] = [
+                        {
+                            "name": str(device.get("name", ""))[:160],
+                            "util_pct": _optional_rounded(device.get("util_pct")),
+                            "mem_used_mb": _optional_rounded(device.get("mem_used_mb")),
+                            "mem_total_mb": _optional_rounded(device.get("mem_total_mb")),
+                        }
+                        for device in devices[:8]
+                        if isinstance(device, Mapping)
+                    ]
+                return result
             return {"available": False, "reason": "gpu-probe-failed"}
         nvml = self._nvml()
         if nvml is None:
             return {"available": False, "reason": "pynvml-not-installed"}
         try:
             devices: list[dict[str, object]] = []
-            for index in range(int(nvml.nvmlDeviceGetCount())):
+            for index in range(min(8, max(0, int(nvml.nvmlDeviceGetCount())))):
                 handle = nvml.nvmlDeviceGetHandleByIndex(index)
                 utilization = nvml.nvmlDeviceGetUtilizationRates(handle)
                 memory = nvml.nvmlDeviceGetMemoryInfo(handle)
                 devices.append(
                     {
-                        "name": _decode(nvml.nvmlDeviceGetName(handle)),
+                        "name": _decode(nvml.nvmlDeviceGetName(handle))[:160],
                         "util_pct": int(utilization.gpu),
                         "mem_used_mb": int(memory.used // (1024 * 1024)),
                         "mem_total_mb": int(memory.total // (1024 * 1024)),
@@ -517,7 +602,10 @@ class ShedDiagnosticCollector:
     # ------------------------------------------------------------------
     def _now(self) -> float:
         clock = self.monotonic
-        return clock() if clock is not None else time.monotonic()
+        value = float(clock() if clock is not None else time.monotonic())
+        if not isfinite(value) or value < 0:
+            raise ValueError("invalid-diagnostic-clock")
+        return value
 
     def _cpu_now(self) -> float:
         clock = self.process_time
