@@ -490,7 +490,7 @@ When setup fails it ends with a number. Interactive setup shows a message box (n
 | 126 | service | The service would not start. | Read the `logs` folder and the Windows Application event log. |
 | 127 | database | Setup cannot tell which CivicCast edition owns this machine. | If there is no WSL edition, set `HKLM\SOFTWARE\CivicCast\ActiveRuntime` to `native`; see `OWNERSHIP-RECOVERY.md`. |
 | 128 | upgrade | An earlier failed upgrade left its record on disk. | Move `upgrade\upgrade-journal.json` aside and run again. |
-| 129 | upgrade | An older setup was run over a newer install. Nothing was changed. | Run the newer setup, or uninstall first. |
+| 129 | upgrade | An older setup was run over a newer install. The database is untouched, but the older program files were already copied over and the service is stopped. | Do not start the service. Run the newer setup, or uninstall first. |
 | 130 | uninstall | You declined the ownership-transfer prompt. | None. |
 | 131 | uninstall | The ownership transfer failed. | Read the detail in the message. |
 | 132 | uninstall | Blocked (active edition conflict, or state unreadable). | As the message says. |

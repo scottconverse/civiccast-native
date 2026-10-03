@@ -274,8 +274,8 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 125 | Service | The service started but the web server is not answering | Read `install-progress.log`, `logs\control_plane.log`, `logs\control_plane-app.log` and `upgrade\upgrade-engine.log`, fix, run setup again |
 | 126 | Service | Windows registered the service but could not start it | Read `C:\ProgramData\CivicCast\logs` and the Windows Application event log (Event Viewer, Windows Logs, Application) |
 | 127 | Database | Setup cannot tell which CivicCast runtime owns the machine | If there is no older WSL edition, an administrator sets `HKLM\SOFTWARE\CivicCast\ActiveRuntime` to `native` and runs setup again. The exact command is in `provision\OWNERSHIP-RECOVERY.md` |
-| 128 | Upgrade engine | An earlier failed upgrade's record is still on disk. Setup did nothing | Move (do not delete) `C:\ProgramData\CivicCast\upgrade\upgrade-journal.json` somewhere safe and run again |
-| 129 | Upgrade engine | An older setup was run over a newer install. Nothing changed | Run the newer setup, or uninstall first |
+| 128 | Upgrade engine | An earlier failed upgrade's record is still on disk. The database is untouched, but setup had already stopped the service and replaced the program files (the dialog's "nothing was changed" is wrong) | Move (do not delete) `C:\ProgramData\CivicCast\upgrade\upgrade-journal.json` somewhere safe and run again |
+| 129 | Upgrade engine | An older setup was run over a newer install. The database is untouched, but the older program files were already copied over the newer ones and the service is left stopped (the dialog's "before changing anything" is wrong) | Do not start the service. Run the newer setup again, or uninstall first |
 | 130 | Uninstall | You declined the ownership-transfer question | None; nothing was removed |
 | 131 | Uninstall | The ownership transfer failed | Read the detail in the dialog |
 | 132 | Uninstall | Blocked (active runtime plus an older WSL edition, or state unreadable) | Follow the dialog |
@@ -359,11 +359,13 @@ Why not uninstall first: the upgrade engine decides what to do from two markers 
 | Committed | Continues |
 | Fresh install (nothing to upgrade) | Continues. Existing CivicCast data on the machine is adopted, not deleted |
 | Same version already installed | Does nothing to the data; re-checks the packs; continues |
-| Older setup over newer install | Exit 129. Nothing changed |
+| Older setup over newer install | Exit 129. Database untouched; older program files already in place; service stopped |
 | Rolled back its own work | Exit 124. The old database is intact. The service is stopped and set to manual start |
 | Rollback also failed | Exit 113. Follow `UPGRADE-RECOVERY.md` |
 | Release has an irreversible change | Exit 114 (refused) |
-| Earlier failed upgrade's record found | Exit 128 |
+| Earlier failed upgrade's record found | Exit 128. Database untouched; program files already replaced; service stopped |
+
+> **Known issue (beta.10):** The dialogs for exit 128 and 129 say setup "did nothing" or stopped "before changing anything". That is not what the code does. Setup stops the service and replaces the program files first, and only then runs the upgrade engine, which is where 128 and 129 are decided. The database is not touched, but the service is left stopped and the program files on disk are those of the setup you ran. After an exit 129 they are the **older** version, so do not start the service until you have run the newer setup.
 
 After a failed upgrade the program files are the **new** version and the station is off air. There is no button that goes back to the old version. The recovery is to fix the cause named in the log and run setup again.
 
