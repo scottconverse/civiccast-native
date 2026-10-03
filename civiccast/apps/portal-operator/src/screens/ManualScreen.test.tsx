@@ -52,6 +52,22 @@ function LocationMarker() {
   return <><div role="note" aria-label="Current route">{location.pathname}{location.hash}</div><button onClick={() => navigate(-1)}>Harness Back</button></>
 }
 
+function largeManual(): ManualDocument {
+  const toc: ManualDocument['toc'] = []
+  for (let part = 0; part < 5; part++) {
+    toc.push({ id: `part-${part}`, level: 1, title: `Part ${part}` })
+    for (let chapter = 0; chapter < 7; chapter++) {
+      const key = `${part}-${chapter}`
+      toc.push({ id: `chapter-${key}`, level: 2, title: `Chapter ${key}` })
+      for (let section = 0; section < 17; section++) {
+        toc.push({ id: `section-${key}-${section}`, level: 3 + section % 4, title: `Section ${key}-${section}` })
+      }
+    }
+  }
+  // Same scale and level range as the real five-part, 35-chapter manual.
+  return manual({ toc, html: toc.map((entry) => `<h${entry.level} id="${entry.id}">${entry.title}</h${entry.level}>`).join('') })
+}
+
 function renderScreen(initialEntries: string[] = ['/help'], hashRouter = false) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const contents = <><ManualScreen /><LocationMarker /></>
@@ -65,6 +81,53 @@ function renderScreen(initialEntries: string[] = ['/help'], hashRouter = false) 
 }
 
 describe('ManualScreen', () => {
+  it('keeps the 635-heading manual to parts and chapters until expanded', async () => {
+    const content = largeManual()
+    expect(content.toc).toHaveLength(635)
+    vi.mocked(getManual).mockResolvedValue(content)
+    renderScreen()
+    const nav = await screen.findByRole('navigation', { name: 'Manual contents' })
+    expect(within(nav).getAllByRole('link')).toHaveLength(40)
+    expect(within(nav).queryByRole('link', { name: 'Section 0-0-0' })).toBeNull()
+    const expand = within(nav).getByRole('button', { name: 'Show sections for Chapter 0-0' })
+    expect(expand.getAttribute('aria-expanded')).toBe('false')
+    fireEvent.click(expand)
+    expect(expand.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById(expand.getAttribute('aria-controls')!)).toBeTruthy()
+    expect(within(nav).getAllByRole('link')).toHaveLength(57)
+    fireEvent.click(within(nav).getByRole('button', { name: 'Hide sections for Chapter 0-0' }))
+    expect(within(nav).getAllByRole('link')).toHaveLength(40)
+  })
+
+  it('expands only the reading chapter for a deep link and chapter navigation', async () => {
+    Element.prototype.scrollIntoView = vi.fn()
+    vi.mocked(getManual).mockResolvedValue(largeManual())
+    renderScreen(['/help#section-2-4-9'])
+    const nav = await screen.findByRole('navigation', { name: 'Manual contents' })
+    await waitFor(() => expect(within(nav).getByRole('link', { name: 'Section 2-4-9' }).getAttribute('aria-current')).toBe('location'))
+    expect(within(nav).getAllByRole('link')).toHaveLength(57)
+    expect(within(nav).queryByRole('link', { name: 'Section 0-0-0' })).toBeNull()
+    fireEvent.click(within(nav).getByRole('link', { name: 'Chapter 1-1' }))
+    await waitFor(() => expect(within(nav).getByRole('link', { name: 'Section 1-1-0' })).toBeTruthy())
+    expect(within(nav).queryByRole('link', { name: 'Section 2-4-9' })).toBeNull()
+    expect(within(nav).getAllByRole('link')).toHaveLength(57)
+  })
+
+  it('title filtering finds collapsed deep sections and restores grouped contents', async () => {
+    vi.mocked(getManual).mockResolvedValue(largeManual())
+    renderScreen()
+    const nav = await screen.findByRole('navigation', { name: 'Manual contents' })
+    const filter = screen.getByRole('searchbox', { name: 'Filter sections by title' })
+    fireEvent.change(filter, { target: { value: 'Section 4-6-16' } })
+    expect(within(nav).getAllByRole('link')).toHaveLength(1)
+    expect(within(nav).getByRole('link', { name: 'Section 4-6-16' })).toBeTruthy()
+    fireEvent.change(filter, { target: { value: 'no matching title' } })
+    expect(within(nav).queryAllByRole('link')).toHaveLength(0)
+    expect(within(nav).getByText(/No section title matches/)).toBeTruthy()
+    fireEvent.change(filter, { target: { value: '' } })
+    expect(within(nav).getAllByRole('link')).toHaveLength(40)
+  })
+
   it.each([false, true])('repeated body section clicks scroll again (hash=%s)', async (hashRouter) => {
     const scroll = vi.fn()
     Element.prototype.scrollIntoView = scroll
@@ -156,7 +219,7 @@ describe('ManualScreen', () => {
 
     const nav = await screen.findByRole('navigation', { name: /manual contents/i })
     expect(within(nav).getByText('Glossary')).toBeTruthy()
-    fireEvent.change(screen.getByPlaceholderText(/search this manual/i), {
+    fireEvent.change(screen.getByPlaceholderText(/filter sections by title/i), {
       target: { value: 'cloudflare' },
     })
 

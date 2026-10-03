@@ -9,8 +9,16 @@ Repeated clicks on the same section scroll again after moving away. Back to the
 unanchored manual clears the contents list's current-section marker.
 HTTP(S) body links open a new tab with noopener/noreferrer; mail links retain their
 existing behavior. This addresses HELP-02 and the external-link part of HELP-08.
+Contents now group the level-1 parts and their level-2 chapters. Deeper sections
+are shown for one expanded chapter at a time; a chapter or deep-section link
+opens the chapter being read. Separate Show/Hide sections buttons work by keyboard
+without replacing chapter links or their native new-tab behavior. Older contents
+without level-1 parts retain their links. "Filter sections by title" searches all
+heading titles, including collapsed sections; it does not search manual body text.
+Clear the filter to return to the grouped view. This addresses HELP-05's misleading
+search label and HELP-07's flat-list navigation, not full-text search.
 The findings below describe the documentation handoff baseline. Regeneration,
-missing screenshots, old product anchor mappings, contents grouping and packaged
+missing screenshots, old product anchor mappings and packaged
 browser acceptance remain open; this update does not mark the full manual done.
 
 Sidebar: Help > **Manual** (the section is collapsed by default). Page eyebrow "Help"; page H1 "Operator manual". Routes `#/help`, `#/docs`, `#/manual`. Manual authority: `docs/manual/src/11-signing-in.md` (find your way around; the Report a beta issue button) and `17-something-wrong.md` (section "Report a beta issue", `#report-a-beta-issue`).

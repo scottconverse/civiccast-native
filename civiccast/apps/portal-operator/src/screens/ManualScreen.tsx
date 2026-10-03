@@ -13,11 +13,40 @@ function apiMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
+type TocChapter = { entry: ManualTocEntry; sections: ManualTocEntry[] }
+type TocPart = { entry: ManualTocEntry; chapters: TocChapter[]; sections: ManualTocEntry[] }
+
+function groupContents(entries: ManualTocEntry[]) {
+  const parts: TocPart[] = []
+  const leading: ManualTocEntry[] = []
+  const chapterForId = new Map<string, string>()
+  let part: TocPart | undefined
+  let chapter: TocChapter | undefined
+  for (const entry of entries) {
+    if (entry.level === 1) {
+      part = { entry, chapters: [], sections: [] }
+      parts.push(part)
+      chapter = undefined
+    } else if (entry.level === 2 && part) {
+      chapter = { entry, sections: [] }
+      part.chapters.push(chapter)
+    } else if (chapter) {
+      chapter.sections.push(entry)
+    } else if (part) {
+      part.sections.push(entry)
+    } else {
+      leading.push(entry)
+    }
+    if (chapter) chapterForId.set(entry.id, chapter.entry.id)
+  }
+  return { parts, leading, chapterForId }
+}
+
 function TocList({ entries, activeId }: { entries: ManualTocEntry[]; activeId: string | null }) {
   return (
     <ol className="m-0 grid gap-0.5 p-0 text-sm" style={{ listStyle: 'none' }}>
       {entries.map((entry) => (
-        <li key={entry.id} style={{ paddingLeft: `${Math.max(0, entry.level - 1) * 0.85}rem` }}>
+        <li key={entry.id} style={{ paddingLeft: `${Math.min(2, Math.max(0, entry.level - 1)) * 0.6}rem`, minWidth: 0 }}>
           {/* A real react-router Link (not a raw <a> + preventDefault): its
               `to` resolves correctly whether the app is mounted under
               BrowserRouter or HashRouter (the packaged operator console
@@ -29,12 +58,13 @@ function TocList({ entries, activeId }: { entries: ManualTocEntry[]; activeId: s
           <Link
             to={manualLink(entry.id)}
             aria-current={activeId === entry.id ? 'location' : undefined}
-            className="block truncate rounded-md px-2 py-1"
+            className="block rounded-md px-2 py-1"
             style={{
               color: activeId === entry.id ? 'var(--cc-brand)' : 'var(--cc-ink-2)',
               background: activeId === entry.id ? 'var(--cc-brand-soft)' : 'transparent',
               fontWeight: entry.level <= 2 ? 600 : 400,
               fontSize: entry.level <= 1 ? '0.9rem' : '0.82rem',
+              overflowWrap: 'anywhere',
             }}
           >
             {entry.title}
@@ -52,6 +82,7 @@ export function ManualScreen() {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [filter, setFilter] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [expandedChapter, setExpandedChapter] = useState<string | null>(null)
   const manualQuery = useQuery({
     queryKey: ['operator-manual'],
     queryFn: getManual,
@@ -60,6 +91,7 @@ export function ManualScreen() {
   })
 
   const toc = manualQuery.data?.toc
+  const contents = useMemo(() => groupContents(toc ?? []), [toc])
   const bodyHtml = useMemo(() => {
     // Template content is inert. Transform only already-sanitized manual links,
     // preserving real router-aware hrefs for copy, middle-click and new tabs.
@@ -101,14 +133,16 @@ export function ManualScreen() {
       if (target && contentRef.current?.contains(target)) {
         target.scrollIntoView({ behavior: 'smooth', block: 'start' })
         setActiveId(hash)
+        setExpandedChapter(contents.chapterForId.get(hash) ?? null)
       } else {
         setActiveId(null)
+        setExpandedChapter(null)
       }
     })
     return () => window.cancelAnimationFrame(raf)
     // A new router entry may retain the same hash (a repeated section click).
     // Its key still changes, so every navigation action can scroll again.
-  }, [manualQuery.isSuccess, location.hash, location.key])
+  }, [manualQuery.isSuccess, location.hash, location.key, contents])
 
   return (
     <div className="grid gap-4 px-6 py-5">
@@ -145,23 +179,62 @@ export function ManualScreen() {
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
           >
             <label className="grid gap-1 text-xs" htmlFor="manual-filter">
-              <span className="sr-only">Filter manual sections</span>
+              <span className="sr-only">Filter sections by title</span>
               <input
                 id="manual-filter"
                 type="search"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}
-                placeholder="Search this manual"
+                placeholder="Filter sections by title"
                 className="rounded-md px-3 py-2 text-sm"
                 style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
               />
             </label>
             {filteredToc.length === 0 ? (
               <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-                No section title matches &quot;{filter}&quot;.
+                No section title matches &quot;{filter}&quot;. Try one word, such as captions or backup.
               </p>
-            ) : (
+            ) : filter.trim() || contents.parts.length === 0 ? (
               <TocList entries={filteredToc} activeId={activeId} />
+            ) : (
+              <div className="grid gap-3">
+                {contents.leading.length > 0 && <TocList entries={contents.leading} activeId={activeId} />}
+                {contents.parts.map((part) => (
+                  <section key={part.entry.id} aria-label={part.entry.title} className="min-w-0">
+                    <TocList entries={[part.entry]} activeId={activeId} />
+                    {part.sections.length > 0 && <TocList entries={part.sections} activeId={activeId} />}
+                    {part.chapters.map((chapter) => {
+                      const expanded = expandedChapter === chapter.entry.id
+                      const panelId = `manual-contents-${chapter.entry.id}`
+                      return (
+                        <div key={chapter.entry.id} className="min-w-0">
+                          <div className="flex items-start">
+                            <div className="min-w-0 flex-1"><TocList entries={[chapter.entry]} activeId={activeId} /></div>
+                            {chapter.sections.length > 0 && (
+                              <button
+                                type="button"
+                                aria-label={`${expanded ? 'Hide' : 'Show'} sections for ${chapter.entry.title}`}
+                                aria-expanded={expanded}
+                                aria-controls={panelId}
+                                onClick={() => setExpandedChapter(expanded ? null : chapter.entry.id)}
+                                className="shrink-0 rounded-md px-2 py-1"
+                                style={{ color: 'var(--cc-ink-2)', minWidth: 32, minHeight: 32 }}
+                              >
+                                <span aria-hidden="true">{expanded ? '−' : '+'}</span>
+                              </button>
+                            )}
+                          </div>
+                          {chapter.sections.length > 0 && (
+                            <div id={panelId} hidden={!expanded}>
+                              {expanded && <TocList entries={chapter.sections} activeId={activeId} />}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </section>
+                ))}
+              </div>
             )}
           </nav>
 
