@@ -1249,3 +1249,208 @@ def test_diagnostic_failure_logger_cannot_escape(tmp_path, monkeypatch, hook):
     except RuntimeError as error:
         failure = error
     assert failure is None
+
+
+class TestBatchTimingIdentity:
+    def test_dispatch_identity_reaches_each_noncontiguous_segment(self, tmp_path, caplog):
+        caplog.set_level(logging.INFO)
+        clock = _FakeClock()
+
+        class Runtime(_ScriptedRuntime):
+            def last_decode_metrics(self):
+                return {"transcribe_s": 2.0, "duration_after_vad": 0.5}
+
+        collector = _collector(clock)
+        worker = _tap(tmp_path / "tap", clock=clock, diagnostic=collector, runtime=Runtime())
+        worker._sweep_retention()
+        assert worker.wait_for_retention_sweep(timeout=5)
+        channel_dir = tmp_path / "tap" / "education"
+        segments = [(index, channel_dir / f"chunk-{index:06d}.wav") for index in (7, 11)]
+        for _, path in segments:
+            _write_wav(path)
+        generation = worker._session_generation.get("education", 0)
+        assert worker._batch_diagnostic.enabled is False
+        batch_id = worker._begin_batch("education", generation, segments)
+        result = worker._isolated_process_channel(
+            "education", channel_dir, segments, generation, batch_id
+        )
+        assert result.consumed_segments == 2
+        _shed(collector)
+        rows = _payloads(caplog)[0]["batches"]
+        assert [row.get("batch_id") for row in rows] == [batch_id, batch_id]
+        assert [row.get("generation") for row in rows] == [generation, generation]
+        assert [row.get("segment_indices") for row in rows] == [[7], [11]]
+        assert [row["transcribe_s"] for row in rows] == [2.0, 2.0]
+
+    def test_old_generation_partial_completion_keeps_origin(self, tmp_path):
+        clock = _FakeClock()
+        collector = _collector(clock)
+        worker = _tap(tmp_path / "tap", clock=clock, diagnostic=collector)
+        worker._sweep_retention()
+        assert worker.wait_for_retention_sweep(timeout=5)
+        channel_dir = tmp_path / "tap" / "education"
+        segments = [(index, channel_dir / f"chunk-{index:06d}.wav") for index in (3, 8)]
+        for _, path in segments:
+            _write_wav(path)
+        generation = worker._session_generation.get("education", 0)
+        batch_id = worker._begin_batch("education", generation, segments)
+
+        class Runtime(_ScriptedRuntime):
+            def transcribe(self, chunks, vocabulary=None):
+                worker._session_generation["education"] = generation + 1
+                yield from super().transcribe(chunks, vocabulary)
+
+        worker._runtime = Runtime()
+        worker._isolated_process_channel("education", channel_dir, segments, generation, batch_id)
+        rows = list(collector._batches["education"])
+        assert len(rows) == 1
+        assert rows[0].get("batch_id") == batch_id
+        assert rows[0].get("generation") == generation
+        assert rows[0].get("segment_indices") == [3]
+
+    def test_raised_process_records_identity_without_changing_exception(
+        self, tmp_path, monkeypatch
+    ):
+        clock = _FakeClock()
+        collector = _collector(clock)
+        worker = _tap(tmp_path / "tap", clock=clock, diagnostic=collector)
+        worker._sweep_retention()
+        assert worker.wait_for_retention_sweep(timeout=5)
+        path = tmp_path / "tap" / "education" / "chunk-000004.wav"
+        _write_wav(path)
+        generation = worker._session_generation.get("education", 0)
+        batch_id = worker._begin_batch("education", generation, [(4, path)])
+        error = RuntimeError("fake process error")
+
+        def fail(*args, **kwargs):
+            raise error
+
+        monkeypatch.setattr(worker._worker_for("education"), "process_batch", fail)
+        with pytest.raises(RuntimeError) as caught:
+            worker._process_channel(
+                "education", path.parent, [(4, path)], generation, batch_id=batch_id
+            )
+        assert caught.value is error
+        row = collector._batches["education"][0]
+        assert row["batch_id"] == batch_id
+        assert row["generation"] == generation
+        assert row["segment_indices"] == [4]
+        assert row["transcribe_s"] is None
+
+    @pytest.mark.parametrize(
+        "batch_id,generation,index",
+        [
+            ("education-g0-b000000-n0", 0, 0),
+            ("education-g0-b000000-n01", 0, 0),
+            ("education-g0-b000000-n1", 0, 1),
+            ("education-g0-b000005-n2", 0, 4),
+            ("education-g1-b000000-n1", 0, 0),
+            ("other-g0-b000000-n1", 0, 0),
+            ("education-g0-b000000-n1/PLANTED_PROMPT_SECRET", 0, 0),
+            ("education-g0-b000000-n1\nPLANTED_TRANSCRIPT_SECRET", 0, 0),
+            ("x" * 257, 0, 0),
+            ("education-g0-b000000-n1", True, 0),
+            ("education-g0-b000000-n1", 0, True),
+            ("education-g0-b000000-n1", -1, 0),
+            ("education-g0-b000000-n1", 0, -1),
+            ("education-g0-b000000-n1", 2**63, 0),
+            ("education-g0-b000000-n1", 0, 2**63),
+            ("education-g0-b000000-n1", 10**400, 0),
+            ("education-g0-b000000-n1", 0, None),
+            (None, 0, 0),
+        ],
+    )
+    def test_invalid_identity_preserves_legacy_shape_and_privacy(
+        self, batch_id, generation, index, caplog
+    ):
+        caplog.set_level(logging.INFO)
+        collector = _collector(_FakeClock())
+        collector.record_batch(
+            channel="education",
+            wait_seconds=1,
+            feed_seconds=2,
+            asr_seconds=3,
+            batch_id=batch_id,
+            generation=generation,
+            segment_index=index,
+        )
+        _shed(collector)
+        row = _payloads(caplog)[0]["batches"][0]
+        assert set(row) == {
+            "wait_s",
+            "feed_s",
+            "asr_s",
+            "stabilize_s",
+            "transcribe_s",
+            "other_process_batch_s",
+            "duration_after_vad",
+            "max_segment_temperature",
+        }
+        encoded = json.dumps(row, allow_nan=False)
+        assert "PLANTED_" not in encoded
+        assert row["asr_s"] == 3.0
+
+    def test_identity_objects_are_not_stringified(self):
+        class Hostile:
+            def __str__(self):
+                raise AssertionError("identity object was inspected")
+
+        collector = _collector(_FakeClock())
+        collector.record_batch(
+            channel="education",
+            wait_seconds=0,
+            feed_seconds=0,
+            asr_seconds=0,
+            batch_id=Hostile(),
+            generation=0,
+            segment_index=0,
+        )
+        assert len(collector._batches["education"]) == 1
+        assert "batch_id" not in collector._batches["education"][0]
+
+    def test_identity_semantic_and_size_boundaries(self):
+        collector = _collector(_FakeClock())
+        maximum = 2**63 - 1
+        channel = "a" * (256 - len("-g0-b000000-n1"))
+        for name, batch_id, generation, index in (
+            (channel, f"{channel}-g0-b000000-n1", 0, 0),
+            ("education", f"education-g{maximum}-b{maximum}-n{maximum}", maximum, maximum),
+        ):
+            collector.record_batch(
+                channel=name,
+                wait_seconds=0,
+                feed_seconds=0,
+                asr_seconds=0,
+                batch_id=batch_id,
+                generation=generation,
+                segment_index=index,
+            )
+            row = collector._batches[name][0]
+            assert row["batch_id"] == batch_id
+            assert row["generation"] == generation
+            assert row["segment_indices"] == [index]
+
+    def test_attributed_rows_stay_bounded_and_snapshot_is_not_a_delta(self, caplog):
+        caplog.set_level(logging.INFO)
+        clock = _FakeClock()
+        collector = _collector(clock, max_batch_records=10**6)
+        for index in range(20):
+            collector.record_batch(
+                channel="education",
+                wait_seconds=0,
+                feed_seconds=0,
+                asr_seconds=0,
+                batch_id=f"education-g0-b{index:06d}-n1",
+                generation=0,
+                segment_index=index,
+            )
+        _shed(collector)
+        clock.advance(31)
+        _shed(collector)
+        payloads = _payloads(caplog)
+        assert len(collector._batches["education"]) == 8
+        assert len(payloads) == 2
+        assert payloads[0]["batches"] == payloads[1]["batches"]
+        assert [row["segment_indices"] for row in payloads[0]["batches"]] == [
+            [i] for i in range(12, 20)
+        ]

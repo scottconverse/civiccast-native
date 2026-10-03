@@ -21,6 +21,7 @@ import contextlib
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -80,6 +81,9 @@ _MAX_CHANNELS: Final[int] = 16
 #: Hard bound on listed ffmpeg processes (the COUNT is still the true total).
 _MAX_FFMPEG_PROCS: Final[int] = 8
 
+_MAX_BATCH_ID_CHARS: Final[int] = 256
+_MAX_IDENTITY_INTEGER: Final[int] = 2**63 - 1
+
 #: Values that turn the diagnostic off. Everything else (including unset) is on.
 _FALSE_VALUES: Final[frozenset[str]] = frozenset({"0", "false", "no", "off"})
 
@@ -105,6 +109,41 @@ def _optional_rounded(value: object) -> float | None:
         return round(number, 3) if isfinite(number) and number >= 0 else None
     except Exception:
         return None
+
+
+def _batch_identity(
+    channel: str, batch_id: object, generation: object, segment_index: object
+) -> dict[str, object]:
+    """Bounded logical-selection metadata, never a unique attempt identifier.
+
+    The singleton is the attempted segment, not the full dispatch selection.
+    A multi-segment ID does not encode all indices, so membership is provided
+    by the worker call site, not inferred from a contiguous range here.
+    """
+    if type(channel) is not str or type(batch_id) is not str:
+        return {}
+    if len(batch_id) > _MAX_BATCH_ID_CHARS or len(channel) > _MAX_BATCH_ID_CHARS:
+        return {}
+    if type(generation) is not int or type(segment_index) is not int:
+        return {}
+    if not (
+        0 <= generation <= _MAX_IDENTITY_INTEGER and 0 <= segment_index <= _MAX_IDENTITY_INTEGER
+    ):
+        return {}
+    prefix = f"{channel}-g{generation}-b"
+    if not batch_id.startswith(prefix):
+        return {}
+    match = re.fullmatch(r"([0-9]{6,19})-n([0-9]{1,19})", batch_id[len(prefix) :])
+    if match is None:
+        return {}
+    first, count = (int(value) for value in match.groups())
+    if not (0 <= first <= segment_index and 1 <= count <= _MAX_IDENTITY_INTEGER):
+        return {}
+    if count == 1 and first != segment_index:
+        return {}
+    if match.group(1) != f"{first:06d}" or match.group(2) != str(count):
+        return {}
+    return {"batch_id": batch_id, "generation": generation, "segment_indices": [segment_index]}
 
 
 def _priority_class_name(psutil: Any, nice: object) -> str:
@@ -212,6 +251,9 @@ class ShedDiagnosticCollector:
         transcribe_seconds: float | None = None,
         duration_after_vad_seconds: float | None = None,
         max_segment_temperature: float | None = None,
+        batch_id: str | None = None,
+        generation: int | None = None,
+        segment_index: int | None = None,
     ) -> None:
         """Keep one segment batch's measured costs for the next emission.
 
@@ -240,6 +282,10 @@ class ShedDiagnosticCollector:
         A caller that has none of the new numbers (another runtime or a test
         fake) omits them and gets JSON ``null``: the record shape is stable and
         the field is never simply absent.
+
+        Optional complete/valid dispatch identity adds batch_id, generation,
+        and singleton segment_indices. Legacy/invalid identity keeps the old
+        timing-only shape. The captured origin is never a current-session stamp.
         """
 
         with contextlib.suppress(Exception), self._lock:
@@ -269,6 +315,7 @@ class ShedDiagnosticCollector:
                     "other_process_batch_s": other_rounded,
                     "duration_after_vad": _optional_rounded(duration_after_vad_seconds),
                     "max_segment_temperature": _optional_rounded(max_segment_temperature),
+                    **_batch_identity(channel, batch_id, generation, segment_index),
                 }
             )
             self._batch_counts[channel] = self._batch_counts.get(channel, 0) + 1

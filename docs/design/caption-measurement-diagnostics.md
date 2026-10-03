@@ -35,6 +35,37 @@ before prompt/audio preparation and each chunk. The tap also clears them before
 phase entry or evidence-factory evaluation, so predecode failures cannot reuse a
 previous batch's measurements. Runtime exceptions still propagate unchanged.
 
+## Logical batch attribution (U82)
+
+Retained shed timing rows from the dispatched tap path also carry the existing
+batch_id and captured generation, plus segment_indices containing exactly the
+one attempted segment index. A dispatch may select multiple, noncontiguous
+segments: its parent batch diagnostic has the selection list, while each shed
+timing row describes one process_batch invocation. Partial completion or a
+generation reset produces rows only for actual attempts. A decode finishing
+after a reset retains its original generation, not the newer current session.
+The opt-in batch diagnostic need not be enabled for the dispatch ID to reach
+the shed row. No decoding, scheduling, retention, or reset policy is changed.
+
+Legacy direct callers without identity, or calls with invalid/partial identity,
+retain the old timing-only row shape. Valid IDs are retained verbatim, capped at
+256 characters, and match the channel/generation and existing g/b/n syntax.
+Generation, index, first index, and positive selection count are bounded by
+2**63-1; bool and arbitrary objects are rejected without stringifying them.
+The first index cannot exceed the current index; a single-segment selection
+must match it. Multi-segment membership comes from the worker's selected list,
+not a guessed contiguous range. No new text, audio, paths, filenames, or prompts
+are retained. Existing eight-row/sixteen-channel bounds and log rates remain.
+
+These IDs identify a logical selection, not a unique attempt or replay. Failed
+same-selection retries can repeat an ID in the same process/generation, and IDs
+can repeat after restart; they do not encode the complete selection sequence.
+Preserve enclosing pid/time/loaded-code provenance and acknowledge that retry
+ambiguity when joining evidence. Shed emission is a retained snapshot, not a
+delta: later events may repeat the same rows and must not be summed blindly.
+The frozen out-of-product U80 sanitizer does not whitelist these added fields;
+its future evidence-capture adaptation is separate and unrun, not changed here.
+
 ## Later measurement plan (requires separate live authorization)
 
 Before installing anything, record the exact candidate and loaded module/process

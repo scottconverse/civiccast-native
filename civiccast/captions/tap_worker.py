@@ -1640,6 +1640,7 @@ class CaptionTapWorker:
                 segments,
                 generation,
                 deferred_over_limit=deferred_over_limit,
+                batch_id=batch_id,
             )
             if batch_id is not None:
                 # Outcome reflects whether cues were COMMITTED, not merely
@@ -1691,6 +1692,8 @@ class CaptionTapWorker:
         segments: list[tuple[int, Path]],
         generation: int | None = None,
         deferred_over_limit: bool = False,
+        *,
+        batch_id: str | None = None,
     ) -> _ChannelScanResult:
         # This thread is about to run ASR. Hint the scheduler that it must
         # yield to the playout workers when the box is saturated.
@@ -1793,6 +1796,13 @@ class CaptionTapWorker:
                     ),
                     max_segment_temperature=(
                         decode.get("max_segment_temperature") if decode else None
+                    ),
+                    # One attempted segment under the captured dispatch origin,
+                    # including a decode finishing after its session was reset.
+                    **(
+                        {"batch_id": batch_id, "generation": generation, "segment_index": index}
+                        if batch_id is not None
+                        else {}
                     ),
                 )
             committed += len(result.committed_review_items)
