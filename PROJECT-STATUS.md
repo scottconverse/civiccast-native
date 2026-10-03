@@ -1,5 +1,9 @@
 # CivicCast project status
 
+> **Taking over coding? Start with
+> [`docs/handoff/CODER-HANDOFF-2026-10-02.md`](docs/handoff/CODER-HANDOFF-2026-10-02.md)**
+> (where everything is, current state, open work, history to avoid).
+
 > **2026-10-02 current: `v1.0.0-beta.10` is the current published release,
 > published 2026-10-02** as a GitHub pre-release (a beta candidate), not a
 > production release. This is the one current status page.
