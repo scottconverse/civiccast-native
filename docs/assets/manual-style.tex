@@ -5,8 +5,8 @@
 %
 % Design intent: this is an operator handbook, not a paper. It should look
 % approachable to a clerk or a volunteer station operator reading it at a
-% desk. Brand colours mirror the public site (docs/index.html): warm paper,
-% navy accent, muted slate for secondary text.
+% desk. Brand colours follow docs/brand/BRAND.md: Chamber Ink, Agenda Paper,
+% Record Steel accent, Night Session for headings, Slate for secondary text.
 %
 % Dependency note: every package used here ships in the TeX packages the
 % ci-docs workflow already installs (texlive-latex-recommended and
@@ -14,12 +14,12 @@
 % updating .github/workflows/ci-docs.yml and ADR 0005.
 
 \usepackage{xcolor}
-\definecolor{ccink}{HTML}{101828}
-\definecolor{ccaccent}{HTML}{2458A6}
-\definecolor{ccdeep}{HTML}{16365C}
-\definecolor{ccmuted}{HTML}{475467}
-\definecolor{ccpaper}{HTML}{F7F2EA}
-\definecolor{ccline}{HTML}{D8CDBF}
+\definecolor{ccink}{HTML}{1D1F20}
+\definecolor{ccaccent}{HTML}{416180}
+\definecolor{ccdeep}{HTML}{1D2D3D}
+\definecolor{ccmuted}{HTML}{424244}
+\definecolor{ccpaper}{HTML}{F2F2F3}
+\definecolor{ccline}{HTML}{94BCE3}
 \definecolor{cccode}{HTML}{F4F6F8}
 
 % -------------------------------------------------------------- cover page --
@@ -29,8 +29,9 @@
 \usepackage{titling}
 
 \pretitle{%
-  \vspace*{3.5cm}%
+  \vspace*{2.2cm}%
   \begin{center}%
+  \includegraphics[width=10.5cm]{docs/brand/png/civiccast-lockup-tagline.png}\par\vspace{2.2em}%
   {\color{ccaccent}\rule{5cm}{3pt}}\par\vspace{1.2em}%
   \sffamily\Huge\bfseries\color{ccdeep}%
 }

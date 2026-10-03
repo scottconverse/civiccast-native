@@ -1,0 +1,150 @@
+[
+  {
+    "name": "operator-readiness-top",
+    "path": "/operator/#/health",
+    "wait_ms": 4000,
+    "full_page": false,
+    "width": 1440,
+    "height": 900,
+    "must_show": "Readiness page titled 'Safe to broadcast': the 'On air right now' banner at the top and the readiness card below it with 'Check broadcast readiness' visible.",
+    "setup": "Lab station signed in as the first admin; one channel configured and running."
+  },
+  {
+    "name": "operator-live-sources",
+    "path": "/operator/#/live",
+    "wait_ms": 4000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "Live screen, no session yet (tag 'No session'): the 'Safe to broadcast' panel, the 'Source switcher' cards with one source showing 'Delivering'.",
+    "setup": "Run 'Check source' on the lab source first so it reads 'Delivering' (30 second default expiry: take the shot right after). The fixed session id council-live-room must not exist yet."
+  },
+  {
+    "name": "operator-live-preflight",
+    "path": "/operator/#/live",
+    "wait_ms": 4000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "clicks": [
+      "button:text-is('Create live session')",
+      "button:text-is('Start pre-flight')",
+      "button:text-is('Run pre-flight')"
+    ],
+    "click_wait_ms": 2500,
+    "must_show": "Session tag 'Pre-flight', the 'Pre-flight checklist' with nine rows after 'Run pre-flight'. Prefer a run where the confirmation box is NOT ticked so the 'Operator confirmation' row is red with its 'Next step.' line.",
+    "setup": "Uses the fixed session council-live-room; reset the live session row on the lab station afterwards (or shoot this before operator-live-endconfirm and reset between)."
+  },
+  {
+    "name": "operator-live-endconfirm",
+    "path": "/operator/#/live",
+    "wait_ms": 4000,
+    "full_page": false,
+    "width": 1440,
+    "height": 900,
+    "clicks": [
+      "button:text-is('Create live session')",
+      "button:text-is('Start pre-flight')",
+      "text=Operator confirms the meeting details",
+      "button:text-is('Run pre-flight')",
+      "button:text-is('Start Live Stream')",
+      "button:text-is('End Live Stream')"
+    ],
+    "click_wait_ms": 5000,
+    "must_show": "The confirm box 'End the live stream?' with 'End live stream' and 'Cancel' buttons, over the Live screen. Do NOT click 'End live stream'.",
+    "setup": "Needs a source that passes the fresh probe, network access to 1.1.1.1:443 or 8.8.8.8:443, 50 GiB free on the CivicCast data drive and a non-rehearsal local recording target; otherwise 'Start Live Stream' is refused and the dialog never appears. Fresh session id."
+  },
+  {
+    "name": "operator-channels-feed",
+    "path": "/operator/#/channels",
+    "wait_ms": 5000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "Channels page with the 'Outgoing channel feed' box: state tag (On air), health rows, and the four buttons Start, Stop, Restart feed, 'Finish current item, then stop'.",
+    "setup": "Lab station with channel 'government' (or any) running with a scheduled premiere with media, and an outgoing-feed configuration."
+  },
+  {
+    "name": "operator-channels-stop-confirm",
+    "path": "/operator/#/channels",
+    "wait_ms": 5000,
+    "full_page": false,
+    "width": 1440,
+    "height": 900,
+    "clicks": ["button:text-is('Stop')"],
+    "click_wait_ms": 1500,
+    "must_show": "The confirm box 'Stop the outgoing feed for <channel>?' with 'Stop feed' and 'Cancel'. Do NOT click 'Stop feed'.",
+    "setup": "Same as operator-channels-feed. The Stop button must be enabled (meeting operator, first admin)."
+  },
+  {
+    "name": "operator-channels-commit-review",
+    "path": "/operator/#/channels",
+    "wait_ms": 5000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "clicks": ["button:has-text('Review & prepare') >> nth=0"],
+    "click_wait_ms": 3000,
+    "must_show": "'Commit programs to air' box with one program expanded after 'Review & prepare': the 'Safe to air' (or 'Not safe to air yet') tag and the 'Approve & put on air' and 'Cancel' buttons. Do NOT click 'Approve & put on air'.",
+    "setup": "At least one scheduled premiere inside the next 24 hours with playable media on the selected channel."
+  },
+  {
+    "name": "operator-channels-takeover-live",
+    "path": "/operator/#/channels",
+    "wait_ms": 5000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "clicks": [
+      "button:text-is('Take live')",
+      "button:text-is('Confirm take live')"
+    ],
+    "click_wait_ms": 4000,
+    "must_show": "'Live takeover' box showing the red 'Live takeover' badge with operator name and minutes, and the 'Return to schedule' button.",
+    "setup": "A live source on the channel must read 'Delivering' within the last 30 seconds (run 'Check source' on /operator/#/live just before). This really takes the lab channel live: click 'Return to schedule' and 'Confirm return to schedule' afterwards."
+  },
+  {
+    "name": "operator-controlroom-test-session",
+    "path": "/operator/#/control-room",
+    "wait_ms": 4000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "manual_steps": "The 'Control surface' control is a drop-down menu, which shoot.py cannot select by click. Choose a surface in the menu, leave 'Test Mode' selected, click 'Open Test Session', then screenshot (the coordinator can add a select step to the shooter).",
+    "must_show": "Blue banner 'TEST MODE - device actions are blocked and recorded as test-only audit events.', the 'Program feed:' banner, the 'Safe State' box with 'Dry Run Safe State' and 'Record Safe State Test', and the cue buttons.",
+    "setup": "Lab station with one OBS-type device pointing at a local helper or simulator, one surface with at least one confirm-required cue and a safe-state cue. The 'TSR control service' (CIVICCAST_CONTROL_ROOM_TSR_URL) should be reachable, otherwise the amber 'Production control unavailable' bar shows instead."
+  },
+  {
+    "name": "operator-facility-preview",
+    "path": "/operator/#/facility",
+    "wait_ms": 4000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "clicks": ["button:has-text('Council chamber to CivicCast capture')"],
+    "click_wait_ms": 2000,
+    "must_show": "Facility router page with the amber 'hardware send disabled' tag, the sample 'Control room router' endpoint card and, in the 'Take preview' card, the command text and the 'Proof boundary' line.",
+    "setup": "Any station. The data is the built-in sample, identical on every station."
+  },
+  {
+    "name": "operator-remote-guests",
+    "path": "/operator/#/remote-contribution",
+    "wait_ms": 4000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "manual_steps": "Click the room name in the 'Rooms' list (text depends on the room created), then screenshot. A second browser must open a guest link first so a guest appears in 'Guests' as 'In waiting room'; admit them for a second shot showing 'On air', 'Mute', 'Off air' and 'Drop'.",
+    "must_show": "Right-hand card titled with the room name: 'Open room' / 'Close room', 'Invite a guest' form, 'Sent invites', and the 'Guests (N)' tray with 'Admit', 'On air' and 'Drop' buttons.",
+    "setup": "Lab station with CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL set (or a mock VDO.Ninja) and a ready live source on the room's channel; setup admin creates a room first."
+  },
+  {
+    "name": "operator-cgboard-bulletins",
+    "path": "/operator/#/cg",
+    "wait_ms": 4000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "CG Board page: 'Template library', 'Visual layout editor', and the 'Community bulletins' box with several bulletins showing the tags Submitted, Approved, Needs changes (with 'Notes:') and Declined.",
+    "setup": "Signed in as first admin; add four bulletins with the 'Add bulletin' form and moderate them (Approve one, 'Request changes' on one, Decline one) before the shot. Needs durable storage prepared."
+  }
+]

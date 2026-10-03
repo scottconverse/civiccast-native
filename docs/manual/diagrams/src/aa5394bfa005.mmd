@@ -1,0 +1,16 @@
+flowchart TB
+    subgraph R1["Prepare"]
+        direction LR
+        A["setup.exe<br/>per-machine, UAC prompt"] --> B["Pre-install<br/>stop old service,<br/>fresh or upgrade"]
+        B --> C["Visual C++<br/>runtime"]
+        C --> D["Stage packs from kit<br/>verify signature<br/>and every file hash"]
+        D --> E["Re-verify<br/>extracted trees"]
+    end
+    subgraph R2["Install and start"]
+        direction LR
+        F["Upgrade engine<br/>(decides the route;<br/>does nothing on fresh)"] --> G["Provision PostgreSQL<br/>DatabaseUrl in registry"]
+        G --> H["Activate station<br/>signed index, models,<br/>self-test"]
+        H --> I["Register service,<br/>start, wait ready;<br/>then firewall rule"]
+        I --> J["Shortcuts, then<br/>first-run wizard"]
+    end
+    R1 --> R2

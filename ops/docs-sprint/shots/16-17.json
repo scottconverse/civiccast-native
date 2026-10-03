@@ -1,0 +1,72 @@
+[
+  {
+    "name": "operator-analytics-telemetry-off",
+    "path": "/operator/#/analytics",
+    "wait_ms": 4000,
+    "full_page": false,
+    "notes": "Fresh install with CIVICCAST_PUBLIC_ANALYTICS_KEY and _ALLOWED_ORIGINS unset. Toolbar visible and the box 'Audience telemetry is off' under it. Token: support_admin or publish_operator (first-admin token has both)."
+  },
+  {
+    "name": "operator-reports-shows",
+    "path": "/operator/#/reports",
+    "wait_ms": 4000,
+    "full_page": false,
+    "notes": "Shows tab (default) with From / Through / Channel filters and the empty-state sentence 'No air times in the selected range...'. Token must carry support_admin."
+  },
+  {
+    "name": "operator-epg-form",
+    "path": "/operator/#/epg",
+    "wait_ms": 4000,
+    "full_page": false,
+    "notes": "Empty state: 'Create export config' form on top, 'No guide exports set up yet.' below. Token: setup_admin or publish_operator."
+  },
+  {
+    "name": "operator-underwriting-spots",
+    "path": "/operator/#/underwriting",
+    "wait_ms": 4000,
+    "full_page": true,
+    "notes": "Spots tab (default for a manager role). 'Create spot' form fully visible including the 47 CFR 73.503 reminder text and the attestation checkbox; list shows 'No underwriting spots yet.'"
+  },
+  {
+    "name": "operator-appadmin-empty",
+    "path": "/operator/#/app-admin",
+    "wait_ms": 5000,
+    "full_page": true,
+    "notes": "Setup admin, no builds. Build profile filled, New build form showing 'Select a platform...' and 'Select a tier...', 'No builds yet.', 'No submissions tracked yet.'"
+  },
+  {
+    "name": "operator-paywall-off",
+    "path": "/operator/#/paywall",
+    "wait_ms": 4000,
+    "full_page": true,
+    "notes": "Fresh station: Config card with the blue 'Paywall is OFF' banner; Tiers and Comp access grants cards greyed. Do not enter any Stripe values."
+  },
+  {
+    "name": "operator-readiness-top",
+    "path": "/operator/#/health",
+    "wait_ms": 6000,
+    "full_page": false,
+    "notes": "Top of the Readiness page after the report has loaded: 'Safe to broadcast' heading, 'On air right now' banner, the report card with 'Check broadcast readiness' button and 'Open resident preview' link. Any colour state is acceptable; note which one was captured."
+  },
+  {
+    "name": "operator-alerts-empty",
+    "path": "/operator/#/alerts",
+    "wait_ms": 4000,
+    "full_page": true,
+    "notes": "Healthy station: Active/Resolved buttons, 'No active alerts...' message, Alert rules cards, 'Where alerts go' with 'No alert destinations yet...' and the 'Add destination' button. Setup admin token."
+  },
+  {
+    "name": "operator-eas-empty",
+    "path": "/operator/#/emergency-alerts",
+    "wait_ms": 4000,
+    "full_page": false,
+    "notes": "Fresh station: posture banner 'Public-safety display - not an EAS device', Channel picker, 'No alert sources are configured yet...', 'No active alerts.', 'Nothing is being displayed.'"
+  },
+  {
+    "name": "operator-federation-off",
+    "path": "/operator/#/activitypub",
+    "wait_ms": 4000,
+    "full_page": false,
+    "notes": "Default state: 'Federation is off' card with the green 'Default-safe' tag, the explanation paragraph, 'Read more in the manual' link and 'Generate station key' button."
+  }
+]

@@ -34,14 +34,30 @@ variables:
     - bottom=2.4cm
     - left=2.6cm
     - right=2.6cm
-  # Liberation ships on the CI image and on operator workstations; it is the
-  # font pairing this manual has always rendered with. Keep the trio together.
-  mainfont: Liberation Serif
-  sansfont: Liberation Sans
+  # Brand typography (docs/brand/BRAND.md): Barlow for text, Barlow Condensed for
+  # headings. The font files are checked in under docs/assets/fonts/barlow (SIL OFL)
+  # and loaded by path, so no font has to be installed on the build machine.
+  # Code stays in Liberation Mono. pandoc runs from the repository root.
+  mainfont: Barlow
+  mainfontoptions:
+    - Path=docs/assets/fonts/barlow/
+    - Extension=.ttf
+    - UprightFont=Barlow-Regular
+    - BoldFont=Barlow-Bold
+    - ItalicFont=Barlow-Italic
+    - BoldItalicFont=Barlow-BoldItalic
+  sansfont: Barlow Condensed
+  sansfontoptions:
+    - Path=docs/assets/fonts/barlow/
+    - Extension=.ttf
+    - UprightFont=BarlowCondensed-Regular
+    - BoldFont=BarlowCondensed-SemiBold
+    - ItalicFont=BarlowCondensed-Regular
+    - BoldItalicFont=BarlowCondensed-SemiBold
   monofont: Liberation Mono
   colorlinks: true
   # Quoted: unquoted "[HTML]{...}" parses as a YAML list, not a hyperref spec.
-  linkcolor: "[HTML]{1F4E8C}"
-  urlcolor: "[HTML]{2458A6}"
-  toccolor: "[HTML]{16365C}"
+  linkcolor: "[HTML]{416180}"
+  urlcolor: "[HTML]{416180}"
+  toccolor: "[HTML]{1D2D3D}"
   secnumdepth: 0

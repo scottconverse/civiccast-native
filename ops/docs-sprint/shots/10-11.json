@@ -1,0 +1,44 @@
+[
+  {
+    "name": "operator-signin-cards",
+    "path": "/operator/#/setup",
+    "wait_ms": 3000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "auth": false,
+    "notes": "Chapter 2, Figure 2.1. Configured station, browser signed out (no token, fresh context). Must show the heading 'First setup', the 'Setup complete' card, the 'First-run defaults' card, and the 'Admin sign-in' and 'Use recovery code' cards. Lab station should have a throwaway kit."
+  },
+  {
+    "name": "operator-shell-desktop",
+    "path": "/operator/#/health",
+    "wait_ms": 4000,
+    "full_page": false,
+    "width": 1440,
+    "height": 900,
+    "auth": true,
+    "clicks": ["summary:has-text('Help')", "summary:has-text('Setup')", "summary:has-text('System Health')"],
+    "notes": "Chapter 2, Figure 2.2. Signed in as the first admin (all five roles). Clicks open the three sections that start closed so all six sidebar sections show. Top bar (logo, version, pill, clock, theme button, initials badge, Sign out) must be visible. If a click toggles an already-open section closed, re-take with the needed order."
+  },
+  {
+    "name": "operator-manual-contents",
+    "path": "/operator/#/help",
+    "wait_ms": 4000,
+    "full_page": false,
+    "width": 1440,
+    "height": 900,
+    "auth": false,
+    "notes": "Chapter 2, Figure 2.3. The Manual screen: 'Operator manual' heading, 'Manual contents' list with the 'Search this manual' box, and the top of the manual text. The page is public, so no token is needed."
+  },
+  {
+    "name": "operator-setup-kit",
+    "path": "/operator/#/setup",
+    "wait_ms": 3000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "auth": false,
+    "manual": true,
+    "notes": "Chapter 2, Figure 2.4. NEEDS A FRESH STATION (use CIVICCAST_STATION_STATE_PATH pointing at an empty file; do not touch the live station) and typing, which shoot.py cannot do. Steps: open /operator/#/setup, click 'Prepare storage', fill the first-admin form with throwaway values (use a clearly fake station name and password), click 'Create first admin'. Capture the green 'Recovery kit ready' panel showing the username, password, eight codes, and the 'Print kit' and 'Save kit' buttons. Use throwaway codes only; never a real kit."
+  }
+]

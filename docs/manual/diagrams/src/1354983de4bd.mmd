@@ -1,0 +1,15 @@
+flowchart LR
+    WK["GStreamer worker<br/>MPEG-TS mux"]
+    TSP["TS relay: tsp (TSDuck)<br/>fix continuity counters,<br/>smooth PCR"]
+    HEAD["Headend<br/>udp host:port"]
+    HR["HLS relay: ffmpeg child<br/>2 s segments, 6 in window"]
+    DIR[("HLS folder<br/>playlist.m3u8, seg*.ts")]
+    MED["Control plane<br/>/media/live/channel-id/"]
+    RES["Residents"]
+    SRT["SRT destination"]
+    BYO["NDI or SDI relay<br/>(station's own ffmpeg)"]
+
+    WK -->|udp 127.0.0.1:17800 and up| TSP --> HEAD
+    WK -->|udp 127.0.0.1:18000 to 18499| HR --> DIR --> MED --> RES
+    WK -->|srtsink| SRT
+    WK -.->|local TS feed| BYO

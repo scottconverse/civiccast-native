@@ -1,0 +1,11 @@
+flowchart LR
+    PL["Program log slots"] --> SCH["Schedule items<br/>(published)"]
+    SCH --> AUT["Channel automation<br/>polls every 2 s"]
+    AUT -->|source plan| DMN["Egress daemon"]
+    FIL["Slate and bulletin<br/>filler"] --> DMN
+    DMN --> PRE["Preparer<br/>conform to one profile"]
+    PRE <--> CC[("Conform cache<br/>60 GB default")]
+    PRE -->|prepared files| WRK["GStreamer worker<br/>decode, select,<br/>encode, mux"]
+    DMN -->|graph and commands| WRK
+    WRK --> SNK["Sinks and relays"]
+    DMN -.-> ASR[("As-run outbox<br/>and ledger")]

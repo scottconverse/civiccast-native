@@ -1,0 +1,9 @@
+flowchart LR
+    SRC["Source file"] --> MEAS["Measure loudness<br/>(EBU R128 gating)"]
+    MEAS --> RIDE["Speech-leveling ride<br/>slow gain curve,<br/>4x oversampled limiter"]
+    RIDE --> CHK{"Ride finished<br/>without error?"}
+    CHK -->|yes| BAR["Check the bar:<br/>every 240 s window within 0.9 LU,<br/>whole program within 0.5 LU.<br/>A miss is logged; the file airs"]
+    CHK -->|no| LN["Fallback: two-pass<br/>loudnorm, then single pass"]
+    BAR --> CC[("Conform cache")]
+    LN --> CC
+    CC --> WRK["Worker plays it<br/>unchanged"]

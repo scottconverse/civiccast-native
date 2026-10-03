@@ -1,0 +1,5 @@
+flowchart LR
+    ENC[Encoder] -->|UDP| IN[Relay input<br/>127.0.0.1:17800]
+    IN --> TSP[TSDuck relay<br/>fixes counters and clock]
+    TSP -->|source port 18800| HE[Cable headend<br/>host:port]
+    VER[Verify stream check] -.-> HE

@@ -1,0 +1,22 @@
+sequenceDiagram
+    participant A as Automation
+    participant D as Egress daemon
+    participant P as Preparer
+    participant W as GStreamer worker
+    A->>D: reload command (about 690 s before plan end)
+    D->>P: prepare the next plan
+    P-->>D: prepared files
+    D->>W: reload (switch at end of current)
+    W-->>D: accepted
+    Note over W: build new leg, preroll, hold at first buffer
+    Note over W: outgoing leg ends, its end-of-stream is dropped
+    Note over W: rebase new leg onto running time, switch selector
+    W-->>D: status file: applied
+    Note over D: record proof event and as-run row, state stays ON_AIR
+    alt reload declined or aborted
+        W-->>D: aborted
+        D->>D: retry up to 2 times
+        D->>W: terminate, restart on the prepared plan
+        Note over D: state shows TRANSITIONING until it is on air
+    end
+    Note over W,D: Watchdogs: commit 15 s then exit 5,<br/>no output 10 s then exit 1,<br/>TRANSITIONING pinned over 1,650 s then re-issue, then restart

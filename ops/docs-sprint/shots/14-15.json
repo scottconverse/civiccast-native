@@ -1,0 +1,82 @@
+[
+  {
+    "name": "operator-assets-list",
+    "path": "/operator/#/assets",
+    "wait_ms": 3000,
+    "dark": false,
+    "note": "Chapter 5. Assets list with 3+ rows in different statuses (Not packaged yet, Packaged, Published), the search box and the All/Validated/Recorded/Analyzing/Rejected tabs visible. Needs a records_clerk-capable or admin token."
+  },
+  {
+    "name": "operator-assets-upload",
+    "path": "/operator/#/assets",
+    "wait_ms": 3000,
+    "clicks": ["text=Upload video"],
+    "dark": false,
+    "note": "Chapter 5. The Upload video panel open above the table (idle state: Title box and Video file chooser, Upload button)."
+  },
+  {
+    "name": "operator-review-queue",
+    "path": "/operator/#/review",
+    "wait_ms": 3000,
+    "dark": false,
+    "note": "Chapter 5. Review queue on the Pending tab with 2-3 cards: one normal cue and one Low confidence cue (amber badge and amber bar). Each card shows Machine cue, Reviewed text, Approve, Save edit, Reject. Setup: publish a short recording with speech so the offline caption job fills the queue."
+  },
+  {
+    "name": "operator-summary-review",
+    "path": "/operator/#/summary",
+    "wait_ms": 3000,
+    "dark": false,
+    "note": "Chapter 5. Summary review with one Pending review card showing the narrative, Sourced claims with cue buttons, the Inline transcript player box, and the Approve summary / Export signed record buttons. Setup: approve several caption cues for one recording, then Generate summary from the asset detail page with the local model running. If no summary can be generated, capture the empty state 'No summaries need review.' instead and tell the writer."
+  },
+  {
+    "name": "operator-media-lifecycle-settings",
+    "path": "/operator/#/media-lifecycle",
+    "wait_ms": 3000,
+    "dark": false,
+    "note": "Chapter 5. Media Lifecycle Settings with the Watch folders, Retention automation and Storage budget cards. Use a setup_admin or admin token so all three cards load."
+  },
+  {
+    "name": "operator-publish-dashboard",
+    "path": "/operator/#/publish",
+    "wait_ms": 3500,
+    "dark": false,
+    "full_page": true,
+    "note": "Chapter 6. Publish dashboard with at least one packaged recording card: Portal row ticked by default, all nine surface rows visible (two marked 'Coming in a future release'), the Readiness check panel, and the Approve and Publish selected button. Use a publish_operator or admin token."
+  },
+  {
+    "name": "operator-publish-confirm",
+    "path": "/operator/#/publish",
+    "wait_ms": 3500,
+    "clicks": ["text=Approve and Publish selected"],
+    "dark": false,
+    "note": "Chapter 6. The confirmation dialog 'Publish \"{title}\" to residents?' with only Portal selected. Capture and then press Cancel; do not confirm."
+  },
+  {
+    "name": "operator-playback-policy",
+    "path": "/operator/#/playback-policy",
+    "wait_ms": 3000,
+    "dark": false,
+    "full_page": true,
+    "note": "Chapter 6. Playback policy screen in its fresh state (Channel / government, Public, prerolls off) with the Decision audit panel at the bottom showing 'No playback decisions yet.'"
+  },
+  {
+    "name": "portal-watch-captions-agenda",
+    "path": "/#/watch/ASSET_ID",
+    "wait_ms": 4000,
+    "auth": false,
+    "width": 1440,
+    "height": 900,
+    "dark": true,
+    "note": "Chapter 6. Replace ASSET_ID with a published recording that has caption tracks (Captions bar with Off, English, Spanish) and a published agenda with timed items. Must show the Agenda card beside the player."
+  },
+  {
+    "name": "portal-paywall-gate",
+    "path": "/#/watch/ASSET_ID",
+    "wait_ms": 4000,
+    "auth": false,
+    "width": 1440,
+    "height": 900,
+    "dark": true,
+    "note": "Chapter 6. LAB STATION ONLY. With the Paywall switched on (Paywall screen, Enable paywall, provider mock, no real Stripe key), open any published recording so the 'Subscription required' gate shows in place of the video. Turn the paywall off again afterwards."
+  }
+]

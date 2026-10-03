@@ -1,954 +1,380 @@
-<title>CivicCast</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CivicCast - public meetings, on the air</title>
+  <meta name="description" content="CivicCast is open-source software for public-access stations and small cities. It schedules channels, records and captions meetings, and publishes them to a resident portal. Runs on one Windows PC. Beta.10 pre-release.">
+  <link rel="canonical" href="https://scottconverse.github.io/civiccast-native/">
+  <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="brand/favicon.ico" sizes="48x48">
+  <link rel="apple-touch-icon" href="brand/png/civiccast-app-icon-180.png">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="CivicCast - public meetings, on the air">
+  <meta property="og:description" content="Open-source broadcast and publishing software for public-access stations and small cities. Windows. Beta.10 pre-release.">
+  <meta property="og:image" content="https://scottconverse.github.io/civiccast-native/brand/png/civiccast-social-preview.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preload" href="assets/web/fonts/Barlow-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/web/fonts/BarlowCondensed-Bold.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/web/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
 
-<style>
-/* ── Design tokens ── */
-:root {
-  --bg-deep:        #060A11;
-  --bg-surface:     #0C1520;
-  --bg-card:        #14213A;
-  --bg-card-h:      #1B2D50;
-  --accent:         #00C8F0;
-  --accent-warm:    #FF5C26;
-  --accent-dim:     rgba(0,200,240,.12);
-  --border:         #1A2E4A;
-  --border-acc:     rgba(0,200,240,.28);
-  --text:           #E8EEF8;
-  --text-muted:     #5E7A9E;
-  --font-d:         'Syne', system-ui, sans-serif;
-  --font-b:         'Instrument Sans', system-ui, sans-serif;
-  --font-m:         'JetBrains Mono', ui-monospace, monospace;
-}
-@media (prefers-color-scheme: light) {
-  :root:not([data-theme="dark"]) {
-    --bg-deep:    #F0F5FC;
-    --bg-surface: #FFFFFF;
-    --bg-card:    #E8EFF9;
-    --bg-card-h:  #DDE7F5;
-    --accent-dim: rgba(0,160,200,.1);
-    --border:     #C4D4E8;
-    --border-acc: rgba(0,160,200,.3);
-    --text:       #0A1422;
-    --text-muted: #4A6280;
-  }
-}
-:root[data-theme="light"] {
-  --bg-deep:    #F0F5FC;
-  --bg-surface: #FFFFFF;
-  --bg-card:    #E8EFF9;
-  --bg-card-h:  #DDE7F5;
-  --accent-dim: rgba(0,160,200,.1);
-  --border:     #C4D4E8;
-  --border-acc: rgba(0,160,200,.3);
-  --text:       #0A1422;
-  --text-muted: #4A6280;
-}
-
-/* ── Base ── */
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-body {
-  background: var(--bg-deep);
-  color: var(--text);
-  font-family: var(--font-b);
-  font-size: 16px;
-  line-height: 1.6;
-  overflow-x: hidden;
-  padding-inline: 24px;
-  padding-block: 0;
-}
-
-img { max-width: 100%; }
-
-.wrap {
-  max-width: 1100px;
-  margin-inline: auto;
-  width: 100%;
-}
-
-/* ── Navigation ── */
-.nav {
-  position: fixed;
-  top: env(safe-area-inset-top, 0px);
-  left: 0; right: 0;
-  z-index: 200;
-  padding: 0 24px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 64px;
-  border-bottom: 1px solid transparent;
-  transition: background .35s, border-color .35s, backdrop-filter .35s;
-}
-.nav.stuck {
-  background: rgba(6,10,17,.82);
-  border-color: var(--border);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-}
-
-.nav-logo {
-  display: flex; align-items: center; gap: 10px;
-  text-decoration: none; color: var(--text);
-}
-.nav-logo-mark {
-  width: 30px; height: 30px;
-  background: var(--accent);
-  border-radius: 5px;
-  display: flex; align-items: center; justify-content: center;
-  flex-shrink: 0;
-}
-.nav-logo-name {
-  font-family: var(--font-d);
-  font-weight: 700;
-  font-size: 17px;
-  letter-spacing: -.02em;
-}
-
-.nav-links {
-  display: flex; gap: 28px; list-style: none; align-items: center;
-}
-.nav-links a {
-  color: var(--text-muted);
-  text-decoration: none;
-  font-size: 14px; font-weight: 500;
-  transition: color .2s;
-}
-.nav-links a:hover { color: var(--text); }
-
-.nav-dl {
-  background: var(--accent);
-  color: #000;
-  padding: 9px 18px;
-  border-radius: 5px;
-  font-weight: 600;
-  font-size: 13px;
-  text-decoration: none;
-  transition: opacity .2s;
-  white-space: nowrap;
-}
-.nav-dl:hover { opacity: .85; }
-
-/* ── Hero ── */
-.hero {
-  position: relative;
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  padding-block: 120px 80px;
-  overflow: hidden;
-}
-#cvs {
-  position: absolute;
-  inset: 0;
-  width: 100%; height: 100%;
-  pointer-events: none;
-}
-.hero-inner {
-  position: relative;
-  z-index: 2;
-  max-width: 780px;
-}
-
-.hero-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  font-family: var(--font-m);
-  font-size: 11px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--accent);
-  background: var(--accent-dim);
-  border: 1px solid var(--border-acc);
-  border-radius: 4px;
-  padding: 6px 13px;
-  margin-bottom: 30px;
-}
-.live-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  background: var(--accent-warm);
-  animation: livepulse 2.2s ease-in-out infinite;
-}
-@keyframes livepulse {
-  0%,100% { opacity:1; transform:scale(1); }
-  50%      { opacity:.45; transform:scale(.75); }
-}
-
-.hero-h1 {
-  font-family: var(--font-d);
-  font-size: clamp(52px, 8.5vw, 100px);
-  font-weight: 800;
-  line-height: .97;
-  letter-spacing: -.04em;
-  margin-bottom: 26px;
-  text-wrap: balance;
-}
-.hero-h1 em {
-  font-style: normal;
-  color: var(--accent);
-}
-
-.hero-sub {
-  font-size: clamp(16px, 2vw, 19px);
-  color: var(--text-muted);
-  max-width: 540px;
-  line-height: 1.65;
-  margin-bottom: 44px;
-}
-
-.hero-btns {
-  display: flex;
-  gap: 14px;
-  flex-wrap: wrap;
-}
-.btn-main, .button.primary {
-  background: var(--accent);
-  color: #000;
-  padding: 14px 26px;
-  border-radius: 5px;
-  font-weight: 700;
-  font-size: 15px;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  transition: opacity .2s, transform .18s;
-}
-.btn-main:hover, .button.primary:hover { opacity: .87; transform: translateY(-2px); }
-.btn-out {
-  color: var(--text);
-  padding: 14px 26px;
-  border-radius: 5px;
-  font-weight: 600;
-  font-size: 15px;
-  text-decoration: none;
-  border: 1px solid var(--border);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  transition: background .2s, border-color .2s;
-}
-.btn-out:hover { background: var(--bg-card); border-color: var(--border-acc); }
-
-/* ── Trust strip ── */
-.trust {
-  background: var(--bg-surface);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  padding: 18px 24px;
-}
-.trust-row {
-  display: flex;
-  gap: 36px;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-}
-.trust-item {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-family: var(--font-m);
-  font-size: 12px;
-  letter-spacing: .04em;
-  color: var(--text-muted);
-}
-.trust-item svg { color: var(--accent); flex-shrink: 0; }
-
-/* ── Sections ── */
-.sec { padding-block: 100px; }
-.sec-alt { background: var(--bg-surface); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
-
-.eyebrow {
-  font-family: var(--font-m);
-  font-size: 11px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-bottom: 16px;
-}
-.sec-h2 {
-  font-family: var(--font-d);
-  font-size: clamp(30px, 4vw, 50px);
-  font-weight: 700;
-  line-height: 1.08;
-  letter-spacing: -.025em;
-  margin-bottom: 16px;
-  text-wrap: balance;
-}
-.sec-lead {
-  color: var(--text-muted);
-  max-width: 500px;
-  line-height: 1.7;
-  font-size: 15px;
-}
-
-/* ── Features grid ── */
-.feat-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  margin-top: 60px;
-  border: 1px solid var(--border);
-  background: var(--border);
-  gap: 1px;
-}
-.feat-cell {
-  background: var(--bg-deep);
-  padding: 36px 30px;
-  transition: background .2s;
-}
-.feat-cell:hover { background: var(--bg-card); }
-.feat-icon {
-  width: 40px; height: 40px;
-  background: var(--accent-dim);
-  border: 1px solid var(--border-acc);
-  border-radius: 7px;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--accent);
-  margin-bottom: 18px;
-}
-.feat-h {
-  font-family: var(--font-d);
-  font-size: 16px;
-  font-weight: 700;
-  margin-bottom: 9px;
-  letter-spacing: -.01em;
-}
-.feat-p {
-  font-size: 14px;
-  color: var(--text-muted);
-  line-height: 1.65;
-}
-
-/* ── Hardware tiers ── */
-.status-grid { grid-template-columns: repeat(2, 1fr); }
-.status-note { color: var(--text-muted); font-size: 14px; max-width: 760px; margin-top: 18px; line-height: 1.7; }
-.status-note a { color: var(--accent); }
-.tier-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
-  margin-top: 56px;
-}
-.tier-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  padding: 28px 22px;
-  transition: border-color .22s, background .22s;
-}
-.tier-card:hover {
-  border-color: var(--border-acc);
-  background: var(--bg-card-h);
-}
-.tier-card.rec { border-color: var(--border-acc); }
-.tier-badge {
-  font-family: var(--font-m);
-  font-size: 10px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--accent);
-  margin-bottom: 6px;
-}
-.tier-name {
-  font-family: var(--font-d);
-  font-size: 21px;
-  font-weight: 700;
-  margin-bottom: 5px;
-  letter-spacing: -.015em;
-}
-.tier-spec {
-  font-family: var(--font-m);
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-bottom: 20px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--border);
-}
-.tier-list {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-}
-.tier-list li {
-  font-size: 13px;
-  color: var(--text-muted);
-  display: flex;
-  gap: 7px;
-  align-items: baseline;
-  line-height: 1.45;
-}
-.tier-list li::before {
-  content: '→';
-  color: var(--accent);
-  font-family: var(--font-m);
-  font-size: 11px;
-  flex-shrink: 0;
-  margin-top: 1px;
-}
-
-/* ── Workflow ── */
-.steps {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 48px;
-  margin-top: 64px;
-}
-.step-num {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  font-family: var(--font-m);
-  font-size: 11px;
-  letter-spacing: .1em;
-  color: var(--accent);
-  margin-bottom: 18px;
-}
-.step-num::after {
-  content: '';
-  flex: 1;
-  height: 1px;
-  background: var(--border);
-}
-.step-h {
-  font-family: var(--font-d);
-  font-size: 18px;
-  font-weight: 700;
-  margin-bottom: 10px;
-  letter-spacing: -.01em;
-}
-.step-p {
-  font-size: 14px;
-  color: var(--text-muted);
-  line-height: 1.65;
-}
-
-/* Code chip */
-.chip {
-  display: inline-block;
-  font-family: var(--font-m);
-  font-size: 12px;
-  background: var(--accent-dim);
-  border: 1px solid var(--border-acc);
-  color: var(--accent);
-  padding: 2px 8px;
-  border-radius: 3px;
-}
-
-/* ── CTA Section ── */
-.cta-sec {
-  text-align: center;
-  position: relative;
-  overflow: hidden;
-}
-.cta-sec::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(ellipse 80% 60% at 50% 0%, rgba(0,200,240,.08) 0%, transparent 70%);
-  pointer-events: none;
-}
-.cta-h2 {
-  font-family: var(--font-d);
-  font-size: clamp(34px, 5vw, 62px);
-  font-weight: 800;
-  line-height: 1.04;
-  letter-spacing: -.035em;
-  margin-bottom: 18px;
-  text-wrap: balance;
-}
-.cta-sub {
-  color: var(--text-muted);
-  font-size: 17px;
-  margin-bottom: 40px;
-  max-width: 480px;
-  margin-inline: auto;
-  line-height: 1.6;
-}
-.cta-btns {
-  display: flex;
-  gap: 14px;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-/* ── Footer ── */
-.foot {
-  border-top: 1px solid var(--border);
-  padding: 36px 24px;
-}
-.foot-inner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 14px;
-}
-.foot-brand {
-  font-family: var(--font-d);
-  font-weight: 700;
-  font-size: 15px;
-  color: var(--text);
-}
-.foot-links {
-  display: flex;
-  gap: 22px;
-  list-style: none;
-}
-.foot-links a {
-  color: var(--text-muted);
-  text-decoration: none;
-  font-size: 13px;
-  transition: color .2s;
-}
-.foot-links a:hover { color: var(--text); }
-.foot-copy {
-  font-size: 12px;
-  color: var(--text-muted);
-  font-family: var(--font-m);
-}
-
-/* ── Scroll animations ── */
-.up {
-  opacity: 0;
-  transform: translateY(22px);
-  transition: opacity .65s ease, transform .65s ease;
-}
-.up.vis { opacity: 1; transform: translateY(0); }
-.up:nth-child(2) { transition-delay: .08s; }
-.up:nth-child(3) { transition-delay: .16s; }
-.up:nth-child(4) { transition-delay: .12s; }
-.up:nth-child(5) { transition-delay: .20s; }
-.up:nth-child(6) { transition-delay: .28s; }
-
-/* ── Responsive ── */
-@media (max-width: 900px) {
-  .feat-grid { grid-template-columns: repeat(2, 1fr); }
-  .tier-grid { grid-template-columns: repeat(2, 1fr); }
-  .status-grid { grid-template-columns: 1fr; }
-  .steps { grid-template-columns: 1fr; gap: 32px; }
-  .step-num::after { display: none; }
-}
-@media (max-width: 640px) {
-  body { padding-inline: 16px; }
-  .nav-links { display: none; }
-  .feat-grid { grid-template-columns: 1fr; }
-  .tier-grid { grid-template-columns: 1fr 1fr; }
-  .foot-inner { flex-direction: column; align-items: flex-start; }
-}
-@media (max-width: 420px) {
-  .tier-grid { grid-template-columns: 1fr; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .up { opacity: 1; transform: none; }
-  .live-dot { animation: none; }
-  .btn-main:hover, .button.primary:hover { transform: none; }
-}
-</style>
-
-<!-- ── Nav ── -->
-<nav class="nav" id="nav" role="navigation" aria-label="Main navigation">
-  <a href="#" class="nav-logo" aria-label="CivicCast home">
-    <div class="nav-logo-mark" aria-hidden="true">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <circle cx="8" cy="11" r="2" fill="#000"/>
-        <path d="M4.5 8.5A4.5 4.5 0 0 1 8 7a4.5 4.5 0 0 1 3.5 1.5" stroke="#000" stroke-width="1.4" stroke-linecap="round"/>
-        <path d="M2 6A7.5 7.5 0 0 1 8 4a7.5 7.5 0 0 1 6 2" stroke="#000" stroke-width="1.4" stroke-linecap="round"/>
-      </svg>
-    </div>
-    <span class="nav-logo-name">CivicCast</span>
-  </a>
-  <ul class="nav-links" role="list">
-    <li><a href="#features">Features</a></li>
-    <li><a href="#hardware">Hardware</a></li>
-    <li><a href="#setup">Setup</a></li>
-    <li><a href="https://github.com/scottconverse/civiccast-native">GitHub</a></li>
-    <li><a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">Current release: v1.0.0-beta.10</a></li>
-    <li><a href="#status">Release status</a></li>
-  </ul>
-  <a href="install-windows.html" class="nav-dl">Install guide</a>
-</nav>
-
-<!-- ── Hero ── -->
-<section class="hero" aria-label="Introduction">
-  <canvas id="cvs" aria-hidden="true"></canvas>
-  <div class="wrap hero-inner">
-    <div class="hero-pill" role="note">
-      <span class="live-dot" aria-hidden="true"></span>
-      Open Source · Public beta · Apache 2.0 code
-    </div>
-    <h1 class="hero-h1">
-      Broadcast<br>Without<br><em>Limits.</em>
-    </h1>
-    <p class="hero-sub">
-      The AI-powered PEG station platform built for the hardware you already own. Free, open-source, and designed for the future of public access television.
-    </p>
-    <div class="hero-btns">
-      <a href="install-windows.html" class="button primary">
-        Windows install guide
-      </a>
-      <a href="https://github.com/scottconverse/civiccast-native" class="btn-out">
-        View on GitHub
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 10L10 2M4 2h6v6"/></svg>
-      </a>
-    </div>
-  </div>
-</section>
-
-<!-- ── Trust strip ── -->
-<div class="trust" role="list" aria-label="Platform highlights">
-  <div class="trust-row wrap">
-    <div class="trust-item" role="listitem">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true"><path d="M7 1.5 2.5 4v4c0 2.8 2.1 4.8 4.5 5.5C9.4 12.8 11.5 10.8 11.5 8V4L7 1.5z"/></svg>
-      Apache 2.0 code
-    </div>
-    <div class="trust-item" role="listitem">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="2" width="10" height="10" rx="2"/><path d="M5 7l2 2 4-4"/></svg>
-      Windows Native
-    </div>
-    <div class="trust-item" role="listitem">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="7" r="5"/><path d="M7 4.5v3l2 1.2"/></svg>
-      Local AI Captioning
-    </div>
-    <div class="trust-item" role="listitem">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><rect x="2" y="4" width="10" height="6" rx="1"/><path d="M5 4V3a2 2 0 0 1 4 0v1"/></svg>
-      Runs on CPU or GPU
-    </div>
-    <div class="trust-item" role="listitem">
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="7" cy="10" r="1.5"/><path d="M4.2 7.6A4.2 4.2 0 0 1 7 6.5a4.2 4.2 0 0 1 2.8 1.1M2 5.2A6.8 6.8 0 0 1 7 3.5a6.8 6.8 0 0 1 5 1.7"/></svg>
-      Public Beta
-    </div>
-  </div>
-</div>
-
-<!-- ── Release status ── -->
-<section id="status" class="sec sec-alt">
+<header class="site-header">
   <div class="wrap">
-    <p class="eyebrow up">Release status</p>
-    <h2 class="sec-h2 up">What is released, what is proven,<br>and what is not.</h2>
-    <p class="sec-lead up">CivicCast is a public beta. Read this before you put it on air.</p>
-    <p class="status-note up"><strong>Current release:</strong> <code>v1.0.0-beta.10</code>, a GitHub pre-release ("Beta Candidate") published 2026-10-02, not a production release (<a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">release page</a>). It was held on air for eight hours on a three-channel lab station with one service process, no black or silent gaps at 50 scored program changes, and loudness in range in 16 of 16 windows. Of the three Gate A lanes, only the clean-install lane was run for it; it passed 10 of 10 criteria in Windows Sandbox on 2026-10-02 against exactly this build. The upgrade and download-only lanes were not run (the owner waived them for this publication), so upgrading from beta.7 and a download-only install are not proven for beta.10. The human station acceptance pass has not been done, and no human field tester has signed off. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">beta.10 verification record</a>.</p>
-    <p class="status-note up"><strong>Previous release:</strong> <code>v1.0.0-beta.7</code>, published 2026-09-15, is superseded (<a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.7">release page</a>; <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.7-verification.md">v1.0.0-beta.7-verification.md</a> is its verification record). <code>v1.0.0-beta.8</code> and <code>v1.0.0-beta.9</code> were never published; their work is in beta.10.</p>
-
-    <div class="tier-grid status-grid" role="list">
-      <div class="tier-card up" role="listitem">
-        <p class="tier-badge">Built and measured in beta.10</p>
-        <h3 class="tier-name">What works today</h3>
-        <p class="tier-spec">Eight-hour lab run, three channels</p>
-        <ul class="tier-list">
-          <li>Recorded meeting-to-resident workflow with operator review</li>
-          <li>Offline captions with operator review</li>
-          <li>Scheduling, program logs, and explicit publishing</li>
-          <li>Seamless program changes, with a watchdog for stuck changes</li>
-          <li>Speech leveling toward -16 LUFS</li>
-          <li>Signed-pack install (data-preserving upgrades were proven for earlier releases, not run for beta.10)</li>
-        </ul>
-      </div>
-      <div class="tier-card up" role="listitem">
-        <p class="tier-badge">Needs station proof or further hardening</p>
-        <h3 class="tier-name">What is not proven</h3>
-        <p class="tier-spec">Known limits, stated plainly</p>
-        <ul class="tier-list">
-          <li>Live captions can skip some audio when the machine is busy (13 times in the eight-hour run, about 160 seconds on a quiet machine); a fix is the next work item</li>
-          <li>Physical DeckLink SDI capture and acceptance</li>
-          <li>Real cable-operator headend acceptance</li>
-          <li>Runs longer than eight hours, and human field-tester sign-off</li>
-          <li>Live provider proof for each station's Internet Archive and YouTube accounts</li>
-          <li>Sustained production use at a real PEG station</li>
-        </ul>
-      </div>
-    </div>
+    <a class="brand" href="#top" aria-label="CivicCast home"><img src="brand/svg/civiccast-lockup.svg" alt="CivicCast" width="162" height="34"></a>
+    <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="nav">Menu</button>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="#product">Product</a>
+      <a href="#how">How it works</a>
+      <a href="#screens">Screens</a>
+      <a href="#evidence">Evidence</a>
+      <a href="#docs">Docs</a>
+      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">Beta.10 release</a>
+    </nav>
   </div>
-</section>
+</header>
 
-<!-- ── Features ── -->
-<section id="features" class="sec">
+<main id="main">
+
+<section class="hero on-dark" id="top">
   <div class="wrap">
-    <p class="eyebrow up">Platform Features</p>
-    <h2 class="sec-h2 up">Everything a modern<br>station needs.</h2>
-    <p class="sec-lead up">CivicCast is an open-source broadcast platform with built-in AI captioning, hardware-tier auto-detection, and live-to-archive workflows — built for real PEG station constraints.</p>
-
-    <div class="feat-grid" role="list">
-      <div class="feat-cell up" role="listitem">
-        <div class="feat-icon" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 10h14M10 3v14M6 6l8 8M14 6l-8 8"/></svg>
+    <div class="hero-grid">
+      <div>
+        <p class="release-tag">Release 1.0.0-beta.10 &middot; pre-release for testing</p>
+        <h1>Public meetings, <em>on the air.</em></h1>
+        <p class="lede">CivicCast is open-source software for public-access stations and small cities. It schedules your channels and keeps them on the air, records and captions your meetings, and publishes them to a portal where residents can watch. It runs on one Windows PC that you control.</p>
+        <div class="btn-row">
+          <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">View the beta.10 release</a>
+          <a class="button ghost" href="USER-MANUAL.pdf">Read the manual</a>
         </div>
-        <h3 class="feat-h">AI Captioning</h3>
-        <p class="feat-p">faster-whisper running on your own hardware, with no cloud service required. The default caption model is <code>medium</code>, which runs on a CPU; the larger large-v3 model is optional and is chosen only when the hardware allows. Live captions are off by default and are turned on in Setup &gt; Station Profile. Some caption audio can be skipped when a station is overloaded; see Release status above.</p>
       </div>
-      <div class="feat-cell up" role="listitem">
-        <div class="feat-icon" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="2.5"/><path d="M3 10h4M13 10h4M10 3v4M10 13v4"/></svg>
+      <figure class="hero-shot" style="margin:0">
+        <div class="frame">
+          <div class="bar"><i></i><i></i><i></i><span>127.0.0.1:8000</span></div>
+          <img src="assets/web/img/portal-home-dark.webp" width="1800" height="1125" alt="The CivicCast resident portal home page: a council meeting playing under Live now, a Broadcast status panel reading On air, and a list of latest recordings.">
         </div>
-        <h3 class="feat-h">Channel Playout</h3>
-        <p class="feat-p">24/7 channel playout from a schedule, with transport-stream, SRT, RTMP, HLS, NDI, and SDI output options. Paths that depend on your equipment or provider (a cable headend, DeckLink SDI, NDI, YouTube uploads) are not proven at a station yet; see Release status above. Live capture-card ingest needs an integrator-supplied media probe.</p>
-      </div>
-      <div class="feat-cell up" role="listitem">
-        <div class="feat-icon" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 15l3.5-7 3.5 5 2.5-3.5L17 15"/></svg>
-        </div>
-        <h3 class="feat-h">Hardware Detection</h3>
-        <p class="feat-p">Run <span class="chip">civiccast doctor</span> to see your CPU, memory, disk, and GPU, and the hardware tier it recommends — from CPU-only to a multi-channel AI workstation.</p>
-      </div>
-      <div class="feat-cell up" role="listitem">
-        <div class="feat-icon" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M7 10h6M10 7v6"/></svg>
-        </div>
-        <h3 class="feat-h">Archive & VOD</h3>
-        <p class="feat-p">Recorded meetings are packaged for the resident portal after staff review and an explicit publish approval, with captions and transcripts available for review. Nothing is published to residents automatically.</p>
-      </div>
-      <div class="feat-cell up" role="listitem">
-        <div class="feat-icon" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 6l7-3 7 3v8l-7 3-7-3V6z"/><path d="M10 3v14"/></svg>
-        </div>
-        <h3 class="feat-h">Open Source</h3>
-        <p class="feat-p">Apache 2.0 licensed code (documentation under CC BY 4.0). No vendor lock-in, no recurring fees, no black box. Fork it, extend it, or contribute back — the way public infrastructure should work.</p>
-      </div>
-      <div class="feat-cell up" role="listitem">
-        <div class="feat-icon" aria-hidden="true">
-          <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3" y="6" width="14" height="9" rx="2"/><path d="M7 6V5a3 3 0 0 1 6 0v1"/><path d="M10 11v2"/></svg>
-        </div>
-        <h3 class="feat-h">REST API</h3>
-        <p class="feat-p">Full REST API including <span class="chip">/api/hardware</span> for tier detection. Integrate with your existing municipal systems, CMS, or automation workflows.</p>
-      </div>
+        <figcaption>The resident portal on a lab station, with sample content.</figcaption>
+      </figure>
+    </div>
+  </div>
+  <div class="proof">
+    <div class="wrap">
+      <ul>
+        <li><strong>Open source</strong>Code under Apache-2.0, documentation under CC BY 4.0.</li>
+        <li><strong>One Windows PC</strong>Installs as a Windows service on hardware you own.</li>
+        <li><strong>3 channels, 8 hours</strong>Held on air in a lab run, with 50 program changes watched and no gaps.</li>
+        <li><strong>10 of 10</strong>Clean-install checks passed on the published installer.</li>
+        <li><strong>Pre-release</strong>Not yet run at a real station. The evidence section lists what is unproven.</li>
+      </ul>
     </div>
   </div>
 </section>
 
-<!-- ── Hardware Tiers ── -->
-<section id="hardware" class="sec sec-alt">
+<section id="purpose">
+  <div class="wrap purpose-grid">
+    <div>
+      <p class="eyebrow">Why it exists</p>
+      <h2>A meeting should not need five tools to reach residents.</h2>
+    </div>
+    <div>
+      <ul class="five-tools" aria-label="Tools a small station often stitches together">
+        <li>Camera recorder</li><li>Playout box</li><li>Caption service</li><li>Website upload</li><li>Schedule spreadsheet</li>
+      </ul>
+      <p class="one-tool">One schedule. One library. One resident portal.</p>
+      <p>CivicCast covers the path a public meeting takes: it is scheduled, aired on a channel, recorded, captioned, checked by a person and published for residents. Staff work in one web console. Residents use a separate public portal. The speech recognition and AI models that make captions and summaries run on the station, not in someone else's cloud.</p>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="product">
   <div class="wrap">
-    <p class="eyebrow up">Hardware Requirements</p>
-    <h2 class="sec-h2 up">Built for the hardware<br>you already own.</h2>
-    <p class="sec-lead up"><span class="chip">civiccast doctor</span> reports your CPU, memory, disk, and GPU and recommends a hardware tier. The tiers below describe what each hardware class is intended for; they are recommendations, not proven station results.</p>
-
-    <div class="tier-grid" role="list">
-      <div class="tier-card up" role="listitem">
-        <p class="tier-badge">Tier 0</p>
-        <h3 class="tier-name">Integrated</h3>
-        <p class="tier-spec">&lt;8 GB VRAM · Ryzen 7 780M iGPU</p>
-        <ul class="tier-list">
-          <li>Channel playout and scheduling</li>
-          <li>Recorded-meeting archive</li>
-          <li>Captions and summaries on the CPU (slower)</li>
-          <li>The <code>medium</code> caption model</li>
-        </ul>
-      </div>
-      <div class="tier-card rec up" role="listitem" aria-label="Recommended tier">
-        <p class="tier-badge">Tier 1 — Recommended</p>
-        <h3 class="tier-name">Standard</h3>
-        <p class="tier-spec">8–16 GB VRAM · 2020-era GPU</p>
-        <ul class="tier-list">
-          <li>All Tier 0 features</li>
-          <li>GPU-accelerated captions and summaries</li>
-          <li>Optional large-v3 caption model</li>
-          <li>Summary and translation models swap in and out</li>
-        </ul>
-      </div>
-      <div class="tier-card up" role="listitem">
-        <p class="tier-badge">Tier 1+</p>
-        <h3 class="tier-name">Enhanced</h3>
-        <p class="tier-spec">16–24 GB VRAM</p>
-        <ul class="tier-list">
-          <li>All Tier 1 features</li>
-          <li>Captions, summary, and translation can stay loaded together</li>
-          <li>No model-swap delay</li>
-        </ul>
-      </div>
-      <div class="tier-card up" role="listitem">
-        <p class="tier-badge">Tier 2</p>
-        <h3 class="tier-name">Professional</h3>
-        <p class="tier-spec">24 GB+ VRAM</p>
-        <ul class="tier-list">
-          <li>All Tier 1+ features</li>
-          <li>Intended for several channels at once, each with its own AI</li>
-          <li>Multi-channel evidence so far is the three-channel lab run</li>
-        </ul>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── Setup ── -->
-<section id="setup" class="sec">
-  <div class="wrap">
-    <p class="eyebrow up">Getting Started</p>
-    <h2 class="sec-h2 up">Getting started<br>in three steps.</h2>
-
-    <div class="steps">
-      <div class="step up">
-        <div class="step-num" aria-hidden="true">01</div>
-        <h3 class="step-h">Download & Install</h3>
-        <p class="step-p">A signed Windows installer. No virtual machine, no WSL. CivicCast installs as a native Windows application. The installer is small; its large AI components are found on the computer or downloaded with a progress display, and a USB or LAN kit is the offline alternative.</p>
-      </div>
-      <div class="step up">
-        <div class="step-num" aria-hidden="true">02</div>
-        <h3 class="step-h">Run civiccast doctor</h3>
-        <p class="step-p">Hardware detection inspects your CPU, GPU, RAM, and storage and reports the hardware tier it recommends. It reports; it does not change any settings.</p>
-      </div>
-      <div class="step up">
-        <div class="step-num" aria-hidden="true">03</div>
-        <h3 class="step-h">Start With Recorded Media</h3>
-        <p class="step-p">Upload or create a recorded meeting, review its captions, and explicitly approve it for the resident portal. Live capture-card ingest needs an integrator-supplied media probe; without one the console shows &ldquo;Source preview unavailable&rdquo; and keeps live start disabled. Live captions are off by default and are turned on in Setup &gt; Station Profile.</p>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── CTA ── -->
-<section id="download" class="sec cta-sec sec-alt">
-  <div class="wrap">
-    <p class="eyebrow up" style="text-align:center;">Free &amp; Open Source</p>
-    <h2 class="cta-h2 up">Your station deserves<br>better software.</h2>
-    <p class="cta-sub up">Stop paying for broadcast software that wasn't built for public access. CivicCast is free for every station: open-source code with no per-minute fees and no vendor lock-in.</p>
-    <div class="cta-btns up">
-      <a href="install-windows.html" class="button primary">
-        Windows install guide
-      </a>
-      <a href="https://github.com/scottconverse/civiccast-native" class="btn-out">
-        GitHub Repository
-        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 10L10 2M4 2h6v6"/></svg>
-      </a>
-    </div>
-  </div>
-</section>
-
-<!-- ── Footer ── -->
-<footer class="foot">
-  <div class="wrap foot-inner">
-    <span class="foot-brand">CivicCast</span>
-    <ul class="foot-links" role="list">
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md">Documentation</a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native">GitHub</a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/LICENSE">License</a></li>
-      <li><a href="https://github.com/scottconverse/civiccast-native/issues">Issues</a></li>
+    <p class="eyebrow">What it does</p>
+    <h2>The whole path from agenda to archive.</h2>
+    <p class="lede">Six jobs, each tagged with what the evidence supports today.</p>
+    <ul class="caps">
+      <li>
+        <div><h3>Schedule and air</h3><span class="tag proven">Measured in lab</span></div>
+        <div>
+          <ul>
+            <li>Channels for education, government and public programming, each with its own schedule.</li>
+            <li>Premieres, recurring program-guide slots and auto-schedule rules that the station compiles into what airs.</li>
+            <li>Program changes without a gap: in an eight-hour three-channel run, the picture gap at changes was at most 0.033 seconds.</li>
+            <li>Loudness leveled to -16 LUFS, with 16 of 16 measured windows in range on all three channels.</li>
+          </ul>
+          <p class="fine">Lab run on an earlier internal build of the same engine.</p>
+        </div>
+      </li>
+      <li>
+        <div><h3>Run the meeting</h3><span class="tag partial">Partly tested</span></div>
+        <div>
+          <ul>
+            <li>A live screen with a nine-row pre-flight checklist before a stream starts.</li>
+            <li>Take a live source to air from the Channels screen and return to the schedule afterwards.</li>
+            <li>Remote guests through VDO.Ninja rooms, when a VDO.Ninja address is configured.</li>
+          </ul>
+          <p class="fine">Live takeover and remote guests have not been field-tested.</p>
+        </div>
+      </li>
+      <li>
+        <div><h3>Record and collect</h3><span class="tag proven">Working in lab</span></div>
+        <div>
+          <ul>
+            <li>Recurring capture schedules for live inputs and network streams, plus Record now.</li>
+            <li>Upload recordings, trim them, and import an agenda whose items link to times in the video.</li>
+            <li>Residents can submit programs through a form; staff review them in a queue.</li>
+          </ul>
+        </div>
+      </li>
+      <li>
+        <div><h3>Caption and review</h3><span class="tag partial">Known limit</span></div>
+        <div>
+          <ul>
+            <li>Speech recognition on the station makes live captions in the channel output and offline captions for recordings.</li>
+            <li>A person reviews and approves caption text before it attaches to a saved recording.</li>
+            <li>AI summaries cite the transcript times behind each claim. This is a preview: the approval step has a known defect in beta.10.</li>
+          </ul>
+          <p class="fine">Under heavy load, live captioning can skip stretches of audio. About 160 seconds were skipped across two channels in a quiet-machine eight-hour run.</p>
+        </div>
+      </li>
+      <li>
+        <div><h3>Publish to residents</h3><span class="tag proven">Working in lab</span></div>
+        <div>
+          <ul>
+            <li>A public portal with Live now, searchable recordings, an upcoming schedule and watch pages with captions and agenda chapters.</li>
+            <li>A publish step with approvals, so a recording reaches residents when staff say so.</li>
+            <li>Works on a phone as well as a desktop.</li>
+          </ul>
+        </div>
+      </li>
+      <li>
+        <div><h3>Deliver and monitor</h3><span class="tag partial">Headend unproven</span></div>
+        <div>
+          <ul>
+            <li>Channel outputs as HLS web streams or a UDP transport stream for a cable headend.</li>
+            <li>A readiness screen that says whether the station is safe to broadcast, and five staff roles from setup admin to records clerk.</li>
+            <li>The Windows service starts and restarts the database, playout workers and caption worker for you.</li>
+          </ul>
+          <p class="fine">Real cable-operator acceptance and SDI capture cards have not been tested.</p>
+        </div>
+      </li>
     </ul>
-    <span class="foot-copy">© 2026 CivicCast · Open Source Software</span>
+  </div>
+</section>
+
+<section id="how">
+  <div class="wrap">
+    <p class="eyebrow">How it works</p>
+    <h2>One meeting, six steps.</h2>
+    <p class="lede">The order is real: each step feeds the next.</p>
+    <ol class="flow">
+      <li><h3>Schedule it</h3><p>Add the meeting to the schedule and the program guide. Import the agenda.</p><span class="who">Meeting operator</span></li>
+      <li><h3>Run it</h3><p>Check readiness, go live or let the channel air its program, and watch the output.</p><span class="who">Camera operator, meeting operator</span></li>
+      <li><h3>Record it</h3><p>The recording lands in the asset library, ready to trim and package.</p><span class="who">Meeting operator</span></li>
+      <li><h3>Caption and check it</h3><p>Captions are generated on the station. A person reviews them before they attach.</p><span class="who">Records clerk</span></li>
+      <li><h3>Publish it</h3><p>Approve the publish steps. The recording and its captions appear on the portal.</p><span class="who">Publish operator</span></li>
+      <li><h3>Residents watch</h3><p>Residents open the portal, search the archive and watch with captions.</p><span class="who">Everyone</span></li>
+    </ol>
+  </div>
+</section>
+
+<section class="band" id="screens">
+  <div class="wrap">
+    <div class="shots-head">
+      <div>
+        <p class="eyebrow">Screens</p>
+        <h2>What residents see.</h2>
+      </div>
+      <p class="fine" style="max-width:38ch">Captured from a lab station running sample content. The staff console is covered screen by screen in the manual.</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Resident portal pages">
+      <button role="tab" id="tab-home" aria-selected="true" aria-controls="p-home" type="button">Home</button>
+      <button role="tab" id="tab-rec" aria-selected="false" aria-controls="p-rec" type="button" tabindex="-1">Recordings</button>
+      <button role="tab" id="tab-sched" aria-selected="false" aria-controls="p-sched" type="button" tabindex="-1">Schedule</button>
+      <button role="tab" id="tab-watch" aria-selected="false" aria-controls="p-watch" type="button" tabindex="-1">Watch</button>
+    </div>
+    <div class="shot-stage">
+      <div>
+        <figure class="panel" id="p-home" role="tabpanel" aria-labelledby="tab-home" style="margin:0">
+          <div class="frame"><img src="assets/web/img/portal-home.webp" width="1800" height="1125" loading="lazy" alt="Resident portal home page: live broadcast with a Broadcast status panel, a Coming up list and Latest recordings."></div>
+          <figcaption>Home shows the channel that is on air now, what is coming up, and the latest recordings.</figcaption>
+        </figure>
+        <figure class="panel" id="p-rec" role="tabpanel" aria-labelledby="tab-rec" hidden style="margin:0">
+          <div class="frame"><img src="assets/web/img/portal-recordings.webp" width="1800" height="1125" loading="lazy" alt="Resident portal recordings page with a search box, filters and a list of published meetings."></div>
+          <figcaption>Recordings can be searched and filtered. Only recordings that staff have published appear.</figcaption>
+        </figure>
+        <figure class="panel" id="p-sched" role="tabpanel" aria-labelledby="tab-sched" hidden style="margin:0">
+          <div class="frame"><img src="assets/web/img/portal-schedule.webp" width="1800" height="1125" loading="lazy" alt="Resident portal schedule page showing upcoming programs for a channel."></div>
+          <figcaption>The schedule shows upcoming programs per channel, so residents know when a meeting will air.</figcaption>
+        </figure>
+        <figure class="panel" id="p-watch" role="tabpanel" aria-labelledby="tab-watch" hidden style="margin:0">
+          <div class="frame"><img src="assets/web/img/portal-watch.webp" width="1800" height="1125" loading="lazy" alt="Resident portal watch page with a video player, caption controls and an agenda list."></div>
+          <figcaption>A watch page has the player, caption controls and the agenda, with each item linked to its time in the video.</figcaption>
+        </figure>
+      </div>
+      <div class="phone"><img src="assets/web/img/portal-home-phone.webp" width="620" height="1342" loading="lazy" alt="The resident portal home page on a phone screen."></div>
+    </div>
+  </div>
+</section>
+
+<section class="on-dark" id="architecture">
+  <div class="wrap">
+    <p class="eyebrow">Architecture</p>
+    <h2>One service, a few well-known parts.</h2>
+    <p class="lede">CivicCast is a Windows service that supervises the programs it needs. Everything talks over the station's own loopback address.</p>
+    <div class="arch-grid">
+      <figure class="arch-fig" style="margin:0">
+        <img src="assets/web/img/architecture-processes.webp" width="1600" height="1396" loading="lazy" alt="Diagram of the processes CivicCast runs on a Windows station: a supervisor service starting the control plane, the PostgreSQL database, playout workers, relays and optional components.">
+        <figcaption>Processes on a native Windows station. From the manual, chapter 16.</figcaption>
+      </figure>
+      <ul class="tech">
+        <li><b>Supervisor</b><span>The CivicCast Native Supervisor service starts the other programs and restarts them if they stop.</span></li>
+        <li><b>Control plane</b><span>A Python web application on 127.0.0.1:8000 serving the staff console, the resident portal and a documented HTTP API of 488 operations.</span></li>
+        <li><b>Database</b><span>PostgreSQL, created and configured by the installer.</span></li>
+        <li><b>Playout</b><span>One GStreamer worker per channel, with seamless program changes and a watchdog that ends a stuck change. Outputs are HLS and UDP transport stream.</span></li>
+        <li><b>Captions and AI</b><span>faster-whisper for speech recognition and a local Ollama runtime for summaries, both on the station.</span></li>
+        <li><b>Trust at install</b><span>The installer is Authenticode-signed. Setup verifies each component pack's signature and every file's hash before it installs anything.</span></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="evidence">
+  <div class="wrap">
+    <p class="eyebrow">Evidence and limits</p>
+    <h2>What has been measured, and what has not.</h2>
+    <p class="lede">Beta.10 is a pre-release. Here is the record behind the claims on this page.</p>
+    <div class="ev-grid">
+      <div>
+        <table class="ev-table">
+          <thead><tr><th scope="col">Measure</th><th scope="col">Result</th><th scope="col">Build</th></tr></thead>
+          <tbody>
+            <tr><td>Clean install, all checks</td><td>10 of 10</td><td>Published beta.10</td></tr>
+            <tr><td>Station boot after install</td><td>26 seconds</td><td>Published beta.10</td></tr>
+            <tr><td>Program changes watched, 3 channels</td><td>50, no holes</td><td>Earlier build, 8 hours</td></tr>
+            <tr><td>Loudness windows in range</td><td>16 of 16</td><td>Earlier build, 8 hours</td></tr>
+            <tr><td>Longest run, 2 channels</td><td>About 59 hours, no restart</td><td>Earlier build</td></tr>
+          </tbody>
+        </table>
+        <p class="fine" style="margin-top:1rem">Every figure comes from the project's own lab runs. No outside group has audited it. The full record is in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">beta.10 verification file</a>.</p>
+      </div>
+      <aside class="limits" aria-labelledby="limits-h">
+        <h3 id="limits-h">Known limits of beta.10</h3>
+        <ul>
+          <li><strong>Not run at a real station.</strong> No human field tester has signed off.</li>
+          <li><strong>Upgrades are untested.</strong> Installing over an earlier release was not run.</li>
+          <li><strong>First installs need the full kit.</strong> The installer needs the station folder of model files as well as the packs on the release page.</li>
+          <li><strong>Live captions can skip audio</strong> when the PC is under heavy load.</li>
+          <li><strong>Some features are unfinished:</strong> AI summary approval, resident email notices, the paywall and alert destinations.</li>
+          <li><strong>Cable headend and SDI cards</strong> are unproven.</li>
+        </ul>
+      </aside>
+    </div>
+  </div>
+</section>
+
+<section class="band" id="start">
+  <div class="wrap">
+    <p class="eyebrow">Quick start</p>
+    <h2>Install it on a Windows PC.</h2>
+    <ol class="steps">
+      <li><b>Get the kit</b>The release page carries <code>setup.exe</code> and five <code>.ccpack</code> component packs, about 4.9 GB in all. A first install also needs the <code>station</code> folder of speech and AI model files, which is not on the release page. Chapter 10 of the manual explains the folder layout.</li>
+      <li><b>Run <code>setup.exe</code></b>Windows asks for administrator approval. Setup checks every pack, creates the database, runs a self-test and starts the CivicCast service.</li>
+      <li><b>Open the operator console</b>Use the <em>CivicCast Operator Console</em> shortcut on the PC, which opens <code>http://127.0.0.1:8000/operator/</code>. First setup only works from the station computer itself.</li>
+      <li><b>Create the first admin</b>Choose the station name and an admin password, and save the recovery kit. The console stays locked until you confirm it.</li>
+      <li><b>Check Readiness</b>The Readiness screen reports whether the station is safe to broadcast.</li>
+    </ol>
+    <div class="callout"><p><strong>Status:</strong> only the clean-install path was tested on the published build. Upgrading from an earlier release, and a first install without the kit, were not.</p></div>
+    <div class="btn-row">
+      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">Open the release page</a>
+      <a class="button ghost" href="install-windows.html">Windows install notes</a>
+    </div>
+  </div>
+</section>
+
+<section id="docs">
+  <div class="wrap">
+    <p class="eyebrow">Documentation</p>
+    <h2>A manual for each kind of reader.</h2>
+    <p class="lede">The User Manual has a plain-language part for volunteers, camera operators, editors, records clerks and station staff, and a technical part for a city's IT staff, with architecture diagrams and a full appendix.</p>
+    <ul class="docs">
+      <li><a href="USER-MANUAL.pdf"><b>User Manual (PDF)</b><span>The complete manual, formatted for reading and printing.</span></a></li>
+      <li><a href="USER-MANUAL.docx"><b>User Manual (Word)</b><span>The same manual as an editable document.</span></a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md"><b>User Manual (Markdown)</b><span>The source text, readable in the browser.</span></a></li>
+      <li><a href="install-windows.html"><b>Windows install notes</b><span>The release status and what a first install needs.</span></a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md"><b>Changelog</b><span>What changed in each release.</span></a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/CONTRIBUTING.md"><b>Contributing</b><span>How to propose a change to the code or the docs.</span></a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/SECURITY.md"><b>Security policy</b><span>How to report a vulnerability.</span></a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/issues"><b>Report a beta issue</b><span>Use a GitHub account. Leave out passwords, recovery codes and private meeting material.</span></a></li>
+    </ul>
+  </div>
+</section>
+
+<section class="on-dark final">
+  <div class="wrap">
+    <h2>Try beta.10 and tell us what breaks.</h2>
+    <p class="lede">It is a pre-release built for testing. Run it alongside your current process, read the known issues for the screens you use, and report what you find.</p>
+    <div class="btn-row">
+      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">View the beta.10 release</a>
+      <a class="button ghost" href="https://github.com/scottconverse/civiccast-native">View the repository</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div>
+      <img src="brand/svg/civiccast-lockup-reversed.svg" alt="CivicCast" width="162" height="34">
+      <p>Public meetings, on the air. Open-source code under the Apache License 2.0; documentation under CC BY 4.0. Copyright The CivicCast Authors.</p>
+      <p>CivicCast 1.0.0-beta.10 is pre-release software. See the evidence section for what has been tested.</p>
+    </div>
+    <ul aria-label="Footer links">
+      <li><a href="https://github.com/scottconverse/civiccast-native">Repository</a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/releases">Releases</a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/issues">Issues</a></li>
+      <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/LICENSE">License notice</a></li>
+      <li><a href="USER-MANUAL.pdf">Manual</a></li>
+    </ul>
   </div>
 </footer>
 
 <script>
-/* ── Nav scroll ── */
-const nav = document.getElementById('nav');
-window.addEventListener('scroll', () => {
-  nav.classList.toggle('stuck', window.scrollY > 50);
-}, { passive: true });
-
-/* ── Scroll fade-up ── */
-const io = new IntersectionObserver((entries) => {
-  entries.forEach(e => {
-    if (e.isIntersecting) {
-      e.target.classList.add('vis');
-      io.unobserve(e.target);
+  // Mobile menu and screenshot tabs. The page works without this script: the menu is a plain link list
+  // on wide screens and the first screenshot is shown.
+  (function () {
+    var toggle = document.querySelector('.menu-toggle');
+    var nav = document.getElementById('nav');
+    if (toggle && nav) {
+      toggle.addEventListener('click', function () {
+        var open = nav.classList.toggle('open');
+        toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
+      nav.addEventListener('click', function (e) {
+        if (e.target.tagName === 'A') { nav.classList.remove('open'); toggle.setAttribute('aria-expanded', 'false'); }
+      });
     }
-  });
-}, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
-
-document.querySelectorAll('.up').forEach((el, i) => {
-  el.style.transitionDelay = (i % 6) * 0.07 + 's';
-  io.observe(el);
-});
-
-/* ── Three.js signal particle field ── */
-(function () {
-  if (typeof THREE === 'undefined') return;
-
-  const canvas = document.getElementById('cvs');
-  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8));
-
-  const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(58, 1, 0.1, 200);
-  camera.position.z = 32;
-
-  /* Particle count — reduce on mobile for performance */
-  const N = window.innerWidth < 600 ? 700 : 1600;
-  const pos  = new Float32Array(N * 3);
-  const col  = new Float32Array(N * 3);
-  const base = new Float32Array(N * 3); /* store original positions */
-
-  const c0 = new THREE.Color('#00C8F0'); /* signal cyan   */
-  const c1 = new THREE.Color('#FF5C26'); /* live indicator */
-
-  for (let i = 0; i < N; i++) {
-    const i3 = i * 3;
-    const x = (Math.random() - 0.5) * 90;
-    const y = (Math.random() - 0.5) * 55;
-    const z = (Math.random() - 0.5) * 18 - 6;
-    pos[i3]   = base[i3]   = x;
-    pos[i3+1] = base[i3+1] = y;
-    pos[i3+2] = base[i3+2] = z;
-    const warm = Math.random() < 0.12;
-    const c = warm ? c1 : c0;
-    col[i3]   = c.r;
-    col[i3+1] = c.g;
-    col[i3+2] = c.b;
-  }
-
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color',    new THREE.BufferAttribute(col, 3));
-
-  const mat = new THREE.PointsMaterial({
-    size: 0.28,
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.55,
-    sizeAttenuation: true,
-  });
-
-  const pts = new THREE.Points(geo, mat);
-  scene.add(pts);
-
-  /* Resize handling */
-  function resize() {
-    const w = canvas.clientWidth || window.innerWidth;
-    const h = canvas.clientHeight || window.innerHeight;
-    renderer.setSize(w, h, false);
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
-  }
-  const ro = new ResizeObserver(resize);
-  ro.observe(canvas.parentElement || document.body);
-  resize();
-
-  /* Subtle mouse parallax */
-  let mx = 0, my = 0;
-  window.addEventListener('mousemove', e => {
-    mx = (e.clientX / window.innerWidth  - 0.5) * 2;
-    my = (e.clientY / window.innerHeight - 0.5) * -2;
-  }, { passive: true });
-
-  /* Animation loop */
-  let t = 0;
-  function tick() {
-    requestAnimationFrame(tick);
-    t += 0.0035;
-
-    for (let i = 0; i < N; i++) {
-      const i3 = i * 3;
-      const bx = base[i3];
-      const bz = base[i3+2];
-      /* Two-frequency sine wave deformation on Y */
-      pos[i3+1] = base[i3+1]
-        + Math.sin(bx * 0.07 + t) * 1.6
-        + Math.cos(bz * 0.09 + t * 0.65) * 0.9;
+    var tabs = Array.prototype.slice.call(document.querySelectorAll('[role="tab"]'));
+    function select(tab) {
+      tabs.forEach(function (t) {
+        var on = t === tab;
+        t.setAttribute('aria-selected', on ? 'true' : 'false');
+        t.tabIndex = on ? 0 : -1;
+        document.getElementById(t.getAttribute('aria-controls')).hidden = !on;
+      });
     }
-    geo.attributes.position.needsUpdate = true;
-
-    /* Ease camera toward cursor */
-    camera.position.x += (mx * 2.5 - camera.position.x) * 0.035;
-    camera.position.y += (my * 1.8 - camera.position.y) * 0.035;
-    camera.lookAt(0, 0, 0);
-
-    renderer.render(scene, camera);
-  }
-  tick();
-})();
+    tabs.forEach(function (t, i) {
+      t.addEventListener('click', function () { select(t); });
+      t.addEventListener('keydown', function (e) {
+        var n = null;
+        if (e.key === 'ArrowRight') n = tabs[(i + 1) % tabs.length];
+        if (e.key === 'ArrowLeft') n = tabs[(i + tabs.length - 1) % tabs.length];
+        if (n) { select(n); n.focus(); e.preventDefault(); }
+      });
+    });
+  }());
 </script>
+</body>
+</html>

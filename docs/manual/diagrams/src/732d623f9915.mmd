@@ -1,0 +1,21 @@
+flowchart TB
+    SCM["Windows Service Control Manager<br/>starts service at boot,<br/>restarts after 5 s, 10 s, 30 s"]
+    SUP["CivicCastSupervisor service<br/>LocalSystem, pythonservice.exe"]
+    PIPE["Admin pipe<br/>civiccast-supervisor"]
+    PG[("PostgreSQL<br/>127.0.0.1:5432*")]
+    CP["Control plane<br/>uvicorn, 127.0.0.1:8000"]
+    OL["Ollama (optional)<br/>127.0.0.1:11434"]
+    W["GStreamer worker<br/>one per channel"]
+    FF["ffmpeg helpers<br/>conform, HLS relay"]
+    REL["Optional relays<br/>tsp, NDI, SDI"]
+
+    SCM --> SUP
+    SUP --- PIPE
+    SUP -->|starts after Ollama step| PG
+    SUP -->|starts after PostgreSQL| CP
+    SUP -.->|tried first, if installed| OL
+    CP --> PG
+    CP -.->|summaries, translation| OL
+    CP -->|spawns| W
+    CP -->|spawns| FF
+    CP -.->|spawns| REL

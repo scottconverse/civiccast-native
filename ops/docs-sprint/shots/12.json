@@ -1,0 +1,118 @@
+[
+  {
+    "name": "operator-schedule-drawer",
+    "path": "/operator/#/schedule",
+    "wait_ms": 3000,
+    "clicks": ["text=\"New scheduled item\""],
+    "width": 1440,
+    "height": 900,
+    "must_show": "The slide-in panel 'New scheduled item' with Mode cards (Premiere selected), Asset, Channel, Start at with the timezone preview line, Duration (min), the yellow 'Timezone check' box, Notes (optional), and the Schedule premiere button.",
+    "setup": "Operator token with publish_operator or setup_admin. At least one validated asset and one channel in the lab station."
+  },
+  {
+    "name": "operator-schedule-list",
+    "path": "/operator/#/schedule",
+    "wait_ms": 3000,
+    "clicks": ["text=\"list\""],
+    "width": 1440,
+    "height": 900,
+    "must_show": "List view with at least one premiere row in state Scheduled showing 'Not yet visible to residents', the Publish to residents button and the Cancel button. A second row that is Published and shows 'Visible to residents' is welcome.",
+    "setup": "Create a Scheduled premiere (do not publish it) and one other premiere that has been published."
+  },
+  {
+    "name": "operator-schedule-review-safe",
+    "path": "/operator/#/schedule",
+    "wait_ms": 3000,
+    "click_wait_ms": 2500,
+    "clicks": ["text=\"list\"", "text=\"Publish to residents\""],
+    "width": 1440,
+    "height": 900,
+    "must_show": "The review panel under the row with the 'Safe to air' badge, the start time and length, and the approve button 'Publish to residents' plus Cancel.",
+    "setup": "Exactly one Scheduled premiere on the list (so the click is unambiguous), with a playable validated asset and no clash."
+  },
+  {
+    "name": "operator-guide-populated",
+    "path": "/operator/#/guide",
+    "wait_ms": 3500,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "Program guide heading, Channel drop-down, Refresh guide and Add to guide buttons, a Recurring slots section with two slots (one Weekly), and the Next 7 days list with a mix of Scheduled, Skipped · conflict, Skipped · not playable and manual rows.",
+    "setup": "Operator token with meeting_operator or support_admin. Two slots; one overlapping manual schedule item to force a conflict; one slot whose asset is not playable to force 'not playable'. Run Refresh guide first."
+  },
+  {
+    "name": "operator-autoschedule-overview",
+    "path": "/operator/#/auto-schedule",
+    "wait_ms": 3500,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "The Auto-schedule page with the intro text, one saved search, one daypart, one rule card (with Simulate, Edit, Delete) and the Compile schedule card with Compile now.",
+    "setup": "Operator token with publish_operator or setup_admin. Create one saved search (Meeting body = City Council), one daypart (weeknights 18:00-22:00 on a real channel) and one rule joining them."
+  },
+  {
+    "name": "operator-autoschedule-simulate",
+    "path": "/operator/#/auto-schedule",
+    "wait_ms": 3500,
+    "click_wait_ms": 3000,
+    "clicks": ["text=\"Simulate\""],
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "The Simulate result under the rule card: 'Would schedule N of M upcoming slots.' and lines with Will air and Already scheduled labels.",
+    "setup": "As operator-autoschedule-overview, with one day already holding a manual schedule item inside the daypart so an 'Already scheduled' label appears. Only one rule so the click is unambiguous."
+  },
+  {
+    "name": "operator-recording-form-weekly",
+    "path": "/operator/#/recording",
+    "wait_ms": 3500,
+    "click_wait_ms": 1500,
+    "clicks": ["text=\"Weekly\""],
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "The New schedule card with Recurrence set to Weekly, the weekday buttons (Weekdays, Weekend, Every day, Clear) and boxes, 'Time (HH:MM UTC)' with the 'In your local time' line, Duration, Quality preset, Loudness regime, Enabled, and the 'Next 3 fires' preview (type a time such as 19:00 and tick a day before capture).",
+    "setup": "Operator token with setup_admin or meeting_operator. The coordinator must type 19:00 in Time and tick one weekday after the Weekly click so the Next 3 fires preview shows; a second click-step may be needed."
+  },
+  {
+    "name": "operator-recording-jobs",
+    "path": "/operator/#/recording",
+    "wait_ms": 4000,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "The Recordings table with at least one job in state recording (with the 'Live · refreshing every 5 s' pill and a Stop button) and one finished job with an asset link.",
+    "setup": "Create a schedule with a network-stream test source (or a capture card), press Record now, and screenshot while it is recording."
+  },
+  {
+    "name": "operator-contribute-queue",
+    "path": "/operator/#/contribute",
+    "wait_ms": 3500,
+    "full_page": true,
+    "width": 1440,
+    "height": 900,
+    "must_show": "The Contributor submissions page: the three tiles (Needs action, Total submissions, Status notices), the search box and state tabs, and cards in several states (Submitted, Under review, Accepted) each showing Media, Media gate and Agreement and the action buttons.",
+    "setup": "Operator token with publish_operator or meeting_operator. Submit 3-4 test programs through the public home page form and drive them through Start review and Accept. Use a small valid MP4."
+  },
+  {
+    "name": "portal-contribute-form",
+    "path": "/#/",
+    "wait_ms": 3500,
+    "full_page": true,
+    "auth": false,
+    "width": 1440,
+    "height": 900,
+    "must_show": "The 'Submit a program' section at the bottom of the portal home page: agreement box, the form fields (Producer name, Email, Organization, Program title, Description, Tags, Requested air date, Video file), the Send to review button, and the 'Check submission status' form. If the full-page image is too long, crop to this section.",
+    "setup": "None. Resident portal, no sign-in."
+  },
+  {
+    "name": "portal-agenda-sidebar",
+    "path": "/#/watch/<ASSET_ID_OF_A_RECORDING_WITH_A_PUBLISHED_AGENDA>",
+    "wait_ms": 4500,
+    "auth": false,
+    "width": 1440,
+    "height": 900,
+    "must_show": "A recording's watch page with the player and the 'Agenda' card beside it, listing items with numbers, titles and HH:MM:SS times, and the 'Agenda document' link if a source URL was set.",
+    "setup": "A packaged recording with a published agenda of 4+ items, most with timecodes and one without ('—'). Replace the placeholder in 'path' with the real asset id."
+  }
+]

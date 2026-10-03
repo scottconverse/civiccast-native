@@ -1,0 +1,21 @@
+flowchart TB
+    CP["Control plane<br/>and workers"]
+    PG[("PostgreSQL<br/>schema civiccast")]
+    UP[("data/uploads<br/>recordings, uploads,<br/>VOD packages")]
+    EG[("data/egress<br/>conform cache, channel work,<br/>live HLS, channel logs")]
+    TAP[("data/caption-tap<br/>5-second audio chunks")]
+    LOG[("logs<br/>supervisor, control plane,<br/>postgres")]
+    REG[("Registry<br/>DatabaseUrl,<br/>InstalledVersion")]
+    UPG[("upgrade<br/>journal, backups,<br/>recovery document")]
+    PRO[("Service-account profile<br/>station-state.json,<br/>as-run outbox, credentials")]
+    BUS["Event bus<br/>(memory only)"]
+
+    CP --> PG
+    CP --> UP
+    CP --> EG
+    CP --> TAP
+    CP --> LOG
+    CP --> PRO
+    CP -.-> BUS
+    REG -.->|read at service start| CP
+    PG -.->|dumped at upgrade| UPG

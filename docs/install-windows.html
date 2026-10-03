@@ -3,29 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>CivicCast for Windows</title>
-  <style>
-    :root {
-      --cc-paper: #f7f4ec;
-      --cc-ink: #18212b;
-      --cc-brand: #174f78;
-      --cc-muted: #5c6670;
-    }
-    body {
-      margin: 0;
-      background: var(--cc-paper);
-      color: var(--cc-ink);
-      font: 18px/1.6 system-ui, sans-serif;
-    }
-    main { max-width: 800px; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
-    h1, h2 { line-height: 1.2; color: var(--cc-brand); }
-    a { color: var(--cc-brand); }
-    .status { border-left: 5px solid var(--cc-brand); padding: .8rem 1rem; background: #fff; }
-    code { background: #fff; padding: .1rem .3rem; }
-  </style>
+  <title>CivicCast for Windows - install notes</title>
+  <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/web/site.css">
+  <style>.doc{padding-block:var(--s5)} .doc h2{margin-top:var(--s4)} .doc ul{max-width:var(--text)} .status{border-left:6px solid var(--record);padding:var(--s2) var(--s3);background:var(--white);border-radius:0 var(--radius) var(--radius) 0;max-width:var(--text)}</style>
 </head>
 <body>
-<main>
+<header class="site-header"><div class="wrap"><a class="brand" href="./" aria-label="CivicCast home"><img src="brand/svg/civiccast-lockup.svg" alt="CivicCast" width="162" height="34"></a><nav class="nav" style="display:flex" aria-label="Main"><a href="./">Home</a><a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">View the beta.10 release</a></nav></div></header>
+<main class="doc wrap">
   <h1>CivicCast for Windows</h1>
 
   <p class="status"><strong>Current release posture:</strong>
@@ -37,13 +22,13 @@
     superseded.
   </p>
 
-  <p>Download <code>setup.exe</code> and the runtime <code>.ccpack</code> packs from the <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">v1.0.0-beta.10 GitHub Release</a>. Verify the SHA-256 checksum against the published <code>SHA256SUMS.txt</code> and the Windows Authenticode signature before running the installer -- see the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">release verification record</a> for what was and was not proven, including the Gate A lanes and the remaining acceptance boundary. A first-time install brings its large AI components either in the ~21 GB AI-model bundle (USB or LAN copy, the offline alternative) or through the installer window's own download screen -- the GitHub download alone does not include them.</p>
+  <p>Download <code>setup.exe</code> and the runtime <code>.ccpack</code> packs from the <a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">v1.0.0-beta.10 GitHub Release</a>. Verify the SHA-256 checksum against the published <code>SHA256SUMS.txt</code> and the Windows Authenticode signature before running the installer -- see the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">release verification record</a> for what was and was not proven, including the Gate A lanes and the remaining acceptance boundary. A first-time install also needs the <code>station</code> folder of speech and AI model files (about 21 GB), which is not on the release page and is supplied in a kit by USB or network copy. The Windows setup step does not download them: with only <code>setup.exe</code> and the packs it stops with exit code 110 or 123. Chapter 10 of the <a href="USER-MANUAL.pdf">User Manual</a> explains the folder layout and every exit code.</p>
 
   <h2>Private tester kits</h2>
   <p><code>v1.0.0-beta.10</code> is a GitHub pre-release (a beta candidate), not a production release. Of the three Gate A lanes, only the clean-install lane was run for it: it passed 10 of 10 criteria, run locally in Windows Sandbox on 2026-10-02 against exactly this build. The upgrade (cross-version) lane and the download-only lane were not run; the owner waived them for this publication, so upgrading from beta.7 and a download-only install are not proven for beta.10. The human station acceptance pass has not been done, and no human field tester has signed off on it. See its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">verification record</a> for what was and was not proven.</p>
   <p>If Scott supplied you with a private tester kit (for example, the USB station bundle for a first-time install), use only the installer and checksum in that kit. Verify the SHA-256 checksum and the Windows Authenticode signature before running the installer. Do not substitute an installer from another build.</p>
 
-  <p>The Windows installer shows a visible progress heartbeat while setup is <strong>visibly active</strong>. Installing a newer approved build over an existing CivicCast installation preserves operator data under <code>C:\ProgramData\CivicCast</code>.</p>
+  <p>The Windows installer shows a visible progress heartbeat while setup is <strong>visibly active</strong>. Installing a newer build over an existing CivicCast installation is designed to keep operator data under <code>C:\ProgramData\CivicCast</code>, but upgrading was not tested for beta.10.</p>
 
   <h2>Evidence boundary</h2>
   <p>Source tests, signed artifacts, and controlled Windows Sandbox checks do not establish field readiness by themselves. Physical DeckLink capture, real headend integration, and production operation remain pending until separately proven.</p>
@@ -51,7 +36,7 @@
   <h2>More information</h2>
   <ul>
     <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md">Windows installation notes</a></li>
-    <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md">User manual</a></li>
+    <li><a href="USER-MANUAL.pdf">User manual (PDF)</a> &middot; <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md">Markdown</a></li>
     <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/BRANCHES.md">Branches and release posture</a></li>
   </ul>
 </main>
