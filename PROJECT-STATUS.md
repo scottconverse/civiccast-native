@@ -3,6 +3,10 @@
 > **Taking over coding? Start with
 > [`docs/handoff/CODER-HANDOFF-2026-10-02.md`](docs/handoff/CODER-HANDOFF-2026-10-02.md)**
 > (where everything is, current state, open work, history to avoid).
+>
+> Built-in help work (beta.11): start with
+> [`docs/handoff/CODER-HANDOFF-INAPP-HELP-2026-10-03.md`](docs/handoff/CODER-HANDOFF-INAPP-HELP-2026-10-03.md)
+> (63 per-screen specs in `docs/in-app-help/`, product-defect list, in-app manual regeneration).
 
 > **2026-10-02 current: `v1.0.0-beta.10` is the current published release,
 > published 2026-10-02** as a GitHub pre-release (a beta candidate), not a

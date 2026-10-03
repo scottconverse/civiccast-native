@@ -286,6 +286,8 @@ Each is something that actually happened. The fix is in italics.
 
 ## 9. What the outgoing coordinator is doing next (so you don't collide)
 
+> **Update 2026-10-03:** the manual, landing page and the 63 in-app help specs are finished and on `main`. The single starting point for the built-in help work is [`CODER-HANDOFF-INAPP-HELP-2026-10-03.md`](CODER-HANDOFF-INAPP-HELP-2026-10-03.md). The list below is the original plan.
+
 **Documentation only, no code.** Scott's plan, pushed straight to `main` in stages (no PR/CI; not part of the installer or beta.10):
 1. A real **User Manual** (`docs/USER-MANUAL.md` + PDF + DOCX): a non-technical section (public-access volunteers, camera operators, editors, PEG staff) and a technical section for a small-city IT team, with Mermaid architecture diagrams, real screenshots, an appendix (commands, API, settings, ports, files, errors, glossary, checklists) and a measured-evidence section.
 2. A rebuilt **landing page** (`docs/index.html`, GitHub Pages).
