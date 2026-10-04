@@ -4,6 +4,243 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Frozen remote candidate: `eb94e465fe1f2b5335f0ad90620e1a01c041812e`,
+  independently matched by ls-remote. Local commits after it reconcile tests,
+  CI prerequisites and documentation policy; they do not change shipping runtime.
+  Draft PR 232 body is bound to the frozen source,
+  terminal original-soak FAIL and restored original baseline. Exact self-hosted
+  candidate build 37230261698 active: K1 station bundle succeeded and native
+  asset job 111520319907 is running. Large/binary uploads false; no new tag,
+  release or station cutover. Current CI: tests 37230256695 active; lint
+  37230256681 failed solely at Ruff formatting (23 files); docs 37230256692 and
+  installer compile 37230256805 succeeded. Windows dual-runtime guard passed.
+  v13 remains sole lab operator; no manual VM may overlap automatic Gate A.
+- Local verification corrections: `61ef21d8` provisions Pandoc through the
+  existing media-prerequisite script; `1bf8b739` exercises the actual public HLS
+  manifest publisher; `14e00b38` selects a validated available H264 encoder;
+  `53a996a8` accepts BOM-prefixed evidence JSON while retaining rejection checks
+  and reconciles obsolete documentation assertions. The packaged Python/GI HLS
+  case is Windows-only, not skipped for a missing Windows runtime. Generic HLS
+  checks: `5 passed, 1 deselected in 10.62s`; the deselected packaged case still
+  requires exact-candidate runtime verification by v13. No installer PASS claimed.
+  Marker commit: 66319bfb; formatting commit: d4e8118b. The 23 CI-reported files were then run through Ruff
+  format (21 changed, two already corrected), with before/after AST equality for
+  every file and a passing 23-file format check. This is mechanical formatting,
+  not another runtime fix; the in-flight eb94 package is unchanged.
+  These local commits are deliberately batched while the current long CI run
+  finishes; they have not been pushed. Next remote checkpoint must include the
+  reviewed native-floor and claims-test corrections, preserve runtime evidence
+  identity, and refresh PR 232 and this handoff after confirming the remote SHA.
+- Buffered worker acknowledgement repair: `ade67360`.
+  Root independently ran 67 affected tests (1 existing gi skip), then 274
+  strategy/daemon tests (6 existing POSIX skips). Whole-tree Ruff passed and
+  mypy passed 690 source files. This is source verification, not installed proof.
+  CI for remote `d258e46d` is terminal FAILURE: run 37225882397, 78 failed,
+  11446 passed, 79 skipped, 5 deselected in the broad unit job; Windows native
+  job passed. u86 is diagnosing residual product failures and obsolete assertions.
+  Do not wait on that already-finished CI job or claim the branch is green.
+  Original beta.5 setup download/extraction recovered the original index hash
+  `4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a`.
+  Original baseline recovery and pin correction are complete (7e97d003);
+  receipt: ops/beta10-oversight/reports/U87-ORIGINAL-BASELINE.md.
+  product_type_contracts owns exact-committed-source native collection floors;
+  u86 owns honest claims-registry reconciliation, without rebinding historical
+  runtime evidence to changed source. v13 owns remaining flat-installer recovery
+  wiring. Unfinished native rollback files remain excluded from candidate commits.
+- Original deb2 two-hour soak is terminal FAIL, verdict at 2026-10-04
+  13:36:34 MDT: 110 total cycles, 3 warmup, 107 evaluated; 1 planned restart,
+  0 unplanned relaunches. Education's startup content reload timed out after
+  5.0 seconds (`reissue_desired_state`) and fell back to restart; detected
+  11:37:06 MDT, recorded recovery gap 22.5 seconds. This is additional to
+  recurring stream continuity failures and public/government startup caption
+  shedding. The earlier two-issue chat summary was incomplete and corrected.
+  Evidence: `sandbox-lab/soak-output/soak-deb2adf-20261004-171539Z/VERDICT.json`,
+  `restart-events.json`, `soak-log.txt`. Runner PID 34096 is now absent;
+  Independent VM/lease cleanup and all 1,228 private evidence file hashes were
+  verified. The buffered acknowledgement fix is in the frozen candidate; its
+  installed effect remains unverified until the replacement run.
+  Do not call candidate ready based on the caption/transport repairs alone.
+- Existing upgrade-baseline metadata repair committed `0faddc2a`: explicit
+  successful original build attempt 1, distinct reconstructed-index attempt 2
+  provenance, all downstream byte/version checks retained. Root independent
+  existing contract module: `98 passed in 2.40s`; actual PowerShell/remote
+  attempt identity validation passed. Agent wider existing suite: 227 passed.
+  The original beta.5 kit is now restored and hash-verified under
+  C:\CivicCastTester\kit-staging\148c8d2172dd6b63cbbb856b429b68aa020dc421.
+  Build pruning removed deb2 staging, not its retained private evidence or the
+  separately protected original baseline recovery source. Actual upgrade proof
+  remains pending; recovery of baseline bytes is not an upgrade PASS.
+- Latest source verification (supersedes the intermediate baselines below):
+  product contract repairs and the nullable caption diagnostic-counter fix
+  returned `439 passed in 54.60s`; root independently ran caption stage/tap,
+  relay and proof-worker modules: `158 passed in 47.76s`. Full product mypy:
+  `Success: no issues found in 689 source files`; full Ruff check passed.
+  These are source checks, not installed acceptance. The new counter guard
+  prevents missing diagnostic receipts from interrupting later captions;
+  it is not evidence that startup audio shedding is fixed.
+  Live-router baseline failures were reproduced with a synthetic inherited
+  staff-token setting. A module-local fixture isolates that setting without
+  changing production authentication. Root independently reran the synthetic
+  contaminated-environment full router module plus both secure-default cases:
+  `108 passed in 68.40s (0:01:08)`, using the security-python interpreter.
+  Agent result: `108 passed in 69.14s (0:01:09)`, including secure defaults.
+  Auth isolation is committed as `abd8416e05855009ab3e6ad9ce30ab968b239754`.
+  Root repeated full mypy (689 source files) and Ruff successfully after it.
+  Product source/doc sync is now committed as
+  `0f7b0014097665904a8a33049484c1c289240f67`. Independent review found no
+  actionable findings, ran 90 focused tests successfully, and independently
+  observed four old-counter failures followed by four fixed-source passes.
+  Private review: oversight `reports/U87-TYPE-CONTRACTS-INDEPENDENT-REVIEW.md`.
+  Push delta review passed all five lenses at `70659633` (two receipt-only
+  ASCII corrections after the product commit). No uncommitted native rollback
+  is included. Post-push CI/PR identity reconciliation remains pending.
+  Next signed build must wait for original soak termination, evidence harvest
+  and verified cleanup; its pruning step can remove the old deb2 kit staging.
+  Gate A's pinned beta.5 build now reports failure for its latest attempt,
+  while original attempt 1 succeeded. Exact attempt/reconstructed-index
+  provenance is being checked before changing either existing validator.
+  Broader remote CI 37225882397 is still running; do not cancel by repeated
+  checkpoint pushes. Native rollback production wiring remains unfinished
+  and must stay outside the next reviewed source package.
+- Active ops cleanup now independently checked by root: the existing loudness,
+  air-audio and caption rung modules returned `37 passed in 11.73s`; scoped
+  Ruff returned `All checks passed!`, format check `18 files already formatted`.
+  Root formatted seven named ops files only and compared parsed Python AST
+  hashes before/after: all seven identical. No operational helper or historical
+  publish wrapper was executed. The pdl credential-argv fix has separate
+  synthetic RED/GREEN review; no real token was read or download performed.
+  Product typing has since passed the checks above; rollback integration is
+  separate ongoing work.
+- Root type-check baseline: `python -m mypy civiccast` reported `Found 32
+  errors in 11 files (checked 688 source files)`, including one in the separate
+  unshipped flat-recovery draft. `phase_timing.py` now explicitly annotates its
+  heterogeneous summary dictionary; runtime behavior is unchanged. Existing
+  `tests/captions/test_caption_phase_timing.py`: `23 passed in 2.05s`;
+  scoped `mypy --follow-imports=silent civiccast/captions/phase_timing.py`:
+  `Success: no issues found in 1 source file`; scoped Ruff passed. Ordinary
+  mypy at that intermediate checkpoint followed imports and reported the other
+  product errors. The latest full-product check above supersedes that result.
+- Local lint-scope reconciliation: `pyproject.toml` excludes only the preserved
+  U37 `evidence/instruments` directory, whose README binds those exact scripts
+  to historical results. No archived script was edited. Root compared
+  `python -m ruff check --show-files .` before/after: 1643 -> 1631 files,
+  exactly those twelve instruments removed; no product, active tool or test
+  path removed. Archive `git diff --exit-code` and config `git diff --check`
+  passed. The latest full Ruff check above includes the active ops cleanup.
+- Local HEAD: `0faddc2a` (upgrade-baseline attempt repair), after
+  `7065963351a01e422ac0fb7e351cbaff191a2c5a` (receipt punctuation
+  after reviewed caption counter/type fixes `0f7b0014`, auth-test isolation
+  `abd8416e` and ops cleanup
+  `fe4a52ff` with bounded credential-safe downloader).
+  Not yet pushed, to avoid
+  cancelling the running broader CI job. Native rollback WIP is intentionally
+  outside that commit; source typing is included.
+  Remote/PR tested source: `d258e46d47226fc1ed84d6d55c44be37da670582`.
+  PR 232 updated. Dedicated unicast proof-copy repair pushed with `df0808ed`
+  (Windows pinned FFmpeg provisioning and changed-identity fixture); `74138634` fixes
+  the new-session overload negative control and `4691a748` live VAD preparation.
+  Current CI at 2026-10-04 13:00 MDT: tests 37225882397 still running;
+  its Windows native job 111505457547 passed: `2137 passed, 3 deselected
+  in 215.82s (0:03:35)`, with pinned FFmpeg provisioned and suite guard passed.
+  The Windows command excludes integration-marked tests; real Postgres
+  integration coverage belongs to the separate Ubuntu job and is not proved
+  by this Windows result. Job logs carry Node action deprecation warnings.
+  The broader unit job is not yet terminal. Lint 37225882300 failed;
+  installer compile 37225882282 and docs 37225882324 passed. Historical
+  b5d4 run 37223766740 is CANCELLED after normal workflow supersession;
+  do not treat its unfinished unit job as a pass.
+  Final matched isolated wildcard comparison: old capture receiver CC4,
+  private-copy receiver CC0, raw mux CC0 in both, successful capture/clean exits.
+  Root independently analyzed both retained receiver files with TSDuck, exit 0.
+  Original deb2 soak remains unchanged and is not a clean run: cycle 73 at
+  12:56:08 MDT had all channels ON_AIR and clean samples, but cycles 71/72
+  repeated the public/government then education continuity failures. Original
+  runner PID 34096 / birth 2026-10-04T17:15:26.6458145Z remains live;
+  fixed deadline 13:36:24 MDT. This package does not contain the source repairs.
+  Old receiver SHA256 E078A45A864E7D7A89269A694DE02FA33492CB6E8592446B1A2400F144F7536F;
+  corrected EEA9748DCD8DA935E6096AA8D3E129AB8BB468DF427197212543C46E9FBDD4A6.
+  Source publication fence now accepted through actual factory/capture path,
+  with independent mutation sensitivity. Root 29 focused and 116 neighboring
+  automation/relay tests passed. This is not installed sustained acceptance.
+  Helper transport assignment finished; v13 now owns rollback draft plus the
+  unchanged original soak, and Luna lint_cleanup owns active-ops mechanical lint.
+  Root independently ran the six affected caption/runtime modules: 198 passed
+  in 7.71s, exit 0; Ruff passed. This does not prove first-encoder latency fixed.
+  Root independently ran the existing overload-control module: 27 passed in
+  2.10s. It now seeds new-session audio after worker construction and explicitly
+  selects supported immediate fail-closed settings for its negative control;
+  nominal capacity defaults are unchanged.
+  The dedicated relay-copy replay timed out. Its copied graph inherited host
+  caption-tap paths and default relay input port 17800: verified isolation
+  failure, so the replay is not valid evidence against or for the mirror fix.
+  Owned replay processes exited; no further replay until all graph paths and
+  ports are rebound and independently reviewed. Exact host file impact is not
+  yet attributable; do not claim harmlessness or delete host data. Prior isolated
+  CC observations need the same host-path qualification. Original guest soak is
+  separate and unchanged. Do not accept unit-test GREEN as broadcast-safe proof.
+  Helper owns that repair; u86 owns CI overload-producer failure; v13 owns
+  the unchanged soak and existing HLS-verifier consistency/FFmpeg failures.
+  Source preparation receipt: oversight reports/U87-CAPTION-VAD-PREPARE.md.
+  Subsequent fully rebound isolated mirror replay succeeded: original media,
+  real native worker/relay and private caption capture, receiver all four PIDs
+  continuity zero. Root independently re-analyzed received.ts with TSDuck:
+  exit 0, PID 0/32/65/66 errors zero, SHA256
+  628750D9F90C0856486EB650DB1070B8C6714E2954E12FAE70C10E38BB88E59D.
+  Evidence: oversight evidence/u87-recorder-product/transport-udp-copy-isolated-output.
+  This is bounded isolated transport proof, not installed or caption-content
+  acceptance. A source review found a stale-result publication window if relay
+  identity changes during caption decoding; helper is correcting it before
+  acceptance. Root verifier tests 73 passed in 5.94s, FFmpeg builder 22 passed
+  in 2.50s; hosted CI provisioning execution remains pending.
+  Caption recovery correction pushed; PR 232 updated. Independent tap module
+  105 passed and old-policy falsification discarded four segments as expected;
+  author neighboring checks 125 passed. Source-only, not installed acceptance.
+  Current CI: tests 37223766740 running; lint 37223766634 failed with the same
+  108 findings (no tap-worker source/test hits); installer compile 37223766659
+  started. Prior 05ba tests 37220741350 were cancelled after the newer push;
+  prior checkpoint CI below is historical, not current evidence.
+  Isolated actual-worker UDP experiment reproduced the live conflict: adding
+  caption-proof capture left raw mux continuity clean but caused receiver errors
+  (PAT, PMT and audio). Dedicated loopback proof-copy repair is being implemented;
+  no transport patch or live repair is yet accepted. Original deb2 soak unchanged.
+- Push receipt: branch `codex/u73-caption-measurements` was independently
+  verified at remote `05ba17b03aa861c872064a91a6d27446bf0f2066`; draft PR 232
+  now distinguishes current source from the deb2 package. That checkpoint's CI
+  started: tests 37220741350 remain running; lint 37220741446 failed with 108
+  findings; docs 37220741540, installer compile 37220741556 and sandbox-lab
+  checks 37220741578 passed. This is not green CI or a packaged-runtime pass.
+  Failed-upgrade recovery under the existing flat layout remains incomplete;
+  its draft is paused while live transport errors and caption loss are repaired.
+  The current DB-only recovery cannot restore old application files.
+  No production operation or new public release is authorized by this receipt.
+- Live-run investigation, 2026-10-04 12:00 MDT: cycles 4/7/10/13/16 were
+  clean; 5/8/11/14/17 failed for public/government, and 6/9/12/15 for education.
+  Raw reports identify varying PIDs, not solely PAT. This approximately
+  three-minute pattern is a reproduction lead, not proof of mux versus UDP loss.
+  The saved initial playback graph is stale across reloads; its retired prepared
+  path cannot establish current loaded-media identity. Original run and criteria
+  remain unchanged, with the 13:36:24 MDT end unchanged.
+  The retained 17:54 UTC control-plane log separately proves startup caption
+  shedding: public at 11:37:20 MDT and government at 11:37:24 each discarded
+  four segments/20 seconds after an initial 40.453-second ASR call. Their queue
+  had decreased from eight to six segments, but the 15-scan over-limit streak
+  still triggered shedding. Source diagnosis is active; no repair is proved.
+  Bounded offline reproduction subsequently ran the retained 30-second prepared
+  media (SHA256 55c471a177f3989541e989ca98d3e832734a6ce054ea6a67c0a9277282a0972d)
+  through the native worker with the initial graph as a topology template and a
+  file sink: 236.5 seconds, eight deferred reload commits, 533,060 packets,
+  all-PID continuity errors zero and backwards PCR zero. Root verified the raw
+  file hash against result.json. This is not exact historical loaded-graph or
+  live UDP proof; the original soak failures remain. Next transport work checks
+  the UDP boundary and possible competing receivers, without changing the run.
+  At 12:11 MDT, same-guest sanitized process evidence confirmed caption proof
+  process 7884 (`civiccast.egress.caption_proof_process`) launching FFmpeg on UDP
+  9003 while the soak TSDuck receiver was also listening on 9003. This establishes
+  the competing product caller; isolated packet-loss reproduction remains pending.
+  The caption recovery draft independently passed the complete tap-worker module:
+  `105 passed in 40.93s`. Restoring only HEAD's overload decision in memory made
+  the new regression fail at four discarded segments, as intended. This is
+  source-only proof; documentation/review and packaged three-channel proof remain.
 - Local installer repair `e4a10af5137b207709ffe28bdc82c7db7674b10e` adds a
   read-only downgrade check before service stop and application replacement.
   It preserves the existing known-version ordering and uses the new bootstrap,
@@ -18,8 +255,8 @@ This file is a pointer, not a log.
   DOCX was regenerated and hash-checked, not separately visually rendered.
   Source/help notes explicitly distinguish published beta.10 behavior.
   Evidence: oversight evidence/u87-recorder-product/preflight-receipt.md.
-- Remote source checkpoint `328edfbaa69a31acb7933de17f6fa8eb9af3f162`
-  remains on draft PR 232. Its installer compile 37216841061 and docs
+- Previous source checkpoint `328edfbaa69a31acb7933de17f6fa8eb9af3f162`
+  on draft PR 232 had installer compile 37216841061 and docs
   37216841181 passed. Lint 37216841013 failed with 108 findings; tests
   37216841029 failed (unit: 79 failed, 11,420 passed, 78 skipped;
   native: 8 failed, 2,127 passed, 2 skipped). These are not green merge gates.
@@ -55,9 +292,32 @@ This file is a pointer, not a log.
   Independent setup-path checks passed five cases; author verification passed
   six default-path and 22 captions-off cases. The replacement host process is
   PID 34096, born 2026-10-04T17:15:26.6458145Z, with installation started at
-  17:15:39.907Z and bounded through 18:15:39.907Z. Provisioning returned 0 and
-  station activation began at 17:22:13Z; at the 17:28 UTC observation activation
-  was still running. The sustained clock and caption confirmation were pending.
+  17:15:39.907Z and bounded through 18:15:39.907Z. Installation exited 0 at
+  17:34:41Z after 1109.7 seconds. Root independently read SOAK-START.json:
+  captions_enabled is Boolean true, all three channels reached ON_AIR in
+  15.3-15.5 seconds, and the sustained clock began 17:36:24.437Z with fixed
+  end 19:36:24.437Z. At 17:38:12Z, captured actual VTTs contained 14 public,
+  12 government and 12 education cues. Root independently confirmed all three
+  contain the source-video spot anchors "working with", "businesses" and
+  "building that place". This proves initial content correspondence, not full
+  speech completeness or sustained acceptance. Actual logs also show seamless
+  content reload accepted; SOAK-START's false seamless_reload field records the
+  explicit override switch, not disabled runtime behavior.
+  Raw transport reports had packet-counter discontinuities on public/government
+  in cycle 2 and education in cycle 3, with zero invalid sync/transport-bit
+  errors. Those samples were inside the existing 180-second warmup; cycle 4,
+  the first afterward, was clean on all three. Startup/reload correlation is
+  being checked; this is not yet a failed sustained verdict or proved source
+  defect. Do not change thresholds or discard these original observations.
+  Cycle 5, after warmup (17:40:41Z start), then failed transport checks on
+  public and government: each report has one PAT/PID 0 continuity error,
+  while PMT/audio/video discontinuities, invalid sync, transport-bit errors
+  and PCR/PTS leaps are zero. Education passed. Stable worker PIDs and
+  advancing caption cues were retained. This IS a steady-state check failure;
+  source generation versus capture loss is under investigation. Do not
+  conflate it with a proved audio/video dropout. Recovery implementation is
+  temporarily held at its uncommitted RED/draft checkpoint while the source
+  worker investigates this actual sustained-acceptance failure.
   Its package is still deb2, not the later installer source changes.
   Receipts are in oversight evidence/u87-packaged-candidate-deb2/soak-captions-on.
   The local
