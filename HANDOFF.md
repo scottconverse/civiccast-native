@@ -4,6 +4,17 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Local source checkpoint `d6965139` contains the reviewed lifecycle fixtures
+  and playout typing cleanup below. The next source change fixes Paywall Save:
+  ordinary saves use the existing PATCH route, omit blank write-only secrets,
+  and create via PUT only after an actual missing-row 404. The old behavior
+  reproduced erased data; exact-lock Vitest 4.1.11 passes 42 UI/API checks
+  independently, and 26 existing backend contract checks pass. TypeScript/Vite
+  build and scoped lint pass. No real credentials or payments were exercised.
+  The feature remains unfinished and off by default; this is not live-payment
+  acceptance. Source chapters, built-in manual and PDF/DOCX were regenerated;
+  both current-source artifact checks pass. Evidence is in the local oversight
+  folder `evidence/u87-paywall-save/receipt.md`.
 - Current remote checkpoint: `7b8a0eddf53997fdd23e614ca773f47e163c333a`,
   pushed to draft PR 232. Installer compile 37198987646, docs 37198987589,
   policy 37198987576, egress and accessibility checks passed. Test 37198987580

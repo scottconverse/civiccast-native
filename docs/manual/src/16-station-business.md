@@ -327,7 +327,7 @@ A *tier* is a price level, for example "Basic monthly", linked to a price you ma
 
 > **Warning:** Leave the paywall **off** in beta.10. The code we read shows the feature is unfinished.
 
-> **Known issue (beta.10):** Saving the paywall settings can erase the stored signing secret. The screen never shows the secret, so the secret box is empty every time you open the page. A blank box is saved as "no secret". Changing any setting and clicking **Save** therefore wipes it, and sign-in links and payment confirmations stop working.
+> **Known issue (published beta.10):** Saving with an empty signing-secret box can erase the stored secret. The development source corrects this: saved secrets remain hidden, and leaving the box blank preserves the saved value. Enter a new value only to replace it. This is a source correction, not proof of a published update or working live payments; leave the unfinished paywall off.
 
 > **Known issue (beta.10):** In the code we read, the email that carries a resident's sign-in link is not sent by default. No server code blocks the recording file itself; the check is a question the resident website asks. The website also asks for a tier-list route and a checkout route that we did not find on the station. The list of free passes (**Recently issued grants**) shows only passes issued in this browser session; you cannot see or cancel passes you issued earlier.
 

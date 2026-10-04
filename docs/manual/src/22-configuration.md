@@ -385,7 +385,7 @@ The paywall (Setup group; `setup_admin`) is optional paid access to recordings t
 
 > **Known issue (beta.10):** Do not rely on the paywall in beta.10. The screen says tier-based gating is active when the box is ticked. In the program code we found the following. The magic-link email is sent by a function that does nothing, so a viewer never receives a link. The public site's calls for tiers and checkout (`/api/public/paywall/tiers`, `/api/public/paywall/checkout`) have no matching routes in the server. We found no server code that blocks the media file itself; whether the HLS and download routes enforce the paywall is something we could not confirm. The access check trusts the email address passed to it; nothing proves the caller owns it.
 
-> **Warning:** **Save** sends the whole form, including the signing secret. The secret box is always empty after you reload the page (the server never returns it), and a blank box is saved as an empty secret, which erases any stored one. After that, magic links and Stripe webhook signature checks stop working. Every time you save this page, paste the secret again.
+> **Published beta.10 warning:** The old **Save** path can erase a stored secret when the box is blank after reload. In the development source, **Save** patches the settings and leaves a blank secret unchanged. Saved secrets are never shown; enter a new value only to replace one. Missing settings are created only after the server confirms they do not exist. This source correction does not establish a published update or live-paywall acceptance.
 
 If you still want to look at it on a lab station:
 

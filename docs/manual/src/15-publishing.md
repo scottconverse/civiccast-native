@@ -146,7 +146,7 @@ The screen has three cards: **Config** (the **Enable paywall** box, a provider, 
 > - The video file itself is not protected. The gate is a screen shown in front of the player.
 > - The "Email me a sign-in link" button reports "Check your inbox for a link.", but no email is ever sent, so a resident cannot finish signing in.
 > - The pages the portal uses to list plans and start payment do not exist on the server, so a resident cannot subscribe.
-> - **Save** with an empty **Signing secret** box erases the stored secret, and the box is always empty after you reload the page. Changing any other setting and saving erases it.
+> - The published beta.10 **Save** path can erase the stored signing secret when its box is empty after reload. In the development source, **Save** now preserves the saved secret when this box is blank; enter a new value only when you intend to replace it. This source correction is not a published-update or live-paywall acceptance claim.
 > - The list of comp grants shows only grants made in the current browser session, and a grant cannot be revoked after you reload.
 
 If you turn the paywall on for testing, the Watch page shows the gate described in the resident tour below. Residents will be blocked.

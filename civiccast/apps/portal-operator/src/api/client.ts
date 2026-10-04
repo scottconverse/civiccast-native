@@ -3641,21 +3641,20 @@ export interface AccessGrantInput {
 
 const PAYWALL = '/api/staff/paywall'
 
-/** GET /api/staff/paywall/config — returns the station's config or 404. The
- * screen treats the 404 as "no config yet; render an empty default". */
+/** GET /api/staff/paywall/config — returns a redacted config or safe disabled
+ * no-row default. A legacy 404 is also handled by the screen. */
 export function getPaywallConfig(): Promise<PaywallConfig> {
   return request<PaywallConfig>(`${PAYWALL}/config`)
 }
 
-/** PUT /api/staff/paywall/config — upsert. The screen sends the full config
- * (toggle + provider + tiers + signing_secret) on every save. */
+/** PUT /api/staff/paywall/config — create/replace. Ordinary screen saves use
+ * PATCH; PUT is used only after PATCH confirms a missing row (404). */
 export function upsertPaywallConfig(payload: PaywallConfigInput): Promise<PaywallConfig> {
   return request<PaywallConfig>(`${PAYWALL}/config`, { method: 'PUT', body: payload })
 }
 
 /** PATCH /api/staff/paywall/config/{config_id} — partial update; absent
- * keys unchanged. The screen uses PUT for ordinary saves and reserves PATCH
- * for future targeted edits (signing-secret rotation alone, for example). */
+ * keys unchanged. Ordinary saves omit a blank write-only signing secret. */
 export function updatePaywallConfig(
   configId: string,
   payload: PaywallConfigUpdate,

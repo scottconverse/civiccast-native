@@ -31,6 +31,12 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Development operator paywall saves preserve a stored write-only signing
+  secret when its form field is blank. Ordinary edits use the existing PATCH
+  contract; only a missing-config response admits creation. Authentication,
+  validation and transport failures do not fall back to replacement. This
+  source correction does not establish working payments or a published update.
+
 - The running application refreshes schema readiness before its existing
   five-second result expires, rather than waiting for the next health request.
   Blocked reads still expire to unknown; refresh work remains single-owner and

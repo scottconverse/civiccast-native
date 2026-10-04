@@ -38,6 +38,7 @@ import {
   getPaywallConfig,
   getStaffIdentity,
   issueCompGrant,
+  updatePaywallConfig,
   upsertPaywallConfig,
 } from '../api/client'
 import { PaywallScreen } from './PaywallScreen'
@@ -98,6 +99,13 @@ beforeEach(() => {
       provider: payload.provider,
       tiers: payload.tiers,
       signing_secret: payload.signing_secret,
+    }),
+  )
+  vi.mocked(updatePaywallConfig).mockImplementation(async (_id, payload) =>
+    config({
+      enabled: payload.enabled ?? false,
+      provider: payload.provider ?? 'stripe',
+      tiers: payload.tiers ?? [],
     }),
   )
   vi.mocked(deletePaywallConfig).mockResolvedValue(undefined)
@@ -237,23 +245,94 @@ describe('PaywallScreen tier add / remove', () => {
 })
 
 describe('PaywallScreen save', () => {
-  it('PUTs the upsert payload with the local config state', async () => {
+  it('PATCHes mutable config fields without resending identities', async () => {
     const { findByLabelText, findByRole } = renderScreen()
     const toggle = (await findByLabelText('Enable paywall')) as HTMLInputElement
     fireEvent.click(toggle)
     fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
     await waitFor(() =>
-      expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledWith(
+      expect(vi.mocked(updatePaywallConfig)).toHaveBeenCalledWith(
+        'paywall-default',
         expect.objectContaining({
-          config_id: 'paywall-default',
-          station_id: 'civiccast-station',
           enabled: true,
           provider: 'stripe',
           tiers: [],
         }),
       ),
     )
+    expect(vi.mocked(upsertPaywallConfig)).not.toHaveBeenCalled()
   })
+
+  it('preserves a saved write-only secret when the redacted form is blank', async () => {
+    let saved = 'fixture-signing-value-01234567890123456789'
+    const publicConfig = config()
+    delete (publicConfig as Partial<PaywallConfig>).signing_secret
+    Object.assign(publicConfig, { signing_secret_present: true })
+    vi.mocked(getPaywallConfig).mockResolvedValue(publicConfig)
+    vi.mocked(upsertPaywallConfig).mockImplementation(async (payload) => {
+      saved = payload.signing_secret ?? ''
+      return publicConfig
+    })
+    const { findByRole, findByLabelText, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText(/Signing secret \(HMAC\)/i), {
+      target: { value: '   ' },
+    })
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await findByText('Saved.')
+    expect(saved).toBe('fixture-signing-value-01234567890123456789')
+    const patch = vi.mocked(updatePaywallConfig).mock.calls[0]![1]
+    expect(patch).not.toHaveProperty('signing_secret')
+    expect(vi.mocked(upsertPaywallConfig)).not.toHaveBeenCalled()
+  })
+
+  it('sends an explicitly entered replacement through PATCH', async () => {
+    const { findByRole, findByLabelText } = renderScreen()
+    fireEvent.change(await findByLabelText(/Signing secret \(HMAC\)/i), {
+      target: { value: 'replacement-fixture-01234567890123456789' },
+    })
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await waitFor(() => expect(vi.mocked(updatePaywallConfig)).toHaveBeenCalledWith(
+      'paywall-default', expect.objectContaining({
+        signing_secret: 'replacement-fixture-01234567890123456789',
+      }),
+    ))
+    expect(vi.mocked(upsertPaywallConfig)).not.toHaveBeenCalled()
+  })
+
+  it.each([null, 'creation-fixture-01234567890123456789'])('creates the safe no-row GET default only after PATCH returns 404 (%s)', async (secret) => {
+    vi.mocked(updatePaywallConfig).mockRejectedValue(new ApiError('Not found', 404))
+    const { findByRole, findByText, findByLabelText } = renderScreen()
+    if (secret !== null) {
+      fireEvent.change(await findByLabelText(/Signing secret \(HMAC\)/i), {
+        target: { value: secret },
+      })
+    }
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await findByText('Saved.')
+    expect(vi.mocked(updatePaywallConfig)).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledWith({
+      config_id: 'paywall-default', station_id: 'civiccast-station',
+      enabled: false, provider: 'stripe', tiers: [], signing_secret: secret,
+    })
+  })
+
+  it.each([401, 403, 422, 500, 0])('never replaces config after PATCH failure %s', async (status) => {
+    vi.mocked(updatePaywallConfig).mockRejectedValue(new ApiError('Save rejected', status))
+    const { findByRole, findByText } = renderScreen()
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await findByText(/Save rejected/)
+    expect(vi.mocked(upsertPaywallConfig)).not.toHaveBeenCalled()
+  })
+
+  it.each([new Error('Network unavailable'), new TypeError('Failed to fetch')])(
+    'never replaces config after an untyped transport rejection', async (error) => {
+      vi.mocked(updatePaywallConfig).mockRejectedValue(error)
+      const { findByRole, findByText } = renderScreen()
+      fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+      await findByText(error.message)
+      expect(vi.mocked(upsertPaywallConfig)).not.toHaveBeenCalled()
+    },
+  )
 })
 
 describe('PaywallScreen "Saved." banner clears on further edits', () => {
@@ -262,7 +341,7 @@ describe('PaywallScreen "Saved." banner clears on further edits', () => {
     const toggle = (await findByLabelText('Enable paywall')) as HTMLInputElement
     fireEvent.click(toggle)
     fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
-    await waitFor(() => expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(vi.mocked(updatePaywallConfig)).toHaveBeenCalledTimes(1))
     expect(await findByText('Saved.')).toBeTruthy()
 
     // react-query's mutation.isSuccess never resets on its own -- editing

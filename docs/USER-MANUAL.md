@@ -2318,7 +2318,7 @@ The screen has three cards: **Config** (the **Enable paywall** box, a provider, 
 > - The video file itself is not protected. The gate is a screen shown in front of the player.
 > - The "Email me a sign-in link" button reports "Check your inbox for a link.", but no email is ever sent, so a resident cannot finish signing in.
 > - The pages the portal uses to list plans and start payment do not exist on the server, so a resident cannot subscribe.
-> - **Save** with an empty **Signing secret** box erases the stored secret, and the box is always empty after you reload the page. Changing any other setting and saving erases it.
+> - The published beta.10 **Save** path can erase the stored signing secret when its box is empty after reload. In the development source, **Save** now preserves the saved secret when this box is blank; enter a new value only when you intend to replace it. This source correction is not a published-update or live-paywall acceptance claim.
 > - The list of comp grants shows only grants made in the current browser session, and a grant cannot be revoked after you reload.
 
 If you turn the paywall on for testing, the Watch page shows the gate described in the resident tour below. Residents will be blocked.
@@ -2773,7 +2773,7 @@ A *tier* is a price level, for example "Basic monthly", linked to a price you ma
 
 > **Warning:** Leave the paywall **off** in beta.10. The code we read shows the feature is unfinished.
 
-> **Known issue (beta.10):** Saving the paywall settings can erase the stored signing secret. The screen never shows the secret, so the secret box is empty every time you open the page. A blank box is saved as "no secret". Changing any setting and clicking **Save** therefore wipes it, and sign-in links and payment confirmations stop working.
+> **Known issue (published beta.10):** Saving with an empty signing-secret box can erase the stored secret. The development source corrects this: saved secrets remain hidden, and leaving the box blank preserves the saved value. Enter a new value only to replace it. This is a source correction, not proof of a published update or working live payments; leave the unfinished paywall off.
 
 > **Known issue (beta.10):** In the code we read, the email that carries a resident's sign-in link is not sent by default. No server code blocks the recording file itself; the check is a question the resident website asks. The website also asks for a tier-list route and a checkout route that we did not find on the station. The list of free passes (**Recently issued grants**) shows only passes issued in this browser session; you cannot see or cancel passes you issued earlier.
 
@@ -4299,7 +4299,7 @@ The paywall (Setup group; `setup_admin`) is optional paid access to recordings t
 
 > **Known issue (beta.10):** Do not rely on the paywall in beta.10. The screen says tier-based gating is active when the box is ticked. In the program code we found the following. The magic-link email is sent by a function that does nothing, so a viewer never receives a link. The public site's calls for tiers and checkout (`/api/public/paywall/tiers`, `/api/public/paywall/checkout`) have no matching routes in the server. We found no server code that blocks the media file itself; whether the HLS and download routes enforce the paywall is something we could not confirm. The access check trusts the email address passed to it; nothing proves the caller owns it.
 
-> **Warning:** **Save** sends the whole form, including the signing secret. The secret box is always empty after you reload the page (the server never returns it), and a blank box is saved as an empty secret, which erases any stored one. After that, magic links and Stripe webhook signature checks stop working. Every time you save this page, paste the secret again.
+> **Published beta.10 warning:** The old **Save** path can erase a stored secret when the box is blank after reload. In the development source, **Save** patches the settings and leaves a blank secret unchanged. Saved secrets are never shown; enter a new value only to replace one. Missing settings are created only after the server confirms they do not exist. This source correction does not establish a published update or live-paywall acceptance.
 
 If you still want to look at it on a lab station:
 
