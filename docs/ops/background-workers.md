@@ -283,6 +283,15 @@ GPU use. An environment request for CUDA alone is not evidence that CUDA
 loaded. If backend identity is unavailable, the diagnostic says so rather
 than presenting the request as the result.
 
+Native live preparation also initializes faster-whisper's cached CPU ONNX VAD
+session before channel automation, on the existing owned background startup
+path. It does not transcribe synthetic audio, change automatic language
+detection, or weaken VAD/quality checks. Failure is logged and leaves the
+existing lazy best-effort behavior intact. Batch/VOD and VAD-disabled runtimes
+do not eagerly initialize VAD. The first Whisper encoder/language-detection
+call is still unverified first-use work; session preparation is not proof that
+the observed long first call has been eliminated.
+
 The beta.10 candidate's lab evidence and its limits (including 13 catch-up
 discard events in an eight-hour three-channel run) are in the
 [verification record](../releases/v1.0.0-beta.10-verification.md). These

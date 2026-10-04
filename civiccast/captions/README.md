@@ -88,6 +88,14 @@ Current surface:
 
 Runtime notes:
 
+- Native live runtime preparation loads both the Whisper model and the cached
+  CPU ONNX VAD session before channel automation starts, on the existing owned
+  background startup path. It performs no dummy audio inference. Batch/VOD and
+  VAD-disabled preparation remain model-only. Preparation failure preserves
+  best-effort startup and is logged; it never disables VAD or quality checks.
+  This moves known first-use session creation off live caption admission, but
+  does not prove the source of measured first-call latency or warm the first
+  Whisper encoder/language-detection call.
 - Live faster-whisper calls use one temperature (`0.0`) per internal decode
   window. VAD, word timestamps, the configured beam size and vocabulary prompt
   are preserved. This bounds retry count, not native execution time; a single

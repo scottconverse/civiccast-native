@@ -31,6 +31,13 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Development native live caption preparation initializes the cached CPU VAD
+  session before channel admission, alongside the existing model preparation.
+  It does not run dummy inference, change language detection or relax quality
+  checks; batch/VOD and VAD-disabled preparation remain unchanged. This moves
+  known first-use setup, not a proven fix for measured first-call latency, and
+  has not established packaged or installed acceptance.
+
 - Development live captions give a demonstrably draining cold-start backlog
   bounded oldest-first recovery instead of shedding valid speech solely because
   the scan streak persisted. Actual completed ASR and in-flight audio accounting

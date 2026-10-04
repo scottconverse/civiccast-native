@@ -30,6 +30,10 @@ from civiccast.native.caption_tiers import (
 
 logger = logging.getLogger(__name__)
 
+# faster-whisper caches VAD process-wide, but lru_cache permits duplicate cold
+# calls. Serialize preparation across live runtimes before channel admission.
+_LIVE_VAD_PREPARE_LOCK = threading.Lock()
+
 #: Kept-alive `os.add_dll_directory` handles, keyed by the directory string
 #: already registered -- makes :func:`_ensure_cuda_dll_directory` idempotent
 #: per directory (a repeat call for the same directory is a no-op) and, per
@@ -865,7 +869,7 @@ class FasterWhisperRuntime:
         return dict(record) if record is not None else None
 
     def prepare(self) -> None:
-        """Resolve and load the model before a live multi-channel dispatch.
+        """Load the model and live VAD session before multi-channel dispatch.
 
         The live tap uses this once work is pending so a requested CUDA runtime
         can complete its existing CUDA-to-CPU fallback before the tap chooses
@@ -875,6 +879,14 @@ class FasterWhisperRuntime:
         """
 
         self._model_instance()
+        if self._live and self.vad_filter:
+            with _LIVE_VAD_PREPARE_LOCK:
+                # This creates the cached CPU ONNX session, not a synthetic
+                # audio decode. The first Whisper encoder/language detection
+                # remains first-use work; preparation is not inference proof.
+                from faster_whisper.vad import get_vad_model
+
+                get_vad_model()
 
     def _model_instance(self) -> Any:
         if self._model is None:
