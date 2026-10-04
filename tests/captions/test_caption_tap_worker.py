@@ -209,6 +209,59 @@ def _runtime_status(tap_root: Path, channel_id: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@pytest.mark.parametrize("all_rejected", [False, True])
+def test_mixed_quality_speech_reaches_three_channel_vtt_and_feed(
+    tmp_path: Path, all_rejected: bool
+) -> None:
+    """Exercise actual decode conversion, PCM overlap, stabilization and output."""
+    def segment(text, start, end, words, *, rejected=False):
+        return SimpleNamespace(
+            text=text, start=start, end=end, avg_logprob=-0.1,
+            compression_ratio=3.0 if rejected else 1.0, no_speech_prob=0.0,
+            words=[SimpleNamespace(word=text, start=a, end=b, probability=0.95)
+                   for text, a, b in words],
+        )
+
+    runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+    runtime._model = SimpleNamespace(transcribe=lambda *args, **kwargs: ([
+        segment("motion carries", 0.5, 2.0,
+                [("motion", 0.5, 1.2), ("carries", 1.2, 2.0)], rejected=all_rejected),
+        segment("rejected hallucination", 2.1, 3.0,
+                [("rejected", 2.1, 2.5), ("hallucination", 2.5, 3.0)], rejected=True),
+        segment("next item", 3.1, 4.5,
+                [("next", 3.1, 3.7), ("item", 3.7, 4.5)], rejected=all_rejected),
+    ], SimpleNamespace(duration_after_vad=4.5)))
+    tap_root = tmp_path / "tap"
+    worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore(),
+                     segment_seconds=5.0, atomic_segments=True)
+    worker._sweep_retention()
+    assert worker.wait_for_retention_sweep()
+    channels = ["public", "government", "education"]
+    for channel in channels:
+        for index in range(2):
+            _write_wav(tap_root / channel / f"chunk-{index:06d}.wav", seconds=5.0)
+    result = worker.run_once()
+    assert result.consumed_segments == 6
+    delivered = []
+    def send(channel, work_dir, **payload):
+        delivered.append((channel, payload))
+        return True
+    feed = CaptionFeedWorker(
+        work_dir=tmp_path / "egress", on_air_channels=lambda: channels,
+        caption_cue_provider=lambda channel: load_caption_cues_from_timed_text(
+            _active_vtt(tap_root, channel)), send_caption_cue=send,
+    )
+    for channel in channels:
+        cues = load_caption_cues_from_timed_text(_active_vtt(tap_root, channel))
+        assert [(c.text, c.start_seconds, c.end_seconds) for c in cues] == (
+            [] if all_rejected else [("motion carries", 0.5, 2.0), ("next item", 3.1, 4.5)]
+        )
+    assert feed.run_once().cues_sent == (0 if all_rejected else 6)
+    assert len(delivered) == (0 if all_rejected else 6)
+    assert all("rejected" not in payload["text"] for _, payload in delivered)
+    assert feed.run_once().cues_sent == 0
+
+
 def _drive_to_the_edge_of_the_overload_window(
     worker,  # type: ignore[no-untyped-def]
     tap_root: Path,

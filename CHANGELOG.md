@@ -24,6 +24,10 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Live captions retain independently valid speech when another ASR segment in
+  the same window fails quality. Explicit gaps preserve separate confirmed cue
+  timings and review regions; rejected speech never joins the valid phrases.
+
 - Schema readiness skips irrelevant migration-graph construction after a fresh
   database revision matches the expected head. Mismatched or missing revisions
   still use the graph; freshness, timeout and lifecycle fences are unchanged.

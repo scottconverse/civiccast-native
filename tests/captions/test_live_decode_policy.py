@@ -101,14 +101,71 @@ def test_live_refuses_missing_quality(field):
 
 
 def test_mixed_window_cannot_bridge_refused_speech():
+    def phrase(text, start):
+        return segment(
+            text=text,
+            start=start,
+            end=start + 2,
+            words=[
+                SimpleNamespace(
+                    word=word, start=start + index, end=start + index + 1, probability=0.9
+                )
+                for index, word in enumerate(text.split())
+            ],
+        )
+
     live, _ = runtime(
         segments=[
-            segment(text="first valid"),
-            segment(compression_ratio=99),
-            segment(text="last valid"),
+            phrase("first valid", 2),
+            segment(text="rejected hallucination", start=4, end=6, compression_ratio=99),
+            phrase("last valid", 6),
         ]
     )
-    assert list(live.transcribe([chunk()])) == []
+    hypotheses = list(live.transcribe([chunk()]))
+    assert len(hypotheses) == 1, "independent valid speech was erased by a rejected segment"
+    hypothesis = hypotheses[0]
+    assert hypothesis.text == "first valid ... last valid"
+    assert hypothesis.word_breaks == [2]
+    assert [(word.text, word.start_seconds, word.end_seconds) for word in hypothesis.words] == [
+        ("first", 2, 3),
+        ("valid", 3, 4),
+        ("last", 6, 7),
+        ("valid", 7, 8),
+    ]
+    assert (hypothesis.audio_window_start_seconds, hypothesis.audio_window_end_seconds) == (0, 10)
+
+
+@pytest.mark.parametrize("position", ["before", "after"])
+def test_edge_refusal_does_not_erase_independent_valid_speech(position):
+    good = segment()
+    rejected = segment(text="rejected hallucination", compression_ratio=99)
+    observations = [rejected, good] if position == "before" else [good, rejected]
+    live, _ = runtime(segments=observations)
+    hypothesis = next(iter(live.transcribe([chunk()])))
+    assert hypothesis.text == "motion carries"
+    assert hypothesis.word_breaks == []
+    assert len(hypothesis.words) == 2
+
+
+def test_wordless_segment_cannot_clear_a_rejected_word_gap():
+    live, _ = runtime(
+        segments=[
+            segment(),
+            segment(text="rejected hallucination", compression_ratio=99),
+            segment(text="unconfirmed fragment", words=[]),
+            segment(
+                text="last phrase",
+                words=[
+                    SimpleNamespace(word=" last", start=8, end=9, probability=0.9),
+                    SimpleNamespace(word=" phrase", start=9, end=10, probability=0.9),
+                ],
+            ),
+        ]
+    )
+    hypothesis = next(iter(live.transcribe([chunk()])))
+    assert hypothesis.word_breaks == [2]
+    assert "rejected hallucination" not in hypothesis.text
+    assert hypothesis.text == "motion carries ... unconfirmed fragment last phrase"
 
 
 def test_valid_thresholds_and_word_alignment_remain_exact():

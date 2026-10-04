@@ -63,6 +63,14 @@ This file is a pointer, not a log.
   admission; two tests pass and reversed startup order still fails both. The
   closed twelve-counter observer selection also passed native independent checks.
   These changes are not yet installed or evidence of a successful soak.
+- A concrete caption-loss defect is now corrected in source: one quality-refused
+  model segment previously erased independent accepted speech in the same window.
+  Accepted words retain actual timings and explicit rejected-region boundaries;
+  confirmation, active VTT/feed cues and review rows cannot bridge those gaps.
+  Independent runtime policy checks passed28 tests; final downstream/gap checks
+  passed22, including actual three-channel WAV-to-VTT/feed output and the original
+  partial-commit review failure. Quality gates and model settings are unchanged.
+  Model responses were injected; real inference/station acceptance remains pending.
 - Still required before a final recommendation: complete health and caption
   runtime proof, repository/product reconciliation, material operator workflow
   repairs, the exact-package installation lifecycle, and sustained three-channel

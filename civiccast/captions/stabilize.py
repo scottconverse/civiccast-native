@@ -29,6 +29,7 @@ class _PendingWord:
     window: tuple[float, float]
     votes: set[tuple[float, float]]
     committed: bool = False
+    break_before: bool = False
 
 
 @dataclass
@@ -138,11 +139,12 @@ class CaptionStabilizer:
             return []  # Same pass/replay/out-of-order observation is not a vote.
         self._last_word_window = window
         expired = [p for p in self._live_words if min(p.word.end_seconds, p.window[1]) <= start]
-        self._review_words([p for p in expired if not p.committed], hypothesis)
+        self._review_words(expired, hypothesis)
         self._live_words = [
             p for p in self._live_words if min(p.word.end_seconds, p.window[1]) > start
         ]
         incoming = hypothesis.words or []
+        breaks = set(hypothesis.word_breaks)
         if not incoming:
             pending = self._new_pending(hypothesis)
             self._pending.remove(pending)
@@ -182,7 +184,12 @@ class CaptionStabilizer:
                 j += 1
         runs: list[list[tuple[int, int]]] = []
         for pair in pairs:
-            if runs and pair == (runs[-1][-1][0] + 1, runs[-1][-1][1] + 1):
+            if (
+                runs
+                and pair == (runs[-1][-1][0] + 1, runs[-1][-1][1] + 1)
+                and not old[pair[0]].break_before
+                and pair[1] not in breaks
+            ):
                 runs[-1].append(pair)
             else:
                 runs.append([pair])
@@ -190,7 +197,8 @@ class CaptionStabilizer:
             pair for run in runs if len(run) >= 2 or len(incoming) == len(old) == 1 for pair in run
         ]
         matched: set[int] = set()
-        confirmed: list[tuple[int, CaptionWord]] = []
+        confirmed: list[tuple[int, CaptionWord, bool]] = []
+        last_confirmed_i = last_confirmed_j = -1
         for i, j in accepted:
             previous, current = old[i], incoming[j]
             matched.add(j)
@@ -211,45 +219,74 @@ class CaptionStabilizer:
                 }
             )
             previous.votes.add(window)
+            break_before = previous.break_before or j in breaks
             previous.word = current.model_copy(update={"confidence": common.confidence})
             previous.window = window
+            previous.break_before = break_before
             if not previous.committed and len(previous.votes) >= self.stable_windows:
                 previous.committed = True
-                confirmed.append((j, common))
+                separated = (
+                    any(p.break_before for p in old[last_confirmed_i + 1 : i + 1])
+                    or any(last_confirmed_j < boundary <= j for boundary in breaks)
+                )
+                confirmed.append((j, common, separated))
+                last_confirmed_i, last_confirmed_j = i, j
         for j, word in enumerate(incoming):
             if j not in matched:
                 observation = word.model_copy(
                     update={"confidence": min(word.confidence, hypothesis.confidence)}
                 )
-                old.append(_PendingWord(observation, window, {window}))
+                old.append(_PendingWord(observation, window, {window}, break_before=j in breaks))
         old.sort(key=lambda p: (p.word.start_seconds, p.word.end_seconds))
-        groups: list[list[tuple[int, CaptionWord]]] = []
+        groups: list[list[tuple[int, CaptionWord, bool]]] = []
+        regions: list[list[list[tuple[int, CaptionWord, bool]]]] = []
         for item in confirmed:
+            if groups and item[2]:
+                regions.append(groups)
+                groups = []
             if groups and item[0] == groups[-1][-1][0] + 1:
                 groups[-1].append(item)
             else:
                 groups.append([item])
         if not groups:
             return []
+        regions.append(groups)
         # One PCM-window update is one caption page, rather than a burst of
         # subsecond fragments. An editorial ellipsis exposes withheld interior
         # words: never silently join the two sides into a different sentence.
-        words = [item[1] for group in groups for item in group]
-        common_phrase = hypothesis.model_copy(
-            update={
-                "text": " ... ".join(
-                    " ".join(item[1].text.strip() for item in group) for group in groups
-                ),
-                "start_seconds": min(w.start_seconds for w in words),
-                "end_seconds": max(w.end_seconds for w in words),
-                "confidence": min(w.confidence for w in words),
-                "words": words,
-            }
-        )
-        return [self._commit(self._new_pending(common_phrase, stable_count=self.stable_windows))]
+        cues = []
+        for region in regions:
+            words = [item[1] for group in region for item in group]
+            common_phrase = hypothesis.model_copy(
+                update={
+                    "text": " ... ".join(
+                        " ".join(item[1].text.strip() for item in group) for group in region
+                    ),
+                    "start_seconds": min(w.start_seconds for w in words),
+                    "end_seconds": max(w.end_seconds for w in words),
+                    "confidence": min(w.confidence for w in words),
+                    "words": words,
+                    "word_breaks": [],
+                }
+            )
+            cues.append(self._commit(self._new_pending(common_phrase, stable_count=self.stable_windows)))
+        return cues
 
     def _review_words(self, words: list[_PendingWord], hypothesis: CaptionHypothesis) -> None:
         if not words:
+            return
+        regions: list[list[_PendingWord]] = [[]]
+        for word in words:
+            if word.break_before and regions[-1]:
+                regions.append([])
+            if not word.committed:
+                regions[-1].append(word)
+        regions = [region for region in regions if region]
+        if not regions:
+            return
+        if len(regions) > 1 or len(regions[0]) != len(words):
+            for region in regions:
+                self._review_words(region, hypothesis)
             return
         # Review-only coarse window bounds also accommodate model zero-duration
         # words without inventing a word duration or airing them.
@@ -259,6 +296,7 @@ class CaptionStabilizer:
                 "start_seconds": min(p.window[0] for p in words),
                 "end_seconds": max(p.window[1] for p in words),
                 "words": [p.word for p in words],
+                "word_breaks": [],
             }
         )
         pending = self._new_pending(review)
@@ -417,7 +455,7 @@ class CaptionStabilizer:
                 end_seconds=first.window[1],
                 text="pending timed words",
             )
-            self._review_words([p for p in self._live_words if not p.committed], review_context)
+            self._review_words(self._live_words, review_context)
             self._live_words.clear()
         ordered = sorted(
             self._pending,

@@ -1050,12 +1050,17 @@ class FasterWhisperRuntime:
 
             live_segments: list[CaptionHypothesis] = []
             live_words: list[CaptionWord] = []
+            live_word_breaks: list[int] = []
+            live_text_regions: list[list[str]] = [[]]
+            text_gap_pending = False
+            word_gap_pending = False
             refused_quality: str | None = None
             for index, segment in enumerate(segments):
                 if self._live:
                     reason = _live_segment_quality_refusal(segment)
                     if reason is not None:
                         refused_quality = refused_quality or reason
+                        text_gap_pending = word_gap_pending = True
                         continue
                 text = str(getattr(segment, "text", "")).strip()
                 if not text:
@@ -1075,6 +1080,11 @@ class FasterWhisperRuntime:
                 )
                 if self._live:
                     live_segments.append(hypothesis)
+                    if text_gap_pending and live_text_regions[-1]:
+                        live_text_regions.append([])
+                    live_text_regions[-1].append(text)
+                    text_gap_pending = False
+                    previous_word_count = len(live_words)
                     for word in getattr(segment, "words", None) or []:
                         live_words.append(
                             CaptionWord(
@@ -1084,16 +1094,19 @@ class FasterWhisperRuntime:
                                 confidence=float(word.probability),
                             )
                         )
+                    if len(live_words) > previous_word_count:
+                        if word_gap_pending and previous_word_count:
+                            live_word_breaks.append(previous_word_count)
+                        word_gap_pending = False
                 else:
                     yield hypothesis
             if refused_quality is not None:
-                # Never join accepted fragments across withheld speech. One
-                # bounded category/count record per window; no transcript.
+                # Refuse only the unsafe segment, not independent speech on
+                # either side. Explicit text/word boundaries prevent bridging.
                 with suppress(Exception):
                     logger.info(
                         "Live caption quality refusal: refused_windows=1 reason=%s", refused_quality
                     )
-                return
             if live_segments:
                 # Segment boundaries vary between overlapping ASR windows.
                 # Confirm one window against another, not two fragments from
@@ -1104,11 +1117,12 @@ class FasterWhisperRuntime:
                     source_id=_segment_source_id(chunk.chunk_id, 0),
                     start_seconds=min(h.start_seconds for h in live_segments),
                     end_seconds=max(h.end_seconds for h in live_segments),
-                    text=" ".join(h.text for h in live_segments),
+                    text=" ... ".join(" ".join(region) for region in live_text_regions if region),
                     confidence=min(h.confidence for h in live_segments),
                     audio_window_start_seconds=chunk.start_seconds,
                     audio_window_end_seconds=chunk.end_seconds,
                     words=live_words,
+                    word_breaks=live_word_breaks,
                 )
 
 

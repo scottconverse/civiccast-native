@@ -82,6 +82,9 @@ class CaptionHypothesis(BaseModel):
     audio_window_start_seconds: Seconds | None = None
     audio_window_end_seconds: Seconds | None = None
     words: list[CaptionWord] | None = None
+    # Index of the first accepted word after a withheld ASR region. Never a
+    # synthetic word or timestamp; prevents confirmation across rejected speech.
+    word_breaks: list[Annotated[int, Field(strict=True, gt=0)]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _end_after_start(self) -> CaptionHypothesis:
@@ -92,6 +95,12 @@ class CaptionHypothesis(BaseModel):
             raise ValueError("audio window timestamps must be provided together")
         if start is not None and end is not None and end <= start:
             raise ValueError("audio_window_end_seconds must be greater than start")
+        if self.word_breaks and (
+            self.words is None
+            or self.word_breaks != sorted(set(self.word_breaks))
+            or any(index >= len(self.words) for index in self.word_breaks)
+        ):
+            raise ValueError("word_breaks must be sorted unique interior word indexes")
         return self
 
     @field_validator("text")
