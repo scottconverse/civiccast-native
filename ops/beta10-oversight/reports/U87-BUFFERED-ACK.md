@@ -120,6 +120,11 @@ in 6.97s`; the same existing gi import skip remains. No change to timeout,
 success-result policy, replay identity or lock order was found. An initial
 coordinator command named nonexistent `test_worker_ipc.py` and collected no tests;
 that command is not evidence. The corrected four-module run is the result cited.
+Coordinator also ran `python -m pytest tests/egress/test_gst_strategy.py
+tests/egress/test_daemon.py -q`: `274 passed, 6 skipped in 7.71s`; all six skips
+are existing POSIX FIFO contracts on Windows. Full-tree `python -m ruff check .`
+passed; `python -m mypy civiccast` passed 690 source files in the current shared
+worktree (including concurrent rollback WIP, not a packaged-candidate claim).
 
 Not run/proved: real named-pipe installed reproduction, current candidate soak,
 elimination of cold ASR scheduling pause, full repository suite/release acceptance.
