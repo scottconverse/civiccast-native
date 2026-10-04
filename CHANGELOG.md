@@ -15,6 +15,10 @@ came across and what deliberately did not.
 
 ### Added
 
+- Opt-in caption batch diagnostics distinguish empty ASR, pending/confirmed
+  stabilization, review expiry/duplicate/refusal and publication fences using
+  numeric metadata; persisted reviews are not reported as aired-caption proof.
+
 - The opt-in health executable-proof flag now also records schema-refresh phase
   and slow-completion diagnostics; health responses and readiness semantics are unchanged.
 

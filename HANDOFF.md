@@ -2,7 +2,7 @@
 
 This file is a pointer, not a log.
 
-## Active development checkpoint - 2026-10-03
+## Active development checkpoint - 2026-10-04
 
 - Branch: `codex/u73-caption-measurements`.
 - Earlier help proof anchor: `2e4db2b61a36179d55bf4a15dd0f2ce954e206de`
@@ -42,6 +42,15 @@ This file is a pointer, not a log.
   asserts channels drain before automation stops. Independent verification:
   six module tests passed; reversing shutdown order failed the intended
   assertion. This is test correction evidence, not installed lifecycle proof.
+- Numeric caption stage diagnostics have source-only independent acceptance:
+  20 focused tests plus five independent fault/privacy checks passed. Review
+  persistence is not aired-caption success; counts distinguish empty ASR,
+  pending/confirmed stabilization, expiry, duplicate/refused review and existing
+  generation/publication decisions. Two review defects are closed: refusal
+  counting cannot alter the product path, and optional reads stop at collector
+  expiry/cap. No live acceptance is claimed. The native stream-end flush fixture
+  fails identically on baseline and candidate and remains unchanged; future
+  observer numeric-key selection is still separate from frozen trials.
 - Still required before a final recommendation: complete health and caption
   runtime proof, repository/product reconciliation, material operator workflow
   repairs, the exact-package installation lifecycle, and sustained three-channel

@@ -581,6 +581,7 @@ class _ChannelScanResult:
     quarantined_segments: int = 0
     committed_review_items: int = 0
     expired_unconfirmed_cues: int = 0
+    stage_counts: dict[str, int | None] | None = None
 
 
 class CaptionTapWorker:
@@ -1652,14 +1653,13 @@ class CaptionTapWorker:
                     batch_id,
                     outcome="committed" if committed_items else "no-commit",
                     reason=(
-                        "asr-committed"
-                        if committed_items
-                        else "asr-completed-no-committed-items"
+                        "asr-committed" if committed_items else "asr-completed-no-committed-items"
                     ),
                     consumed_segments=result.consumed_segments,
                     committed_review_items=committed_items,
                     expired_unconfirmed_cues=result.expired_unconfirmed_cues,
                     elapsed_seconds=time.monotonic() - started,
+                    stage_counts=result.stage_counts,
                 )
             return result
         except Exception:
@@ -1698,12 +1698,29 @@ class CaptionTapWorker:
         # This thread is about to run ASR. Hint the scheduler that it must
         # yield to the playout workers when the box is saturated.
         with suppress(Exception):
-            note_executing('tap', sys._getframe().f_code, self)
+            note_executing("tap", sys._getframe().f_code, self)
         _lower_current_thread_priority()
         consumed = 0
         quarantined = 0
         committed = 0
         expired = 0
+        stage_counts: dict[str, int | None] | None = None
+        if batch_id is not None and self._stage_diagnostics_enabled():
+            stage_counts = dict.fromkeys(
+                (
+                    "asr_batches",
+                    "asr_empty_batches",
+                    "asr_nonempty_batches",
+                    "hypotheses",
+                    "confirmed_cues",
+                    "duplicate_review_items",
+                    "refused_review_items",
+                    "generation_discarded_segments",
+                    "publish_accepted_batches",
+                    "publish_rejected_batches",
+                ),
+                0,
+            )
         with self._timed_session_lock(channel_id):
             if generation is None:
                 generation = self._session_generation.get(channel_id, 0)
@@ -1717,6 +1734,8 @@ class CaptionTapWorker:
                     generation != self._session_generation.get(channel_id, 0)
                     or channel_id in self._failed_sessions
                 ):
+                    if stage_counts is not None:
+                        stage_counts["generation_discarded_segments"] += 1
                     break
                 processed = channel_dir / "processed" / segment.name
                 if processed.exists():
@@ -1739,6 +1758,8 @@ class CaptionTapWorker:
             raw_chunk = self._read_chunk(channel_id, index, segment)
             with self._session_lock(channel_id):
                 if generation != self._session_generation.get(channel_id, 0):
+                    if stage_counts is not None:
+                        stage_counts["generation_discarded_segments"] += 1
                     break
                 if raw_chunk is None:
                     self._previous_segments.pop(channel_id, None)
@@ -1809,8 +1830,31 @@ class CaptionTapWorker:
                 )
             committed += len(result.committed_review_items)
             expired += len(result.expired_unconfirmed_cues)
+            if stage_counts is not None:
+                with suppress(Exception):
+                    count = len(result.hypotheses)
+                    for key, delta in (
+                        ("asr_batches", 1),
+                        ("asr_empty_batches", int(count == 0)),
+                        ("asr_nonempty_batches", int(count > 0)),
+                        ("hypotheses", count),
+                        ("confirmed_cues", result.confirmed_cues),
+                        ("duplicate_review_items", len(result.duplicate_review_item_ids)),
+                        ("refused_review_items", result.refused_review_items),
+                    ):
+                        previous = stage_counts[key]
+                        stage_counts[key] = (
+                            previous + delta
+                            if type(previous) is int and type(delta) is int and delta >= 0
+                            else None
+                        )
+                    stage_counts.setdefault("pending_before", result.pending_before)
+                    stage_counts["pending_after"] = result.pending_after
             with self._session_lock(channel_id):
                 if generation != self._session_generation.get(channel_id, 0):
+                    if stage_counts is not None:
+                        stage_counts["generation_discarded_segments"] += 1
+                        stage_counts["publish_rejected_batches"] += 1
                     # A new writer may already have reused this numbered path.
                     # Do not move it or restore the old session's overlap.
                     break
@@ -1818,6 +1862,8 @@ class CaptionTapWorker:
                     retention_ready = self._retention_ready
                     retention_in_flight = self._retention_in_flight
                     if not retention_ready and not retention_in_flight:
+                        if stage_counts is not None:
+                            stage_counts["publish_rejected_batches"] += 1
                         for _index, stale_segment in segments:
                             stale_segment.unlink(missing_ok=True)
                         self._clear_channel_captions(channel_id)
@@ -1828,7 +1874,24 @@ class CaptionTapWorker:
                             refusal_reason=self._retention_refusal,
                         )
                         break
-                    self._publish_cues(channel_id, generation, worker.committed_cues())
+                    cues = worker.committed_cues()
+                    if stage_counts is None:
+                        self._publish_cues(channel_id, generation, cues)
+                    else:
+                        acceptance: list[bool] = []
+                        self._publish_cues(
+                            channel_id, generation, cues, _diagnostic_acceptance=acceptance
+                        )
+                        if acceptance and type(acceptance[0]) is bool:
+                            key = (
+                                "publish_accepted_batches"
+                                if acceptance[0]
+                                else "publish_rejected_batches"
+                            )
+                            stage_counts[key] += 1
+                        else:
+                            stage_counts["publish_accepted_batches"] = None
+                            stage_counts["publish_rejected_batches"] = None
                     if self._retention_in_flight:
                         # Captions/review text continue while periodic audio
                         # retention verification is pending. Never keep raw WAVs
@@ -1885,6 +1948,7 @@ class CaptionTapWorker:
             quarantined_segments=quarantined,
             committed_review_items=committed,
             expired_unconfirmed_cues=expired,
+            stage_counts=stage_counts,
         )
 
     def _discard_pre_existing_segments(self) -> int:
@@ -2103,6 +2167,7 @@ class CaptionTapWorker:
         expired_unconfirmed_cues: int,
         elapsed_seconds: float,
         committed_review_items: int = 0,
+        stage_counts: dict[str, int | None] | None = None,
     ) -> None:
         self._batch_diagnostic.finish_batch(
             batch_id=batch_id,
@@ -2112,6 +2177,7 @@ class CaptionTapWorker:
             committed_review_items=committed_review_items,
             expired_unconfirmed_cues=expired_unconfirmed_cues,
             elapsed_seconds=elapsed_seconds,
+            stage_counts=stage_counts,
         )
 
     def _record_discarded_batch(
@@ -2531,6 +2597,7 @@ class CaptionTapWorker:
     def _worker_for(self, channel_id: str) -> LiveCaptionWorker:
         worker = self._channel_workers.get(channel_id)
         if worker is None:
+            stage_diagnostics = self._stage_diagnostics_enabled
             worker = LiveCaptionWorker(
                 self._runtime,
                 self._review_store,
@@ -2549,15 +2616,22 @@ class CaptionTapWorker:
                 pipeline=CaptionPipeline(
                     self._runtime,
                     stabilizer=CaptionStabilizer(live=True),
+                    stage_diagnostics=stage_diagnostics,
                     phase_timing=self._worker_phase_timing,
                     phase_timing_channel=channel_id,
                 ),
                 persistence_guard=self._review_persistence_guard,
+                stage_diagnostics=stage_diagnostics,
                 phase_timing=self._worker_phase_timing,
                 phase_timing_channel=channel_id,
             )
             self._channel_workers[channel_id] = worker
         return worker
+
+    def _stage_diagnostics_enabled(self) -> bool:
+        with suppress(Exception):
+            return bool(self._batch_diagnostic.enabled)
+        return False
 
     @contextmanager
     def _review_persistence_guard(self) -> Iterator[ReviewPersistenceMode]:
@@ -2660,7 +2734,14 @@ class CaptionTapWorker:
             self._publisher_for(channel_id).publish(cues)
             return True
 
-    def _publish_cues(self, channel_id: str, generation: int, cues: list[CaptionCue]) -> None:
+    def _publish_cues(
+        self,
+        channel_id: str,
+        generation: int,
+        cues: list[CaptionCue],
+        *,
+        _diagnostic_acceptance: list[bool] | None = None,
+    ) -> None:
         """Publish committed cues unless their session has already ended.
 
         ``generation`` is captured when the worker that produced these cues was
@@ -2669,7 +2750,10 @@ class CaptionTapWorker:
         dropped rather than written over the new session's sidecar.
         """
 
-        self.publish_for_current_session(channel_id, generation, cues)
+        accepted = self.publish_for_current_session(channel_id, generation, cues)
+        if _diagnostic_acceptance is not None:
+            with suppress(Exception):
+                _diagnostic_acceptance.append(accepted)
 
     def _publisher_for(self, channel_id: str) -> LiveWebVttPublisher:
         publisher = self._channel_publishers.get(channel_id)

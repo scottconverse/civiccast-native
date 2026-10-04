@@ -22,7 +22,7 @@ from civiccast.stream.config import HLS_SEGMENT_DURATION
 from civiccast.stream.packager import SlateOnlyResult, VodPackageResult
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Callable, Mapping
 
     from civiccast.translate import TranslationProvider, TranslationTarget
 
@@ -35,6 +35,8 @@ class CaptionPipelineResult:
     committed_cues: list[CaptionCue]
     review_items: list[CaptionReviewItemCreate]
     expired_unconfirmed_cues: list[CaptionCue] = field(default_factory=list)
+    pending_before: int | None = None
+    pending_after: int | None = None
 
 
 @dataclass(frozen=True)
@@ -55,11 +57,13 @@ class CaptionPipeline:
         stabilizer: CaptionStabilizer | None = None,
         phase_timing: object | None = None,
         phase_timing_channel: str | None = None,
+        stage_diagnostics: bool | Callable[[], bool] = False,
     ) -> None:
         self._runtime = runtime
         self._stabilizer = stabilizer or CaptionStabilizer()
         self._phase_timing = phase_timing
         self._phase_timing_channel = phase_timing_channel
+        self._stage_diagnostics = stage_diagnostics
 
     def _phase(self, name: str):
         """Return an opt-in timing context without affecting pipeline work."""
@@ -88,11 +92,13 @@ class CaptionPipeline:
         with self._phase("runtime_transcribe"):
             hypotheses = list(self._runtime.transcribe(chunks, vocabulary=vocabulary))
         with self._phase("caption_stabilize"):
+            pending_before = self._pending_count()
             committed_cues: list[CaptionCue] = []
             expired_before = self._stabilizer.expired_unconfirmed_count
             for hypothesis in hypotheses:
                 committed_cues.extend(self._stabilizer.observe(hypothesis))
             expired_unconfirmed_cues = self._stabilizer.expired_unconfirmed()[expired_before:]
+            pending_after = self._pending_count()
 
         # Expired-unconfirmed cues never air (never enter committed_cues /
         # the active track) but still land in the same review queue as any
@@ -111,7 +117,26 @@ class CaptionPipeline:
             committed_cues=committed_cues,
             review_items=review_items,
             expired_unconfirmed_cues=expired_unconfirmed_cues,
+            pending_before=pending_before,
+            pending_after=pending_after,
         )
+
+    def _pending_count(self) -> int | None:
+        # Diagnostic access must never change processing, including custom
+        # stabilizers that do not expose this optional scalar seam.
+        if not self._stage_diagnostics_enabled():
+            return None
+        with suppress(Exception):
+            value = self._stabilizer.pending_count
+            if type(value) is int and value >= 0:
+                return value
+        return None
+
+    def _stage_diagnostics_enabled(self) -> bool:
+        with suppress(Exception):
+            gate = self._stage_diagnostics
+            return bool(gate() if callable(gate) else gate)
+        return False
 
     def process_and_publish_hls(
         self,

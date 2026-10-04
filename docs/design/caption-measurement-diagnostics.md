@@ -74,6 +74,26 @@ its future evidence-capture adaptation is separate and unrun, not changed here.
 
 ## Later measurement plan (requires separate live authorization)
 
+The opt-in per-batch collector additionally records a closed numeric
+`stage_counts` object: ASR calls with zero/nonzero hypotheses, hypothesis and
+newly confirmed cue counts, pending stabilization before/after, duplicate or
+refused review rows, generation-discarded segment attempts, and accepted or
+rejected sidecar publication attempts. Existing consumed-segment, expired-cue
+and newly persisted review counts remain separate. The historical `committed`
+outcome means review persistence, **not aired-caption success**. An expired cue
+can create a review row without ever becoming a confirmed/active cue.
+
+Pending units are unresolved legacy cues plus unconfirmed timed words; these
+units, ASR hypotheses and emitted cues cannot be summed into a conservation
+equation. Sidecar acceptance proves only that the existing publication fence
+accepted the write, not that captions aired or were complete. Unknown optional
+counts are null; malformed or unapproved fields are omitted. No speech text,
+audio, URL or exception text is added. Pending-state access is default-off and
+stops on the existing collector's dynamic expiry/cap gate even for a long-lived worker,
+and counter failures cannot control stabilization or publication. Future
+observer selections must explicitly retain these closed numeric keys; the
+already frozen diagnostic stages do not contain this source-only addition.
+
 Before installing anything, record the exact candidate and loaded module/process
 identity. Observe several live-shaped windows across all channels with decoding
 unchanged; correlate shed and streak-start events with retained batch timings,

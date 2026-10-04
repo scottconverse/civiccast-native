@@ -47,6 +47,10 @@ class LiveCaptionWorkerResult:
     # committed_review_items, same store, same path) but are broken out here
     # too so a caller can count the drop instead of it hiding in the total.
     expired_unconfirmed_cues: list[CaptionCue] = field(default_factory=list)
+    confirmed_cues: int | None = None
+    pending_before: int | None = None
+    pending_after: int | None = None
+    refused_review_items: int | None = None
 
 
 class LiveCaptionWorker:
@@ -78,13 +82,16 @@ class LiveCaptionWorker:
         | None = None,
         phase_timing: object | None = None,
         phase_timing_channel: str | None = None,
+        stage_diagnostics: bool | Callable[[], bool] = False,
     ) -> None:
         self._phase_timing = phase_timing
         self._phase_timing_channel = phase_timing_channel
+        self._stage_diagnostics = stage_diagnostics
         self._pipeline = pipeline or CaptionPipeline(
             runtime,
             phase_timing=phase_timing,
             phase_timing_channel=phase_timing_channel,
+            stage_diagnostics=stage_diagnostics,
         )
         self._review_store = review_store
         self._asset_id = asset_id
@@ -133,7 +140,7 @@ class LiveCaptionWorker:
                 caption_result = hls_result.caption_result
 
         with self._phase("review_persist"):
-            committed_items, duplicates = self._persist_review_items(
+            committed_items, duplicates, refused = self._persist_review_items(
                 caption_result,
                 audio_evidence_factory=audio_evidence_factory,
             )
@@ -144,6 +151,8 @@ class LiveCaptionWorker:
             duplicate_review_item_ids=duplicates,
             hls_result=hls_result,
             expired_unconfirmed_cues=caption_result.expired_unconfirmed_cues,
+            refused_review_items=refused,
+            **self._stage_result(caption_result),
         )
 
     def flush(self) -> LiveCaptionWorkerResult:
@@ -181,7 +190,7 @@ class LiveCaptionWorker:
             )
             caption_result = hls_result.caption_result
 
-        committed_items, duplicates = self._persist_review_items(caption_result)
+        committed_items, duplicates, refused = self._persist_review_items(caption_result)
 
         return LiveCaptionWorkerResult(
             hypotheses=caption_result.hypotheses,
@@ -189,14 +198,34 @@ class LiveCaptionWorker:
             duplicate_review_item_ids=duplicates,
             hls_result=hls_result,
             expired_unconfirmed_cues=caption_result.expired_unconfirmed_cues,
+            refused_review_items=refused,
+            **self._stage_result(caption_result),
         )
+
+    def _stage_result(self, result: CaptionPipelineResult) -> dict[str, int | None]:
+        values: dict[str, int | None] = {}
+        if not self._stage_diagnostics_enabled():
+            return values
+        with suppress(Exception):
+            values["confirmed_cues"] = len(result.committed_cues)
+            for key in ("pending_before", "pending_after"):
+                value = getattr(result, key, None)
+                if value is None or (type(value) is int and value >= 0):
+                    values[key] = value
+        return values
+
+    def _stage_diagnostics_enabled(self) -> bool:
+        with suppress(Exception):
+            gate = self._stage_diagnostics
+            return bool(gate() if callable(gate) else gate)
+        return False
 
     def _persist_review_items(
         self,
         caption_result: CaptionPipelineResult,
         *,
         audio_evidence_factory: AudioEvidenceFactory | None = None,
-    ) -> tuple[list[CaptionReviewItemResponse], list[str]]:
+    ) -> tuple[list[CaptionReviewItemResponse], list[str], int | None]:
         committed_items: list[CaptionReviewItemResponse] = []
         duplicates: list[str] = []
         # ASR has already completed. The live tap checks CURRENT storage policy
@@ -206,7 +235,11 @@ class LiveCaptionWorker:
         guard = self._persistence_guard() if self._persistence_guard else nullcontext("audio")
         with guard as mode:
             if mode == "refused":
-                return committed_items, duplicates
+                refused = None
+                if self._stage_diagnostics_enabled():
+                    with suppress(Exception):
+                        refused = len(caption_result.review_items)
+                return committed_items, duplicates, refused
             for item in caption_result.review_items:
                 if mode == "audio" and audio_evidence_factory is not None:
                     with self._phase("audio_evidence"):
@@ -220,7 +253,7 @@ class LiveCaptionWorker:
                         committed_items.append(self._review_store.create(payload))
                 except CaptionReviewItemAlreadyExistsError:
                     duplicates.append(item.review_item_id)
-        return committed_items, duplicates
+        return committed_items, duplicates, 0 if self._stage_diagnostics_enabled() else None
 
     def _phase(self, name: str):
         """Return an opt-in timing context without changing worker behavior."""

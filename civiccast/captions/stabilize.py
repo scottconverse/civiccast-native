@@ -449,6 +449,16 @@ class CaptionStabilizer:
         return list(self._expired_unconfirmed)
 
     @property
+    def pending_count(self) -> int:
+        """Unresolved legacy cues plus timed words; never an aired-cue count.
+
+        Timed-word and legacy-cue units are intentionally not interchangeable
+        with ASR hypotheses or emitted cues in a conservation equation.
+        """
+
+        return len(self._pending) + sum(not word.committed for word in self._live_words)
+
+    @property
     def expired_unconfirmed_count(self) -> int:
         """Total number of pending cues expired without re-confirmation."""
 
