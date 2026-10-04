@@ -4,8 +4,12 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
-- Frozen remote candidate: `eb94e465fe1f2b5335f0ad90620e1a01c041812e`,
-  independently matched by ls-remote. Local follow-ups reconcile tests,
+- Frozen built candidate: `eb94e465fe1f2b5335f0ad90620e1a01c041812e`.
+  Reviewed development proof anchor: `404c584a`, including the separate
+  constructor test correction `34a170c3` and fallback audio guard `b75444ea`.
+  The next remote checkpoint carries this reviewed batch; resolve its exact
+  tip and new CI through draft PR 232, not the frozen package SHA.
+  Follow-ups reconcile tests,
   CI prerequisites and documentation policy. The subsequent fallback audio-tail
   target correction changes runtime source and requires a new package; the
   running eb94 acceptance job cannot prove that correction.
@@ -66,10 +70,10 @@ This file is a pointer, not a log.
   format (21 changed, two already corrected), with before/after AST equality for
   every file and a passing 23-file format check. This is mechanical formatting,
   not another runtime fix; the in-flight eb94 package is unchanged.
-  These local commits were batched while the long CI run finished; they have
-  not been pushed. That run is now terminal. Next remote checkpoint must include the
+  These commits were batched while the long CI run finished. That run is now
+  terminal. The reviewed remote checkpoint includes the
   reviewed native-floor and claims-test corrections, preserve runtime evidence
-  identity, and refresh PR 232 and this handoff after confirming the remote SHA.
+  identity. Refresh PR 232 after confirming the remote SHA and new CI identities.
 - Local follow-up commits: `6f224618` raises native execution floors to
   1881/2087 from isolated committed-source collection (1931 pure, 2140 total,
   2137 excluding integration). Root rerun: `34 passed in 32.03s`. `7be11a8f`
