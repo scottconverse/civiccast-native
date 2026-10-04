@@ -4,6 +4,29 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Local installer repair `e4a10af5137b207709ffe28bdc82c7db7674b10e` adds a
+  read-only downgrade check before service stop and application replacement.
+  It preserves the existing known-version ordering and uses the new bootstrap,
+  not a potentially broken installed Python. Baseline ordering assertions failed;
+  final hooks passed 43 checks including actual NSIS compilation. The compiled
+  native command passed 14 deliberate SHA-bound cases and five independent
+  root cases, silently. This is source/command proof, not a refused packaged
+  installation or full application/database rollback proof. The tested deb2
+  package does not contain this change. Generated manual synchronization is in
+  `24c03584280fb0046f5c4326206964d892213666`: both artifact freshness checks
+  passed independently; PDF page 195 was visually checked without clipping.
+  DOCX was regenerated and hash-checked, not separately visually rendered.
+  Source/help notes explicitly distinguish published beta.10 behavior.
+  Evidence: oversight evidence/u87-recorder-product/preflight-receipt.md.
+- Remote source checkpoint `328edfbaa69a31acb7933de17f6fa8eb9af3f162`
+  remains on draft PR 232. Its installer compile 37216841061 and docs
+  37216841181 passed. Lint 37216841013 failed with 108 findings; tests
+  37216841029 failed (unit: 79 failed, 11,420 passed, 78 skipped;
+  native: 8 failed, 2,127 passed, 2 skipped). These are not green merge gates.
+  Two constructor-responsiveness cases failed their two-second wait in the
+  full Linux unit run; an independent isolated Windows rerun of their two
+  modules passed all 20 in 12.87 seconds. The CI failures remain unresolved;
+  that isolated pass does not establish their cause or waive them.
 - Current packaged candidate is `deb2adfa9dab7e41c5d9a64fcd2bebb95b26723d`.
   Build 37211323548 passed all three jobs, independently confirmed at
   2026-10-04 09:38 MDT. Both installer executables have valid signatures.
@@ -14,8 +37,30 @@ This file is a pointer, not a log.
   sink in 15 seconds; transport verification passed 1,182 packets with zero sync
   errors, transport errors or discontinuities. Worker PID 5524 and its graph/log
   were captured before the existing test stopped it. No FFmpeg substitute was
-  used. The unchanged 20-minute health observation is still running; sustained
-  three-channel speech acceptance remains pending. The local
+  used. The unchanged 20-minute health observation passed four samples with zero
+  unhealthy results in 1200.3 seconds. Clean Gate A job 111469803858 passed,
+  including normal host cleanup. Workflow 37213690258 nevertheless finished
+  FAILURE: its separate cross-version lane could not resolve the pinned beta.5
+  baseline and did not execute installation; download-only was skipped. This is
+  not an all-lanes pass. Sustained three-channel speech acceptance remains pending.
+  The replacement existing 120-minute soak uses its supported 60-minute installation
+  allowance because this fresh installation measured about 33 minutes; its
+  actual soak duration, health, on-air, quiet and rollup limits are unchanged.
+  This does not establish installation within the tool's 20-minute default.
+  The first local deb2 attempt installed successfully and put all three channels
+  on air, but captions were off: the runner read the default setting without
+  enabling it. That attempt was cancelled, not passed. Setup-only commit
+  `71038c5d` now enables captions through the existing profile API and requires
+  a confirmed Boolean true before measurement; explicit captions-off is unchanged.
+  Independent setup-path checks passed five cases; author verification passed
+  six default-path and 22 captions-off cases. The replacement host process is
+  PID 34096, born 2026-10-04T17:15:26.6458145Z, with installation started at
+  17:15:39.907Z and bounded through 18:15:39.907Z. Provisioning returned 0 and
+  station activation began at 17:22:13Z; at the 17:28 UTC observation activation
+  was still running. The sustained clock and caption confirmation were pending.
+  Its package is still deb2, not the later installer source changes.
+  Receipts are in oversight evidence/u87-packaged-candidate-deb2/soak-captions-on.
+  The local
   test-only commits `7c1e5500` and `2afcd8a3` are not in this package: they
   reconcile the accepted U43 window and U63 immediate-warm contracts, with
   independent reruns of 29 and 8 passing tests respectively. No runtime changes
