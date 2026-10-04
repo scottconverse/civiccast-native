@@ -231,18 +231,19 @@ as an outbox not assembled in an ephemeral configuration, makes the receipt
 unavailable. The first attempted capture is not retried, even if setup later
 converges. HTTP 200 alone is neither loaded-code attestation nor healthy readiness.
 
-The same default-off flag also enables schema-refresh diagnostics on the existing
-refresh worker. `Health schema refresh phase <json>` records fixed phases
+The same default-off flag also enables an in-memory schema-refresh snapshot on
+the existing refresh worker. `diagnostic_snapshot()` records fixed phases
 `started`, `sync_storage`, `head`, `read`, `graph`, `complete`, `retained_work`,
-or `closed`; a terminal operation taking at least five seconds also emits
-`Health schema refresh slow completion <json>`. The bounded
+or `closed`. Phase and slow-completion logging is deliberately absent: the
+production durable handler fsyncs each record, so even exception-isolated logging
+can delay the fresh DB read or retain the sole worker after publication. The bounded
 `health-schema-refresh-v1` payload contains `pid`, `attempt`, `epoch`, `phase`,
 `state`, `elapsed_ms`, `phase_elapsed_ms`, `queued_ms`, `retained_work`,
 `previous_phase`, and `previous_elapsed_ms`. Epoch follows the actual check fence
 after storage activation, even when it differs from the queued epoch. Elapsed
 time freezes at completion/retained-work/close; phase elapsed is the current
 phase age, and retained work is the completion-time count of unfinished bounded
-DB futures, not a live gauge. These receipts
+DB futures, not a live gauge. These detached snapshots
 help isolate diagnostic refresh phases and retained-work timing; they do not
 change the HTTP response, public schema, readiness semantics, worker count, or
 refresh behavior. Diagnostic failures are suppressed so they cannot control
@@ -251,7 +252,7 @@ isolation only: it does not prove a live bottleneck or its cause.
 
 Schema refresh still reads the database revision freshly. When that revision
 equals the expected head, it skips migration-graph construction, which cannot
-change the `current` classification; `graph` is emitted only for mismatches
+change the `current` classification; `graph` is recorded only for mismatches
 (including a missing revision). Owner TTL, source/epoch/close fences, bounded
 database reads and behind/ahead classification remain unchanged. Isolated
 regression tests prove the matching-revision path does not wait on a held graph;

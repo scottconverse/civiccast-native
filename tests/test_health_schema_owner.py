@@ -155,7 +155,6 @@ def test_current_schema_for_different_unwired_source_cannot_attest(
 
 
 def test_diagnostics_identify_held_refresh_phase_without_private_source(monkeypatch, caplog):
-    import json
     import logging
 
     from civiccast import health_provenance
@@ -194,11 +193,9 @@ def test_diagnostics_identify_held_refresh_phase_without_private_source(monkeypa
             assert owner.diagnostic_snapshot()["phase"] == "sync_storage"
             release.set()
             owner._thread.join(1)
-        records = [r.message for r in caplog.records if "Health schema refresh phase " in r.message]
-        assert records, "opt-in existing proof logger must expose the active worker phase"
-        assert all("PRIVATE_" not in r for r in records)
-        payloads = [json.loads(r.split("phase ", 1)[1]) for r in records]
-        assert {p["phase"] for p in payloads} >= {"started", "sync_storage", "complete"}
+        assert not caplog.records, "snapshot diagnostics must perform no logging IO"
+        assert owner.diagnostic_snapshot()["phase"] == "complete"
+        assert "PRIVATE_" not in str(owner.diagnostic_snapshot())
         assert len(owner.diagnostic_snapshot()) <= 12
     finally:
         release.set()
@@ -325,10 +322,7 @@ def test_diagnostic_queued_delay_is_observed_only_when_existing_worker_starts(mo
         now[0] = 6
         owner._thread.target()
     assert owner.diagnostic_snapshot()["queued_ms"] == 6000
-    slow = [
-        r.message for r in caplog.records if "Health schema refresh slow completion " in r.message
-    ]
-    assert len(slow) == 1 and "PRIVATE_URL" not in slow[0]
+    assert not caplog.records, "slow completion remains snapshot-only"
     assert owner.diagnostic_snapshot()["elapsed_ms"] == 6000
     now[0] = 12
     assert owner.diagnostic_snapshot()["elapsed_ms"] == 6000, "completed duration must not age"
@@ -353,6 +347,45 @@ def test_diagnostics_default_off_has_no_phase_log_or_private_export(monkeypatch,
         assert not any("Health schema refresh" in r.message for r in caplog.records)
     finally:
         assert owner.close(2)
+
+
+def test_durable_diagnostic_handler_cannot_delay_actual_read(monkeypatch):
+    import logging
+
+    from civiccast import health_provenance, schema_check
+
+    monkeypatch.setattr(health_provenance, "ENABLED", True)
+    entered, release, read = threading.Event(), threading.Event(), threading.Event()
+
+    class StalledHandler(logging.Handler):
+        def emit(self, record):
+            entered.set()
+            assert release.wait(2)
+
+    def actual_check(source):
+        read.set()
+        return SchemaStatus(state="current", db_revision="head", expected_head="head")
+
+    handler = StalledHandler()
+    logger = health_provenance._LOG
+    previous_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.INFO)
+    monkeypatch.setattr(schema_check, "check_schema_currency", actual_check)
+    state = SimpleNamespace(durable_storage_active=True, durable_storage_url="db")
+    owner = HealthSchemaOwner(state, sync_storage=lambda: None, source=lambda: "db", ttl_seconds=5)
+    try:
+        assert owner.request().state == "unknown"
+        assert read.wait(0.5), "diagnostic sink blocked the actual fresh read"
+        owner._thread.join(1)
+        assert not entered.is_set()
+        assert owner.request().state == "current"
+        assert owner.diagnostic_snapshot()["phase"] == "complete"
+    finally:
+        release.set()
+        owner.close(2)
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
 
 
 def test_diagnostic_logging_failure_cannot_change_readiness(monkeypatch):

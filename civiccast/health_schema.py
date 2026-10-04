@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -144,16 +143,9 @@ class HealthSchemaOwner:
             if state in {"unknown", "current", "behind", "ahead", "not-configured"}
             else "unknown",
         )
-        # Only the existing refresh worker emits; HTTP performs no logging IO.
-        with suppress(Exception):
-            from civiccast import health_provenance
-
-            payload = json.dumps(self.diagnostic_snapshot(), allow_nan=False, separators=(",", ":"))
-            if len(payload.encode("utf-8")) > 1024:
-                return
-            health_provenance._LOG.info("Health schema refresh phase %s", payload)
-            if phase in {"complete", "retained_work", "closed"} and now - snapshot.scheduled >= 5:
-                health_provenance._LOG.info("Health schema refresh slow completion %s", payload)
+        # Snapshot-only: the production handler fsyncs every record. Even a
+        # failure-isolated log call can block before the fresh DB read, or keep
+        # the sole owner busy after publication. Diagnostics must do no IO here.
 
     @property
     def closed(self) -> bool:
