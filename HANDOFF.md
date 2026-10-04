@@ -7,23 +7,28 @@ This file is a pointer, not a log.
 - Frozen built candidate: `eb94e465fe1f2b5335f0ad90620e1a01c041812e`.
   Reviewed development proof anchor: `404c584a`, including the separate
   constructor test correction `34a170c3` and fallback audio guard `b75444ea`.
-  The next remote checkpoint carries this reviewed batch; resolve its exact
-  tip and new CI through draft PR 232, not the frozen package SHA.
+  Remote checkpoint verified: `2fd8a22ae708c9d4f98d414781e414fc28627f02`.
+  Local follow-up `6789602a` fixes only regression-test formatting (AST identical).
+  Resolve later tips and CI through draft PR 232, not the frozen package SHA.
   Follow-ups reconcile tests,
   CI prerequisites and documentation policy. The subsequent fallback audio-tail
   target correction changes runtime source and requires a new package; the
   running eb94 acceptance job cannot prove that correction.
-  Draft PR 232 body is bound to the frozen source,
+  Draft PR 232 now distinguishes the remote development source, frozen package,
   terminal original-soak FAIL and restored original baseline. Exact self-hosted
   candidate build 37230261698 completed SUCCESS in all three jobs, including
   signed artifact verification, packaged GStreamer worker smoke and final kit.
   Automatic Gate A 37232341060 started at 20:30:14Z and is active; v13 owns it.
   Large/binary uploads false; no new tag,
-  release or station cutover. Current CI: tests 37230256695 terminal FAILURE,
+  release or station cutover. Current-source tests 37235135807 are active; the
+  Windows native job has passed. Current docs 37235135808, installer compile
+  37235135809, operator build 37235135854, accessibility 37235135825 and policy
+  37235135799 passed. Lint 37235135805 failed on one test file's formatting;
+  local 6789602a corrects it, not yet pushed. Historical tests 37230256695 FAILURE:
   `71 failed, 11465 passed, 79 skipped, 5 deselected in 2428.31s (0:40:28)`;
   this ran frozen eb94 before the local correction batch. Do not poll its
-  terminal watch session. u86 is reconciling remaining egress test contracts
-  with current product behavior, without restoring deliberately discarded code.
+  terminal watch session. u86 is reconciling current-source claims with executed
+  evidence, without rebinding unfinished DR source or rewriting historical proof.
   Lint
   37230256681 failed solely at Ruff formatting (23 files); docs 37230256692 and
   installer compile 37230256805 succeeded. Windows dual-runtime guard passed.
