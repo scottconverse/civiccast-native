@@ -24,6 +24,13 @@ Missing, unreadable and damaged manual artifacts now produce HTTP 503 with a
 plain-English message asking staff to have IT repair the installation (HELP-12).
 This is source/API verification, not packaged installation acceptance.
 
+On narrow screens, chapter expansion is committed before scrolling a deep link.
+The manual's layout and list items can shrink to the viewport; wide code blocks
+keep their own horizontal scrolling, and tables have named, keyboard-focusable
+scrolling regions. Isolated browser checks use the current 635-heading source,
+including desktop, Back, public feedback and 375px mobile navigation. They do not
+prove the still-unregenerated installed manual or its missing screenshots.
+
 Sidebar: Help > **Manual** (the section is collapsed by default). Page eyebrow "Help"; page H1 "Operator manual". Routes `#/help`, `#/docs`, `#/manual`. Manual authority: `docs/manual/src/11-signing-in.md` (find your way around; the Report a beta issue button) and `17-something-wrong.md` (section "Report a beta issue", `#report-a-beta-issue`).
 
 ## Where the help text lives now

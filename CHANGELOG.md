@@ -24,6 +24,8 @@ came across and what deliberately did not.
   unreliable text; recorded-video decoding keeps its existing retry behavior.
   This bounds retries, not the duration of a single decode. Three-channel caption
   coverage and sustained performance still require live acceptance testing.
+- The operator manual keeps narrow-screen deep links aligned after opening a
+  chapter, and contains wide code blocks and tables in local scrolling areas.
 - A missing, unreadable or damaged built-in manual now shows a plain-English
   installation-repair message instead of developer commands or a generic server
   error.

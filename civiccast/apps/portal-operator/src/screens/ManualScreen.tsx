@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useHref, useLocation, useNavigate } from 'react-router'
 import { ApiError, getManual } from '../api/client'
@@ -106,6 +106,15 @@ export function ManualScreen() {
         link.setAttribute('rel', 'noopener noreferrer')
       }
     }
+    for (const [index, table] of [...template.content.querySelectorAll('table')].entries()) {
+      const region = document.createElement('div')
+      region.className = 'cc-manual-table-scroll'
+      region.setAttribute('role', 'region')
+      region.setAttribute('aria-label', `Scrollable manual table ${index + 1}`)
+      region.tabIndex = 0
+      table.replaceWith(region)
+      region.append(table)
+    }
     return template.innerHTML
   }, [manualQuery.data?.html, manualHref])
   const filteredToc = useMemo(() => {
@@ -122,21 +131,22 @@ export function ManualScreen() {
   // out from under HashRouter's own '/operator/#/...' scheme). Runs once
   // the manual HTML is actually in the DOM, since scrollIntoView needs the
   // target element to exist.
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!manualQuery.isSuccess) return
     const hash = location.hash.replace(/^#/, '')
-    // getElementById (not a CSS-selector query) so this needs no CSS.escape
-    // polyfill and works for any id pandoc's slugger produces. Let the
-    // injected HTML paint first.
+    // Commit the chapter layout before scrolling: on mobile the contents
+    // sit above the body, so expanding them after scroll shifts the target.
+    const target = hash && contentRef.current && document.getElementById(hash)
+    const validTarget = target && contentRef.current?.contains(target)
+    setActiveId(validTarget ? hash : null)
+    setExpandedChapter(validTarget ? contents.chapterForId.get(hash) ?? null : null)
+    // getElementById avoids CSS.escape assumptions for Pandoc IDs.
     const raf = window.requestAnimationFrame(() => {
-      const target = hash && contentRef.current && document.getElementById(hash)
-      if (target && contentRef.current?.contains(target)) {
-        target.scrollIntoView({ behavior: 'smooth', block: 'start' })
-        setActiveId(hash)
-        setExpandedChapter(contents.chapterForId.get(hash) ?? null)
-      } else {
-        setActiveId(null)
-        setExpandedChapter(null)
+      // State commits can replace the injected body; never scroll a detached
+      // element captured before the expanded contents render.
+      const paintedTarget = hash && document.getElementById(hash)
+      if (paintedTarget && contentRef.current?.contains(paintedTarget)) {
+        paintedTarget.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
     })
     return () => window.cancelAnimationFrame(raf)
@@ -145,7 +155,7 @@ export function ManualScreen() {
   }, [manualQuery.isSuccess, location.hash, location.key, contents])
 
   return (
-    <div className="grid gap-4 px-6 py-5">
+    <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 px-6 py-5">
       <header className="max-w-3xl">
         <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--cc-ink-3)' }}>
           Help
@@ -172,10 +182,10 @@ export function ManualScreen() {
       )}
 
       {manualQuery.data && (
-        <div className="grid gap-4 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] lg:items-start">
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(220px,280px)_minmax(0,1fr)] lg:items-start">
           <nav
             aria-label="Manual contents"
-            className="grid gap-2 rounded-md p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto"
+            className="grid min-w-0 gap-2 rounded-md p-3 lg:sticky lg:top-4 lg:max-h-[calc(100vh-7rem)] lg:overflow-y-auto"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
           >
             <label className="grid gap-1 text-xs" htmlFor="manual-filter">

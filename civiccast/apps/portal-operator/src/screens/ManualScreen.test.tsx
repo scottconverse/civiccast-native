@@ -81,6 +81,30 @@ function renderScreen(initialEntries: string[] = ['/help'], hashRouter = false) 
 }
 
 describe('ManualScreen', () => {
+  it('commits expanded chapter layout before scrolling a deep section', async () => {
+    let linksAtScroll = 0
+    Element.prototype.scrollIntoView = vi.fn(() => {
+      linksAtScroll = within(screen.getByRole('navigation', { name: 'Manual contents' })).getAllByRole('link').length
+    })
+    vi.mocked(getManual).mockResolvedValue(largeManual())
+    renderScreen(['/help#section-2-4-9'])
+    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
+    expect(linksAtScroll).toBe(57)
+  })
+
+  it('keeps wide manual tables in named keyboard-accessible overflow regions', async () => {
+    const content = manual()
+    content.html += '<table><caption>Provider comparison</caption><tbody><tr><td>Wide details</td></tr></tbody></table>'
+    vi.mocked(getManual).mockResolvedValue(content)
+    renderScreen()
+    const table = await screen.findByRole('table', { name: 'Provider comparison' })
+    const region = table.parentElement!
+    expect(region.getAttribute('role')).toBe('region')
+    expect(region.getAttribute('aria-label')).toBe('Scrollable manual table 1')
+    expect(region.tabIndex).toBe(0)
+    expect(region.classList.contains('cc-manual-table-scroll')).toBe(true)
+  })
+
   it('keeps the 635-heading manual to parts and chapters until expanded', async () => {
     const content = largeManual()
     expect(content.toc).toHaveLength(635)
