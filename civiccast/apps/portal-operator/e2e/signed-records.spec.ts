@@ -141,11 +141,11 @@ async function openWithRecordBackend(
   await page.route('**/api/staff/assets', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) })
   })
-  await page.route('**/api/staff/summaries/review-items', async (route) => {
+  await page.route('**/api/staff/summaries/review-items?include_approved=true', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ items: [approvedSummary], next_cursor: null }),
+      body: JSON.stringify({ items: [approvedSummary], next_cursor: null, approval_required_summary_ids: [] }),
     })
   })
   await page.route('**/api/staff/records', async (route) => {
@@ -203,7 +203,8 @@ test.describe('signed record export', () => {
     await expect(page.getByRole('button', { name: 'Approve summary' })).toBeDisabled()
     await page.getByRole('button', { name: 'Export signed record' }).click()
     await expect(page.getByText(/Signed record exported: record-approved/)).toBeVisible()
-    await expect(page.getByText(/server validates the\s+PDF\/A-3B artifact/i)).toBeVisible()
+    await expect(page.getByText(/server runs PDF\/A-3\s+shape checks/i)).toBeVisible()
+    await expect(page.getByText(/timestamp authority remains deterministic unless a\s+real authority is configured/i)).toBeVisible()
     await expect(page.getByText(/sha256:dddd/)).toBeVisible()
     await expect(errors).toEqual([])
     await page.screenshot({ path: `${evidenceDir}/v0.6-signed-record-export-desktop.png`, fullPage: true })
@@ -212,7 +213,7 @@ test.describe('signed record export', () => {
   test('export error gives a concrete recovery step', async ({ page }) => {
     await openWithRecordBackend(page, { failExport: true })
     await page.getByRole('button', { name: 'Export signed record' }).click()
-    await expect(page.getByText('Could not load summary review.')).toBeVisible()
+    await expect(page.getByText('Could not export signed record.')).toBeVisible()
     await expect(page.getByText(/Approve the sourced summary before exporting/)).toBeVisible()
     await expect(page.getByText(/Retry this request/)).toBeVisible()
   })
