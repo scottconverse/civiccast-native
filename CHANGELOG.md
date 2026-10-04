@@ -19,10 +19,17 @@ came across and what deliberately did not.
   stabilization, review expiry/duplicate/refusal and publication fences using
   numeric metadata; persisted reviews are not reported as aired-caption proof.
 
-- The opt-in health executable-proof flag now also records schema-refresh phase
-  and slow-completion diagnostics; health responses and readiness semantics are unchanged.
+- The opt-in health executable-proof flag also keeps a bounded in-memory
+  schema-refresh snapshot; health responses and readiness semantics are unchanged.
 
 ### Fixed
+
+- Health readiness no longer waits for optional schema-diagnostic log writes.
+  Fresh database verification and stale-result rejection remain unchanged.
+
+- New community-program submissions save requested air times with an explicit
+  time zone, avoiding the Schedule's rejection of zone-less times. The public
+  form labels the producer's local zone; older submissions are not rewritten.
 
 - The interactive installer carries the selected download plan to the native
   downloader. Unchecked Large/CUDA components are not acquired, retries stay

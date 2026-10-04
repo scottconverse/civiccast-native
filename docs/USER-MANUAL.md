@@ -646,7 +646,7 @@ Several boxes ask for a time. They do not all use the same time zone. Read the l
 | Program Guide: **First airing**, **Repeat until (optional)** | Your computer's local time when you type it. After that, the repeats are counted in UTC (see the warning below). |
 | Auto-schedule dayparts: **Start**, **End** | The station's time zone, set in the **Timezone** box on the **Station Profile** screen (the First Setup form has no such box). If it is still "local" or was never set, UTC. |
 | Recording: **Start (UTC)**, **Time (HH:MM UTC)** and the weekday boxes | **UTC**, not your local time. |
-| Contributors: producer's **Requested air date** | The producer's own computer, with no zone saved (see Known issue under Contributors). |
+| Contributors: producer's **Requested air date** | The producer's computer's local time; the form names that zone and saves the corresponding UTC instant. Older beta.10 submissions may lack a zone (see below). |
 
 *UTC* (Coordinated Universal Time) is the world's reference clock. It has no daylight saving time. A US station in Mountain Time is 6 hours behind UTC in summer and 7 hours behind in winter. Only the Recording screen makes you type UTC yourself.
 
@@ -1073,6 +1073,7 @@ Community producers can send a program to the station through the resident porta
 Tell producers to open the station's resident portal and scroll to **Submit a program** at the bottom of the home page. They:
 
 1. Fill **Producer name**, **Email**, **Program title** and **Description**. **Organization**, **Tags** (separated by commas) and **Requested air date** are optional.
+   The requested time uses the producer's computer's time zone, shown in its label. It is a preference for staff to review, not permission to air the program.
 2. Choose a **Video file**.
 3. Click **Send to review**. The button reads "Uploading" while it works.
 4. Copy the **Receipt** and **Status token** shown on the page.
@@ -1119,7 +1120,7 @@ There are **no confirmation boxes**. Each click acts at once.
 
 > **Known issue (beta.10):** **Send to schedule** does **not** put anything on the air. It makes a **Scheduled** entry. You must then open **Schedule** and approve it with **Publish to residents**. The screen does not say so, and the message producers see, "Your program has a real spot on the schedule and will air automatically.", is untrue until you do.
 
-> **Known issue (beta.10):** **Send to schedule** uses settings you cannot see first: the channel is whatever the form stored (the portal form always sends `public`), the length is the **Minutes** box beside the button (30 to begin with, never less than 60 seconds) rather than the video's real length, and the start is the producer's **Requested air date**, or the moment you click if there was none. A start time in the past is likely not what you want. We read the code and tested the data checks, but did not run this on a live station. They show that the screen sends the producer's date without a time zone, and the Schedule rules refuse a time with no zone. So expect **Send to schedule** to fail with "Could not build a schedule item from this handoff" for any submission that has a **Requested air date**.
+> **Known issue (beta.10):** **Send to schedule** uses settings you cannot see first: the channel is whatever the form stored (the portal form always sends `public`), the length is the **Minutes** box beside the button (30 to begin with, never less than 60 seconds) rather than the video's real length, and the start is the producer's **Requested air date**, or the moment you click if there was none. A start time in the past is likely not what you want. Published beta.10 saved requested dates without a time zone, which Schedule rejects. The repaired public form saves new requests with a zone, but does not rewrite older submissions. For an older zone-less request, confirm the intended time with the producer and use **New scheduled item** on Schedule instead. New-form serialization is checked in component tests; installed-station scheduling acceptance remains pending.
 
 > **Tip:** The more reliable path is to **Accept**, then use **New scheduled item** on the Schedule screen ([Put a recording on a channel once](#put-a-recording-on-a-channel-once)). The accepted file is Validated, so the **Asset** drop-down offers it. You choose the channel, start time and length yourself. A schedule conflict on Send to schedule shows "Schedule conflict on channel '…': …".
 
