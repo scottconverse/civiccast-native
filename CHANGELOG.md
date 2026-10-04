@@ -31,6 +31,12 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Development worker control checks a buffered, correlated acknowledgement
+  before reporting it lost when the caller resumes after a scheduling pause.
+  Missing or unrelated receipts still expire at the existing five-second bound;
+  error receipts still fail. This does not prove cold-caption startup pauses
+  eliminated or establish installed seamless-reload acceptance.
+
 - Development caption batch diagnostics retain an unknown publication total
   when a diagnostic receipt is unavailable, while later cues continue through
   the existing publication checks. An unknown counter no longer interrupts

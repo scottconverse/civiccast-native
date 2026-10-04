@@ -1,0 +1,284 @@
+FFFF                                                                     [100%]
+================================== FAILURES ===================================
+___ test_reload_checks_buffered_receipt_after_caller_descheduling[accepted] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002D2AACED160>
+result = 'accepted'
+
+    @pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+    def test_reload_checks_buffered_receipt_after_caller_descheduling(
+        monkeypatch: pytest.MonkeyPatch, result: str | None
+    ) -> None:
+        """A caller pause is not evidence that the worker failed to acknowledge.
+    
+        The clock crosses the unchanged deadline after writing. Only a correlated
+        positive receipt may succeed; an empty pipe must expire without another wait.
+        """
+        from civiccast.egress.gst import strategy
+    
+        clock = [0.0]
+        reads: list[float] = []
+        sleeps: list[float] = []
+    
+        class _PausedCallerServer(_ImmediateAckServer):
+            def write_line(self, text: str) -> bool:
+                written = super().write_line(text)
+                command_id = json.loads(text)["id"]
+                self._inbox.clear()
+                if result is not None:
+                    self._inbox.append(
+                        json.dumps(
+                            {
+                                "v": 1,
+                                "id": "another-command" if result == "unrelated" else command_id,
+                                "result": "accepted" if result == "unrelated" else result,
+                                "detail": None,
+                            }
+                        )
+                    )
+                clock[0] = 20.5
+                return written
+    
+            def read_line(self) -> str | None:
+                reads.append(clock[0])
+                return super().read_line()
+    
+        monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(strategy.time, "sleep", sleeps.append)
+        server = _PausedCallerServer()
+        channel = _WindowsPipeChannel("c1", server=server)
+        channel._connected_event.set()
+    
+>       assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+E       AssertionError: assert False is ('accepted' == 'accepted'
+E        +  where False = send_and_wait('reload', 'reload /w/g.json')
+E        +    where send_and_wait = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x000002D2AB3D7A10>.send_and_wait
+E         
+E           accepted)
+
+_PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
+channel    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x000002D2AB3D7A10>
+clock      = [20.5]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002D2AACED160>
+reads      = []
+result     = 'accepted'
+server     = <tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer object at 0x000002D2AB3D7860>
+sleeps     = []
+strategy   = <module 'civiccast.egress.gst.strategy' from 'C:\\Dev\\Claude\\civiccast-u73\\civiccast\\egress\\gst\\strategy.py'>
+
+tests\egress\test_worker_pipe_seam.py:625: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  civiccast.egress.gst.strategy:strategy.py:582 worker command e614365a-8a70-44fc-8bdf-4084eccd3475 lost-ack -> reissue_desired_state
+____ test_reload_checks_buffered_receipt_after_caller_descheduling[error] _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002D2AB46F800>
+result = 'error'
+
+    @pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+    def test_reload_checks_buffered_receipt_after_caller_descheduling(
+        monkeypatch: pytest.MonkeyPatch, result: str | None
+    ) -> None:
+        """A caller pause is not evidence that the worker failed to acknowledge.
+    
+        The clock crosses the unchanged deadline after writing. Only a correlated
+        positive receipt may succeed; an empty pipe must expire without another wait.
+        """
+        from civiccast.egress.gst import strategy
+    
+        clock = [0.0]
+        reads: list[float] = []
+        sleeps: list[float] = []
+    
+        class _PausedCallerServer(_ImmediateAckServer):
+            def write_line(self, text: str) -> bool:
+                written = super().write_line(text)
+                command_id = json.loads(text)["id"]
+                self._inbox.clear()
+                if result is not None:
+                    self._inbox.append(
+                        json.dumps(
+                            {
+                                "v": 1,
+                                "id": "another-command" if result == "unrelated" else command_id,
+                                "result": "accepted" if result == "unrelated" else result,
+                                "detail": None,
+                            }
+                        )
+                    )
+                clock[0] = 20.5
+                return written
+    
+            def read_line(self) -> str | None:
+                reads.append(clock[0])
+                return super().read_line()
+    
+        monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(strategy.time, "sleep", sleeps.append)
+        server = _PausedCallerServer()
+        channel = _WindowsPipeChannel("c1", server=server)
+        channel._connected_event.set()
+    
+        assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+>       assert reads == [20.5]
+E       assert [] == [20.5]
+E         
+E         Right contains one more item: 20.5
+E         Use -v to get more diff
+
+_PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
+channel    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x000002D2AB46C8F0>
+clock      = [20.5]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002D2AB46F800>
+reads      = []
+result     = 'error'
+server     = <tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer object at 0x000002D2AB46E390>
+sleeps     = []
+strategy   = <module 'civiccast.egress.gst.strategy' from 'C:\\Dev\\Claude\\civiccast-u73\\civiccast\\egress\\gst\\strategy.py'>
+
+tests\egress\test_worker_pipe_seam.py:626: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  civiccast.egress.gst.strategy:strategy.py:582 worker command cd99ddd1-57f6-432e-ae66-459663a0a091 lost-ack -> reissue_desired_state
+_____ test_reload_checks_buffered_receipt_after_caller_descheduling[None] _____
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002D2AB46C4A0>
+result = None
+
+    @pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+    def test_reload_checks_buffered_receipt_after_caller_descheduling(
+        monkeypatch: pytest.MonkeyPatch, result: str | None
+    ) -> None:
+        """A caller pause is not evidence that the worker failed to acknowledge.
+    
+        The clock crosses the unchanged deadline after writing. Only a correlated
+        positive receipt may succeed; an empty pipe must expire without another wait.
+        """
+        from civiccast.egress.gst import strategy
+    
+        clock = [0.0]
+        reads: list[float] = []
+        sleeps: list[float] = []
+    
+        class _PausedCallerServer(_ImmediateAckServer):
+            def write_line(self, text: str) -> bool:
+                written = super().write_line(text)
+                command_id = json.loads(text)["id"]
+                self._inbox.clear()
+                if result is not None:
+                    self._inbox.append(
+                        json.dumps(
+                            {
+                                "v": 1,
+                                "id": "another-command" if result == "unrelated" else command_id,
+                                "result": "accepted" if result == "unrelated" else result,
+                                "detail": None,
+                            }
+                        )
+                    )
+                clock[0] = 20.5
+                return written
+    
+            def read_line(self) -> str | None:
+                reads.append(clock[0])
+                return super().read_line()
+    
+        monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(strategy.time, "sleep", sleeps.append)
+        server = _PausedCallerServer()
+        channel = _WindowsPipeChannel("c1", server=server)
+        channel._connected_event.set()
+    
+        assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+>       assert reads == [20.5]
+E       assert [] == [20.5]
+E         
+E         Right contains one more item: 20.5
+E         Use -v to get more diff
+
+_PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
+channel    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x000002D2AB46F1A0>
+clock      = [20.5]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002D2AB46C4A0>
+reads      = []
+result     = None
+server     = <tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer object at 0x000002D2AB46D250>
+sleeps     = []
+strategy   = <module 'civiccast.egress.gst.strategy' from 'C:\\Dev\\Claude\\civiccast-u73\\civiccast\\egress\\gst\\strategy.py'>
+
+tests\egress\test_worker_pipe_seam.py:626: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  civiccast.egress.gst.strategy:strategy.py:582 worker command 68130e8f-7e23-4414-9196-683451bb4f2a lost-ack -> reissue_desired_state
+__ test_reload_checks_buffered_receipt_after_caller_descheduling[unrelated] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002D2AB46CE00>
+result = 'unrelated'
+
+    @pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+    def test_reload_checks_buffered_receipt_after_caller_descheduling(
+        monkeypatch: pytest.MonkeyPatch, result: str | None
+    ) -> None:
+        """A caller pause is not evidence that the worker failed to acknowledge.
+    
+        The clock crosses the unchanged deadline after writing. Only a correlated
+        positive receipt may succeed; an empty pipe must expire without another wait.
+        """
+        from civiccast.egress.gst import strategy
+    
+        clock = [0.0]
+        reads: list[float] = []
+        sleeps: list[float] = []
+    
+        class _PausedCallerServer(_ImmediateAckServer):
+            def write_line(self, text: str) -> bool:
+                written = super().write_line(text)
+                command_id = json.loads(text)["id"]
+                self._inbox.clear()
+                if result is not None:
+                    self._inbox.append(
+                        json.dumps(
+                            {
+                                "v": 1,
+                                "id": "another-command" if result == "unrelated" else command_id,
+                                "result": "accepted" if result == "unrelated" else result,
+                                "detail": None,
+                            }
+                        )
+                    )
+                clock[0] = 20.5
+                return written
+    
+            def read_line(self) -> str | None:
+                reads.append(clock[0])
+                return super().read_line()
+    
+        monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+        monkeypatch.setattr(strategy.time, "sleep", sleeps.append)
+        server = _PausedCallerServer()
+        channel = _WindowsPipeChannel("c1", server=server)
+        channel._connected_event.set()
+    
+        assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+>       assert reads == [20.5]
+E       assert [] == [20.5]
+E         
+E         Right contains one more item: 20.5
+E         Use -v to get more diff
+
+_PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
+channel    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x000002D2AB46C3B0>
+clock      = [20.5]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000002D2AB46CE00>
+reads      = []
+result     = 'unrelated'
+server     = <tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer object at 0x000002D2AB46CCB0>
+sleeps     = []
+strategy   = <module 'civiccast.egress.gst.strategy' from 'C:\\Dev\\Claude\\civiccast-u73\\civiccast\\egress\\gst\\strategy.py'>
+
+tests\egress\test_worker_pipe_seam.py:626: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  civiccast.egress.gst.strategy:strategy.py:582 worker command 274e3b63-6892-4952-9d19-0571873534c0 lost-ack -> reissue_desired_state
+=========================== short test summary info ===========================
+FAILED tests/egress/test_worker_pipe_seam.py::test_reload_checks_buffered_receipt_after_caller_descheduling[accepted]
+FAILED tests/egress/test_worker_pipe_seam.py::test_reload_checks_buffered_receipt_after_caller_descheduling[error]
+FAILED tests/egress/test_worker_pipe_seam.py::test_reload_checks_buffered_receipt_after_caller_descheduling[None]
+FAILED tests/egress/test_worker_pipe_seam.py::test_reload_checks_buffered_receipt_after_caller_descheduling[unrelated]
+4 failed, 34 deselected in 1.48s
