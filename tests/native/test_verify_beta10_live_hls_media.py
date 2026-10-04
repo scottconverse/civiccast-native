@@ -1506,6 +1506,7 @@ def test_snapshot_segment_fails_closed_on_mid_read_rewrite(tmp_path: Path) -> No
 
     real_read = _os.read
     state = {"touched": False}
+    original_mtime = src.stat().st_mtime_ns
 
     def rewriting_read(fd, n):
         if not state["touched"]:
@@ -1513,7 +1514,9 @@ def test_snapshot_segment_fails_closed_on_mid_read_rewrite(tmp_path: Path) -> No
             # Same SIZE, different bytes, and a later mtime -> identity changes.
             with src.open("wb") as fh:
                 fh.write(b"\x00" * 4096)
-            _os.utime(src, None)
+            # Wall-clock utime(None) can equal the creation timestamp on a
+            # fast Windows runner. Make the identity change deterministic.
+            _os.utime(src, ns=(original_mtime + 1_000_000_000, original_mtime + 1_000_000_000))
         return real_read(fd, n)
 
     monkeypatched = False

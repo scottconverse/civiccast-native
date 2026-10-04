@@ -553,6 +553,15 @@ jobs:
       - name: Install project (dev)
         run: uv sync --group dev
 
+      - name: Provision reviewed FFmpeg for native media proofs
+        # The verifier deliberately resolves the installed native tools or PATH;
+        # a clean hosted Windows runner has neither. Reuse the component builder's
+        # existing locked acquisition (size/SHA/license pins), not an unpinned
+        # package-manager install or a skipped subcc proof.
+        timeout-minutes: 15
+        run: |
+          uv run python -c "import os; from pathlib import Path; from scripts.build_native_ffmpeg_pack import acquire_ffmpeg_pack_sources; root = acquire_ffmpeg_pack_sources(Path(os.environ['RUNNER_TEMP']) / 'civiccast-ffmpeg-test-cache'); Path(os.environ['GITHUB_PATH']).open('a', encoding='utf-8').write(str(root / 'bin') + '\n')"
+
       - name: Run tests/native (junit)
         # PR #143 review fix: -m "not integration" excludes
         # test_upgrade_engine_postgres.py's real-Postgres D3 engine proof.
