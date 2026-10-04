@@ -125,6 +125,16 @@ def session_factory(engine: Engine):  # type: ignore[no-untyped-def]
 
 
 @pytest.fixture(autouse=True)
+def _live_route_auth_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the test bootstrap token, not an inherited operator credential.
+
+    Individual role tests may still explicitly configure their own tokens
+    after this fixture runs. Production lifecycle-store fallback is unchanged.
+    """
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _live_hls_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """``/api/public/live/current`` advertises a local manifest only when the
     ``hls`` sink's folder is inside the root the media router may serve AND
