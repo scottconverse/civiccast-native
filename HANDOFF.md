@@ -72,7 +72,12 @@ This file is a pointer, not a log.
   modules together: `44 passed in 29.67s`. CI's doc-render failures explicitly
   name missing Pandoc; the local prerequisite repair addresses that cause.
   The two-second constructor test failed on CI without entering either held
-  model builder; it passes locally and remains under timing-contract review.
+  model builder. It now checks constructor builder entry directly, recording
+  attempts before raising so swallowed errors cannot evade the assertion.
+  Root module rerun: `9 passed in 8.07s`; author direct and swallowed-entry
+  mutations each fail both parameters. No product timeout was raised; other
+  constructor responsiveness checks remain unchanged. Receipt: oversight
+  reports/U87-CONSTRUCTOR-BOUNDARY-RECONCILIATION.md.
   Fresh CI artifacts are retained at oversight evidence/u87-ci-eb94-37230256695.
   Producer metadata binds run 37230256695 attempt 1 to exact eb94. Six registered
   PostgreSQL backup/restore, SQLite restore positive/falsification and release-

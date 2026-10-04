@@ -159,13 +159,15 @@ def test_inline_model_selection_is_not_constructor_io(monkeypatch, tmp_path, fea
         "civiccast.schema_check.check_schema_currency",
         lambda source: SchemaStatus("current", "head", "head"),
     )
-    entered, release, constructed = threading.Event(), threading.Event(), threading.Event()
+    entered, release = threading.Event(), threading.Event()
+    constructing = True
     apps = []
     calls = []
     runtime, translator = object(), object()
 
     def caption(service, **kwargs):
         calls.append("captions")
+        assert not constructing, "caption model selection ran during construction"
         if feature == "captions":
             entered.set()
             assert release.wait(8)
@@ -173,6 +175,7 @@ def test_inline_model_selection_is_not_constructor_io(monkeypatch, tmp_path, fea
 
     def translation(service):
         calls.append("translation")
+        assert not constructing, "translation model selection ran during construction"
         if feature == "translation":
             entered.set()
             assert release.wait(8)
@@ -190,14 +193,12 @@ def test_inline_model_selection_is_not_constructor_io(monkeypatch, tmp_path, fea
         ),
     )
 
-    def construct():
-        apps.append(module.create_app())
-        constructed.set()
-
-    thread = threading.Thread(target=construct)
-    thread.start()
     try:
-        assert constructed.wait(2), "inline model selection must not block construction"
+        # A cold route/app assembly can take longer on a shared CI runner.
+        # Prove the deferred builder boundary directly, not assembly throughput:
+        # either builder called here raises before it can enter the held work.
+        apps.append(module.create_app())
+        constructing = False
         assert not entered.is_set() and not calls
         app = apps[0]
         app.state.durable_storage_backfill = lambda: None
@@ -218,8 +219,6 @@ def test_inline_model_selection_is_not_constructor_io(monkeypatch, tmp_path, fea
             assert app.state.caption_tap_worker._translation_provider is translator
     finally:
         release.set()
-        thread.join(3)
-        assert not thread.is_alive()
         for app in apps:
             assert app.state.health_schema_owner.close(2)
             assert app.state.as_run_outbox.close()
