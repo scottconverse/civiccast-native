@@ -420,18 +420,24 @@ def test_actual_lifespan_does_not_compete_with_owned_worker_preparation(
         if close_held:
             assert not app.state.health_schema_owner.close(0.01)
         release.set()
-        app.state.health_schema_owner._thread.join(2)
-        assert not app.state.health_schema_owner._thread.is_alive()
         if close_held:
+            app.state.health_schema_owner._thread.join(2)
+            assert not app.state.health_schema_owner._thread.is_alive()
             assert not worker_started.is_set() and prepares == []
             assert not app.state.durable_storage_active
         else:
             assert worker_started.wait(1)
+            deadline = time.monotonic() + 1
+            while not prepares and time.monotonic() < deadline:
+                time.sleep(0.01)
             assert prepares == ["prepared"]
             # Re-enter the owner callback for already-active storage: no
             # duplicate build or prewarm, and fresh attestation converges.
             original_request(invalidate=True)
-            app.state.health_schema_owner._thread.join(2)
+            deadline = time.monotonic() + 2
+            while app.state.schema_status.state != "current" and time.monotonic() < deadline:
+                time.sleep(0.01)
+            assert app.state.health_schema_owner._thread.is_alive(), "active cadence remains owned"
             with httpx.Client(timeout=1, trust_env=False) as client:
                 body = client.get(f"http://127.0.0.1:{port}/health").json()
             assert body["status"] == "healthy"

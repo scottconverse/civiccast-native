@@ -15,6 +15,175 @@ from civiccast.health_schema import HealthSchemaOwner
 from civiccast.schema_check import SchemaStatus
 
 
+def test_active_owner_refreshes_without_http_poll_and_keeps_real_freshness(monkeypatch):
+    state = SimpleNamespace(durable_storage_active=True, durable_storage_url="db")
+    now = [0.0]
+    calls = []
+    entered, release = threading.Event(), threading.Event()
+
+    def read(source):
+        calls.append(source)
+        if len(calls) == 2:
+            entered.set()
+            assert release.wait(2)
+        return SchemaStatus("current", "head", "head")
+
+    monkeypatch.setattr("civiccast.schema_check.check_schema_currency", read)
+    owner = HealthSchemaOwner(
+        state, sync_storage=lambda: None, source=lambda: "db", ttl_seconds=1, clock=lambda: now[0]
+    )
+    try:
+        owner.start()
+        _wait(lambda: state.schema_status.state == "current")
+        now[0] = 0.6
+        owner._wake.set()
+        assert entered.wait(1), "refresh must start before expiry without a request"
+        assert owner.request().state == "current"
+        now[0] = 1.1
+        for _ in range(10):
+            assert owner.request().state == "unknown"
+        assert calls == ["db", "db"]
+        assert state.schema_status_checked_monotonic == 0
+        release.set()
+        _wait(lambda: state.schema_status_checked_monotonic == 1.1)
+        assert owner.request().state == "current"
+    finally:
+        release.set()
+        assert owner.close(2)
+
+
+def test_active_owner_close_blocks_late_publication_and_new_refresh(monkeypatch):
+    state = SimpleNamespace(durable_storage_active=True, durable_storage_url="db")
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def read(source):
+        calls.append(source)
+        entered.set()
+        assert release.wait(2)
+        return SchemaStatus("current", "head", "head")
+
+    monkeypatch.setattr("civiccast.schema_check.check_schema_currency", read)
+    owner = HealthSchemaOwner(
+        state, sync_storage=lambda: None, source=lambda: "db", ttl_seconds=0.1
+    )
+    try:
+        owner.start()
+        assert entered.wait(1)
+        assert not owner.close(0.01)
+        release.set()
+        owner._thread.join(1)
+        assert owner.request().state == "unknown"
+        assert state.schema_status_checked_monotonic is None
+        owner.start()
+        assert calls == ["db"]
+    finally:
+        release.set()
+        assert owner.close(2)
+
+
+def test_active_owner_retains_actual_timed_out_future(monkeypatch):
+    state = SimpleNamespace(durable_storage_active=True, durable_storage_url="db")
+    entered, release, exited = threading.Event(), threading.Event(), threading.Event()
+    calls = []
+
+    def read(source):
+        calls.append(source)
+        if len(calls) == 1:
+
+            def blocked():
+                entered.set()
+                try:
+                    assert release.wait(2)
+                finally:
+                    exited.set()
+
+            try:
+                run_bounded(blocked, ceiling_seconds=0.02)
+            except TimeoutError:
+                return SchemaStatus("unknown")
+        return SchemaStatus("current", "head", "head")
+
+    monkeypatch.setattr("civiccast.schema_check.check_schema_currency", read)
+    owner = HealthSchemaOwner(
+        state, sync_storage=lambda: None, source=lambda: "db", ttl_seconds=0.1
+    )
+    try:
+        owner.start()
+        assert entered.wait(1)
+        _wait(lambda: state.schema_status_checked_monotonic is not None)
+        time.sleep(0.12)
+        for _ in range(10):
+            owner.request()
+            owner._wake.set()
+        assert calls == ["db"]
+        release.set()
+        assert exited.wait(1)
+        _wait(lambda: state.schema_status.state == "current")
+        assert calls == ["db", "db"]
+    finally:
+        release.set()
+        assert owner.close(2)
+
+
+def test_start_during_operation_owns_eventual_refresh_without_poll(monkeypatch):
+    from civiccast import health_provenance
+
+    monkeypatch.setattr(health_provenance, "ENABLED", True)
+    state = SimpleNamespace(durable_storage_active=True, durable_storage_url="db")
+    calls = []
+    monkeypatch.setattr(
+        "civiccast.schema_check.check_schema_currency",
+        lambda source: calls.append(source) or SchemaStatus("current", "head", "head"),
+    )
+    owner = HealthSchemaOwner(state, sync_storage=lambda: None, source=lambda: "db", ttl_seconds=1)
+    try:
+        with owner.operation():
+            owner.start()
+            assert owner._thread is not None and owner._thread.is_alive(), (
+                "start must own eventual work during activation"
+            )
+            assert owner.diagnostic_snapshot()["phase"] == "queued"
+            time.sleep(0.05)
+            assert calls == []
+        _wait(lambda: state.schema_status.state == "current")
+        assert calls == ["db"]
+        assert owner.diagnostic_snapshot()["attempt"] == 1
+    finally:
+        assert owner.close(2)
+
+
+def test_active_owner_rejects_old_source_and_converges_without_poll(monkeypatch):
+    source = ["old"]
+    state = SimpleNamespace(durable_storage_active=True, durable_storage_url="old")
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+
+    def read(url):
+        calls.append(url)
+        if url == "old":
+            entered.set()
+            assert release.wait(2)
+        return SchemaStatus("current", url, "head")
+
+    def sync():
+        state.durable_storage_url = source[0]
+
+    monkeypatch.setattr("civiccast.schema_check.check_schema_currency", read)
+    owner = HealthSchemaOwner(state, sync_storage=sync, source=lambda: source[0], ttl_seconds=1)
+    try:
+        owner.start()
+        assert entered.wait(1)
+        source[0] = "new"
+        release.set()
+        _wait(lambda: state.schema_status.db_revision == "new")
+        assert calls == ["old", "new"]
+        assert owner.request().db_revision == "new"
+    finally:
+        release.set()
+        assert owner.close(2)
+
+
 def _wait(predicate) -> None:
     deadline = time.monotonic() + 2
     while not predicate() and time.monotonic() < deadline:
@@ -260,7 +429,9 @@ def test_diagnostic_real_schema_check_phase_is_not_guessed(monkeypatch, phase):
         checks, "expected_migration_head", lambda: held("head") if phase == "head" else "head"
     )
     monkeypatch.setattr(
-        checks, "read_db_revision", lambda source: held("head") if phase == "read" else ("old" if phase == "graph" else "head")
+        checks,
+        "read_db_revision",
+        lambda source: held("head") if phase == "read" else ("old" if phase == "graph" else "head"),
     )
     monkeypatch.setattr(
         checks,

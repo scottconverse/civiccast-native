@@ -754,7 +754,7 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     # (pinned by test_create_app_does_not_call_engine_connect).
     # The owner's serialized callback also handles storage activated before
     # lifespan. Never compete on supervisor preparation locks on this loop.
-    app.state.health_schema_owner.request(invalidate=True)
+    app.state.health_schema_owner.start()
     try:
         yield
     finally:

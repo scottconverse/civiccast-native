@@ -59,9 +59,12 @@ class HealthSchemaOwner:
         self._clock = clock
         self._lock = threading.Lock()
         self._thread: threading.Thread | None = None
+        self._one_shot_done = False
         self._work: list[Future[Any]] = []
         self._epoch = 0
         self._closed = False
+        self._active = False
+        self._wake = threading.Event()
         self._operations: dict[threading.Thread, int] = {}
         self._owned_threads: list[threading.Thread] = []
         self._cached_source = source()
@@ -156,7 +159,7 @@ class HealthSchemaOwner:
         # The attempt must finish before reading its now-immutable work list.
         return (
             bool(self._operations)
-            or bool(self._thread and self._thread.is_alive())
+            or bool(self._thread and self._thread.is_alive() and not self._one_shot_done)
             or any(not future.done() for future in self._work)
         )
 
@@ -169,6 +172,38 @@ class HealthSchemaOwner:
         """Invalidate without starting work (also safe during construction)."""
         with self._lock:
             self._invalidate()
+            self._wake.set()
+
+    def start(self) -> None:
+        """Begin lifespan-owned preexpiry refresh; construction stays inert."""
+        with self._lock:
+            if self._closed or self._active:
+                return
+            self._active = True
+            self._invalidate()
+            if not self._thread or not self._thread.is_alive() or self._one_shot_done:
+                self._one_shot_done = False
+                self._queue_diagnostic()
+                self._thread = threading.Thread(
+                    target=self._run, name="civiccast-health-schema", daemon=True
+                )
+                try:
+                    self._thread.start()
+                except Exception:
+                    self._thread = None
+                    self._active = False
+                    raise
+            self._wake.set()
+
+    def _queue_diagnostic(self) -> None:
+        if self._diagnostics_enabled:
+            self._diagnostic = None
+            with suppress(Exception):
+                self._attempt += 1
+                now = self._clock()
+                self._diagnostic = _RefreshDiagnostic(
+                    self._attempt, self._epoch, "queued", now, None, now
+                )
 
     @contextmanager
     def operation(self) -> Iterator[bool]:
@@ -233,6 +268,7 @@ class HealthSchemaOwner:
             if invalidate or current_source != self._cached_source:
                 self._cached_source = current_source
                 self._invalidate()
+                self._wake.set()
             last = self._state.schema_status_checked_monotonic
             status: SchemaStatus = self._state.schema_status
             if last is not None and self._clock() - last < self._ttl:
@@ -240,15 +276,9 @@ class HealthSchemaOwner:
                     return SchemaStatus(state="unknown")
                 return status
             if not self._busy():
+                self._one_shot_done = False
                 self._work = []
-                if self._diagnostics_enabled:
-                    self._diagnostic = None
-                    with suppress(Exception):
-                        self._attempt += 1
-                        now = self._clock()
-                        self._diagnostic = _RefreshDiagnostic(
-                            self._attempt, self._epoch, "queued", now, None, now
-                        )
+                self._queue_diagnostic()
                 self._thread = threading.Thread(
                     target=self._run, name="civiccast-health-schema", daemon=True
                 )
@@ -262,6 +292,39 @@ class HealthSchemaOwner:
             return SchemaStatus(state="unknown")
 
     def _run(self) -> None:
+        while True:
+            with self._lock:
+                if self._closed:
+                    return
+                blocked = bool(self._operations) or any(not f.done() for f in self._work)
+            if blocked:
+                self._wake.wait(0.5)
+                self._wake.clear()
+                continue
+            self._run_once()
+            while True:
+                with self._lock:
+                    if self._closed or not self._active:
+                        self._one_shot_done = True
+                        return
+                    current_source = self._source()
+                    if current_source != self._cached_source:
+                        self._cached_source = current_source
+                        self._invalidate()
+                    last = self._state.schema_status_checked_monotonic
+                    # Retain uncancellable actual driver work and arbitrary
+                    # activation operations; never begin a competing attempt.
+                    blocked = bool(self._operations) or any(not f.done() for f in self._work)
+                    remaining = 0 if last is None else last + self._ttl / 2 - self._clock()
+                    if not blocked and remaining <= 0:
+                        self._work = []
+                        self._queue_diagnostic()
+                        break
+                    delay = 0.5 if blocked else remaining
+                self._wake.wait(delay)
+                self._wake.clear()
+
+    def _run_once(self) -> None:
         from civiccast.schema_check import check_schema_currency
 
         with self._lock:
@@ -320,6 +383,7 @@ class HealthSchemaOwner:
         """Forbid late publication/new work, then finitely join the owner."""
         with self._lock:
             self._closed = True
+            self._wake.set()
             self._state.durable_storage_active = False
             self._invalidate()
             thread = self._thread

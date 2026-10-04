@@ -231,6 +231,14 @@ as an outbox not assembled in an ephemeral configuration, makes the receipt
 unavailable. The first attempted capture is not retried, even if setup later
 converges. HTTP 200 alone is neither loaded-code attestation nor healthy readiness.
 
+Schema readiness is refreshed proactively by the app lifespan's sole owned
+refresh thread at half the existing five-second TTL. Construction starts no
+thread. Expired results still return unknown; a blocked refresh never advances
+the checked timestamp, and unfinished actual DB work prevents overlapping reads.
+Close wakes the cadence and forbids late publication. This avoids request-driven
+cyclic degradation without extending freshness or promising that every live
+refresh completes on time.
+
 The same default-off flag also enables an in-memory schema-refresh snapshot on
 the existing refresh worker. `diagnostic_snapshot()` records fixed phases
 `started`, `sync_storage`, `head`, `read`, `graph`, `complete`, `retained_work`,
