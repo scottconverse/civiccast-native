@@ -3,7 +3,7 @@
 #
 # scripts/ci/install_media_test_prerequisites.sh
 #
-# Shared "install ffmpeg + tsduck for the media test suites" step for
+# Shared media and manual-link test prerequisites (ffmpeg, tsduck, pandoc) for
 # hosted-ubuntu CI jobs -- ci-test.yml's `Unit tests` job and
 # deterministic-detectors.yml's `randomized-suite` job. Both jobs used to
 # carry a near-identical copy of this shell inline; consolidated here so a
@@ -142,6 +142,13 @@ if ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; 
   apt_install_with_mirror_fallback -y ffmpeg
 fi
 
+# The ordinary suite checks help destinations against the real manual's
+# Pandoc heading IDs. Both full-suite jobs need the same existing docs tool.
+if ! command -v pandoc >/dev/null 2>&1; then
+  timeout "$APT_TIMEOUT_SECS" "${APT[@]}" update
+  apt_install_with_mirror_fallback -y pandoc
+fi
+
 # #151 TS-relay behavioral splice test (skips without tsp).
 #
 # GauntletGate T5: this tolerates a failed install with a warning and has NO
@@ -160,3 +167,4 @@ trap - ERR
 
 ffmpeg -version | head -n 1
 ffprobe -version | head -n 1
+pandoc --version | head -n 1
