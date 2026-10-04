@@ -4,21 +4,34 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
-- Packaged candidate source is `84a283077f4ba9359113c7bbf4189095393c08bc`,
+- Current packaged candidate is `deb2adfa9dab7e41c5d9a64fcd2bebb95b26723d`.
+  Build 37211323548 passed all three jobs, independently confirmed at
+  2026-10-04 09:38 MDT. Both installer executables have valid signatures.
+  This candidate includes the generated-slate preparation and bounded HTTP-log
+  repairs described below. Clean installation and actual product-engine output
+  remain pending; FFmpeg fallback does not satisfy engine acceptance. The local
+  test-only commits `7c1e5500` and `2afcd8a3` are not in this package: they
+  reconcile the accepted U43 window and U63 immediate-warm contracts, with
+  independent reruns of 29 and 8 passing tests respectively. No runtime changes
+  or deleted tests are in those two commits.
+- Previous packaged candidate source is `84a283077f4ba9359113c7bbf4189095393c08bc`,
   verified remotely on PR 232; original self-hosted build 37204600121 passed.
   Both setup and First Install executables have valid Authenticode signatures.
-  Automatic clean Gate A 37207093775 is running against that exact kit;
+  Automatic clean Gate A 37207093775 finished with a host-cleanup failure;
   database provisioning and mandatory station activation/self-tests passed.
   The installer exited 0, Edge rendered both interfaces, and the real upload/
   publish/offline-caption loop passed. T4 product-engine output did not pass:
   no worker appeared during its window while generated silent-slate preparation
   resampled loudness; the existing test substituted FFmpeg fallback. This is
   not a product-engine transport pass. The unchanged 20-minute health observation
-  passed four samples with zero unhealthy results; host teardown is pending.
+  passed four samples with zero unhealthy results. Host teardown exceeded its
+  unchanged 300-second deadline; the owned Sandbox later exited naturally and
+  all five mapped-directory handle checks passed before the next build began.
+  No process was killed, and the original failed workflow verdict is preserved.
   Sustained three-channel speech acceptance remains pending.
   Candidate CI: installer compile 37204558280 and docs 37204558277 passed;
   lint 37204558284 and tests 37204558265 failed. No merge or release claim.
-- Next-source generated-slate preparation now reuses verified internal canonical
+- The current candidate's generated-slate preparation reuses verified internal canonical
   silence without program loudness analysis or re-encoding. Provenance binds
   bytes, file identity, profile and segment fields; disk names and serialized
   plans cannot claim that trust. Root independently passed 12 focused checks
@@ -27,17 +40,17 @@ This file is a pointer, not a log.
   Author affected run passed 208 with two unchanged-HEAD cache-fixture failures;
   final focused run including real media passed 21. Actual packaged startup
   remains to be rerun; no timeout or test-verdict relaxation was made.
-- Next-source supervised HTTP access/error logs rotate separately in
+- The current candidate's supervised HTTP access/error logs rotate separately in
   `control_plane-http.log` (10 MiB plus ten backups), without forced fsync on
   each request. Existing application diagnostics retain their durable handler.
   Root independently passed 16 affected logging/spawn checks in 4.82s; the
   forced-fsync counterexample failed. Both manual artifact freshness checks
   passed. Raw startup/print/native stderr and Postgres remain unbounded;
   this is not a total process-output cap or installed-package evidence.
-- Next-source copy checkpoint `32fbee33` corrects the activation step-67
+- Included copy checkpoint `32fbee33` corrects the activation step-67
   dialog: disk/extraction/missing-file failures are possible, and full child
   details are in the setup window, not the step log. Existing NSIS checks
-  passed 40 tests; independent copy review accepted. Not in the active build.
+  passed 40 tests; independent copy review accepted. Included in candidate deb2.
 - Four old guard tests called ceiling-search APIs explicitly retired by U43.
   They now assert the settled decoded-peak pad, cap, variant order and measured
   trim correction without restoring old product behavior. Author run passed
