@@ -5,8 +5,10 @@ This file is a pointer, not a log.
 ## Active development checkpoint - 2026-10-04
 
 - Frozen remote candidate: `eb94e465fe1f2b5335f0ad90620e1a01c041812e`,
-  independently matched by ls-remote. Local commits after it reconcile tests,
-  CI prerequisites and documentation policy; they do not change shipping runtime.
+  independently matched by ls-remote. Local follow-ups reconcile tests,
+  CI prerequisites and documentation policy. The subsequent fallback audio-tail
+  target correction changes runtime source and requires a new package; the
+  running eb94 acceptance job cannot prove that correction.
   Draft PR 232 body is bound to the frozen source,
   terminal original-soak FAIL and restored original baseline. Exact self-hosted
   candidate build 37230261698 completed SUCCESS in all three jobs, including
@@ -22,6 +24,25 @@ This file is a pointer, not a log.
   37230256681 failed solely at Ruff formatting (23 files); docs 37230256692 and
   installer compile 37230256805 succeeded. Windows dual-runtime guard passed.
   v13 remains sole lab operator; no manual VM may overlap automatic Gate A.
+- New fallback audio-tail correction supplies the published switch bound when
+  no outgoing audio end was measured; an empty target previously released the
+  guard immediately. Existing two sensitive tests failed in the saved baseline.
+  Root independently ran five affected egress modules: `185 passed, 2 skipped
+  in 9.89s` (two explicit real-GStreamer cases unrun in that interpreter), plus
+  relay logging: `17 passed in 14.72s`. Engine mypy and scoped Ruff pass.
+  Existing deadline/quiet behavior is checked at 290/310 ms and 19/21 ms.
+  Author observed a separate logging timing failure during overlapping work:
+  1.68 seconds supervised versus 1.27 seconds baseline at the unchanged 1.10x
+  bound. Root's passing run does not erase that counterevidence; diagnosis
+  remains open. Review: oversight reports/U87-AUDIO-TAIL-INDEPENDENT-REVIEW.md.
+  Six egress fixture contracts are reconciled without restoring discarded code.
+- Rollback database replacement implementation is partially blocked by the
+  local Agent Pipeline plugin's text-based tool guard, which rejects SQL text
+  inside source patches and even read-only searches. No bypass attempted.
+  Owner was asked asynchronously for a narrowly tested classification repair
+  retaining destructive-execution protections. Non-destructive backup/verify
+  work continues on a private loopback PostgreSQL instance. Do not call the
+  unfinished database restore path complete or narrow away shared-database support.
 - Local verification corrections: `61ef21d8` provisions Pandoc through the
   existing media-prerequisite script; `1bf8b739` exercises the actual public HLS
   manifest publisher; `14e00b38` selects a validated available H264 encoder;

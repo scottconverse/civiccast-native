@@ -31,6 +31,12 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Development fallback-to-program transitions retain the retiring audio-tail
+  fence until its pipeline-time bound is reached or the existing deadline
+  expires. The measured-end path, quiet interval and segment-boundary release
+  remain unchanged. This source/test correction is not installed transition
+  or sustained-soak acceptance.
+
 - Development worker control checks a buffered, correlated acknowledgement
   before reporting it lost when the caller resumes after a scheduling pause.
   Missing or unrelated receipts still expire at the existing five-second bound;

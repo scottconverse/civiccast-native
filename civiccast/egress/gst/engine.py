@@ -6318,7 +6318,8 @@ class GstPlayoutEngine:
                 # EOS'd immediately, or a forced switch before any buffer): fall
                 # back to the pipeline's own running time. Never 0 -- that would
                 # rewind the output timeline by the whole uptime. With no
-                # per-stream bound to read, the fence stays unbounded.
+                # measured per-stream end, this same pipeline-time switch point
+                # bounds both the selector fence and the audio mux-tail target.
                 pipeline_running_time_ms = self._pipeline_running_time_ms()
                 switch_running_time = pipeline_running_time_ms * int(Gst.MSECOND)
                 # Nothing was measured, so there are no two ends to compare and
@@ -7151,6 +7152,13 @@ class GstPlayoutEngine:
                 # audio 3.605 against a switch point of 2.533). The fence may not
                 # come off until an arrival reaches it.
                 pending.setdefault("mux_tail_target", {})[pad_name] = int(seed["end"])
+            else:
+                # A fallback has no measured retiring end, but its published
+                # switch point still bounds the tail. An empty target map would
+                # release the fence at selector mutation without waiting for it.
+                pending.setdefault("mux_tail_target", {})[pad_name] = int(
+                    pending["old_tail_cutoff_ns"]
+                )
             try:
                 probe_id = pad.add_probe(Gst.PadProbeType.BUFFER, _mux_tail_cutoff_probe, pending)
             except Exception as exc:
