@@ -3389,7 +3389,7 @@ class GstPlayoutEngine:
                         if structure.has_field(key):
                             with contextlib.suppress(Exception):
                                 entry[key] = int(structure.get_value(key))
-            history = list(self._u59_qos) + [entry]
+            history = [*self._u59_qos, entry]
             self._u59_qos = tuple(history[-_U59_QOS_HISTORY:])
 
     def _u59_record_leg(self, pending: dict[str, Any]) -> None:
@@ -3507,7 +3507,7 @@ class GstPlayoutEngine:
                             entry["first_pts"] = pts
                         entry["last_pts"] = pts
             except Exception:
-                pass
+                return Gst.PadProbeReturn.OK
             return Gst.PadProbeReturn.OK
 
         return _u59_piece_probe
@@ -3868,7 +3868,7 @@ class GstPlayoutEngine:
         self._u59_lag_total = float(self._u59_lag_total or 0.0) + (
             audio_seconds - video_seconds
         )
-        samples = list(self._u59_lag_samples) + [(now, self._u59_lag_total)]
+        samples = [*self._u59_lag_samples, (now, self._u59_lag_total)]
         self._u59_lag_samples = tuple(self._u59_prune_lag_samples(samples, now))
 
     @staticmethod
@@ -3884,8 +3884,7 @@ class GstPlayoutEngine:
         cutoff = now - _U59_LAG_WINDOW_S
         inside = [sample for sample in samples if sample[0] > cutoff]
         before = [sample for sample in samples if sample[0] <= cutoff]
-        keep = ([before[-1]] if before else []) + inside[-(_U59_LAG_SAMPLES - 1):]
-        return keep
+        return ([before[-1]] if before else []) + inside[-(_U59_LAG_SAMPLES - 1):]
 
     def _u59_lag_growth(self, now: float) -> float | None:
         """The lag's growth across the window ending now, or ``None`` while the
@@ -4040,7 +4039,7 @@ class GstPlayoutEngine:
         prefers the LAG witness (it measures the deficit in seconds -- the same
         quantity as the spread) and falls back to the round-4 rate witness. When
         neither fired the line is byte-identical to round 4's."""
-        ends = {label: end for label, end in measured_ends}
+        ends = dict(measured_ends)
         parts = [
             "WARN: reload switch-at-shorter-leg bound exceeded",
             f"reload_id={pending.get('txn_id')}",
@@ -7274,9 +7273,7 @@ class GstPlayoutEngine:
         ):
             return False
         last = pending.get("mux_last_arrival_t")
-        if last is not None and time.monotonic() - last < _MUX_TAIL_QUIET_S:
-            return False
-        return True
+        return not (last is not None and time.monotonic() - last < _MUX_TAIL_QUIET_S)
 
     def _defer_mux_tail_release(self, pending: dict[str, Any]) -> None:
         """U56 round 5: hold the mux fence past the first mutation, bounded.

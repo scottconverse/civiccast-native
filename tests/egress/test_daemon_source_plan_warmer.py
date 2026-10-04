@@ -25,9 +25,9 @@ from civiccast.egress.daemon import EgressDaemon
 from civiccast.egress.models import (
     CanonicalProfile,
     EgressConfig,
+    EgressSinkSpec,
     EgressSourcePlan,
     EgressSourceSegment,
-    EgressSinkSpec,
 )
 from civiccast.egress.store import InMemoryEgressStore
 
