@@ -1406,17 +1406,22 @@ def test_ws3r3_005_drifting_one_bound_code_module_independently_invalidates_the_
     real_registry = cce.load_registry(REPO_ROOT / "docs" / "claims" / "claims.yaml")
     work = tmp_path / "work"
     _copy_registry_referenced_files(work, real_registry)
+    registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
+    baseline = set(cce.blob_drift_violations(work, registry))
     target = work / module_path
     target.write_text(target.read_text(encoding="utf-8") + "\n# UNBOUND EDIT.\n", encoding="utf-8")
 
-    registry = cce.load_registry(work / "docs" / "claims" / "claims.yaml")
-    violations = cce.blob_drift_violations(work, registry)
-    assert violations, f"expected a blob-drift violation after mutating {module_path}"
-    assert all(module_path in v for v in violations), (
+    violations = set(cce.blob_drift_violations(work, registry))
+    introduced = violations - baseline
+    # The independent at-HEAD checks still reject real registry drift. This
+    # counterexample must prove its own edit, not borrow an unrelated failure.
+    assert introduced, f"expected a new blob-drift violation after mutating {module_path}"
+    assert all(module_path in v for v in introduced), (
         "mutating exactly one file must not implicate any other input path",
-        violations,
+        introduced,
     )
-    assert any(claim_id in v for v in violations), (claim_id, violations)
+    assert any(claim_id in v for v in introduced), (claim_id, introduced)
+    assert {v for v in baseline if module_path not in v} <= violations
 
 
 # ===========================================================================
