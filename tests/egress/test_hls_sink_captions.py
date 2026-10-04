@@ -24,6 +24,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -569,6 +570,10 @@ def _assert_independently_decodable(segment: Path) -> None:
     assert result.stderr.strip() == "", f"{segment.name} decoded with errors: {result.stderr}"
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="requires native Windows packaged Python/GI; generic FFmpeg HLS proof runs separately",
+)
 def test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence(tmp_path: Path) -> None:
     """Real packaged GStreamer -> real HlsSink copy -> captioned, playable HLS.
 
