@@ -895,11 +895,11 @@ def test_stale_playlist_removal_never_acts_on_a_cached_resolution(
     assert not (folder / "playlist.m3u8").exists()
 
 
-def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
+def test_start_clears_the_old_playlist_when_rebinding_a_live_hls_relay(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # A crash-relaunch of the encoder alone: the relay child keeps writing the
-    # same rolling window, so residents' players must not lose the manifest.
+    # U51 supersedes the old carry-forward expectation: a genuine new session
+    # must not advertise fossil segments from the previous broadcast.
     from civiccast.egress.hls_relay import HlsRelaySupervisor
 
     root = tmp_path / "hls-root"
@@ -924,11 +924,12 @@ def test_start_leaves_the_playlist_alone_while_the_hls_relay_is_still_alive(
     assert relay.is_alive("gov") is True
     (folder / "playlist.m3u8").write_text("#EXTM3U\n", encoding="utf-8")
 
-    # The encoder is gone but the relay is not: an in-place relaunch.
+    # The encoder is gone but the relay is not: the new session rebinds it.
     daemon._processes["gov"].returncode = 1  # type: ignore[attr-defined]
     daemon.process_once("gov")
 
-    assert (folder / "playlist.m3u8").exists()
+    assert not (folder / "playlist.m3u8").exists()
+    assert relay.is_alive("gov") is True
 
 
 def test_daemon_gives_the_relay_its_work_dir_so_child_stderr_lands_beside_the_worker_log(
@@ -999,9 +1000,8 @@ def test_crash_relaunch_rebinds_the_channels_hls_relay_to_the_new_worker_session
 ) -> None:
     # U21: the relay child corrects input PTS discontinuities itself and keeps the
     # resulting per-stream offset for the rest of its life, so a relaunched worker
-    # must not inherit the previous worker's relay. The window on disk is still
-    # carried forward (the manifest must survive the relaunch), but the CHILD
-    # writing it from here on is a new one.
+    # must not inherit the previous worker's relay. U51 also clears its stale
+    # window before the new child begins publishing fresh segments.
     from civiccast.egress.hls_relay import HlsRelaySupervisor
 
     root = tmp_path / "hls-root"
@@ -1048,7 +1048,7 @@ def test_crash_relaunch_rebinds_the_channels_hls_relay_to_the_new_worker_session
     assert relay_calls[0] == relay_calls[1], "the rebound relay must keep the same udp port"
     assert relay_procs[0].terminated
     assert not relay_procs[1].terminated
-    assert (folder / "playlist.m3u8").exists()
+    assert not (folder / "playlist.m3u8").exists()
 
 
 def test_daemon_clears_active_cg_overlay_when_encoder_exits(tmp_path: Path) -> None:
@@ -2309,7 +2309,7 @@ def test_stop_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
     # ``_request_reload``'s) is unconditional regardless of any command_id,
     # so the matching rule under test elsewhere is irrelevant here.
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)}
 
     store.enqueue_command(_command("stop"))
     daemon.process_once("gov")
@@ -2445,7 +2445,7 @@ def test_drain_with_no_live_process_clears_the_recorded_rollover_plan_end(
     # command_id=None: unscoped -- ``_drain``'s process-is-None pop is
     # unconditional, so no id needs to match here.
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)}
 
     store.enqueue_command(_command("drain"))
     daemon.process_once("gov")  # _drain: process is None -> STOPPED
@@ -2774,7 +2774,7 @@ def test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_off_air
     # the unscoped entry is still sitting there, untouched, for lack of a
     # match; it did NOT wrongly bind to whichever reload drained first.
     assert strategy.switch_at_end_of_current_calls == [True, True]
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False)}
+    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)}
 
     # Only a genuine off-air transition clears it -- an operator stop, here.
     store.enqueue_command(
@@ -2846,7 +2846,7 @@ def test_command_id_scoping_closes_the_immediate_crash_relaunch_leak(tmp_path: P
     assert len(started) == 2  # the immediate relaunch really did happen
     # Untouched by the relaunch -- _start must never pop this (round 4).
     assert daemon._rollover_plan_end_at == {
-        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False)
+        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False, None)
     }
 
     # A wholly unrelated operator reload, drained afterward -- mismatches
@@ -2859,7 +2859,7 @@ def test_command_id_scoping_closes_the_immediate_crash_relaunch_leak(tmp_path: P
     assert strategy.reload_calls == ["Mayor interview"]
     assert strategy.switch_at_end_of_current_calls == [True]  # deferred, not wrongly cut
     assert daemon._rollover_plan_end_at == {
-        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False)
+        "gov": ("auto-reload-scoped", datetime(2020, 1, 1, tzinfo=UTC), False, None)
     }
 
     # The rollover's own command_id never actually arrives (dropped, or
@@ -3016,7 +3016,7 @@ def test_retry_collision_a_stalled_retry_that_overwrites_the_recorded_value_stil
         )
     )
     assert daemon._rollover_plan_end_at == {
-        "gov": ("auto-reload-B", datetime(2020, 1, 1, tzinfo=UTC), False)
+        "gov": ("auto-reload-B", datetime(2020, 1, 1, tzinfo=UTC), False, None)
     }
 
     current_label = "Mayor interview"
@@ -7880,8 +7880,11 @@ def test_held_prepared_restart_plan_is_released_when_the_exit_takes_no_pending_r
 
     assert run.released == [tmp_path / "plan-1"]
     assert run.daemon._prepared_restart_plans == {}
-    assert run.strategy.started_labels == []
-    assert run.started == []
+    # Crash recovery may start a fresh slate; it must not air the abandoned
+    # prepared program or retain its directory as live.
+    assert run.strategy.started_labels == ["Fallback slate"]
+    assert run.started == [run.new_process]
+    assert tmp_path / "plan-1" not in run.daemon.live_prepared_plan_dirs("gov")
 
 
 def test_held_prepared_restart_plan_is_released_when_a_newer_one_supersedes_it(
