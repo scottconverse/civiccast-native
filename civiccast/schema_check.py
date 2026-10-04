@@ -13,6 +13,9 @@ decision and a separate failure domain.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +23,30 @@ from pathlib import Path
 from civiccast.db.url import normalize_database_url
 
 _LOG = logging.getLogger(__name__)
+_PHASE_OBSERVER: ContextVar[Callable[[str], None] | None] = ContextVar(
+    "civiccast_schema_check_phase", default=None
+)
+
+
+@contextmanager
+def observe_schema_phases(observer: Callable[[str], None] | None) -> Iterator[None]:
+    """Observe only fixed phase names on the existing caller thread."""
+    token = None
+    with suppress(Exception):
+        token = _PHASE_OBSERVER.set(observer)
+    try:
+        yield
+    finally:
+        if token is not None:
+            with suppress(Exception):
+                _PHASE_OBSERVER.reset(token)
+
+
+def _note_phase(phase: str) -> None:
+    with suppress(Exception):
+        observer = _PHASE_OBSERVER.get()
+        if observer is not None:
+            observer(phase)
 
 
 @dataclass(frozen=True)
@@ -247,10 +274,12 @@ def check_schema_currency(database_url: str | None) -> SchemaStatus:
     if not database_url:
         return SchemaStatus(state="not-configured")
     try:
+        _note_phase("head")
         head = expected_migration_head()
-        status = evaluate_schema_currency(
-            read_db_revision(database_url), head, known=known_revisions()
-        )
+        _note_phase("read")
+        revision = read_db_revision(database_url)
+        _note_phase("graph")
+        status = evaluate_schema_currency(revision, head, known=known_revisions())
     except Exception:
         _LOG.exception("Schema-currency check failed; reporting 'unknown'.")
         return SchemaStatus(state="unknown")

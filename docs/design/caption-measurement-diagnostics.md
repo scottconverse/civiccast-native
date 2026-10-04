@@ -192,13 +192,31 @@ handler. The hook captures selected immutable code objects and starts at most
 one additional daemon worker per process. It does not import support modules,
 read storage, hash code, join a worker or log from the request caller.
 
-The receipt covers 27 selected anchors from 11 modules, including the executing
+The receipt covers 32 selected anchors from 11 modules, including the executing
 health handler, schema owner, durable-store wiring and startup support. It is
 not evidence that every selected function executed or that all module bytes,
 native libraries or station outputs are correct. A missing support module, such
 as an outbox not assembled in an ephemeral configuration, makes the receipt
 unavailable. The first attempted capture is not retried, even if setup later
 converges. HTTP 200 alone is neither loaded-code attestation nor healthy readiness.
+
+The same default-off flag also enables schema-refresh diagnostics on the existing
+refresh worker. `Health schema refresh phase <json>` records fixed phases
+`started`, `sync_storage`, `head`, `read`, `graph`, `complete`, `retained_work`,
+or `closed`; a terminal operation taking at least five seconds also emits
+`Health schema refresh slow completion <json>`. The bounded
+`health-schema-refresh-v1` payload contains `pid`, `attempt`, `epoch`, `phase`,
+`state`, `elapsed_ms`, `phase_elapsed_ms`, `queued_ms`, `retained_work`,
+`previous_phase`, and `previous_elapsed_ms`. Epoch follows the actual check fence
+after storage activation, even when it differs from the queued epoch. Elapsed
+time freezes at completion/retained-work/close; phase elapsed is the current
+phase age, and retained work is the completion-time count of unfinished bounded
+DB futures, not a live gauge. These receipts
+help isolate diagnostic refresh phases and retained-work timing; they do not
+change the HTTP response, public schema, readiness semantics, worker count, or
+refresh behavior. Diagnostic failures are suppressed so they cannot control
+actual refresh work or publication. This is source-level diagnostic fault
+isolation only: it does not prove a live bottleneck or its cause.
 
 Acceptance needs an independent, same-interpreter compiled source oracle and
 trusted process PID, birth time, executable, origin and fresh log window. A

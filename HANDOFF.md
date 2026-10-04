@@ -25,8 +25,11 @@ This file is a pointer, not a log.
   health reported unknown schema readiness. Automatic recovery hit a helper
   task wake-up race; explicit same-request recovery subsequently verified the
   original files, proof settings and three-channel readiness. Health refresh
-  phase timing remains under investigation. No successful soak or caption-fix
-  claim follows.
+  phase timing remains under investigation. Opt-in refresh phase diagnostics
+  now have independent source-only acceptance: both original diagnostic-failure
+  assertions, 47 affected checks and three additional in-flight epoch fences
+  passed. The diagnostics do not change readiness rules or prove the live cause.
+  No successful soak or caption-fix claim follows.
 - Still required before a final recommendation: complete health and caption
   runtime proof, repository/product reconciliation, material operator workflow
   repairs, the exact-package installation lifecycle, and sustained three-channel

@@ -4,18 +4,36 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Iterator
 from concurrent.futures import Future
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
+from dataclasses import dataclass, replace
 from typing import Any
 
 from civiccast.db.guarded_connect import track_bounded_work
-from civiccast.schema_check import SchemaStatus
+from civiccast.schema_check import SchemaStatus, observe_schema_phases
 
 _LOG = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _RefreshDiagnostic:
+    attempt: int
+    epoch: int
+    phase: str
+    scheduled: float
+    started: float | None
+    phase_started: float
+    state: str = "unknown"
+    retained_work: int = 0
+    completed: float | None = None
+    previous_phase: str = "queued"
+    previous_elapsed_ms: float = 0.0
 
 
 class HealthSchemaOwner:
@@ -48,8 +66,94 @@ class HealthSchemaOwner:
         self._operations: dict[threading.Thread, int] = {}
         self._owned_threads: list[threading.Thread] = []
         self._cached_source = source()
+        from civiccast import health_provenance
+
+        self._diagnostics_enabled = health_provenance.ENABLED
+        self._diagnostic: _RefreshDiagnostic | None = None
+        self._attempt = 0
         state.schema_status = SchemaStatus(state="unknown")
         state.schema_status_checked_monotonic = None
+
+    def diagnostic_snapshot(self) -> dict[str, str | int | float]:
+        """Constant-size detached diagnostic; never a readiness attestation.
+
+        Immutable publication does not wait for the owner's locks or DB work.
+        Queued delay is known only after the existing worker starts. No source,
+        credentials, revision, exception, frame, or work object is exported.
+        """
+        snapshot = self._diagnostic
+        if snapshot is None:
+            return {}
+        now = self._clock()
+        return {
+            "schema": "health-schema-refresh-v1",
+            "pid": os.getpid(),
+            "attempt": snapshot.attempt,
+            "epoch": snapshot.epoch,
+            "phase": snapshot.phase,
+            "state": snapshot.state,
+            "elapsed_ms": max(
+                0.0,
+                (
+                    (snapshot.completed if snapshot.completed is not None else now)
+                    - snapshot.scheduled
+                )
+                * 1000,
+            ),
+            "phase_elapsed_ms": max(0.0, (now - snapshot.phase_started) * 1000),
+            "queued_ms": max(
+                0.0,
+                ((snapshot.started if snapshot.started is not None else now) - snapshot.scheduled)
+                * 1000,
+            ),
+            "retained_work": snapshot.retained_work,
+            "previous_phase": snapshot.previous_phase,
+            "previous_elapsed_ms": snapshot.previous_elapsed_ms,
+        }
+
+    def _diagnostic_phase(self, phase: str, *, state: str = "unknown") -> None:
+        # Instrumentation must never control actual refresh work or publication.
+        with suppress(Exception):
+            self._update_diagnostic_phase(phase, state=state)
+
+    def _update_diagnostic_phase(self, phase: str, *, state: str = "unknown") -> None:
+        if phase not in {
+            "started",
+            "sync_storage",
+            "head",
+            "read",
+            "graph",
+            "complete",
+            "retained_work",
+            "closed",
+        }:
+            return
+        snapshot = self._diagnostic
+        if snapshot is None:
+            return
+        now = self._clock()
+        self._diagnostic = replace(
+            snapshot,
+            phase=phase,
+            phase_started=now,
+            started=now if phase == "started" else snapshot.started,
+            completed=now if phase in {"complete", "retained_work", "closed"} else None,
+            previous_phase=snapshot.phase,
+            previous_elapsed_ms=max(0.0, (now - snapshot.phase_started) * 1000),
+            state=state
+            if state in {"unknown", "current", "behind", "ahead", "not-configured"}
+            else "unknown",
+        )
+        # Only the existing refresh worker emits; HTTP performs no logging IO.
+        with suppress(Exception):
+            from civiccast import health_provenance
+
+            payload = json.dumps(self.diagnostic_snapshot(), allow_nan=False, separators=(",", ":"))
+            if len(payload.encode("utf-8")) > 1024:
+                return
+            health_provenance._LOG.info("Health schema refresh phase %s", payload)
+            if phase in {"complete", "retained_work", "closed"} and now - snapshot.scheduled >= 5:
+                health_provenance._LOG.info("Health schema refresh slow completion %s", payload)
 
     @property
     def closed(self) -> bool:
@@ -145,6 +249,14 @@ class HealthSchemaOwner:
                 return status
             if not self._busy():
                 self._work = []
+                if self._diagnostics_enabled:
+                    self._diagnostic = None
+                    with suppress(Exception):
+                        self._attempt += 1
+                        now = self._clock()
+                        self._diagnostic = _RefreshDiagnostic(
+                            self._attempt, self._epoch, "queued", now, None, now
+                        )
                 self._thread = threading.Thread(
                     target=self._run, name="civiccast-health-schema", daemon=True
                 )
@@ -163,15 +275,33 @@ class HealthSchemaOwner:
         with self._lock:
             epoch = self._epoch
             source = self._source()
+        with suppress(Exception):
+            if self._diagnostic is not None:
+                self._diagnostic = replace(self._diagnostic, epoch=epoch)
+        self._diagnostic_phase("started")
         try:
-            with track_bounded_work(self._work):
+            with (
+                track_bounded_work(self._work),
+                observe_schema_phases(
+                    self._diagnostic_phase if self._diagnostics_enabled else None
+                ),
+            ):
+                self._diagnostic_phase("sync_storage")
                 self._sync_storage()
                 with self._lock:
-                    if self._closed:
-                        return
-                    epoch = self._epoch
-                    source = self._source()
-                    self._cached_source = source
+                    closed = self._closed
+                    if not closed:
+                        epoch = self._epoch
+                        source = self._source()
+                        self._cached_source = source
+                if closed:
+                    self._diagnostic_phase("closed")
+                    return
+                # Storage activation may legitimately invalidate the queued epoch.
+                # Correlate subsequent phases with the actual check's fence.
+                with suppress(Exception):
+                    if self._diagnostic is not None:
+                        self._diagnostic = replace(self._diagnostic, epoch=epoch)
                 status = check_schema_currency(source)
                 if status.state == "current" and not self._storage_ready(source):
                     status = SchemaStatus(state="unknown")
@@ -180,9 +310,19 @@ class HealthSchemaOwner:
             _LOG.warning("Schema readiness refresh or storage activation failed.")
             status = SchemaStatus(state="unknown")
         with self._lock:
+            published = False
             if not self._closed and epoch == self._epoch and source == self._source():
                 self._state.schema_status = status
                 self._state.schema_status_checked_monotonic = self._clock()
+                published = True
+        with suppress(Exception):
+            if self._diagnostic is not None:
+                retained = sum(not future.done() for future in self._work)
+                self._diagnostic = replace(self._diagnostic, retained_work=retained)
+                self._diagnostic_phase(
+                    "retained_work" if retained else "complete",
+                    state=status.state if published else "unknown",
+                )
 
     def close(self, timeout: float = 1.0) -> bool:
         """Forbid late publication/new work, then finitely join the owner."""

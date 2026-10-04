@@ -13,6 +13,11 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
+### Added
+
+- The opt-in health executable-proof flag now also records schema-refresh phase
+  and slow-completion diagnostics; health responses and readiness semantics are unchanged.
+
 ### Fixed
 
 - Live meeting controls can reopen unfinished sessions from the server after a
