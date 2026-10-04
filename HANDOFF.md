@@ -21,6 +21,10 @@ This file is a pointer, not a log.
   trim inverse assertions failed. One earlier three-second child startup miss
   passed unchanged in isolation and both final runs; no deadline was widened.
   Evidence: oversight `evidence/u87-recorder-product/guard-reconcile-*.log`.
+- Two watchdog tests now exceed the actual platform wait ceiling instead of
+  hard-coding a value that Linux legitimately permits. Runtime is unchanged;
+  all 30 affected checks passed independently in 7.38s, and disabling the bound
+  in memory made both corrected assertions fail. No timeout was widened.
 - Previous remote checkpoint is `f9f210c03f375b318a5d2edc7e76eab2e07e1b57`,
   verified on draft PR 232. Its test run 37202959271 was pending; installer
   compile 37202959249 and docs 37202959261 passed. Lint 37202959246 failed.

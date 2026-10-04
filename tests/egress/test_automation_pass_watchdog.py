@@ -812,20 +812,25 @@ def test_run_forever_survives_a_watcher_thread_that_cannot_start(
 def test_repeat_beyond_the_event_wait_ceiling_warns_and_uses_the_default(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """U04 review (R1): 100000000 is finite, positive and unparsable to nothing
-    -- and ``Event.wait`` cannot wait it. Reproduced before the fix: the reader
+    """U04 review (R1): a finite interval above the platform wait ceiling.
+
+    The original Windows reproduction used 100000000; Linux can wait that
+    value, so derive a genuine over-limit value on either platform. The reader
     accepted it in silence and the watcher died with ``OverflowError`` inside
     its own loop condition, which is the silent-disable failure this reader
     exists to prevent."""
 
-    monkeypatch.setenv(_REPEAT_ENV, "100000000")
+    over_limit = threading.TIMEOUT_MAX * 2.0
+    assert math.isfinite(over_limit) and over_limit > threading.TIMEOUT_MAX
+    raw = str(over_limit)
+    monkeypatch.setenv(_REPEAT_ENV, raw)
     with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
         value = pass_watchdog_repeat_seconds_from_env()
 
     assert value == 60.0
     warnings = _records(caplog, _REPEAT_ENV)
     assert len(warnings) == 1, f"expected exactly one warning naming the variable: {warnings}"
-    assert "100000000" in warnings[0].getMessage()
+    assert raw in warnings[0].getMessage()
     assert "using 60.0s" in warnings[0].getMessage()
 
 
@@ -844,11 +849,13 @@ def test_a_directly_built_watcher_survives_an_interval_the_event_cannot_wait() -
     is labelled as such rather than left to look load-bearing.
     """
 
-    watchdog = _PassWatchdog(threshold_seconds=0.2, repeat_seconds=1e8)
+    over_limit = threading.TIMEOUT_MAX * 2.0
+    assert math.isfinite(over_limit) and over_limit > threading.TIMEOUT_MAX
+    watchdog = _PassWatchdog(threshold_seconds=0.2, repeat_seconds=over_limit)
     assert watchdog.tick_seconds == pytest.approx(0.2), (
         "a huge repeat must not become the wait interval"
     )
-    assert watchdog._wait_interval(1e8) == threading.TIMEOUT_MAX, (
+    assert watchdog._wait_interval(over_limit) == threading.TIMEOUT_MAX, (
         "the clamp no longer bounds the watcher's own interval; it must still "
         "bound a value it is handed directly"
     )
