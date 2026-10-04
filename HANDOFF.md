@@ -27,8 +27,13 @@ This file is a pointer, not a log.
   v13 owns its watcher and the subsequent corrected-branch Gate A dispatch.
   The prior disposable VM is gone; no duplicate lab operation is authorized.
   Large/binary uploads false; no new tag,
-  release or station cutover. Current-source tests 37235135807 are active; the
-  Windows native job has passed. Current docs 37235135808, installer compile
+  release or station cutover. Current-source tests 37235135807 are terminal
+  FAILURE: 5 failed, 11543 passed, 77 skipped, 5 deselected in 1954.05 seconds;
+  Windows native passed. Four failures are the 15 registry role mismatches
+  addressed by local 572d119e (not in that run); the fifth is missing TSDuck/PCR
+  measurement in the Linux real-media fixture, not an observed station-output
+  failure. Receipt: oversight reports/U87-CI-2FD8-RESULT.md. Current docs
+  37235135808, installer compile
   37235135809, operator build 37235135854, accessibility 37235135825 and policy
   37235135799 passed. Lint 37235135805 failed on one test file's formatting;
   local 6789602a corrects it, not yet pushed. Historical tests 37230256695 FAILURE:
