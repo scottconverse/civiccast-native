@@ -18,7 +18,7 @@ ___ test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob ___
             "4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a"
         )
 E       AssertionError: assert 'ff7c10a69811...fc95a4d945b16' == '486082528407...b1125d184849a'
-E         
+E
 E         - 4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a
 E         + ff7c10a698116a66b292f76493daebfed8618244631859d0d5bfc95a4d945b16
 
