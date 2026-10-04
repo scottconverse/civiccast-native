@@ -8,12 +8,21 @@ This file is a pointer, not a log.
   Build 37211323548 passed all three jobs, independently confirmed at
   2026-10-04 09:38 MDT. Both installer executables have valid signatures.
   This candidate includes the generated-slate preparation and bounded HTTP-log
-  repairs described below. Clean installation and actual product-engine output
-  remain pending; FFmpeg fallback does not satisfy engine acceptance. The local
+  repairs described below. Clean installation exited 0, health was healthy with
+  the current schema, both Edge-rendered interfaces passed, and the real upload/
+  publish/offline-caption loop passed. The actual product engine connected its
+  sink in 15 seconds; transport verification passed 1,182 packets with zero sync
+  errors, transport errors or discontinuities. Worker PID 5524 and its graph/log
+  were captured before the existing test stopped it. No FFmpeg substitute was
+  used. The unchanged 20-minute health observation is still running; sustained
+  three-channel speech acceptance remains pending. The local
   test-only commits `7c1e5500` and `2afcd8a3` are not in this package: they
   reconcile the accepted U43 window and U63 immediate-warm contracts, with
   independent reruns of 29 and 8 passing tests respectively. No runtime changes
   or deleted tests are in those two commits.
+  Two additional cache fixtures now use actual 32-hex cache keys and the current
+  scratch-age constant, preserving their cleanup/eviction assertions. Independent
+  full source-plan/preparer verification passed 211 tests in 18.15 seconds.
 - Previous packaged candidate source is `84a283077f4ba9359113c7bbf4189095393c08bc`,
   verified remotely on PR 232; original self-hosted build 37204600121 passed.
   Both setup and First Install executables have valid Authenticode signatures.
@@ -38,8 +47,8 @@ This file is a pointer, not a log.
   and the real-FFmpeg one-hour check (1 passed in 5.21s): generation 2.375s,
   preparation 0.969s, 3600.026622s audio/video, one continuous stream-copy output.
   Author affected run passed 208 with two unchanged-HEAD cache-fixture failures;
-  final focused run including real media passed 21. Actual packaged startup
-  remains to be rerun; no timeout or test-verdict relaxation was made.
+  final focused run including real media passed 21. Actual packaged startup now
+  passes as recorded above; no timeout or test-verdict relaxation was made.
 - The current candidate's supervised HTTP access/error logs rotate separately in
   `control_plane-http.log` (10 MiB plus ten backups), without forced fsync on
   each request. Existing application diagnostics retain their durable handler.
