@@ -132,6 +132,9 @@ def test_manifest_size_change_with_same_last_segment_is_not_progress(tmp_path: P
     sup, _calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
 
+    # Startup deliberately discards predecessor manifests (U51). Observe a
+    # window emitted by this incarnation, not the pre-start fossil above.
+    playlist = _write_playlist(hls_dir, last_segment="seg000000010.ts", media_sequence=0)
     sup.note_progress("gov", now=1000.0)
     # Same final segment, but the manifest body/size changed (tag churn).
     playlist.write_text(
@@ -184,6 +187,8 @@ def test_one_stalled_sink_among_two_is_reported(tmp_path: Path) -> None:
     )
     assert len(procs) == 2  # one child per sink, keyed channel|label
 
+    _write_playlist(stalled_dir, last_segment="seg000000010.ts")
+    _write_playlist(live_dir, last_segment="seg000000020.ts")
     sup.note_progress("gov", now=1000.0)
     # Only the LIVE sink advances; the stalled one keeps its segment.
     _write_playlist(live_dir, last_segment="seg000000021.ts")
@@ -507,6 +512,7 @@ def test_daemon_reports_stalled_but_alive_relay_unhealthy_behavioral(tmp_path: P
     daemon, store, _relay, _hls_dir, procs, clock, label = _stalled_daemon(tmp_path)
 
     assert daemon.process_once("gov") == 1
+    _write_playlist(_hls_dir, last_segment="seg000000010.ts")
     daemon._on_air_confirmed_at["gov"] = clock()
     daemon.process_once("gov")  # anchors the segment baseline
     clock.value += 1.0
@@ -798,6 +804,7 @@ def test_old_api_alive_relay_with_frozen_window_reads_unhealthy(tmp_path: Path) 
 
     assert daemon.process_once("gov") == 1
     daemon._on_air_confirmed_at["gov"] = daemon._monotonic()
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     daemon.process_once("gov")  # anchor the segment baseline
     # Backdate the observed progress so the unchanged window is unambiguously
     # past the (zero) bound on the next tick; on OLD code this attribute is
