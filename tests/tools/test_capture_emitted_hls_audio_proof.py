@@ -1657,6 +1657,8 @@ def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> Non
 
     import subprocess
 
+    from civiccast.stream._ffmpeg import resolve_h264_encoder
+
     mod = _load()
     root = tmp_path / "live-hls"
     channel = root / "public"
@@ -1680,7 +1682,7 @@ def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> Non
             "-af",
             "loudnorm=I=-16:TP=-1.5:LRA=11",
             "-c:v",
-            "libopenh264",
+            resolve_h264_encoder(ffmpeg_path=str(_REAL_FFMPEG)),
             "-pix_fmt",
             "yuv420p",
             "-g",
