@@ -44,6 +44,8 @@ ANCHORS = {
     "civiccast.health_schema": (
         "HealthSchemaOwner.request",
         "HealthSchemaOwner._run",
+        "HealthSchemaOwner.start",
+        "HealthSchemaOwner._run_once",
         "HealthSchemaOwner.publish_storage",
         "HealthSchemaOwner.close",
         "HealthSchemaOwner.diagnostic_snapshot",
