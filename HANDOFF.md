@@ -2,7 +2,131 @@
 
 This file is a pointer, not a log.
 
+## Owner stop and preservation checkpoint - 2026-10-04
+
+Owner requested committing and pushing all current work, without merging, then
+stopping. Goal remains PAUSED. This is an unfinished-work preservation checkpoint,
+not a release candidate or a claim that the six goals are complete. No further
+development, lab runs, or CI repair is authorized until the owner resumes work.
+
+Exact 2fd8 clean installation and 20-minute health checks passed; installed
+disabled Paywall save/edit/reload passed. The original two-hour run failed;
+no replacement two-hour PASS exists. Workflow 37238796668 was cancelled after
+the clean job succeeded; the dirty lane failed before candidate installation,
+and download-only was cancelled. The original cleanup timeout is retained;
+subsequent identity-bound observation confirmed the owned VM and PID absent.
+
+Recovery source is saved but incomplete: NSIS wiring and production database
+restore are unfinished. Latest Rust discovery changes passed 17 scoped tests,
+but wider checks and independent review of that final delta are not complete.
+Prior scoped evidence does not prove integrated installed rollback. Generated
+manual preview images, ignored logs, private station evidence, credentials and
+large binary artifacts remain local, not part of this source checkpoint.
+
+Preservation review: engineering and QA findings remain as disclosed above;
+UX has not received complete installed acceptance; tests are scoped, not final
+acceptance; documentation records the paused WIP state. No readiness, merge,
+tag, publication or deployment authorization is implied by this checkpoint.
+
 ## Active development checkpoint - 2026-10-04
+
+Owner usage correction: keep coordinator activity bounded. v13 alone monitors
+the active lab and owns Python/NSIS integration; flat_db_review_fresh owns the
+bounded Rust incoming-pack resolver. No duplicate coordinator job polling,
+extra review microtasks, or new agents merely to watch existing work. Reuse
+the existing independent reviewer for a completed integrated unit. Report
+actionable failures, frozen implementation results, and terminal lab outcomes.
+All six owner goals remain required; this reduces overhead, not product scope.
+
+23:04 UTC continuation: exact 2fd8 installed disabled Paywall action now passes
+normal-login save, provider edit with secret omitted, persisted secret presence,
+and reload with the feature still disabled. The original child-exit-1 result is
+preserved; installed DOM proved the test's exact Provider label lookup matched
+zero elements while its prefix matched the intended select. Only those two
+existing action locators changed, not the product. v13 owns raw evidence and
+the sole lab. Root read the preserved final T3T5-RESULT.txt: T3 PASS, T4
+PASS_PRODUCT_ENGINE, T5 elapsed 1200.3 seconds PASS with four observations and
+zero unhealthy readings. Final summary has harness_completed=true and
+top_level_error=null. Evidence is oversight/evidence/u87-packaged-candidate-2fd8/
+gatea-clean-final-private/output/. T4 is product-generated slate, not programmed
+speech or sustained caption proof. Gate A 37238796668 remains in progress for
+host lifecycle/cleanup; Tests 37241455560 was still in progress at 23:03 UTC.
+
+Recovery work continues in parallel: v13 owns Python CLI/NSIS integration;
+flat_db_review_fresh owns the bounded Rust signed incoming-pack resolver in
+flat_recovery_launcher.rs and narrow main.rs dispatch. The cold reviewer owns
+independent verification of the frozen two-file builder hash binding. NSIS has
+not yet consumed that define; argv proof alone is not compiled recovery proof.
+The next soak's existing UDP setup overwrites preconfigured HLS before start;
+do not claim HLS output from external preconfiguration alone. Actual emitted
+TS audio/video and embedded captions must be checked; that HLS sink does not
+promise VTT files. No running T5 channel was reconfigured.
+
+Latest verified remote development checkpoint: `88412e4ced392c80e4e572015e7c0140ddfd631d`.
+Draft PR 232 matches it. New tests 37241455560, lint 37241455587, docs
+37241455523, installer compile 37241455617 and detectors 37241455597 are
+running; do not inherit old green results. Previous 7ce46cf6 Tests 37237990606
+completed SUCCESS (unit, Windows-native, claims verifier). Its randomized
+detector run had one half-second static HLS test failure; 88412e4c stabilizes
+only two existing static fixtures with ENDLIST and the existing clock seam.
+Exact segment assertions and production code are unchanged. Independent root
+module run: 28 passed in 5.27s. The mutmut baseline identity mismatch remains
+separate, with no claimed mutation campaign pass. No new package was built.
+Build 37236684992 completed SUCCESS at exact 2fd8a22a. Automatic default-main
+Gate A 37238796668 is running with an owned Sandbox; do not overlap or cancel
+its active guest. Its later baseline validator still has the known default-main
+defect. v13 owns lifecycle and corrected-branch dispatch only after terminal
+completion and cleanup. No replacement two-hour PASS exists.
+Root independently hashed the kit-staging setup executable:
+`4E84C581B90F07C7FF78088CBF75F6B686060C04A010B17EB1B601F394FAE95F`;
+it matches the candidate SHA256SUMS and Authenticode is Valid, Scott Converse.
+The candidate receipt binds source 2fd8a22a. This proves staged artifact
+identity/signature, not that every installed workflow passes.
+
+Uncommitted recovery integration remains separate from that package. The shared
+D7 acquisition/release repair passed root's 21 focused Windows checks; removing
+the mutex in an isolated test process produced both expected concurrency
+failures. See oversight reports/U87-SHARED-D7-INDEPENDENT-REVIEW.md. Frozen
+database capture/verification review returned DB-01: custom timeout settings
+could yield different source/tool/drill limits. Sol6.1 repaired optional local
+timeout propagation, including the schema revision reader. Root independently
+ran 101 affected checks (21 explicit Docker/runtime skips) and reproduced both
+expected failures after removing the local bound in a test child. Final v3
+hashes and AST equivalence to tested v2 verified. See oversight
+reports/U87-DB01-INDEPENDENT-REPAIR-REVIEW.md. A subsequent cold full database
+review found DB-02: missing disposable verifier can route the backup drill to
+the source cluster. Frozen v4 now rejects that path before IO. Root independently
+ran five refusal checks, and the cold reviewer verified all 13 frozen hashes,
+the two-file-only delta, five passing checks, and the original vulnerability
+witness stopping at the new guard. DB-02 is closed for this source contract;
+actual isolated v4 PostgreSQL capture/drill also passed with limited roles,
+TLS, unchanged source/neighbor rows and global role privileges. Root read the
+raw driver/output and independently rechecked all 13 frozen runtime hashes.
+The driver's wrapper exit 1 was a variable-name bookkeeping collision; the
+separate read-only hash/cleanup check passed and the original failure is retained.
+See oversight evidence/u87-flat-db-cold-leaf/review-v1.md and
+reports/U87-FLAT-DATABASE-v4-runtime-receipt.md. This does not prove production
+namespace replacement or installed rollback; the local pre-tool guard still
+blocks that implementation, documented in
+reports/U87-FLAT-DATABASE-namespace-replacement-path.md.
+Production namespace replacement remains incomplete. Root completed independent
+review of the frozen Rust launcher: 15 staging and 9 adjacent checks passed;
+positive elevated protected-root creation/readback also passed on the exact
+root-hashed test binary. Full signed-pair CLI execution remains unrun.
+See oversight reports/U87-FLAT-LAUNCHER-INDEPENDENT-REVIEW.md. v13 owns NSIS,
+Python integration, and the sole active lab operation. The cold review of frozen
+entry settlement/OLD-tool retention passed 32 existing focused checks with no
+concrete finding. Its subsequent recovery-actor increment passed a separate
+six-case cold review; actual lifecycle composition remains pending. These are
+not installed rollback or final-release acceptance claims.
+
+After the current automatic acceptance workflow is terminal and its owned
+cleanup finishes, run the corrected branch's existing cross-version-only lane
+against build 37236684992; preserve any successful clean-install evidence from
+the automatic run. Report composed lane evidence honestly, not a single full
+workflow PASS. No parallel guest or redundant full rerun.
+
+## Historical checkpoints (superseded by the active section above)
 
 - Frozen built candidate: `eb94e465fe1f2b5335f0ad90620e1a01c041812e`.
   Reviewed development proof anchor: `404c584a`, including the separate

@@ -238,6 +238,28 @@ def test_full_upgrade_commits(tmp_path) -> None:
     assert outcome.journal.backup is not None
 
 
+def test_outer_owned_interlock_is_not_reported_as_physically_released(tmp_path) -> None:
+    """D3 may borrow an installer lease without releasing physical maintenance."""
+    from dataclasses import replace
+
+    h = _make(tmp_path)
+    h.interlock_held = True
+
+    def assert_outer_lease() -> None:
+        assert h.interlock_held
+
+    seams = replace(
+        h.seams(), acquire_interlock=assert_outer_lease, release_interlock=assert_outer_lease
+    )
+    # Also permits running this assertion against the pre-field baseline.
+    object.__setattr__(seams, "outer_interlock_owned", True)
+    outcome = run_upgrade(_plan(), _context(h), seams)
+    assert outcome.ok and h.interlock_held
+    details = [entry[2] for entry in outcome.journal.history]
+    assert "interlock released; upgrade committed" not in details
+    assert "D3 committed; outer installer maintenance interlock retained" in details
+
+
 # --- pre-mutation failures: junction reverts, NO DB restore -------------------
 
 

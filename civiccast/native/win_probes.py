@@ -43,6 +43,7 @@ the dev box, not assumed from documentation -- see
 
 from __future__ import annotations
 
+import hashlib
 import os
 import subprocess
 from datetime import UTC, datetime
@@ -303,12 +304,24 @@ def read_interlock(
     )
 
 
+def _acquire_interlock_mutex(root: _RegKeyType, key_path: str) -> RuntimeOwnerMutex:
+    namespace = f"{int(root):x}:{key_path.casefold()}".encode()
+    mutex = RuntimeOwnerMutex(
+        name=r"Global\CivicCastMaintenanceAdmission-" + hashlib.sha256(namespace).hexdigest()
+    )
+    acquisition = mutex.acquire()
+    if acquisition.status not in ("acquired", "acquired_abandoned"):
+        raise RuntimeError("maintenance admission is active or ownership unreadable")
+    return mutex
+
+
 def take_interlock(
     owner_run_id: str,
     *,
     root: _RegKeyType | None = None,
     key_path: str = MAINTENANCE_KEY,
     clock: Callable[[], str] | None = None,
+    owner_pid: int | None = None,
 ) -> MaintenanceRecord:
     """Acquire the D7a interlock. Raises RuntimeError if already held or
     unreadable (fail-closed: an interlock we can't prove is free is not
@@ -316,28 +329,43 @@ def take_interlock(
 
     import winreg
 
+    # Installer entry may bind the observed, long-lived NSIS parent rather
+    # than its short-lived preflight child. The caller must prove that OS
+    # incarnation independently; this primitive never reclaims a held lease.
+    if owner_pid is not None and (type(owner_pid) is not int or owner_pid <= 0):
+        raise ValueError("interlock owner PID must be a positive integer")
     resolved_root = _hklm() if root is None else root
-    current = read_interlock(root=resolved_root, key_path=key_path)
-    if current.status in ("held", "unreadable"):
-        raise RuntimeError(f"cannot take interlock: {_held_interlock_detail(current)}")
-
-    next_generation = (current.record.generation + 1) if current.record is not None else 1
-    now = (clock or _utc_now_iso)()
-    record = MaintenanceRecord(
-        v=1,
-        state="held",
-        generation=next_generation,
-        owner_run_id=owner_run_id,
-        taken_utc=now,
-        released_utc=None,
-        # <installer-path-audit BL-05> See MaintenanceRecord.owner_pid.
-        owner_pid=os.getpid(),
-    )
-    with winreg.CreateKeyEx(
-        resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)
-    ) as key:
-        winreg.SetValueEx(key, MAINTENANCE_VALUE_NAME, 0, winreg.REG_SZ, record.model_dump_json())
-    return record
+    # Every current caller (ordinary D3 and outer installer admission) must
+    # serialize the free/read -> held/write transaction. An entry-only mutex
+    # cannot prevent another D3 caller from acquiring the same generation.
+    mutex = _acquire_interlock_mutex(resolved_root, key_path)
+    try:
+        current = read_interlock(root=resolved_root, key_path=key_path)
+        if current.status in ("held", "unreadable"):
+            raise RuntimeError(f"cannot take interlock: {_held_interlock_detail(current)}")
+        next_generation = (current.record.generation + 1) if current.record is not None else 1
+        now = (clock or _utc_now_iso)()
+        record = MaintenanceRecord(
+            v=1,
+            state="held",
+            generation=next_generation,
+            owner_run_id=owner_run_id,
+            taken_utc=now,
+            released_utc=None,
+            owner_pid=os.getpid() if owner_pid is None else owner_pid,
+        )
+        with winreg.CreateKeyEx(
+            resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)
+        ) as key:
+            winreg.SetValueEx(
+                key, MAINTENANCE_VALUE_NAME, 0, winreg.REG_SZ, record.model_dump_json()
+            )
+        observed = read_interlock(root=resolved_root, key_path=key_path)
+        if observed.status != "held" or observed.record != record:
+            raise RuntimeError("cannot take interlock: exact persisted ownership changed")
+        return record
+    finally:
+        mutex.release()
 
 
 def _pid_is_alive(pid: int) -> bool | None:
@@ -426,26 +454,36 @@ def release_interlock(
     import winreg
 
     resolved_root = _hklm() if root is None else root
-    current = read_interlock(root=resolved_root, key_path=key_path)
-    if current.record is None:
-        raise RuntimeError(f"cannot release interlock: {current.detail}")
-    if current.record.state == "released":
-        return current.record
-    if owner_run_id is not None and current.record.owner_run_id != owner_run_id:
-        raise RuntimeError(
-            "refusing to release the D7a maintenance interlock: it is held by run "
-            f"{current.record.owner_run_id!r} (taken {current.record.taken_utc}), not by this "
-            f"run {owner_run_id!r}. Releasing another run's interlock would re-permit writers "
-            "against a database that run may be mid-migration on."
-        )
-
-    now = (clock or _utc_now_iso)()
-    record = current.record.model_copy(update={"state": "released", "released_utc": now})
-    with winreg.CreateKeyEx(
-        resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)
-    ) as key:
-        winreg.SetValueEx(key, MAINTENANCE_VALUE_NAME, 0, winreg.REG_SZ, record.model_dump_json())
-    return record
+    # Release must use the same transaction fence: two stale releases could
+    # otherwise overwrite a new owner's acquisition between their writes.
+    mutex = _acquire_interlock_mutex(resolved_root, key_path)
+    try:
+        current = read_interlock(root=resolved_root, key_path=key_path)
+        if current.record is None:
+            raise RuntimeError(f"cannot release interlock: {current.detail}")
+        if current.record.state == "released":
+            return current.record
+        if owner_run_id is not None and current.record.owner_run_id != owner_run_id:
+            raise RuntimeError(
+                "refusing to release the D7a maintenance interlock: it is held by run "
+                f"{current.record.owner_run_id!r} (taken {current.record.taken_utc}), not by this "
+                f"run {owner_run_id!r}. Releasing another run's interlock would re-permit writers "
+                "against a database that run may be mid-migration on."
+            )
+        now = (clock or _utc_now_iso)()
+        record = current.record.model_copy(update={"state": "released", "released_utc": now})
+        with winreg.CreateKeyEx(
+            resolved_root, key_path, 0, _civiccast_key_access(winreg.KEY_SET_VALUE)
+        ) as key:
+            winreg.SetValueEx(
+                key, MAINTENANCE_VALUE_NAME, 0, winreg.REG_SZ, record.model_dump_json()
+            )
+        observed = read_interlock(root=resolved_root, key_path=key_path)
+        if observed.status != "free" or observed.record != record:
+            raise RuntimeError("cannot release interlock: exact persisted ownership changed")
+        return record
+    finally:
+        mutex.release()
 
 
 # ---------------------------------------------------------------------------

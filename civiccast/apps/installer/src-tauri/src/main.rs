@@ -7,6 +7,7 @@ mod acquisition_catalog;
 mod acquisition_state;
 mod component_acquisition;
 mod hardware_inventory;
+mod flat_recovery_launcher;
 mod native_activation;
 mod native_distribution;
 mod native_first_install;
@@ -6523,6 +6524,11 @@ fn run_native_uninstall_preflight_cli(args: &[String]) -> Option<i32> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // This closed staging entry rejects mixed privileged-operation flags before
+    // any other dispatcher can interpret them. It never grants writer authority.
+    if let Some(exit_code) = flat_recovery_launcher::run_cli(&args, CIVICCAST_VERSION) {
+        std::process::exit(exit_code);
+    }
     if let Some(exit_code) = native_install_preflight::exit_code(&args, CIVICCAST_VERSION) {
         std::process::exit(exit_code);
     }

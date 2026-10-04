@@ -809,3 +809,430 @@ def test_bl04_the_identity_gate_is_optional_so_fake_seam_tests_are_unaffected() 
         sleep=clock.sleep,
     )
     assert gate() is True
+
+
+@pytest.mark.parametrize("bad_binding", ["account", "binary", "class", "python-path"])
+def test_flat_windows_registration_refuses_foreign_binding(tmp_path, bad_binding):
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+    from civiccast.native.upgrade.flat_recovery_windows import _validate_binding
+
+    root = tmp_path / "owned"
+    root.mkdir()
+    config = [
+        16,
+        2,
+        1,
+        f'"{root / "runtime" / "PythonService.exe"}"',
+        "",
+        0,
+        [],
+        "LocalSystem",
+        "CivicCast",
+    ]
+    python_class = "civiccast.native.supervisor.service_host.CivicCastSupervisorService"
+    python_path = None
+    if bad_binding == "account":
+        config[7] = "DOMAIN\\OtherUser"
+    elif bad_binding == "binary":
+        config[3] = f'"{tmp_path / "other" / "PythonService.exe"}"'
+    elif bad_binding == "class":
+        python_class = "foreign.Service"
+    else:
+        python_path = str(tmp_path / "foreign")
+    with pytest.raises(FlatRecoveryError):
+        _validate_binding(root, config, python_class, python_path)
+
+
+@pytest.mark.parametrize("absolute_class", [False, True])
+def test_flat_windows_pythonservice_owned_binding_is_accepted(tmp_path, absolute_class):
+    from civiccast.native.upgrade.flat_recovery_windows import _validate_binding
+
+    root = tmp_path / "owned"
+    root.mkdir()
+    config = [
+        16,
+        2,
+        1,
+        f'"{root / "runtime" / "PythonService.exe"}"',
+        "",
+        0,
+        [],
+        "LocalSystem",
+        "CivicCast",
+    ]
+    python_class = "civiccast.native.supervisor.service_host.CivicCastSupervisorService"
+    if absolute_class:
+        python_class = (
+            str(root / "runtime/Lib/site-packages/civiccast/native/supervisor/service_host")
+            + ".CivicCastSupervisorService"
+        )
+    _validate_binding(root, config, python_class, str(root / "runtime/Lib/site-packages"))
+
+
+def _flat_fake_registration(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+
+    from civiccast.native.upgrade import flat_recovery_windows as windows
+    from civiccast.native.upgrade import service_control
+
+    root = tmp_path / "owned"
+    root.mkdir()
+    config = [
+        16,
+        2,
+        1,
+        f'"{root / "runtime" / "PythonService.exe"}"',
+        "",
+        0,
+        [],
+        "LocalSystem",
+        "CivicCast",
+    ]
+    events = []
+    scm = SimpleNamespace(
+        QueryServiceConfig=lambda _handle: config,
+        QueryServiceConfig2=lambda _handle, level: (
+            {"ResetPeriod": 10, "RebootMsg": "", "Command": "", "Actions": ((1, 5000),)}
+            if level == 2
+            else 0
+        ),
+        QueryServiceObjectSecurity=lambda *_args: "sddl",
+        ChangeServiceConfig=lambda *args: events.append(("config", args)),
+        ChangeServiceConfig2=lambda *args: events.append(("advanced", args)),
+        SetServiceObjectSecurity=lambda *args: events.append(("security", args)),
+        SERVICE_NO_CHANGE=0xFFFFFFFF,
+        SERVICE_DISABLED=4,
+        SERVICE_CONFIG_FAILURE_ACTIONS=2,
+    )
+
+    @contextmanager
+    def handle(config=None):
+        yield scm, "owned-service"
+
+    values = {"values": [["PythonClass", windows._CLASS, 1]], "children": {}, "security": "sddl"}
+    monkeypatch.setattr(windows, "_service_handle", handle)
+    monkeypatch.setattr(windows, "_registry_snapshot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        windows,
+        "_python_settings",
+        lambda: (values, {"PythonClass": None, "PythonPath": None}, windows._CLASS, None),
+    )
+    monkeypatch.setattr(windows, "_security_flags", lambda: 7)
+    monkeypatch.setattr(windows, "_sddl", lambda value: value)
+    monkeypatch.setattr(windows, "_descriptor", lambda value: value)
+    monkeypatch.setattr(
+        windows, "_registry_restore", lambda *args, **kwargs: events.append(("registry", args))
+    )
+    monkeypatch.setattr(service_control, "_real_service_stopped_probe", lambda: True)
+    monkeypatch.setattr(service_control, "_real_service_registered_probe", lambda: True)
+    return windows, scm, root, config, events
+
+
+def test_flat_windows_registration_roundtrip_preserves_policy_never_starts(tmp_path, monkeypatch):
+    import json
+
+    windows, _scm, root, config, events = _flat_fake_registration(tmp_path, monkeypatch)
+    record = json.loads(json.dumps(windows.capture_registration(root)))
+    windows.restore_registration(record, expected_install_root=root)
+    assert events[0] == (
+        "config",
+        ("owned-service", 16, 2, 1, config[3], "", False, [], "LocalSystem", None, "CivicCast"),
+    )
+    assert [event[1][1] for event in events if event[0] == "advanced"] == list(range(1, 8))
+    assert events[-1] == ("security", ("owned-service", 7, "sddl"))
+    assert not any(event[0] == "start" for event in events)
+
+
+def test_flat_windows_restore_running_service_is_refused_before_any_write(tmp_path, monkeypatch):
+    from civiccast.native.upgrade import service_control
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    windows, _scm, root, _config, events = _flat_fake_registration(tmp_path, monkeypatch)
+    record = windows.capture_registration(root)
+    monkeypatch.setattr(service_control, "_real_service_stopped_probe", lambda: False)
+    with pytest.raises(FlatRecoveryError):
+        windows.restore_registration(record, expected_install_root=root)
+    assert events == []
+
+
+def test_flat_windows_errors_do_not_expose_registry_or_scm_secrets(tmp_path, monkeypatch):
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    windows, scm, root, _config, _events = _flat_fake_registration(tmp_path, monkeypatch)
+    secret = "synthetic-private-config"
+
+    def fail(_handle):
+        raise RuntimeError(secret)
+
+    scm.QueryServiceConfig = fail
+    with pytest.raises(FlatRecoveryError) as error:
+        windows.capture_registration(root)
+    assert secret not in str(error.value)
+    assert error.value.__suppress_context__ is True
+
+
+def test_flat_windows_containment_disables_restart_then_waits_for_stopped(tmp_path, monkeypatch):
+    from civiccast.native.upgrade import service_control
+
+    windows, _scm, _root, _config, events = _flat_fake_registration(tmp_path, monkeypatch)
+    replies = iter([False, True])
+    monkeypatch.setattr(service_control, "_real_scm_stop", lambda: events.append(("stop",)))
+    monkeypatch.setattr(service_control, "_real_service_stopped_probe", lambda: next(replies))
+    monkeypatch.setattr(windows.time, "sleep", lambda _seconds: None)
+    windows.contain_service()
+    assert [event[0] for event in events] == ["config", "advanced", "stop"]
+    assert events[0][1][2] == 4
+    assert events[1][1][2]["Actions"] == ()
+
+
+@pytest.mark.windows_only
+def test_flat_windows_configuration_temp_files_preserve_bytes_and_acl_only(tmp_path, monkeypatch):
+    from civiccast.native.upgrade import flat_recovery_windows as windows
+    from civiccast.native.upgrade import service_control
+
+    install = tmp_path / "install"
+    install.mkdir()
+    data = tmp_path / "CivicCast"
+    pgdata = data / "data/pgdata"
+    pgdata.mkdir(parents=True)
+    first = pgdata / "postgresql.conf"
+    first.write_bytes(b"port=5432\n")
+    sentinel = pgdata / "physical-data-sentinel"
+    sentinel.write_bytes(b"never-copy-or-restore")
+    destination = tmp_path / "configuration"
+    monkeypatch.setattr(windows, "_registry_snapshot", lambda *args, **kwargs: None)
+    restored = []
+    monkeypatch.setattr(
+        windows, "_registry_restore", lambda *args, **kwargs: restored.append(args[0])
+    )
+    monkeypatch.setattr(service_control, "_real_service_stopped_probe", lambda: True)
+    windows.capture_configuration(destination, install, data)
+    original = windows._file_snapshot(first)
+    first.write_bytes(b"changed\n")
+    (pgdata / "pg_hba.conf").write_bytes(b"new-local-file")
+    windows.restore_configuration(destination, install, data)
+    assert windows._file_snapshot(first) == original
+    assert not (pgdata / "pg_hba.conf").exists()
+    assert sentinel.read_bytes() == b"never-copy-or-restore"
+    assert sorted(path.name for path in destination.iterdir()) == ["configuration.json"]
+    assert restored == [windows._NATIVE_KEY, windows._SERVICE_KEY]
+    import win32security
+
+    from civiccast.native.provision.journal import _current_process_sid_sddl
+
+    security = win32security.GetFileSecurity(
+        str(destination / "configuration.json"), win32security.DACL_SECURITY_INFORMATION
+    )
+    dacl = security.GetSecurityDescriptorDacl()
+    allowed = {_current_process_sid_sddl(), "S-1-5-18", "S-1-5-32-544"}
+    assert {
+        win32security.ConvertSidToStringSid(dacl.GetAce(index)[2])
+        for index in range(dacl.GetAceCount())
+    } <= allowed
+
+
+@pytest.mark.windows_only
+@pytest.mark.parametrize("protected", [False, True])
+def test_flat_windows_owned_hkcu_registry_values_and_acl_roundtrip(tmp_path, protected):
+    import uuid
+    import winreg
+
+    from civiccast.native.upgrade import flat_recovery_windows as windows
+
+    path = r"Software\CivicCastRecoveryTest-" + uuid.uuid4().hex
+    try:
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_ALL_ACCESS) as key:
+            winreg.SetValueEx(key, "synthetic-credential", 0, winreg.REG_BINARY, b"synthetic-only")
+            winreg.SetValueEx(key, "Environment", 0, winreg.REG_MULTI_SZ, ["OWNED=fixture"])
+            if protected:
+                import win32api
+                import win32security
+
+                from civiccast.native.provision.journal import _current_process_sid_sddl
+
+                descriptor = windows._descriptor(f"D:P(A;OICI;KA;;;{_current_process_sid_sddl()})")
+                win32api.RegSetKeySecurity(
+                    int(key),
+                    win32security.DACL_SECURITY_INFORMATION
+                    | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+                    descriptor,
+                )
+        with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, path + r"\PythonClass") as key:
+            winreg.SetValueEx(key, "", 0, winreg.REG_SZ, "owned-fixture-class")
+        original = windows._registry_snapshot(path, hive=winreg.HKEY_CURRENT_USER)
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, "synthetic-credential", 0, winreg.REG_BINARY, b"changed")
+            winreg.SetValueEx(key, "new-only", 0, winreg.REG_SZ, "remove")
+        windows._registry_restore(path, original, hive=winreg.HKEY_CURRENT_USER)
+        assert windows._registry_snapshot(path, hive=winreg.HKEY_CURRENT_USER) == original
+    finally:
+        # Only this exact newly generated test key, never product registration.
+        windows._delete_registry_tree(winreg.HKEY_CURRENT_USER, path)
+
+
+def test_flat_windows_containment_deadline_is_fail_closed(tmp_path, monkeypatch):
+    from civiccast.native.upgrade import service_control
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    windows, _scm, _root, _config, events = _flat_fake_registration(tmp_path, monkeypatch)
+    monkeypatch.setattr(service_control, "_real_scm_stop", lambda: events.append(("stop",)))
+    monkeypatch.setattr(service_control, "_real_service_stopped_probe", lambda: None)
+    clock = iter([0, 61])
+    monkeypatch.setattr(windows.time, "monotonic", lambda: next(clock))
+    with pytest.raises(FlatRecoveryError):
+        windows.contain_service()
+    assert events[-1] == ("stop",)
+
+
+@pytest.mark.parametrize("operation", ["restore_registration", "ensure_contained_registration"])
+def test_flat_windows_malformed_registration_is_refused_before_any_write(
+    tmp_path, monkeypatch, operation
+):
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    windows, _scm, root, _config, events = _flat_fake_registration(tmp_path, monkeypatch)
+    record = windows.capture_registration(root)
+    record["python_children"]["foreign"] = None
+    with pytest.raises(FlatRecoveryError):
+        getattr(windows, operation)(record, expected_install_root=root)
+    assert events == []
+
+
+def test_flat_windows_missing_registration_is_created_contained_before_config(
+    tmp_path, monkeypatch
+):
+    from contextlib import contextmanager
+
+    windows, scm, root, config, events = _flat_fake_registration(tmp_path, monkeypatch)
+    record = windows.capture_registration(root)
+    opens = []
+
+    @contextmanager
+    def service_handle(candidate=None):
+        opens.append(candidate)
+        yield scm, "service"
+
+    monkeypatch.setattr(windows, "_service_handle", service_handle)
+    scm.SERVICE_DISABLED = 4
+    scm.SERVICE_NO_CHANGE = 0xFFFFFFFF
+    scm.SERVICE_CONFIG_FAILURE_ACTIONS = 2
+    windows.ensure_contained_registration(record, expected_install_root=root)
+    assert opens[0][1] == 4, "missing service must not be created auto-start"
+    assert config[1] != 4, "captured original startup policy must remain intact"
+    assert events[0][0] == "config"
+    assert events[0][1][2] == 4
+    assert events[1] == (
+        "advanced",
+        (
+            "service",
+            2,
+            {
+                "ResetPeriod": 0,
+                "RebootMsg": "",
+                "Command": "",
+                "Actions": (),
+            },
+        ),
+    )
+    assert all(event[0] not in {"start", "registry"} for event in events)
+
+
+@pytest.mark.parametrize("operation", ["restore_registration", "ensure_contained_registration"])
+def test_flat_windows_registration_root_is_independently_bound(tmp_path, monkeypatch, operation):
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    windows, _scm, root, _config, events = _flat_fake_registration(tmp_path, monkeypatch)
+    record = windows.capture_registration(root)
+    foreign = root.parent / "foreign-install"
+    foreign.mkdir()
+    record["install_root"] = str(foreign)
+    record["config"][3] = f'"{foreign / "runtime/PythonService.exe"}"'
+    with pytest.raises(FlatRecoveryError):
+        getattr(windows, operation)(record, expected_install_root=root)
+    assert events == []
+
+
+@pytest.mark.parametrize("error_code", [1060, 5])
+def test_flat_windows_scm_recreates_only_definitively_absent_registration(
+    tmp_path, monkeypatch, error_code
+):
+    import sys
+    from types import SimpleNamespace
+
+    from civiccast.native.upgrade import flat_recovery_windows as windows
+
+    calls = []
+
+    def absent(*_args):
+        error = OSError("synthetic-SCM-error")
+        error.winerror = error_code
+        raise error
+
+    scm = SimpleNamespace(
+        OpenSCManager=lambda *args: "manager",
+        OpenService=absent,
+        CreateService=lambda *args: calls.append(args) or "created",
+        CloseServiceHandle=lambda value: None,
+        SC_MANAGER_CONNECT=1,
+        SC_MANAGER_CREATE_SERVICE=2,
+        SERVICE_ALL_ACCESS=0xFFFF,
+    )
+    monkeypatch.setitem(sys.modules, "win32service", scm)
+    config = [16, 2, 1, str(tmp_path / "PythonService.exe"), "", 0, [], "LocalSystem", "CivicCast"]
+    if error_code == 5:
+        with pytest.raises(OSError), windows._service_handle(config):
+            pytest.fail("ambiguous SCM error admitted recreation")
+        assert calls == []
+    else:
+        with windows._service_handle(config) as (_api, service):
+            assert service == "created"
+        assert calls == [
+            (
+                "manager",
+                "CivicCastSupervisor",
+                "CivicCast",
+                0xFFFF,
+                16,
+                2,
+                1,
+                config[3],
+                None,
+                False,
+                [],
+                "LocalSystem",
+                None,
+            )
+        ]
+
+
+@pytest.mark.windows_only
+def test_flat_windows_corrupt_config_snapshot_cannot_mutate_owned_state(tmp_path, monkeypatch):
+    import json
+
+    from civiccast.native.upgrade import flat_recovery_windows as windows
+    from civiccast.native.upgrade import service_control
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    install = tmp_path / "install"
+    install.mkdir()
+    data = tmp_path / "CivicCast"
+    pgdata = data / "data/pgdata"
+    pgdata.mkdir(parents=True)
+    target = pgdata / "postgresql.conf"
+    target.write_bytes(b"old-config")
+    destination = tmp_path / "recovery"
+    monkeypatch.setattr(windows, "_registry_snapshot", lambda *args, **kwargs: None)
+    writes = []
+    monkeypatch.setattr(windows, "_registry_restore", lambda *args, **kwargs: writes.append(args))
+    monkeypatch.setattr(service_control, "_real_service_stopped_probe", lambda: True)
+    windows.capture_configuration(destination, install, data)
+    manifest = destination / "configuration.json"
+    record = json.loads(manifest.read_text())
+    record["files"]["postgresql.conf"]["sha256"] = "0" * 64
+    manifest.write_text(json.dumps(record))
+    target.write_bytes(b"current-config")
+    with pytest.raises(FlatRecoveryError):
+        windows.restore_configuration(destination, install, data)
+    assert writes == []
+    assert target.read_bytes() == b"current-config"

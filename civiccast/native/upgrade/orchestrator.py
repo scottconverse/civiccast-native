@@ -190,7 +190,13 @@ def _drive_forward(journal: UpgradeJournal, seams: UpgradeSeams) -> UpgradeOutco
             attempting = UpgradePhase.INTERLOCK_ACQUIRED
             seams.acquire_interlock()
             journal = _persist(
-                journal, UpgradePhase.INTERLOCK_ACQUIRED, "D7a maintenance interlock acquired"
+                journal,
+                UpgradePhase.INTERLOCK_ACQUIRED,
+                (
+                    "outer installer maintenance interlock verified"
+                    if seams.outer_interlock_owned
+                    else "D7a maintenance interlock acquired"
+                ),
             )
 
         if journal.phase.rank < UpgradePhase.WRITERS_DRAINED.rank:
@@ -318,7 +324,13 @@ def _drive_forward(journal: UpgradeJournal, seams: UpgradeSeams) -> UpgradeOutco
             attempting = UpgradePhase.COMPLETE
             seams.release_interlock()
             journal = _persist(
-                journal, UpgradePhase.COMPLETE, "interlock released; upgrade committed"
+                journal,
+                UpgradePhase.COMPLETE,
+                (
+                    "D3 committed; outer installer maintenance interlock retained"
+                    if seams.outer_interlock_owned
+                    else "interlock released; upgrade committed"
+                ),
             )
 
     except NotImplementedError:

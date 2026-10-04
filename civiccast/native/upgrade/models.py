@@ -384,3 +384,6 @@ class UpgradeSeams:
     #: <installer-path-audit MA-01> Whether this bundle can revert the on-disk
     #: payload. See ``UpgradeJournal.filesystem_rollback``.
     filesystem_rollback: bool = True
+    #: The installer owns the physical D7 lease beyond this D3 transaction.
+    #: Its acquire/release seams must validate that lease, not remove it.
+    outer_interlock_owned: bool = False

@@ -183,8 +183,11 @@ def evaluate_schema_currency(
 _READ_DB_REVISION_CEILING_SECONDS = 15.0
 
 
-def read_db_revision(database_url: str) -> str | None:
+def read_db_revision(database_url: str, *, timeout_seconds: int | None = None) -> str | None:
     """Read alembic_version from the configured database (None if absent).
+
+    ``timeout_seconds`` binds an operation-local connect ceiling without changing
+    the application's existing global timeout policy for ordinary callers.
 
     ``database_url`` is normalized (:func:`civiccast.db.url.
     normalize_database_url`) before it reaches ``create_engine``: a bare
@@ -234,7 +237,7 @@ def read_db_revision(database_url: str) -> str | None:
         engine = create_engine(
             normalized_url,
             poolclass=None,
-            **connect_options(normalized_url),
+            **connect_options(normalized_url, timeout_seconds=timeout_seconds),
         )
         try:
             try:

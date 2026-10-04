@@ -350,7 +350,12 @@ def normalize_nsis_bootstrap() -> None:
         if GENERATED_NSIS_OUTPUT.exists():
             GENERATED_NSIS_OUTPUT.unlink()
         _run(
-            [str(_find_makensis()), "/V2", str(GENERATED_NSIS_SCRIPT)],
+            [
+                str(_find_makensis()),
+                "/V2",
+                f"/DCIVICCAST_FLAT_EXECUTOR_SHA256={hashlib.sha256(patched).hexdigest()}",
+                str(GENERATED_NSIS_SCRIPT),
+            ],
             cwd=GENERATED_NSIS_DIR,
         )
         if not GENERATED_NSIS_OUTPUT.is_file():

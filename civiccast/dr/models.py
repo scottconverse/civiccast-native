@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,6 +67,29 @@ class BackupManifest(BaseModel):
             "and on any Postgres backup taken before this field existed."
         ),
     )
+    role_prerequisites_artifact: str | None = Field(
+        default=None,
+        description=(
+            "Scoped role attributes/memberships required for same-cluster namespace recovery. "
+            "Not cluster globals, role credentials, or cold-standby role-restorability proof."
+        ),
+    )
+    namespace_extensions: dict[str, tuple[str, str]] | None = Field(
+        default=None,
+        description="Explicit necessary extension version/schema closure for a namespace-only drill.",
+    )
+
+
+class PostgresRolePrerequisites(BaseModel):
+    """Non-secret prerequisites; recovery compares these, never replays roles."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_name: Literal["civiccast"] = "civiccast"
+    roles: dict[str, tuple[bool, bool, bool, bool, bool, bool, int]] = Field(min_length=1)
+    memberships: list[tuple[str, str]]
+    role_options: dict[str, tuple[bool, str | None]] = Field(min_length=1)
+    membership_options: list[tuple[str, str, bool, bool, bool]]
 
 
 class RestoreTableResult(BaseModel):

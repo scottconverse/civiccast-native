@@ -40,6 +40,8 @@ become a no-op on a developer machine that happens to have psycopg2 present.
 from __future__ import annotations
 
 import importlib
+import json
+import os
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
@@ -302,3 +304,484 @@ def test_an_unreadable_source_revision_fails_the_backup_closed(
     detail = " ".join(backup_ref.restore_drill_errors)
     assert "could not read the source database's own current revision" in detail
     assert "33681670855" in detail, "the failure must name the defect it is refusing to reintroduce"
+
+
+@pytest.mark.parametrize("local", [False, True])
+def test_flat_database_does_not_delegate_to_unscoped_cluster_backup(tmp_path, monkeypatch, local):
+    from civiccast.native.upgrade import flat_recovery_database as database
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    calls = []
+
+    def unsafe_backup(**kwargs):
+        calls.append("whole-cluster globals and whole-database dump")
+        return _postgres_manifest()
+
+    monkeypatch.setattr(database, "run_full_backup", unsafe_backup, raising=False)
+    context = database.FlatDatabaseContext(
+        database_url=_BARE_POSTGRES_URL,
+        pg_bin=tmp_path / "old-tools",
+        expected_owned_pgdata=tmp_path / "pgdata" if local else None,
+        backup_root=tmp_path / "database",
+        expected_schema_revision="old-revision",
+        owned_database="civiccast",
+        owned_role="civiccast",
+        verification_target=database.FlatVerificationTarget(
+            "postgresql://verifier@127.0.0.1:56489/postgres", tmp_path / "verifier-pgdata"
+        ),
+    )
+    # The unverified tool paths alone require pre-overwrite refusal. Neither
+    # local classification nor a shared service URL authorizes global capture.
+    with pytest.raises(FlatRecoveryError):
+        database.build_flat_database_seams(context).backup(str(context.backup_root))
+    assert not calls
+
+
+def _flat_context(tmp_path: Path):
+    from civiccast.native.upgrade.flat_recovery_database import (
+        FlatDatabaseContext,
+        FlatVerificationTarget,
+    )
+
+    tools = tmp_path / "old-tools"
+    tools.mkdir()
+    for name in ("pg_dump", "pg_restore", "psql"):
+        (tools / (name + (".exe" if os.name == "nt" else ""))).write_bytes(b"admitted old tool")
+    return FlatDatabaseContext(
+        database_url=_BARE_POSTGRES_URL,
+        pg_bin=tools,
+        expected_owned_pgdata=None,
+        backup_root=tmp_path / "database",
+        expected_schema_revision="old-revision",
+        owned_database="civiccast",
+        owned_role="civiccast",
+        verification_target=FlatVerificationTarget(
+            "postgresql://verifier@127.0.0.1:56489/postgres", tmp_path / "verifier-pgdata"
+        ),
+    )
+
+
+def _scoped_roles():
+    from civiccast.dr.models import PostgresRolePrerequisites
+
+    return PostgresRolePrerequisites(
+        roles={"civiccast": (False, False, False, True, False, False, -1)},
+        memberships=[],
+        role_options={"civiccast": (True, None)},
+        membership_options=[],
+    )
+
+
+def _flat_reference(context):
+    from civiccast.dr.backup import write_integrity_manifest
+    from civiccast.dr.models import TableSnapshot
+    from civiccast.native.upgrade.flat_recovery_database import _header_hash
+    from civiccast.native.upgrade.models import BackupRef
+
+    root = context.backup_root
+    root.mkdir()
+    (root / "database.pgdump").write_bytes(b"synthetic dump for integrity-unit test only")
+    (root / "role-prerequisites.json").write_text(
+        _scoped_roles().model_dump_json(), encoding="utf-8"
+    )
+    manifest = _postgres_manifest().model_copy(
+        update={
+            "db_artifact": "database.pgdump",
+            "globals_artifact": None,
+            "role_prerequisites_artifact": "role-prerequisites.json",
+            "namespace_extensions": {"plpgsql": ("1.0", "pg_catalog")},
+            "tables": [TableSnapshot(name="items", row_count=1, checksum_sha256="a" * 64)],
+        }
+    )
+    receipt = {
+        "target": {
+            "host": "127.0.0.1",
+            "port": 1,
+            "database": "civiccast",
+            "role": "civiccast",
+            "schemas": ["civiccast"],
+            "connection_options": {},
+        },
+        "source_revision": "old-revision",
+        "manifest_header_sha256": _header_hash(manifest),
+    }
+    (root / "namespace-recovery.json").write_text(json.dumps(receipt), encoding="utf-8")
+    manifest = manifest.model_copy(update={"integrity": write_integrity_manifest(root)})
+    (root / "manifest.json").write_text(manifest.model_dump_json(), encoding="utf-8")
+    return BackupRef(
+        backup_id=manifest.backup_id,
+        backup_dir=str(root),
+        manifest_hash=upgrade_seams._manifest_blob_hash(manifest),
+        db_artifact="database.pgdump",
+        verified=True,
+        restore_drill_ok=True,
+    )
+
+
+@pytest.mark.parametrize("damage", ["table-baseline", "artifact", "path", "drill", "tools"])
+def test_flat_database_verification_rejects_changed_contract(tmp_path, damage):
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+    from civiccast.native.upgrade.flat_recovery_database import build_flat_database_seams
+
+    context = _flat_context(tmp_path)
+    seams = build_flat_database_seams(context)
+    reference = _flat_reference(context)
+    seams.verify_backup(reference)
+    if damage == "table-baseline":
+        path = context.backup_root / "manifest.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["tables"][0]["row_count"] = 0
+        path.write_text(json.dumps(data), encoding="utf-8")
+    elif damage == "artifact":
+        (context.backup_root / "database.pgdump").write_bytes(b"changed")
+    elif damage == "path":
+        reference = reference.model_copy(update={"backup_dir": str(tmp_path / "foreign")})
+    elif damage == "drill":
+        reference = reference.model_copy(update={"restore_drill_ok": False})
+    else:
+        tool = context.pg_bin / ("psql.exe" if os.name == "nt" else "psql")
+        tool.write_bytes(b"new payload overwrote the old tools")
+    with pytest.raises(FlatRecoveryError):
+        seams.verify_backup(reference)
+
+
+def test_flat_database_destination_binding_precedes_connection(tmp_path, monkeypatch):
+    from civiccast.native.upgrade import flat_recovery_database as database
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    context = _flat_context(tmp_path)
+    seams = database.build_flat_database_seams(context)
+    monkeypatch.setattr(
+        database, "create_engine", lambda *_args, **_kwargs: pytest.fail("connected")
+    )
+    with pytest.raises(FlatRecoveryError, match="destination"):
+        seams.backup(str(tmp_path / "foreign"))
+    assert not (tmp_path / "foreign").exists()
+    assert "secret" not in repr(context)
+
+
+@pytest.mark.parametrize("damage", ["missing", "empty", "malformed", "escape"])
+def test_scoped_role_proof_requires_valid_backup_local_artifact(tmp_path, damage):
+    artifact = "role-prerequisites.json"
+    if damage == "empty":
+        (tmp_path / artifact).write_text("", encoding="utf-8")
+    elif damage == "malformed":
+        (tmp_path / artifact).write_text('{"roles":{}}', encoding="utf-8")
+    elif damage == "escape":
+        artifact = "../role-prerequisites.json"
+        (tmp_path.parent / "role-prerequisites.json").write_text(
+            _scoped_roles().model_dump_json(), encoding="utf-8"
+        )
+    with pytest.raises((ValueError, FileNotFoundError)):
+        restore_drill.read_postgres_role_prerequisites(tmp_path, artifact)
+
+
+@pytest.mark.parametrize(
+    "damage", ["attributes", "memberships", "inheritance", "membership-options"]
+)
+def test_scoped_role_prerequisites_refuse_drift_without_replaying_roles(monkeypatch, damage):
+    prerequisites = _scoped_roles()
+    monkeypatch.setattr(restore_drill, "_pg_role_attributes", lambda *_: prerequisites.roles)
+    monkeypatch.setattr(restore_drill, "_pg_role_memberships", lambda *_: set())
+    monkeypatch.setattr(restore_drill, "_pg_role_options", lambda *_: prerequisites.role_options)
+    monkeypatch.setattr(restore_drill, "_pg_membership_options", lambda *_: [])
+    restore_drill.verify_postgres_role_prerequisites(None, prerequisites)
+    if damage == "attributes":
+        monkeypatch.setattr(restore_drill, "_pg_role_attributes", lambda *_: {})
+    elif damage == "memberships":
+        monkeypatch.setattr(
+            restore_drill, "_pg_role_memberships", lambda *_: {("civiccast", "foreign")}
+        )
+    elif damage == "inheritance":
+        monkeypatch.setattr(
+            restore_drill, "_pg_role_options", lambda *_: {"civiccast": (False, None)}
+        )
+    else:
+        monkeypatch.setattr(
+            restore_drill,
+            "_pg_membership_options",
+            lambda *_: [("civiccast", "foreign", True, True, True)],
+        )
+    with pytest.raises(ValueError):
+        restore_drill.verify_postgres_role_prerequisites(None, prerequisites)
+
+
+def test_scoped_role_capture_requires_complete_necessary_role_closure(monkeypatch):
+    prerequisites = _scoped_roles()
+    monkeypatch.setattr(restore_drill, "_pg_relevant_roles", lambda *_, **_kw: {"civiccast"})
+    monkeypatch.setattr(restore_drill, "_pg_role_attributes", lambda *_: prerequisites.roles)
+    monkeypatch.setattr(restore_drill, "_pg_role_memberships", lambda *_: set())
+    monkeypatch.setattr(restore_drill, "_pg_role_options", lambda *_: prerequisites.role_options)
+    monkeypatch.setattr(restore_drill, "_pg_membership_options", lambda *_: [])
+    captured = restore_drill.capture_postgres_role_prerequisites(None)
+    assert captured == prerequisites
+    assert set(captured.roles) == {"civiccast"}
+    monkeypatch.setattr(restore_drill, "_pg_role_attributes", lambda *_: {})
+    with pytest.raises(ValueError, match="could not be read"):
+        restore_drill.capture_postgres_role_prerequisites(None)
+
+
+@pytest.mark.parametrize(
+    "address,expected",
+    [
+        ("127.0.0.1/32", True),
+        ("::1/128", True),
+        ("127.0.0.1", True),
+        ("192.168.1.1/32", False),
+        ("::ffff:192.168.1.1/128", False),
+        (None, False),
+    ],
+)
+def test_owned_postgres_admission_parses_server_inet_text(address, expected):
+    from civiccast.native.upgrade.flat_recovery_database import _loopback_server
+
+    assert _loopback_server(address) is expected
+
+
+@pytest.mark.parametrize("damage", ["same-source", "remote"])
+def test_flat_verifier_target_must_be_independently_disposable(tmp_path, damage):
+    from dataclasses import replace
+
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+    from civiccast.native.upgrade.flat_recovery_database import (
+        FlatVerificationTarget,
+        build_flat_database_seams,
+    )
+
+    context = _flat_context(tmp_path)
+    target_url = (
+        context.database_url
+        if damage == "same-source"
+        else "postgresql://admin@192.0.2.1:56489/postgres"
+    )
+    context = replace(
+        context,
+        verification_target=FlatVerificationTarget(target_url, tmp_path / "verifier-pgdata"),
+    )
+    with pytest.raises(FlatRecoveryError, match="verification target"):
+        build_flat_database_seams(context)
+
+
+@pytest.mark.parametrize("missing", ["roles", "extensions", "ambiguous-globals"])
+def test_separate_namespace_drill_requires_closed_prerequisites_before_connection(
+    tmp_path, monkeypatch, missing
+):
+    from datetime import UTC, datetime
+
+    from civiccast.dr.models import BackupManifest
+
+    manifest = BackupManifest(
+        backup_id="synthetic",
+        created_at=datetime.now(UTC),
+        engine="postgres",
+        db_artifact="database.pgdump",
+        role_prerequisites_artifact="roles.json",
+        namespace_extensions={"plpgsql": ("1.0", "pg_catalog")},
+    )
+    if missing == "roles":
+        manifest = manifest.model_copy(update={"role_prerequisites_artifact": None})
+    elif missing == "extensions":
+        manifest = manifest.model_copy(update={"namespace_extensions": None})
+    else:
+        manifest = manifest.model_copy(update={"globals_artifact": "globals.sql"})
+    monkeypatch.setattr(restore_drill, "create_engine", lambda *_a, **_kw: pytest.fail("connected"))
+    with pytest.raises(ValueError, match="role and extension prerequisites"):
+        restore_drill.run_postgres_restore_drill(
+            backup_dir=tmp_path,
+            manifest=manifest,
+            source_database_url="postgresql://source@127.0.0.1:56487/source",
+            restore_target_database_url="postgresql://verifier@127.0.0.1:56489/postgres",
+        )
+
+
+def test_disposable_roles_reject_incomplete_membership_closure_before_write():
+    proof = _scoped_roles().model_copy(update={"memberships": [("civiccast", "unrelated")]})
+    with pytest.raises(ValueError, match="incomplete"):
+        restore_drill.prepare_disposable_postgres_roles(None, proof)
+
+
+def test_namespace_role_closure_does_not_read_unrelated_database_grants(monkeypatch):
+    monkeypatch.setattr(
+        restore_drill, "_pg_database_owner", lambda *_a, **_kw: pytest.fail("database owner")
+    )
+    monkeypatch.setattr(
+        restore_drill, "_pg_database_acl", lambda *_a, **_kw: pytest.fail("database grants")
+    )
+    monkeypatch.setattr(
+        restore_drill, "_pg_table_owners", lambda *_a, **_kw: {"items": "civiccast"}
+    )
+    monkeypatch.setattr(restore_drill, "_pg_sequence_owners", lambda *_a, **_kw: {})
+    monkeypatch.setattr(restore_drill, "_pg_schema_owner", lambda *_a, **_kw: "civiccast")
+    for name in (
+        "_pg_schema_acl",
+        "_pg_table_grants",
+        "_pg_sequence_acls",
+        "_pg_default_acls",
+        "_pg_all_role_membership_edges",
+    ):
+        monkeypatch.setattr(restore_drill, name, lambda *_a, **_kw: [])
+    assert restore_drill._pg_relevant_roles(None, include_database=False) == {"civiccast"}
+
+
+def test_flat_refuses_global_timeout_before_io(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+    from civiccast.native.upgrade.flat_recovery_database import build_flat_database_seams
+
+    monkeypatch.setenv("CIVICCAST_DB_CONNECT_TIMEOUT", "20")
+    context = _flat_context(tmp_path)
+    context = replace(context, database_url=context.database_url + "?connect_timeout=20")
+    with pytest.raises(FlatRecoveryError, match="option admission"):
+        build_flat_database_seams(context)
+    assert not context.backup_root.exists()
+
+
+def test_flat_requires_disposable_verifier_before_tool_or_database_io(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from civiccast.native.upgrade import flat_recovery_database as database
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    context = replace(_flat_context(tmp_path), verification_target=None)
+    touched = []
+    monkeypatch.setattr(database, "_sha", lambda *_: touched.append("tool hash") or "a" * 64)
+    monkeypatch.setattr(database, "create_engine", lambda *_a, **_k: touched.append("database"))
+    with pytest.raises(FlatRecoveryError, match="requires an independent disposable verifier"):
+        database.build_flat_database_seams(context)
+    assert touched == []
+    assert not context.backup_root.exists()
+
+
+@pytest.mark.parametrize("source_host", ["localhost", "::1", "127.0.0.2"])
+def test_flat_refuses_loopback_source_cluster_alias_before_database_io(tmp_path, source_host):
+    from dataclasses import replace
+
+    from sqlalchemy.engine import URL
+
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+    from civiccast.native.upgrade.flat_recovery_database import build_flat_database_seams
+
+    context = _flat_context(tmp_path)
+    context = replace(
+        context,
+        database_url=URL.create(
+            "postgresql+psycopg",
+            username="civiccast",
+            host=source_host,
+            port=56489,
+            database="civiccast",
+        ).render_as_string(),
+    )
+    with pytest.raises(FlatRecoveryError, match="not independently disposable"):
+        build_flat_database_seams(context)
+    assert not context.backup_root.exists()
+
+
+def test_flat_refuses_known_source_pgdata_as_verifier_before_database_io(tmp_path):
+    from dataclasses import replace
+
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+    from civiccast.native.upgrade.flat_recovery_database import build_flat_database_seams
+
+    context = _flat_context(tmp_path)
+    context = replace(context, expected_owned_pgdata=context.verification_target.expected_pgdata)
+    with pytest.raises(FlatRecoveryError, match="not independently disposable"):
+        build_flat_database_seams(context)
+    assert not context.backup_root.exists()
+
+
+@pytest.mark.parametrize("query", ["", "?connect_timeout=10"])
+def test_flat_local_bound_reaches_tools_source_verifier_and_drill(tmp_path, monkeypatch, query):
+    from dataclasses import replace
+    from subprocess import CompletedProcess
+
+    from civiccast.dr.models import TableSnapshot
+    from civiccast.native.upgrade import flat_recovery_database as database
+    from civiccast.native.upgrade.flat_recovery import FlatRecoveryError
+
+    monkeypatch.setenv("CIVICCAST_DB_CONNECT_TIMEOUT", "20")
+    context = _flat_context(tmp_path)
+    target = database.FlatVerificationTarget(
+        "postgresql://verifier@127.0.0.1:56489/postgres" + query, tmp_path / "verifier"
+    )
+    context = replace(
+        context, database_url=context.database_url + query, verification_target=target
+    )
+    events = []
+
+    class Result:
+        def __init__(self, sql):
+            self.sql = sql
+
+        def one(self):
+            return ("civiccast", "civiccast", "127.0.0.1/32")
+
+        def scalar_one(self):
+            if "EXISTS" in self.sql:
+                return False
+            return "old-revision" if "version_num" in self.sql else "snapshot-id"
+
+        def all(self):
+            return []
+
+    class Source:
+        def connect(self):
+            return self
+
+        def execution_options(self, **kwargs):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def execute(self, statement, *args):
+            return Result(str(statement))
+
+        def dispose(self):
+            pass
+
+    def factory(url, **kwargs):
+        events.append((make_url(url).username, kwargs["connect_args"]["connect_timeout"]))
+        if make_url(url).username == "verifier":
+            raise RuntimeError("verifier construction observed")
+        return Source()
+
+    def spawn(argv, **kwargs):
+        events.append(("tool", kwargs["env"]["PGCONNECT_TIMEOUT"]))
+        return CompletedProcess(argv, 0, b"synthetic dump", b"")
+
+    monkeypatch.setattr(database, "create_engine", factory)
+    monkeypatch.setattr(database.subprocess, "run", spawn)
+    monkeypatch.setattr(
+        database,
+        "snapshot_tables",
+        lambda *_a, **_k: [TableSnapshot(name="items", row_count=1, checksum_sha256="a" * 64)],
+    )
+    monkeypatch.setattr(
+        database,
+        "capture_postgres_namespace_extensions",
+        lambda *_: {"plpgsql": ("1.0", "pg_catalog")},
+    )
+    monkeypatch.setattr(database, "capture_postgres_role_prerequisites", lambda *_: _scoped_roles())
+    seams = database.build_flat_database_seams(context)
+    with pytest.raises(FlatRecoveryError, match="backup failed"):
+        seams.backup(str(context.backup_root))
+    assert events == [("civiccast", 10), ("tool", "10"), ("verifier", 10)]
+
+    def drill_factory(url, **kwargs):
+        assert kwargs["connect_args"]["connect_timeout"] == 10
+        raise RuntimeError("drill source construction observed")
+
+    monkeypatch.setattr(restore_drill, "create_engine", drill_factory)
+    with pytest.raises(RuntimeError, match="drill source construction"):
+        restore_drill.run_postgres_restore_drill(
+            backup_dir=tmp_path,
+            manifest=_postgres_manifest(),
+            source_database_url=context.database_url,
+            timeout_seconds=10,
+        )
+    assert os.environ["CIVICCAST_DB_CONNECT_TIMEOUT"] == "20"
