@@ -2,10 +2,11 @@
 # Copyright (c) The CivicCast Authors
 """Contracts for the bounded continuous emitted-HLS audio verifier.
 
-FIXTURE-ONLY tests. They build a synthetic sliding-window HLS directory and
-drive the tool's collector/measurement seams with injected readers and
-injected ffmpeg results, so nothing here touches the live station, the
-network, or a real GStreamer/ffmpeg process.
+Most tests build a synthetic sliding-window HLS directory and drive the
+collector/measurement seams with injected readers and ffmpeg results. The
+Windows-only positive control runs real packaged media analyzers on generated
+synthetic media; it requires FFmpeg, FFprobe and TSDuck. No test touches the
+live station or network. Missing PCR remains NOT_PROVEN, not a relaxed PASS.
 
 Why this exists (scope of the claim)
 ------------------------------------
@@ -1655,7 +1656,7 @@ def test_scratchdir_remove_uses_its_own_owned_dir(tmp_path: Path) -> None:
     assert not cleanup.owned_dir.exists()
 
 
-# --- real-ffmpeg end-to-end (skipped when ffmpeg is unavailable) -----------
+# --- native toolchain end-to-end (Windows required, tools fail closed) ---
 
 
 _REAL_FFMPEG = Path(r"C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin\ffmpeg.exe")
@@ -1671,9 +1672,13 @@ if not _REAL_FFPROBE.is_file():  # pragma: no cover - host dependent
     _found_probe = shutil.which("ffprobe")
     if _found_probe:
         _REAL_FFPROBE = Path(_found_probe)
+if not _REAL_TSP.is_file():  # pragma: no cover - host dependent
+    _found_tsp = shutil.which("tsp")
+    if _found_tsp:
+        _REAL_TSP = Path(_found_tsp)
 
 
-@pytest.mark.skipif(not _REAL_FFMPEG.is_file(), reason="real ffmpeg not available on this host")
+@pytest.mark.skipif(sys.platform != "win32", reason="requires the native Windows media toolchain")
 def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> None:
     """A really-normalized continuous window must measure in-band and PASS.
 
@@ -1688,6 +1693,8 @@ def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> Non
 
     from civiccast.stream._ffmpeg import resolve_h264_encoder
 
+    for tool in (_REAL_FFMPEG, _REAL_FFPROBE, _REAL_TSP):
+        assert tool.is_file(), f"required native media analyzer is absent: {tool}"
     mod = _load()
     root = tmp_path / "live-hls"
     channel = root / "public"
@@ -1745,8 +1752,8 @@ def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> Non
         min_duration_seconds=6.0,
         release_grade=False,
         ffmpeg=_REAL_FFMPEG,
-        ffprobe=_REAL_FFPROBE if _REAL_FFPROBE.is_file() else None,
-        tsp=_REAL_TSP if _REAL_TSP.is_file() else None,
+        ffprobe=_REAL_FFPROBE,
+        tsp=_REAL_TSP,
     )
 
     assert result["continuity"]["status"] == mod.Verdict.PASS, result["continuity"]

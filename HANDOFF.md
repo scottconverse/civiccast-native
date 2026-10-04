@@ -32,7 +32,13 @@ This file is a pointer, not a log.
   Windows native passed. Four failures are the 15 registry role mismatches
   addressed by local 572d119e (not in that run); the fifth is missing TSDuck/PCR
   measurement in the Linux real-media fixture, not an observed station-output
-  failure. Receipt: oversight reports/U87-CI-2FD8-RESULT.md. Current docs
+  failure. The real-media positive control now explicitly requires Windows and
+  all three native analyzers, with TSP PATH fallback; root independently ran
+  all 68 tests successfully in 5.16 seconds, including actual generated-media
+  PCR/loudness measurement. Missing Windows tools fail; the analyzer's negative
+  checks remain unchanged. This does not prove installed station output.
+  Receipt: oversight reports/U87-CI-2FD8-RESULT.md and
+  U87-NATIVE-AUDIO-ANALYZER-FIXTURE.md. Current docs
   37235135808, installer compile
   37235135809, operator build 37235135854, accessibility 37235135825 and policy
   37235135799 passed. Lint 37235135805 failed on one test file's formatting;
