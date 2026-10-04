@@ -171,6 +171,10 @@ function ActiveAlertsSection() {
       {eventsQuery.error && (
         <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
           {apiMessage(eventsQuery.error, 'Alerts could not load.')}
+          <p className="mt-2 mb-0">The alert list could not be verified. Check Readiness and retry.</p>
+          <button type="button" className="mt-2 underline" disabled={eventsQuery.isFetching} onClick={() => void eventsQuery.refetch()}>
+            Retry alerts
+          </button>
         </div>
       )}
       {ack.error && (
@@ -178,10 +182,10 @@ function ActiveAlertsSection() {
           {apiMessage(ack.error, 'Could not acknowledge the alert.')}
         </div>
       )}
-      {!eventsQuery.isLoading && events.length === 0 && (
-        <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-ok-soft)', color: 'var(--cc-ink-2)' }}>
+      {eventsQuery.isSuccess && events.length === 0 && (
+        <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
           {scope === 'firing'
-            ? 'No active alerts. Everything the watch box monitors is healthy.'
+            ? 'No active alerts were returned. This does not verify station health; check Readiness before going on air.'
             : 'No resolved alerts in the recent history.'}
         </div>
       )}
@@ -733,7 +737,7 @@ function AlertChannelsSection({ canManage }: { canManage: boolean }) {
               {apiMessage(channelsQuery.error, 'Destinations could not load.')}
             </div>
           )}
-          {!channelsQuery.isLoading && channels.length === 0 && (
+          {channelsQuery.isSuccess && channels.length === 0 && (
             <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
               No alert destinations yet. Add one so the station can reach you when something needs attention.
             </div>

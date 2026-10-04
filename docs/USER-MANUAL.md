@@ -2916,7 +2916,7 @@ An *alert* is a warning the station raises by itself, such as "Disk space low" o
 3. Read each row: the title (what went wrong), a severity (CRITICAL, WARNING or INFO), a summary, what it is about, and when it was first and last seen. "seen 3×" means it happened again.
 4. Click **Acknowledge** on a row to say you have seen it. The row then shows "Acknowledged by" your name and the date.
 
-An empty list says: "No active alerts. Everything the watch box monitors is healthy." The screen calls the station's own monitor "the watch box".
+After a successful check, an empty list says: "No active alerts were returned. This does not verify station health; check Readiness before going on air." If the list could not load, it shows an error and **Retry alerts**, not an all-clear message. An empty list is not proof that monitoring or notification delivery works.
 
 ![The Alerts screen with the Active and Resolved buttons at the top, the alert list, and the Alert rules and Where alerts go sections below.](manual/images/operator-alerts-empty.png){width=90%}
 

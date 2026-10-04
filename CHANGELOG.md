@@ -15,6 +15,10 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Alerts no longer presents a failed request or an empty list as proof that the
+  station is healthy. Failed alert reads offer Retry alerts; failed destination
+  reads no longer claim there are no destinations.
+
 - Live captions no longer retry the same decode window at progressively higher
   temperatures. A failed quality check withholds that window rather than emitting
   unreliable text; recorded-video decoding keeps its existing retry behavior.
