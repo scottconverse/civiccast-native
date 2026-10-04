@@ -606,6 +606,10 @@ jobs:
           if ($baseline.schema_version -ne 2) { throw "Unsupported upgrade baseline schema: $($baseline.schema_version)" }
           $previousSha = [string]$baseline.source_sha
           $previousRunId = [string]$baseline.run_id
+          $previousRunAttempt = $baseline.run_attempt
+          if (($previousRunAttempt -isnot [int] -and $previousRunAttempt -isnot [long]) -or $previousRunAttempt -le 0) {
+            throw "Invalid immutable previous candidate run_attempt in $baselinePath; require a positive integer."
+          }
           $previousInstallerSha256 = [string]$baseline.installer_sha256
           $previousStationIndexSha256 = [string]$baseline.station_index_sha256
           $previousProductVersion = [string]$baseline.product_version
@@ -618,18 +622,18 @@ jobs:
           if ($previousSha -eq "${{ steps.run_id.outputs.source_sha }}") {
             throw "Pinned previous source SHA equals the current candidate; this would be a same-candidate reinstall."
           }
-          $runJson = & gh run view $previousRunId -R "scottconverse/civiccast-native" --json headSha,workflowName,conclusion,status 2>&1
+          $runJson = & gh run view $previousRunId -R "scottconverse/civiccast-native" --attempt $previousRunAttempt --json headSha,workflowName,conclusion,status,attempt 2>&1
           if ($LASTEXITCODE -ne 0) { throw "Could not verify pinned previous candidate run ${previousRunId}: $runJson" }
           $run = $runJson | ConvertFrom-Json
-          if ($run.headSha -ne $previousSha -or $run.workflowName -ne 'native-beta-candidate-artifacts' -or $run.conclusion -ne 'success') {
-            throw "Pinned previous candidate identity mismatch: expected sha=$previousSha workflow=native-beta-candidate-artifacts conclusion=success; got sha=$($run.headSha) workflow=$($run.workflowName) conclusion=$($run.conclusion)"
+          if ($run.headSha -ne $previousSha -or $run.workflowName -ne 'native-beta-candidate-artifacts' -or $run.attempt -ne $previousRunAttempt -or $run.status -ne 'completed' -or $run.conclusion -ne 'success') {
+            throw "Pinned previous candidate identity mismatch: expected sha=$previousSha workflow=native-beta-candidate-artifacts attempt=$previousRunAttempt status=completed conclusion=success; got sha=$($run.headSha) workflow=$($run.workflowName) attempt=$($run.attempt) status=$($run.status) conclusion=$($run.conclusion)"
           }
           "previous_source_sha=$previousSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_run_id=$previousRunId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_installer_sha256=$previousInstallerSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_station_index_sha256=$previousStationIndexSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_product_version=$previousProductVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Host "Verified previous candidate: label=$($baseline.candidate_label) run_id=$previousRunId source_sha=$previousSha product_version=$previousProductVersion gate_a_run_id=$($baseline.gate_a_run_id)"
+          Write-Host "Verified previous build identity: label=$($baseline.candidate_label) run_id=$previousRunId run_attempt=$previousRunAttempt source_sha=$previousSha product_version=$previousProductVersion gate_a_run_id=$($baseline.gate_a_run_id); local byte/version verification follows separately."
 
       - name: Require the pinned previous full kit from local staging
         shell: pwsh
@@ -1009,6 +1013,10 @@ jobs:
           if ($baseline.schema_version -ne 2) { throw "Unsupported upgrade baseline schema: $($baseline.schema_version)" }
           $previousSha = [string]$baseline.source_sha
           $previousRunId = [string]$baseline.run_id
+          $previousRunAttempt = $baseline.run_attempt
+          if (($previousRunAttempt -isnot [int] -and $previousRunAttempt -isnot [long]) -or $previousRunAttempt -le 0) {
+            throw "Invalid immutable previous candidate run_attempt in $baselinePath; require a positive integer."
+          }
           $previousInstallerSha256 = [string]$baseline.installer_sha256
           $previousStationIndexSha256 = [string]$baseline.station_index_sha256
           $previousProductVersion = [string]$baseline.product_version
@@ -1021,18 +1029,18 @@ jobs:
           if ($previousSha -eq "${{ steps.run_id.outputs.source_sha }}") {
             throw "Pinned previous source SHA equals the current candidate; this would be a same-candidate reinstall."
           }
-          $runJson = & gh run view $previousRunId -R "scottconverse/civiccast-native" --json headSha,workflowName,conclusion,status 2>&1
+          $runJson = & gh run view $previousRunId -R "scottconverse/civiccast-native" --attempt $previousRunAttempt --json headSha,workflowName,conclusion,status,attempt 2>&1
           if ($LASTEXITCODE -ne 0) { throw "Could not verify pinned previous candidate run ${previousRunId}: $runJson" }
           $run = $runJson | ConvertFrom-Json
-          if ($run.headSha -ne $previousSha -or $run.workflowName -ne 'native-beta-candidate-artifacts' -or $run.conclusion -ne 'success') {
-            throw "Pinned previous candidate identity mismatch: expected sha=$previousSha workflow=native-beta-candidate-artifacts conclusion=success; got sha=$($run.headSha) workflow=$($run.workflowName) conclusion=$($run.conclusion)"
+          if ($run.headSha -ne $previousSha -or $run.workflowName -ne 'native-beta-candidate-artifacts' -or $run.attempt -ne $previousRunAttempt -or $run.status -ne 'completed' -or $run.conclusion -ne 'success') {
+            throw "Pinned previous candidate identity mismatch: expected sha=$previousSha workflow=native-beta-candidate-artifacts attempt=$previousRunAttempt status=completed conclusion=success; got sha=$($run.headSha) workflow=$($run.workflowName) attempt=$($run.attempt) status=$($run.status) conclusion=$($run.conclusion)"
           }
           "previous_source_sha=$previousSha" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_run_id=$previousRunId" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_installer_sha256=$previousInstallerSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_station_index_sha256=$previousStationIndexSha256" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
           "previous_product_version=$previousProductVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
-          Write-Host "Verified previous candidate: label=$($baseline.candidate_label) run_id=$previousRunId source_sha=$previousSha product_version=$previousProductVersion gate_a_run_id=$($baseline.gate_a_run_id)"
+          Write-Host "Verified previous build identity: label=$($baseline.candidate_label) run_id=$previousRunId run_attempt=$previousRunAttempt source_sha=$previousSha product_version=$previousProductVersion gate_a_run_id=$($baseline.gate_a_run_id); local byte/version verification follows separately."
 
       - name: Require the pinned previous full kit from local staging
         shell: pwsh

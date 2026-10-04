@@ -1160,13 +1160,23 @@ tells the dirty lane nothing new, and Windows Sandbox on this runner is a
 shared resource that a doomed 3-hour second cycle should not occupy. It invokes
 `Run-GateA.ps1 -DirtyLane` with the pinned previous-kit directory and source
 SHA. The previous identity lives in `sandbox-lab/upgrade-baseline.json`; the
-workflow verifies its exact candidate-build run, source SHA, workflow name,
-successful conclusion, installer SHA-256, signed station-index SHA-256, and
-product version. Candidate #22 (`1.0.0-rc18`) is the pinned older product
-version; its complete kit is retained in
+workflow verifies its exact candidate-build run and positive-integer attempt,
+source SHA, workflow name, completed status, successful conclusion, installer
+SHA-256, signed station-index SHA-256, and product version. The current pin is
+`1.0.0-beta.5`: original build run `34405681086`, successful attempt `1`, source
+`148c8d2172dd6b63cbbb856b429b68aa020dc421`. Later failed attempts do not replace
+that historical success. The reconstructed station index is separate: station
+job `105485113314` succeeded in attempt `2` of the same run; owner receipt commit
+`8d5730a596989ab320b10edcf152d10883db1550` pins its `ff7c10a6...` hash. Attempt
+`1` does not establish that it produced this reconstructed index. The original
+index is unavailable, and the baseline notes retain the reconstruction limits.
+
+The complete previous kit must exist at
 `C:\CivicCastTester\kit-staging\<sha>`. The lane fails closed if those exact
 local bytes are absent or mixed. The signed station index in turn pins every
 station pack hash. It never substitutes newest/latest or a partial artifact.
+Verifying the historical run attempt does not establish current kit availability
+or a baseline PASS; the local byte/version checks still follow that verification.
 
 `Run-GateA.ps1` threads `-DirtyMode` and `-UpgradeMode` into
 `Host-Launch-Sandbox-Test.ps1` (writes `DIRTY_MODE.txt` into `output\`, the

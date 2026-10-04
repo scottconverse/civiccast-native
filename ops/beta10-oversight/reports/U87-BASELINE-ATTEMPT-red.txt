@@ -1,0 +1,11 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+___ test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob ___
+tests\gate_a\test_gate_a_harness_contract.py:1200: in test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob
+    assert baseline.get("run_attempt") == 1
+E   AssertionError: assert None == 1
+E    +  where None = <built-in method get of dict object at 0x00000228B9391BC0>('run_attempt')
+E    +    where <built-in method get of dict object at 0x00000228B9391BC0> = {'candidate_label': 'candidate-beta.5', 'gate_a_run_id': 34423542177, 'installer_sha256': '775b9a3e63a94183f1c065bb416...stroyed original. Previous station_index_sha256 4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a', ...}.get
+=========================== short test summary info ===========================
+FAILED tests/gate_a/test_gate_a_harness_contract.py::test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob
+1 failed, 97 deselected in 2.57s
