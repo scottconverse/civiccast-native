@@ -466,11 +466,13 @@ jobs:
         # enforces this floor stays within that margin of a FRESH collection
         # on every run (not a second hardcoded number), so this pin cannot
         # go stale again the way 1429 did without failing that test first.
+        # 2026-10-04: isolated committed 14e00b38 collection = 1931 pure;
+        # retain the same 50-test margin, excluding shared rollback WIP.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1774 \
+            --floor 1881 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -610,12 +612,14 @@ jobs:
         # and fails if this floor drifts more than the margin below it, so
         # this pin cannot go stale again the way 1565 did without failing
         # that test first.
+        # 2026-10-04: isolated committed 14e00b38 collection = 2137 with
+        # -m "not integration" (2140 total); retain the 50-test margin.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 1978 \
+            --floor 2087 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit
