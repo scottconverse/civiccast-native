@@ -1,4 +1,4 @@
-# U87 product type contracts — v2
+# U87 product type contracts - v2
 
 Scope: CI-blocker cleanup in `C:\Dev\Claude\civiccast-u73`, branch `codex/u73-caption-measurements`. Initial HEAD `d258e46d47226fc1ed84d6d55c44be37da670582`; final checks at HEAD `fe4a52ffb355d45d7e8051df80da065934b983f3` plus the uncommitted product/test changes below. The HEAD advance was the coordinator's unrelated ops/security checkpoint. No commit/push, station/helper/VM/GPU operation, package install, download, or heavy build performed here. These are local source checks, not installer, running-station, or release proof.
 
@@ -87,7 +87,7 @@ Engineering: callable/data contracts match existing consumers; repeated close ch
 
 Standard lane: this unit changes a diagnostics arithmetic guard, not concurrency policy; the surrounding threading/install context is not itself a changed Critical contract. Remaining work belongs to the coordinator: auth-environment reconciliation, integrated candidate/CI/release proof, and running-station/soak acceptance. Do not call this a full working release.
 
-proved: 439 affected tests passed; four regression cases fail under old increment and pass under fixed source; full product mypy and full Ruff check passed · lane: Standard
+proved: 439 affected tests passed; four regression cases fail under old increment and pass under fixed source; full product mypy and full Ruff check passed; lane: Standard
 
 ## v2 documentation sync
 
