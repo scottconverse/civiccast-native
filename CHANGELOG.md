@@ -24,6 +24,16 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- The interactive installer carries the selected download plan to the native
+  downloader. Unchecked Large/CUDA components are not acquired, retries stay
+  within the admitted plan, and stale progress from an earlier plan cannot
+  finish a refused or newly admitted plan. This does not change the published
+  beta.10 first-install kit requirement.
+
+- The built-in manual packages illustrations as verified local image assets
+  instead of duplicating base64 image data inside its JSON document. Illustrated
+  help remains available without an internet connection.
+
 - Live captions retain independently valid speech when another ASR segment in
   the same window fails quality. Explicit gaps preserve separate confirmed cue
   timings and review regions; rejected speech never joins the valid phrases.

@@ -2204,7 +2204,7 @@ You should see the **Portal** row change to "Succeeded". The card's state become
 
 At the top of the screen, tiles count your recordings: Total, Draft, Portal live, Archive verified, Degraded and Needs action. Each card shows three facts: **Canonical** (Portal public or Portal pending), **Archive** and **Published** (the date, or "Not public yet").
 
-![The Publish dashboard with a recording card. The Portal row is ticked, and the Approve and Publish selected button sits below the surface rows.](manual/images/operator-publish-dashboard.png){width=90%}
+![The Publish dashboard with a recording card. The Portal row is ticked, and the Approve and Publish selected button sits below the surface rows.](manual/images/operator-publish-dashboard.png){width=75%}
 
 *Figure: the current-source Publish dashboard with a synthetic example recording and readiness replies. No station readiness was checked and nothing was published or archived for this illustration.*
 

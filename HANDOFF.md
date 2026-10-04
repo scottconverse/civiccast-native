@@ -5,6 +5,41 @@ This file is a pointer, not a log.
 ## Active development checkpoint - 2026-10-04
 
 - Branch: `codex/u73-caption-measurements`.
+- Current integration PR: [draft #232](https://github.com/scottconverse/civiccast-native/pull/232),
+  opened at source checkpoint `4817d6eb198c82e617cf4baa6cb817bfc1355523`.
+  Existing remote CI is running and has unresolved failures; no merge or release
+  approval. Initial failures include the oversized generated manual, stale
+  PDF/DOCX manifest, lint, egress/native tests and three operator browser cases.
+  Each needs product-versus-fixture reconciliation; no checks were relaxed.
+- The selected installed health/caption candidate completed its bounded local
+  functional window on October 4, 03:25 MDT. All 66 regular samples showed
+  current/healthy responses and advancing public, government and education
+  HLS/captions on the same verified process. Regular saved samples cover
+  17 minutes 51 seconds, not a fully sampled 20-minute soak. Retained logs show
+  no ongoing audio-shedding event; startup discards, quality refusals and
+  unconfirmed-word expiry are disclosed, not counted as proof of complete speech.
+  This selection included the live fallback cap and rejected-region preservation,
+  not every change on the branch. Exact original files/settings and healthy
+  three-channel baseline operation were restored at 03:32 MDT. Full-caption,
+  packaged-install and sustained release acceptance remain open.
+- Product checkpoints: the installer selected-plan repair now has independent
+  source acceptance, including two witnessed stale-completion regressions.
+  The illustrated offline manual packaging repair is committed as `74d2a621`,
+  with independent containment review. Both preserve existing trust checks.
+  PDF/DOCX regeneration and current-source checks passed. A tall screenshot's
+  caption/footer overlap was corrected and the affected PDF page visually
+  checked. Whole-manual visual review and DOCX rendering remain unaccepted. Do not expand
+  the diagnostic harness or change CI limits to hide these failures.
+- Reconciled inherited playout/stream-end fixtures in `fe818cf3`: the current
+  U51 restart intentionally clears stale HLS, rollover records carry four
+  fields, crash recovery may air a fresh slate without reusing an abandoned
+  prepared program, and live caption audio arrives after startup cleanup.
+  Existing checks now pass (196 daemon; 7 stream-end), with a separate 10-test
+  independent focused review. No product runtime behavior changed in this
+  checkpoint and no failed scenario was deleted.
+- Browser fixture reconciliation is committed as `96984445`; existing Chrome
+  scenarios passed 15 locally and 15 in independent review. No production
+  approval, publication or export protection changed.
 - Earlier help proof anchor: `2e4db2b61a36179d55bf4a15dd0f2ce954e206de`
   (help links, operator guidance, source illustrations and regenerated built-in
   manual, including continued numbered lists). This is the code checkpoint,
