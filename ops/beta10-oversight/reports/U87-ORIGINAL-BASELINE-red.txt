@@ -1,0 +1,30 @@
+F                                                                        [100%]
+================================== FAILURES ===================================
+___ test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob ___
+
+    def test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob() -> None:
+        baseline = json.loads(_UPGRADE_BASELINE.read_text(encoding="utf-8"))
+        assert baseline["schema_version"] == 2
+        assert re.fullmatch(r"[0-9a-f]{40}", baseline["source_sha"])
+        assert str(baseline["run_id"]).isdigit()
+        assert baseline.get("run_attempt") == 1
+        assert type(baseline["run_attempt"]) is int
+        assert str(baseline["gate_a_run_id"]).isdigit()
+        assert baseline["run_id"] != baseline["gate_a_run_id"]
+        assert baseline["candidate_label"]
+        assert re.fullmatch(r"[0-9a-f]{64}", baseline["installer_sha256"])
+        assert re.fullmatch(r"[0-9a-f]{64}", baseline["station_index_sha256"])
+>       assert baseline["station_index_sha256"] == (
+            "4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a"
+        )
+E       AssertionError: assert 'ff7c10a69811...fc95a4d945b16' == '486082528407...b1125d184849a'
+E         
+E         - 4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a
+E         + ff7c10a698116a66b292f76493daebfed8618244631859d0d5bfc95a4d945b16
+
+baseline   = {'candidate_label': 'candidate-beta.5', 'gate_a_run_id': 34423542177, 'installer_sha256': '775b9a3e63a94183f1c065bb416...stroyed original. Previous station_index_sha256 4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a', ...}
+
+tests\gate_a\test_gate_a_harness_contract.py:1207: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/gate_a/test_gate_a_harness_contract.py::test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob
+1 failed, 97 deselected in 1.80s

@@ -1165,11 +1165,14 @@ source SHA, workflow name, completed status, successful conclusion, installer
 SHA-256, signed station-index SHA-256, and product version. The current pin is
 `1.0.0-beta.5`: original build run `34405681086`, successful attempt `1`, source
 `148c8d2172dd6b63cbbb856b429b68aa020dc421`. Later failed attempts do not replace
-that historical success. The reconstructed station index is separate: station
-job `105485113314` succeeded in attempt `2` of the same run; owner receipt commit
-`8d5730a596989ab320b10edcf152d10883db1550` pins its `ff7c10a6...` hash. Attempt
-`1` does not establish that it produced this reconstructed index. The original
-index is unavailable, and the baseline notes retain the reconstruction limits.
+that historical success. On 2026-10-04 the original station index was recovered
+from the published, hash-matching signed beta.5 installer, with its original
+`48608252...` hash and matching embedded core pack. Original release installer
+packs and hash-verified unchanged model packs restore the local baseline kit.
+This supersedes the reconstructed `ff7c10a6...` index produced by station job
+`105485113314` in attempt `2`, pinned by owner receipt commit
+`8d5730a596989ab320b10edcf152d10883db1550`. The earlier claim that the original
+index was unrecoverable is disproven; it was embedded in the published installer.
 
 The complete previous kit must exist at
 `C:\CivicCastTester\kit-staging\<sha>`. The lane fails closed if those exact

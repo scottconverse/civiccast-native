@@ -1204,6 +1204,10 @@ def test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob() ->
     assert baseline["candidate_label"]
     assert re.fullmatch(r"[0-9a-f]{64}", baseline["installer_sha256"])
     assert re.fullmatch(r"[0-9a-f]{64}", baseline["station_index_sha256"])
+    assert baseline["station_index_sha256"] == (
+        "4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a"
+    )
+    assert "recovered from the original published signed installer" in baseline["notes"]
     assert baseline["product_version"]
     assert "attempt 2" in baseline["notes"]
     assert "105485113314" in baseline["notes"]
@@ -1221,7 +1225,7 @@ def test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob() ->
     assert "previous-kit-staging" in workflow
     assert "Previous full kit is absent" in workflow
     # Both cross-version lanes must bind the successful original build attempt,
-    # independently of the separately documented station reconstruction.
+    # now also bound to the recovered original embedded station index.
     validators = workflow.split("      - name: Resolve and verify immutable previous candidate")[1:]
     assert len(validators) == 2
     for validator in validators:
