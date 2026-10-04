@@ -42,7 +42,7 @@ You should see two panels, **VOD** and **Live**. Each starts with a line in the 
 
 > **Note:** The two panels and their charts read totals that CivicCast recalculates in the background about every 5 minutes by default, so they can trail the tiles under them by a few minutes.
 
-![The Analytics screen on a station where counting is not switched on. A box headed "Audience telemetry is off" appears under the toolbar.](manual/images/operator-analytics-telemetry-off.png){width=90%}
+![The Analytics screen with example data representing counting switched off. A box headed "Audience telemetry is off" appears under the toolbar.](manual/images/operator-analytics-telemetry-off.png){width=90%}
 
 Under the panels, the page shows:
 
@@ -73,7 +73,7 @@ By default CivicCast discards events older than 366 days.
 
 > **Known issue (beta.10):** Most of the extra tables stay empty. The resident website sends only the five messages above. It does not send the viewer's device, platform, country, caption language, audio track or how many people are watching live. The **Geography**, **Device**, **Platform**, **Caption Usage**, **Audio Usage** and **Subscription Growth** tables, the **Live peak** tile and **Live Concurrent Viewers** table therefore stay empty unless another app sends that information. This is expected, not a fault with your station. Watch time is also approximate: in both the file-based and the database-backed store we read, it is added up only from the position reported when a video finishes, so people who stop early add nothing.
 
-> **Known issue (beta.10):** The empty-state box says "Turn it on in Setup to collect Viewer Count and Time Viewed." No screen in Setup has that switch. Counting is turned on by an IT person changing a station setting and restarting CivicCast. The report and the PDF can show nothing until that is done.
+> **Note:** No screen in Setup has an audience-counting switch. Ask your IT person to configure counting for your resident website. The separate **Reports** screen is available to support admins and reads what aired, not who watched. In the published beta.10, the Analytics box incorrectly says to turn counting on in Setup; that instruction is corrected in the next release.
 
 > **For IT staff:** The two settings are `CIVICCAST_PUBLIC_ANALYTICS_KEY` and `CIVICCAST_PUBLIC_ANALYTICS_ALLOWED_ORIGINS`; see [Chapter 11](#ch-configuration) and [Chapter 13](#ch-security). The resident website sends no key, so the website's own messages are accepted only when its address is listed in the allowed-origins setting (a comma-separated list of exact addresses such as `https://tv.example.gov`, matched against the browser's origin header). Setting only the key removes the "telemetry is off" box, but the website's messages are then refused.
 
@@ -118,7 +118,7 @@ The page opens on today's date through tomorrow's, UTC midnight to UTC midnight.
 
 > **Warning:** Dates here are UTC. A station on Mountain time should widen the range by a day when looking for an evening meeting.
 
-![The Reports screen on the Shows tab, with the From, Through and Channel filters above an empty table.](manual/images/operator-reports-shows.png){width=90%}
+![The Reports screen on the Shows tab, with the From, Through and Channel filters and an empty result. This example uses synthetic data.](manual/images/operator-reports-shows.png){width=90%}
 
 ### What each tab shows
 
@@ -164,7 +164,7 @@ An *EPG* (electronic program guide) is the schedule file that cable boxes, TV-gu
 - You need the channel's id. The **Reports** screen has a channel drop-down that lists them as `slug (channel_id)`, or ask your IT person.
 - Ask the guide service for a sample file and its address first. In testing we could not confirm that any particular service, such as TitanTV, accepts what CivicCast makes. The "X-List" format here is a generic eight-column table.
 
-![The EPG Export screen with the Create export config form above the empty list of configured exports.](manual/images/operator-epg-form.png){width=90%}
+![The EPG Export screen with the Create export config form above the empty list of configured exports. This example uses synthetic data.](manual/images/operator-epg-form.png){width=90%}
 
 ### Create an export and download the file
 
@@ -238,7 +238,7 @@ Underwriting means paid "sponsor acknowledgment" messages, such as "Support for 
 | Read **Affidavits** | Empty |
 | Click **Download CSV**, **Download XML**, **Download PDF** | Shows an error instead of a file (below) |
 
-![The Underwriting screen on the Spots tab, showing the Create spot form with the compliance reminder and attestation checkbox.](manual/images/operator-underwriting-spots.png){width=90%}
+![The Underwriting screen on the Spots tab, showing the Create spot form with the compliance reminder and attestation checkbox. This example uses synthetic data.](manual/images/operator-underwriting-spots.png){width=90%}
 
 ### Add a spot
 
@@ -288,7 +288,7 @@ A resident app lets people watch your station on a phone or a TV box. CivicCast 
 
 > **Warning:** App Admin does not put any app in any app store. CivicCast never contacts a store. Someone technical still has to sign each package and submit it. The built package is a generic starter. The page says apps read the station's settings when they run, so name and branding update without a rebuild. In testing we could not confirm this in a running app, and store review is separate work.
 
-![The App Admin screen with the Build profile, New build, Build history and Store submissions sections.](manual/images/operator-appadmin-empty.png){width=90%}
+![The App Admin screen with the Build profile, New build, Build history and Store submissions sections. This example uses synthetic data.](manual/images/operator-appadmin-empty.png){width=90%}
 
 ### Make a build
 
@@ -322,6 +322,8 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
 ![The Subscription paywall screen in its default state. A banner says the paywall is off, and the Tiers and Comp access grants cards are greyed.](manual/images/operator-paywall-off.png){width=90%}
+
+*Figure: the current-source Subscription paywall screen with synthetic disabled configuration. No actual configuration or credential was read, generated or saved; this example does not establish payment or access enforcement.*
 
 > **Warning:** Leave the paywall **off** in beta.10. The code we read shows the feature is unfinished.
 

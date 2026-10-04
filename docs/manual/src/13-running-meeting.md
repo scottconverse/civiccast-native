@@ -73,7 +73,7 @@ You should see a card titled "Broadcast readiness check result" with a line "Reh
 
 ![The Readiness page, titled "Safe to broadcast". The "On air right now" banner is at the top, with the readiness card below it.](manual/images/operator-readiness-top.png){width=90%}
 
-*Figure: the Readiness page at the start of a check.*
+*Figure: the actual Readiness screen with synthetic example results. This illustration is not evidence that a station passed its checks.*
 
 > **Warning:** **Check broadcast readiness** has no confirmation box. It creates a private test live session called "Private first-broadcast rehearsal" on the channel `government`, copies the sample test video that was set up during first setup (if there is none, the result reads **Not run**), and saves a short test recording. If they do not already exist, it also adds a source called "CivicCast sample test source" (see the Known issue under "Choose and check a meeting source") and a test recording location. In the code we read, the test session is marked "On air" for a moment and then ended, and the portal home page reads the live session record, so residents could briefly see the test session as on air. We have not watched this happen. We could not confirm whether the test recording shows up in the Assets list. Do not run this check while a real meeting is on air.
 
@@ -94,7 +94,7 @@ You should see the source's tag change to **Delivering** and text such as "Check
 
 ![The Live screen with sources configured and no session yet. The Safe to broadcast panel is at the top and the Source switcher cards are below it.](manual/images/operator-live-sources.png){width=90%}
 
-*Figure: the Live screen before a session exists.*
+*Figure: the current-source Live screen before a session exists, with a synthetic example source and recording target. No camera, media or station readiness check was run.*
 
 > **Tip:** a source's **Delivering** answer expires after 30 seconds by default (your IT person can change this to anything from 5 to 300 seconds). Run **Check source** again immediately before you do anything that depends on it, especially **Take live** on the Channels screen.
 
@@ -134,9 +134,9 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 | Recording target | A real (not test) local recording location is configured. |
 | Operator confirmation | The box in step 4 is ticked. |
 
-![The Pre-flight checklist after Run pre-flight, with the session controls above it.](manual/images/operator-live-preflight.png){width=90%}
+![The Pre-flight checklist after Run pre-flight, with the session controls above it.](manual/images/operator-live-preflight.png){width=70%}
 
-*Figure: the nine-row Pre-flight checklist. A row that failed shows a red border and a "Next step." line.*
+*Figure: the current-source nine-row Pre-flight checklist with synthetic example results. The failed camera row shows a red border and a "Next step." line; no actual pre-flight or source check was run.*
 
 > **Known issue (beta.10):** three more things on this screen are easy to misread. First, the **Safe to broadcast** panel near the top is worked out from the last test on the Readiness screen, not from the checklist on this page, so it can say "Check before meeting" while this page says "Pre-flight ready". Second, the hint on a failed Operator confirmation row says to tick the box "below", but the box is in **Session controls**, above the checklist. Third, the empty checklist says "Run pre-flight to populate the nine-check contract." It means "Click **Run pre-flight** to check the camera, the recording drive, the internet and your confirmation."
 
@@ -151,7 +151,8 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 
 ![The confirmation box "End the live stream?" over the Live screen.](manual/images/operator-live-endconfirm.png){width=70%}
 
-*Figure: the End Live Stream confirmation. Its wording about residents does not match what the code does; see the warning below.*
+*Figure: the current-source End Live Stream confirmation over a synthetic example session. The dialog was cancelled; no real session or stream was started or ended. Its wording about residents does not match what the code does; see the warning below.*
+
 3. Watch the **Recording finalization** panel that appears. It shows **Waiting**, then "Attempt N of M. The recording is being checked and packaged.", then "Recording saved as asset <id>. Find it in the Assets library."
 
 If it fails, the panel shows the reason (or "Finalization failed."). Fix the cause, then click **Retry finalization**. See [After the meeting](#ch-after-meeting) for what to do with the saved recording.
@@ -175,7 +176,7 @@ You should see the state tag change to **Starting** and then **On air**, or **Sh
 
 ![The Outgoing channel feed box on the Channels screen, with the Start, Stop, Restart feed and Finish current item, then stop buttons.](manual/images/operator-channels-feed.png){width=90%}
 
-*Figure: the Outgoing channel feed box.*
+*Figure: the Outgoing channel feed box with synthetic example data. The On air state is an illustration, not proof that a station is broadcasting.*
 
 > **Warning:** **Start** makes the channel visible to residents and to every output set up for it (the web player, and any cable or streaming output). Start a channel only when you mean it to be public.
 
@@ -202,7 +203,7 @@ Use the same **Outgoing channel feed** box.
 
 ![The confirmation box "Stop the outgoing feed for" the selected channel, with Stop feed and Cancel buttons.](manual/images/operator-channels-stop-confirm.png){width=70%}
 
-*Figure: the Stop confirmation.*
+*Figure: the Stop confirmation for an example channel. The dialog was cancelled; no outgoing feed was stopped.*
 
 > **Warning:** all three commands change what residents see right now. **Stop** drops the stream at once. Use **Finish current item, then stop** at the end of a meeting if you want the program to end cleanly.
 
@@ -242,7 +243,7 @@ You should see a red badge reading "Live takeover" with the name of the person a
 
 ![The Live takeover box while a channel is under takeover, with the Return to schedule button.](manual/images/operator-channels-takeover-live.png){width=70%}
 
-*Figure: the Live takeover box during a takeover.*
+*Figure: the Live takeover box with a synthetic five-minute session and example operator and source. No live takeover or return to schedule was performed.*
 
 > **Warning:** **Confirm take live** overrides the schedule and changes what is on the air. There is no pop-up. The second click is the confirmation. If the source's last good check is older than the window (30 seconds by default) when you confirm, the code we read refuses the takeover before it re-checks anything. The error can then read something like "Live ingest path '<channel>:local' is disabled.", which names CivicCast's built-in placeholder path and not your camera. Click **Check source** again and retry. If the channel is already under takeover, the error says "Channel '<id>' is already under live takeover."
 
@@ -272,7 +273,7 @@ You should see the program move to the "Recent commits" list with a tag: **Prepa
 
 ![The Commit programs to air box after Review & prepare, showing the safety check result and the Approve & put on air button.](manual/images/operator-channels-commit-review.png){width=90%}
 
-*Figure: a program under review in Commit programs to air.*
+*Figure: an example program under review in Commit programs to air. The safety-check response is synthetic; no program was approved or put on air.*
 
 > **Warning:** **Approve & put on air** has **no confirmation box**. It is a single click once the review says **Safe to air**. It publishes the schedule item to residents, saves an approval record in your name, and then queues a **Start** for the channel if the feed is stopped, or a reload if it is running, so the schedule is read again. The program plays at its scheduled time, not at the moment you click. On a stopped channel the click also starts the whole channel's feed.
 
@@ -347,7 +348,7 @@ You should see the banner "Test action recorded." Test Mode never touches your e
 
 ![The Production Control Room with a Test Mode session open, showing the mode banner, the program-feed banner and the Safe State box.](manual/images/operator-controlroom-test-session.png){width=90%}
 
-*Figure: a Test Mode session in the Control Room.*
+*Figure: the current-source Control Room with a synthetic Test Mode session, example program feed and no configured devices or cues. No actual session was opened, readiness check run or device action sent.*
 
 ### Open an On-Air Mode session
 
@@ -414,7 +415,7 @@ You should see the command text, and the tag "ready" or "blocked". No hardware i
 
 ![The Facility router screen with the "hardware send disabled" tag and a Take preview card.](manual/images/operator-facility-preview.png){width=90%}
 
-*Figure: a Facility router preview. The router and its sources are built-in sample data.*
+*Figure: the current-source Facility router with synthetic example inventory and a blocked preview result. No router was contacted or command sent; this is not a station hardware check.*
 
 Two more previews need a channel chosen in **Target channel**: **Preview scheduled take** (a take timed 15 minutes from now with a 15-second lead, using a made-up item) and **Preview L-bar and squeezeback** (a plan for shrinking the picture to make room for a graphics frame). Neither runs anything.
 
@@ -438,7 +439,7 @@ The board is shown in the gaps between programs when the channel's filler is set
 
 ![The CG Board screen with the Community bulletins box on the right.](manual/images/operator-cgboard-bulletins.png){width=90%}
 
-*Figure: Community bulletins on the CG Board screen.*
+*Figure: the current-source CG Board with a synthetic example template and submitted community bulletin. No bulletin was created, moderated or approved, and no feed was fetched.*
 
 To send a bulletin back, click **Request changes**, type a note and click **Send request**. The tag becomes **Needs changes**, with your note in amber ("Notes: …"). To remove a bulletin, click **Decline**, type a reason and click **Decline bulletin**.
 
@@ -490,7 +491,7 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 ![The Remote Contribution screen with a room selected and its Guests list.](manual/images/operator-remote-guests.png){width=90%}
 
-*Figure: the Guests list for an open room.*
+*Figure: the current-source Remote Contribution screen with a synthetic example room and guest in the waiting room. The Live and Good labels are example data; no room, invitation, remote connection or on-air action was performed.*
 
 > **Warning:** the guest's **On air** button does **more than show that guest**. It also switches the *whole channel* to its live source, exactly like **Take live** on Channels, for up to an hour. There is no confirmation box. CivicCast records the change under the name "remote-contribution", not your name. If the channel cannot be taken live (for example, no source passes its check), you get "Channel takeover failed; guest <id> not placed on-air." and the guest goes back to the waiting room. If the channel is already under takeover, nothing more happens and the guest joins the live picture.
 

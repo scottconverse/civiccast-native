@@ -95,6 +95,54 @@ class TestEmbedLocalImages:
 
 
 class TestSanitizeHtml:
+    def test_keeps_ordered_list_start_after_a_figure(self) -> None:
+        html = (
+            "<ol><li>First</li><li>Second</li></ol>"
+            "<figure><figcaption>Instructions</figcaption></figure>"
+            '<ol start="3"><li>Third</li></ol>'
+        )
+        assert sanitize_html(html) == html
+
+    @pytest.mark.parametrize("start", ["1", "3", "0", "-2", "003"])
+    def test_keeps_only_integer_ordered_list_start(self, start: str) -> None:
+        html = f'<ol start="{start}"><li>Step</li></ol>'
+        assert sanitize_html(html) == html
+
+    @pytest.mark.parametrize(
+        "start",
+        [
+            "",
+            "3.5",
+            "+3",
+            " 3",
+            "3 ",
+            "3px",
+            "3\n",
+            "٣",
+            "javascript:alert(1)",
+            "3&quot; onclick=&quot;alert(1)",
+            "3&#10;onmouseover=alert(1)",
+        ],
+    )
+    def test_strips_malformed_ordered_list_start(self, start: str) -> None:
+        assert sanitize_html(f'<ol start="{start}"><li>Step</li></ol>') == (
+            "<ol><li>Step</li></ol>"
+        )
+
+    def test_list_start_does_not_relax_other_attributes_or_tags(self) -> None:
+        html = (
+            '<ol start="3" onclick="alert(1)" style="color:red" reversed type="a" '
+            'srcdoc="bad"><li start="4" onmouseover="bad()">Step</li></ol>'
+            '<ul start="3"><li>Bullet</li></ul><p start="3">Text</p>'
+        )
+        assert sanitize_html(html) == (
+            '<ol start="3"><li>Step</li></ol><ul><li>Bullet</li></ul><p>Text</p>'
+        )
+
+    def test_ordinary_ordered_list_is_unchanged(self) -> None:
+        html = "<ol><li>First</li><li>Second</li></ol>"
+        assert sanitize_html(html) == html
+
     def test_drops_script_tag_and_its_content(self) -> None:
         out = sanitize_html("<p>hello</p><script>alert(document.cookie)</script><p>world</p>")
         assert "<script" in "<p>hello</p><script>alert(document.cookie)</script><p>world</p>"

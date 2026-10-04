@@ -751,7 +751,7 @@ function RulesSection({ canWrite, canRead }: { canWrite: boolean; canRead: boole
         <div>
           <h2 className="m-0 text-base font-semibold">Auto-schedule rules</h2>
           <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            Each rule fills a daypart from a saved search. Simulate to preview; rules feed the commit gate before air.
+            Each enabled rule fills a daypart from a saved search. Its picks are approved to air at their scheduled times; Simulate previews without writing anything.
           </p>
         </div>
         {canWrite && (
@@ -822,7 +822,7 @@ function CompileBar({ canWrite }: { canWrite: boolean }) {
         <div>
           <h2 className="m-0 text-base font-semibold">Compile schedule</h2>
           <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            Run every enabled rule and add its picks to the schedule. The new items still need an operator commit before they air.
+            Run every enabled rule now. New programs are Published and approved to air at their scheduled times, without a separate commit. There is no confirmation box.
           </p>
         </div>
         <button type="button" disabled={compile.isPending} onClick={() => compile.mutate()} className="rounded-md px-3 py-2 text-sm font-semibold" style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}>
@@ -836,7 +836,7 @@ function CompileBar({ canWrite }: { canWrite: boolean }) {
       )}
       {report && (
         <div role="status" className="rounded-md p-2 text-xs" style={{ background: 'var(--cc-ok-soft)', color: 'var(--cc-ink)' }}>
-          Added {report.items_created ?? 0} scheduled items across {report.results?.length ?? 0} rules.
+          Added {report.items_created ?? 0} published items across {report.results?.length ?? 0} rules.
         </div>
       )}
     </section>
@@ -860,10 +860,10 @@ export function AutoScheduleScreen() {
         </div>
         <h1 className="m-0 text-2xl font-semibold tracking-tight">Auto-schedule</h1>
         <p className="m-0 mt-1 max-w-2xl text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-          Define saved searches and dayparts, connect them with rules, then preview and compile to fill the
-          schedule automatically. Compiling a rule approves its picked items to air &mdash; reviewing the
-          preview before you compile is the approval step. Only manually-added schedule items need a separate
-          Commit-to-Air approval.
+          An enabled rule approves the programs it generates for their scheduled times. Use Simulate to
+          preview its picks without writing anything. When automatic scheduling is enabled, CivicCast
+          compiles enabled rules at startup and about every hour, without another approval. Only
+          manually-added schedule items need a separate Commit-to-Air approval.
         </p>
       </header>
       <SavedSearchesSection canWrite={canWrite} canRead={canRead} />

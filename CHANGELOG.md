@@ -15,6 +15,13 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- The built-in manual preserves instruction numbering when a screenshot splits
+  a numbered list, instead of restarting the next step at 1.
+
+- Auto-schedule now explains that enabled rules approve generated programs for
+  their scheduled times and can compile at startup and hourly without another
+  approval. It no longer tells operators those programs need a separate commit.
+
 - Alerts no longer presents a failed request or an empty list as proof that the
   station is healthy. Failed alert reads offer Retry alerts; failed destination
   reads no longer claim there are no destinations.
@@ -26,6 +33,10 @@ came across and what deliberately did not.
   coverage and sustained performance still require live acceptance testing.
 - The operator manual keeps narrow-screen deep links aligned after opening a
   chapter, and contains wide code blocks and tables in local scrolling areas.
+- Analytics no longer sends staff to a nonexistent Setup switch to enable audience
+  counting, and identifies Reports as a separate screen for support admins.
+- Operator setup, provider cards and feedback links now target the current manual
+  sections. CDN guidance points to provider setup without claiming a current price.
 - A missing, unreadable or damaged built-in manual now shows a plain-English
   installation-repair message instead of developer commands or a generic server
   error.

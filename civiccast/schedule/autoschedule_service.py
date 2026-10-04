@@ -379,8 +379,9 @@ class AutoScheduleService:
     def compile(self) -> CompileReport:
         """Compile every enabled rule into schedule_items now; return the report.
 
-        The created items are ``scheduled`` and still flow through the S4 commit
-        gate before air — this does not put anything on air.
+        The enabled rule approves its generated ``published`` items for their
+        scheduled times, without a separate per-item commit. This does not imply
+        immediate playback; manually-added items still require Commit-to-Air.
         """
         factory = self._require_session_factory()
         with factory() as session:

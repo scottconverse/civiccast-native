@@ -178,7 +178,7 @@ describe('First setup when the loopback check denies the request', () => {
     expect(screen.getByText(/support.md/i)).toBeTruthy()
     const reportLink = screen.getByRole('link', { name: /report it/i })
     expect(reportLink).toBeTruthy()
-    expect(reportLink.getAttribute('href')).toBe('/help#report-without-github')
+    expect(reportLink.getAttribute('href')).toBe('/help#report-a-beta-issue')
   })
 
   it('never renders a Prepare storage control when the loopback check denied the read', async () => {

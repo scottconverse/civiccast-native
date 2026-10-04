@@ -90,7 +90,7 @@ describe('ActivityPubScreen DisabledPanel', () => {
   it('links to the manual\'s federation section', () => {
     renderPanel()
     const link = screen.getByRole('link', { name: /read more in the manual/i })
-    expect(link.getAttribute('href')).toBe('/help#provider-federation')
+    expect(link.getAttribute('href')).toBe('/help#federation-activitypub')
   })
 
   it('generates a station key with a real button instead of a terminal command', async () => {

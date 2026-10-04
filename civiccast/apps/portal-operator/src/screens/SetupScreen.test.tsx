@@ -118,20 +118,20 @@ describe('CostForecastPanel', () => {
     // should exist anywhere in this panel any more.
     expect(screen.queryByText(/^\$\d/)).toBeNull()
     expect(screen.getByText('Varies by provider')).toBeTruthy()
-    expect(screen.getByText(/cloudflare r2 is free/i)).toBeTruthy()
+    expect(screen.getByText(/check your provider's current terms/i)).toBeTruthy()
   })
 
-  it('names Cloudflare R2 as the $0-egress provider, sourced, not estimated', () => {
+  it('directs operators to current provider terms without claiming a price', () => {
     renderCostForecastPanel()
     expect(
-      screen.getByText(/charges \$0 for egress.*not a civiccast estimate/i),
+      screen.getByText(/check the provider's current terms before/i),
     ).toBeTruthy()
   })
 
-  it('links to the manual\'s CDN cost estimate section', () => {
+  it('links to the manual\'s CDN and provider setup section', () => {
     renderCostForecastPanel()
-    const link = screen.getByRole('link', { name: /read more in the manual/i })
-    expect(link.getAttribute('href')).toBe('/help#cdn-cost-estimate')
+    const link = screen.getByRole('link', { name: /read CDN and provider setup in the manual/i })
+    expect(link.getAttribute('href')).toBe('/help#cdn-and-provider-options')
   })
 
   it('still computes storage and bandwidth GB from the entered numbers', () => {

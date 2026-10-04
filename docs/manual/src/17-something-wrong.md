@@ -24,6 +24,8 @@ Readiness answers one question: "Can we broadcast right now?"
 
 ![The Readiness page. The top shows the On air right now banner, then a card with the station's readiness label, a Check broadcast readiness button and a link to the resident preview.](manual/images/operator-readiness-top.png){width=90%}
 
+*Figure: the current-source Readiness screen with synthetic Ready responses and no automatic channels. This illustrates the interface, not live station readiness.*
+
 ### What the colours and words mean
 
 | Colour | Words on screen | What it means |
@@ -127,6 +129,8 @@ After a successful check, an empty list says: "No active alerts were returned. T
 
 ![The Alerts screen with the Active and Resolved buttons at the top, the alert list, and the Alert rules and Where alerts go sections below.](manual/images/operator-alerts-empty.png){width=90%}
 
+*Figure: the current-source Alerts screen with synthetic empty alert, rule and destination lists. The empty state does not establish that a station is healthy or its notifications are configured.*
+
 > **Note:** **Acknowledge** means "I have seen this". It does not fix the problem and does not close the alert. An alert closes itself when the problem goes away, and then moves to **Resolved**.
 
 The alert titles you may see are:
@@ -186,6 +190,8 @@ The **Emergency Alerts** screen shows public-safety alerts the station has pulle
 The feeds come from the National Weather Service (NWS), the federal alert system IPAWS, and AMBER child-abduction alerts. IPAWS and AMBER alerts are read in a standard format called CAP (Common Alerting Protocol); the code reads National Weather Service alerts from that service's GeoJSON feed instead. We did not test any live feed.
 
 ![The Emergency Alerts screen. The permanent banner "Public-safety display — not an EAS device" sits above the Channel picker and the Alert sources, Active alerts and On-channel now lists.](manual/images/operator-eas-empty.png){width=90%}
+
+*Figure: the current-source Emergency Alerts screen with synthetic empty sources, alerts and display decisions. No live feed or on-channel display was tested.*
 
 ### What airs by itself, and what staff must do
 
@@ -249,6 +255,8 @@ Residents on that channel go back to regular programming.
 2. If you see **Federation is off** with a green tag, **Default-safe**, nothing is shared and the station is not advertised. You can stop here.
 
 ![The Federation screen in its default state. The card is headed "Federation is off" and has a Generate station key button.](manual/images/operator-federation-off.png){width=90%}
+
+*Figure: the current-source Federation screen with synthetic example configuration. No station configuration was read and no station key was generated for this illustration.*
 
 > **Known issue (beta.10):** There is no on/off switch in the console. The page says nothing about how federation is turned on. An IT person has to change station settings and restart CivicCast. The old built-in manual points to a switch that does not exist.
 
@@ -325,7 +333,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 CivicCast is a beta (beta.10 was published as a GitHub pre-release on 2026-10-02). Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
 
-1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
+1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Report a beta issue".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
 3. If you do not have an account, ask your IT lead or anyone on staff who has one to post your description. If nobody has one, the same Manual section tells you to email the file and a short description to the project maintainer at the address in the project's security policy: <https://github.com/scottconverse/civiccast-native/blob/main/SECURITY.md>.
 

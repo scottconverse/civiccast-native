@@ -216,8 +216,9 @@ function TelemetryOffBanner() {
     >
       <div className="font-medium">Audience telemetry is off</div>
       <div className="mt-1" style={{ color: 'var(--cc-ink-3)' }}>
-        Turn it on in Setup to collect Viewer Count and Time Viewed. The Reports tab (as-run /
-        proof-of-performance) still works — it reads the program log, not the beacon.
+        Audience counting is switched off. Ask your IT person to configure counting for
+        your resident website; there is no switch in Setup. The separate Reports screen,
+        available to support admins, reads what aired, not who watched.
       </div>
     </div>
   )

@@ -418,7 +418,9 @@ def preview_rule(rule_id: str, service: Any = Depends(get_autoschedule_service))
 )
 def compile_now(service: Any = Depends(get_autoschedule_service)) -> CompileReport:
     """Run the rolling-window materializer for every enabled rule. The created
-    items are ``scheduled`` and still flow through the S4 commit gate."""
+    items are ``published`` and approved by the enabled rule for their scheduled
+    times, without a separate per-item commit. Compile does not imply immediate
+    playback; manually-added items still require Commit-to-Air approval."""
     svc = _require_service(service)
     try:
         return svc.compile()

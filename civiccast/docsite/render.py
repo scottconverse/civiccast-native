@@ -152,6 +152,7 @@ _ALLOWED_TAGS = frozenset(
 _ALLOWED_ATTRS: dict[str, frozenset[str]] = {
     "a": frozenset({"href", "id", "title"}),
     "img": frozenset({"src", "alt", "title", "width", "height"}),
+    "ol": frozenset({"start"}),
     "*": frozenset({"id", "class", "aria-hidden"}),
 }
 
@@ -206,6 +207,10 @@ class _SanitizingParser(HTMLParser):
         kept: list[str] = []
         for name, value in attrs:
             if name not in allowed_names or value is None:
+                continue
+            # Pandoc resumes numbered instructions after a figure with
+            # <ol start="3">. Retain only ASCII integers, not arbitrary HTML.
+            if name == "start" and re.fullmatch(r"-?[0-9]+", value) is None:
                 continue
             if name in ("href", "src"):
                 safe = _safe_url(value)

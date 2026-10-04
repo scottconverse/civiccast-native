@@ -92,7 +92,11 @@ def test_actual_png_still_embeds_and_passes_drift_check(
     docs = tmp_path / "docs"
     docs.mkdir()
     source = docs / "USER-MANUAL.md"
-    source.write_text("# Manual\n\n![Diagram](diagram.png)\n\n## After\n", encoding="utf-8")
+    source.write_text(
+        "# Manual\n\n1. First step.\n2. Second step.\n\n"
+        "![Diagram](diagram.png)\n\n3. Third step.\n4. Fourth step.\n\n## After\n",
+        encoding="utf-8",
+    )
     png = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jH1sAAAAASUVORK5CYII="
     )
@@ -105,5 +109,8 @@ def test_actual_png_still_embeds_and_passes_drift_check(
     document = json.loads(renderer.render_docsite_manual().read_text(encoding="utf-8"))
     assert "data:image/png;base64," + base64.b64encode(png).decode("ascii") in document["html"]
     assert "Diagram" in document["html"]
+    assert '<ol start="3">' in document["html"]
+    assert "Third step." in document["html"]
+    assert "Fourth step." in document["html"]
     assert [entry["title"] for entry in document["toc"]] == ["Manual", "After"]
     renderer.check_current()

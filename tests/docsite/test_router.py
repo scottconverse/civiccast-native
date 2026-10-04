@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -81,20 +84,89 @@ class TestManualEndpoint:
         assert len(body["toc"]) > 10
         assert "<h1" in body["html"] or "<h2" in body["html"]
 
-    def test_toc_includes_the_provider_and_glossary_sections(self, client: TestClient) -> None:
-        toc_ids = {entry["id"] for entry in client.get("/api/public/manual").json()["toc"]}
+    def test_bundled_manual_contains_current_product_destinations(self, client: TestClient) -> None:
+        # This checks the real bundled artifact. Keep it separate from the
+        # source-render test: callers must not ship ahead of their destination.
+        response = client.get("/api/public/manual")
+        assert response.status_code == 200
+        body = response.json()
+        required = {
+            "app-glossary",
+            "cdn-and-provider-options",
+            "publishing-providers",
+            "federation-activitypub",
+            "configuration-storage",
+            "the-publishing-steps-surfaces",
+            "report-a-beta-issue",
+            "ch-before-meeting",
+            "live-captions-what-the-settings-change",
+        }
+        toc_ids = {entry["id"] for entry in body["toc"]}
+        assert not required - toc_ids, (
+            f"bundled manual missing destinations: {sorted(required - toc_ids)}"
+        )
+        for anchor in required:
+            assert f'id="{anchor}"' in body["html"]
+
+    def test_current_source_artifact_includes_product_destinations(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        request: pytest.FixtureRequest,
+    ) -> None:
+        from civiccast.docsite.render import extract_toc, sanitize_html
+
+        source = Path(__file__).resolve().parents[2] / "docs/USER-MANUAL.md"
+        # Isolated heading/navigation artifact from exact source; screenshot
+        # embedding is deliberately outside this anchor test, not bypassed in shipping.
+        html = sanitize_html(
+            subprocess.run(
+                ["pandoc", str(source), "-f", "markdown-raw_html-task_lists", "-t", "html5"],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            ).stdout
+        )
+        source_hash = hashlib.sha256(source.read_text(encoding="utf-8").encode()).hexdigest()
+        artifact = tmp_path / "current-manual.json"
+        artifact.write_text(
+            json.dumps(
+                {
+                    "source": "docs/USER-MANUAL.md",
+                    "source_sha256": source_hash,
+                    "generated_at": "2026-10-03T00:00:00Z",
+                    "toc": extract_toc(html),
+                    "html": html,
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(docsite_service, "_MANUAL_JSON_PATH", artifact)
+        request.addfinalizer(docsite_service._load_manual_cached.cache_clear)
+        docsite_service._load_manual_cached.cache_clear()
+        response = client.get("/api/public/manual")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["source_sha256"] == source_hash
+        toc_ids = {entry["id"] for entry in body["toc"]}
         for anchor in (
-            "glossary",
-            "provider-cloudflare-r2",
-            "provider-internet-archive",
-            "provider-youtube",
-            "provider-federation",
-            "where-recordings-live",
-            "publish-surfaces",
-            "cdn-cost-estimate",
-            "report-without-github",
+            "app-glossary",
+            "cdn-and-provider-options",
+            "publishing-providers",
+            "federation-activitypub",
+            "configuration-storage",
+            "the-publishing-steps-surfaces",
+            "report-a-beta-issue",
+            "ch-before-meeting",
+            "live-captions-what-the-settings-change",
         ):
             assert anchor in toc_ids, f"expected manual anchor {anchor!r} in the table of contents"
+            assert f'id="{anchor}"' in body["html"]
+        docsite_service._load_manual_cached.cache_clear()
 
     def test_html_never_carries_a_script_tag(self, client: TestClient) -> None:
         assert "<script" not in client.get("/api/public/manual").json()["html"]

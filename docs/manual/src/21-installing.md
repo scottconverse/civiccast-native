@@ -215,15 +215,15 @@ Open the **CivicCast Operator Console** shortcut (or **Open operator console**) 
 5. The **Recovery kit ready** panel appears. Select **Print kit** or **Save kit**. **Save kit** downloads `civiccast-recovery-kit-<kit id>.txt`, which contains the eight one-time recovery codes **and the administrator password in plain text**.
 6. Tick "I have saved or printed this kit..." (it unlocks after you use **Print kit** or **Save kit**), then select **Continue to the console**. Navigation stays locked until the kit is confirmed, and the browser warns you if you leave first.
 
-![The First setup page on a station that has not been set up. The form asks for the station name, an admin display name and username, a password of 12 characters or more, and where you will keep the recovery kit.](manual/images/operator-setup-firstadmin.png){width=80%}
+![Example of the actual First setup form with synthetic station details. Password fields are blank and Create first admin is disabled; no account or recovery kit was created.](manual/images/operator-setup-firstadmin.png){width=80%}
 
-*Figure 10.2. The first-admin form (a new station).*
+*Figure 10.2. First-admin form example, before submitting any setup details.*
 
 You should see "Setup complete" or "Signed in", the **First-run defaults** card, and the setup tools: **Camera or test media**, **Backup destination**, **Storage and viewing estimate** and **Provider setup**. Later sign-ins use **Admin sign-in** on the same page and land on the Readiness screen.
 
-![The First setup page on a station that is already set up. It offers Admin sign-in and Use recovery code.](manual/images/operator-setup-signin.png){width=80%}
+![Example of the actual First setup page with synthetic configured-station details. Admin sign-in and Use recovery code have blank fields; no sign-in or recovery action was performed.](manual/images/operator-setup-signin.png){width=80%}
 
-*Figure 10.3. The same page on a configured station, signed out.*
+*Figure 10.3. Configured-station example showing the sign-in and recovery forms.*
 
 A lost password is recovered with **Use recovery code**: the first click arms it ("This permanently consumes one recovery code — only 8 exist for this station. Click Recover account again to confirm.").
 
@@ -336,7 +336,7 @@ Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
 
 ![The Readiness screen, headed Safe to broadcast.](manual/images/operator-health-ready.png){width=90%}
 
-*Figure 10.4. The Readiness screen, where you confirm the install before a meeting.*
+*Figure 10.4. The current-source Readiness screen with synthetic example responses. This image is not install verification or evidence that the live station is healthy; perform the actual checks above.*
 
 Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). The project's clean-install test checked, in this order: install, activation, health, console and portal render, a clerk workflow, offline captions (21 caption cues on a test clip), the playout engine (5,445 transport-stream packets analysed with no errors) and a five-minute soak. The playout-engine check passed only on a harness that waits longer: on a fresh install the engine's first packets came more than 60 seconds after its first start, and the first capture attempt saw none (the second saw the 5,445). Restart the computer once and confirm that the service comes back by itself. The beta.10 verification record does not cover a restart.
 

@@ -2112,7 +2112,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Confirm the resident page shows the expected station and meeting state.",
             ],
             proof_requirement="Resident preview must open from the same URL residents will use.",
-            manual_section="publish-surfaces",
+            manual_section="the-publishing-steps-surfaces",
         ),
         ProviderReadinessItem(
             id="backup",
@@ -2128,7 +2128,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Run Verify backup and keep the destination connected before meetings.",
             ],
             proof_requirement="CivicCast writes, reads, verifies, and deletes a probe file.",
-            manual_section="where-recordings-live",
+            manual_section="configuration-storage",
         ),
         _provider_item(
             provider_id="internet-archive",
@@ -2146,7 +2146,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Run live proof before this shows as ready.",
             ],
             proof_requirement="A real upload proof is required before CivicCast marks this provider ready.",
-            manual_section="provider-internet-archive",
+            manual_section="publishing-providers",
         ),
         _provider_item(
             provider_id="youtube",
@@ -2164,7 +2164,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Run a private upload or stream proof before using YouTube for residents.",
             ],
             proof_requirement="A private YouTube proof is required before public claims.",
-            manual_section="provider-youtube",
+            manual_section="publishing-providers",
         ),
         _provider_item(
             provider_id="subscriber-notifications",
@@ -2180,7 +2180,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Send a test notification to a non-public test subscriber list.",
             ],
             proof_requirement="A redacted delivery proof is required before sending public notices.",
-            manual_section="provider-subscriber-notifications",
+            manual_section="publishing-providers",
         ),
         _provider_item(
             provider_id="local-nas",
@@ -2195,7 +2195,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Run the Local NAS proof so CivicCast writes and removes a probe file.",
             ],
             proof_requirement="CivicCast must prove write/read/delete access to the archive folder.",
-            manual_section="provider-local-archive-folder",
+            manual_section="publishing-providers",
         ),
         _provider_item(
             provider_id="cloudflare-r2",
@@ -2213,7 +2213,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Prefer to do it by hand? Use the manual fields below the concierge box instead.",
             ],
             proof_requirement="A real object upload and public URL proof is required.",
-            manual_section="provider-cloudflare-r2",
+            manual_section="cdn-and-provider-options",
         ),
         _provider_item(
             provider_id="bunny",
@@ -2233,7 +2233,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Run Test connection before advertising CDN playback.",
             ],
             proof_requirement="A real object upload and public URL proof is required.",
-            manual_section="provider-alternative-cdns",
+            manual_section="cdn-and-provider-options",
         ),
         _provider_item(
             provider_id="fastly",
@@ -2253,7 +2253,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Run Test connection before advertising CDN playback.",
             ],
             proof_requirement="A real object upload and public URL proof is required.",
-            manual_section="provider-alternative-cdns",
+            manual_section="cdn-and-provider-options",
         ),
         _provider_item(
             provider_id="akamai",
@@ -2273,7 +2273,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Run Test connection before advertising CDN playback.",
             ],
             proof_requirement="A real object upload and public URL proof is required.",
-            manual_section="provider-alternative-cdns",
+            manual_section="cdn-and-provider-options",
         ),
         ProviderReadinessItem(
             id="podcast",
@@ -2289,7 +2289,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Open the feed preview before sharing the feed URL.",
             ],
             proof_requirement="Local feed generation is available; public distribution depends on station policy.",
-            manual_section="provider-podcast-feed",
+            manual_section="publishing-providers",
         ),
         ProviderReadinessItem(
             id="activitypub",
@@ -2308,7 +2308,7 @@ def build_provider_readiness_report() -> ProviderReadinessReport:
                 "Run local and live interop proof before public federation claims.",
             ],
             proof_requirement="Federation must stay off until the station records an explicit proof.",
-            manual_section="provider-federation",
+            manual_section="federation-activitypub",
         ),
     ]
     return ProviderReadinessReport(

@@ -100,7 +100,7 @@ You should see the panel close and a message, "Scheduled.", with a line such as 
 
 ![The New scheduled item panel with Mode, Asset, Channel, Start at, Duration and Notes.](manual/images/operator-schedule-drawer.png){width=60%}
 
-*Figure: the New scheduled item panel.*
+*Figure: the current-source New scheduled item panel with synthetic example data. No program was scheduled on a station.*
 
 > **Warning:** The item you just made is **Scheduled**. It is not on the air and residents cannot see it. Go on to the next task, "Approve a program to air".
 
@@ -141,11 +141,11 @@ You should see the message "Visible to residents." with the program title, and t
 
 ![The Schedule list with one program waiting for approval. The row reads Not yet visible to residents and has a Publish to residents button.](manual/images/operator-schedule-list.png){width=90%}
 
-*Figure: a Scheduled row with its Publish to residents button.*
+*Figure: a current-source Scheduled row with its Publish to residents button, using synthetic schedule data.*
 
 ![The review panel after the check, with the Safe to air badge.](manual/images/operator-schedule-review-safe.png){width=70%}
 
-*Figure: the review panel for a program that passed the check.*
+*Figure: the current-source review panel showing a synthetic Safe to air response. This illustrates the controls; it is not a station safety check or approval to air.*
 
 > **Warning:** The final **Publish to residents** click has no further confirmation. It approves the program to air on the channel, not only to appear on the portal.
 
@@ -194,7 +194,7 @@ You should see the message "Added to guide." with a line such as "City Council �
 
 ![The Program guide screen with two recurring slots and the Next 7 days list.](manual/images/operator-guide-populated.png){width=90%}
 
-*Figure: the Program guide screen. Recurring slots are at the top; the day-by-day list is below.*
+*Figure: the current-source Program guide screen with synthetic example slots and log entries. Recurring slots are at the top; the day-by-day list is below. No station guide was built or approved for this illustration.*
 
 The guide is rebuilt in the background. By default it looks 72 hours ahead and runs about every five minutes. The **Refresh guide** button builds it immediately, for every channel, not only the one shown.
 
@@ -247,9 +247,9 @@ Use **Auto-schedule** when you want CivicCast to pick recordings for a time of d
 
 For each matching day in a rule's window, CivicCast places **one** recording. It starts at the start time of the daypart and uses the recording's own length. If anything is already scheduled anywhere inside that day's daypart, that day is left alone.
 
-> **Warning:** Programs placed by Auto-schedule are written as **Published**. They are approved to air with no separate approval step. Reviewing the **Simulate** preview is the only check you get. And CivicCast also runs the compile by itself about once an hour, so a saved rule can put programs on the air without anyone pressing a button.
+> **Warning:** An enabled rule approves the programs it generates for their scheduled times. They are written as **Published**, with no separate per-program commit. **Simulate** previews without writing anything; it is not an approval gate. When automatic scheduling is enabled, CivicCast compiles enabled rules at startup and about every hour, without another approval or anyone pressing **Compile now**. Check a rule carefully before saving it.
 
-> **Known issue (beta.10):** The text under **Compile now** says "The new items still need an operator commit before they air." That is **wrong**. They are already approved. The text at the top of the screen ("Compiling a rule approves its picked items to air") is the correct one. The success message "Added N scheduled items across M rules." also uses the wrong word: those programs are Published. The line under **Auto-schedule rules**, "rules feed the commit gate before air", is wrong for the same reason. The hourly automatic run is not mentioned on the screen at all.
+> **Note:** The current-source screen explains rule approval and automatic compilation. Earlier beta.10 wording incorrectly said these picks needed a separate commit. This wording correction does not change scheduling policy or establish that an installed station has been updated. Manually-added schedule items still need a separate **Commit-to-Air** approval.
 
 You need the publish operator or setup admin role to change anything here. A support admin can look and run **Simulate**, but the **Add**, **Edit**, **Delete** and **Compile now** controls do not appear.
 
@@ -304,15 +304,15 @@ To change or remove one later, click **Edit**, or click **Delete** and then **Co
    - **No usable duration**: the recording picked has no length.
 2. If you are happy, click **Compile now** in the **Compile schedule** card. There is no confirmation box.
 
-You should see "Added N scheduled items across M rules." The programs now show on **Schedule** as **Published**.
+You should see "Added N published items across M rules." The programs now show on **Schedule** as **Published**. They are approved for their scheduled times; compiling does not mean they start playing immediately.
 
 ![The Auto-schedule screen with one saved search, one daypart and one rule.](manual/images/operator-autoschedule-overview.png){width=90%}
 
-*Figure: the Auto-schedule screen.*
+*Figure: the corrected current-source Auto-schedule screen with a synthetic example search, daypart and rule. The approval and startup/hourly wording describes existing policy; no station rule was saved or compiled for this illustration.*
 
 ![A Simulate result with Will air and Already scheduled labels.](manual/images/operator-autoschedule-simulate.png){width=70%}
 
-*Figure: the Simulate preview for one rule.*
+*Figure: the corrected current-source Simulate panel with a synthetic example preview response. Simulate is a preview, not an approval gate. No actual program was scheduled or approved for this illustration.*
 
 ### Retire a rule
 
@@ -354,7 +354,7 @@ You should see the new schedule appear in the **Schedules** table above the form
 
 ![The New schedule form with Weekly selected and the Next 3 fires preview.](manual/images/operator-recording-form-weekly.png){width=80%}
 
-*Figure: a weekly recording schedule being created.*
+*Figure: the current-source New schedule form with unsaved synthetic example values and the actual UTC/local next-fire preview. The input list is synthetic; no device was inspected, schedule saved or recording started.*
 
 > **Warning:** The time you type is **UTC**, not local time. Under **Start (UTC)** and **Time (HH:MM UTC)** the screen shows "In your local time: …" so you can check it. The weekday boxes are also UTC days, and they get no such line. A Monday 7 PM meeting in US Mountain Time (UTC−6 in summer, UTC−7 in winter) is already Tuesday in UTC: in summer it is Tuesday 01:00 UTC, in winter Tuesday 02:00 UTC. Tick **Tue**, not **Mon**. Use the **Next 3 fires** lines to confirm the local day and time before you save. After the clocks change, edit the schedule: the UTC time does not move, so your local time does.
 
@@ -416,7 +416,7 @@ If the job was in `recording`, the file recorded so far is finished into an asse
 
 ![The Recordings table with a job in the recording state.](manual/images/operator-recording-jobs.png){width=90%}
 
-*Figure: the Recordings table.*
+*Figure: the current-source Recordings table with a synthetic example job in the recording state. The Live refresh label polls example replies only; no actual capture was running or stopped for this illustration.*
 
 ## Publish an agenda for a meeting (Agendas)
 
@@ -488,9 +488,9 @@ The **Bulk actions** section has four ways to fill an agenda without typing each
 
 On the recording's watch page, residents see a card headed "Agenda" beside the video. It shows each item's number, title and time. Clicking an item that has a time jumps the video to it. An item with no time shows "—" and cannot be clicked. If you gave a **Source doc URL**, there is an "Agenda document" link, and if the address ends in `.pdf`, the document appears in a viewer. Residents never see your **Notes**. While the agenda is a draft, residents see nothing at all.
 
-![A recording's watch page with the published agenda beside the video.](manual/images/portal-agenda-sidebar.png){width=90%}
+![Example recording watch page with a published agenda beside the video.](manual/images/portal-agenda-sidebar.png){width=90%}
 
-*Figure: the agenda card beside the video on the resident watch page.*
+*Figure: the current-source agenda card beside the video on the resident watch page, using example data. The video is a two-second synthetic test clip, not the example meeting.*
 
 > **Known issue (beta.10):** The operator screen does not say where residents see the agenda, and it only links to the public page when the station was built with a public portal address set. Open the recording on the resident portal ([Chapter 6](#ch-publishing)) to check how it looks.
 
@@ -509,9 +509,9 @@ Tell producers to open the station's resident portal and scroll to **Submit a pr
 
 Later, the producer pastes both into **Check submission status** and clicks **Check status** to see the state of the submission.
 
-![The Submit a program form on the resident portal home page.](manual/images/portal-contribute-form.png){width=80%}
+![Example Submit a program form on the resident portal home page, with no file selected.](manual/images/portal-contribute-form.png){width=80%}
 
-*Figure: the Submit a program form.*
+*Figure: the current-source Submit a program form with example details. No file was selected, submission sent or agreement accepted.*
 
 > **Known issue (beta.10):** The receipt and status token are shown only on the page and are lost if the producer reloads it. The page does not say so. Tell producers to copy both before they leave.
 
@@ -561,7 +561,7 @@ There are **no confirmation boxes**. Each click acts at once.
 
 ![The Contributors queue with several submissions in different states.](manual/images/operator-contribute-queue.png){width=90%}
 
-*Figure: the Contributors queue.*
+*Figure: the current-source Contributor submissions screen with synthetic Submitted and Under review examples. No real submission, media, agreement, notification or review decision was accessed or changed.*
 
 > **For IT staff:** upload limits, the intake folder, and the file that holds submissions are described in [Part II, Running it day to day](#ch-operations).
 

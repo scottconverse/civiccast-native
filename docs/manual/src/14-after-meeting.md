@@ -63,7 +63,7 @@ The **State** and **Status** columns describe the same video in two ways.
 
 ![The Assets list. Each row shows a title, state, status, duration, size, codec and published date, with Upload video, a search box and tabs above it.](manual/images/operator-assets-list.png){width=90%}
 
-*Figure: the Assets list.*
+*Figure: the current-source Assets list with synthetic example recordings and statuses. No actual media was accessed or packaged for this illustration.*
 
 ## Upload a video
 
@@ -82,7 +82,7 @@ When it finishes you should see "Uploaded: {title}". The text below says the vid
 
 ![The Upload video panel open above the Assets table, with the Title box and the Video file chooser.](manual/images/operator-assets-upload.png){width=90%}
 
-*Figure: the upload panel.*
+*Figure: the current-source upload panel above synthetic example assets. No file was selected or uploaded for this illustration.*
 
 ## Edit a video's public details
 
@@ -191,7 +191,7 @@ The job can also be held. These are the reasons CivicCast puts on the row:
 
 ## Review and correct captions
 
-The **Review queue** (page heading "Caption review") is where a person checks the machine's caption lines before the public sees them.
+The **Review queue** (current-source page heading "Review queue", labeled "Caption review" above it) is where a person checks the machine's caption lines before the public sees them.
 
 1. In the left menu, click **Review queue**. It opens on the **Pending** tab. The other tabs are **All**, **Edited**, **Approved** and **Rejected**, and a **Search** box above them filters by asset ID or caption text.
 2. To work on one language, click **English** or **Spanish** in the **Language** row. **All languages** shows both.
@@ -233,7 +233,7 @@ Everyone can read the queue and play audio. Only a records clerk can approve, ed
 
 ![The Review queue on the Pending tab. Each card shows the Machine cue, an editable Reviewed text box, and Approve, Save edit and Reject buttons.](manual/images/operator-review-queue.png){width=90%}
 
-*Figure: the Review queue.*
+*Figure: the current-source Review queue with a synthetic pending English cue. No actual caption was fetched, edited, approved or rejected for this illustration.*
 
 ### If it did not work
 
@@ -301,7 +301,7 @@ Approval, export, download and verification failures have separate messages and 
 
 > **For IT staff:** Approval accepts only an approval note; the server gets the approver from the authenticated sign-in. Signed-record export requires matching saved approval before rendering. See the API appendix.
 
-![The Summary review page, where a records clerk checks a draft and its sourced claims.](manual/images/operator-summary-review.png){width=90%}
+![Summary review with a synthetic Pending review draft and its source caption range selected. The actual interface shows retained generation words, not audio playback. No summary was approved or exported.](manual/images/operator-summary-review.png){width=90%}
 
 *Figure: Summary review.*
 
@@ -339,7 +339,7 @@ Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ing
 
 ![Media Lifecycle Settings with the Watch folders, Retention automation and Storage budget cards.](manual/images/operator-media-lifecycle-settings.png){width=90%}
 
-*Figure: Media Lifecycle Settings.*
+*Figure: current-source Media Lifecycle Settings with synthetic empty configuration and usage. No station folders, retention rules or storage settings were read or changed for this illustration.*
 
 ## If it did not work
 

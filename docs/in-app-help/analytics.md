@@ -2,6 +2,8 @@
 
 Console group: Publish. Spec for the in-app help of the audience numbers screen. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`; line numbers are in `screens/AnalyticsScreen.tsx` unless stated.
 
+Implementation note (unreleased, 2026-10-03): HELP-01 and NEW-1 guidance is corrected in source. The telemetry-off banner directs staff to their IT person, says there is no Setup switch, and identifies Reports as a separate screen for support admins. No counting setting, access rule, or collection behavior changed. Other findings below remain separate work; the historical beta.10 strings are retained as audit context.
+
 ## Where the help text lives now
 - Heading and intro 497-499; Export CSV 509; chart buttons 518-531; range labels 25-30 (Quarter 28, Year 29); metric drop-down in the toolbar 516-579.
 - Generate Board PDF 371; "Include sections" 378; Download PDF 404; PDF failure 356; station label 351.

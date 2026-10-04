@@ -275,7 +275,7 @@ You should be taken to the **Readiness** screen. If a screen sent you here becau
 
 ![The First setup page on a configured station when you are signed out. The Setup complete card is at the top, with the Admin sign-in and Use recovery code cards below it.](manual/images/operator-signin-cards.png){width=90%}
 
-*Figure 2.1. The sign-in page of a station that is already set up.*
+*Figure 2.1. The current-source sign-in page using synthetic station data; not a live station.*
 
 > **Note:** Signing in on one browser does not sign out any other browser or device that is already signed in.
 
@@ -342,7 +342,7 @@ Altogether the console has 37 sidebar entries. On a phone or a narrow window, un
 
 ![The operator console with a signed-in user. The top bar is across the top, and the sidebar on the left shows its six sections.](manual/images/operator-shell-desktop.png){width=90%}
 
-*Figure 2.2. The console's top bar, sidebar and main area.*
+*Figure 2.2. The current-source console's top bar, sidebar and main area, using a synthetic signed-in operator example.*
 
 #### Which screens you can see
 
@@ -453,11 +453,11 @@ You should see a page headed **Operator manual** with a contents list on the lef
 
 - To find a section, type in **Search this manual**. It narrows the contents list to sections whose *title* contains your words. It does not search the text inside sections. If nothing matches you see `No section title matches "<text>".`
 - Click a contents entry to jump to that section.
-- **Report a beta issue** at the bottom of the sidebar opens the Manual at the section "Don't Have A GitHub Account?".
+- **Report a beta issue** at the bottom of the sidebar opens the Manual at the section "Report a beta issue".
 
-![The Manual screen showing the Manual contents list with a search box on the left and the start of the manual text on the right.](manual/images/operator-manual-contents.png){width=90%}
+![The Manual screen showing grouped Manual contents with a title filter on the left and the start of the manual text on the right.](manual/images/operator-manual-contents.png){width=90%}
 
-*Figure 2.3. The Manual screen.*
+*Figure 2.3. The current-source Manual screen using an isolated 635-heading manual fixture. This is an interface example, not acceptance of the bundled manual.*
 
 > **Known issue (beta.10):** The Manual built into the console is a copy made when the release was built, and it can be out of date. In the release source, it still says beta.10 "has not been published", which is no longer true. This manual was checked against the beta.10 software.
 
@@ -465,7 +465,7 @@ You should see a page headed **Operator manual** with a contents list on the lef
 
 > **Known issue (beta.10):** In testing we could not confirm whether the links inside the Manual's text that jump to another section work. The console reads a bare link of that kind as a page address, and it may show "Page not found". If one does, use the contents list on the left. Links to outside websites open in the same browser tab and replace the console; use your browser's **Back** button to return.
 
-> **Known issue (beta.10):** The section "Don't Have A GitHub Account?" tells you to press **Create support bundle** on "System Health". Only the Support admin role can use those buttons, and the screen is named **Readiness** in the sidebar. See [When something looks wrong](#ch-something-wrong) for who to contact.
+> **Support bundles:** Only the Support admin role can use **Create support bundle** on **Readiness**. See [When something looks wrong](#ch-something-wrong) for who to contact.
 
 ### Use the keyboard or a screen reader
 
@@ -509,9 +509,9 @@ Do this once, on the station computer, when CivicCast is installed and nobody ha
 
 You should see a green **Setup complete** card, a **First-run defaults** card, and a block of setup tools.
 
-![The Recovery kit ready panel on First setup, showing the admin username, the admin password, the recovery codes, and the Print kit and Save kit buttons.](manual/images/operator-setup-kit.png){width=90%}
+![The Recovery kit ready panel with unmistakably fake EXAMPLE ONLY credentials and EXAMPLE-NOT-VALID recovery codes, plus the Print kit and Save kit buttons.](manual/images/operator-setup-kit.png){width=90%}
 
-*Figure 2.4. The recovery kit panel.*
+*Figure 2.4. The current-source recovery kit panel using synthetic example data. The displayed password and recovery codes are not valid credentials and cannot access a station.*
 
 > **Warning:** The saved kit file contains the admin password in plain text, together with all eight codes. Keep it, or the printout, where only authorized people can find it. Do not email it, and do not leave it in a folder that syncs to the internet.
 
@@ -670,7 +670,7 @@ You should see the panel close and a message, "Scheduled.", with a line such as 
 
 ![The New scheduled item panel with Mode, Asset, Channel, Start at, Duration and Notes.](manual/images/operator-schedule-drawer.png){width=60%}
 
-*Figure: the New scheduled item panel.*
+*Figure: the current-source New scheduled item panel with synthetic example data. No program was scheduled on a station.*
 
 > **Warning:** The item you just made is **Scheduled**. It is not on the air and residents cannot see it. Go on to the next task, "Approve a program to air".
 
@@ -711,11 +711,11 @@ You should see the message "Visible to residents." with the program title, and t
 
 ![The Schedule list with one program waiting for approval. The row reads Not yet visible to residents and has a Publish to residents button.](manual/images/operator-schedule-list.png){width=90%}
 
-*Figure: a Scheduled row with its Publish to residents button.*
+*Figure: a current-source Scheduled row with its Publish to residents button, using synthetic schedule data.*
 
 ![The review panel after the check, with the Safe to air badge.](manual/images/operator-schedule-review-safe.png){width=70%}
 
-*Figure: the review panel for a program that passed the check.*
+*Figure: the current-source review panel showing a synthetic Safe to air response. This illustrates the controls; it is not a station safety check or approval to air.*
 
 > **Warning:** The final **Publish to residents** click has no further confirmation. It approves the program to air on the channel, not only to appear on the portal.
 
@@ -764,7 +764,7 @@ You should see the message "Added to guide." with a line such as "City Council �
 
 ![The Program guide screen with two recurring slots and the Next 7 days list.](manual/images/operator-guide-populated.png){width=90%}
 
-*Figure: the Program guide screen. Recurring slots are at the top; the day-by-day list is below.*
+*Figure: the current-source Program guide screen with synthetic example slots and log entries. Recurring slots are at the top; the day-by-day list is below. No station guide was built or approved for this illustration.*
 
 The guide is rebuilt in the background. By default it looks 72 hours ahead and runs about every five minutes. The **Refresh guide** button builds it immediately, for every channel, not only the one shown.
 
@@ -817,9 +817,9 @@ Use **Auto-schedule** when you want CivicCast to pick recordings for a time of d
 
 For each matching day in a rule's window, CivicCast places **one** recording. It starts at the start time of the daypart and uses the recording's own length. If anything is already scheduled anywhere inside that day's daypart, that day is left alone.
 
-> **Warning:** Programs placed by Auto-schedule are written as **Published**. They are approved to air with no separate approval step. Reviewing the **Simulate** preview is the only check you get. And CivicCast also runs the compile by itself about once an hour, so a saved rule can put programs on the air without anyone pressing a button.
+> **Warning:** An enabled rule approves the programs it generates for their scheduled times. They are written as **Published**, with no separate per-program commit. **Simulate** previews without writing anything; it is not an approval gate. When automatic scheduling is enabled, CivicCast compiles enabled rules at startup and about every hour, without another approval or anyone pressing **Compile now**. Check a rule carefully before saving it.
 
-> **Known issue (beta.10):** The text under **Compile now** says "The new items still need an operator commit before they air." That is **wrong**. They are already approved. The text at the top of the screen ("Compiling a rule approves its picked items to air") is the correct one. The success message "Added N scheduled items across M rules." also uses the wrong word: those programs are Published. The line under **Auto-schedule rules**, "rules feed the commit gate before air", is wrong for the same reason. The hourly automatic run is not mentioned on the screen at all.
+> **Note:** The current-source screen explains rule approval and automatic compilation. Earlier beta.10 wording incorrectly said these picks needed a separate commit. This wording correction does not change scheduling policy or establish that an installed station has been updated. Manually-added schedule items still need a separate **Commit-to-Air** approval.
 
 You need the publish operator or setup admin role to change anything here. A support admin can look and run **Simulate**, but the **Add**, **Edit**, **Delete** and **Compile now** controls do not appear.
 
@@ -874,15 +874,15 @@ To change or remove one later, click **Edit**, or click **Delete** and then **Co
    - **No usable duration**: the recording picked has no length.
 2. If you are happy, click **Compile now** in the **Compile schedule** card. There is no confirmation box.
 
-You should see "Added N scheduled items across M rules." The programs now show on **Schedule** as **Published**.
+You should see "Added N published items across M rules." The programs now show on **Schedule** as **Published**. They are approved for their scheduled times; compiling does not mean they start playing immediately.
 
 ![The Auto-schedule screen with one saved search, one daypart and one rule.](manual/images/operator-autoschedule-overview.png){width=90%}
 
-*Figure: the Auto-schedule screen.*
+*Figure: the corrected current-source Auto-schedule screen with a synthetic example search, daypart and rule. The approval and startup/hourly wording describes existing policy; no station rule was saved or compiled for this illustration.*
 
 ![A Simulate result with Will air and Already scheduled labels.](manual/images/operator-autoschedule-simulate.png){width=70%}
 
-*Figure: the Simulate preview for one rule.*
+*Figure: the corrected current-source Simulate panel with a synthetic example preview response. Simulate is a preview, not an approval gate. No actual program was scheduled or approved for this illustration.*
 
 #### Retire a rule
 
@@ -924,7 +924,7 @@ You should see the new schedule appear in the **Schedules** table above the form
 
 ![The New schedule form with Weekly selected and the Next 3 fires preview.](manual/images/operator-recording-form-weekly.png){width=80%}
 
-*Figure: a weekly recording schedule being created.*
+*Figure: the current-source New schedule form with unsaved synthetic example values and the actual UTC/local next-fire preview. The input list is synthetic; no device was inspected, schedule saved or recording started.*
 
 > **Warning:** The time you type is **UTC**, not local time. Under **Start (UTC)** and **Time (HH:MM UTC)** the screen shows "In your local time: …" so you can check it. The weekday boxes are also UTC days, and they get no such line. A Monday 7 PM meeting in US Mountain Time (UTC−6 in summer, UTC−7 in winter) is already Tuesday in UTC: in summer it is Tuesday 01:00 UTC, in winter Tuesday 02:00 UTC. Tick **Tue**, not **Mon**. Use the **Next 3 fires** lines to confirm the local day and time before you save. After the clocks change, edit the schedule: the UTC time does not move, so your local time does.
 
@@ -986,7 +986,7 @@ If the job was in `recording`, the file recorded so far is finished into an asse
 
 ![The Recordings table with a job in the recording state.](manual/images/operator-recording-jobs.png){width=90%}
 
-*Figure: the Recordings table.*
+*Figure: the current-source Recordings table with a synthetic example job in the recording state. The Live refresh label polls example replies only; no actual capture was running or stopped for this illustration.*
 
 ### Publish an agenda for a meeting (Agendas)
 
@@ -1058,9 +1058,9 @@ The **Bulk actions** section has four ways to fill an agenda without typing each
 
 On the recording's watch page, residents see a card headed "Agenda" beside the video. It shows each item's number, title and time. Clicking an item that has a time jumps the video to it. An item with no time shows "—" and cannot be clicked. If you gave a **Source doc URL**, there is an "Agenda document" link, and if the address ends in `.pdf`, the document appears in a viewer. Residents never see your **Notes**. While the agenda is a draft, residents see nothing at all.
 
-![A recording's watch page with the published agenda beside the video.](manual/images/portal-agenda-sidebar.png){width=90%}
+![Example recording watch page with a published agenda beside the video.](manual/images/portal-agenda-sidebar.png){width=90%}
 
-*Figure: the agenda card beside the video on the resident watch page.*
+*Figure: the current-source agenda card beside the video on the resident watch page, using example data. The video is a two-second synthetic test clip, not the example meeting.*
 
 > **Known issue (beta.10):** The operator screen does not say where residents see the agenda, and it only links to the public page when the station was built with a public portal address set. Open the recording on the resident portal ([Chapter 6](#ch-publishing)) to check how it looks.
 
@@ -1079,9 +1079,9 @@ Tell producers to open the station's resident portal and scroll to **Submit a pr
 
 Later, the producer pastes both into **Check submission status** and clicks **Check status** to see the state of the submission.
 
-![The Submit a program form on the resident portal home page.](manual/images/portal-contribute-form.png){width=80%}
+![Example Submit a program form on the resident portal home page, with no file selected.](manual/images/portal-contribute-form.png){width=80%}
 
-*Figure: the Submit a program form.*
+*Figure: the current-source Submit a program form with example details. No file was selected, submission sent or agreement accepted.*
 
 > **Known issue (beta.10):** The receipt and status token are shown only on the page and are lost if the producer reloads it. The page does not say so. Tell producers to copy both before they leave.
 
@@ -1131,7 +1131,7 @@ There are **no confirmation boxes**. Each click acts at once.
 
 ![The Contributors queue with several submissions in different states.](manual/images/operator-contribute-queue.png){width=90%}
 
-*Figure: the Contributors queue.*
+*Figure: the current-source Contributor submissions screen with synthetic Submitted and Under review examples. No real submission, media, agreement, notification or review decision was accessed or changed.*
 
 > **For IT staff:** upload limits, the intake folder, and the file that holds submissions are described in [Part II, Running it day to day](#ch-operations).
 
@@ -1285,7 +1285,7 @@ You should see a card titled "Broadcast readiness check result" with a line "Reh
 
 ![The Readiness page, titled "Safe to broadcast". The "On air right now" banner is at the top, with the readiness card below it.](manual/images/operator-readiness-top.png){width=90%}
 
-*Figure: the Readiness page at the start of a check.*
+*Figure: the actual Readiness screen with synthetic example results. This illustration is not evidence that a station passed its checks.*
 
 > **Warning:** **Check broadcast readiness** has no confirmation box. It creates a private test live session called "Private first-broadcast rehearsal" on the channel `government`, copies the sample test video that was set up during first setup (if there is none, the result reads **Not run**), and saves a short test recording. If they do not already exist, it also adds a source called "CivicCast sample test source" (see the Known issue under "Choose and check a meeting source") and a test recording location. In the code we read, the test session is marked "On air" for a moment and then ended, and the portal home page reads the live session record, so residents could briefly see the test session as on air. We have not watched this happen. We could not confirm whether the test recording shows up in the Assets list. Do not run this check while a real meeting is on air.
 
@@ -1306,7 +1306,7 @@ You should see the source's tag change to **Delivering** and text such as "Check
 
 ![The Live screen with sources configured and no session yet. The Safe to broadcast panel is at the top and the Source switcher cards are below it.](manual/images/operator-live-sources.png){width=90%}
 
-*Figure: the Live screen before a session exists.*
+*Figure: the current-source Live screen before a session exists, with a synthetic example source and recording target. No camera, media or station readiness check was run.*
 
 > **Tip:** a source's **Delivering** answer expires after 30 seconds by default (your IT person can change this to anything from 5 to 300 seconds). Run **Check source** again immediately before you do anything that depends on it, especially **Take live** on the Channels screen.
 
@@ -1346,9 +1346,9 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 | Recording target | A real (not test) local recording location is configured. |
 | Operator confirmation | The box in step 4 is ticked. |
 
-![The Pre-flight checklist after Run pre-flight, with the session controls above it.](manual/images/operator-live-preflight.png){width=90%}
+![The Pre-flight checklist after Run pre-flight, with the session controls above it.](manual/images/operator-live-preflight.png){width=70%}
 
-*Figure: the nine-row Pre-flight checklist. A row that failed shows a red border and a "Next step." line.*
+*Figure: the current-source nine-row Pre-flight checklist with synthetic example results. The failed camera row shows a red border and a "Next step." line; no actual pre-flight or source check was run.*
 
 > **Known issue (beta.10):** three more things on this screen are easy to misread. First, the **Safe to broadcast** panel near the top is worked out from the last test on the Readiness screen, not from the checklist on this page, so it can say "Check before meeting" while this page says "Pre-flight ready". Second, the hint on a failed Operator confirmation row says to tick the box "below", but the box is in **Session controls**, above the checklist. Third, the empty checklist says "Run pre-flight to populate the nine-check contract." It means "Click **Run pre-flight** to check the camera, the recording drive, the internet and your confirmation."
 
@@ -1363,7 +1363,8 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 
 ![The confirmation box "End the live stream?" over the Live screen.](manual/images/operator-live-endconfirm.png){width=70%}
 
-*Figure: the End Live Stream confirmation. Its wording about residents does not match what the code does; see the warning below.*
+*Figure: the current-source End Live Stream confirmation over a synthetic example session. The dialog was cancelled; no real session or stream was started or ended. Its wording about residents does not match what the code does; see the warning below.*
+
 3. Watch the **Recording finalization** panel that appears. It shows **Waiting**, then "Attempt N of M. The recording is being checked and packaged.", then "Recording saved as asset <id>. Find it in the Assets library."
 
 If it fails, the panel shows the reason (or "Finalization failed."). Fix the cause, then click **Retry finalization**. See [After the meeting](#ch-after-meeting) for what to do with the saved recording.
@@ -1387,7 +1388,7 @@ You should see the state tag change to **Starting** and then **On air**, or **Sh
 
 ![The Outgoing channel feed box on the Channels screen, with the Start, Stop, Restart feed and Finish current item, then stop buttons.](manual/images/operator-channels-feed.png){width=90%}
 
-*Figure: the Outgoing channel feed box.*
+*Figure: the Outgoing channel feed box with synthetic example data. The On air state is an illustration, not proof that a station is broadcasting.*
 
 > **Warning:** **Start** makes the channel visible to residents and to every output set up for it (the web player, and any cable or streaming output). Start a channel only when you mean it to be public.
 
@@ -1414,7 +1415,7 @@ Use the same **Outgoing channel feed** box.
 
 ![The confirmation box "Stop the outgoing feed for" the selected channel, with Stop feed and Cancel buttons.](manual/images/operator-channels-stop-confirm.png){width=70%}
 
-*Figure: the Stop confirmation.*
+*Figure: the Stop confirmation for an example channel. The dialog was cancelled; no outgoing feed was stopped.*
 
 > **Warning:** all three commands change what residents see right now. **Stop** drops the stream at once. Use **Finish current item, then stop** at the end of a meeting if you want the program to end cleanly.
 
@@ -1454,7 +1455,7 @@ You should see a red badge reading "Live takeover" with the name of the person a
 
 ![The Live takeover box while a channel is under takeover, with the Return to schedule button.](manual/images/operator-channels-takeover-live.png){width=70%}
 
-*Figure: the Live takeover box during a takeover.*
+*Figure: the Live takeover box with a synthetic five-minute session and example operator and source. No live takeover or return to schedule was performed.*
 
 > **Warning:** **Confirm take live** overrides the schedule and changes what is on the air. There is no pop-up. The second click is the confirmation. If the source's last good check is older than the window (30 seconds by default) when you confirm, the code we read refuses the takeover before it re-checks anything. The error can then read something like "Live ingest path '<channel>:local' is disabled.", which names CivicCast's built-in placeholder path and not your camera. Click **Check source** again and retry. If the channel is already under takeover, the error says "Channel '<id>' is already under live takeover."
 
@@ -1484,7 +1485,7 @@ You should see the program move to the "Recent commits" list with a tag: **Prepa
 
 ![The Commit programs to air box after Review & prepare, showing the safety check result and the Approve & put on air button.](manual/images/operator-channels-commit-review.png){width=90%}
 
-*Figure: a program under review in Commit programs to air.*
+*Figure: an example program under review in Commit programs to air. The safety-check response is synthetic; no program was approved or put on air.*
 
 > **Warning:** **Approve & put on air** has **no confirmation box**. It is a single click once the review says **Safe to air**. It publishes the schedule item to residents, saves an approval record in your name, and then queues a **Start** for the channel if the feed is stopped, or a reload if it is running, so the schedule is read again. The program plays at its scheduled time, not at the moment you click. On a stopped channel the click also starts the whole channel's feed.
 
@@ -1559,7 +1560,7 @@ You should see the banner "Test action recorded." Test Mode never touches your e
 
 ![The Production Control Room with a Test Mode session open, showing the mode banner, the program-feed banner and the Safe State box.](manual/images/operator-controlroom-test-session.png){width=90%}
 
-*Figure: a Test Mode session in the Control Room.*
+*Figure: the current-source Control Room with a synthetic Test Mode session, example program feed and no configured devices or cues. No actual session was opened, readiness check run or device action sent.*
 
 #### Open an On-Air Mode session
 
@@ -1626,7 +1627,7 @@ You should see the command text, and the tag "ready" or "blocked". No hardware i
 
 ![The Facility router screen with the "hardware send disabled" tag and a Take preview card.](manual/images/operator-facility-preview.png){width=90%}
 
-*Figure: a Facility router preview. The router and its sources are built-in sample data.*
+*Figure: the current-source Facility router with synthetic example inventory and a blocked preview result. No router was contacted or command sent; this is not a station hardware check.*
 
 Two more previews need a channel chosen in **Target channel**: **Preview scheduled take** (a take timed 15 minutes from now with a 15-second lead, using a made-up item) and **Preview L-bar and squeezeback** (a plan for shrinking the picture to make room for a graphics frame). Neither runs anything.
 
@@ -1650,7 +1651,7 @@ The board is shown in the gaps between programs when the channel's filler is set
 
 ![The CG Board screen with the Community bulletins box on the right.](manual/images/operator-cgboard-bulletins.png){width=90%}
 
-*Figure: Community bulletins on the CG Board screen.*
+*Figure: the current-source CG Board with a synthetic example template and submitted community bulletin. No bulletin was created, moderated or approved, and no feed was fetched.*
 
 To send a bulletin back, click **Request changes**, type a note and click **Send request**. The tag becomes **Needs changes**, with your note in amber ("Notes: …"). To remove a bulletin, click **Decline**, type a reason and click **Decline bulletin**.
 
@@ -1702,7 +1703,7 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 ![The Remote Contribution screen with a room selected and its Guests list.](manual/images/operator-remote-guests.png){width=90%}
 
-*Figure: the Guests list for an open room.*
+*Figure: the current-source Remote Contribution screen with a synthetic example room and guest in the waiting room. The Live and Good labels are example data; no room, invitation, remote connection or on-air action was performed.*
 
 > **Warning:** the guest's **On air** button does **more than show that guest**. It also switches the *whole channel* to its live source, exactly like **Take live** on Channels, for up to an hour. There is no confirmation box. CivicCast records the change under the name "remote-contribution", not your name. If the channel cannot be taken live (for example, no source passes its check), you get "Channel takeover failed; guest <id> not placed on-air." and the guest goes back to the waiting room. If the channel is already under takeover, nothing more happens and the guest joins the live picture.
 
@@ -1868,7 +1869,7 @@ The **State** and **Status** columns describe the same video in two ways.
 
 ![The Assets list. Each row shows a title, state, status, duration, size, codec and published date, with Upload video, a search box and tabs above it.](manual/images/operator-assets-list.png){width=90%}
 
-*Figure: the Assets list.*
+*Figure: the current-source Assets list with synthetic example recordings and statuses. No actual media was accessed or packaged for this illustration.*
 
 ### Upload a video
 
@@ -1887,7 +1888,7 @@ When it finishes you should see "Uploaded: {title}". The text below says the vid
 
 ![The Upload video panel open above the Assets table, with the Title box and the Video file chooser.](manual/images/operator-assets-upload.png){width=90%}
 
-*Figure: the upload panel.*
+*Figure: the current-source upload panel above synthetic example assets. No file was selected or uploaded for this illustration.*
 
 ### Edit a video's public details
 
@@ -1996,7 +1997,7 @@ The job can also be held. These are the reasons CivicCast puts on the row:
 
 ### Review and correct captions
 
-The **Review queue** (page heading "Caption review") is where a person checks the machine's caption lines before the public sees them.
+The **Review queue** (current-source page heading "Review queue", labeled "Caption review" above it) is where a person checks the machine's caption lines before the public sees them.
 
 1. In the left menu, click **Review queue**. It opens on the **Pending** tab. The other tabs are **All**, **Edited**, **Approved** and **Rejected**, and a **Search** box above them filters by asset ID or caption text.
 2. To work on one language, click **English** or **Spanish** in the **Language** row. **All languages** shows both.
@@ -2038,7 +2039,7 @@ Everyone can read the queue and play audio. Only a records clerk can approve, ed
 
 ![The Review queue on the Pending tab. Each card shows the Machine cue, an editable Reviewed text box, and Approve, Save edit and Reject buttons.](manual/images/operator-review-queue.png){width=90%}
 
-*Figure: the Review queue.*
+*Figure: the current-source Review queue with a synthetic pending English cue. No actual caption was fetched, edited, approved or rejected for this illustration.*
 
 #### If it did not work
 
@@ -2092,7 +2093,7 @@ What is possible today:
 
 > **For IT staff:** The approve route is `POST /api/staff/summaries/{id}/approve`, which accepts `{"approval_note": ...}` only. The signed-record export is `POST /api/staff/records`, with download and verify routes under `/api/staff/records/{id}`. The signing timestamp is a deterministic test timestamp unless a real timestamp authority is configured. See the API appendix.
 
-![The Summary review page with one Pending review card showing sourced claims and the Inline transcript player box.](manual/images/operator-summary-review.png){width=90%}
+![Summary review with a synthetic Pending review draft and its source caption range selected. The actual interface shows retained generation words, not audio playback. No summary was approved or exported.](manual/images/operator-summary-review.png){width=90%}
 
 *Figure: Summary review.*
 
@@ -2130,7 +2131,7 @@ Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ing
 
 ![Media Lifecycle Settings with the Watch folders, Retention automation and Storage budget cards.](manual/images/operator-media-lifecycle-settings.png){width=90%}
 
-*Figure: Media Lifecycle Settings.*
+*Figure: current-source Media Lifecycle Settings with synthetic empty configuration and usage. No station folders, retention rules or storage settings were read or changed for this illustration.*
 
 ### If it did not work
 
@@ -2191,11 +2192,11 @@ At the top of the screen, tiles count your recordings: Total, Draft, Portal live
 
 ![The Publish dashboard with a recording card. The Portal row is ticked, and the Approve and Publish selected button sits below the surface rows.](manual/images/operator-publish-dashboard.png){width=90%}
 
-*Figure: the Publish dashboard.*
+*Figure: the current-source Publish dashboard with a synthetic example recording and readiness replies. No station readiness was checked and nothing was published or archived for this illustration.*
 
 ![The confirmation dialog asking whether to publish a recording to residents.](manual/images/operator-publish-confirm.png){width=70%}
 
-*Figure: the publish confirmation dialog.*
+*Figure: the current-source confirmation dialog for a synthetic example recording. The dialog was canceled; no approval or publishing request was sent.*
 
 #### What happens behind the button
 
@@ -2288,7 +2289,7 @@ Exactly what is enforced today:
 
 ![The Playback policy screen with the policy target, access tier, preroll and decision audit panels.](manual/images/operator-playback-policy.png){width=90%}
 
-*Figure: the Playback policy screen.*
+*Figure: the current-source Playback policy screen with synthetic example configuration and an empty example audit. No station policy was read or saved; this illustration does not prove playback access enforcement.*
 
 ### The paywall: optional paid access
 
@@ -2381,9 +2382,9 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 
 **Agenda chapters.** If staff published an agenda for the meeting, an **Agenda** card sits beside the video (below it on a phone). It lists the items by number, title and time. Click an item with a time and the video jumps there and plays. An item with no time shows a dash and cannot be clicked. If the agenda has a document, an **Agenda document** link opens it in a new tab, and a PDF may show in the card. If there is no agenda, nothing is shown. The agenda is the only chapter feature: the player has no chapter marks on its timeline.
 
-![A recording's Watch page with captions and the agenda beside the video.](manual/images/portal-watch-captions-agenda.png){width=90%}
+![Example recording Watch page with Spanish selected in the caption controls and an agenda beside the video.](manual/images/portal-watch-captions-agenda.png){width=90%}
 
-*Figure: Watch page with captions and an agenda.*
+*Figure: the current-source Watch page with example metadata, an agenda and Spanish selected in the caption controls. The two-second synthetic test clip is not the example meeting; this illustrates the interface, not caption accuracy.*
 
 **Errors.** A recording that is not public shows "Recording not found" and "This recording does not exist or is no longer published. Browse the archive for the current recordings." Other failures show "This recording could not be loaded right now. Try again, then contact the station if the problem continues." with **Retry**. If the video cannot play, the player says one of: "Network error while loading the video. Check your connection and try again.", "The video could not be played. The stream may be unavailable." or, for an old browser, "Your browser does not support HLS playback. Please try a recent version of Chrome, Firefox, Safari, or Edge." (HLS is the streaming format the portal uses.) The player has no retry button; reload the page.
 
@@ -2395,9 +2396,9 @@ Only if a setup administrator has turned the paywall on. The video is replaced b
 
 In beta.10 the likely sequence is: the resident enters an email and clicks the link button and sees "Check your inbox for a link." No email arrives. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall Known issue above.
 
-![The subscription gate shown in place of the video on a Watch page.](manual/images/portal-paywall-gate.png){width=80%}
+![Example subscription gate replacing the Watch page video, with the public agenda still visible.](manual/images/portal-paywall-gate.png){width=80%}
 
-*Figure: the subscription gate.*
+*Figure: the current-source subscription gate with example metadata and no plans configured. No sign-in link, subscription, checkout or payment was requested.*
 
 #### Subscribing to new recordings
 
@@ -2472,7 +2473,7 @@ You should see two panels, **VOD** and **Live**. Each starts with a line in the 
 
 > **Note:** The two panels and their charts read totals that CivicCast recalculates in the background about every 5 minutes by default, so they can trail the tiles under them by a few minutes.
 
-![The Analytics screen on a station where counting is not switched on. A box headed "Audience telemetry is off" appears under the toolbar.](manual/images/operator-analytics-telemetry-off.png){width=90%}
+![The Analytics screen with example data representing counting switched off. A box headed "Audience telemetry is off" appears under the toolbar.](manual/images/operator-analytics-telemetry-off.png){width=90%}
 
 Under the panels, the page shows:
 
@@ -2503,7 +2504,7 @@ By default CivicCast discards events older than 366 days.
 
 > **Known issue (beta.10):** Most of the extra tables stay empty. The resident website sends only the five messages above. It does not send the viewer's device, platform, country, caption language, audio track or how many people are watching live. The **Geography**, **Device**, **Platform**, **Caption Usage**, **Audio Usage** and **Subscription Growth** tables, the **Live peak** tile and **Live Concurrent Viewers** table therefore stay empty unless another app sends that information. This is expected, not a fault with your station. Watch time is also approximate: in both the file-based and the database-backed store we read, it is added up only from the position reported when a video finishes, so people who stop early add nothing.
 
-> **Known issue (beta.10):** The empty-state box says "Turn it on in Setup to collect Viewer Count and Time Viewed." No screen in Setup has that switch. Counting is turned on by an IT person changing a station setting and restarting CivicCast. The report and the PDF can show nothing until that is done.
+> **Note:** No screen in Setup has an audience-counting switch. Ask your IT person to configure counting for your resident website. The separate **Reports** screen is available to support admins and reads what aired, not who watched. In the published beta.10, the Analytics box incorrectly says to turn counting on in Setup; that instruction is corrected in the next release.
 
 > **For IT staff:** The two settings are `CIVICCAST_PUBLIC_ANALYTICS_KEY` and `CIVICCAST_PUBLIC_ANALYTICS_ALLOWED_ORIGINS`; see [Chapter 11](#ch-configuration) and [Chapter 13](#ch-security). The resident website sends no key, so the website's own messages are accepted only when its address is listed in the allowed-origins setting (a comma-separated list of exact addresses such as `https://tv.example.gov`, matched against the browser's origin header). Setting only the key removes the "telemetry is off" box, but the website's messages are then refused.
 
@@ -2548,7 +2549,7 @@ The page opens on today's date through tomorrow's, UTC midnight to UTC midnight.
 
 > **Warning:** Dates here are UTC. A station on Mountain time should widen the range by a day when looking for an evening meeting.
 
-![The Reports screen on the Shows tab, with the From, Through and Channel filters above an empty table.](manual/images/operator-reports-shows.png){width=90%}
+![The Reports screen on the Shows tab, with the From, Through and Channel filters and an empty result. This example uses synthetic data.](manual/images/operator-reports-shows.png){width=90%}
 
 #### What each tab shows
 
@@ -2594,7 +2595,7 @@ An *EPG* (electronic program guide) is the schedule file that cable boxes, TV-gu
 - You need the channel's id. The **Reports** screen has a channel drop-down that lists them as `slug (channel_id)`, or ask your IT person.
 - Ask the guide service for a sample file and its address first. In testing we could not confirm that any particular service, such as TitanTV, accepts what CivicCast makes. The "X-List" format here is a generic eight-column table.
 
-![The EPG Export screen with the Create export config form above the empty list of configured exports.](manual/images/operator-epg-form.png){width=90%}
+![The EPG Export screen with the Create export config form above the empty list of configured exports. This example uses synthetic data.](manual/images/operator-epg-form.png){width=90%}
 
 #### Create an export and download the file
 
@@ -2668,7 +2669,7 @@ Underwriting means paid "sponsor acknowledgment" messages, such as "Support for 
 | Read **Affidavits** | Empty |
 | Click **Download CSV**, **Download XML**, **Download PDF** | Shows an error instead of a file (below) |
 
-![The Underwriting screen on the Spots tab, showing the Create spot form with the compliance reminder and attestation checkbox.](manual/images/operator-underwriting-spots.png){width=90%}
+![The Underwriting screen on the Spots tab, showing the Create spot form with the compliance reminder and attestation checkbox. This example uses synthetic data.](manual/images/operator-underwriting-spots.png){width=90%}
 
 #### Add a spot
 
@@ -2718,7 +2719,7 @@ A resident app lets people watch your station on a phone or a TV box. CivicCast 
 
 > **Warning:** App Admin does not put any app in any app store. CivicCast never contacts a store. Someone technical still has to sign each package and submit it. The built package is a generic starter. The page says apps read the station's settings when they run, so name and branding update without a rebuild. In testing we could not confirm this in a running app, and store review is separate work.
 
-![The App Admin screen with the Build profile, New build, Build history and Store submissions sections.](manual/images/operator-appadmin-empty.png){width=90%}
+![The App Admin screen with the Build profile, New build, Build history and Store submissions sections. This example uses synthetic data.](manual/images/operator-appadmin-empty.png){width=90%}
 
 #### Make a build
 
@@ -2752,6 +2753,8 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
 ![The Subscription paywall screen in its default state. A banner says the paywall is off, and the Tiers and Comp access grants cards are greyed.](manual/images/operator-paywall-off.png){width=90%}
+
+*Figure: the current-source Subscription paywall screen with synthetic disabled configuration. No actual configuration or credential was read, generated or saved; this example does not establish payment or access enforcement.*
 
 > **Warning:** Leave the paywall **off** in beta.10. The code we read shows the feature is unfinished.
 
@@ -2816,6 +2819,8 @@ Readiness answers one question: "Can we broadcast right now?"
 5. Scroll down to **Required before broadcast** and **Optional and advanced**. Each row is one check, with a coloured label, a short message and a "Next step".
 
 ![The Readiness page. The top shows the On air right now banner, then a card with the station's readiness label, a Check broadcast readiness button and a link to the resident preview.](manual/images/operator-readiness-top.png){width=90%}
+
+*Figure: the current-source Readiness screen with synthetic Ready responses and no automatic channels. This illustrates the interface, not live station readiness.*
 
 #### What the colours and words mean
 
@@ -2920,6 +2925,8 @@ After a successful check, an empty list says: "No active alerts were returned. T
 
 ![The Alerts screen with the Active and Resolved buttons at the top, the alert list, and the Alert rules and Where alerts go sections below.](manual/images/operator-alerts-empty.png){width=90%}
 
+*Figure: the current-source Alerts screen with synthetic empty alert, rule and destination lists. The empty state does not establish that a station is healthy or its notifications are configured.*
+
 > **Note:** **Acknowledge** means "I have seen this". It does not fix the problem and does not close the alert. An alert closes itself when the problem goes away, and then moves to **Resolved**.
 
 The alert titles you may see are:
@@ -2979,6 +2986,8 @@ The **Emergency Alerts** screen shows public-safety alerts the station has pulle
 The feeds come from the National Weather Service (NWS), the federal alert system IPAWS, and AMBER child-abduction alerts. IPAWS and AMBER alerts are read in a standard format called CAP (Common Alerting Protocol); the code reads National Weather Service alerts from that service's GeoJSON feed instead. We did not test any live feed.
 
 ![The Emergency Alerts screen. The permanent banner "Public-safety display — not an EAS device" sits above the Channel picker and the Alert sources, Active alerts and On-channel now lists.](manual/images/operator-eas-empty.png){width=90%}
+
+*Figure: the current-source Emergency Alerts screen with synthetic empty sources, alerts and display decisions. No live feed or on-channel display was tested.*
 
 #### What airs by itself, and what staff must do
 
@@ -3042,6 +3051,8 @@ Residents on that channel go back to regular programming.
 2. If you see **Federation is off** with a green tag, **Default-safe**, nothing is shared and the station is not advertised. You can stop here.
 
 ![The Federation screen in its default state. The card is headed "Federation is off" and has a Generate station key button.](manual/images/operator-federation-off.png){width=90%}
+
+*Figure: the current-source Federation screen with synthetic example configuration. No station configuration was read and no station key was generated for this illustration.*
 
 > **Known issue (beta.10):** There is no on/off switch in the console. The page says nothing about how federation is turned on. An IT person has to change station settings and restart CivicCast. The old built-in manual points to a switch that does not exist.
 
@@ -3118,7 +3129,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 CivicCast is a beta (beta.10 was published as a GitHub pre-release on 2026-10-02). Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
 
-1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
+1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Report a beta issue".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
 3. If you do not have an account, ask your IT lead or anyone on staff who has one to post your description. If nobody has one, the same Manual section tells you to email the file and a short description to the project maintainer at the address in the project's security policy: <https://github.com/scottconverse/civiccast-native/blob/main/SECURITY.md>.
 
@@ -3652,15 +3663,15 @@ Open the **CivicCast Operator Console** shortcut (or **Open operator console**) 
 5. The **Recovery kit ready** panel appears. Select **Print kit** or **Save kit**. **Save kit** downloads `civiccast-recovery-kit-<kit id>.txt`, which contains the eight one-time recovery codes **and the administrator password in plain text**.
 6. Tick "I have saved or printed this kit..." (it unlocks after you use **Print kit** or **Save kit**), then select **Continue to the console**. Navigation stays locked until the kit is confirmed, and the browser warns you if you leave first.
 
-![The First setup page on a station that has not been set up. The form asks for the station name, an admin display name and username, a password of 12 characters or more, and where you will keep the recovery kit.](manual/images/operator-setup-firstadmin.png){width=80%}
+![Example of the actual First setup form with synthetic station details. Password fields are blank and Create first admin is disabled; no account or recovery kit was created.](manual/images/operator-setup-firstadmin.png){width=80%}
 
-*Figure 10.2. The first-admin form (a new station).*
+*Figure 10.2. First-admin form example, before submitting any setup details.*
 
 You should see "Setup complete" or "Signed in", the **First-run defaults** card, and the setup tools: **Camera or test media**, **Backup destination**, **Storage and viewing estimate** and **Provider setup**. Later sign-ins use **Admin sign-in** on the same page and land on the Readiness screen.
 
-![The First setup page on a station that is already set up. It offers Admin sign-in and Use recovery code.](manual/images/operator-setup-signin.png){width=80%}
+![Example of the actual First setup page with synthetic configured-station details. Admin sign-in and Use recovery code have blank fields; no sign-in or recovery action was performed.](manual/images/operator-setup-signin.png){width=80%}
 
-*Figure 10.3. The same page on a configured station, signed out.*
+*Figure 10.3. Configured-station example showing the sign-in and recovery forms.*
 
 A lost password is recovered with **Use recovery code**: the first click arms it ("This permanently consumes one recovery code — only 8 exist for this station. Click Recover account again to confirm.").
 
@@ -3773,7 +3784,7 @@ Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
 
 ![The Readiness screen, headed Safe to broadcast.](manual/images/operator-health-ready.png){width=90%}
 
-*Figure 10.4. The Readiness screen, where you confirm the install before a meeting.*
+*Figure 10.4. The current-source Readiness screen with synthetic example responses. This image is not install verification or evidence that the live station is healthy; perform the actual checks above.*
 
 Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). The project's clean-install test checked, in this order: install, activation, health, console and portal render, a clerk workflow, offline captions (21 caption cues on a test clip), the playout engine (5,445 transport-stream packets analysed with no errors) and a five-minute soak. The playout-engine check passed only on a harness that waits longer: on a fresh install the engine's first packets came more than 60 seconds after its first start, and the first capture attempt saw none (the second saw the 5,445). Restart the computer once and confirm that the service comes back by itself. The beta.10 verification record does not cover a restart.
 

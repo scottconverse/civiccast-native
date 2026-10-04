@@ -35,11 +35,11 @@ At the top of the screen, tiles count your recordings: Total, Draft, Portal live
 
 ![The Publish dashboard with a recording card. The Portal row is ticked, and the Approve and Publish selected button sits below the surface rows.](manual/images/operator-publish-dashboard.png){width=90%}
 
-*Figure: the Publish dashboard.*
+*Figure: the current-source Publish dashboard with a synthetic example recording and readiness replies. No station readiness was checked and nothing was published or archived for this illustration.*
 
 ![The confirmation dialog asking whether to publish a recording to residents.](manual/images/operator-publish-confirm.png){width=70%}
 
-*Figure: the publish confirmation dialog.*
+*Figure: the current-source confirmation dialog for a synthetic example recording. The dialog was canceled; no approval or publishing request was sent.*
 
 ### What happens behind the button
 
@@ -132,7 +132,7 @@ Exactly what is enforced today:
 
 ![The Playback policy screen with the policy target, access tier, preroll and decision audit panels.](manual/images/operator-playback-policy.png){width=90%}
 
-*Figure: the Playback policy screen.*
+*Figure: the current-source Playback policy screen with synthetic example configuration and an empty example audit. No station policy was read or saved; this illustration does not prove playback access enforcement.*
 
 ## The paywall: optional paid access
 
@@ -225,9 +225,9 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 
 **Agenda chapters.** If staff published an agenda for the meeting, an **Agenda** card sits beside the video (below it on a phone). It lists the items by number, title and time. Click an item with a time and the video jumps there and plays. An item with no time shows a dash and cannot be clicked. If the agenda has a document, an **Agenda document** link opens it in a new tab, and a PDF may show in the card. If there is no agenda, nothing is shown. The agenda is the only chapter feature: the player has no chapter marks on its timeline.
 
-![A recording's Watch page with captions and the agenda beside the video.](manual/images/portal-watch-captions-agenda.png){width=90%}
+![Example recording Watch page with Spanish selected in the caption controls and an agenda beside the video.](manual/images/portal-watch-captions-agenda.png){width=90%}
 
-*Figure: Watch page with captions and an agenda.*
+*Figure: the current-source Watch page with example metadata, an agenda and Spanish selected in the caption controls. The two-second synthetic test clip is not the example meeting; this illustrates the interface, not caption accuracy.*
 
 **Errors.** A recording that is not public shows "Recording not found" and "This recording does not exist or is no longer published. Browse the archive for the current recordings." Other failures show "This recording could not be loaded right now. Try again, then contact the station if the problem continues." with **Retry**. If the video cannot play, the player says one of: "Network error while loading the video. Check your connection and try again.", "The video could not be played. The stream may be unavailable." or, for an old browser, "Your browser does not support HLS playback. Please try a recent version of Chrome, Firefox, Safari, or Edge." (HLS is the streaming format the portal uses.) The player has no retry button; reload the page.
 
@@ -239,9 +239,9 @@ Only if a setup administrator has turned the paywall on. The video is replaced b
 
 In beta.10 the likely sequence is: the resident enters an email and clicks the link button and sees "Check your inbox for a link." No email arrives. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall Known issue above.
 
-![The subscription gate shown in place of the video on a Watch page.](manual/images/portal-paywall-gate.png){width=80%}
+![Example subscription gate replacing the Watch page video, with the public agenda still visible.](manual/images/portal-paywall-gate.png){width=80%}
 
-*Figure: the subscription gate.*
+*Figure: the current-source subscription gate with example metadata and no plans configured. No sign-in link, subscription, checkout or payment was requested.*
 
 ### Subscribing to new recordings
 
