@@ -10,16 +10,16 @@ result = 'accepted'
         monkeypatch: pytest.MonkeyPatch, result: str | None
     ) -> None:
         """A caller pause is not evidence that the worker failed to acknowledge.
-    
+
         The clock crosses the unchanged deadline after writing. Only a correlated
         positive receipt may succeed; an empty pipe must expire without another wait.
         """
         from civiccast.egress.gst import strategy
-    
+
         clock = [0.0]
         reads: list[float] = []
         sleeps: list[float] = []
-    
+
         class _PausedCallerServer(_ImmediateAckServer):
             def write_line(self, text: str) -> bool:
                 written = super().write_line(text)
@@ -38,22 +38,22 @@ result = 'accepted'
                     )
                 clock[0] = 20.5
                 return written
-    
+
             def read_line(self) -> str | None:
                 reads.append(clock[0])
                 return super().read_line()
-    
+
         monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
         monkeypatch.setattr(strategy.time, "sleep", sleeps.append)
         server = _PausedCallerServer()
         channel = _WindowsPipeChannel("c1", server=server)
         channel._connected_event.set()
-    
+
 >       assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
 E       AssertionError: assert False is ('accepted' == 'accepted'
 E        +  where False = send_and_wait('reload', 'reload /w/g.json')
 E        +    where send_and_wait = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x000002D2AB3D7A10>.send_and_wait
-E         
+E
 E           accepted)
 
 _PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
@@ -79,16 +79,16 @@ result = 'error'
         monkeypatch: pytest.MonkeyPatch, result: str | None
     ) -> None:
         """A caller pause is not evidence that the worker failed to acknowledge.
-    
+
         The clock crosses the unchanged deadline after writing. Only a correlated
         positive receipt may succeed; an empty pipe must expire without another wait.
         """
         from civiccast.egress.gst import strategy
-    
+
         clock = [0.0]
         reads: list[float] = []
         sleeps: list[float] = []
-    
+
         class _PausedCallerServer(_ImmediateAckServer):
             def write_line(self, text: str) -> bool:
                 written = super().write_line(text)
@@ -107,21 +107,21 @@ result = 'error'
                     )
                 clock[0] = 20.5
                 return written
-    
+
             def read_line(self) -> str | None:
                 reads.append(clock[0])
                 return super().read_line()
-    
+
         monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
         monkeypatch.setattr(strategy.time, "sleep", sleeps.append)
         server = _PausedCallerServer()
         channel = _WindowsPipeChannel("c1", server=server)
         channel._connected_event.set()
-    
+
         assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
 >       assert reads == [20.5]
 E       assert [] == [20.5]
-E         
+E
 E         Right contains one more item: 20.5
 E         Use -v to get more diff
 
@@ -148,16 +148,16 @@ result = None
         monkeypatch: pytest.MonkeyPatch, result: str | None
     ) -> None:
         """A caller pause is not evidence that the worker failed to acknowledge.
-    
+
         The clock crosses the unchanged deadline after writing. Only a correlated
         positive receipt may succeed; an empty pipe must expire without another wait.
         """
         from civiccast.egress.gst import strategy
-    
+
         clock = [0.0]
         reads: list[float] = []
         sleeps: list[float] = []
-    
+
         class _PausedCallerServer(_ImmediateAckServer):
             def write_line(self, text: str) -> bool:
                 written = super().write_line(text)
@@ -176,21 +176,21 @@ result = None
                     )
                 clock[0] = 20.5
                 return written
-    
+
             def read_line(self) -> str | None:
                 reads.append(clock[0])
                 return super().read_line()
-    
+
         monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
         monkeypatch.setattr(strategy.time, "sleep", sleeps.append)
         server = _PausedCallerServer()
         channel = _WindowsPipeChannel("c1", server=server)
         channel._connected_event.set()
-    
+
         assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
 >       assert reads == [20.5]
 E       assert [] == [20.5]
-E         
+E
 E         Right contains one more item: 20.5
 E         Use -v to get more diff
 
@@ -217,16 +217,16 @@ result = 'unrelated'
         monkeypatch: pytest.MonkeyPatch, result: str | None
     ) -> None:
         """A caller pause is not evidence that the worker failed to acknowledge.
-    
+
         The clock crosses the unchanged deadline after writing. Only a correlated
         positive receipt may succeed; an empty pipe must expire without another wait.
         """
         from civiccast.egress.gst import strategy
-    
+
         clock = [0.0]
         reads: list[float] = []
         sleeps: list[float] = []
-    
+
         class _PausedCallerServer(_ImmediateAckServer):
             def write_line(self, text: str) -> bool:
                 written = super().write_line(text)
@@ -245,21 +245,21 @@ result = 'unrelated'
                     )
                 clock[0] = 20.5
                 return written
-    
+
             def read_line(self) -> str | None:
                 reads.append(clock[0])
                 return super().read_line()
-    
+
         monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
         monkeypatch.setattr(strategy.time, "sleep", sleeps.append)
         server = _PausedCallerServer()
         channel = _WindowsPipeChannel("c1", server=server)
         channel._connected_event.set()
-    
+
         assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
 >       assert reads == [20.5]
 E       assert [] == [20.5]
-E         
+E
 E         Right contains one more item: 20.5
 E         Use -v to get more diff
 
