@@ -616,15 +616,8 @@ def _overload_negative_control(
     tap_root = work_root / "tap"
     channel_dir = tap_root / "government"
     channel_dir.mkdir(parents=True, exist_ok=True)
-    for index in range(4):
-        shutil.copy2(audio, channel_dir / f"chunk-{index:06d}.wav")
     caption_work = work_root / "egress"
     active = caption_work / "government" / "captions" / "active.vtt"
-    active.parent.mkdir(parents=True, exist_ok=True)
-    active.write_text(
-        "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
-        encoding="utf-8",
-    )
     worker = CaptionTapWorker(
         tap_root=tap_root,
         caption_work_dir=caption_work,
@@ -645,6 +638,21 @@ def _overload_negative_control(
         # when this argument was still hardcoded to the pre-item-79 value of
         # 3.
         max_backlog_segments=2,
+        # This separate negative control deliberately selects the supported
+        # immediate fail-closed policy, not normal catch-up capacity. Keep the
+        # nominal capacity run's production persistence/catch-up defaults.
+        overload_persistence_scans=1,
+        catch_up_shed_limit=0,
+    )
+    # Audio seeded before construction belongs to the previous session and is
+    # correctly discarded at startup. This control needs NEW-session backlog
+    # and stale visible captions to prove the overload path clears them.
+    for index in range(4):
+        shutil.copy2(audio, channel_dir / f"chunk-{index:06d}.wav")
+    active.parent.mkdir(parents=True, exist_ok=True)
+    active.write_text(
+        "WEBVTT\n\nold\n00:00:00.000 --> 00:00:01.000\nstale caption\n",
+        encoding="utf-8",
     )
     result = worker.run_once()
     status_path = caption_work / "government" / "captions" / "runtime-status.json"
@@ -654,6 +662,8 @@ def _overload_negative_control(
         "dropped_overload_segments": result.dropped_overload_segments,
         "overload_files": sorted(path.name for path in (channel_dir / "overload").glob("*.wav")),
         "runtime_state": status.get("state"),
+        "overload_persistence_scans": 1,
+        "catch_up_shed_limit": 0,
     }
 
 
