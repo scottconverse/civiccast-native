@@ -31,6 +31,10 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Station activation failure text now distinguishes possible disk-space,
+  extraction and self-test failures and directs operators to preserve the
+  setup details list instead of promising a detailed reason in the step log.
+
 - Speech-level rendering can cancel or time out while its decoder or encoder
   pipe is blocked, and cleans up its owned children. An encoder that closes
   early cannot be reported as a successful audio render. The mandatory peak

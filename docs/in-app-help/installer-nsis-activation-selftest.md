@@ -2,6 +2,16 @@
 
 Paths relative to `civiccast/apps/installer/src-tauri/`. Hooks = `nsis-hooks-bootstrap.nsh`.
 
+## Development update - 2026-10-04
+
+The step-67 dialog now names disk space, extraction, missing files and self-test
+as possible causes. It directs operators to copy the setup details list before
+closing and distinguishes it from the step-only installer log. This addresses
+the misleading copy in HELP-87/88 and the step-67 part of NEW-1, without adding
+persisted child-output capture or distinct exit codes. The inventory below is
+the original beta.10 review; other proposed changes remain unimplemented here.
+Installed-dialog verification remains pending.
+
 ## Where the text lives now
 The hook step is Hooks:1393-1505 (strings listed below). The child program's own messages come from `src/native_activation.rs:841-880` (disk space), `src/main.rs:4742-4777` (AI self-test), `main.rs:5578, 5658` (runtime program self-test) and `main.rs:5915-5930` (exit 67 for every error after the packs verified). Those child messages appear only in the details list, because the step runs under `nsExec::ExecToLog` (Hooks:1459, 1467); the log file receives only "step d4-activate-station: returned N" (Hooks:1475).
 
