@@ -65,6 +65,34 @@ def test_run_ffmpeg_pre_cancel_does_not_launch(monkeypatch: pytest.MonkeyPatch) 
     popen.assert_not_called()
 
 
+@pytest.mark.parametrize("reason", ["cancel", "deadline"])
+def test_run_ffmpeg_owned_kill_cleanup_has_deadline(monkeypatch, reason):
+    cancel = threading.Event()
+    process = MagicMock()
+    process.returncode = -9
+    calls = []
+
+    def communicate(*, timeout=None):
+        calls.append(timeout)
+        assert timeout is not None, "owned kill cleanup waits without a deadline"
+        if reason == "cancel" and len(calls) <= 2:
+            cancel.set()
+            raise subprocess.TimeoutExpired(["ffmpeg"], timeout)
+        return ("", "")
+
+    process.communicate.side_effect = communicate
+    monkeypatch.setattr(ffmpeg_module, "_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(ffmpeg_module, "_resolve_video_encoder_args", lambda args, path: args)
+    monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=process))
+    if reason == "deadline":
+        ticks = iter([0.0, 1.0])
+        monkeypatch.setattr(ffmpeg_module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    expected = FfmpegCancelledError if reason == "cancel" else subprocess.TimeoutExpired
+    with pytest.raises(expected):
+        run_ffmpeg(["-version"], cancel_event=cancel, timeout=0.5)
+    process.kill.assert_called_once_with()
+
+
 def test_run_ffmpeg_cancel_during_resolution_does_not_launch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -83,6 +111,34 @@ def test_run_ffmpeg_cancel_during_resolution_does_not_launch(
         run_ffmpeg(["-version"], cancel_event=cancel_event)
 
     popen.assert_not_called()
+
+
+@pytest.mark.parametrize("reason", ["cancel", "deadline"])
+def test_run_ffmpeg_cleanup_expiry_preserves_original_stop_reason(monkeypatch, reason):
+    cancel = threading.Event()
+    process = MagicMock()
+
+    def communicate(*, timeout=None):
+        assert timeout is not None
+        if reason == "cancel":
+            cancel.set()
+        raise subprocess.TimeoutExpired(["ffmpeg"], timeout)
+
+    process.communicate.side_effect = communicate
+    monkeypatch.setattr(ffmpeg_module, "_ffmpeg_path", lambda: "ffmpeg")
+    monkeypatch.setattr(ffmpeg_module, "_resolve_video_encoder_args", lambda args, path: args)
+    monkeypatch.setattr(subprocess, "Popen", MagicMock(return_value=process))
+    if reason == "deadline":
+        ticks = iter([0.0, 1.0])
+        monkeypatch.setattr(ffmpeg_module, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
+    expected = FfmpegCancelledError if reason == "cancel" else subprocess.TimeoutExpired
+    with pytest.raises(expected) as caught:
+        run_ffmpeg(["-version"], cancel_event=cancel, timeout=0.5)
+    if reason == "cancel":
+        assert "cleanup exceeded" in str(caught.value)
+    else:
+        assert caught.value.timeout == 0.5
+    process.kill.assert_called_once_with()
 
 
 def _all_usable(_path: str, _encoder: str) -> bool:
@@ -499,7 +555,7 @@ class TestRunFfmpeg:
         ):
             run_ffmpeg(["-version"])
 
-        assert spawn.call_args.kwargs["creationflags"] == 0
+        assert spawn.call_args.kwargs["creationflags"] == getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     def test_lower_priority_sets_below_normal_creationflags(self) -> None:
         mock_completed = MagicMock(returncode=0, stdout="", stderr="")
@@ -509,7 +565,10 @@ class TestRunFfmpeg:
         ):
             run_ffmpeg(["-version"], lower_priority=True)
 
-        expected = getattr(ffmpeg_module.subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+        expected = (
+            getattr(ffmpeg_module.subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
         assert spawn.call_args.kwargs["creationflags"] == expected
 
     def test_lower_priority_prefixes_nice_on_posix(self) -> None:

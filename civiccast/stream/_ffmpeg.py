@@ -561,10 +561,10 @@ def run_ffmpeg(
     # called subprocess and the warm runs on its own worker thread.  A POSIX
     # host with no ``nice`` on PATH runs ffmpeg at normal priority rather than
     # failing the job: degrading the priority hint must never fail the work.
-    creationflags = 0
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     if lower_priority:
         if os.name == "nt":
-            creationflags = getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
+            creationflags |= getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
         elif shutil.which("nice") is not None:
             cmd = ["nice", "-n", str(_LOWER_PRIORITY_NICE_ADJUSTMENT), *cmd]
 
@@ -599,13 +599,23 @@ def run_ffmpeg(
                     process.communicate(timeout=_CANCEL_TERMINATE_SECONDS)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    process.communicate()
+                    try:
+                        process.communicate(timeout=_CANCEL_TERMINATE_SECONDS)
+                    except subprocess.TimeoutExpired as exc:
+                        raise FfmpegCancelledError(
+                            "ffmpeg cancelled; owned output cleanup exceeded its deadline"
+                        ) from exc
                 raise FfmpegCancelledError("ffmpeg cancelled")
             remaining = None if timeout is None else timeout - (time.monotonic() - started)
             if remaining is not None and remaining <= 0:
                 process.kill()
-                stdout, stderr = process.communicate()
                 assert timeout is not None
+                try:
+                    stdout, stderr = process.communicate(timeout=_CANCEL_TERMINATE_SECONDS)
+                except subprocess.TimeoutExpired as exc:
+                    raise subprocess.TimeoutExpired(
+                        cmd, timeout, output=exc.output, stderr=exc.stderr
+                    ) from exc
                 raise subprocess.TimeoutExpired(cmd, timeout, output=stdout, stderr=stderr)
             poll_timeout = (
                 _CANCEL_POLL_SECONDS

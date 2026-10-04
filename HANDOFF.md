@@ -4,11 +4,12 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
-- Remote checkpoint is `f9f210c03f375b318a5d2edc7e76eab2e07e1b57`,
-  verified on draft PR 232. Current test run 37202959271 is pending; installer
+- Previous remote checkpoint is `f9f210c03f375b318a5d2edc7e76eab2e07e1b57`,
+  verified on draft PR 232. Its test run 37202959271 was pending; installer
   compile 37202959249 and docs 37202959261 passed. Lint 37202959246 failed.
-  The 7b8a0edd results below are historical. Local audio repair commits
-  `6951bcf8` and `1ddc6da7` are not yet pushed or installed.
+  The 7b8a0edd results below are historical. Audio repair commits
+  `6951bcf8` and `1ddc6da7` join the next packaged candidate; they are not
+  installed-station evidence. Exact build identity is recorded by the workflow.
 - The caption-proof lifespan fixture now implements the actual health-owner
   start contract and asserts start/run/close ordering. Baseline failed on its
   obsolete request-only fake (1 failed, 33 passed in 13.48s); the same three
@@ -21,7 +22,13 @@ This file is a pointer, not a log.
   closed-algorithm expectations remain red. Peak-scan cancellation is also
   repaired: root independently passed 21 focused checks in 6.49s, including
   actual blocked reads/waits, peak calculation and stop/error distinctions.
-  Probe timeout remains open; no whole-preparation or installed cancellation claim.
+  Preparation loudness probes now receive their base or warm per-call budget,
+  including warm calls without a cancellation event. Owned output cleanup is
+  bounded and preserves timeout versus cancellation. Real blocked-child REDs
+  became GREEN; author and independent focused runs both passed 56 checks.
+  Full affected run: 213 passed, two cache-fixture failures also reproduced on
+  unchanged HEAD. No whole-preparation or installed cancellation claim.
+  Probe evidence: oversight `evidence/u87-recorder-product/probe-receipt.md`.
   Evidence: oversight `evidence/u87-recorder-product/ride-cancel-receipt-v2.md`.
 - Background reload refusal now carries the original airing-program horizon
   into restart recovery (A-006). A two-hour program previously entered recovery

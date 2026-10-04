@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -304,6 +305,109 @@ def test_source_preparer_conform_timeout_fails_closed_and_cleans_partial_output(
     assert leftovers == []
 
 
+@pytest.mark.parametrize("stop_reason", ["deadline", "deadline-no-event", "cancel"])
+def test_prepare_loudness_probe_stops_real_owned_child(tmp_path, monkeypatch, stop_reason):
+    import civiccast.stream._ffmpeg as ffmpeg_module
+    import civiccast.stream.loudness as loudness_module
+
+    marker = tmp_path / "probe-started"
+    monkeypatch.setattr(loudness_module, "check_ffmpeg", lambda: ("7.0", True))
+    monkeypatch.setattr(ffmpeg_module, "_ffmpeg_path", lambda: sys.executable)
+    monkeypatch.setattr(ffmpeg_module, "_resolve_video_encoder_args", lambda args, path: args)
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(argv, **kwargs):
+        # Substitute only the decoder executable/argv; production wrapper owns
+        # real pipes, timeout polling and termination of the resulting child.
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        child = popen([
+            sys.executable, "-c",
+            "import sys,time; from pathlib import Path; Path(sys.argv[1]).touch(); time.sleep(30)",
+            str(marker),
+        ], **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(ffmpeg_module.subprocess, "Popen", spawn)
+    cancel = threading.Event()
+    preparer = SourcePreparer(work_dir=tmp_path / "work", preparation_timeout_seconds=0.3)
+    plan = _source_plan(tmp_path)
+    outcomes = []
+    done = threading.Event()
+
+    def prepare():
+        try:
+            outcomes.append(preparer.prepare(
+                plan, _config(), cancel_event=None if stop_reason == "deadline-no-event" else cancel,
+            ))
+        except BaseException as exc:
+            outcomes.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=prepare)
+    thread.start()
+    try:
+        until = time.monotonic() + 2
+        while not marker.exists() and time.monotonic() < until:
+            time.sleep(0.01)
+        assert marker.exists(), outcomes
+        if stop_reason == "cancel":
+            cancel.set()
+        assert done.wait(2), "loudness probe ignored the preparation timeout"
+        thread.join(1)
+        expected = SourcePreparationCancelledError if stop_reason == "cancel" else SourcePrepareError
+        assert isinstance(outcomes[0], expected), outcomes
+        if stop_reason.startswith("deadline"):
+            assert "loudness" in str(outcomes[0]) and "timed out after 0.3s" in str(outcomes[0])
+        assert all(p.poll() is not None for p in children)
+        assert not list((tmp_path / "work" / "gov" / "prepared").rglob("*.tmp"))
+    finally:
+        cancel.set()
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=2)
+        thread.join(2)
+        assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("override", [None, 17.0])
+def test_prepare_segment_both_loudness_samples_use_selected_timeout(tmp_path, monkeypatch, override):
+    import civiccast.stream.loudness as loudness_module
+
+    calls = []
+    monkeypatch.setattr(loudness_module, "check_ffmpeg", lambda: ("7.0", True))
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda path: 4000.0)
+
+    def probe(args, **kwargs):
+        calls.append(kwargs)
+        value = -70 if len(calls) == 1 else -24
+        return FfmpegResult(0, "", f"I: {value} LUFS")
+
+    def conform(args):
+        _write_fake_output(args)
+        return FfmpegResult(0, "", "")
+
+    monkeypatch.setattr(loudness_module, "run_ffmpeg", probe)
+    preparer = SourcePreparer(
+        work_dir=tmp_path / "work", ffmpeg_runner=conform,
+        preparation_timeout_seconds=3.0, warm_scheduler=lambda job: None,
+    )
+    segment = _source_plan(tmp_path).segments[0].model_copy(update={
+        "inpoint_seconds": None, "outpoint_seconds": None, "duration_seconds": 4000.0,
+    })
+    cancel = threading.Event()
+    preparer._prepare_segment(
+        segment, config=_config(), output_path=tmp_path / "prepared.ts",
+        cancel_event=cancel, timeout_seconds=override,
+    )
+    assert len(calls) == 2
+    assert all(call["timeout"] == (3.0 if override is None else override) for call in calls)
+    assert all(call["cancel_event"] is cancel for call in calls)
+
+
 class TestPreparationTimeoutEnvSpelling:
     """BETA.10 U03. ``preparation_timeout_seconds_from_env`` read only the
     one-C ``CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS`` while the station's
@@ -398,7 +502,7 @@ class TestPreparationTimeoutEnvSpelling:
         monkeypatch.setenv(self._LEGACY, "450")
         assert preparation_timeout_seconds_from_env() == 450.0
 
-    @pytest.mark.parametrize("bad", ["bad", "-5", "0"])
+    @pytest.mark.parametrize("bad", ["bad", "-5", "0", "nan", "inf", "-inf"])
     def test_an_invalid_value_falls_back_and_names_the_spelling_used(
         self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, bad: str
     ) -> None:
@@ -411,6 +515,12 @@ class TestPreparationTimeoutEnvSpelling:
         assert any(self._PRIMARY in record.getMessage() for record in caplog.records), [
             record.getMessage() for record in caplog.records
         ]
+
+
+@pytest.mark.parametrize("budget", [float("nan"), float("inf"), float("-inf")])
+def test_source_preparer_rejects_nonfinite_timeout(tmp_path, budget):
+    with pytest.raises(ValueError, match="finite"):
+        SourcePreparer(work_dir=tmp_path / "work", preparation_timeout_seconds=budget)
 
 
 def test_source_preparer_rejects_missing_source(tmp_path: Path) -> None:

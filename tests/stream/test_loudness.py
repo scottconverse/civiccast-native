@@ -4,8 +4,40 @@
 
 from __future__ import annotations
 
+import threading
 from importlib import import_module
 from pathlib import Path
+
+import pytest
+
+
+@pytest.mark.parametrize("caller_cancel", [False, True])
+def test_explicit_probe_timeout_uses_owned_wrapper_mode(tmp_path, monkeypatch, caller_cancel):
+    loudness_module = import_module("civiccast.stream.loudness")
+    from civiccast.stream._ffmpeg import FfmpegResult
+
+    media = tmp_path / "probe.wav"
+    media.write_bytes(b"placeholder")
+    captured = {}
+
+    def run(args, **kwargs):
+        captured.update(kwargs)
+        return FfmpegResult(0, "", "I: -16 LUFS")
+
+    monkeypatch.setattr(loudness_module, "check_ffmpeg", lambda: ("7.0", True))
+    monkeypatch.setattr(loudness_module, "run_ffmpeg", run)
+    cancel = threading.Event() if caller_cancel else None
+    result = loudness_module.check_streaming_loudness(
+        media_path=media, target_lufs=-16, tolerance_lufs=1,
+        timeout_seconds=0.3, cancel_event=cancel,
+    )
+    assert result.status == "ok"
+    assert captured["timeout"] == 0.3
+    assert isinstance(captured["cancel_event"], threading.Event)
+    if caller_cancel:
+        assert captured["cancel_event"] is cancel
+    else:
+        assert not captured["cancel_event"].is_set()
 
 
 class TestLoudnessComplianceRealFfmpeg:
