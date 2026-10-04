@@ -625,6 +625,15 @@ def test_the_writer_trims_its_own_file_to_the_cap_keeping_the_header_and_newest_
     assert body[-1] == lines[-1], "the newest line must survive every trim"
     assert len(body) > 1
 
+    # Check the instant of a trim, before later appends can hide lost tail
+    # bytes by writing another newest line into an otherwise empty log.
+    untrimmed = header + ("\n".join(lines) + "\n").encode()
+    path.write_bytes(untrimmed)
+    assert writer._rewrite_to_tail(len(untrimmed))
+    expected_tail = untrimmed[-tail:]
+    expected_tail = expected_tail[expected_tail.index(b"\n") + 1 :]
+    assert path.read_bytes() == header + expected_tail
+
 
 def test_the_writer_discards_and_keeps_draining_when_its_log_cannot_be_opened(
     tmp_path: Path, caplog: pytest.LogCaptureFixture

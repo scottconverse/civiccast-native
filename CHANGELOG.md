@@ -31,6 +31,10 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Development relay-log trimming preserves the newest diagnostic lines instead
+  of seeking beyond the file and retaining only its header. The size cap and
+  relay process behavior are unchanged; installed verification remains pending.
+
 - Development fallback-to-program transitions retain the retiring audio-tail
   fence until its pipeline-time bound is reached or the existing deadline
   expires. The measured-end path, quiet interval and segment-boundary release

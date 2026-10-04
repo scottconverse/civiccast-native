@@ -36,6 +36,14 @@ This file is a pointer, not a log.
   bound. Root's passing run does not erase that counterevidence; diagnosis
   remains open. Review: oversight reports/U87-AUDIO-TAIL-INDEPENDENT-REVIEW.md.
   Six egress fixture contracts are reconciled without restoring discarded code.
+- Separate relay-log retention defect corrected: a calculated absolute offset
+  was sought relative to EOF, discarding the diagnostic tail. The one-line
+  seek-origin correction has an exact retained-byte RED/GREEN check, 16 adjacent
+  passes (performance case excluded), independent root retained-byte PASS,
+  scoped Ruff PASS and relay-module mypy PASS. Receipt: oversight reports/
+  U87-RELAY-TAIL-RETENTION.md. The prior performance timing counterexample remains
+  open; neither this fix nor root's earlier passing run erases it. This source
+  also requires a new package; eb94 installation evidence remains historical.
 - Rollback database replacement implementation is partially blocked by the
   local Agent Pipeline plugin's text-based tool guard, which rejects SQL text
   inside source patches and even read-only searches. No bypass attempted.
