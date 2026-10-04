@@ -23,8 +23,11 @@ This file is a pointer, not a log.
   `53a996a8` accepts BOM-prefixed evidence JSON while retaining rejection checks
   and reconciles obsolete documentation assertions. The packaged Python/GI HLS
   case is Windows-only, not skipped for a missing Windows runtime. Generic HLS
-  checks: `5 passed, 1 deselected in 10.62s`; the deselected packaged case still
-  requires exact-candidate runtime verification by v13. No installer PASS claimed.
+  checks: `5 passed, 1 deselected in 10.62s`. The packaged case subsequently
+  passed against exact eb94 runtime/source: `1 passed in 44.80s`, no skips.
+  Receipt: oversight evidence/u87-packaged-candidate-eb94/hls-runtime/receipt.md.
+  This proves short packaged-runtime HLS integration, not caption completeness
+  or installation. No installer PASS claimed.
   Marker commit: 66319bfb; formatting commit: d4e8118b. The 23 CI-reported files were then run through Ruff
   format (21 changed, two already corrected), with before/after AST equality for
   every file and a passing 23-file format check. This is mechanical formatting,
@@ -53,6 +56,13 @@ This file is a pointer, not a log.
   Existing deb2 resource samples are analyzed in oversight reports/
   U87-DEB2-RESOURCE-OBSERVATION.md: cyclic worker working-set changes, not a
   demonstrated leak or long-run resource-stability PASS.
+- Exact eb94 source/packaged-runtime worker checks passed: build/play/teardown
+  and role-swap continuity, `2 passed in 8.06s`, zero skips. Root independently
+  read JUnit: tests 2, failures 0, errors 0, skipped 0. Five tested source files
+  matched extracted package bytes; actual worker used package Python 3.12.10,
+  GStreamer 1.28.5 and private test outputs. Evidence: oversight
+  evidence/u87-packaged-candidate-eb94/registry-worker. This is not service-at-
+  boot or full station proof; registry evidence has not been blindly rebound.
 - Buffered worker acknowledgement repair: `ade67360`.
   Root independently ran 67 affected tests (1 existing gi skip), then 274
   strategy/daemon tests (6 existing POSIX skips). Whole-tree Ruff passed and
