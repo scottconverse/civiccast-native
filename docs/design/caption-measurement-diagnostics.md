@@ -157,6 +157,15 @@ handed to a worker. `executing` hashes actual frame code; `selected` hashes capt
 anchors, not a claim every selected method was exercised. A replaced lookup at
 capture reports mismatch/unavailable, not ok; a later patch cannot relabel capture.
 
+Native caption prewarm prepares the same three one-shot proof workers before
+model preparation/channel automation, only when proof is enabled. Initialization
+has at most three construction/start attempts and never joins callbacks; real
+startup scheduling cost is outside the caption caller stopwatch, not zero-cost
+or a hard wall-clock guarantee. Unused workers expire after a finite 1800-second
+wait; lifespan close wakes unused workers without joining active fingerprint or
+logger callbacks. Closed, failed and expired slots never spawn replacements.
+Without native preparation, existing lazy Thread.start remains fully measured.
+
 At most three one-shot daemon threads/process (one per fixed key), no general
 executor, queue, periodic monitor or replacement while stuck. Caller never joins
 hash, receipt clock, JSON or logger work. Constructor/start failure reserves its
@@ -167,8 +176,10 @@ timeout yields no receipt/confirmation, never a consumer wait. A stuck worker ma
 retain its bounded immutable code snapshot, not product owner/audio. Thread.start,
 trusted builtin clock, GIL and OS scheduling are not cancellable/hard-real-time.
 
-`caller_capture_dispatch_elapsed_s` measures enabled hook capture through actual
-Thread.start completion with the trusted builtin perf_counter. Its final scalar/
+`caller_capture_dispatch_elapsed_s` measures the entire enabled natural-boundary
+immutable actual-frame capture through dispatch: prepared slot/Event handoff, or
+lazy Thread.start completion, with the trusted builtin perf_counter. No loaded-only
+startup receipt replaces exercised code proof. Its final scalar/
 Event publication is outside that stopwatch; external whole-call checks cover it.
 `background_fingerprint_elapsed_s` independently measures worker receipt/hash work
 after completion handoff, before JSON/logger. Both finite/nonnegative or null on

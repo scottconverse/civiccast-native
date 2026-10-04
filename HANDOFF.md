@@ -51,6 +51,18 @@ This file is a pointer, not a log.
   expiry/cap. No live acceptance is claimed. The native stream-end flush fixture
   fails identically on baseline and candidate and remains unchanged; future
   observer numeric-key selection is still separate from frozen trials.
+- Proof-worker native prewarm has independent source-only acceptance: 42 focused
+  dispatch/lifecycle tests passed, including delayed-start and actual-handoff
+  sensitivity. Actual executing-frame capture and the 100ms trial stop remain;
+  startup creates only the same three one-shot workers with finite unused waits
+  and nonjoining close. A bounded immutable-code dead-slot retention race is a
+  cleanup watch item, not false proof. The preceding local trial stopped on a
+  102.4ms instrumentation caller-cost receipt; baseline restoration was verified,
+  and this was not a product readiness or caption-completeness failure.
+  Two outdated native-startup fixtures were separately corrected to honor owner
+  admission; two tests pass and reversed startup order still fails both. The
+  closed twelve-counter observer selection also passed native independent checks.
+  These changes are not yet installed or evidence of a successful soak.
 - Still required before a final recommendation: complete health and caption
   runtime proof, repository/product reconciliation, material operator workflow
   repairs, the exact-package installation lifecycle, and sustained three-channel

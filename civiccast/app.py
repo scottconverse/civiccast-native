@@ -760,6 +760,10 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         app.state.lifespan_started = False
         await run_in_threadpool(app.state.health_schema_owner.close)
+        with suppress(Exception):
+            from civiccast.captions.diagnostic_identity import close_executable_proof
+
+            close_executable_proof()
         # RAT-004: drain every live channel through its owner (observed exit,
         # escalating to a kill past the deadline) BEFORE background.stop()
         # halts the automation poll loop, so channels are drained on
@@ -924,6 +928,10 @@ def _prewarm_native_live_caption_runtime(app: FastAPI) -> None:
     if not callable(prepare):
         return
 
+    with suppress(Exception):
+        from civiccast.captions.diagnostic_identity import prepare_executable_proof
+
+        prepare_executable_proof()
     started = time.monotonic()
     try:
         prepare()

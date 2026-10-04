@@ -3,9 +3,30 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 
 from civiccast.app import _maybe_start_background_supervisors
+
+
+class _Owner:
+    """Synchronous seam for the current serialized startup/admission contract."""
+
+    def __init__(self) -> None:
+        self._depth = 0
+
+    @contextmanager
+    def operation(self):
+        self._depth += 1
+        try:
+            yield True
+        finally:
+            self._depth -= 1
+
+    @contextmanager
+    def admission(self):
+        assert self._depth == 1, 'startup must hold its owner operation'
+        yield True
 
 
 class _Supervisor:
@@ -13,8 +34,10 @@ class _Supervisor:
         self._name = name
         self._events = events
 
-    def start(self) -> None:
-        self._events.append(f"start:{self._name}")
+    def start(self, *, admission) -> None:
+        with admission() as allowed:
+            assert allowed
+            self._events.append(f"start:{self._name}")
 
 
 class _Runtime:
@@ -40,6 +63,8 @@ def test_live_caption_runtime_is_prepared_before_channel_automation_starts(
     app = SimpleNamespace(
         state=SimpleNamespace(
             lifespan_started=True,
+            durable_storage_active=True,
+            health_schema_owner=_Owner(),
             supervisor_mode="normal",
             caption_tap_worker=SimpleNamespace(_runtime=_Runtime(events)),
             background_supervisors=[
@@ -73,6 +98,8 @@ def test_live_caption_runtime_preparation_failure_does_not_block_startup(
     app = SimpleNamespace(
         state=SimpleNamespace(
             lifespan_started=True,
+            durable_storage_active=True,
+            health_schema_owner=_Owner(),
             supervisor_mode="normal",
             caption_tap_worker=SimpleNamespace(_runtime=_BrokenRuntime(events)),
             background_supervisors=[_Supervisor("civiccast-channel-automation", events)],

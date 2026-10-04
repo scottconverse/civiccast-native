@@ -28,6 +28,9 @@ _LOCK = threading.Lock()
 _SEEN: set[str] = set()
 _THREADS: dict[str, threading.Thread] = {}
 _FAILED: set[str] = set()
+_SLOTS: dict[str, _ProofSlot] = {}
+_CLOSED = False
+_UNUSED_WAIT_SECONDS = 1800
 PROOF_ENV = "CIVICCAST_CAPTION_EXECUTABLE_PROOF"
 _PROOF_ENABLED = os.environ.get(PROOF_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 _NONCE = "unavailable"
@@ -163,6 +166,70 @@ class _Captured:
     optimize: int
 
 
+@dataclass
+class _ProofSlot:
+    ready: threading.Event
+    done: threading.Event
+    timing: list[float | None]
+    snapshot: _Captured | None = None
+
+
+def _wait_for_capture(module: str, slot: _ProofSlot) -> None:
+    """One bounded wait, then the existing immutable fingerprint callback."""
+    try:
+        if not slot.ready.wait(_UNUSED_WAIT_SECONDS):
+            _FAILED.add(module)
+            return
+        snapshot = slot.snapshot
+        if snapshot is not None:
+            _emit_captured(snapshot, slot.done, slot.timing)
+    finally:
+        slot.snapshot = None
+
+
+def prepare_executable_proof() -> None:
+    """Opt-in startup only: prestart exactly the same three one-shot workers."""
+    if not _PROOF_ENABLED or _CLOSED:
+        return
+    with _LOCK:
+        for module in _ANCHORS:
+            if _CLOSED:
+                break
+            if module in _THREADS or module in _SEEN or module in _FAILED:
+                continue
+            try:
+                slot = _ProofSlot(threading.Event(), threading.Event(), [None])
+                _SLOTS[module] = slot
+                worker = threading.Thread(
+                    target=_wait_for_capture,
+                    args=(module, slot),
+                    name="caption-proof-" + module,
+                    daemon=True,
+                )
+                _THREADS[module] = worker
+                try:
+                    worker.start()
+                except Exception:
+                    _FAILED.add(module)
+                if _CLOSED:
+                    slot.ready.set()
+            except Exception:
+                _FAILED.add(module)
+
+
+def close_executable_proof() -> None:
+    """Wake unused slots without joining fingerprint/logger callbacks."""
+    global _CLOSED
+    if not _PROOF_ENABLED:
+        return
+    _CLOSED = True
+    for module in _ANCHORS:
+        slot = _SLOTS.get(module)
+        if slot is not None:
+            with suppress(Exception):
+                slot.ready.set()
+
+
 def _finite_elapsed(start: float | None, end: float | None) -> float | None:
     with suppress(Exception):
         value = end - start
@@ -224,13 +291,13 @@ def _emit_captured(snapshot: _Captured, done: threading.Event, timing: list[floa
 def note_executing(module: str, code: CodeType, owner: object) -> None:
     """Proof-only, at most three one-shot workers; caller never joins callbacks."""
     with suppress(Exception):
-        if module not in _ANCHORS or not _PROOF_ENABLED:
+        if module not in _ANCHORS or not _PROOF_ENABLED or _CLOSED:
             return
         started = _caller_now()
         if not _LOCK.acquire(blocking=False):
             return
         try:
-            if module in _SEEN:
+            if module in _SEEN or module in _FAILED or _CLOSED:
                 return
             _SEEN.add(module)
         finally:
@@ -251,9 +318,17 @@ def note_executing(module: str, code: CodeType, owner: object) -> None:
             tuple(sys.version_info[:3]),
             sys.flags.optimize,
         )
-        done = threading.Event()
-        timing: list[float | None] = [None]
+        slot = _SLOTS.get(module)
+        done = slot.done if slot is not None else threading.Event()
+        timing: list[float | None] = slot.timing if slot is not None else [None]
         try:
+            if slot is not None:
+                if _CLOSED or module in _FAILED or not _THREADS[module].is_alive():
+                    _FAILED.add(module)
+                    return
+                slot.snapshot = snapshot
+                slot.ready.set()
+                return
             worker = threading.Thread(
                 target=_emit_captured,
                 args=(snapshot, done, timing),
