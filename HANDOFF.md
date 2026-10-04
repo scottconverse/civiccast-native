@@ -38,6 +38,10 @@ This file is a pointer, not a log.
   failed as intended. Installed verification remains pending. A broader shutdown test failed
   identically on baseline and patch; its separate test correction is not part
   of this product-fix checkpoint.
+- The separate drain-all test now waits for asynchronous startup and still
+  asserts channels drain before automation stops. Independent verification:
+  six module tests passed; reversing shutdown order failed the intended
+  assertion. This is test correction evidence, not installed lifecycle proof.
 - Still required before a final recommendation: complete health and caption
   runtime proof, repository/product reconciliation, material operator workflow
   repairs, the exact-package installation lifecycle, and sustained three-channel
