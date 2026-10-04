@@ -77,6 +77,13 @@ Current surface:
   burying the playout failure it was competing with. Captions are best effort
   and playout wins: see the ASR concurrency bound and CPU sizing in
   `docs/ops/background-workers.md`.
+- Opt-in caption batch diagnostics count ASR, review and publication outcomes
+  without treating persisted reviews as proof of aired captions. If a publication
+  diagnostic receipt is unavailable, its aggregate count remains unknown even
+  after later receipts arrive. Later cues still pass through the existing
+  publication checks; incrementing an unknown diagnostic count no longer stops
+  caption processing. This source correction does not fix startup backlog
+  shedding or establish packaged or installed acceptance.
 - Caption benchmark helpers plus `scripts/benchmark-caption-runtime.py`, which
   load mono signed 16-bit PCM WAV fixtures, run the same runtime adapter used by
   live captions, and emit JSON evidence with transcript text, optional WER,

@@ -60,7 +60,7 @@ posture established in v0.3.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -90,6 +90,9 @@ from civiccast.live.models import (
 from civiccast.live.preflight import PreflightEvaluation, PreflightInputs
 from civiccast.live.relay import build_ingest_plan
 from civiccast.live.surge_service import get_surge_switch_service
+
+if TYPE_CHECKING:
+    from civiccast.live.store import LiveSessionStore
 
 # ---------------------------------------------------------------------------
 # Dependency seams (overridden by the app factory when DATABASE_URL is set)
@@ -544,7 +547,9 @@ def list_active_sessions(
 
     Completed recordings belong in Assets, not this control-recovery picker.
     """
-    store = _require_store(live_session_store, surface="live session recovery")
+    store = cast(
+        "LiveSessionStore", _require_store(live_session_store, surface="live session recovery")
+    )
     return store.list_sessions(
         channel_id=channel_id, states=("idle", "preflight", "on_air", "ending")
     )

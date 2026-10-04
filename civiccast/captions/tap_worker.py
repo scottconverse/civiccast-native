@@ -76,7 +76,7 @@ from civiccast.captions.live_sidecar import (
 )
 from civiccast.captions.models import AudioChunk, CaptionCue
 from civiccast.captions.phase_timing import phase_timing_from_env
-from civiccast.captions.pipeline import CaptionPipeline
+from civiccast.captions.pipeline import CaptionPhaseTiming, CaptionPipeline
 from civiccast.captions.retention import (
     RETENTION_SWEEP_SECONDS,
     CaptionEvidenceRetentionPolicy,
@@ -107,6 +107,14 @@ if TYPE_CHECKING:
     from civiccast.translate.service import TranslationProvider
 
 _LOG = logging.getLogger(__name__)
+
+
+def _increment_stage_count(counts: dict[str, int | None], key: str) -> None:
+    """An unavailable diagnostic total stays unknown after later observations."""
+    previous = counts[key]
+    if previous is not None:
+        counts[key] = previous + 1
+
 
 _SEGMENT_RE = re.compile(r"^chunk-(\d+)\.wav$")
 
@@ -760,7 +768,7 @@ class CaptionTapWorker:
         # exactly the same records) and additionally reports caption_stabilize.
         # It is deliberately NOT assigned to ``self._phase_timing`` -- that
         # attribute must stay the collector the operator configured.
-        self._worker_phase_timing: object = self._phase_timing
+        self._worker_phase_timing: CaptionPhaseTiming = self._phase_timing
         if self._shed_diagnostic.samples_phases:
             self._worker_phase_timing = PhaseSampleForwarder(
                 self._phase_timing,
@@ -1798,7 +1806,7 @@ class CaptionTapWorker:
                     or channel_id in self._failed_sessions
                 ):
                     if stage_counts is not None:
-                        stage_counts["generation_discarded_segments"] += 1
+                        _increment_stage_count(stage_counts, "generation_discarded_segments")
                     break
                 processed = channel_dir / "processed" / segment.name
                 if processed.exists():
@@ -1822,7 +1830,7 @@ class CaptionTapWorker:
             with self._session_lock(channel_id):
                 if generation != self._session_generation.get(channel_id, 0):
                     if stage_counts is not None:
-                        stage_counts["generation_discarded_segments"] += 1
+                        _increment_stage_count(stage_counts, "generation_discarded_segments")
                     break
                 if raw_chunk is None:
                     self._previous_segments.pop(channel_id, None)
@@ -1916,8 +1924,8 @@ class CaptionTapWorker:
             with self._session_lock(channel_id):
                 if generation != self._session_generation.get(channel_id, 0):
                     if stage_counts is not None:
-                        stage_counts["generation_discarded_segments"] += 1
-                        stage_counts["publish_rejected_batches"] += 1
+                        _increment_stage_count(stage_counts, "generation_discarded_segments")
+                        _increment_stage_count(stage_counts, "publish_rejected_batches")
                     # A new writer may already have reused this numbered path.
                     # Do not move it or restore the old session's overlap.
                     break
@@ -1926,7 +1934,7 @@ class CaptionTapWorker:
                     retention_in_flight = self._retention_in_flight
                     if not retention_ready and not retention_in_flight:
                         if stage_counts is not None:
-                            stage_counts["publish_rejected_batches"] += 1
+                            _increment_stage_count(stage_counts, "publish_rejected_batches")
                         for _index, stale_segment in segments:
                             stale_segment.unlink(missing_ok=True)
                         self._clear_channel_captions(channel_id)
@@ -1951,7 +1959,7 @@ class CaptionTapWorker:
                                 if acceptance[0]
                                 else "publish_rejected_batches"
                             )
-                            stage_counts[key] += 1
+                            _increment_stage_count(stage_counts, key)
                         else:
                             stage_counts["publish_accepted_batches"] = None
                             stage_counts["publish_rejected_batches"] = None

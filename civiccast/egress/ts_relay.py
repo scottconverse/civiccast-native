@@ -46,6 +46,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict, cast
 from urllib.parse import urlsplit
 
 from civiccast.egress.compliance import locate_tsduck
@@ -87,9 +88,19 @@ def _proof_path(work_dir: Path, channel_id: str, destination: str) -> Path:
     return path
 
 
+class CaptionProofTarget(TypedDict):
+    """Validated relay ownership receipt used to fence emitted-stream captures."""
+
+    generation: str
+    pid: int
+    birth: int | float
+    port: int
+    target: str
+
+
 def read_caption_proof_target(
     work_dir: Path, config: EgressConfig, destination: str | None = None
-) -> dict | None:
+) -> CaptionProofTarget | None:
     """A live relay's private copy, never the broadcast receiver socket."""
     try:
         targets = [sink.uri for sink in config.sinks if sink.kind == "udp-ts"]
@@ -121,7 +132,8 @@ def read_caption_proof_target(
             return None
         if any(urlsplit(uri).port == data["port"] for uri in targets):
             return None
-        return data
+        # Every field above has been validated against the closed receipt schema.
+        return cast(CaptionProofTarget, data)
     except (OSError, ValueError, TypeError, KeyError):
         return None
 
@@ -298,7 +310,11 @@ class TsRelaySupervisor:
             proof_port = None
             generation = uuid.uuid4().hex
             if self._work_dir is not None:
-                forbidden = {listen_port, listen_port + _LOCAL_PORT_OFFSET, parsed.port}
+                forbidden: set[int | None] = {
+                    listen_port,
+                    listen_port + _LOCAL_PORT_OFFSET,
+                    parsed.port,
+                }
                 for current in self._relays.values():
                     forbidden.update(
                         (

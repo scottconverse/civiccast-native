@@ -189,11 +189,13 @@ def _wait_for_capture(module: str, slot: _ProofSlot) -> None:
 
 def prepare_executable_proof() -> None:
     """Opt-in startup only: prestart exactly the same three one-shot workers."""
-    if not _PROOF_ENABLED or _CLOSED:
+    # bool keeps mypy from carrying an earlier False narrowing across lock/start.
+    # Each check must re-read this mutable flag: another thread can close proof.
+    if not _PROOF_ENABLED or bool(_CLOSED):
         return
     with _LOCK:
         for module in _ANCHORS:
-            if _CLOSED:
+            if bool(_CLOSED):
                 break
             if module in _THREADS or module in _SEEN or module in _FAILED:
                 continue
@@ -211,7 +213,7 @@ def prepare_executable_proof() -> None:
                     worker.start()
                 except Exception:
                     _FAILED.add(module)
-                if _CLOSED:
+                if bool(_CLOSED):
                     slot.ready.set()
             except Exception:
                 _FAILED.add(module)
@@ -231,6 +233,8 @@ def close_executable_proof() -> None:
 
 
 def _finite_elapsed(start: float | None, end: float | None) -> float | None:
+    if start is None or end is None:
+        return None
     with suppress(Exception):
         value = end - start
         if isfinite(value) and value >= 0:
@@ -274,12 +278,14 @@ def _emit_captured(snapshot: _Captured, done: threading.Event, timing: list[floa
             }
 
         with suppress(Exception):
-            payload["executing"] = descriptor(snapshot.executing)
-            payload["selected"] = [descriptor(anchor) for anchor in snapshot.selected]
+            executing = descriptor(snapshot.executing)
+            payload["executing"] = executing
+            selected = [descriptor(anchor) for anchor in snapshot.selected]
+            payload["selected"] = selected
             matches = any(
-                anchor["sha256"] == payload["executing"]["sha256"]
-                and anchor["qualname"] == payload["executing"]["qualname"]
-                for anchor in payload["selected"]
+                anchor["sha256"] == executing["sha256"]
+                and anchor["qualname"] == executing["qualname"]
+                for anchor in selected
             )
             payload["executing_matches_selected"] = matches
             if snapshot.capture_ok:
@@ -315,7 +321,7 @@ def note_executing(module: str, code: CodeType, owner: object) -> None:
             os.getpid(),
             _NONCE,
             sys.implementation.cache_tag,
-            tuple(sys.version_info[:3]),
+            (sys.version_info.major, sys.version_info.minor, sys.version_info.micro),
             sys.flags.optimize,
         )
         slot = _SLOTS.get(module)

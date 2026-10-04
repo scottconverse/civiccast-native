@@ -323,3 +323,74 @@ def test_actual_tap_reports_asr_and_actual_publication_fences(
     assert counters["publish_accepted_batches"] == int(not reset and not reject)
     assert counters["publish_rejected_batches"] == int(reset or reject)
     assert counters["generation_discarded_segments"] == int(reset)
+
+
+@pytest.mark.parametrize("next_outcome", ["accepted", "rejected", "reset", "storage-refused"])
+def test_unknown_publication_count_never_interrupts_later_segments(
+    tmp_path, monkeypatch, next_outcome
+):
+    import wave
+
+    from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
+    from civiccast.captions.tap_worker import CaptionTapWorker
+
+    tap = CaptionTapWorker(
+        tap_root=tmp_path / "tap",
+        caption_work_dir=tmp_path / "egress",
+        runtime=Runtime([hypothesis()]),
+        review_store=InMemoryCaptionReviewStore(),
+        atomic_segments=True,
+        segment_seconds=5,
+        batch_diagnostic=BatchDiagnosticCollector(),
+    )
+    tap._sweep_retention()
+    assert tap.wait_for_retention_sweep(timeout=5)
+    channel_dir = tmp_path / "tap" / "public"
+    channel_dir.mkdir(parents=True)
+    segments = []
+    for index in range(2):
+        segment = channel_dir / f"chunk-{index:06d}.wav"
+        with wave.open(str(segment), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(TAP_SAMPLE_RATE_HZ)
+            handle.writeframes(b"\x01\x00" * TAP_SAMPLE_RATE_HZ * 5)
+        segments.append((index, segment))
+    publications = []
+    original_publish = tap._publish_cues
+
+    def publish(channel, generation, cues, *, _diagnostic_acceptance=None):
+        publications.append((channel, generation, cues))
+        # Actual publication still runs; only its first diagnostic receipt is absent.
+        return original_publish(
+            channel,
+            generation,
+            cues,
+            _diagnostic_acceptance=(_diagnostic_acceptance if len(publications) > 1 else None),
+        )
+
+    monkeypatch.setattr(tap, "_publish_cues", publish)
+    original_transcribe = tap._runtime.transcribe
+    transcriptions = []
+
+    def transcribe(chunks, vocabulary=None):
+        transcriptions.append(chunks)
+        if len(transcriptions) == 2:
+            if next_outcome == "reset":
+                tap.begin_channel_session("public")
+            elif next_outcome == "storage-refused":
+                tap._retention_ready = False
+            elif next_outcome == "rejected":
+                monkeypatch.setattr(tap, "publish_for_current_session", lambda *args: False)
+        return original_transcribe(chunks, vocabulary=vocabulary)
+
+    monkeypatch.setattr(tap._runtime, "transcribe", transcribe)
+    result = tap._process_channel("public", channel_dir, segments, batch_id="test")
+    assert len(transcriptions) == 2
+    assert len(publications) == (2 if next_outcome in {"accepted", "rejected"} else 1)
+    if next_outcome in {"accepted", "rejected"}:
+        assert len(publications[1][2]) == 1
+        assert publications[1][2][0].text == hypothesis().text
+    assert result.stage_counts["publish_accepted_batches"] is None
+    assert result.stage_counts["publish_rejected_batches"] is None
+    assert result.consumed_segments == (2 if next_outcome in {"accepted", "rejected"} else 1)

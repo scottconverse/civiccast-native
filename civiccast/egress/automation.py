@@ -51,7 +51,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from civiccast.egress.daemon import AlertEvaluatorHook, EgressDaemon
+from civiccast.egress.daemon import (
+    AlertEvaluatorHook,
+    BoundarySourcePlanProvider,
+    EgressDaemon,
+    SourcePlanProvider,
+)
 from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.gst.reload_policy import rollover_trigger_at
@@ -790,10 +795,10 @@ class ChannelAutomationService:
         self,
         store: EgressStore,
         daemon: EgressDaemon,
-        source_plan_provider: Any,
+        source_plan_provider: SourcePlanProvider,
         *,
         settings: ChannelAutomationSettings,
-        boundary_source_plan_provider: Any = None,
+        boundary_source_plan_provider: BoundarySourcePlanProvider | None = None,
         ndi_supervisor_factory: Any = None,
         sdi_supervisor_factory: Any = None,
         monotonic: Any = None,
@@ -2421,7 +2426,7 @@ class ChannelAutomationService:
             fresh_plan = self._resolve_rollover_tail(channel_id, max(now, plan_end_at), fresh_plan)
         force_fallback = fresh_plan is None or not fresh_plan.segments
         fresh_end = plan_end_at
-        if not force_fallback:
+        if not force_fallback and fresh_plan is not None:
             fresh_seconds = sum(segment.duration_seconds for segment in fresh_plan.segments)
             fresh_start = (
                 max(now, plan_end_at) if self._boundary_source_plan_provider is not None else now

@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext, suppress
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass, field
 from hashlib import sha256
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from civiccast.captions.hls import (
     CaptionHlsTrack,
@@ -47,6 +47,14 @@ class CaptionHlsPipelineResult:
     hls_outputs: list[CaptionHlsTrackOutput]
 
 
+class CaptionPhaseTiming(Protocol):
+    """Injected timing seam shared by collectors and forwarding test doubles."""
+
+    def phase(
+        self, phase: str, /, *, channel: str | None = None
+    ) -> AbstractContextManager[None]: ...
+
+
 class CaptionPipeline:
     """Run a caption runtime through stabilization and review preparation."""
 
@@ -55,7 +63,7 @@ class CaptionPipeline:
         runtime: CaptionRuntime,
         *,
         stabilizer: CaptionStabilizer | None = None,
-        phase_timing: object | None = None,
+        phase_timing: CaptionPhaseTiming | None = None,
         phase_timing_channel: str | None = None,
         stage_diagnostics: bool | Callable[[], bool] = False,
     ) -> None:
@@ -65,7 +73,7 @@ class CaptionPipeline:
         self._phase_timing_channel = phase_timing_channel
         self._stage_diagnostics = stage_diagnostics
 
-    def _phase(self, name: str):
+    def _phase(self, name: str) -> AbstractContextManager[None]:
         """Return an opt-in timing context without affecting pipeline work."""
 
         timing = self._phase_timing

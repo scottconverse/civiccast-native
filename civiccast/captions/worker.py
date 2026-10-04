@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Literal
 from civiccast.captions.models import AudioChunk, CaptionCue, CaptionHypothesis, CustomVocabulary
 from civiccast.captions.pipeline import (
     CaptionHlsPipelineResult,
+    CaptionPhaseTiming,
     CaptionPipeline,
     CaptionPipelineResult,
 )
@@ -80,7 +81,7 @@ class LiveCaptionWorker:
         pipeline: CaptionPipeline | None = None,
         persistence_guard: Callable[[], AbstractContextManager[ReviewPersistenceMode]]
         | None = None,
-        phase_timing: object | None = None,
+        phase_timing: CaptionPhaseTiming | None = None,
         phase_timing_channel: str | None = None,
         stage_diagnostics: bool | Callable[[], bool] = False,
     ) -> None:
@@ -255,7 +256,7 @@ class LiveCaptionWorker:
                     duplicates.append(item.review_item_id)
         return committed_items, duplicates, 0 if self._stage_diagnostics_enabled() else None
 
-    def _phase(self, name: str):
+    def _phase(self, name: str) -> AbstractContextManager[None]:
         """Return an opt-in timing context without changing worker behavior."""
 
         timing = self._phase_timing

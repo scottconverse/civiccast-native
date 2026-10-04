@@ -739,8 +739,8 @@ class PhaseSampleForwarder:
     records; the only addition is the sampled duration.
 
     ``inner`` is duck-typed on purpose -- the same reason
-    ``LiveCaptionWorker.phase_timing`` is typed ``object``: the collector is
-    injected, and a test double must work here too.
+    ``LiveCaptionWorker.phase_timing`` uses a structural protocol: the collector
+    is injected, and a test double must work here too.
     """
 
     def __init__(

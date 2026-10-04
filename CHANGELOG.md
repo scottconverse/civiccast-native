@@ -31,6 +31,12 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Development caption batch diagnostics retain an unknown publication total
+  when a diagnostic receipt is unavailable, while later cues continue through
+  the existing publication checks. An unknown counter no longer interrupts
+  processing with a numeric-increment error. This does not fix startup backlog
+  shedding or establish packaged or installed acceptance.
+
 - Development caption decode-back proof no longer opens a configured unicast
   UDP broadcast receiver. With an available persistent TS relay, it captures a
   private loopback copy after continuity/PCR correction and rejects retired

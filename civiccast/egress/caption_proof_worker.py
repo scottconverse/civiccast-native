@@ -28,6 +28,7 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
@@ -44,7 +45,7 @@ from civiccast.egress.caption_proof import (
 )
 from civiccast.egress.models import EgressConfig
 from civiccast.egress.store import EgressStore
-from civiccast.egress.ts_relay import read_caption_proof_target
+from civiccast.egress.ts_relay import CaptionProofTarget, read_caption_proof_target
 from civiccast.stream._ffmpeg import run_ffmpeg
 
 _LOG = logging.getLogger(__name__)
@@ -287,7 +288,9 @@ def capture_emitted_segment(
         return None
     if proof_identity is not None and (
         config != store.get_config(channel_id)
-        or read_caption_proof_target(work_dir, config, proof_destination) != proof_identity
+        # An identity can only be captured inside the non-None config branch above.
+        or read_caption_proof_target(work_dir, cast(EgressConfig, config), proof_destination)
+        != proof_identity
     ):
         out.unlink(missing_ok=True)
         return None
@@ -323,7 +326,7 @@ def build_caption_proof_worker(
 
     store = PostgresEgressStore(session_factory)
     resolved_work_dir = (work_dir or default_egress_work_dir()).expanduser()
-    capture_fences: dict[str, tuple[EgressConfig, str | None, dict | None]] = {}
+    capture_fences: dict[str, tuple[EgressConfig, str | None, CaptionProofTarget | None]] = {}
 
     def _on_air() -> list[str]:
         channels: list[str] = []

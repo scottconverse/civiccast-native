@@ -28,6 +28,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import Event
 
+from sqlalchemy.orm import Session
+
 _LOG = logging.getLogger(__name__)
 
 
@@ -132,7 +134,7 @@ class CaptionProofProcessSupervisor:
 
 
 @contextmanager
-def _session_factory() -> Iterator[object]:
+def _session_factory() -> Iterator[Session]:
     """Yield a fresh DB session in the proof child.
 
     The child builds its own lazy engine from the inherited ``DATABASE_URL``;
