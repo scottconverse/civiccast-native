@@ -42,6 +42,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
+from civiccast.egress.hls_relay import _ManifestPublisher
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.sinks import HlsSink, build_sink
@@ -54,8 +55,7 @@ from civiccast.stream._ffmpeg import (
 from civiccast.stream.media_router import live_router
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None
-    and os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT") is None,
+    shutil.which("ffmpeg") is None and os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT") is None,
     reason="no ffmpeg on PATH and no packaged runtime root declared",
 )
 
@@ -72,7 +72,10 @@ def _packaged_ffmpeg_dir() -> Path | None:
     if not root:
         return None
     base = Path(root)
-    for candidate in (base.parent / "dependencies" / "ffmpeg" / "bin", base / "dependencies" / "ffmpeg" / "bin"):
+    for candidate in (
+        base.parent / "dependencies" / "ffmpeg" / "bin",
+        base / "dependencies" / "ffmpeg" / "bin",
+    ):
         if (candidate / "ffmpeg.exe").is_file():
             return candidate
     return None
@@ -212,7 +215,9 @@ def _start_live_hls_encoder(live_dir: Path, encoded_source: Path) -> FfmpegProce
         "-i",
         str(encoded_source),
     ]
-    return start_ffmpeg([*input_args, *sink.output_args()])
+    return start_ffmpeg(
+        [*input_args, *sink.output_args()], stderr_path=live_dir / "encoder.stderr.log"
+    )
 
 
 def _read_segment_names(manifest_text: str) -> set[str]:
@@ -247,11 +252,19 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
     live_dir = tmp_path / "live-hls" / "gov-ch12"
     encoded_source = tmp_path / "encoded-source.mkv"
     _write_encoded_test_source(encoded_source)
+    publisher = _ManifestPublisher(
+        manifest_path=live_dir / HlsSink.manifest_name,
+        staging_path=live_dir / HlsSink.mux_playlist_name,
+    )
     handle = _start_live_hls_encoder(live_dir, encoded_source)
     try:
+        publisher.start()
         manifest_path = live_dir / "playlist.m3u8"
         deadline = time.monotonic() + 30.0
         while time.monotonic() < deadline and not manifest_path.exists():
+            assert handle.poll() is None, "HLS muxer exited before publication: " + (
+                live_dir / "encoder.stderr.log"
+            ).read_text(encoding="utf-8")
             time.sleep(0.2)
         assert manifest_path.exists(), "ffmpeg never wrote a live manifest within 30s"
 
@@ -373,4 +386,7 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
                     f"manifest references {segment_name} but it 404s"
                 )
     finally:
-        handle.terminate(grace_seconds=5.0)
+        try:
+            handle.terminate(grace_seconds=5.0)
+        finally:
+            publisher.close()
