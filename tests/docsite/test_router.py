@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,6 +21,56 @@ def client() -> Iterator[TestClient]:
 
 
 class TestManualEndpoint:
+    @pytest.mark.parametrize("payload", [None, b"\xff", b"{", b"{}"])
+    def test_unavailable_artifact_gives_operator_repair_message(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        payload: bytes | None,
+    ) -> None:
+        artifact = tmp_path / "manual.json"
+        if payload is not None:
+            artifact.write_bytes(payload)
+        monkeypatch.setattr(docsite_service, "_MANUAL_JSON_PATH", artifact)
+        docsite_service._load_manual_cached.cache_clear()
+        try:
+            with TestClient(create_app(), raise_server_exceptions=False) as client:
+                response = client.get("/api/public/manual")
+            assert response.status_code == 503
+            assert response.json()["detail"] == (
+                "The built-in manual is missing, damaged, or cannot be read. "
+                "Ask your IT support person to repair the CivicCast installation."
+            )
+            assert str(tmp_path) not in response.text
+        finally:
+            docsite_service._load_manual_cached.cache_clear()
+
+    @pytest.mark.parametrize("operation", ["stat", "read_text"])
+    def test_unreadable_artifact_recovers_after_repair(
+        self,
+        client: TestClient,
+        monkeypatch: pytest.MonkeyPatch,
+        operation: str,
+    ) -> None:
+        original = getattr(Path, operation)
+
+        def denied(path: Path, *args: object, **kwargs: object) -> object:
+            if path == docsite_service._MANUAL_JSON_PATH:
+                raise PermissionError("private filesystem detail")
+            return original(path, *args, **kwargs)
+
+        docsite_service._load_manual_cached.cache_clear()
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(Path, operation, denied)
+                response = client.get("/api/public/manual")
+                assert response.status_code == 503
+                assert "repair the CivicCast installation" in response.json()["detail"]
+                assert "private filesystem detail" not in response.text
+            assert client.get("/api/public/manual").status_code == 200
+        finally:
+            docsite_service._load_manual_cached.cache_clear()
+
     def test_returns_the_rendered_manual(self, client: TestClient) -> None:
         response = client.get("/api/public/manual")
         assert response.status_code == 200
@@ -74,11 +125,11 @@ class TestManualEndpoint:
     ) -> None:
         def _boom() -> None:
             raise docsite_service.ManualUnavailableError(
-                "civiccast/docsite/manual.json not found. Run: "
-                "uv run python scripts/render_docsite_manual.py"
+                "The built-in manual is missing, damaged, or cannot be read. "
+                "Ask your IT support person to repair the CivicCast installation."
             )
 
         monkeypatch.setattr("civiccast.docsite.router.load_manual", _boom)
         response = client.get("/api/public/manual")
         assert response.status_code == 503
-        assert "render_docsite_manual.py" in response.json()["detail"]
+        assert "repair the CivicCast installation" in response.json()["detail"]

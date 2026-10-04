@@ -9,20 +9,15 @@ import json
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from civiccast.docsite.models import ManualDocument
 
 _MANUAL_JSON_PATH = Path(__file__).resolve().parent / "manual.json"
 
 
 class ManualUnavailableError(RuntimeError):
-    """civiccast/docsite/manual.json is missing or unreadable.
-
-    Should not happen on a real install -- the file ships inside the
-    ``civiccast`` package via pyproject.toml's wheel force-include, exactly
-    like civiccast/records/fixtures/*.ttf -- but a dev checkout that never
-    ran ``scripts/render_docsite_manual.py`` will hit this, so the error
-    names the exact fix instead of a bare stack trace.
-    """
+    """The bundled manual cannot be loaded; safe to show to an operator."""
 
 
 @lru_cache(maxsize=1)
@@ -32,12 +27,7 @@ def _load_manual_cached(mtime_ns: int) -> ManualDocument:
     while still avoiding a JSON parse + pydantic validation on every request.
     """
 
-    try:
-        raw = _MANUAL_JSON_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise ManualUnavailableError(
-            f"{_MANUAL_JSON_PATH} not found. Run: uv run python scripts/render_docsite_manual.py"
-        ) from exc
+    raw = _MANUAL_JSON_PATH.read_text(encoding="utf-8")
     return ManualDocument.model_validate(json.loads(raw))
 
 
@@ -46,8 +36,9 @@ def load_manual() -> ManualDocument:
 
     try:
         mtime_ns = _MANUAL_JSON_PATH.stat().st_mtime_ns
-    except FileNotFoundError as exc:
+        return _load_manual_cached(mtime_ns)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValidationError) as exc:
         raise ManualUnavailableError(
-            f"{_MANUAL_JSON_PATH} not found. Run: uv run python scripts/render_docsite_manual.py"
+            "The built-in manual is missing, damaged, or cannot be read. "
+            "Ask your IT support person to repair the CivicCast installation."
         ) from exc
-    return _load_manual_cached(mtime_ns)

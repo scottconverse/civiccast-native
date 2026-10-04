@@ -13,7 +13,11 @@ came across and what deliberately did not.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- A missing, unreadable or damaged built-in manual now shows a plain-English
+  installation-repair message instead of developer commands or a generic server
+  error.
 
 ## [1.0.0-beta.10] - 2026-10-02
 

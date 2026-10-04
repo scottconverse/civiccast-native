@@ -55,6 +55,13 @@ demand.
    file's own mtime so a live dev server picks up a re-render without a
    restart). It never touches `docs/` or `pandoc` at runtime.
 
+If the installed artifact is missing, unreadable, invalid UTF-8/JSON, or fails
+document validation, the public endpoint returns HTTP 503 with a plain-English
+message asking the operator to have IT repair the installation. It does not show
+local filesystem paths or tell station staff to run build tools. In a development
+checkout, regenerate the artifact using the build command below. Read failures
+are not cached, so a repaired artifact can be loaded on the next request.
+
 ## The drift gate
 
 `scripts/render_docsite_manual.py --check-current` (wired into

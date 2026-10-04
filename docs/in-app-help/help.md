@@ -20,6 +20,9 @@ search label and HELP-07's flat-list navigation, not full-text search.
 The findings below describe the documentation handoff baseline. Regeneration,
 missing screenshots, old product anchor mappings and packaged
 browser acceptance remain open; this update does not mark the full manual done.
+Missing, unreadable and damaged manual artifacts now produce HTTP 503 with a
+plain-English message asking staff to have IT repair the installation (HELP-12).
+This is source/API verification, not packaged installation acceptance.
 
 Sidebar: Help > **Manual** (the section is collapsed by default). Page eyebrow "Help"; page H1 "Operator manual". Routes `#/help`, `#/docs`, `#/manual`. Manual authority: `docs/manual/src/11-signing-in.md` (find your way around; the Report a beta issue button) and `17-something-wrong.md` (section "Report a beta issue", `#report-a-beta-issue`).
 
