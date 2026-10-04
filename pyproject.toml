@@ -283,6 +283,10 @@ target-version = "py312"
 extend-exclude = [
   "docs/spec/spec.md",
   "docs/spec/release-plan.md",
+  # Immutable, commit-bound U37 measurement instruments (see their evidence
+  # README). Preserve the exact scripts behind historical results; these are
+  # not shipped source or active CI tests. Keep active ops/tools under lint.
+  ".agent-runs/native-windows/beta10-u37-mux-video-stall/evidence/instruments",
 ]
 
 [tool.ruff.lint]

@@ -21,8 +21,10 @@ the ambiguity branch that the two real copies would otherwise trigger.
 from __future__ import annotations
 
 import argparse
+import datetime as _dt
 import importlib.util
 import json
+import random as _random
 import sys
 from pathlib import Path
 
@@ -188,9 +190,6 @@ def test_emit_keeps_the_previous_report_when_the_write_fails(tmp_path: Path) -> 
 # trust, and the fact that an ordinary single-part window is untouched by it.
 # ---------------------------------------------------------------------------
 
-import datetime as _dt  # noqa: E402  (kept beside the U66 tests they serve)
-import random as _random  # noqa: E402
-
 _EDUCATION = "education"
 
 
@@ -305,14 +304,14 @@ def _on_air_line(channel: str, when_local: _dt.datetime, name: str = _REAL_NAME)
 def _window_at(log_start_local: _dt.datetime, leg_seconds: float) -> str:
     """A `captured_at_utc` that `local_naive` turns back into `leg_seconds` later."""
     when_local = log_start_local + _dt.timedelta(seconds=leg_seconds)
-    return when_local.astimezone(_dt.timezone.utc).isoformat()
+    return when_local.astimezone(_dt.UTC).isoformat()
 
 
 # --- the loud part, and the halves that must agree -------------------------
 
 
 def _pattern(n: int, seed: int = 11, lo: float = -38.0, hi: float = -20.0) -> list[float]:
-    rnd = _random.Random(seed)
+    rnd = _random.Random(seed)  # noqa: S311 -- reproducible synthetic audio, not secrets
     return [round(rnd.uniform(lo, hi), 3) for _ in range(n)]
 
 
@@ -393,10 +392,12 @@ def test_loud_part_correlate_accepts_halves_that_agree(monkeypatch) -> None:
 def test_loud_part_correlate_refuses_a_half_that_does_not_lock(monkeypatch) -> None:
     """A half below r/margin must not be averaged away by a good other half."""
 
-    calls = iter([
-        {"ok": True, "lag_s": 300.0, "r": 0.9, "margin": 0.5, "curve_half_width_s": 1.0},
-        {"ok": True, "lag_s": 300.0, "r": 0.2, "margin": 0.05, "curve_half_width_s": 1.0},
-    ])
+    calls = iter(
+        [
+            {"ok": True, "lag_s": 300.0, "r": 0.9, "margin": 0.5, "curve_half_width_s": 1.0},
+            {"ok": True, "lag_s": 300.0, "r": 0.2, "margin": 0.05, "curve_half_width_s": 1.0},
+        ]
+    )
     monkeypatch.setattr(adj, "best_lag", lambda *a, **kw: next(calls))
     got = adj.loud_part_correlate(_blocks([-25.0] * 2000), _blocks([-25.0] * 2000), 0.0)
     assert not got["ok"]

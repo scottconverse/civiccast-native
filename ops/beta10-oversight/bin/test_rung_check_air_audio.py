@@ -98,16 +98,18 @@ def _segments(tmp_path: Path, bodies: list[bytes]) -> list[dict]:
     for i, body in enumerate(bodies):
         p = d / f"seg-{7609 + i}.ts"
         p.write_bytes(body)
-        out.append({
-            "sequence": 7609 + i,
-            "name": f"seg-{7609 + i}.ts",
-            "snapshot_path": str(p),
-            "bytes": len(body),
-            "sha256": sha256(body).hexdigest(),
-            "present": True,
-            "capture_status": "complete",
-            "extinf_seconds": 6.0,
-        })
+        out.append(
+            {
+                "sequence": 7609 + i,
+                "name": f"seg-{7609 + i}.ts",
+                "snapshot_path": str(p),
+                "bytes": len(body),
+                "sha256": sha256(body).hexdigest(),
+                "present": True,
+                "capture_status": "complete",
+                "extinf_seconds": 6.0,
+            }
+        )
     return out
 
 
@@ -134,17 +136,22 @@ def _evidence(tmp_path: Path, segments: list[dict], **chan_over: object) -> Path
     }
     chan.update(chan_over)
     p = tmp_path / "loudness-09.json"
-    p.write_text(json.dumps({
-        "tool": "rung_loudness_capture",
-        "target_lufs": -16.0,
-        "tolerance_lufs": 1.0,
-        "blocking_reasons": [],
-        "channels": {
-            _CHANNEL: chan,
-            "government": {"status": "PASS"},
-            "public": {"status": "PASS"},
-        },
-    }), encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "tool": "rung_loudness_capture",
+                "target_lufs": -16.0,
+                "tolerance_lufs": 1.0,
+                "blocking_reasons": [],
+                "channels": {
+                    _CHANNEL: chan,
+                    "government": {"status": "PASS"},
+                    "public": {"status": "PASS"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     return p
 
 
@@ -153,7 +160,8 @@ def _run(tool: Path, evidence: Path, scratch: Path, tmp_path: Path) -> str:
     env["CIVICAST_AIR_AUDIO_DIR"] = str(scratch)
     env["TEMP"] = str(tmp_path)  # the adjudicator's own report lands under here
     env["TMP"] = str(tmp_path)
-    got = subprocess.run(
+    # Current Python executes the owned tmp_path tool/stub; fixture paths are separate argv.
+    got = subprocess.run(  # noqa: S603
         [sys.executable, str(tool), "loudness", str(evidence)],
         capture_output=True,
         text=True,
