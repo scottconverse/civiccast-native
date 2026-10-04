@@ -12,6 +12,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import {
   cancelAcquisition,
+  isFirstInstallEntry,
+  firstInstallPlan,
+  finishFirstInstall,
   fetchHardwareInventory,
   loadInstallerProgress,
   measureLinkSpeedBytesPerSecond,
@@ -339,6 +342,7 @@ export function MachineCheckScreen({
 /** Exported for direct testing (see first-run-reachability.test.ts), the same
  * reason MachineCheckScreen and DownloadingScreen are. */
 export function DownloadPlanScreen({
+  catalog = COMPONENT_CATALOG,
   freeDiskBytes,
   hardware,
   selected,
@@ -347,6 +351,7 @@ export function DownloadPlanScreen({
   linkSpeedBps,
   onContinue
 }: {
+  catalog?: readonly CatalogComponent[];
   /**
    * Measured free bytes on the install volume, or `null` when the probe could
    * not read it. This screen never needed the whole inventory -- taking just
@@ -375,7 +380,7 @@ export function DownloadPlanScreen({
   linkSpeedBps: number | null;
   onContinue: () => void;
 }) {
-  const planItems = COMPONENT_CATALOG.map((component) => ({
+  const planItems = catalog.map((component) => ({
     id: component.id,
     selected: selected.has(component.id),
     sizeBytes: component.placeholderSizeBytes
@@ -409,7 +414,7 @@ export function DownloadPlanScreen({
         tabIndex={0}
       >
         <ul className="plan-list" aria-label="Components to download">
-          {COMPONENT_CATALOG.map((component) => (
+          {catalog.map((component) => (
             <PlanRow
               key={component.id}
               component={component}
@@ -657,9 +662,11 @@ function useAcquisitionComponents(selectedIds: readonly ComponentId[]) {
  * through simulated clicks, is what lets the screen-entry `startAcquisition`
  * call be asserted deterministically. */
 export function DownloadingScreen({
+  signedSizes,
   selectedIds,
   onAllComplete
 }: {
+  signedSizes?: Record<string, number>;
   selectedIds: readonly ComponentId[];
   onAllComplete: () => void;
 }) {
@@ -705,7 +712,7 @@ export function DownloadingScreen({
   const stoppable = components.some((component) => acquisitionRowIsActive(component.state));
   useEffect(() => {
     if (allDone) {
-      markAcquisitionFlowComplete();
+      if (!isFirstInstallEntry()) markAcquisitionFlowComplete();
       onAllComplete();
     }
   }, [allDone, onAllComplete]);
@@ -717,7 +724,7 @@ export function DownloadingScreen({
   // measured and placeholder sizes, which is what made it walk 12.8 -> 12.1
   // -> 11.6 GB in front of the operator.
   const announcedTotalBytes = useRef(
-    selectedIds.reduce((sum, id) => sum + catalogComponent(id).placeholderSizeBytes, 0)
+    selectedIds.reduce((sum, id) => sum + (signedSizes?.[id] ?? catalogComponent(id).placeholderSizeBytes), 0)
   ).current;
   const settledTotal = useRef<DownloadTotalDenominator | null>(null);
   if (settledTotal.current === null) {
@@ -1057,12 +1064,26 @@ function DownloadRow({
 // ---------------------------------------------------------------------------
 
 export function AcquisitionFlow({ onComplete }: { onComplete: () => void }) {
+  const [signedSizes, setSignedSizes] = useState<Record<string, number> | null>(null);
+  const [authorityError, setAuthorityError] = useState<string | null>(null);
+  const [handoffState, setHandoffState] = useState<"idle" | "opening" | "running" | "unconfirmed" | "failed">("idle");
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const handoffStarted = useRef(false);
+  const handoffAction = useRef<"start" | "check" | "retry">("start");
   const [hardware, setHardware] = useState<HardwareInventory | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"checking" | "plan" | "downloading">("checking");
   const [selected, setSelected] = useState<Set<ComponentId>>(new Set());
   const [linkSpeedBps, setLinkSpeedBps] = useState<number | null>(null);
   const selectedIdsAtDownloadStart = useRef<ComponentId[]>([]);
+
+  useEffect(() => {
+    if (!isFirstInstallEntry()) return;
+    let ignore = false;
+    void firstInstallPlan().then((sizes) => { if (!ignore) setSignedSizes(sizes); })
+      .catch(() => { if (!ignore) setAuthorityError("The signed release plan could not be verified. Check the matching first-install files and connection, then reopen setup. No legacy downloads were started."); });
+    return () => { ignore = true; };
+  }, []);
 
   useEffect(() => {
     let ignore = false;
@@ -1117,6 +1138,34 @@ export function AcquisitionFlow({ onComplete }: { onComplete: () => void }) {
   }, [phase]);
 
   const memoizedCatalogIds = useMemo(() => COMPONENT_CATALOG.map((component) => component.id), []);
+  const catalog = signedSizes ? COMPONENT_CATALOG.filter((component) => signedSizes[component.id] !== undefined)
+    .map((component) => ({ ...component, placeholderSizeBytes: signedSizes[component.id],
+      purpose: component.id === "app_runtime" ? "Windows Setup, CivicCast, video and audio tools, and the local AI runtime." : component.purpose })) : COMPONENT_CATALOG;
+
+  if (isFirstInstallEntry() && !signedSizes) {
+    return <main className="shell"><h1>Verify this CivicCast release</h1><p role={authorityError ? "alert" : "status"}>{authorityError ?? "Checking the signed release authority before downloads start…"}</p></main>;
+  }
+  if (handoffState !== "idle") {
+    return <main className="shell"><h1>Windows Setup</h1><p role={handoffError ? "alert" : "status"}>{handoffError ?? (handoffState === "unconfirmed" ? "Windows could not confirm Setup's status. Keep this window open and check its Setup window; the verified files remain protected and no completion is claimed." : handoffState === "running" ? "Windows Setup is still running. Finish its open window, then check again. Keep this window open; the verified files remain protected." : "Approving and finishing Windows Setup installs the verified selected files. Keep this window open while Setup runs.")}</p>
+      {(handoffState === "running" || handoffState === "unconfirmed") && <button onClick={() => { handoffAction.current="check"; handoffStarted.current = false; setHandoffState("idle"); }}>Check Windows Setup</button>}
+      {handoffState === "failed" && <button onClick={() => { handoffAction.current="retry"; handoffStarted.current = false; setHandoffState("idle"); }}>Retry Windows Setup</button>}</main>;
+  }
+  const finish = () => {
+    if (!isFirstInstallEntry()) { onComplete(); return; }
+    if (handoffStarted.current) return;
+    handoffStarted.current = true;
+    setHandoffError(null); setHandoffState("opening");
+    void finishFirstInstall(handoffAction.current).then((outcome) => {
+      if (outcome === "completed") onComplete();
+      else if (outcome === "failed") {
+        setHandoffError("Windows Setup failed or was canceled. Choose Retry Windows Setup to deliberately start it again.");
+        setHandoffState("failed");
+      } else setHandoffState(outcome);
+    }).catch(() => {
+      setHandoffError("Windows Setup did not finish. Approve its Windows permission prompt and complete Setup, then retry this verified installation.");
+      setHandoffState("failed");
+    });
+  };
 
   // A failed probe (hardware === null, probeError set) does NOT wedge the
   // flow here the way `|| !hardware` used to: the screen says what could not
@@ -1131,6 +1180,7 @@ export function AcquisitionFlow({ onComplete }: { onComplete: () => void }) {
   if (phase === "plan") {
     return (
       <DownloadPlanScreen
+        catalog={catalog}
         freeDiskBytes={hardware?.free_disk_bytes ?? null}
         hardware={hardware}
         selected={selected}
@@ -1158,12 +1208,12 @@ export function AcquisitionFlow({ onComplete }: { onComplete: () => void }) {
           });
         }}
         onContinue={() => {
-          selectedIdsAtDownloadStart.current = memoizedCatalogIds.filter((id) => selected.has(id));
+          selectedIdsAtDownloadStart.current = memoizedCatalogIds.filter((id) => selected.has(id) && (!signedSizes || signedSizes[id] !== undefined));
           setPhase("downloading");
         }}
       />
     );
   }
 
-  return <DownloadingScreen selectedIds={selectedIdsAtDownloadStart.current} onAllComplete={onComplete} />;
+  return <DownloadingScreen signedSizes={signedSizes ?? undefined} selectedIds={selectedIdsAtDownloadStart.current} onAllComplete={finish} />;
 }

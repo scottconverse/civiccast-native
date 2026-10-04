@@ -3,6 +3,8 @@
 Paths relative to `civiccast/apps/installer/`. AF = `src/AcquisitionFlow.tsx`; AP = `src/acquisition-progress.ts`; CC = `src/components-catalog.ts`.
 
 ## Where the text lives now
+
+Development first-install mode uses the same plan screens before elevation. Its signed current channel supplies sizes and available optional packs; only the selected mandatory plan and checked Large/CUDA packs transfer. `CivicCast First Install.exe` needs its matching `first-install.json`, Microsoft WebView2, and reachable whole-pack HTTPS delivery. It prepares and verifies the existing NSIS side-load layout before opening Windows Setup. The release hint is not authority, older release URLs are never a fallback, and download completion alone is not installation success. Public hosting and clean-machine installation remain unverified; published beta.10 still requires the full kit.
 Screen: AF:341-529. Row names, purposes and sizes: CC:57-161. Explanations under the two optional rows: AP:502-614. Totals and the disk check: AP:383-444; the time line: AF:458-462. The download itself starts on the next screen (AF:585; `src-tauri/src/main.rs:3740-3747`).
 
 ## Current text

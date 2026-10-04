@@ -20,9 +20,95 @@ import { createRoot, type Root } from "react-dom/client";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { DownloadingScreen } from "./AcquisitionFlow";
+import { AcquisitionFlow, DownloadingScreen } from "./AcquisitionFlow";
 
 type Bridge = { invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> };
+
+it("first-install entry refuses unverified authority before any acquisition or completion", async () => {
+  Object.defineProperty(window,"__CIVICCAST_FIRST_INSTALL__",{value:true, configurable:true});
+  window.localStorage.setItem("civiccast.acquisitionFlowComplete","true");
+  const invoke = vi.fn(async (command:string) => {
+    if(command === "first_install_plan" || command === "firstInstallPlan") throw new Error("untrusted authority");
+    if(command === "native_hardware_inventory" || command === "nativeHardwareInventory") throw new Error("no hardware fixture");
+    return "null";
+  });
+  installTauriBridge(invoke);
+  const container=document.createElement("div");document.body.append(container);
+  const root=createRoot(container);const complete=vi.fn();
+  try {
+    await act(async () => {root.render(createElement(AcquisitionFlow,{onComplete:complete}));await Promise.resolve();});
+    expect(container.textContent).toContain("signed release plan could not be verified");
+    expect(startAcquisitionCallCount(invoke)).toBe(0);
+    expect(complete).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());container.remove();removeTauriBridge();
+    delete (window as Window & {__CIVICCAST_FIRST_INSTALL__?:boolean}).__CIVICCAST_FIRST_INSTALL__;
+    window.localStorage.clear();
+  }
+});
+
+it("first-install download completion does not set installed-GUI completion latch", async () => {
+  vi.useFakeTimers();
+  Object.defineProperty(window,"__CIVICCAST_FIRST_INSTALL__",{value:true, configurable:true});
+  window.localStorage.clear();
+  const selectedIds=["app_runtime","server_binaries","captions_medium","local_ai_model"] as const;
+  const invoke=vi.fn(async(command:string) => {
+    if(command === "start_acquisition" || command === "startAcquisition") return "Started";
+    if(command === "read_local_installer_state" || command === "readLocalInstallerState") return JSON.stringify({schema_version:1,status:"running",current_lane_id:"runtime",message:"",reboot_required:false,updated_at_unix:1,
+      acquisition:{components:selectedIds.map(id => ({id,state:"complete",bytes_done:1,bytes_total:1,elapsed_seconds:0}))}});
+    throw new Error("unexpected command");
+  });
+  installTauriBridge(invoke);
+  const container=document.createElement("div");document.body.append(container);
+  const root=createRoot(container);const complete=vi.fn();
+  try {
+    await act(async () => {root.render(createElement(DownloadingScreen,{selectedIds,onAllComplete:complete,signedSizes:{app_runtime:1,server_binaries:1,captions_medium:1,local_ai_model:1}}));await Promise.resolve();});
+    expect(complete).toHaveBeenCalled();
+    expect(window.localStorage.getItem("civiccast.acquisitionFlowComplete")).toBeNull();
+  } finally {
+    act(() => root.unmount());container.remove();removeTauriBridge();
+    delete (window as Window & {__CIVICCAST_FIRST_INSTALL__?:boolean}).__CIVICCAST_FIRST_INSTALL__;
+    window.localStorage.clear();vi.useRealTimers();
+  }
+});
+
+it.each(["running","unconfirmed","failed","completed"] as const)("first-install Setup %s is not confused with another outcome", async (outcome) => {
+  vi.useFakeTimers();
+  Object.defineProperty(window,"__CIVICCAST_FIRST_INSTALL__",{value:true, configurable:true});
+  window.localStorage.clear();
+  const ids=["app_runtime","server_binaries","captions_medium","local_ai_model"];
+  const invoke=vi.fn(async(command:string) => {
+    if(command === "first_install_plan" || command === "firstInstallPlan") return Object.fromEntries(ids.map(id=>[id,1]));
+    if(command === "native_hardware_inventory" || command === "nativeHardwareInventory") throw new Error("unavailable fixture hardware");
+    if(command === "start_acquisition" || command === "startAcquisition") return "Started";
+    if(command === "finish_first_install" || command === "finishFirstInstall") return outcome;
+    if(command === "read_local_installer_state" || command === "readLocalInstallerState") return JSON.stringify({schema_version:1,status:"running",current_lane_id:"runtime",message:"",reboot_required:false,updated_at_unix:1,
+      acquisition:{components:ids.map(id=>({id,state:"complete",bytes_done:1,bytes_total:1,elapsed_seconds:0}))}});
+    throw new Error("unexpected command");
+  });
+  installTauriBridge(invoke);
+  const container=document.createElement("div");document.body.append(container);
+  const root=createRoot(container);const complete=vi.fn();
+  try {
+    await act(async()=>{root.render(createElement(AcquisitionFlow,{onComplete:complete}));await Promise.resolve();});
+    await act(async()=>{await vi.advanceTimersByTimeAsync(650);});
+    const continueButton=()=>Array.from(container.querySelectorAll("button")).find(button=>button.textContent === "Continue")!;
+    await act(async()=>{continueButton().click();await Promise.resolve();});
+    expect(container.textContent).toContain("Windows Setup, CivicCast, video and audio tools");
+    await act(async()=>{continueButton().click();await Promise.resolve();});
+    if(outcome === "completed") expect(complete).toHaveBeenCalledTimes(1);
+    else {
+      expect(complete).not.toHaveBeenCalled();
+      expect(container.textContent).toContain(outcome === "running" ? "still running" : outcome === "unconfirmed" ? "could not confirm" : "failed or was canceled");
+      expect(container.textContent).not.toContain("Windows Setup did not finish");
+    }
+    expect(window.localStorage.getItem("civiccast.acquisitionFlowComplete")).toBeNull();
+  } finally {
+    act(()=>root.unmount());container.remove();removeTauriBridge();
+    delete (window as Window & {__CIVICCAST_FIRST_INSTALL__?:boolean}).__CIVICCAST_FIRST_INSTALL__;
+    window.localStorage.clear();vi.useRealTimers();
+  }
+});
 
 function installTauriBridge(invoke: Bridge["invoke"]): void {
   (window as unknown as { __TAURI__: Bridge }).__TAURI__ = { invoke };

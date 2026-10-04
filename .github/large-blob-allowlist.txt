@@ -14,4 +14,8 @@
 #
 # Format: <glob>    # YYYY-MM-DD reason
 #
-# (no entries)
+# Required, tracked offline manuals; ci-docs checks their source/artifact hashes.
+# Both exceeded 5 MiB in main at 8c3ab70b before this refresh (PDF 7185565,
+# DOCX 5627216 bytes). No installer, model pack, evidence kit or directory glob.
+docs/USER-MANUAL.pdf   # 2026-10-04 required illustrated operator manual
+docs/USER-MANUAL.docx  # 2026-10-04 required editable operator manual

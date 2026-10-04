@@ -895,6 +895,22 @@ export async function startAcquisition(selectedIds: readonly ComponentId[]): Pro
   }
 }
 
+export function isFirstInstallEntry(): boolean {
+  return (window as Window & { __CIVICCAST_FIRST_INSTALL__?: boolean }).__CIVICCAST_FIRST_INSTALL__ === true;
+}
+
+export async function firstInstallPlan(): Promise<Record<string, number>> {
+  return invokeNativeInstallerAny<Record<string, number>>(["first_install_plan", "firstInstallPlan"]);
+}
+
+export async function finishFirstInstall(action: "start" | "check" | "retry" = "start"): Promise<"running" | "unconfirmed" | "failed" | "completed"> {
+  // This version-bound entry owns the command contract. Never retry a
+  // potentially side-effecting Setup launch through a fallback alias.
+  const outcome = await invokeNativeInstaller<unknown>("finish_first_install",{action});
+  if (outcome !== "running" && outcome !== "unconfirmed" && outcome !== "failed" && outcome !== "completed") throw new Error("Windows Setup returned no verified completion state.");
+  return outcome;
+}
+
 /**
  * The one message shown when the native cancel command exists and refuses.
  * Exported so the screen and its tests agree on the exact string.

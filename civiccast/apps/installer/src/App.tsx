@@ -4,6 +4,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  isFirstInstallEntry,
   LOCAL_OPERATOR_CONSOLE_URL,
   loadInstallerProgress,
   loadInstallerState,
@@ -286,6 +287,16 @@ function RuntimeSetupActivity({ progress }: { progress: InstallerProgress | null
 }
 
 function App() {
+  return isFirstInstallEntry() ? <FirstInstallApp /> : <InstalledApp />;
+}
+
+function FirstInstallApp() {
+  const [done, setDone] = useState(false);
+  return done ? <main className="shell"><h1>Windows Setup completed</h1><p>The verified selected installation finished. Open CivicCast from the Windows Start menu.</p></main>
+    : <AcquisitionFlow onComplete={() => setDone(true)} />;
+}
+
+function InstalledApp() {
   const searchParams = new URLSearchParams(window.location.search);
   const requestedState = searchParams.get("state");
   // The download-experience screens (machine check, plan, downloading) run

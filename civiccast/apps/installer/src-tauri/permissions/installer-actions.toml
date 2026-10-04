@@ -10,6 +10,10 @@ description = "Allows the installer window to invoke local CivicCast setup comma
 # the expected set from `main.rs` and asserts exact equality with this list, so
 # adding a command without adding it here fails CI.
 commands.allow = [
+  "firstInstallPlan",
+  "first_install_plan",
+  "finishFirstInstall",
+  "finish_first_install",
   "cancelAcquisition",
   "cancel_acquisition",
   "nativeHardwareInventory",

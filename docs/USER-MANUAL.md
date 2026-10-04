@@ -3214,6 +3214,8 @@ You need three decisions and one fact:
 
 ### Know what has and has not been proven
 
+The development first-install entry can prepare a verified selected kit before requesting administrator rights. It requires matching release files, an available signed channel and whole-pack HTTPS hosting; public delivery and a clean-machine journey are not yet verified. Plan for Microsoft WebView2 and enough space for both cached packs and their installed contents. This does not replace the published beta.10 full-kit instructions below; see [Chapter 10](#ch-installing).
+
 CivicCast 1.0.0-beta.10 was published on 2026-10-02 as a **GitHub pre-release** (a "Beta Candidate"). It is a beta candidate, not a production release. State this plainly to anyone who signs off on the purchase.
 
 | What was tested | Result |
@@ -3493,6 +3495,14 @@ This chapter walks the person who installs CivicCast through the install exactly
 - For an upgrade, you also have a backup and you accept that the station goes off air while setup runs.
 
 > **Note:** beta.10 is a pre-release. The clean-install lane of the project's acceptance test passed using the full kit. The upgrade lane and the download-only lane were not run, and no human field tester has signed off. A first install with neither the full kit nor an earlier install is not proven.
+
+### Development first-install entry - not a published download
+
+The development build adds an unelevated `CivicCast First Install.exe` with a matching `first-install.json` beside it. Double-clicking that entry verifies the current release's signed channel before offering downloads. The JSON supplies the channel address and exact release version; it is not itself trusted authority. Missing or mismatched release files stop the process instead of selecting older downloads.
+
+Only the selected plan is acquired: the mandatory program, services, standard captions and local AI packs, plus Large and CUDA only when selected. Sizes come from the verified release index. The entry prepares the existing `setup.exe`, `packs` and `station` layout, rechecks its signed packs and Setup bytes, then asks Windows to open the same NSIS installer with administrator rights. Keep the first-install window open while Windows Setup runs. Cancellation or failure does not certify an installation; retry uses the same selected plan.
+
+This requires a reachable current signed channel and an HTTPS host that can serve the complete pack files. GitHub release assets cannot serve a single file larger than 2 GiB. No public delivery host or clean-machine first-install journey has been verified for this development entry. The raw GUI also needs Microsoft WebView2 before it can display the download screens; that prerequisite has not been proven on a clean computer. The published beta.10 full-kit requirement remains unchanged.
 
 ### What beta.10 requires and what it does not yet support
 

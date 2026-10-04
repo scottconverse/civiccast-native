@@ -9,6 +9,7 @@ mod component_acquisition;
 mod hardware_inventory;
 mod native_activation;
 mod native_distribution;
+mod native_first_install;
 mod native_install_verify;
 mod native_pack_staging;
 mod native_packs;
@@ -3028,6 +3029,7 @@ async fn read_local_installer_state() -> Result<String, String> {
 }
 
 fn read_local_installer_state_blocking() -> Result<String, String> {
+    if native_first_install::is_entry() { return native_first_install::progress_state(); }
     let Some(path) = newest_existing_installer_state_path()? else {
         return Ok("null".to_string());
     };
@@ -3298,6 +3300,7 @@ fn acquisition_persist_fields(existing_raw: Option<&str>) -> (String, String, St
 /// has no lane-transition context of its own (and, for the earliest calls in
 /// a fresh install, no installer-state.json may exist yet at all).
 fn persist_acquisition_progress() -> Result<(), String> {
+    if native_first_install::is_entry() { return native_first_install::persist_progress(); }
     let existing = newest_existing_installer_state_path()?
         .map(|path| fs::read_to_string(&path))
         .transpose()
@@ -3944,6 +3947,7 @@ fn require_selected_acquisition_retry(
 
 #[tauri::command(rename_all = "camelCase")]
 fn start_acquisition(selected_ids: Vec<String>) -> Result<String, String> {
+    if native_first_install::is_entry() { native_first_install::validate_plan(&selected_ids)?; }
     let (start, selected) = admit_acquisition_plan(&ACQUISITION_DRIVER_PLAN, &selected_ids, |ids| {
         for id in ids {
             acquisition_state::mark_pending(id);
@@ -3953,7 +3957,8 @@ fn start_acquisition(selected_ids: Vec<String>) -> Result<String, String> {
     if !start {
         return Ok("CivicCast is already downloading its components.".to_string());
     }
-    thread::spawn(move || run_production_acquisition(selected));
+    if native_first_install::is_entry() { native_first_install::begin(selected)?; }
+    else { thread::spawn(move || run_production_acquisition(selected)); }
     Ok("CivicCast started downloading its components.".to_string())
 }
 
@@ -3971,6 +3976,7 @@ fn start_acquisition(selected_ids: Vec<String>) -> Result<String, String> {
 /// already written stay in the `.partial`, so Resume resumes.
 #[tauri::command(rename_all = "camelCase")]
 fn cancel_acquisition() -> Result<String, String> {
+    if native_first_install::is_entry() { return native_first_install::cancel(); }
     component_acquisition::request_cancel();
     acquisition_state::mark_unfinished_canceled();
     let _ = persist_acquisition_progress();
@@ -3981,6 +3987,12 @@ fn cancel_acquisition() -> Result<String, String> {
 async fn retry_acquisition_component(component_id: String) -> Result<String, String> {
     // Refuse before clearing cancellation, writing progress, or spawning work.
     require_selected_acquisition_retry(&ACQUISITION_DRIVER_PLAN, &component_id)?;
+    if native_first_install::is_entry() {
+        let selected = ACQUISITION_DRIVER_PLAN.lock().map_err(|_| "The selected plan is unavailable.")?
+            .clone().ok_or("No first-install plan was admitted.")?;
+        native_first_install::begin(selected)?;
+        return Ok("Resuming the same verified selected installation.".into());
+    }
     tauri::async_runtime::spawn_blocking(move || retry_acquisition_component_blocking(component_id))
         .await
         .map_err(|error| format!("CivicCast could not retry the component download: {error}"))?
@@ -4005,6 +4017,18 @@ fn retry_acquisition_component_blocking(component_id: String) -> Result<String, 
             "Retry is queued. CivicCast will pick this file back up on the next check.".to_string(),
         ),
     }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn first_install_plan() -> Result<std::collections::BTreeMap<String,u64>,String> {
+    tauri::async_runtime::spawn_blocking(native_first_install::load_plan).await
+        .map_err(|_| "The signed release plan could not be loaded.".to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn finish_first_install(action: native_first_install::SetupAction) -> Result<native_first_install::SetupOutcome,String> {
+    tauri::async_runtime::spawn_blocking(move || native_first_install::launch_setup(action)).await
+        .map_err(|_| "Windows Setup could not be opened for this verified installation.".to_string())?
 }
 
 fn validate_local_console_url(url: &str) -> Result<(), String> {
@@ -6498,6 +6522,24 @@ fn run_native_uninstall_preflight_cli(args: &[String]) -> Option<i32> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    let named_entry = std::env::current_exe().ok().and_then(|path| path.file_name().map(|name|
+        name.to_string_lossy().eq_ignore_ascii_case("CivicCast First Install.exe"))).unwrap_or(false);
+    if named_entry || args.iter().any(|arg| arg == "--civiccast-first-install") {
+        let user_state = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default().join(".civiccast");
+        let mode = if named_entry && args.is_empty() {
+            std::env::current_exe().map_err(|_| "The first-install location is unavailable.".to_string())
+                .and_then(|exe| fs::read(exe.with_file_name("first-install.json"))
+                    .map_err(|_| "Keep first-install.json beside CivicCast First Install.exe.".to_string()))
+                .and_then(|raw| native_first_install::read_entry_hint(&raw, CIVICCAST_VERSION, &user_state))
+        } else {
+            native_first_install::parse_mode(&args, &user_state)
+                .and_then(|mode| mode.ok_or("First-install arguments are missing.".into()))
+        };
+        let _ = native_first_install::MODE.set(mode);
+    }
+    // First-install admission is an exclusive entry: malformed mixed flags
+    // must not fall through to existing privileged maintenance actions.
+    if !native_first_install::is_entry() {
     if let Some(exit_code) = run_native_uninstall_policy_cli(&args) {
         std::process::exit(exit_code);
     }
@@ -6636,7 +6678,7 @@ fn main() {
     // this binary does not implement is fatal, and it names the flag.
     if let Some(unknown) = args
         .iter()
-        .find(|argument| argument.starts_with("--civiccast-"))
+        .find(|argument| argument.starts_with("--civiccast-") && !native_first_install::is_entry())
     {
         eprintln!(
             "CivicCast Installer {CIVICCAST_VERSION} does not implement {unknown}. This is \
@@ -6648,8 +6690,21 @@ fn main() {
         std::process::exit(native_service_registration::UNKNOWN_CIVICCAST_FLAG_EXIT_CODE);
     }
 
-    tauri::Builder::default()
-        .setup(|app| {
+    }
+    let mut context = tauri::generate_context!();
+    let entry_window = if native_first_install::is_entry() {
+        let config = context.config().app.windows.first().cloned();
+        for window in &mut context.config_mut().app.windows { window.create=false; }
+        config
+    } else { None };
+    let gui_result = tauri::Builder::default()
+        .setup(move |app| {
+            if let Some(config) = &entry_window {
+                tauri::WebviewWindowBuilder::from_config(app, config)?
+                    .initialization_script("Object.defineProperty(window,'__CIVICCAST_FIRST_INSTALL__',{value:true});")
+                    .build()?;
+                return Ok(());
+            }
             remove_stale_shutdown_markers();
             launch_shutdown_marker_watcher();
             // The native product is the only product this binary ever is --
@@ -6667,15 +6722,32 @@ fn main() {
             native_hardware_inventory,
             start_acquisition,
             cancel_acquisition,
-            retry_acquisition_component
+            retry_acquisition_component,
+            first_install_plan,
+            finish_first_install
         ])
         .on_window_event(|_window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if native_first_install::is_entry() && !native_first_install::can_close() {
+                    api.prevent_close();
+                    return;
+                }
                 std::process::exit(0);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run CivicCast installer");
+        .run(context);
+    if gui_result.is_err() {
+        #[cfg(windows)]
+        if native_first_install::is_entry() {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_OK, MB_ICONERROR};
+            let title:Vec<u16>="CivicCast First Install".encode_utf16().chain(Some(0)).collect();
+            let message:Vec<u16>="The first-install window could not open. Install Microsoft Edge WebView2 Runtime and keep the matching first-install.json beside this executable, then try again. No CivicCast installation was started."
+                .encode_utf16().chain(Some(0)).collect();
+            unsafe { MessageBoxW(std::ptr::null_mut(),message.as_ptr(),title.as_ptr(),MB_OK|MB_ICONERROR); }
+        }
+        eprintln!("The CivicCast installer window could not open.");
+        std::process::exit(1);
+    }
 }
 
 

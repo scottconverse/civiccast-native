@@ -13,6 +13,8 @@ You need three decisions and one fact:
 
 ## Know what has and has not been proven
 
+The development first-install entry can prepare a verified selected kit before requesting administrator rights. It requires matching release files, an available signed channel and whole-pack HTTPS hosting; public delivery and a clean-machine journey are not yet verified. Plan for Microsoft WebView2 and enough space for both cached packs and their installed contents. This does not replace the published beta.10 full-kit instructions below; see [Chapter 10](#ch-installing).
+
 CivicCast 1.0.0-beta.10 was published on 2026-10-02 as a **GitHub pre-release** (a "Beta Candidate"). It is a beta candidate, not a production release. State this plainly to anyone who signs off on the purchase.
 
 | What was tested | Result |

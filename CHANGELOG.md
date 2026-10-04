@@ -15,6 +15,13 @@ came across and what deliberately did not.
 
 ### Added
 
+- Development first-install support verifies a version-bound signed release
+  before selected downloads, prepares the existing NSIS side-load layout and
+  re-verifies its files before requesting elevation. The same-candidate
+  `CivicCast First Install.exe` entry and release hint are not a published
+  beta.10 delivery; public HTTPS hosting and clean-machine download/WebView2/
+  UAC/NSIS installation remain unverified.
+
 - Opt-in caption batch diagnostics distinguish empty ASR, pending/confirmed
   stabilization, review expiry/duplicate/refusal and publication fences using
   numeric metadata; persisted reviews are not reported as aired-caption proof.
@@ -23,6 +30,11 @@ came across and what deliberately did not.
   schema-refresh snapshot; health responses and readiness semantics are unchanged.
 
 ### Fixed
+
+- The running application refreshes schema readiness before its existing
+  five-second result expires, rather than waiting for the next health request.
+  Blocked reads still expire to unknown; refresh work remains single-owner and
+  shutdown prevents late publication. Sustained station acceptance is pending.
 
 - Health readiness no longer waits for optional schema-diagnostic log writes.
   Fresh database verification and stale-result rejection remain unchanged.

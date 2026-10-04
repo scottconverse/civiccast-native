@@ -4,6 +4,52 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Latest health repair anchor: `58c3aca174b9d15ca479dca0bbd2bd6700ac9789`.
+  The explicit app lifespan now keeps one schema-refresh worker alive and
+  refreshes before the unchanged five-second expiry. Blocked actual reads
+  remain owned; stale results still become unknown and close rejects late
+  publication. Request-only inverse tests fail the intended assertions;
+  69 affected checks and an independent 35 owner/lifecycle checks pass.
+  Live sustained acceptance is still pending.
+- Earlier repair anchor: `8b7034e29154b73274aebedf88a42ca7d8b5e328`.
+  Optional schema diagnostics no longer block readiness on synchronous disk
+  logging. A stalled-handler reproduction failed before correction; 64 affected
+  checks and a separate 19-check review passed. This does not establish that
+  logging caused every historical readiness delay.
+- The two-hour attempt beginning 04:21 MDT FAILED around 04:28 MDT when health
+  did not become ready within its existing five-second check. All three HLS
+  and caption outputs were fresh at failure. Exact original files, settings,
+  and advancing three-channel operation were restored by 04:33 MDT. The next
+  bounded run started at 04:55 MDT and FAILED at 05:03 MDT after 31 successful
+  samples, again at the unchanged five-second health-poll limit. All three
+  HLS/caption outputs were fresh. Candidate PID 32184; original 16 files and
+  proof state are restored, with healthy advancing three-channel operation
+  verified at 05:10 MDT. The reader discards the last HTTP reply when its
+  aggregate budget expires: this is a readiness-poll miss, not a proven HTTP
+  outage. The snapshot-only logging fix did not close sustained readiness.
+  No successful two-hour claim. An earlier 0-16 ms database benchmark used
+  the interactive user's SQLite source, not station PostgreSQL; it is not
+  evidence ruling out station DB connection/query cost.
+  A subsequent read-only elevated check of the exact service PostgreSQL source
+  completed three schema reads in 446.300, 42.832 and 39.513 ms. This baseline
+  measurement does not explain the earlier candidate's transient delay.
+- First-install GUI/handoff and exact-candidate download assembly have scoped
+  source acceptance: 11 native, 33 UI/API, 19 distribution and 62 combined
+  packaging/station/workflow checks passed (overlapping suites, not a total).
+  The actual 13.5 MB native GUI opened and refused an invalid authority without
+  Setup or installed-service activity. Root independently repeated the 11 native
+  and 33 UI/API checks and inspected the rendered refusal. Two Rust warnings
+  remain: existing CatalogRoots visibility and unused build_signed_pack helper.
+  No clean-machine download, WebView2, UAC/NSIS, Authenticode or lifecycle verdict.
+  Current delivery still lacks a verified public host for
+  complete model packs larger than GitHub's 2 GiB asset limit. Do not call this
+  a working online installer. Contributor-time source repair is independently
+  accepted and committed at `0a615ae1`. Its manual artifacts and the current
+  first-install development guidance were regenerated; both manual current-source
+  checks pass. PDF pages 174-175 were visually checked, not all 497 pages or DOCX.
+  Earlier entries
+  below are historical proof anchors, not current release acceptance.
+
 - Branch: `codex/u73-caption-measurements`.
 - Current integration PR: [draft #232](https://github.com/scottconverse/civiccast-native/pull/232),
   opened at source checkpoint `4817d6eb198c82e617cf4baa6cb817bfc1355523`.
