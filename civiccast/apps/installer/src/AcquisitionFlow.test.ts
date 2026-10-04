@@ -138,6 +138,18 @@ describe("DownloadingScreen entry calls start_acquisition exactly once", () => {
       secondRoot.unmount();
     });
   });
+
+  it.each([false, true])("passes the actual download plan, with optional components selected=%s", async (optional) => {
+    const selectedIds = ["app_runtime", "server_binaries", "captions_medium", "local_ai_model"] as const;
+    const plan = optional ? [...selectedIds, "captions_large", "cuda_runtime"] as const : selectedIds;
+    await act(async () => {
+      root.render(createElement(DownloadingScreen, { selectedIds: plan, onAllComplete: () => {} }));
+      await Promise.resolve();
+    });
+    const calls = invokeMock.mock.calls.filter(([command]) => command === "start_acquisition");
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toEqual({ selectedIds: [...plan] });
+  });
 });
 
 // A rejected `start_acquisition` is the EXACT runtime shape of the Tauri ACL
@@ -230,4 +242,88 @@ describe("DownloadingScreen surfaces a failed start_acquisition", () => {
 
     expect(alertText()).toBe("");
   });
+
+  it("does not complete a refused plan using old completed progress", async () => {
+    const onAllComplete = vi.fn();
+    const selectedIds = ["app_runtime", "server_binaries", "captions_medium", "local_ai_model"] as const;
+    installTauriBridge(vi.fn(async (command: string) => {
+      if (command === "start_acquisition" || command === "startAcquisition") {
+        throw new Error("A different download plan is already active.");
+      }
+      return JSON.stringify({
+        schema_version: 1, current_lane_id: "runtime", status: "running", message: "",
+        reboot_required: false, updated_at_unix: 1,
+        acquisition: { components: selectedIds.map((id) => ({
+          id, state: "found_locally", bytes_done: 1, bytes_total: 1, elapsed_seconds: 0
+        })) }
+      });
+    }));
+    await act(async () => {
+      root.render(createElement(DownloadingScreen, { selectedIds, onAllComplete }));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(alertText()).toContain("could not start");
+    expect(alertText()).not.toContain("Nothing is being downloaded");
+    expect(alertText()).toContain("earlier plan may still be running");
+    expect(alertText()).toContain("Close and reopen");
+    expect(onAllComplete).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("civiccast.acquisitionFlowComplete")).toBeNull();
+  });
+});
+it("never completes a newly admitted plan from a read begun before admission", async () => {
+  vi.useFakeTimers();
+  window.localStorage.clear();
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const selectedIds = ["app_runtime", "server_binaries", "captions_medium", "local_ai_model"] as const;
+  let admit: (value: string) => void = () => {};
+  let progressReads = 0;
+  let admitted = false;
+  const admission = new Promise<string>(resolve => { admit = resolve });
+  const invoke = vi.fn(async (command: string) => {
+    if (command === "start_acquisition" || command === "startAcquisition") return admission;
+    progressReads++;
+    return JSON.stringify({schema_version:1, status:"running", current_lane_id:"runtime", message:"", reboot_required:false, updated_at_unix:1,
+      acquisition:{components:selectedIds.map(id => ({id, state:admitted ? "pending" : "found_locally", bytes_done:1, bytes_total:1, elapsed_seconds:0}))}});
+  });
+  (window as unknown as {__TAURI__: {invoke: typeof invoke}}).__TAURI__ = {invoke};
+  const complete = vi.fn();
+  try {
+    await act(async () => { root.render(createElement(DownloadingScreen, {selectedIds,onAllComplete:complete})); await Promise.resolve() });
+    expect(complete).not.toHaveBeenCalled();
+    await act(async () => { admitted = true; admit("Started"); await Promise.resolve() });
+    expect(complete).not.toHaveBeenCalled();
+    expect(window.localStorage.getItem("civiccast.acquisitionFlowComplete")).toBeNull();
+  } finally {
+    act(() => root.unmount());
+    container.remove();
+    delete (window as unknown as {__TAURI__?: unknown}).__TAURI__;
+    vi.useRealTimers();
+  }
+});
+
+it("never completes fresh native admission from browser fallback progress when native read fails", async () => {
+  vi.useFakeTimers();
+  const selectedIds = ["app_runtime", "server_binaries", "captions_medium", "local_ai_model"] as const;
+  window.localStorage.setItem("civiccast.installerProgress", JSON.stringify({schema_version:1,status:"running",current_lane_id:"runtime",message:"",reboot_required:false,updated_at_unix:1,
+    acquisition:{components:selectedIds.map(id => ({id,state:"complete",bytes_done:1,bytes_total:1,elapsed_seconds:0}))}}));
+  window.localStorage.removeItem("civiccast.acquisitionFlowComplete");
+  const invoke = vi.fn(async (command: string) => {
+    if(command === "start_acquisition" || command === "startAcquisition") return "Started";
+    throw new Error("Cannot read progress");
+  });
+  (window as unknown as {__TAURI__: {invoke: typeof invoke}}).__TAURI__ = {invoke};
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const complete = vi.fn();
+  try {
+    await act(async () => {root.render(createElement(DownloadingScreen,{selectedIds,onAllComplete:complete}));await Promise.resolve()});
+    expect(complete).not.toHaveBeenCalled();
+  } finally {
+    act(() => root.unmount());container.remove();
+    delete (window as unknown as {__TAURI__?: unknown}).__TAURI__;
+    window.localStorage.clear();vi.useRealTimers();
+  }
 });

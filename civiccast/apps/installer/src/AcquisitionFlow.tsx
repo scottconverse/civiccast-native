@@ -563,6 +563,7 @@ function useAcquisitionComponents(selectedIds: readonly ComponentId[]) {
   // a native command that could not run (the Tauri ACL denied it) left the
   // screen showing "Waiting" rows and nothing anywhere saying why.
   const [startError, setStartError] = useState<string>("");
+  const [startAccepted, setStartAccepted] = useState(false);
   // Which components the ENGINE has reported a size for, as opposed to the
   // ones still carrying the catalog placeholder pendingComponentProgress
   // seeded them with. F-15: summing across those two kinds of number is what
@@ -582,9 +583,14 @@ function useAcquisitionComponents(selectedIds: readonly ComponentId[]) {
     // here keeps that guarantee from ever being exercised in the normal
     // case, and matches the one-shot "the user just reached this screen"
     // semantics described in AcquisitionFlow's module doc comment.
-    void startAcquisition().then((result) => {
-      if (!cancelled && !result.ok) {
-        setStartError(result.message);
+    void startAcquisition(selectedIdsRef.current).then((result) => {
+      if (!cancelled) {
+        if (result.ok) {
+          setStartAccepted(true);
+          void tick();
+        } else {
+          setStartError(result.message);
+        }
       }
     });
 
@@ -631,7 +637,6 @@ function useAcquisitionComponents(selectedIds: readonly ComponentId[]) {
       timer = window.setTimeout(() => void tick(), pollIntervalMs(componentsRef.current));
     };
 
-    void tick();
     return () => {
       cancelled = true;
       if (timer !== undefined) {
@@ -644,7 +649,7 @@ function useAcquisitionComponents(selectedIds: readonly ComponentId[]) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  return { components, startError, measuredIds };
+  return { components, startError, startAccepted, measuredIds };
 }
 
 /** Exported for direct testing (see AcquisitionFlow.test.ts): mounting just
@@ -658,7 +663,7 @@ export function DownloadingScreen({
   selectedIds: readonly ComponentId[];
   onAllComplete: () => void;
 }) {
-  const { components, startError, measuredIds } = useAcquisitionComponents(selectedIds);
+  const { components, startError, startAccepted, measuredIds } = useAcquisitionComponents(selectedIds);
   const nowMillis = useNowMillis(true);
   const sampleHistory = useRef<Map<string, ProgressSample[]>>(new Map());
   const overallSamples = useRef<ProgressSample[]>([]);
@@ -678,7 +683,8 @@ export function DownloadingScreen({
   // downloading".
   const [logOpenError, setLogOpenError] = useState<string>("");
 
-  const allDone = components.every((component) => component.state === "complete" || component.state === "found_locally");
+  // Old persisted rows cannot certify a plan the native driver refused.
+  const allDone = startAccepted && components.length > 0 && components.every((component) => component.state === "complete" || component.state === "found_locally");
   // Offline-kit honesty (field finding, 2026-08-29): a USB-kit install downloads
   // NOTHING, but the screen still said "Downloading ... 0 KB of 9.7 GB" and told
   // the operator to keep an internet connection alive. When no row has needed the
