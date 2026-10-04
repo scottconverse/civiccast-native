@@ -4,6 +4,17 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- The asynchronous program-change watchdog gap (historical audit A-001) is
+  repaired in source: pending background preparation and a later refusal retain
+  the same failed hand-off's retry budget. A successful arm or cleared pin ends
+  that episode; outstanding preparation is never killed by this watchdog.
+  The reproduced async failure had 2 failing assertions before correction;
+  all 207 affected daemon/isolation/recovery checks pass after it. Independent
+  review passed the 9 recovery tests and 3 adversarial checks, including work
+  held beyond the grace and a new pin receiving a new full budget. This repair
+  is not part of the v20 installed selection or a packaged/runtime claim.
+  Local evidence: `u87-recorder-product/watchdog-{red,green,affected}.log`;
+  review: `reports/audit-lite-watchdog-async-2026-10-04.md` in oversight.
 - Local source checkpoint `d6965139` contains the reviewed lifecycle fixtures
   and playout typing cleanup below. The next source change fixes Paywall Save:
   ordinary saves use the existing PATCH route, omit blank write-only secrets,

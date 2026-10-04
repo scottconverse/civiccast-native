@@ -31,6 +31,11 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- A stalled program change retains its recovery retry budget while background
+  preparation runs. If that retry also fails, the existing watchdog can restart
+  the stuck worker instead of retrying indefinitely. Healthy hand-offs and
+  preparation still in progress are not interrupted by this repair.
+
 - Development operator paywall saves preserve a stored write-only signing
   secret when its form field is blank. Ordinary edits use the existing PATCH
   contract; only a missing-config response admits creation. Authentication,
