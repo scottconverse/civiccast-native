@@ -4,6 +4,15 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Take live now admits a stale enabled configured source to a fresh check,
+  instead of disabling the action before verification. Ready sources retain
+  priority; failed, unknown and disabled sources remain blocked. Both ready
+  and stale configured sources require matched source proof before an audit
+  row or command is written, including deletion and endpoint-change races.
+  Independent final verification: 60 affected checks pass (10.69s), scoped
+  Ruff passes. Built-in help and PDF/DOCX are regenerated and current checks
+  pass. Evidence: oversight `evidence/u87-stale-takeover/receipt-v2.md`.
+  This is source verification, not an installed live-takeover claim.
 - The asynchronous program-change watchdog gap (historical audit A-001) is
   repaired in source: pending background preparation and a later refusal retain
   the same failed hand-off's retry budget. A successful arm or cleared pin ends
@@ -29,8 +38,10 @@ This file is a pointer, not a log.
 - Current remote checkpoint: `7b8a0eddf53997fdd23e614ca773f47e163c333a`,
   pushed to draft PR 232. Installer compile 37198987646, docs 37198987589,
   policy 37198987576, egress and accessibility checks passed. Test 37198987580
-  remains active; its Windows native job failed (missing FFmpeg and a capacity
-  fixture failure). Lint also failed. No green-CI or release claim.
+  completed red: unit 106 failed/11331 passed/78 skipped/5 deselected;
+  randomized 105 failed/11336 passed/79 skipped. Its Windows native job
+  failed (7 failed/2126 passed/2 skipped/3 deselected: missing FFmpeg and a
+  capacity fixture failure). Lint also failed. No green-CI or release claim.
   Prior run IDs below remain historical anchors, not current-source passes.
 - Latest health repair anchor: `58c3aca174b9d15ca479dca0bbd2bd6700ac9789`.
   The explicit app lifespan now keeps one schema-refresh worker alive and

@@ -19,12 +19,14 @@ injectable for deterministic tests; ``ingest_plan_provider`` is injected so the
 service stays decoupled from the live relay-config store.
 
 WP-07 adds one more injected seam, ``readiness_verifier``, called in **take**
-after the source plan is built and *before* the audit row is written or the
-command is queued. Ordering is the whole point: an audit row is the station's
+before the audit row is written or the command is queued. Ordering is the
+whole point: an audit row is the station's
 durable record that a takeover happened, and the queued command moves air as
 soon as the daemon reads it, so neither may exist for a source that has gone
 stale, started failing, or been edited since the operator's ingest plan was
-built. See ``civiccast.live.readiness_service``.
+built. A stale configured source reaches this verifier before source-plan
+construction; only matched fresh source proof allows the ready-only adapter
+to consume a request-local verified path. See ``civiccast.live.readiness_service``.
 """
 
 from __future__ import annotations
@@ -39,9 +41,17 @@ from civiccast.egress.live_takeover import build_live_takeover_source_plan
 from civiccast.egress.models import EgressCommand, ManualRouteState, TakeoverSession
 from civiccast.egress.store import EgressStore
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
-from civiccast.live.models import RELAY_HEALTH_READY, LiveIngestPath, LiveIngestPlan
+from civiccast.live.models import (
+    RELAY_HEALTH_DEGRADED,
+    RELAY_HEALTH_READY,
+    LiveIngestPath,
+    LiveIngestPlan,
+)
 
 IngestPlanProvider = Callable[[str], LiveIngestPlan]
+_SOURCE_UNAVAILABLE = (
+    "The live source is no longer available. Reload Live, check the source, and try again."
+)
 
 
 class ReadinessVerdict(Protocol):
@@ -61,6 +71,9 @@ class ReadinessVerdict(Protocol):
 
     @property
     def secret_ref(self) -> str | None: ...
+
+    @property
+    def source_found(self) -> bool: ...
 
 
 #: Last gate before air changes. Called with the channel, the selected ingest
@@ -100,9 +113,20 @@ def _selected_path(plan: LiveIngestPlan, path_id: str) -> LiveIngestPath | None:
     return None
 
 
-def _live_source_ready(plan: LiveIngestPlan) -> bool:
+def _can_recheck(path: LiveIngestPath) -> bool:
+    # Only operator sources map stale observations to degraded. Relay health,
+    # disabled paths and failed/unknown observations keep their existing floor.
+    return (
+        path.enabled
+        and path.provider == "operator-configured"
+        and path.health_state == RELAY_HEALTH_DEGRADED
+    )
+
+
+def _live_source_ready(plan: LiveIngestPlan, *, allow_recheck: bool = False) -> bool:
     return any(
-        path.enabled and path.health_state == RELAY_HEALTH_READY
+        path.enabled
+        and (path.health_state == RELAY_HEALTH_READY or (allow_recheck and _can_recheck(path)))
         for path in (plan.local_default, *plan.relay_paths)
     )
 
@@ -125,14 +149,10 @@ class TakeoverService:
         self._ingest_plan_provider = ingest_plan_provider
         self._clock = clock
         self._id_factory = id_factory
-        # ``None`` is not fail-open. The plan's own ``health_state`` is already
-        # a fail-closed floor -- WP-07 made it derive from the source's
-        # persisted probe observation rather than from the row's existence, and
-        # build_live_takeover_source_plan still refuses anything that is not
-        # ``ready``. The verifier ADDS the freshness re-check and the
-        # plan-built-then-source-edited race check on top of that floor; a
-        # caller that omits it (an in-memory test, the deprecated no-DB path)
-        # gets the floor, never a bypass.
+        # Without a verifier the ready-only plan floor remains unchanged.
+        # With one, a stale operator source may get a fresh version-fenced
+        # check before planning. Neither eligibility nor its old observation
+        # is proof to air; only the successful fresh check is.
         self._readiness_verifier = readiness_verifier
 
     def take(
@@ -151,6 +171,40 @@ class TakeoverService:
             raise AlreadyLiveError(f"Channel {channel_id!r} is already under live takeover.")
 
         ingest_plan = self._ingest_plan_provider(channel_id)
+        selected = _selected_path(ingest_plan, path_id or ingest_plan.recommended_path_id)
+        if (
+            path_id is None
+            and self._readiness_verifier is not None
+            and not _live_source_ready(ingest_plan)
+        ):
+            # Preserve the normal ready recommendation; only when none is ready
+            # offer the first stale configured source for a fresh bounded check.
+            selected = next((p for p in ingest_plan.relay_paths if _can_recheck(p)), selected)
+        rechecked = False
+        verdict: ReadinessVerdict | None = None
+        if (
+            ingest_plan.channel_id == channel_id
+            and duration_seconds > 0
+            and selected is not None
+            and _can_recheck(selected)
+            and self._readiness_verifier is not None
+        ):
+            verdict = self._readiness_verifier(channel_id, selected.path_id, selected.endpoint_url)
+            # Relay/no-opinion is never evidence about a configured source.
+            # A concurrent fresh check may legitimately be reused here.
+            if not verdict.ok or not verdict.source_found:
+                raise TakeoverNotReadyError(verdict.reason if not verdict.ok else _SOURCE_UNAVAILABLE)
+            verified_path = selected.model_copy(update={"health_state": RELAY_HEALTH_READY})
+            ingest_plan = ingest_plan.model_copy(
+                update={
+                    "relay_paths": [
+                        verified_path if p.path_id == selected.path_id else p
+                        for p in ingest_plan.relay_paths
+                    ]
+                }
+            )
+            path_id = selected.path_id
+            rechecked = True
         try:
             plan = build_live_takeover_source_plan(
                 channel_id=channel_id,
@@ -170,13 +224,19 @@ class TakeoverService:
         # saw and this request must produce neither.
         if self._readiness_verifier is not None and segment.source_ref:
             selected = _selected_path(ingest_plan, segment.source_ref)
-            verdict = self._readiness_verifier(
-                channel_id,
-                segment.source_ref,
-                selected.endpoint_url if selected is not None else "",
-            )
-            if not verdict.ok:
-                raise TakeoverNotReadyError(verdict.reason)
+            if not rechecked:
+                verdict = self._readiness_verifier(
+                    channel_id,
+                    segment.source_ref,
+                    selected.endpoint_url if selected is not None else "",
+                )
+            assert verdict is not None
+            if not verdict.ok or (
+                selected is not None
+                and selected.provider == "operator-configured"
+                and not verdict.source_found
+            ):
+                raise TakeoverNotReadyError(verdict.reason if not verdict.ok else _SOURCE_UNAVAILABLE)
             if verdict.secret_ref:
                 # A handle, never a secret: this plan is serialized into the
                 # durable takeover audit row and into the engine's graph file.
@@ -248,7 +308,10 @@ class TakeoverService:
         if active is None:
             # Only probe live readiness when not already live (cheap + relevant).
             try:
-                ready = _live_source_ready(self._ingest_plan_provider(channel_id))
+                ready = _live_source_ready(
+                    self._ingest_plan_provider(channel_id),
+                    allow_recheck=self._readiness_verifier is not None,
+                )
             except Exception:  # readiness is best-effort; never fail the state read
                 ready = False
         return ManualRouteState(

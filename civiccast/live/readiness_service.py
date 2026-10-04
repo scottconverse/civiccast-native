@@ -75,6 +75,8 @@ class TakeoverReadiness:
     #: The source's credential HANDLE (never its secret), so the engine can
     #: open an authenticated SRT feed. ``None`` for every other shape.
     secret_ref: str | None = None
+    #: False for relay/no-opinion verdicts; True only for matched source proof.
+    source_found: bool = False
 
 
 class LiveSourceReadinessService:
@@ -196,6 +198,7 @@ class LiveSourceReadinessService:
                 ok=True,
                 reason=f"{source.name} was confirmed delivering media within the last {ttl}s.",
                 secret_ref=_secret_ref_for(source),
+                source_found=True,
             )
 
         # never_probed / stale / failed all get one bounded fresh look before
@@ -268,6 +271,7 @@ class LiveSourceReadinessService:
             reason=f"{refreshed.name} was re-checked just now and is delivering media.",
             reprobed=True,
             secret_ref=_secret_ref_for(refreshed),
+            source_found=True,
         )
 
     # -- internals ----------------------------------------------------------

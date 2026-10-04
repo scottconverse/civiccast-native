@@ -1448,7 +1448,7 @@ A *takeover* puts a live source on a channel right now, ahead of whatever is sch
 
 1. On the **Live** screen, click your source's card and click **Check source** until it says **Delivering**.
 2. Go to **Channels** and click the channel. Find the box **Live takeover**. It says "This channel is on its scheduled program." Return to Live and reopen the correct **Existing meeting** when you need its controls.
-3. Click **Take live**. If it is grey, the line beside it says "No live source is ready yet." Go back to step 1. By default the button goes grey again 30 seconds after your last good **Check source**. The Channels screen asks for this state every 15 seconds, so after a fresh **Check source** the button can take up to about 15 seconds to turn on.
+3. Click **Take live**. If it is grey, the line beside it says "No live source is ready yet." Go back to step 1. In published beta.10 the button goes grey again 30 seconds after your last good **Check source**. The development source allows an expired successful check to be checked again when you confirm; this does not mean the source is ready. A fresh successful check is still required before takeover. The Channels screen asks for this state every 15 seconds, so the button can take up to about 15 seconds to update.
 4. A small form appears with the question "Why are you going live? (optional)". Type a reason if you like.
 5. Click **Confirm take live**, or **Cancel**. The button reads "Going live…" while CivicCast works.
 
@@ -1458,7 +1458,11 @@ You should see a red badge reading "Live takeover" with the name of the person a
 
 *Figure: the Live takeover box with a synthetic five-minute session and example operator and source. No live takeover or return to schedule was performed.*
 
-> **Warning:** **Confirm take live** overrides the schedule and changes what is on the air. There is no pop-up. The second click is the confirmation. If the source's last good check is older than the window (30 seconds by default) when you confirm, the code we read refuses the takeover before it re-checks anything. The error can then read something like "Live ingest path '<channel>:local' is disabled.", which names CivicCast's built-in placeholder path and not your camera. Click **Check source** again and retry. If the channel is already under takeover, the error says "Channel '<id>' is already under live takeover."
+> **Warning:** **Confirm take live** overrides the schedule and changes what is on the air. There is no pop-up. The second click is the confirmation. Published beta.10 can refuse an expired check before checking again; use **Check source** and retry. The development source performs a bounded fresh check instead, or reuses a still-fresh successful observation of that same source. A failed check or a source removed or changed during the check refuses the request without recording or queuing a takeover. If the source is no longer available, reload Live and check it again. If the channel is already under takeover, the error says "Channel '<id>' is already under live takeover." These development corrections have not yet been proven on an actual station takeover.
+
+The development source still prefers the first ready source. If none is ready,
+it checks the first configured source whose earlier successful check expired.
+It does not select the camera card you picked on Live. Watch the actual output.
 
 To hand the channel back:
 
@@ -1749,7 +1753,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 
 8. If you want a lower-third banner, set it first (see step 11). Then, if the channel is stopped, click **Start**, confirm **Start feed**, and watch for **On air** or **Showing slate**.
 9. On **Live**, create or reopen the correct meeting. Click **Start pre-flight** if it is Idle, tick the confirmation box, click **Run pre-flight**, and click **Start Live Stream** only when the channel really is broadcasting. After reopening, confirmation and the checklist must be checked again.
-10. To go to the camera, run **Check source** (it expires after 30 seconds by default), then **Take live**, **Confirm take live**. The red badge shows only who took over, not the source, so read the **Source:** line in the **Outgoing channel feed** box (it can take up to 30 seconds to update) and watch the channel's own output.
+10. To go to the camera, run **Check source**, then **Take live**, **Confirm take live**. Checks expire after 30 seconds by default; the development source re-checks an expired successful observation before takeover. The red badge shows only who took over, not the source, so read the **Source:** line in the **Outgoing channel feed** box (it can take up to 30 seconds to update) and watch the channel's own output.
 11. A lower-third banner is meant to take effect at the channel's next start (we have not watched one appear). On a channel that is already running it appears only when the channel next restarts or swaps content.
 
 **During the meeting**
@@ -1777,7 +1781,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 | "Go on air blocked: a fresh source-bound server-side pre-flight did not pass." | A required checklist row failed when you clicked. Fix it, run **Run pre-flight**, try again. |
 | A duplicate live-session ID error | Recheck **Existing meeting** and reopen the correct session. New meetings use unique IDs; do not reset station data. |
 | "Start was queued but the feed did not start." | The feed program did not respond in 20 seconds. Check Readiness, then click **Start** again. |
-| "No live source is ready yet." (Take live is grey) | No source passed **Check source** in the last 30 seconds (by default). Run **Check source** on Live. |
+| "No live source is ready yet." (Take live is grey) | Run **Check source** on Live. Published beta.10 needs a successful check in the last 30 seconds by default; the development source also allows an expired successful check to be checked again at confirmation. |
 | "Channel '<id>' is already under live takeover." | The channel is already live. Use **Return to schedule** first if you want to change it. |
 | "Outgoing feed controls require the meeting operator role." | Your sign-in cannot start or stop channels. |
 | A program says **Not safe to air yet** | Read the reason: missing media, or a clash with another program. Fix it on **Schedule** and review again. |

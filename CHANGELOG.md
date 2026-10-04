@@ -31,6 +31,11 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Take live can freshly verify an expired successful source check instead of
+  refusing it before checking. A deleted configured source is no longer treated
+  as a relay with no source-specific verdict; failed checks never record or
+  queue a takeover. Ready sources still take selection priority.
+
 - A stalled program change retains its recovery retry budget while background
   preparation runs. If that retry also fails, the existing watchdog can restart
   the stuck worker instead of retrying indefinitely. Healthy hand-offs and
