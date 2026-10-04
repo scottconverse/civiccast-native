@@ -3296,19 +3296,20 @@ class GstPlayoutEngine:
     # own media timeline: exact within a piece, and "the leg's running time" is
     # the sum of the completed pieces plus the position in the active one.
 
-    _u59_legs: ClassVar[tuple[dict[str, Any], ...]] = ()
-    _u59_qos: ClassVar[tuple[dict[str, Any], ...]] = ()
-    _u59_rate_streak: ClassVar[int] = 0
-    _u59_rate_in_episode: ClassVar[bool] = False
-    _u59_fired_t: ClassVar[float | None] = None
-    _u59_rate_interval_t: ClassVar[float] = 0.0
-    _u59_lag_samples: ClassVar[tuple[tuple[float, float], ...]] = ()
-    _u59_lag_total: ClassVar[float] = 0.0
-    _u59_lag_txn: ClassVar[Any] = None
-    _u59_lag_streak: ClassVar[int] = 0
-    _u59_lag_in_episode: ClassVar[bool] = False
-    _u59_lag_fired_t: ClassVar[float | None] = None
-    _u59_lag_interval_t: ClassVar[float] = 0.0
+    # Immutable defaults, replaced on each worker instance (not shared state).
+    _u59_legs: tuple[dict[str, Any], ...] = ()
+    _u59_qos: tuple[dict[str, Any], ...] = ()
+    _u59_rate_streak: int = 0
+    _u59_rate_in_episode: bool = False
+    _u59_fired_t: float | None = None
+    _u59_rate_interval_t: float = 0.0
+    _u59_lag_samples: tuple[tuple[float, float], ...] = ()
+    _u59_lag_total: float = 0.0
+    _u59_lag_txn: Any = None
+    _u59_lag_streak: int = 0
+    _u59_lag_in_episode: bool = False
+    _u59_lag_fired_t: float | None = None
+    _u59_lag_interval_t: float = 0.0
 
     def _u59_init_diagnostics(self) -> None:
         """This worker's own diagnostic state.
@@ -3557,7 +3558,7 @@ class GstPlayoutEngine:
         last = piece.get("last_pts")
         if first is None or last is None:
             return None
-        return (int(last) - int(first)) / Gst.SECOND
+        return (int(last) - int(first)) / int(Gst.SECOND)
 
     @staticmethod
     def _u59_caps_text(element: Any) -> str:

@@ -4,6 +4,12 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Current remote checkpoint: `7b8a0eddf53997fdd23e614ca773f47e163c333a`,
+  pushed to draft PR 232. Installer compile 37198987646, docs 37198987589,
+  policy 37198987576, egress and accessibility checks passed. Test 37198987580
+  remains active; its Windows native job failed (missing FFmpeg and a capacity
+  fixture failure). Lint also failed. No green-CI or release claim.
+  Prior run IDs below remain historical anchors, not current-source passes.
 - Latest health repair anchor: `58c3aca174b9d15ca479dca0bbd2bd6700ac9789`.
   The explicit app lifespan now keeps one schema-refresh worker alive and
   refreshes before the unchanged five-second expiry. Blocked actual reads
@@ -11,6 +17,24 @@ This file is a pointer, not a log.
   publication. Request-only inverse tests fail the intended assertions;
   69 affected checks and an independent 35 owner/lifecycle checks pass.
   Live sustained acceptance is still pending.
+- Selected v20 runtime window: October 4, 05:40:28-07:40:28 MDT, unchanged
+  two-hour ceiling. First regular sample was 05:42:37 MDT after local reader
+  invocation/identity-query errors; the initial gap is not sampled acceptance.
+  Candidate PID 3860, birth 05:34:04.556294 MDT, supervisor PID 24736.
+  Actual health (34 anchors) and caption code identity checks passed before
+  sampling. All three channels were advancing at initial readiness. This is
+  only the frozen 16-file selection, not the full branch or a packaged release.
+- Reviewed local fixture reconciliation preserves the recording target,
+  unwritable-directory and worker shutdown assertions, but observes actual
+  lifespan activation rather than constructor-only state (18 independent passes).
+  Three HLS fixtures now emit their simulated new-child output after intentional
+  startup cleanup; 21 affected checks and 3 independent focused checks pass.
+  These are test corrections, not newly fixed recording or playout behavior.
+- Playout typing cleanup preserves instance-owned diagnostic defaults and makes
+  the GStreamer nanosecond unit explicitly integral. Scoped mypy and Ruff pass;
+  independent source-extracted checks cover instance isolation and span values.
+  The adjacent two-file run has the same 13 failures, 119 passes and 2 skips on
+  both HEAD and this cleanup; no broad playout-suite pass is claimed.
 - Earlier repair anchor: `8b7034e29154b73274aebedf88a42ca7d8b5e328`.
   Optional schema diagnostics no longer block readiness on synchronous disk
   logging. A stalled-handler reproduction failed before correction; 64 affected
