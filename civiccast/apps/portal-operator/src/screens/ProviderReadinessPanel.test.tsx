@@ -67,10 +67,10 @@ function renderPanel(items: ProviderReadinessItem[], canManageProviders = true) 
 
 describe('ProviderReadinessPanel manual cross-links', () => {
   it('links a provider card with manual_section to its /help#<anchor>', async () => {
-    renderPanel([item({ manual_section: 'provider-internet-archive' })])
+    renderPanel([item({ manual_section: 'publishing-providers' })])
 
     const link = await screen.findByRole('link', { name: /read more in the manual/i })
-    expect(link.getAttribute('href')).toBe('/help#provider-internet-archive')
+    expect(link.getAttribute('href')).toBe('/help#publishing-providers')
   })
 
   it('omits the manual link for a card with no manual_section', async () => {
@@ -85,7 +85,7 @@ describe('ProviderReadinessPanel manual cross-links', () => {
       item({
         id: 'cloudflare-r2',
         label: 'Cloudflare R2',
-        manual_section: 'provider-cloudflare-r2',
+        manual_section: 'cdn-and-provider-options',
         setup_steps: [
           'Use the CDN concierge box on this card: create a free Cloudflare account.',
           'Create one API token scoped to R2 Edit, then paste it in and click Provision for me.',

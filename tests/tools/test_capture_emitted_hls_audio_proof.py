@@ -2,10 +2,11 @@
 # Copyright (c) The CivicCast Authors
 """Contracts for the bounded continuous emitted-HLS audio verifier.
 
-FIXTURE-ONLY tests. They build a synthetic sliding-window HLS directory and
-drive the tool's collector/measurement seams with injected readers and
-injected ffmpeg results, so nothing here touches the live station, the
-network, or a real GStreamer/ffmpeg process.
+Most tests build a synthetic sliding-window HLS directory and drive the
+collector/measurement seams with injected readers and ffmpeg results. The
+Windows-only positive control runs real packaged media analyzers on generated
+synthetic media; it requires FFmpeg, FFprobe and TSDuck. No test touches the
+live station or network. Missing PCR remains NOT_PROVEN, not a relaxed PASS.
 
 Why this exists (scope of the claim)
 ------------------------------------
@@ -38,11 +39,7 @@ import pytest
 
 _clock = iter(0.0 + 0.5 * i for i in range(100000))
 
-_SCRIPT = (
-    Path(__file__).resolve().parents[2]
-    / "scripts"
-    / "capture_emitted_hls_audio_proof.py"
-)
+_SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "capture_emitted_hls_audio_proof.py"
 
 
 def _load() -> object:
@@ -212,9 +209,7 @@ def test_collector_fails_closed_on_missing_referenced_segment(tmp_path: Path) ->
     _write_playlist(channel, media_sequence=500, count=3)
     (channel / "seg000000501.ts").unlink()
 
-    result = mod.capture_channel(
-        "public", root, min_duration_seconds=0.0, required_segments=3
-    )
+    result = mod.capture_channel("public", root, min_duration_seconds=0.0, required_segments=3)
 
     assert result["status"] == mod.Verdict.FAIL
     assert any("missing" in reason.lower() for reason in result["blocking_reasons"])
@@ -235,12 +230,13 @@ def test_collector_fails_closed_on_sequence_gap(tmp_path: Path) -> None:
         text.replace("seg000000602.ts", "seg000000699.ts"), encoding="utf-8"
     )
 
-    result = mod.capture_channel(
-        "public", root, min_duration_seconds=0.0, required_segments=3
-    )
+    result = mod.capture_channel("public", root, min_duration_seconds=0.0, required_segments=3)
 
     assert result["status"] == mod.Verdict.FAIL
-    assert any("gap" in reason.lower() or "contigu" in reason.lower() for reason in result["blocking_reasons"])
+    assert any(
+        "gap" in reason.lower() or "contigu" in reason.lower()
+        for reason in result["blocking_reasons"]
+    )
 
 
 def test_collector_fails_closed_when_sample_is_too_short(tmp_path: Path) -> None:
@@ -249,9 +245,7 @@ def test_collector_fails_closed_when_sample_is_too_short(tmp_path: Path) -> None
     channel = root / "public"
     _write_playlist(channel, media_sequence=700, count=2)
 
-    result = mod.capture_channel(
-        "public", root, min_duration_seconds=180.0, required_segments=999
-    )
+    result = mod.capture_channel("public", root, min_duration_seconds=180.0, required_segments=999)
 
     # Too short is a measurement-validity issue, not a loudness failure: it must
     # never PASS, and it is UNVERIFIED rather than FAIL (unless required_segments
@@ -492,9 +486,7 @@ def _writer(tmp_path: Path, channel: str = "public"):
             lines.append(f"#EXT-X-MEDIA-SEQUENCE:{visible[0]}")
             for s in visible:
                 lines += ["#EXTINF:2.000000,", f"seg{s:09d}.ts"]
-            (channel_dir / "playlist.m3u8").write_text(
-                "\n".join(lines) + "\n", encoding="utf-8"
-            )
+            (channel_dir / "playlist.m3u8").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     advance(window)
     return root, channel_dir, advance
@@ -573,9 +565,7 @@ def test_accumulation_fails_closed_on_skipped_sequence(tmp_path: Path) -> None:
 
     def write_window(seqs: list[int]) -> None:
         for s in seqs:
-            (channel / f"seg{s:09d}.ts").write_bytes(
-                bytes([0x47]) * 188 + s.to_bytes(4, "little")
-            )
+            (channel / f"seg{s:09d}.ts").write_bytes(bytes([0x47]) * 188 + s.to_bytes(4, "little"))
         lines = ["#EXTM3U", "#EXT-X-VERSION:6", "#EXT-X-TARGETDURATION:2"]
         lines.append(f"#EXT-X-MEDIA-SEQUENCE:{seqs[0]}")
         for s in seqs:
@@ -610,6 +600,7 @@ def test_accumulation_fails_closed_on_skipped_sequence(tmp_path: Path) -> None:
         "skip" in reason.lower() or "gap" in reason.lower()
         for reason in snapshot["blocking_reasons"]
     )
+
 
 def test_accumulation_fails_closed_on_timeout(tmp_path: Path) -> None:
     """A writer that never advances must time out, not loop forever."""
@@ -706,7 +697,12 @@ def test_continuity_passes_on_forward_two_second_cadence() -> None:
 
     result = mod.evaluate_pts_pcr_continuity(
         [
-            {"name": f"seg{i:09d}.ts", "video_start_pts": pts[i], "pcr_first": pcr[i], "duration": 2.0}
+            {
+                "name": f"seg{i:09d}.ts",
+                "video_start_pts": pts[i],
+                "pcr_first": pcr[i],
+                "duration": 2.0,
+            }
             for i in range(4)
         ]
     )
@@ -719,8 +715,18 @@ def test_continuity_fails_closed_on_pts_discontinuity() -> None:
 
     result = mod.evaluate_pts_pcr_continuity(
         [
-            {"name": "seg0", "video_start_pts": 90_000, "pcr_first": 5_000_000_000, "duration": 2.0},
-            {"name": "seg1", "video_start_pts": 900_000, "pcr_first": 5_000_180_000, "duration": 2.0},
+            {
+                "name": "seg0",
+                "video_start_pts": 90_000,
+                "pcr_first": 5_000_000_000,
+                "duration": 2.0,
+            },
+            {
+                "name": "seg1",
+                "video_start_pts": 900_000,
+                "pcr_first": 5_000_180_000,
+                "duration": 2.0,
+            },
         ]
     )
 
@@ -733,8 +739,18 @@ def test_continuity_fails_closed_on_pcr_stall() -> None:
 
     result = mod.evaluate_pts_pcr_continuity(
         [
-            {"name": "seg0", "video_start_pts": 90_000, "pcr_first": 5_000_000_000, "duration": 2.0},
-            {"name": "seg1", "video_start_pts": 270_000, "pcr_first": 5_000_000_000, "duration": 2.0},
+            {
+                "name": "seg0",
+                "video_start_pts": 90_000,
+                "pcr_first": 5_000_000_000,
+                "duration": 2.0,
+            },
+            {
+                "name": "seg1",
+                "video_start_pts": 270_000,
+                "pcr_first": 5_000_000_000,
+                "duration": 2.0,
+            },
         ]
     )
 
@@ -767,6 +783,7 @@ def test_continuity_negative_control_forward_is_not_flagged() -> None:
 
     assert result["status"] == mod.Verdict.PASS
     assert result["problems"] == []
+
 
 # --- continuity gates the loudness verdict ---------------------------------
 
@@ -861,6 +878,7 @@ def test_verify_channel_measures_only_after_continuity_passes(
     assert result["continuity"]["status"] == mod.Verdict.PASS
     assert result["audio_window"]["status"] == mod.Verdict.PASS
     assert result["audio_window"]["integrated_lufs"] == pytest.approx(-15.9)
+
 
 # --- scratch containment & safe delete (coordinator HOLD findings) ----------
 
@@ -1160,6 +1178,7 @@ def test_zero_and_huge_max_wait_are_bounded(tmp_path: Path) -> None:
         )
         assert result["verdict"] != mod.Verdict.PASS
 
+
 # --- missing ffprobe / missing continuity must not PASS --------------------
 
 
@@ -1248,10 +1267,18 @@ def test_pcr_cadence_is_not_asserted_and_units_are_not_assumed() -> None:
     # A large (real-muxer-like) PCR step must NOT be a failure on its own.
     result = mod.evaluate_pts_pcr_continuity(
         [
-            {"name": "seg0", "video_start_pts": 90_000, "pcr_first": 5_000_000_000,
-             "duration": 2.0},
-            {"name": "seg1", "video_start_pts": 270_000, "pcr_first": 5_026_550_000,
-             "duration": 2.0},
+            {
+                "name": "seg0",
+                "video_start_pts": 90_000,
+                "pcr_first": 5_000_000_000,
+                "duration": 2.0,
+            },
+            {
+                "name": "seg1",
+                "video_start_pts": 270_000,
+                "pcr_first": 5_026_550_000,
+                "duration": 2.0,
+            },
         ]
     )
 
@@ -1265,10 +1292,18 @@ def test_continuity_passes_when_pcr_advances_by_one_segment() -> None:
 
     result = mod.evaluate_pts_pcr_continuity(
         [
-            {"name": "seg0", "video_start_pts": 90_000, "pcr_first": 5_000_000_000,
-             "duration": 2.0},
-            {"name": "seg1", "video_start_pts": 270_000, "pcr_first": 5_000_180_000,
-             "duration": 2.0},
+            {
+                "name": "seg0",
+                "video_start_pts": 90_000,
+                "pcr_first": 5_000_000_000,
+                "duration": 2.0,
+            },
+            {
+                "name": "seg1",
+                "video_start_pts": 270_000,
+                "pcr_first": 5_000_180_000,
+                "duration": 2.0,
+            },
         ]
     )
 
@@ -1328,6 +1363,7 @@ def test_release_min_duration_floor_is_at_least_180_seconds() -> None:
 
     assert mod.RELEASE_MIN_DURATION_SECONDS >= 180.0
 
+
 # --- Luna audit: wraparound, discontinuity, tsp wiring, poll bound ---------
 
 
@@ -1340,10 +1376,8 @@ def test_pts_33bit_rollover_is_not_a_discontinuity() -> None:
     last_pts = (1 << 33) - 180_000
     result = mod.evaluate_pts_pcr_continuity(
         [
-            {"name": "seg0", "video_start_pts": last_pts, "pcr_first": 1_000_000,
-             "duration": 2.0},
-            {"name": "seg1", "video_start_pts": 0, "pcr_first": 1_180_000,
-             "duration": 2.0},
+            {"name": "seg0", "video_start_pts": last_pts, "pcr_first": 1_000_000, "duration": 2.0},
+            {"name": "seg1", "video_start_pts": 0, "pcr_first": 1_180_000, "duration": 2.0},
         ]
     )
 
@@ -1357,10 +1391,8 @@ def test_pcr_42bit_rollover_is_not_a_discontinuity() -> None:
     last_pcr = (1 << 42) - 90_000
     result = mod.evaluate_pts_pcr_continuity(
         [
-            {"name": "seg0", "video_start_pts": 90_000, "pcr_first": last_pcr,
-             "duration": 2.0},
-            {"name": "seg1", "video_start_pts": 270_000, "pcr_first": 90_000,
-             "duration": 2.0},
+            {"name": "seg0", "video_start_pts": 90_000, "pcr_first": last_pcr, "duration": 2.0},
+            {"name": "seg1", "video_start_pts": 270_000, "pcr_first": 90_000, "duration": 2.0},
         ]
     )
 
@@ -1471,6 +1503,7 @@ def test_time_bounds_are_documented_as_wall_clock_not_media_duration() -> None:
     assert mod.RELEASE_MIN_DURATION_SECONDS >= 180.0
     assert mod.DEFAULT_MAX_WAIT_SECONDS != mod.RELEASE_MIN_DURATION_SECONDS
 
+
 # --- release-grade channel set, hard bounds, junction refusal --------------
 
 
@@ -1507,7 +1540,9 @@ def test_subset_of_required_channels_is_not_release_pass(tmp_path: Path) -> None
         min_duration_seconds=180.0,
         duration_seconds=180.0,
         run=lambda *a, **k: {
-            "ok": True, "returncode": 0, "stdout": "",
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
             "stderr": "I:         -16.0 LUFS\nLRA:         2.0 LU\nPeak:       -1.3 dBFS\n",
         },
         ffprobe=None,
@@ -1620,18 +1655,15 @@ def test_scratchdir_remove_uses_its_own_owned_dir(tmp_path: Path) -> None:
     assert cleanup.remove() is True
     assert not cleanup.owned_dir.exists()
 
-# --- real-ffmpeg end-to-end (skipped when ffmpeg is unavailable) -----------
+
+# --- native toolchain end-to-end (Windows required, tools fail closed) ---
 
 
-_REAL_FFMPEG = Path(
-    r"C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin\ffmpeg.exe"
-)
+_REAL_FFMPEG = Path(r"C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin\ffmpeg.exe")
 _REAL_TSP = Path(
     r"C:\Program Files\CivicCast (Native)\packs\native-server-binaries\payload\tsduck\bin\tsp.exe"
 )
-_REAL_FFPROBE = Path(
-    r"C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin\ffprobe.exe"
-)
+_REAL_FFPROBE = Path(r"C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin\ffprobe.exe")
 if not _REAL_FFMPEG.is_file():  # pragma: no cover - host dependent
     _found_ffmpeg = shutil.which("ffmpeg")
     if _found_ffmpeg:
@@ -1640,11 +1672,13 @@ if not _REAL_FFPROBE.is_file():  # pragma: no cover - host dependent
     _found_probe = shutil.which("ffprobe")
     if _found_probe:
         _REAL_FFPROBE = Path(_found_probe)
+if not _REAL_TSP.is_file():  # pragma: no cover - host dependent
+    _found_tsp = shutil.which("tsp")
+    if _found_tsp:
+        _REAL_TSP = Path(_found_tsp)
 
 
-@pytest.mark.skipif(
-    not _REAL_FFMPEG.is_file(), reason="real ffmpeg not available on this host"
-)
+@pytest.mark.skipif(sys.platform != "win32", reason="requires the native Windows media toolchain")
 def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> None:
     """A really-normalized continuous window must measure in-band and PASS.
 
@@ -1657,6 +1691,10 @@ def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> Non
 
     import subprocess
 
+    from civiccast.stream._ffmpeg import resolve_h264_encoder
+
+    for tool in (_REAL_FFMPEG, _REAL_FFPROBE, _REAL_TSP):
+        assert tool.is_file(), f"required native media analyzer is absent: {tool}"
     mod = _load()
     root = tmp_path / "live-hls"
     channel = root / "public"
@@ -1680,7 +1718,7 @@ def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> Non
             "-af",
             "loudnorm=I=-16:TP=-1.5:LRA=11",
             "-c:v",
-            "libopenh264",
+            resolve_h264_encoder(ffmpeg_path=str(_REAL_FFMPEG)),
             "-pix_fmt",
             "yuv420p",
             "-g",
@@ -1714,13 +1752,14 @@ def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> Non
         min_duration_seconds=6.0,
         release_grade=False,
         ffmpeg=_REAL_FFMPEG,
-        ffprobe=_REAL_FFPROBE if _REAL_FFPROBE.is_file() else None,
-        tsp=_REAL_TSP if _REAL_TSP.is_file() else None,
+        ffprobe=_REAL_FFPROBE,
+        tsp=_REAL_TSP,
     )
 
     assert result["continuity"]["status"] == mod.Verdict.PASS, result["continuity"]
     assert result["audio_window"]["status"] == mod.Verdict.PASS, result["audio_window"]
     assert abs(result["audio_window"]["integrated_lufs"] - (-16.0)) <= 1.0
+
 
 # --- bounded scratch cleanup ----------------------------------------------
 

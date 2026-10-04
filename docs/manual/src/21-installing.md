@@ -12,6 +12,14 @@ This chapter walks the person who installs CivicCast through the install exactly
 
 > **Note:** beta.10 is a pre-release. The clean-install lane of the project's acceptance test passed using the full kit. The upgrade lane and the download-only lane were not run, and no human field tester has signed off. A first install with neither the full kit nor an earlier install is not proven.
 
+## Development first-install entry - not a published download
+
+The development build adds an unelevated `CivicCast First Install.exe` with a matching `first-install.json` beside it. Double-clicking that entry verifies the current release's signed channel before offering downloads. The JSON supplies the channel address and exact release version; it is not itself trusted authority. Missing or mismatched release files stop the process instead of selecting older downloads.
+
+Only the selected plan is acquired: the mandatory program, services, standard captions and local AI packs, plus Large and CUDA only when selected. Sizes come from the verified release index. The entry prepares the existing `setup.exe`, `packs` and `station` layout, rechecks its signed packs and Setup bytes, then asks Windows to open the same NSIS installer with administrator rights. Keep the first-install window open while Windows Setup runs. Cancellation or failure does not certify an installation; retry uses the same selected plan.
+
+This requires a reachable current signed channel and an HTTPS host that can serve the complete pack files. GitHub release assets cannot serve a single file larger than 2 GiB. No public delivery host or clean-machine first-install journey has been verified for this development entry. The raw GUI also needs Microsoft WebView2 before it can display the download screens; that prerequisite has not been proven on a clean computer. The published beta.10 full-kit requirement remains unchanged.
+
 ## What beta.10 requires and what it does not yet support
 
 Setup has two phases. The **Windows setup** (`setup.exe`) runs with administrator rights and does all the real work: it copies the program, checks every component, creates the database, runs the station's self-test and registers the Windows service. Then the **first-run window** ("CivicCast (Native) Setup") opens as a normal user and may offer extra downloads. The first phase downloads no CivicCast components: the installer passes no download address to its steps, and the Gate A run had networking switched off.
@@ -165,7 +173,9 @@ After setup, the window titled **CivicCast (Native) Setup** appears (we could no
 
 **What CivicCast Needs.** "These are the large pieces CivicCast runs on. Anything already on this computer or on your USB kit is used as-is and is not downloaded again; only what is missing comes from the internet." It lists seven rows with sizes: CivicCast application runtime (482 MB), Database & messaging services (94 MB), Video and audio tools (137 MB, "Not included": it was installed by setup), Caption engine — Medium (1.5 GB), Caption engine — Large (optional, 3.1 GB), GPU caption acceleration (optional, 1.3 GB) and Local AI model (summaries & translation) (7.6 GB). The footer shows the total (9.7 GB by default, about 14.1 GB with both optional rows) and **Continue**. These sizes are placeholders; the real total is corrected once.
 
-> **Known issue (beta.10):** "Untick it to skip the download" is not true. The next screen's download engine always runs all six downloadable items in a fixed order (application runtime, database services, Medium, Large, GPU acceleration, local AI model); the checkboxes only change what the screen shows. Items already on the computer count as satisfied ("Found locally — verified"). The code's own comment says the Large caption engine and the GPU library are "not guaranteed to be staged by the offline USB kit". On a computer with poor internet those rows can take hours (the transfer timeout is six hours). With no internet they fail quickly with "The connection dropped". The window stays on this screen until every row finishes. Also the "Local AI model" row lists one model, but the station needs three (all three arrive with the kit).
+The corrected first-run download window passes your selection to the download engine. Untick **Large** or **GPU caption acceleration** to skip that optional download. The application runtime, database services, Medium caption engine and local AI model remain required. Items already on the computer still count as satisfied only after verification ("Found locally — verified"). Resume and retry use the same selected plan; to change the plan after downloading starts, close and reopen the installer. A refused plan cannot finish using progress saved by an earlier plan.
+
+> **Delivery boundary:** This selection correction is verified in development source, not in a newly shipped installer or a clean-machine install. Earlier beta.10 installers can still download optional items that you untick. The correction does not change Windows setup's kit requirement. The "Local AI model" row still lists one model, while the station needs three (all three arrive with the kit).
 
 **Downloading** (or **Setting Up** if everything is found locally). "Keep CivicCast Installer open. If a download is interrupted, use Resume download." Each row shows a state:
 
@@ -215,15 +225,15 @@ Open the **CivicCast Operator Console** shortcut (or **Open operator console**) 
 5. The **Recovery kit ready** panel appears. Select **Print kit** or **Save kit**. **Save kit** downloads `civiccast-recovery-kit-<kit id>.txt`, which contains the eight one-time recovery codes **and the administrator password in plain text**.
 6. Tick "I have saved or printed this kit..." (it unlocks after you use **Print kit** or **Save kit**), then select **Continue to the console**. Navigation stays locked until the kit is confirmed, and the browser warns you if you leave first.
 
-![The First setup page on a station that has not been set up. The form asks for the station name, an admin display name and username, a password of 12 characters or more, and where you will keep the recovery kit.](manual/images/operator-setup-firstadmin.png){width=80%}
+![Example of the actual First setup form with synthetic station details. Password fields are blank and Create first admin is disabled; no account or recovery kit was created.](manual/images/operator-setup-firstadmin.png){width=80%}
 
-*Figure 10.2. The first-admin form (a new station).*
+*Figure 10.2. First-admin form example, before submitting any setup details.*
 
 You should see "Setup complete" or "Signed in", the **First-run defaults** card, and the setup tools: **Camera or test media**, **Backup destination**, **Storage and viewing estimate** and **Provider setup**. Later sign-ins use **Admin sign-in** on the same page and land on the Readiness screen.
 
-![The First setup page on a station that is already set up. It offers Admin sign-in and Use recovery code.](manual/images/operator-setup-signin.png){width=80%}
+![Example of the actual First setup page with synthetic configured-station details. Admin sign-in and Use recovery code have blank fields; no sign-in or recovery action was performed.](manual/images/operator-setup-signin.png){width=80%}
 
-*Figure 10.3. The same page on a configured station, signed out.*
+*Figure 10.3. Configured-station example showing the sign-in and recovery forms.*
 
 A lost password is recovered with **Use recovery code**: the first click arms it ("This permanently consumes one recovery code — only 8 exist for this station. Click Recover account again to confirm.").
 
@@ -336,7 +346,7 @@ Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
 
 ![The Readiness screen, headed Safe to broadcast.](manual/images/operator-health-ready.png){width=90%}
 
-*Figure 10.4. The Readiness screen, where you confirm the install before a meeting.*
+*Figure 10.4. The current-source Readiness screen with synthetic example responses. This image is not install verification or evidence that the live station is healthy; perform the actual checks above.*
 
 Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). The project's clean-install test checked, in this order: install, activation, health, console and portal render, a clerk workflow, offline captions (21 caption cues on a test clip), the playout engine (5,445 transport-stream packets analysed with no errors) and a five-minute soak. The playout-engine check passed only on a harness that waits longer: on a fresh install the engine's first packets came more than 60 seconds after its first start, and the first capture attempt saw none (the second saw the 5,445). Restart the computer once and confirm that the service comes back by itself. The beta.10 verification record does not cover a restart.
 
@@ -366,6 +376,8 @@ Why not uninstall first: the upgrade engine decides what to do from two markers 
 | Earlier failed upgrade's record found | Exit 128. Database untouched; program files already replaced; service stopped |
 
 > **Known issue (beta.10):** The dialogs for exit 128 and 129 say setup "did nothing" or stopped "before changing anything". That is not what the code does. Setup stops the service and replaces the program files first, and only then runs the upgrade engine, which is where 128 and 129 are decided. The database is not touched, but the service is left stopped and the program files on disk are those of the setup you ran. After an exit 129 they are the **older** version, so do not start the service until you have run the newer setup.
+
+Development setups add a downgrade preflight before stopping a registered service or replacing application files. They run the new setup's embedded bootstrap from a temporary folder, without depending on the old Python runtime. A known newer registered install is refused with exit 129, leaving its files and service unchanged; a failed preflight refuses with exit 120. Fresh installs with no registered service are not refused merely because old version metadata remains. This does not change the published beta.10 behavior above, and is not a full application-and-database rollback guarantee.
 
 After a failed upgrade the program files are the **new** version and the station is off air. There is no button that goes back to the old version. The recovery is to fix the cause named in the log and run setup again.
 

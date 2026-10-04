@@ -196,19 +196,27 @@ def test_single_item_rollover_prepares_next_boundary_with_bounded_lead() -> None
     120s: it now covers BOTH bounded preparation passes of a normalized
     segment plus the reload settle budget and margin -- 2*300 + 30 + 60 = 690s
     at the shipped 300s timeout, against a 3600s plan that is longer than the
-    lead. So the trigger is ``end - 690``: nothing one second before it, the
-    reload at it. (U02's numbers here were 391/390 for its single-timeout
-    390s lead.)"""
+    lead. So the trigger is ``end - 690``: no dispatch one second before it,
+    the reload at it. U53 probes the incoming asset once before the trigger
+    and resolves it again for dispatch. (U02's numbers here were 391/390
+    for its single-timeout 390s lead.)"""
 
     service, store, sampled = _single_item_rollover_service(3600.0)
     end = _NOW + timedelta(seconds=3600)
     service.run_once(now=_NOW)
+    assert sampled == []
     service.run_once(now=end - timedelta(seconds=691))
     assert _pending_actions(store, "public") == []
-    assert sampled == []
+    assert sampled == [end]  # U53 early lookup, not a reload.
+    service.run_once(now=end - timedelta(seconds=691))
+    assert sampled == [end]  # Cached once for this exact boundary.
+    assert _pending_actions(store, "public") == []
     service.run_once(now=end - timedelta(seconds=690))
-    assert sampled == [end]
+    assert sampled == [end, end]  # Dispatch resolves the same boundary afresh.
     assert _pending_actions(store, "public") == ["reload"]
+    service.run_once(now=end - timedelta(seconds=689))
+    assert sampled == [end, end]
+    assert _pending_actions(store, "public") == []
 
 
 def test_a_plan_shorter_than_the_lead_arms_at_its_own_start() -> None:
@@ -389,11 +397,14 @@ class TestGstRolloverLeadCoversPreparationTimeout:
 
         service.run_once(now=_NOW)
         service.run_once(now=end - timedelta(seconds=691))
-        assert boundaries == []
+        assert boundaries == [end]  # U53 adaptive-lead lookup only.
+        assert _pending_actions(store, "public") == []
+        service.run_once(now=end - timedelta(seconds=691))
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=end - timedelta(seconds=690))
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
     def test_the_env_override_restores_a_shorter_lead(
@@ -408,11 +419,14 @@ class TestGstRolloverLeadCoversPreparationTimeout:
 
         service.run_once(now=_NOW)
         service.run_once(now=end - timedelta(seconds=91))
-        assert boundaries == []
+        assert boundaries == [end]
+        assert _pending_actions(store, "public") == []
+        service.run_once(now=end - timedelta(seconds=91))
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=end - timedelta(seconds=90))
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
     @pytest.mark.parametrize("bad", ["abc", "-5", "0"])
@@ -427,12 +441,15 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
             service.run_once(now=_NOW)
             service.run_once(now=end - timedelta(seconds=691))
-            assert boundaries == []
+            assert boundaries == [end]
+            assert _pending_actions(store, "public") == []
+            service.run_once(now=end - timedelta(seconds=691))
+            assert boundaries == [end]
             assert _pending_actions(store, "public") == []
 
             service.run_once(now=end - timedelta(seconds=690))
 
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
         assert any(self._LEAD_ENV in record.getMessage() for record in caplog.records)
 
@@ -457,15 +474,15 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         service.run_once(now=_NOW)  # establish: last segment begins at +1700
         # Past the lead (_NOW+1110) but before the last segment begins.
         service.run_once(now=end - timedelta(seconds=690))
-        assert boundaries == []
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
         # Past the OLD flat lead too (_NOW+1680); still before +1700.
         service.run_once(now=end - timedelta(seconds=120))
-        assert boundaries == []
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=last_segment_start)
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
 
@@ -2564,7 +2581,7 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
             def __init__(self) -> None:
                 super().__init__(live_channels={"public"})
                 self.dispatched["public"] = ("ev-1", (100.0,), False)
-                self.recorded: list[tuple[datetime, str | None]] = []
+                self.recorded: list[tuple[datetime, str | None, float | None]] = []
 
             def record_rollover_plan_end(
                 self,
@@ -2573,8 +2590,9 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
-                self.recorded.append((plan_end_at, command_id))
+                self.recorded.append((plan_end_at, command_id, min_plan_seconds))
 
         daemon = _RecordingDaemon()
         service = ChannelAutomationService(
@@ -2597,7 +2615,9 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
 
         pending = store.peek_pending_commands("public")
         assert [command.action for command in pending] == ["reload"]
-        assert daemon.recorded == [(_NOW + timedelta(seconds=100), pending[0].command_id)]
+        assert daemon.recorded == [
+            (_NOW + timedelta(seconds=100), pending[0].command_id, service._rollover_lead_seconds())
+        ]
         assert service._plan_horizon["public"][1] == _NOW + timedelta(seconds=100)
 
         # The issued latch prevents a second command while the first is waiting
@@ -2626,7 +2646,7 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 super().__init__(live_channels={"education"})
                 self.dispatched["education"] = ("ev-1", (30.0,), False)
                 self.control_ready = False
-                self.recorded: list[tuple[datetime, str | None]] = []
+                self.recorded: list[tuple[datetime, str | None, float | None]] = []
 
             def worker_initial_control_connection_observed(self, _channel_id: str) -> bool:
                 return self.control_ready
@@ -2638,8 +2658,9 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
-                self.recorded.append((plan_end_at, command_id))
+                self.recorded.append((plan_end_at, command_id, min_plan_seconds))
 
         daemon = _ConnectingDaemon()
         provider_boundaries: list[datetime] = []
@@ -2673,7 +2694,9 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
         pending = store.peek_pending_commands("education")
         assert [command.action for command in pending] == ["reload"]
         assert provider_boundaries == [ready_at]
-        assert daemon.recorded == [(_NOW + timedelta(seconds=30), pending[0].command_id)]
+        assert daemon.recorded == [
+            (_NOW + timedelta(seconds=30), pending[0].command_id, service._rollover_lead_seconds())
+        ]
         assert "education" in service._rollover_issued
 
         service.run_once(now=ready_at + timedelta(seconds=2))

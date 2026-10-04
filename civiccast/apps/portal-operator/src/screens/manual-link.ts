@@ -6,8 +6,8 @@
 // provider card across the console can share the exact same "/help#<id>"
 // shape ManualScreen.tsx itself uses to scroll to a section.
 
-/** Build a link into the in-product manual, e.g. `manualLink('glossary')`
- * -> `/help#glossary`. The id must match a heading anchor in
+/** Build a link into the in-product manual, e.g. `manualLink('app-glossary')`
+ * -> `/help#app-glossary`. The id must match a heading anchor in
  * docs/USER-MANUAL.md (civiccast/docsite/manual.json's table of contents). */
 export function manualLink(sectionId: string): string {
   return `/help#${sectionId}`

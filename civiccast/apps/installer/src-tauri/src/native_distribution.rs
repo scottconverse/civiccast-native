@@ -431,8 +431,29 @@ pub fn acquire_online_distribution(
     expected_product_version: &str,
     expected_compatible_core: &str,
 ) -> Result<AcquiredDistribution, String> {
-    validate_https_location(index_url, "channel index")?;
     let client = build_http_client()?;
+    let index = read_online_distribution_index_with_client(&client, index_url, cache_root, trust,
+        expected_channel, expected_product_version, expected_compatible_core)?;
+    acquire_verified_distribution(index, cache_root, trust, |pack| {
+        download_pack_with(pack, &cache_root.join("packs"), |location, offset| {
+            send_pack_request(&client, location, offset)
+        })
+    })
+}
+
+pub(crate) fn read_online_distribution_index(
+    index_url: &str, cache_root: &Path, trust: &PackTrust,
+    expected_channel: &str, expected_product_version: &str, expected_compatible_core: &str,
+) -> Result<VerifiedDistribution, String> {
+    read_online_distribution_index_with_client(&build_http_client()?, index_url, cache_root, trust,
+        expected_channel, expected_product_version, expected_compatible_core)
+}
+
+fn read_online_distribution_index_with_client(
+    client: &Client, index_url: &str, cache_root: &Path, trust: &PackTrust,
+    expected_channel: &str, expected_product_version: &str, expected_compatible_core: &str,
+) -> Result<VerifiedDistribution, String> {
+    validate_https_location(index_url, "channel index")?;
     let response = client
         .get(index_url)
         .header(ACCEPT_ENCODING, "identity")
@@ -460,11 +481,7 @@ pub fn acquire_online_distribution(
         Some(expected_compatible_core),
     )?;
     retain_verified_index(cache_root, &index, &index_bytes, "ccindex")?;
-    acquire_verified_distribution(index, cache_root, trust, |pack| {
-        download_pack_with(pack, &cache_root.join("packs"), |location, offset| {
-            send_pack_request(&client, location, offset)
-        })
-    })
+    Ok(index)
 }
 
 pub fn acquire_station_distribution(
@@ -1150,7 +1167,7 @@ fn write_canonical_json(value: &Value, output: &mut String) -> Result<(), String
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::{
         download_pack_with, verify_distribution_bytes, DistributionPack, TransferResponse,
         VerifiedDistribution,
@@ -1538,7 +1555,7 @@ mod tests {
     /// packs declare the stable `station-models-1` identity and only `core`
     /// carries the product version. See
     /// [`super::pack_identity_expectations`].
-    fn build_signed_pack_with_identity(
+    pub(crate) fn build_signed_pack_with_identity(
         pack_path: &std::path::Path,
         signing_key: &SigningKey,
         component: &str,

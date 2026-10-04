@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { MemoryRouter } from 'react-router'
 
 // Full-screen tests (role gating, the readiness poll, and the 409-conflict
 // reload) need the real API surface mocked -- LiveRoomScreen itself imports
@@ -30,6 +31,7 @@ vi.mock('../api/client', () => ({
   goLiveOnAir: vi.fn(),
   listChannelProfiles: vi.fn(),
   listLiveSources: vi.fn(),
+  listLiveSessions: vi.fn(),
   listRecordingTargets: vi.fn(),
   probeLiveSource: vi.fn(),
   retryLiveFinalization: vi.fn(),
@@ -46,6 +48,13 @@ import {
   getStaffIdentity,
   listChannelProfiles,
   listLiveSources,
+  listLiveSessions,
+  createLiveSession,
+  getLiveSession,
+  getLiveFinalizationStatus,
+  startLivePreflight,
+  endLiveBroadcast,
+  goLiveOnAir,
   listRecordingTargets,
   updateLiveSource,
 } from '../api/client'
@@ -67,7 +76,7 @@ import type {
   SystemHealthReport,
 } from '../types/api.generated'
 
-afterEach(cleanup)
+afterEach(() => { cleanup(); vi.unstubAllGlobals() })
 
 /**
  * A source in whatever readiness state the test needs.
@@ -506,12 +515,13 @@ function renderLiveRoomScreen() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={qc}>
-      <LiveRoomScreen />
+      <MemoryRouter><LiveRoomScreen /></MemoryRouter>
     </QueryClientProvider>,
   )
 }
 
 function stubCommonQueries() {
+  vi.mocked(listLiveSessions).mockResolvedValue([])
   vi.mocked(listChannelProfiles).mockResolvedValue([] as unknown as ChannelProfile[])
   vi.mocked(getSourceSetup).mockResolvedValue({} as unknown as SourceSetupReport)
   vi.mocked(listRecordingTargets).mockResolvedValue([])
@@ -521,8 +531,214 @@ function stubCommonQueries() {
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  vi.clearAllMocks()
   vi.useRealTimers()
   stubCommonQueries()
+})
+
+describe('LiveRoomScreen persisted meeting recovery', () => {
+  const meeting = (id: string, state: 'on_air' | 'recorded' | 'idle' | 'ending' | 'preflight' = 'on_air') => ({
+    live_session_id: id, channel_id: 'government', title: 'Council live room',
+    state, started_at: null, ended_at: null, notes: null, created_at: '2026-10-03T00:00:00Z',
+  })
+
+  beforeEach(() => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+    vi.mocked(listLiveSources).mockResolvedValue([source()])
+    vi.mocked(getLiveFinalizationStatus).mockResolvedValue({ terminal: true, state: 'completed' } as never)
+    window.localStorage.clear()
+  })
+
+  it('reopens a persisted on-air meeting after remount without any broadcast action', async () => {
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('meeting-one')])
+    vi.mocked(getLiveSession).mockResolvedValue(meeting('meeting-one'))
+    const view = renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'meeting-one' } })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(false))
+    view.unmount()
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'meeting-one' } })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(false))
+    expect(endLiveBroadcast).not.toHaveBeenCalled()
+    expect(goLiveOnAir).not.toHaveBeenCalled()
+    expect(createLiveSession).not.toHaveBeenCalled()
+  })
+
+  it('creates a distinct new meeting after the previous one is recorded', async () => {
+    vi.mocked(createLiveSession).mockImplementation(async (payload) => meeting(payload.live_session_id, 'recorded'))
+    vi.mocked(getLiveSession).mockImplementation(async (id) => meeting(id, 'recorded'))
+    renderLiveRoomScreen()
+    const button = await screen.findByRole('button', { name: 'Create live session' })
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(button)
+    await waitFor(() => expect(createLiveSession).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(button)
+    await waitFor(() => expect(createLiveSession).toHaveBeenCalledTimes(2))
+    const ids = vi.mocked(createLiveSession).mock.calls.map(([payload]) => payload.live_session_id)
+    expect(ids[0]).not.toBe('council-live-room')
+    expect(ids[1]).not.toBe(ids[0])
+  })
+
+  it('creates unique meeting IDs when randomUUID is unavailable on a LAN HTTP origin', async () => {
+    const getRandomValues = globalThis.crypto.getRandomValues.bind(globalThis.crypto)
+    vi.stubGlobal('crypto', { getRandomValues })
+    vi.mocked(createLiveSession).mockImplementation(async (payload) => meeting(payload.live_session_id, 'recorded'))
+    vi.mocked(getLiveSession).mockImplementation(async (id) => meeting(id, 'recorded'))
+    renderLiveRoomScreen()
+    const create = await screen.findByRole('button', { name: 'Create live session' })
+    await waitFor(() => expect((create as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(create)
+    await waitFor(() => expect(createLiveSession).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect((create as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(create)
+    await waitFor(() => expect(createLiveSession).toHaveBeenCalledTimes(2))
+    const ids = vi.mocked(createLiveSession).mock.calls.map(([payload]) => payload.live_session_id)
+    expect(ids[0]).toMatch(/^meeting-[0-9a-f-]{36}$/)
+    expect(ids[1]).not.toBe(ids[0])
+  })
+
+  it('does not silently select one of multiple meetings or allow a replacement', async () => {
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('one'), meeting('two')])
+    renderLiveRoomScreen()
+    const picker = await screen.findByLabelText('Existing meeting') as HTMLSelectElement
+    expect(picker.value).toBe('')
+    expect(picker.options.length).toBe(3)
+    expect((screen.getByRole('button', { name: 'Create live session' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(getLiveSession).not.toHaveBeenCalled()
+  })
+
+  it('blocks creation on discovery failure and exposes a retry', async () => {
+    vi.mocked(listLiveSessions).mockRejectedValueOnce(new Error('offline')).mockResolvedValue([])
+    renderLiveRoomScreen()
+    fireEvent.click(await screen.findByRole('button', { name: 'Retry meeting list' }))
+    await screen.findByText('No unfinished meetings on this channel. Completed recordings are in Assets.')
+    expect(createLiveSession).not.toHaveBeenCalled()
+  })
+
+  it('discards an old-channel recovery response after channel switch', async () => {
+    let resolve!: (value: ReturnType<typeof meeting>) => void
+    vi.mocked(getLiveSession).mockImplementation(() => new Promise((done) => { resolve = done }))
+    vi.mocked(listLiveSessions).mockImplementation(async (channel) => channel === 'government' ? [meeting('old')] : [])
+    vi.mocked(listChannelProfiles).mockResolvedValue([{ channel_id: 'government' }, { channel_id: 'education' }] as ChannelProfile[])
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'old' } })
+    await waitFor(() => expect(getLiveSession).toHaveBeenCalledWith('old'))
+    fireEvent.change(screen.getByLabelText('Broadcast channel'), { target: { value: 'education' } })
+    await act(async () => resolve(meeting('old')))
+    await screen.findByLabelText('Existing meeting')
+    expect(screen.queryByText('Selected meeting: old')).toBeNull()
+    expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('discards old-channel creation responses', async () => {
+    let resolveCreate!: (value: ReturnType<typeof meeting>) => void
+    vi.mocked(createLiveSession).mockImplementation(() => new Promise((done) => { resolveCreate = done }))
+    vi.mocked(listChannelProfiles).mockResolvedValue([{ channel_id: 'government' }, { channel_id: 'education' }] as ChannelProfile[])
+    renderLiveRoomScreen()
+    const create = await screen.findByRole('button', { name: 'Create live session' })
+    await waitFor(() => expect((create as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(create)
+    await waitFor(() => expect(createLiveSession).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByLabelText('Broadcast channel'), { target: { value: 'education' } })
+    await act(async () => resolveCreate(meeting('old-created', 'idle')))
+    expect(screen.queryByText('Selected meeting: old-created')).toBeNull()
+  })
+
+  it('keeps read-only recovery visible but never enables meeting mutations', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('read-only')])
+    vi.mocked(getLiveSession).mockResolvedValue(meeting('read-only'))
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'read-only' } })
+    await screen.findByText('Selected meeting: read-only')
+    expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('discarding old-channel transition does not repopulate controls', async () => {
+    let resolve!: (value: ReturnType<typeof meeting>) => void
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('idle-one', 'idle')])
+    vi.mocked(getLiveSession).mockResolvedValue(meeting('idle-one', 'idle'))
+    vi.mocked(startLivePreflight).mockImplementation(() => new Promise((done) => { resolve = done }))
+    vi.mocked(listChannelProfiles).mockResolvedValue([{ channel_id: 'government' }, { channel_id: 'education' }] as ChannelProfile[])
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'idle-one' } })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Start pre-flight' }) as HTMLButtonElement).disabled).toBe(false))
+    fireEvent.click(screen.getByRole('button', { name: 'Start pre-flight' }))
+    await waitFor(() => expect(startLivePreflight).toHaveBeenCalledTimes(1))
+    fireEvent.change(screen.getByLabelText('Broadcast channel'), { target: { value: 'education' } })
+    await act(async () => resolve({ ...meeting('idle-one', 'idle'), state: 'preflight' } as never))
+    expect(screen.queryByText('Selected meeting: idle-one')).toBeNull()
+  })
+
+  it('can recover on-air controls even when no source remains configured', async () => {
+    vi.mocked(getSourceSetup).mockRejectedValue(new Error('setup unavailable'))
+    vi.mocked(listLiveSources).mockResolvedValue([])
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('lost-source')])
+    vi.mocked(getLiveSession).mockResolvedValue(meeting('lost-source'))
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'lost-source' } })
+    await waitFor(() => expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(false))
+  })
+
+  it('keeps recovered preflight unconfirmed and requires a fresh checklist', async () => {
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('preflight-one', 'preflight')])
+    vi.mocked(getLiveSession).mockResolvedValue(meeting('preflight-one', 'preflight'))
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'preflight-one' } })
+    await screen.findByText('Selected meeting: preflight-one')
+    expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('button', { name: 'Start Live Stream' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(goLiveOnAir).not.toHaveBeenCalled()
+  })
+
+  it('shows recovery failure and does not enable stale meeting controls', async () => {
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('missing')])
+    vi.mocked(getLiveSession).mockRejectedValue(new Error('missing'))
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'missing' } })
+    await screen.findByRole('button', { name: 'Retry meeting recovery' })
+    expect((screen.getByRole('button', { name: 'End Live Stream' }) as HTMLButtonElement).disabled).toBe(true)
+    expect((screen.getByRole('button', { name: 'Create live session' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('retains ending finalization failures and does not treat them as completed', async () => {
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('finalizing', 'ending')])
+    vi.mocked(getLiveSession).mockResolvedValue(meeting('finalizing', 'ending'))
+    vi.mocked(getLiveFinalizationStatus).mockResolvedValue({ terminal: true, state: 'failed', failure_reason: 'Recording file missing' } as never)
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'finalizing' } })
+    await screen.findByRole('button', { name: 'Retry finalization' })
+    expect(screen.getByText('Recording file missing')).not.toBeNull()
+    expect((screen.getByRole('button', { name: 'Create live session' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('disables finalization retry for read-only staff', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['records_clerk']))
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('finalizing', 'ending')])
+    vi.mocked(getLiveSession).mockResolvedValue(meeting('finalizing', 'ending'))
+    vi.mocked(getLiveFinalizationStatus).mockResolvedValue({ terminal: true, state: 'failed', failure_reason: 'Recording file missing' } as never)
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'finalizing' } })
+    const retry = await screen.findByRole('button', { name: 'Retry finalization' }) as HTMLButtonElement
+    expect(retry.disabled).toBe(true)
+  })
+
+  it('disables finalization retry when the authoritative session read fails after recovery', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    vi.mocked(listLiveSessions).mockResolvedValue([meeting('finalizing', 'ending')])
+    vi.mocked(getLiveSession).mockResolvedValueOnce(meeting('finalizing', 'ending'))
+      .mockResolvedValueOnce(meeting('finalizing', 'ending')).mockRejectedValue(new Error('session unavailable'))
+    vi.mocked(getLiveFinalizationStatus).mockResolvedValue({ terminal: true, state: 'failed', failure_reason: 'Recording file missing' } as never)
+    renderLiveRoomScreen()
+    fireEvent.change(await screen.findByLabelText('Existing meeting'), { target: { value: 'finalizing' } })
+    const retry = await screen.findByRole('button', { name: 'Retry finalization' }) as HTMLButtonElement
+    await waitFor(() => expect(retry.disabled).toBe(false))
+    await act(async () => { vi.advanceTimersByTime(3100) })
+    await screen.findByRole('button', { name: 'Retry meeting recovery' })
+    expect(retry.disabled).toBe(true)
+  })
 })
 
 describe('LiveRoomScreen probe-button role gate (finding: Probe button rendered for everyone)', () => {

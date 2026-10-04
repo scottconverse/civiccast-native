@@ -1,5 +1,47 @@
 # Manual (nav id: help)
 
+## Implementation update - 2026-10-03 (source, not installed acceptance)
+
+ManualScreen now gives body section links router-aware addresses, including
+HashRouter, while preserving modified clicks and copy/open-in-new-tab behavior.
+Ordinary body-link clicks navigate inside the console and scroll to the target.
+Repeated clicks on the same section scroll again after moving away. Back to the
+unanchored manual clears the contents list's current-section marker.
+HTTP(S) body links open a new tab with noopener/noreferrer; mail links retain their
+existing behavior. This addresses HELP-02 and the external-link part of HELP-08.
+Contents now group the level-1 parts and their level-2 chapters. Deeper sections
+are shown for one expanded chapter at a time; a chapter or deep-section link
+opens the chapter being read. Separate Show/Hide sections buttons work by keyboard
+without replacing chapter links or their native new-tab behavior. Older contents
+without level-1 parts retain their links. "Filter sections by title" searches all
+heading titles, including collapsed sections; it does not search manual body text.
+Clear the filter to return to the grouped view. This addresses HELP-05's misleading
+search label and HELP-07's flat-list navigation, not full-text search.
+The findings below describe the documentation handoff baseline. All 54 unique
+source screenshot references now resolve, and the bundled JSON has been regenerated
+and passes the current-source check. PDF/DOCX candidates have been rendered but
+are not accepted; packaged and installed browser verification remains open.
+This update does not mark the full manual done.
+Missing, unreadable and damaged manual artifacts now produce HTTP 503 with a
+plain-English message asking staff to have IT repair the installation (HELP-12).
+This is source/API verification, not packaged installation acceptance.
+
+Inventoried setup, storage, provider, caption and feedback callers now use the
+current source headings in the historical anchor map below. Public feedback keeps
+`/operator/#/help#report-a-beta-issue`; operator links keep `/help#<id>`. CDN copy
+links to provider setup without a pricing claim. Canonical chapters and assembled
+Markdown now name "Report a beta issue" consistently. The regenerated bundled JSON
+passes 54 affected tests and its source/artifact hash check; PDF/DOCX candidates
+remain unaccepted. This is not packaged or installed navigation acceptance. No inbound
+bookmark alias was added; old external bookmarks remain a compatibility limitation.
+
+On narrow screens, chapter expansion is committed before scrolling a deep link.
+The manual's layout and list items can shrink to the viewport; wide code blocks
+keep their own horizontal scrolling, and tables have named, keyboard-focusable
+scrolling regions. Isolated browser checks use the current 635-heading source,
+including desktop, Back, public feedback and 375px mobile navigation. They do not
+prove an installed manual, packaged browser behavior or PDF/DOCX acceptance.
+
 Sidebar: Help > **Manual** (the section is collapsed by default). Page eyebrow "Help"; page H1 "Operator manual". Routes `#/help`, `#/docs`, `#/manual`. Manual authority: `docs/manual/src/11-signing-in.md` (find your way around; the Report a beta issue button) and `17-something-wrong.md` (section "Report a beta issue", `#report-a-beta-issue`).
 
 ## Where the help text lives now

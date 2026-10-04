@@ -97,9 +97,7 @@ def _preparer(
 def _probe(monkeypatch: pytest.MonkeyPatch, seconds: float | None) -> None:
     """The warm job probes the asset on the warm worker, never on the tick."""
 
-    monkeypatch.setattr(
-        preparer_module, "probe_media_duration_seconds", lambda *_a, **_k: seconds
-    )
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda *_a, **_k: seconds)
 
 
 def _cache_paths(preparer: SourcePreparer, source: Path, config: EgressConfig):
@@ -144,7 +142,9 @@ def test_warm_plan_queues_the_work_and_does_not_conform_on_the_calling_thread(
     assert calls == []  # nothing ran yet: the tick was not made to pay for it
 
 
-def test_warm_plan_queues_one_job_per_segment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_warm_plan_queues_one_job_per_segment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _probe(monkeypatch, _ASSET_SECONDS)
     jobs: list = []
     preparer = _preparer(tmp_path, jobs=jobs)
@@ -250,9 +250,7 @@ def test_warm_plan_skips_a_source_that_is_not_a_file(tmp_path: Path) -> None:
     jobs: list = []
     preparer = _preparer(tmp_path, jobs=jobs)
 
-    preparer.warm_plan(
-        _config(), _plan_for(_segment(tmp_path / "not-there-yet.mp4"))
-    )
+    preparer.warm_plan(_config(), _plan_for(_segment(tmp_path / "not-there-yet.mp4")))
 
     assert jobs == []
 

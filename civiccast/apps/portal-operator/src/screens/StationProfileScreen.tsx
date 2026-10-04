@@ -378,7 +378,7 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
         yourself may not work. You do not need file access to find a recording: use{' '}
         <strong>Assets</strong> instead. If you do need the files, use Copy path above, then paste
         into File Explorer&apos;s address bar; ask an administrator if it says access is denied.{' '}
-        <Link to={manualLink('where-recordings-live')} style={{ color: 'var(--cc-brand)' }}>
+        <Link to={manualLink('configuration-storage')} style={{ color: 'var(--cc-brand)' }}>
           Read more in the manual
         </Link>
         . An env-var override (CIVICCAST_STATION_TZ, CIVICCAST_STATION_NAME,
@@ -421,7 +421,7 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
           {/* Deliberately NOT another "Read more in the manual": this screen
               already has one, and two links with identical text are ambiguous
               to anyone navigating by link list rather than by eye. */}
-          <Link to={manualLink('live-captions-switch')} style={{ color: 'var(--cc-brand)' }}>
+          <Link to={manualLink('live-captions-what-the-settings-change')} style={{ color: 'var(--cc-brand)' }}>
             More about live captions in the manual
           </Link>
           .

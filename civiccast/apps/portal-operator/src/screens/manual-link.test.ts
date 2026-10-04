@@ -6,11 +6,11 @@ import { manualLink } from './manual-link'
 
 describe('manualLink', () => {
   it('builds a /help#<id> href', () => {
-    expect(manualLink('provider-cloudflare-r2')).toBe('/help#provider-cloudflare-r2')
+    expect(manualLink('cdn-and-provider-options')).toBe('/help#cdn-and-provider-options')
   })
 
   it('builds a distinct href per section id', () => {
-    expect(manualLink('glossary')).toBe('/help#glossary')
-    expect(manualLink('where-recordings-live')).toBe('/help#where-recordings-live')
+    expect(manualLink('app-glossary')).toBe('/help#app-glossary')
+    expect(manualLink('configuration-storage')).toBe('/help#configuration-storage')
   })
 })

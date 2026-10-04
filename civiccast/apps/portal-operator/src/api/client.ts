@@ -291,6 +291,11 @@ function runtimeApiBase(): string {
   return (window.__CIVICCAST_API_BASE__ ?? '').replace(/\/$/, '')
 }
 
+export function manualImageUrl(path: string): string {
+  return /^\/api\/public\/manual\/assets\/[0-9a-f]{64}\.(png|jpg|jpeg|gif|svg|webp)$/.test(path)
+    ? `${runtimeApiBase()}${path}` : path
+}
+
 /**
  * sessionStorage flag set when the shared 401 handler discards a stored
  * staff token that the server no longer accepts (see queryClient.ts).
@@ -1381,6 +1386,12 @@ export function getLiveSession(liveSessionId: string): Promise<LiveSessionRespon
   )
 }
 
+export function listLiveSessions(channelId: string): Promise<LiveSessionResponse[]> {
+  return request<LiveSessionResponse[]>(
+    `/api/staff/live/sessions?channel_id=${encodeURIComponent(channelId)}`,
+  )
+}
+
 export function startLivePreflight(
   liveSessionId: string,
 ): Promise<LiveSessionResponse> {
@@ -2196,8 +2207,10 @@ export function rejectCaptionReviewItem(
   )
 }
 
-export function listSummaryReviewItems(): Promise<SummaryReviewQueueResponse> {
-  return request<SummaryReviewQueueResponse>('/api/staff/summaries/review-items')
+export function listSummaryReviewItems(includeApproved = false): Promise<SummaryReviewQueueResponse & { approval_required_summary_ids?: string[] }> {
+  return request<SummaryReviewQueueResponse & { approval_required_summary_ids?: string[] }>(
+    `/api/staff/summaries/review-items${includeApproved ? '?include_approved=true' : ''}`,
+  )
 }
 
 export function approveSummary(
@@ -2217,6 +2230,14 @@ export function exportSignedRecord(
     method: 'POST',
     body: payload,
   })
+}
+
+export function downloadSignedRecord(recordId: string): Promise<Blob> {
+  return downloadStaffBlob(`/api/staff/records/${encodeURIComponent(recordId)}/download`)
+}
+
+export function verifySignedRecord(recordId: string): Promise<RecordExportResponse> {
+  return request<RecordExportResponse>(`/api/staff/records/${encodeURIComponent(recordId)}/verify`)
 }
 
 export function getActivityPubStatus(): Promise<ActivityPubStatusResponse> {
@@ -3620,21 +3641,20 @@ export interface AccessGrantInput {
 
 const PAYWALL = '/api/staff/paywall'
 
-/** GET /api/staff/paywall/config — returns the station's config or 404. The
- * screen treats the 404 as "no config yet; render an empty default". */
+/** GET /api/staff/paywall/config — returns a redacted config or safe disabled
+ * no-row default. A legacy 404 is also handled by the screen. */
 export function getPaywallConfig(): Promise<PaywallConfig> {
   return request<PaywallConfig>(`${PAYWALL}/config`)
 }
 
-/** PUT /api/staff/paywall/config — upsert. The screen sends the full config
- * (toggle + provider + tiers + signing_secret) on every save. */
+/** PUT /api/staff/paywall/config — create/replace. Ordinary screen saves use
+ * PATCH; PUT is used only after PATCH confirms a missing row (404). */
 export function upsertPaywallConfig(payload: PaywallConfigInput): Promise<PaywallConfig> {
   return request<PaywallConfig>(`${PAYWALL}/config`, { method: 'PUT', body: payload })
 }
 
 /** PATCH /api/staff/paywall/config/{config_id} — partial update; absent
- * keys unchanged. The screen uses PUT for ordinary saves and reserves PATCH
- * for future targeted edits (signing-secret rotation alone, for example). */
+ * keys unchanged. Ordinary saves omit a blank write-only signing secret. */
 export function updatePaywallConfig(
   configId: string,
   payload: PaywallConfigUpdate,

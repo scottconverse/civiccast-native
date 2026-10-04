@@ -39,6 +39,11 @@ and in this regime the walk never ran at all. The gate is now
 and the walk's own ``dispatch_at >= now + lead`` test is what keeps a racing
 boundary out, in this regime exactly as in the recovery one.
 
+U63 defect B supersedes the exclusion above when dispatch collapses onto the
+previous boundary: warm that next plan immediately, even without a full lead.
+The per-key conform lock deduplicates warm and foreground preparation. Ordinary
+cadence still uses the full-lead rule. These tests retain both contracts.
+
 This test drives ``ChannelAutomationService`` directly, mirroring
 ``tests/egress/test_automation_rollover_retry_log_cadence.py``'s harness. No
 station is touched and the engine's changeover code is not exercised.
@@ -221,14 +226,11 @@ def _armed_service(
     return store, service
 
 
-def test_short_leg_lookahead_warms_the_first_boundary_a_full_lead_away() -> None:
-    """290s items, a 690s lead: the first savable boundary is the 5th item.
+def test_short_leg_lookahead_warms_the_collapsed_dispatch_immediately() -> None:
+    """U63: 290s items collapse dispatch onto the previous boundary.
 
-    Boundary ``fresh_end = _NOW+580`` dispatches at ``_NOW+290`` (the item-2
-    start, the clamp), ``_NOW+870`` at ``_NOW+580``; both are nearer than one
-    lead from the tick, so warming them would race the reload's own cold
-    conform. ``_NOW+1160`` dispatches at ``_NOW+870``, which IS a full lead
-    out -- that is the first plan worth warming, and only that one.
+    Warm item 3 now rather than skip it for item 5; there is no earlier
+    dispatch opportunity. Only the one next plan is warmed.
     """
 
     clock = {"t": 0.0}
@@ -242,10 +244,8 @@ def test_short_leg_lookahead_warms_the_first_boundary_a_full_lead_away() -> None
     assert len(daemon.warmed) == 1, daemon.warmed
     channel_id, warmed_plan = daemon.warmed[0]
     assert channel_id == "public"
-    assert [seg.source_ref for seg in warmed_plan.segments] == ["item-5"]
-    # The dispatch's own boundary first, then each boundary the walk stepped
-    # over, ending on the one it warmed.
-    assert schedule.calls == [_at(290), _at(580), _at(870), _at(1160)]
+    assert [seg.source_ref for seg in warmed_plan.segments] == ["item-3"]
+    assert schedule.calls == [_at(290), _at(580)]
 
 
 def test_lookahead_warms_the_next_boundary_in_ordinary_cadence() -> None:
@@ -355,12 +355,8 @@ def test_the_ordinary_cadence_warm_gets_more_runway_than_the_asset_costs() -> No
     assert runway >= _CONFORM_SECONDS_LIVE_LARGEST_MEASURED
 
 
-def test_lookahead_gives_up_when_no_boundary_is_a_full_lead_away() -> None:
-    """30s items: every boundary inside the walk's reach is unsavable.
-
-    Nothing is warmed rather than something useless -- the bounded walk returns
-    empty and the dispatch is unaffected.
-    """
+def test_short_item_lookahead_warms_only_the_next_collapsed_boundary() -> None:
+    """U63 applies even to 30s items, without warming the whole schedule."""
 
     clock = {"t": 0.0}
     schedule = _Schedule("public", count=100, seconds=30.0)
@@ -370,15 +366,16 @@ def test_lookahead_gives_up_when_no_boundary_is_a_full_lead_away() -> None:
     service.run_once(now=_at(2))
 
     assert _pending_actions(store, "public") == ["reload"]
-    assert daemon.warmed == []
-    # The dispatch's boundary, then the walk's bounded search.
-    assert schedule.calls[0] == _at(30)
-    assert len(schedule.calls) <= 1 + 8
+    assert len(daemon.warmed) == 1
+    channel_id, plan = daemon.warmed[0]
+    assert channel_id == "public"
+    assert [seg.source_ref for seg in plan.segments] == ["item-3"]
+    assert schedule.calls == [_at(30), _at(60)]
 
 
 def test_lookahead_stops_when_the_schedule_resolves_no_further_item() -> None:
     clock = {"t": 0.0}
-    schedule = _Schedule("public", count=3, seconds=290.0)
+    schedule = _Schedule("public", count=2, seconds=290.0)
     daemon = _WarmFakeDaemon(live_channels={"public"})
     store, service = _armed_service(daemon=daemon, schedule=schedule, clock=clock)
 
@@ -386,7 +383,7 @@ def test_lookahead_stops_when_the_schedule_resolves_no_further_item() -> None:
 
     assert _pending_actions(store, "public") == ["reload"]
     assert daemon.warmed == []
-    assert schedule.calls == [_at(290), _at(580), _at(870)]
+    assert schedule.calls == [_at(290), _at(580)]
 
 
 def test_lookahead_survives_a_provider_that_raises_mid_walk() -> None:
@@ -400,7 +397,7 @@ def test_lookahead_survives_a_provider_that_raises_mid_walk() -> None:
     schedule = _Schedule("public", count=3, seconds=290.0)
 
     def raising(channel_id: str, at: datetime) -> EgressSourcePlan | None:
-        if at >= _at(870):
+        if at >= _at(580):
             schedule.calls.append(at)
             raise SourcePrepareError("no schedule item at this boundary")
         return schedule.plan_at(channel_id, at)
@@ -423,6 +420,7 @@ def test_lookahead_survives_a_provider_that_raises_mid_walk() -> None:
 
     assert _pending_actions(store, "public") == ["reload"]
     assert daemon.warmed == []
+    assert schedule.calls == [_at(290), _at(580)]
 
 
 def test_lookahead_is_skipped_when_the_daemon_cannot_warm() -> None:
@@ -453,5 +451,5 @@ def test_a_raising_warmer_never_breaks_the_dispatch() -> None:
     service.run_once(now=_at(2))
 
     assert _pending_actions(store, "public") == ["reload"]
-    assert [entry[1].segments[0].source_ref for entry in daemon.warmed] == ["item-5"]
+    assert [entry[1].segments[0].source_ref for entry in daemon.warmed] == ["item-3"]
     assert daemon.warm_raised == ["public"]

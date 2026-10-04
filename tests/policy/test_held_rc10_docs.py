@@ -103,9 +103,14 @@ def test_windows_setup_guidance_requires_visible_progress() -> None:
     )
 
 
-def test_user_manual_names_current_migration_and_limits_external_claims() -> None:
+def test_user_manual_describes_field_limitations_without_external_overclaims() -> None:
     manual = (ROOT / "docs" / "USER-MANUAL.md").read_text(encoding="utf-8")
-    assert "single-headed at `0072_normalize_recording_file_uris`" in manual
+    # Schema-head detail belongs to the migration reference docs checked above,
+    # not the owner-reconciled operator manual. Its field-proof limits remain.
+    assert "No human field tester has signed off." in manual
+    assert (
+        "Real cable-company acceptance and physical broadcast video cards are unproven." in manual
+    )
     assert "0060_recording_paywall_merge â† HEAD" not in manual
     assert "record-of-record version" not in manual
     assert "major\n  mobile app stores" not in manual

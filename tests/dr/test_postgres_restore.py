@@ -78,6 +78,29 @@ def _skip_if_no_postgres() -> None:
         )
 
 
+def test_namespace_extension_closure_excludes_unused_and_includes_index_dependency(
+    postgres_container,
+):
+    from civiccast.dr.restore_drill import capture_postgres_namespace_extensions
+
+    engine = create_engine(postgres_container[0])
+    try:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE SCHEMA IF NOT EXISTS civiccast"))
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS btree_gist"))
+            connection.execute(text("CREATE TABLE civiccast.extension_closure_case(id integer)"))
+        assert set(capture_postgres_namespace_extensions(engine)) == {"plpgsql"}
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE INDEX extension_closure_gist ON civiccast.extension_closure_case USING gist(id)"
+                )
+            )
+        assert set(capture_postgres_namespace_extensions(engine)) == {"plpgsql", "btree_gist"}
+    finally:
+        engine.dispose()
+
+
 @pytest.fixture
 def postgres_container() -> Iterator[tuple[str, str]]:
     """Yields (host-side connection url, container id)."""

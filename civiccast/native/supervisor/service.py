@@ -269,14 +269,18 @@ def _attach_rotating_file_logger(
     log_root: Path | str | None,
     log_file_name: str,
     logger_names: tuple[str, ...],
+    durable: bool = True,
 ) -> logging.Logger:
     """Shared implementation behind :func:`configure_logging` and
     :func:`configure_control_plane_logging`: attach ONE
-    :class:`_DurableRotatingFileHandler` (10 MiB x 10, ``fsync``'d per
-    record) at INFO to every logger named in ``logger_names``, creating
+    rotating handler (10 MiB x 10) at INFO to every logger named in
+    ``logger_names``, creating
     ``log_root`` if needed. Idempotent: re-running replaces the handler(s) a
     prior call left behind rather than stacking a new one each call. Returns
-    the first logger in ``logger_names``."""
+    the first logger in ``logger_names``. ``durable`` defaults to per-record
+    fsync; HTTP logging opts out to avoid forced disk synchronization on the
+    event loop, while keeping ordinary flush and rotation.
+    """
 
     root = Path(log_root) if log_root is not None else default_log_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -294,7 +298,8 @@ def _attach_rotating_file_logger(
             if not any(handler in other.handlers for other in loggers):
                 handler.close()
 
-    file_handler = _DurableRotatingFileHandler(
+    handler_type = _DurableRotatingFileHandler if durable else logging.handlers.RotatingFileHandler
+    file_handler = handler_type(
         root / log_file_name,
         maxBytes=LOG_MAX_BYTES,
         backupCount=LOG_BACKUP_COUNT,
@@ -346,6 +351,7 @@ def configure_logging(*, log_root: Path | str | None = None) -> logging.Logger:
 #: on Windows every time it rotates (the redirect handle can block the
 #: rename); a distinct file name sidesteps that entirely.
 CONTROL_PLANE_LOG_NAME = "control_plane-app.log"
+CONTROL_PLANE_HTTP_LOG_NAME = "control_plane-http.log"
 
 
 def configure_control_plane_logging(*, log_root: Path | str | None = None) -> logging.Logger:
@@ -371,13 +377,27 @@ def configure_control_plane_logging(*, log_root: Path | str | None = None) -> lo
 
     Writes to :data:`CONTROL_PLANE_LOG_NAME` (``control_plane-app.log``),
     NOT ``control_plane.log`` -- see that constant's docstring for why they
-    must stay separate files."""
+    must stay separate files. Uvicorn access/error records use a separate ordinary
+    rotating handler, avoiding forced fsync on the HTTP event-loop path while
+    retaining CivicCast diagnostic durability. Each file has exactly one owner.
+    Console handlers are replaced only in this supervised child configuration.
+    The app's CIVICCAST_SUPERVISED guard leaves interactive logging unchanged.
+    Raw startup output, prints and native stderr retain the inherited file-backed
+    capture and are not bounded by this handler.
+    """
 
-    return _attach_rotating_file_logger(
+    logger = _attach_rotating_file_logger(
         log_root=log_root,
         log_file_name=CONTROL_PLANE_LOG_NAME,
         logger_names=(PACKAGE_LOGGER_NAME,),
     )
+    _attach_rotating_file_logger(
+        log_root=log_root,
+        log_file_name=CONTROL_PLANE_HTTP_LOG_NAME,
+        logger_names=("uvicorn", "uvicorn.error", "uvicorn.access"),
+        durable=False,
+    )
+    return logger
 
 
 # ---------------------------------------------------------------------------

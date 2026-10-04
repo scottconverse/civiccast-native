@@ -70,6 +70,7 @@ Error title: "That did not go through" for failed actions, and "Contributor queu
 Empty text: "No contributor submissions are waiting. Producers send programs from the Submit a program form on the resident portal home page."
 
 ## Notes for the coder
+- Candidate repair (2026-10-04): new public-form submissions convert the producer's browser-local requested time to a UTC instant before upload and label the input's time zone. NEW-1 remains relevant to older zone-less submissions; no stored dates are silently reinterpreted. This is source/component evidence, not installed-station scheduling acceptance.
 - Edit `screens/ContributeScreen.tsx`; contributor-facing wording is in `civiccast/contribute/store.py:840-858` and the public form in `civiccast/apps/portal-public/src/screens/HomeScreen.tsx:603-734`.
 - Tests that pin strings (verified by grep): there is no `ContributeScreen.test.tsx` and no operator e2e spec for this screen. `tests/contribute/test_store.py` pins the producer message "will air automatically" (`civiccast/contribute/store.py:855`); update it together with that message.
 - Code fixes, not text fixes: separate error box for actions (HELP-01); send the time zone with `requested_start` or default to a valid time (NEW-1); pass the change-request note to the producer (NEW-2); send "Send to schedule" through Commit to Air or reword the producer message (HELP-02); disable action buttons for support_admin (HELP-10); add a Published tab; confirmation dialogs; real email or remove the "outbox" wording (HELP-03).

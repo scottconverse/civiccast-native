@@ -22,6 +22,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
 import subprocess
@@ -29,7 +30,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
 from uuid import uuid4
 
 from sqlalchemy import inspect, text
@@ -226,6 +227,143 @@ def _parse_postgres_url(database_url: str) -> dict[str, str]:
     }
 
 
+_LIBPQ_QUERY_ENV = {
+    "sslmode": "PGSSLMODE",
+    "sslrootcert": "PGSSLROOTCERT",
+    "sslcert": "PGSSLCERT",
+    "sslkey": "PGSSLKEY",
+    "sslcrl": "PGSSLCRL",
+    "sslcrldir": "PGSSLCRLDIR",
+    "ssl_min_protocol_version": "PGSSLMINPROTOCOLVERSION",
+    "ssl_max_protocol_version": "PGSSLMAXPROTOCOLVERSION",
+    "sslsni": "PGSSLSNI",
+    "sslnegotiation": "PGSSLNEGOTIATION",
+    "sslcertmode": "PGSSLCERTMODE",
+    "channel_binding": "PGCHANNELBINDING",
+    "gssencmode": "PGGSSENCMODE",
+    "connect_timeout": "PGCONNECT_TIMEOUT",
+    "application_name": "PGAPPNAME",
+    "target_session_attrs": "PGTARGETSESSIONATTRS",
+    "options": "PGOPTIONS",
+}
+
+
+def _postgres_connect_timeout(database_url: str, *, timeout_seconds: int | None = None) -> str:
+    """Use the application's global policy unless this operation owns a local bound."""
+    from civiccast.db import connect_options
+
+    args = connect_options(database_url, timeout_seconds=timeout_seconds).get("connect_args")
+    if not isinstance(args, dict) or "connect_timeout" not in args:
+        raise ValueError("PostgreSQL connection bound is unavailable")
+    return str(args["connect_timeout"])
+
+
+def _postgres_query_options(
+    database_url: str, *, timeout_seconds: int | None = None
+) -> dict[str, str]:
+    """Explicit non-secret libpq options, never endpoint/service overrides."""
+    try:
+        pairs = parse_qsl(urlsplit(database_url).query, keep_blank_values=True, strict_parsing=True)
+    except ValueError:
+        raise ValueError("invalid PostgreSQL connection query") from None
+    result: dict[str, str] = {}
+    for key, value in pairs:
+        if key not in _LIBPQ_QUERY_ENV or key in result or any(c in value for c in "\x00\r\n"):
+            raise ValueError("unsafe or ambiguous PostgreSQL connection option")
+        if key == "options":
+            try:
+                tokens = iter(shlex.split(value))
+            except ValueError:
+                raise ValueError("invalid PostgreSQL session option") from None
+            for word in tokens:
+                setting = next(tokens, "") if word == "-c" else word.removeprefix("-c")
+                name, separator, val = setting.partition("=")
+                valid_timeout = name in {
+                    "statement_timeout",
+                    "lock_timeout",
+                    "idle_in_transaction_session_timeout",
+                } and re.fullmatch(r"\d+(?:ms|s|min|h)?", val)
+                valid_search_path = name == "search_path" and all(
+                    part in {"civiccast", "pg_catalog", "public"} for part in val.split(",")
+                )
+                if (
+                    not word.startswith("-c")
+                    or not separator
+                    or not (valid_timeout or valid_search_path)
+                ):
+                    raise ValueError("unsafe PostgreSQL session option")
+        elif key == "connect_timeout":
+            if not re.fullmatch(r"[1-9]\d{0,2}", value):
+                raise ValueError("invalid PostgreSQL connection timeout")
+            if value != _postgres_connect_timeout(database_url, timeout_seconds=timeout_seconds):
+                # Shared schema revision reads use this existing application
+                # bound too. Do not silently give tools a different timeout.
+                raise ValueError(
+                    "explicit connect_timeout conflicts with verification connection bound"
+                )
+        result[key] = value
+    return result
+
+
+def _postgres_tool_environment(
+    database_url: str, *, timeout_seconds: int | None = None
+) -> dict[str, str]:
+    """Prevent interactive PG defaults from overriding the service connection.
+
+    SSL/certificate and other allowlisted settings travel via documented libpq
+    environment parameters, not credential-bearing command arguments.
+    """
+    options = _postgres_query_options(database_url, timeout_seconds=timeout_seconds)
+    conn = _parse_postgres_url(database_url)
+    env = {key: value for key, value in os.environ.items() if not key.upper().startswith("PG")}
+    env["PGPASSWORD"] = conn["password"]
+    env["PGCONNECT_TIMEOUT"] = _postgres_connect_timeout(
+        database_url, timeout_seconds=timeout_seconds
+    )
+    env.update({_LIBPQ_QUERY_ENV[key]: value for key, value in options.items()})
+    return env
+
+
+def _admit_postgres_environment(database_url: str, *, timeout_seconds: int | None = None) -> None:
+    """Refuse interactive defaults that libpq could add to an in-process read.
+
+    Unlike our tool children, shared callers cannot safely mutate the process
+    environment. In particular an empty ``service`` still means a service-file
+    lookup, not disabling PGSERVICE. Require explicit matching settings or an
+    operation child started with a clean environment. Never echo their values.
+    """
+    conn = _parse_postgres_url(database_url)
+    expected = {
+        "PGHOST": conn["host"],
+        "PGPORT": conn["port"],
+        "PGDATABASE": conn["dbname"],
+        "PGUSER": conn["user"],
+        "PGPASSWORD": conn["password"],
+        "PGCONNECT_TIMEOUT": _postgres_connect_timeout(
+            database_url, timeout_seconds=timeout_seconds
+        ),
+    }
+    expected.update(
+        {
+            _LIBPQ_QUERY_ENV[key]: value
+            for key, value in _postgres_query_options(
+                database_url, timeout_seconds=timeout_seconds
+            ).items()
+        }
+    )
+    conflicting = sorted(
+        key
+        for key, value in os.environ.items()
+        if key.upper().startswith("PG") and value and expected.get(key.upper()) != value
+    )
+    if conflicting:
+        raise ValueError(
+            "conflicting inherited PostgreSQL settings: "
+            + ", ".join(conflicting)
+            + "; start the database operation in a child without inherited PG settings"
+        )
+
+
 def run_postgres_backup(
     *,
     database_url: str,
@@ -255,12 +393,10 @@ def run_postgres_backup(
     filesystem path.
     """
 
+    conn = _parse_postgres_url(database_url)
+    env = _postgres_tool_environment(database_url)
     dest_dir.mkdir(parents=True, exist_ok=True)
     artifact = dest_dir / "database.pgdump"
-    conn = _parse_postgres_url(database_url)
-    env = dict(os.environ)
-    if conn["password"]:
-        env["PGPASSWORD"] = conn["password"]
     argv = [
         *(pg_dump_command or ["pg_dump"]),
         "--host",
@@ -306,12 +442,10 @@ def run_postgres_globals_backup(
     argument: it operates across the whole cluster, not one database.
     """
 
+    conn = _parse_postgres_url(database_url)
+    env = _postgres_tool_environment(database_url)
     dest_dir.mkdir(parents=True, exist_ok=True)
     artifact = dest_dir / "globals.sql"
-    conn = _parse_postgres_url(database_url)
-    env = dict(os.environ)
-    if conn["password"]:
-        env["PGPASSWORD"] = conn["password"]
     argv = [
         *(pg_dumpall_command or ["pg_dumpall"]),
         "--host",
@@ -342,6 +476,7 @@ def run_postgres_restore(
     pg_restore_command: list[str] | None = None,
     preserve_ownership: bool = False,
     single_transaction: bool = False,
+    timeout_seconds: int | None = None,
 ) -> None:
     """Restore a ``pg_dump --format=custom`` artifact into ``target_database_url``.
 
@@ -371,9 +506,7 @@ def run_postgres_restore(
     """
 
     conn = _parse_postgres_url(target_database_url)
-    env = dict(os.environ)
-    if conn["password"]:
-        env["PGPASSWORD"] = conn["password"]
+    env = _postgres_tool_environment(target_database_url, timeout_seconds=timeout_seconds)
     argv = [
         *(pg_restore_command or ["pg_restore"]),
         "--host",
@@ -449,6 +582,7 @@ def read_database_locale(
     database_url: str,
     source_database_name: str,
     psql_command: list[str] | None = None,
+    timeout_seconds: int | None = None,
 ) -> DatabaseLocale:
     """Read ``source_database_name``'s encoding/collation from ``pg_database``.
 
@@ -467,9 +601,7 @@ def read_database_locale(
         # identifier rather than quoting defensively.
         return _FALLBACK_DATABASE_LOCALE
     conn = _parse_postgres_url(database_url)
-    env = dict(os.environ)
-    if conn["password"]:
-        env["PGPASSWORD"] = conn["password"]
+    env = _postgres_tool_environment(database_url, timeout_seconds=timeout_seconds)
     query = f"SELECT pg_encoding_to_char(encoding), datcollate, datctype FROM pg_database WHERE datname = '{source_database_name}'"  # noqa: S608 -- name validated against _LOCALE_TOKEN immediately above  # nosec B608
     argv = [
         *(psql_command or ["psql"]),
@@ -512,6 +644,7 @@ def create_fresh_postgres_database(
     database_name: str = "civiccast_drill_restore",
     psql_command: list[str] | None = None,
     allow_dropping_the_connection_url_database: bool = False,
+    timeout_seconds: int | None = None,
 ) -> str:
     """Drop-if-exists then create ``database_name`` on the same server; return its URL.
 
@@ -547,11 +680,12 @@ def create_fresh_postgres_database(
             "Pass allow_dropping_the_connection_url_database=True only from a caller that "
             "deliberately means to replace the live database (the D3 rollback restore)."
         )
-    env = dict(os.environ)
-    if conn["password"]:
-        env["PGPASSWORD"] = conn["password"]
+    env = _postgres_tool_environment(database_url, timeout_seconds=timeout_seconds)
     locale = read_database_locale(
-        database_url=database_url, source_database_name=conn["dbname"], psql_command=psql_command
+        database_url=database_url,
+        source_database_name=conn["dbname"],
+        psql_command=psql_command,
+        timeout_seconds=timeout_seconds,
     )
     argv = [
         *(psql_command or ["psql"]),
@@ -592,7 +726,9 @@ def create_fresh_postgres_database(
         )
 
     parts = urlsplit(database_url)
-    return urlunsplit((parts.scheme, parts.netloc, f"/{database_name}", "", ""))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, f"/{database_name}", parts.query, parts.fragment)
+    )
 
 
 def build_media_manifest(
@@ -794,6 +930,9 @@ def run_full_backup(
     from civiccast.db.guarded_connect import run_bounded
     from civiccast.db.url import normalize_database_url
 
+    if database_url.startswith("postgresql"):
+        _admit_postgres_environment(database_url)
+        _postgres_query_options(command_database_url or database_url)
     dest_dir.mkdir(parents=True, exist_ok=True)
     backup_id = f"backup-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}-{uuid4().hex[:8]}"
 

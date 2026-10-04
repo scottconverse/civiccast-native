@@ -24,11 +24,13 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from civiccast.egress.caption_proof import decode_embedded_captions
+from civiccast.egress.hls_relay import _ManifestPublisher
 from civiccast.egress.models import EgressSinkSpec
 from civiccast.egress.sinks import HlsSink, build_sink
 from civiccast.stream._ffmpeg import resolve_h264_encoder
@@ -96,6 +98,12 @@ def _hls_via_sink(input_ts: Path, out_dir: Path) -> Path:
     """Run ffmpeg with the sink's real output_args() and return the HLS dir."""
     sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=str(out_dir)))
     assert isinstance(sink, HlsSink)
+    # Capture the pre-mux baseline, just as the production relay does. The
+    # muxer writes only its private staging name; viewers need publication.
+    publisher = _ManifestPublisher(
+        manifest_path=Path(sink.manifest_target()),
+        staging_path=Path(sink.connect_target()),
+    )
     result = subprocess.run(
         [
             _selected_ffmpeg(),
@@ -113,6 +121,7 @@ def _hls_via_sink(input_ts: Path, out_dir: Path) -> Path:
         timeout=120,
     )
     assert result.returncode == 0, result.stderr
+    publisher._publish_once()
     return out_dir
 
 
@@ -354,7 +363,7 @@ _GST_AVAILABLE = bool(
 )
 
 
-_GST_EMITTER = '''# emitted by the packaged CPython 3.12 interpreter
+_GST_EMITTER = """# emitted by the packaged CPython 3.12 interpreter
 import os, sys, time
 # VERSION_ROOT is the directory holding python.exe + dependencies/gstreamer
 # (i.e. <install_root>/runtime); the parent resolves and passes it explicitly.
@@ -418,7 +427,7 @@ while time.time() < deadline:
 pipe.set_state(Gst.State.NULL)
 assert os.path.getsize(out_path) > 0
 print("GST_EMIT_OK", os.path.getsize(out_path))
-'''
+"""
 
 
 def _gstreamer_python() -> Path:
@@ -462,7 +471,9 @@ def _emit_captioned_gstreamer_ts(out_path: Path, *, embed_caption: bool) -> None
         env=env,
     )
     assert emit.returncode == 0, f"GStreamer emit failed:\n{emit.stdout}\n{emit.stderr}"
-    assert "GST_EMIT_OK" in emit.stdout, f"GStreamer emit produced no marker:\n{emit.stdout}\n{emit.stderr}"
+    assert "GST_EMIT_OK" in emit.stdout, (
+        f"GStreamer emit produced no marker:\n{emit.stdout}\n{emit.stderr}"
+    )
 
 
 _INTEGRATION_CUE = "CIVICCAST INTEGRATION CUE"
@@ -494,7 +505,16 @@ def _segment_duration_seconds(segment: Path) -> float:
     """Container duration of one HLS segment, via the selected ffprobe."""
     ffprobe = _selected_ffprobe()
     out = subprocess.run(
-        [ffprobe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(segment)],
+        [
+            ffprobe,
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+            str(segment),
+        ],
         capture_output=True,
         text=True,
         timeout=60,
@@ -550,6 +570,10 @@ def _assert_independently_decodable(segment: Path) -> None:
     assert result.stderr.strip() == "", f"{segment.name} decoded with errors: {result.stderr}"
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="requires native Windows packaged Python/GI; generic FFmpeg HLS proof runs separately",
+)
 def test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence(tmp_path: Path) -> None:
     """Real packaged GStreamer -> real HlsSink copy -> captioned, playable HLS.
 
@@ -612,5 +636,3 @@ def test_packaged_gstreamer_to_hls_sink_preserves_captions_and_cadence(tmp_path:
                 f"previous segment's {last_pts:.3f}"
             )
         last_pts = frames[-1][1]
-
-

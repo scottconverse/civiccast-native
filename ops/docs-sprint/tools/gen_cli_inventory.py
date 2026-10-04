@@ -79,6 +79,6 @@ for path, cmd in rows:
                 + " |"
             )
         out.append("")
-with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as fh:
+with Path(sys.argv[1]).open("w", encoding="utf-8", newline="\n") as fh:
     fh.write("\n".join(out) + "\n")
 print(len(rows), "commands written")

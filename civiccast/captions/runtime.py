@@ -8,15 +8,18 @@ import json
 import logging
 import os
 import subprocess
+import sys
 import threading
+import time
 import wave
 from collections.abc import Iterable, Iterator
-from contextlib import contextmanager
-from math import exp
+from contextlib import contextmanager, suppress
+from math import exp, isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
 
+from civiccast.captions.diagnostic_identity import note_executing
 from civiccast.captions.models import AudioChunk, CaptionHypothesis, CaptionWord, CustomVocabulary
 from civiccast.native.caption_tiers import (
     CAPTION_TIER_REGISTRY,
@@ -26,6 +29,10 @@ from civiccast.native.caption_tiers import (
 )
 
 logger = logging.getLogger(__name__)
+
+# faster-whisper caches VAD process-wide, but lru_cache permits duplicate cold
+# calls. Serialize preparation across live runtimes before channel admission.
+_LIVE_VAD_PREPARE_LOCK = threading.Lock()
 
 #: Kept-alive `os.add_dll_directory` handles, keyed by the directory string
 #: already registered -- makes :func:`_ensure_cuda_dll_directory` idempotent
@@ -373,6 +380,12 @@ def _resolved_whisper_cpu_threads_env(default: int, *, live: bool) -> int:
 #: width in decoder passes, and the live tap has a hard real-time budget that
 #: a VOD pass does not. Overridable with ``CIVICCAST_WHISPER_BEAM_SIZE``.
 LIVE_TAP_CPU_BEAM_SIZE = 1
+
+# Match faster-whisper's quality thresholds, but never spend live cadence on
+# temperature retries. This bounds attempts per decode window, not native time.
+LIVE_DECODE_TEMPERATURES = (0.0,)
+LIVE_COMPRESSION_RATIO_THRESHOLD = 2.4
+LIVE_LOG_PROB_THRESHOLD = -1.0
 
 #: Files a tier's pinned inventory carries for PROVENANCE rather than for
 #: inference: CTranslate2/faster-whisper never opens them, and an upstream
@@ -791,6 +804,9 @@ class FasterWhisperRuntime:
         self.vad_filter = vad_filter
         self._model: Any | None = None
         self._model_lock = threading.Lock()
+        # One runtime serves concurrent channels; measurements belong to the
+        # caller thread, never to the shared model or the previous batch.
+        self._decode_metrics = threading.local()
 
     def on_cuda(self) -> bool:
         """Whether this runtime will actually decode on a GPU.
@@ -828,12 +844,32 @@ class FasterWhisperRuntime:
         chunks: Iterable[AudioChunk],
         vocabulary: CustomVocabulary | None = None,
     ) -> Iterable[CaptionHypothesis]:
+        with suppress(Exception):
+            note_executing("runtime", sys._getframe().f_code, self)
+        self.reset_decode_metrics()
         initial_prompt = _build_initial_prompt(vocabulary)
         for chunk in chunks:
+            self.reset_decode_metrics()
             yield from self._transcribe_chunk(chunk, initial_prompt=initial_prompt)
 
+    def reset_decode_metrics(self) -> None:
+        """Clear only this thread before work that can fail before decoding."""
+        self._decode_metrics.last = None
+
+    def last_decode_metrics(self) -> dict[str, float | None] | None:
+        """Copy the latest chunk's metrics on this thread, or null before decode.
+
+        transcribe_s covers the model call and each lazy next(), not model
+        loading, audio preparation, hypothesis conversion or consumer pauses.
+        model_call_s and lazy_next_s split that same interval; lazy_next_s
+        includes terminal and failing next attempts, not only yielded segments.
+        Reading metadata never changes transcript or runtime exceptions.
+        """
+        record = getattr(self._decode_metrics, "last", None)
+        return dict(record) if record is not None else None
+
     def prepare(self) -> None:
-        """Resolve and load the model before a live multi-channel dispatch.
+        """Load the model and live VAD session before multi-channel dispatch.
 
         The live tap uses this once work is pending so a requested CUDA runtime
         can complete its existing CUDA-to-CPU fallback before the tap chooses
@@ -843,6 +879,14 @@ class FasterWhisperRuntime:
         """
 
         self._model_instance()
+        if self._live and self.vad_filter:
+            with _LIVE_VAD_PREPARE_LOCK:
+                # This creates the cached CPU ONNX session, not a synthetic
+                # audio decode. The first Whisper encoder/language detection
+                # remains first-use work; preparation is not inference proof.
+                from faster_whisper.vad import get_vad_model
+
+                get_vad_model()
 
     def _model_instance(self) -> Any:
         if self._model is None:
@@ -947,17 +991,65 @@ class FasterWhisperRuntime:
         live chunk that is (:func:`_pcm_s16le_to_whisper_audio`).
         """
 
-        segments: Iterable[Any]
-        segments, _info = self._model_instance().transcribe(
-            source,
-            beam_size=self.beam_size,
-            language=self.language,
-            task=self.task,
-            vad_filter=self.vad_filter,
-            initial_prompt=initial_prompt,
-            **({"word_timestamps": True} if self._live else {}),
-        )
-        return segments
+        model = self._model_instance()
+        metrics: dict[str, float | None] = {
+            "transcribe_s": 0.0,
+            "model_call_s": 0.0,
+            "lazy_next_s": 0.0,
+            "duration_after_vad": None,
+            "max_segment_temperature": None,
+        }
+        self._decode_metrics.last = metrics
+        started = time.perf_counter()
+        try:
+            segments, info = model.transcribe(
+                source,
+                beam_size=self.beam_size,
+                language=self.language,
+                task=self.task,
+                vad_filter=self.vad_filter,
+                initial_prompt=initial_prompt,
+                **(
+                    {
+                        "word_timestamps": True,
+                        "temperature": LIVE_DECODE_TEMPERATURES,
+                        "compression_ratio_threshold": LIVE_COMPRESSION_RATIO_THRESHOLD,
+                        "log_prob_threshold": LIVE_LOG_PROB_THRESHOLD,
+                        "no_speech_threshold": 0.6,
+                    }
+                    if self._live
+                    else {}
+                ),
+            )
+        finally:
+            elapsed = time.perf_counter() - started
+            metrics["model_call_s"] = elapsed
+            metrics["transcribe_s"] = elapsed
+        metrics["duration_after_vad"] = _diagnostic_number(info, "duration_after_vad")
+        return self._measured_segments(segments, metrics)
+
+    def _measured_segments(
+        self, segments: Iterable[Any], metrics: dict[str, float | None]
+    ) -> Iterator[Any]:
+        iterator = iter(segments)
+        while True:
+            started = time.perf_counter()
+            try:
+                segment = next(iterator)
+            except StopIteration:
+                return
+            finally:
+                elapsed = time.perf_counter() - started
+                metrics["lazy_next_s"] = (metrics["lazy_next_s"] or 0.0) + elapsed
+                metrics["transcribe_s"] = (metrics["transcribe_s"] or 0.0) + elapsed
+            temperature = _diagnostic_number(segment, "temperature")
+            if temperature is not None:
+                previous = metrics["max_segment_temperature"]
+                metrics["max_segment_temperature"] = (
+                    temperature if previous is None else max(previous, temperature)
+                )
+            # Timer is stopped before yielding: VOD callers can pause here.
+            yield segment
 
     def _transcribe_chunk(
         self,
@@ -970,7 +1062,18 @@ class FasterWhisperRuntime:
 
             live_segments: list[CaptionHypothesis] = []
             live_words: list[CaptionWord] = []
+            live_word_breaks: list[int] = []
+            live_text_regions: list[list[str]] = [[]]
+            text_gap_pending = False
+            word_gap_pending = False
+            refused_quality: str | None = None
             for index, segment in enumerate(segments):
+                if self._live:
+                    reason = _live_segment_quality_refusal(segment)
+                    if reason is not None:
+                        refused_quality = refused_quality or reason
+                        text_gap_pending = word_gap_pending = True
+                        continue
                 text = str(getattr(segment, "text", "")).strip()
                 if not text:
                     continue
@@ -989,6 +1092,11 @@ class FasterWhisperRuntime:
                 )
                 if self._live:
                     live_segments.append(hypothesis)
+                    if text_gap_pending and live_text_regions[-1]:
+                        live_text_regions.append([])
+                    live_text_regions[-1].append(text)
+                    text_gap_pending = False
+                    previous_word_count = len(live_words)
                     for word in getattr(segment, "words", None) or []:
                         live_words.append(
                             CaptionWord(
@@ -998,8 +1106,19 @@ class FasterWhisperRuntime:
                                 confidence=float(word.probability),
                             )
                         )
+                    if len(live_words) > previous_word_count:
+                        if word_gap_pending and previous_word_count:
+                            live_word_breaks.append(previous_word_count)
+                        word_gap_pending = False
                 else:
                     yield hypothesis
+            if refused_quality is not None:
+                # Refuse only the unsafe segment, not independent speech on
+                # either side. Explicit text/word boundaries prevent bridging.
+                with suppress(Exception):
+                    logger.info(
+                        "Live caption quality refusal: refused_windows=1 reason=%s", refused_quality
+                    )
             if live_segments:
                 # Segment boundaries vary between overlapping ASR windows.
                 # Confirm one window against another, not two fragments from
@@ -1010,12 +1129,49 @@ class FasterWhisperRuntime:
                     source_id=_segment_source_id(chunk.chunk_id, 0),
                     start_seconds=min(h.start_seconds for h in live_segments),
                     end_seconds=max(h.end_seconds for h in live_segments),
-                    text=" ".join(h.text for h in live_segments),
+                    text=" ... ".join(" ".join(region) for region in live_text_regions if region),
                     confidence=min(h.confidence for h in live_segments),
                     audio_window_start_seconds=chunk.start_seconds,
                     audio_window_end_seconds=chunk.end_seconds,
                     words=live_words,
+                    word_breaks=live_word_breaks,
                 )
+
+
+def _live_segment_quality_refusal(segment: Any) -> str | None:
+    """Fail closed before live aggregation; VOD fallback remains unchanged.
+
+    Missing/nonfinite quality is not proof of safe output. Do not reapply a
+    no-speech-only cutoff: faster-whisper preserves its high-logprob speech
+    exception before emitting segments, and we must preserve it too.
+    """
+    try:
+        compression = segment.compression_ratio
+        logprob = segment.avg_logprob
+        if not (
+            type(compression) in (int, float)
+            and isfinite(compression)
+            and compression >= 0
+            and type(logprob) in (int, float)
+            and isfinite(logprob)
+        ):
+            return "unproven_metadata"
+    except Exception:
+        return "unproven_metadata"
+    if compression > LIVE_COMPRESSION_RATIO_THRESHOLD:
+        return "compression_ratio"
+    if logprob < LIVE_LOG_PROB_THRESHOLD:
+        return "log_probability"
+    return None
+
+
+def _diagnostic_number(value: object, name: str) -> float | None:
+    """Read optional model metadata without introducing a decode failure."""
+    try:
+        number = float(getattr(value, name))
+        return number if isfinite(number) and number >= 0 else None
+    except Exception:
+        return None
 
 
 def _load_whisper_model_class() -> Any:

@@ -11,7 +11,6 @@ and read the restored database (not just SQLAlchemy raw SQL).
 from __future__ import annotations
 
 import hashlib
-import os
 import re
 import shutil
 import subprocess
@@ -21,7 +20,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from sqlalchemy import create_engine, text
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Engine, make_url
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
 
@@ -29,7 +28,10 @@ from civiccast import schema_check
 from civiccast.db import connect_options
 from civiccast.db.url import normalize_database_url
 from civiccast.dr.backup import (
+    _admit_postgres_environment,
     _parse_postgres_url,
+    _postgres_query_options,
+    _postgres_tool_environment,
     build_sqlite_engine,
     create_fresh_postgres_database,
     run_postgres_restore,
@@ -37,6 +39,7 @@ from civiccast.dr.backup import (
 )
 from civiccast.dr.models import (
     BackupManifest,
+    PostgresRolePrerequisites,
     RestoreDrillReport,
     RestoreTableResult,
     TableSnapshot,
@@ -504,7 +507,9 @@ def _close_roles_over_memberships(seed: set[str], edges: set[tuple[str, str]]) -
     return closed
 
 
-def _pg_relevant_roles(engine: Engine, *, schema: str = "civiccast") -> set[str]:
+def _pg_relevant_roles(
+    engine: Engine, *, schema: str = "civiccast", include_database: bool = True
+) -> set[str]:
     """Roles the drill expects ``globals.sql`` to have captured, TRANSITIVELY closed.
 
     Round-4 rewrite (CC-WS2-001, Critical): round-3 seeded only table
@@ -529,14 +534,20 @@ def _pg_relevant_roles(engine: Engine, *, schema: str = "civiccast") -> set[str]
     module -- a role is "the same role" here iff it has the same
     ``rolname``, matching this drill's single-station, name-is-identity
     deployment model.
+
+    ``include_database=False`` is namespace-only: database ownership and
+    database-wide ACLs do not authorize replaying unrelated application roles
+    into the disposable verifier. The default full-database drill is unchanged.
     """
 
-    with engine.connect() as conn:
-        database = conn.execute(text("SELECT current_database()")).scalar_one()
+    database = None
+    if include_database:
+        with engine.connect() as conn:
+            database = conn.execute(text("SELECT current_database()")).scalar_one()
 
     table_owners = set(_pg_table_owners(engine, schema=schema).values())
     sequence_owners = set(_pg_sequence_owners(engine, schema=schema).values())
-    database_owner = _pg_database_owner(engine, database=database)
+    database_owner = _pg_database_owner(engine, database=database) if database is not None else None
     schema_owner = _pg_schema_owner(engine, schema=schema)
 
     owners = table_owners | sequence_owners
@@ -546,10 +557,11 @@ def _pg_relevant_roles(engine: Engine, *, schema: str = "civiccast") -> set[str]
         owners.add(schema_owner)
 
     grantees: set[str] = set()
-    grantees.update(
-        grantee
-        for grantee, _grantor, _priv, _grantable in _pg_database_acl(engine, database=database)
-    )
+    if database is not None:
+        grantees.update(
+            grantee
+            for grantee, _grantor, _priv, _grantable in _pg_database_acl(engine, database=database)
+        )
     grantees.update(
         grantee for grantee, _grantor, _priv, _grantable in _pg_schema_acl(engine, schema=schema)
     )
@@ -980,10 +992,12 @@ def _with_database_name(database_url: str, database_name: str) -> str:
     """Swap only the path (database name) component of a DATABASE_URL."""
 
     parts = urlsplit(database_url)
-    return urlunsplit((parts.scheme, parts.netloc, f"/{database_name}", "", ""))
+    return urlunsplit(
+        (parts.scheme, parts.netloc, f"/{database_name}", parts.query, parts.fragment)
+    )
 
 
-def _verification_engine_url(database_url: str) -> str:
+def _verification_engine_url(database_url: str, *, timeout_seconds: int | None = None) -> str:
     """The URL this module's OWN SQLAlchemy reads connect through.
 
     Every ``create_engine`` in this module goes through here (beta BLOCKER
@@ -1010,7 +1024,14 @@ def _verification_engine_url(database_url: str) -> str:
     know nothing about SQLAlchemy driver names.
     """
 
-    return normalize_database_url(database_url)
+    _admit_postgres_environment(database_url, timeout_seconds=timeout_seconds)
+    options = _postgres_query_options(database_url, timeout_seconds=timeout_seconds)
+    normalized = normalize_database_url(database_url)
+    if options and make_url(normalized).get_driver_name() not in {"psycopg", "psycopg2"}:
+        # libpq parameters are not pg8000/asyncpg keyword arguments. Refuse
+        # before connecting rather than stripping TLS or changing the driver.
+        raise ValueError("secure PostgreSQL drill options require a libpq verification driver")
+    return normalized
 
 
 def run_postgres_restore_drill(
@@ -1023,6 +1044,8 @@ def run_postgres_restore_drill(
     pg_restore_command: list[str] | None = None,
     psql_command: list[str] | None = None,
     expected_revision: str | None = None,
+    restore_target_database_url: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> RestoreDrillReport:
     """Restore ``manifest``'s Postgres dump into a brand-new database and verify it.
 
@@ -1055,6 +1078,19 @@ def run_postgres_restore_drill(
     engines — see ``civiccast.dr.models.RestoreDrillReport`` consumers), so
     every mismatch above is reported as an ``errors`` entry, which already
     fails :attr:`RestoreDrillReport.ok`.
+
+    Namespace-only, same-cluster installer recovery can instead explicitly
+    supply ``role_prerequisites_artifact``. That contract compares the captured
+    necessary role attributes and membership privileges on source and restored
+    databases; it never creates roles or claims cold-standby restorability.
+    Missing/invalid prerequisites still fail, and all other drill checks below
+    are identical. Naming both artifact kinds is an ambiguous, failed proof.
+
+    ``restore_target_database_url`` selects a separate, independently admitted
+    disposable cluster prepared by the installer entry. It requires scoped
+    role and extension prerequisites, preserves namespace object ownership,
+    and makes no source CREATEDB or CREATEROLE demand. The source is read-only;
+    this verifier is not production namespace replacement or credential recovery.
 
     The program charter's restore precondition -- source and restored copy
     report the IDENTICAL alembic revision -- is also enforced via
@@ -1116,14 +1152,35 @@ def run_postgres_restore_drill(
 
     started_at = datetime.now(UTC)
     errors: list[str] = []
-    verify_source_url = _verification_engine_url(verification_database_url or source_database_url)
+    timeout_kwargs = {"timeout_seconds": timeout_seconds} if timeout_seconds is not None else {}
+    verify_source_url = _verification_engine_url(
+        verification_database_url or source_database_url, **timeout_kwargs
+    )
+    verify_target_url = (
+        _verification_engine_url(restore_target_database_url, **timeout_kwargs)
+        if restore_target_database_url is not None
+        else verify_source_url
+    )
+    if restore_target_database_url is not None and (
+        not manifest.role_prerequisites_artifact
+        or manifest.namespace_extensions is None
+        or manifest.globals_artifact
+    ):
+        raise ValueError(
+            "separate namespace drill requires explicit role and extension prerequisites"
+        )
 
     source_engine = create_engine(
-        verify_source_url, future=True, **connect_options(verify_source_url)
+        verify_source_url, future=True, **connect_options(verify_source_url, **timeout_kwargs)
     )
     try:
-        source_revision = schema_check.read_db_revision(verify_source_url)
+        source_revision = schema_check.read_db_revision(verify_source_url, **timeout_kwargs)
         source_extensions = _pg_extension_names(source_engine)
+        if manifest.namespace_extensions is not None:
+            necessary = capture_postgres_namespace_extensions(source_engine)
+            if necessary != manifest.namespace_extensions:
+                raise ValueError("namespace extension prerequisites changed")
+            source_extensions = sorted(necessary)
         source_sequence_states = _pg_sequence_states(source_engine)
         source_constraints = _pg_constraint_defs(source_engine)
         source_indexes = _pg_index_defs(source_engine)
@@ -1132,18 +1189,21 @@ def run_postgres_restore_drill(
         source_engine.dispose()
 
     restore_cli_url = create_fresh_postgres_database(
-        database_url=source_database_url,
+        database_url=restore_target_database_url or source_database_url,
         database_name=restore_database_name,
         psql_command=psql_command,
+        timeout_seconds=timeout_seconds,
     )
     run_postgres_restore(
         backup_dir / manifest.db_artifact,
         restore_cli_url,
         pg_restore_command=pg_restore_command,
+        preserve_ownership=restore_target_database_url is not None,
+        timeout_seconds=timeout_seconds,
     )
-    restored_verify_url = _with_database_name(verify_source_url, restore_database_name)
+    restored_verify_url = _with_database_name(verify_target_url, restore_database_name)
 
-    db_revision = schema_check.read_db_revision(restored_verify_url)
+    db_revision = schema_check.read_db_revision(restored_verify_url, **timeout_kwargs)
     expected_head = (
         expected_revision
         if expected_revision is not None
@@ -1158,7 +1218,9 @@ def run_postgres_restore_drill(
             f"restored={db_revision!r}"
         )
 
-    engine = create_engine(restored_verify_url, future=True, **connect_options(restored_verify_url))
+    engine = create_engine(
+        restored_verify_url, future=True, **connect_options(restored_verify_url, **timeout_kwargs)
+    )
     table_results: list[RestoreTableResult] = []
     app_store_reads: dict[str, int] = {}
     try:
@@ -1187,6 +1249,21 @@ def run_postgres_restore_drill(
                 "pg_extension mismatch after restore: "
                 f"source={source_extensions!r} restored={restored_extensions!r}"
             )
+        if manifest.namespace_extensions is not None:
+            with engine.connect() as connection:
+                rows = connection.execute(
+                    text(
+                        "SELECT e.extname,e.extversion,n.nspname FROM pg_extension e "
+                        "JOIN pg_namespace n ON n.oid=e.extnamespace"
+                    )
+                ).all()
+            restored_extension_contract = {
+                str(name): (str(version), str(schema)) for name, version, schema in rows
+            }
+            if restored_extension_contract != manifest.namespace_extensions:
+                errors.append(
+                    "namespace extension version/schema prerequisites changed after restore"
+                )
 
         restored_sequence_states = _pg_sequence_states(engine)
         if restored_sequence_states != source_sequence_states:
@@ -1213,7 +1290,29 @@ def run_postgres_restore_drill(
                 f"restored={restored_grants!r}"
             )
 
-        if manifest.globals_artifact:
+        if manifest.role_prerequisites_artifact:
+            if manifest.globals_artifact:
+                errors.append("backup ambiguously names both globals and scoped role prerequisites")
+            try:
+                prerequisites = read_postgres_role_prerequisites(
+                    backup_dir, manifest.role_prerequisites_artifact
+                )
+                verify_postgres_role_prerequisites(engine, prerequisites)
+                source_engine = create_engine(
+                    verify_source_url,
+                    future=True,
+                    **connect_options(verify_source_url, **timeout_kwargs),
+                )
+                try:
+                    verify_postgres_role_prerequisites(source_engine, prerequisites)
+                finally:
+                    source_engine.dispose()
+            except Exception:
+                # Do not leak service credentials in driver errors. A missing,
+                # malformed, or changed prerequisite is a failed proof, not an
+                # exemption from the existing role admission check.
+                errors.append("scoped role prerequisites are missing, invalid, or changed")
+        elif manifest.globals_artifact:
             globals_path = backup_dir / manifest.globals_artifact
             globals_sql = globals_path.read_text(encoding="utf-8") if globals_path.exists() else ""
             if not globals_sql:
@@ -1347,6 +1446,177 @@ def _pg_role_memberships(engine: Engine, roles: set[str]) -> set[tuple[str, str]
     return {(row[0], row[1]) for row in rows if row[0] in roles or row[1] in roles}
 
 
+def capture_postgres_role_prerequisites(engine: Engine) -> PostgresRolePrerequisites:
+    """Capture only the role closure needed by the CivicCast namespace."""
+    roles = _pg_relevant_roles(engine, include_database=False)
+    attributes = _pg_role_attributes(engine, roles)
+    if set(attributes) != roles:
+        raise ValueError("required PostgreSQL roles could not be read")
+    return PostgresRolePrerequisites(
+        roles=attributes,
+        memberships=sorted(_pg_role_memberships(engine, roles)),
+        role_options=_pg_role_options(engine, roles),
+        membership_options=_pg_membership_options(engine, roles),
+    )
+
+
+def capture_postgres_namespace_extensions(engine: Engine) -> dict[str, tuple[str, str]]:
+    """Follow namespace object dependencies, including internal child objects.
+
+    Unlike the default whole-database drill, a scoped dump must not include
+    unrelated installed extensions. plpgsql is the fresh-cluster baseline.
+    """
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "WITH RECURSIVE owned(classid,objid,objsubid) AS ("
+                "SELECT classid,objid,objsubid FROM pg_depend WHERE "
+                "refclassid='pg_namespace'::regclass AND "
+                "refobjid=(SELECT oid FROM pg_namespace WHERE nspname='civiccast') "
+                "UNION SELECT link.classid,link.objid,link.objsubid FROM owned o "
+                "CROSS JOIN LATERAL ("
+                "SELECT d.refclassid classid,d.refobjid objid,d.refobjsubid objsubid "
+                "FROM pg_depend d WHERE d.classid=o.classid AND d.objid=o.objid "
+                "AND (o.objsubid=0 OR d.objsubid=o.objsubid) UNION "
+                "SELECT d.classid,d.objid,d.objsubid FROM pg_depend d "
+                "WHERE d.refclassid=o.classid AND d.refobjid=o.objid "
+                "AND d.deptype IN ('i','a')) link) "
+                "SELECT e.extname,e.extversion,n.nspname FROM pg_extension e "
+                "JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='plpgsql' "
+                "OR EXISTS(SELECT 1 FROM owned o WHERE o.classid='pg_extension'::regclass "
+                "AND o.objid=e.oid) ORDER BY e.extname"
+            )
+        ).all()
+    return {str(name): (str(version), str(schema)) for name, version, schema in rows}
+
+
+def prepare_disposable_postgres_roles(engine: Engine, proof: PostgresRolePrerequisites) -> None:
+    """Populate only an independently admitted disposable verification cluster.
+
+    Caller must prove that admission before calling. This is never production
+    role restoration and never replays passwords or unrelated cluster globals.
+    """
+    roles = set(proof.roles)
+    if set(proof.role_options) != roles or any(
+        member not in roles or role not in roles for member, role in proof.memberships
+    ):
+        raise ValueError("incomplete scoped role prerequisites")
+    existing = _pg_role_attributes(engine, roles)
+    with engine.begin() as connection:
+        for name, attributes in proof.roles.items():
+            if name in existing:
+                continue  # verify exact attributes below; never change bootstrap identity
+            flags = [
+                ("" if enabled else "NO") + option
+                for option, enabled in zip(
+                    ("SUPERUSER", "CREATEDB", "CREATEROLE", "LOGIN", "REPLICATION", "BYPASSRLS"),
+                    attributes[:6],
+                    strict=True,
+                )
+            ]
+            inherit, valid_until = proof.role_options[name]
+            quoted = '"' + name.replace('"', '""') + '"'
+            connection.execute(
+                text(
+                    "CREATE ROLE "
+                    + quoted
+                    + " "
+                    + " ".join(flags)
+                    + (" INHERIT" if inherit else " NOINHERIT")
+                    + " CONNECTION LIMIT "
+                    + str(attributes[6])
+                    + (
+                        " VALID UNTIL '" + valid_until.replace("'", "''") + "'"
+                        if valid_until is not None
+                        else ""
+                    )
+                )
+            )
+        for member, role, admin, inherit, can_set in proof.membership_options:
+            if member not in roles or role not in roles:
+                raise ValueError("incomplete scoped role membership prerequisites")
+            quoted_member = '"' + member.replace('"', '""') + '"'
+            quoted_role = '"' + role.replace('"', '""') + '"'
+            connection.execute(
+                text(
+                    "GRANT "
+                    + quoted_role
+                    + " TO "
+                    + quoted_member
+                    + " WITH ADMIN "
+                    + str(admin).upper()
+                    + ", INHERIT "
+                    + str(inherit).upper()
+                    + ", SET "
+                    + str(can_set).upper()
+                )
+            )
+    verify_postgres_role_prerequisites(engine, proof)
+
+
+def read_postgres_role_prerequisites(backup_dir: Path, artifact: str) -> PostgresRolePrerequisites:
+    if not artifact or artifact in {".", ".."} or any(c in artifact for c in "/\\:"):
+        raise ValueError("scoped role artifact must be a backup-local filename")
+    path = backup_dir / artifact
+    if path.is_symlink() or path.resolve().parent != backup_dir.resolve():
+        raise ValueError("scoped role artifact escaped its backup directory")
+    return PostgresRolePrerequisites.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _pg_role_options(engine: Engine, roles: set[str]) -> dict[str, tuple[bool, str | None]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT rolname,rolinherit,rolvaliduntil::text FROM pg_roles "
+                "WHERE rolname=ANY(:roles)"
+            ),
+            {"roles": sorted(roles)},
+        ).all()
+    return {str(row[0]): (bool(row[1]), row[2]) for row in rows}
+
+
+def _pg_membership_options(
+    engine: Engine, roles: set[str]
+) -> list[tuple[str, str, bool, bool, bool]]:
+    # Per-membership inherit/set options arrived in PG16. Older servers inherit
+    # these semantics implicitly; JSON lookup avoids referencing absent columns.
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT m.rolname,r.rolname,am.admin_option,"
+                "COALESCE((to_jsonb(am)->>'inherit_option')::boolean,true),"
+                "COALESCE((to_jsonb(am)->>'set_option')::boolean,true) "
+                "FROM pg_auth_members am JOIN pg_roles m ON m.oid=am.member "
+                "JOIN pg_roles r ON r.oid=am.roleid "
+                "WHERE m.rolname=ANY(:roles) OR r.rolname=ANY(:roles)"
+            ),
+            {"roles": sorted(roles)},
+        ).all()
+    return sorted(
+        (str(row[0]), str(row[1]), bool(row[2]), bool(row[3]), bool(row[4])) for row in rows
+    )
+
+
+def verify_postgres_role_prerequisites(
+    engine: Engine, prerequisites: PostgresRolePrerequisites
+) -> None:
+    """Require existing roles, without creating or changing cluster-global state.
+
+    This is same-cluster recovery admission, not a replacement for the cold-
+    standby drill. Compare all membership edges touching the captured roles,
+    including unexpected edges to roles outside the original closure.
+    """
+    roles = set(prerequisites.roles)
+    if _pg_role_attributes(engine, roles) != prerequisites.roles:
+        raise ValueError("required PostgreSQL role attributes changed")
+    if _pg_role_memberships(engine, roles) != set(prerequisites.memberships):
+        raise ValueError("required PostgreSQL role memberships changed")
+    if _pg_role_options(engine, roles) != prerequisites.role_options:
+        raise ValueError("required PostgreSQL inheritance/login validity changed")
+    if _pg_membership_options(engine, roles) != prerequisites.membership_options:
+        raise ValueError("required PostgreSQL membership privileges changed")
+
+
 def _pg_database_owner(engine: Engine, *, database: str) -> str | None:
     """The owning role's name for ``database``, or ``None`` if it has no catalog row."""
 
@@ -1415,9 +1685,7 @@ def _replay_globals_sql(
     """
 
     conn = _parse_postgres_url(database_url)
-    env = dict(os.environ)
-    if conn["password"]:
-        env["PGPASSWORD"] = conn["password"]
+    env = _postgres_tool_environment(database_url)
     argv = [
         *(psql_command or ["psql"]),
         "--host",

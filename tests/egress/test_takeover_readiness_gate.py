@@ -31,8 +31,11 @@ from civiccast.db import Base, bind_engine, reset_engine
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.takeover_service import TakeoverNotReadyError, TakeoverService
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
-from civiccast.live.models import LiveSourceResponse
+from civiccast.live.models import LiveSource, LiveSourceCreate, LiveSourceResponse, LiveSourceUpdate
+from civiccast.live.readiness_service import LiveSourceReadinessService
 from civiccast.live.relay import build_ingest_plan
+from civiccast.live.source_probe import ProbeObservation
+from civiccast.live.store import LiveSourceStore
 
 _ENDPOINT = "srt://0.0.0.0:9000?mode=listener"
 
@@ -42,6 +45,8 @@ class _Verdict:
     ok: bool
     reason: str
     secret_ref: str | None = None
+    reprobed: bool = False
+    source_found: bool = True
 
 
 def _source(
@@ -138,6 +143,137 @@ class TestPlanHealthFloor:
 
 
 class TestFreshnessVerifier:
+    @pytest.mark.parametrize("state", ["never_probed", "failed"])
+    def test_verifier_does_not_bypass_unknown_or_failed_floor(
+        self, engine: Engine, state: str
+    ) -> None:
+        service, egress, audit = _build(
+            engine, _source(probe_state=state), _Verdict(True, "ok", reprobed=True)
+        )
+        assert service.state("public").can_takeover is False
+        with pytest.raises(TakeoverNotReadyError):
+            service.take(channel_id="public", operator_id="dana", path_id="council-encoder")
+        assert audit.list_by_channel("public") == []
+        assert egress.pop_pending_commands("public") == []
+
+    @pytest.mark.parametrize(
+        "outcome", ["success", "failure", "edited", "deleted", "ready_deleted", "fresh_reuse"]
+    )
+    def test_stale_takeover_uses_real_version_fenced_probe(
+        self, engine: Engine, outcome: str
+    ) -> None:
+        @contextmanager
+        def factory() -> Iterator[Session]:
+            with Session(bind=engine) as session:
+                yield session
+
+        sources = LiveSourceStore(factory)
+        source = sources.create(
+            LiveSourceCreate(
+                live_source_id="council-encoder",
+                channel_id="public",
+                name="Council Room Encoder",
+                source_type="srt",
+                endpoint_url=_ENDPOINT,
+            )
+        )
+        sources.record_probe_observation(
+            source.live_source_id,
+            ok=True,
+            observed_at=datetime.now(UTC)
+            - timedelta(seconds=1 if outcome == "ready_deleted" else 60),
+            detail="previous media",
+            error_code=None,
+        )
+        audit = PostgresTakeoverAuditStore(factory)
+        egress = InMemoryEgressStore()
+        calls = []
+
+        def probe(row, **kwargs):
+            assert audit.list_by_channel("public") == []
+            assert egress.pop_pending_commands("public") == []
+            calls.append(row.live_source_id)
+            if outcome == "edited":
+                sources.update(
+                    row.live_source_id, LiveSourceUpdate(endpoint_url="srt://127.0.0.1:9001")
+                )
+            return ProbeObservation(ok=outcome != "failure", detail="fresh result")
+
+        readiness = LiveSourceReadinessService(sources, probe=probe)
+
+        def ingest(channel):
+            plan = build_ingest_plan(channel, [], live_sources=sources.list(channel_id=channel))
+            assert plan.relay_paths[0].health_state == (
+                "ready" if outcome == "ready_deleted" else "degraded"
+            )
+            if outcome in {"deleted", "ready_deleted"}:
+                with factory() as session:
+                    row = session.get(LiveSource, source.live_source_id)
+                    assert row is not None
+                    session.delete(row)
+                    session.commit()
+            elif outcome == "fresh_reuse":
+                sources.record_probe_observation(
+                    source.live_source_id,
+                    ok=True,
+                    observed_at=datetime.now(UTC),
+                    detail="concurrent fresh proof",
+                    error_code=None,
+                )
+            return plan
+
+        service = TakeoverService(
+            audit,
+            egress,
+            ingest,
+            readiness_verifier=lambda channel, path, endpoint: readiness.verify_for_takeover(
+                channel_id=channel,
+                path_id=path,
+                endpoint_url=endpoint,
+            ),
+        )
+        if outcome in {"success", "fresh_reuse"}:
+            assert (
+                service.take(channel_id="public", operator_id="dana").source_ref
+                == source.live_source_id
+            )
+            assert len(audit.list_by_channel("public")) == 1
+            assert len(egress.pop_pending_commands("public")) == 1
+        else:
+            with pytest.raises(TakeoverNotReadyError):
+                service.take(channel_id="public", operator_id="dana")
+            assert audit.list_by_channel("public") == []
+            assert egress.pop_pending_commands("public") == []
+        assert len(calls) == (0 if outcome in {"deleted", "ready_deleted", "fresh_reuse"} else 1)
+
+    def test_stale_source_can_be_freshly_verified_before_takeover(self, engine: Engine) -> None:
+        service, egress, audit = _build(
+            engine, _source(age_seconds=60), _Verdict(True, "fresh media", reprobed=True)
+        )
+        assert service.state("public").can_takeover is True
+        session = service.take(channel_id="public", operator_id="dana")
+        assert session.source_ref == "council-encoder"
+        assert audit.get_active("public") is not None
+        assert len(egress.pop_pending_commands("public")) == 1
+
+    def test_stale_source_fresh_failure_has_no_side_effects(self, engine: Engine) -> None:
+        service, egress, audit = _build(
+            engine, _source(age_seconds=60), _Verdict(False, "fresh probe failed", reprobed=True)
+        )
+        with pytest.raises(TakeoverNotReadyError, match="fresh probe failed"):
+            service.take(channel_id="public", operator_id="dana")
+        assert audit.list_by_channel("public") == []
+        assert egress.pop_pending_commands("public") == []
+
+    def test_stale_source_no_opinion_is_not_fresh_proof(self, engine: Engine) -> None:
+        service, egress, audit = _build(
+            engine, _source(age_seconds=60), _Verdict(True, "not a source", source_found=False)
+        )
+        with pytest.raises(TakeoverNotReadyError):
+            service.take(channel_id="public", operator_id="dana")
+        assert audit.list_by_channel("public") == []
+        assert egress.pop_pending_commands("public") == []
+
     def test_a_refusing_verifier_leaves_no_audit_row_and_no_command(self, engine: Engine) -> None:
         # The plan says ready (observed one second ago) but the verifier's own
         # fresh probe says no -- the race between preflight and takeover.

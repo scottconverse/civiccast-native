@@ -180,7 +180,6 @@ class TestCaptionTapWorkerStreamEndFlush:
         tmp_path: Path,
     ) -> None:
         tap_root = tmp_path / "tap"
-        _write_tap_wav(tap_root / "government" / "chunk-000000.wav")
         runtime = _OnceRuntime()
         store = InMemoryCaptionReviewStore()
         worker = CaptionTapWorker(
@@ -191,6 +190,9 @@ class TestCaptionTapWorkerStreamEndFlush:
             segment_seconds=1.0,
             atomic_segments=True,
         )
+        # Live audio arrives after worker startup; the intentional startup
+        # sweep removes pre-existing audio from an earlier broadcast.
+        _write_tap_wav(tap_root / "government" / "chunk-000000.wav")
 
         scan = worker.run_once()
 

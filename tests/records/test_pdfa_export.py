@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from datetime import UTC, datetime
 from io import BytesIO
 
 import pikepdf
@@ -22,6 +23,7 @@ from civiccast.records.pdfa import (
     validate_pdfa3_shape,
 )
 from civiccast.records.timestamp import DeterministicTimestampAuthority
+from civiccast.summary.models import OperatorApproval
 from civiccast.summary.store import InMemorySummaryStore
 from tests.summary.test_summary_persistence import _summary
 
@@ -30,6 +32,17 @@ TEST_OPERATOR = OperatorIdentity(
     operator_display_name="Staff One",
     token_id="token-staff-1",
 )
+
+
+def _approve(store: InMemorySummaryStore, summary_id: str) -> None:
+    store.approve_summary(
+        OperatorApproval(
+            summary_id=summary_id,
+            operator_id=TEST_OPERATOR.operator_id,
+            operator_display_name=TEST_OPERATOR.operator_display_name,
+            approved_at=datetime.now(UTC),
+        )
+    )
 
 
 class TestPdfaExport:
@@ -48,6 +61,7 @@ class TestPdfaExport:
         summary = _summary().model_copy(update={"status": "approved"})
         summary_store = InMemorySummaryStore()
         summary_store.create_summary(summary)
+        _approve(summary_store, summary.summary_id)
         exporter = SignedRecordExporter(
             summary_store=summary_store,
             timestamp_authority=DeterministicTimestampAuthority(),
@@ -117,6 +131,7 @@ class TestPdfaExport:
         )
         summary_store = InMemorySummaryStore()
         summary_store.create_summary(summary)
+        _approve(summary_store, summary.summary_id)
         exporter = SignedRecordExporter(
             summary_store=summary_store,
             timestamp_authority=DeterministicTimestampAuthority(),
@@ -145,6 +160,7 @@ class TestPdfaConformanceStructure:
         )
         store = InMemorySummaryStore()
         store.create_summary(summary)
+        _approve(store, summary.summary_id)
         exporter = SignedRecordExporter(
             summary_store=store,
             timestamp_authority=DeterministicTimestampAuthority(),
@@ -258,8 +274,7 @@ class TestPdfaConformanceStructure:
             assert isinstance(sourced, list)
             assert sourced, "sourced-claims.json attachment is empty"
             assert "extraction_version" in provenance
-            # approval.json carries JSON 'null' when no operator approval was
-            # attached and a JSON object otherwise; either form satisfies the
-            # contract that the attachment is present and parseable.
             approval = json.loads(approval_blob)
-            assert approval is None or isinstance(approval, dict)
+            assert isinstance(approval, dict)
+            assert approval["summary_id"] == "summary-conformance"
+            assert approval["operator_id"] == TEST_OPERATOR.operator_id

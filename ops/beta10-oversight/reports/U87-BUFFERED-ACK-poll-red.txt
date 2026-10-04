@@ -1,0 +1,328 @@
+....FFFF                                                                 [100%]
+================================== FAILURES ===================================
+_ test_reload_checks_buffered_receipt_after_caller_descheduling[poll-accepted] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000179A4349940>
+result = 'accepted', pause_at = 'poll'
+
+    @pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+    @pytest.mark.parametrize("pause_at", ["write", "poll"])
+    def test_reload_checks_buffered_receipt_after_caller_descheduling(
+        monkeypatch: pytest.MonkeyPatch, result: str | None, pause_at: str
+    ) -> None:
+        """A caller pause is not evidence that the worker failed to acknowledge.
+
+        The clock crosses the unchanged deadline after writing. Only a correlated
+        positive receipt may succeed; an empty pipe must expire without another wait.
+        """
+        from civiccast.egress.gst import strategy
+
+        clock = [0.0]
+        reads: list[float] = []
+        sleeps: list[float] = []
+
+        class _PausedCallerServer(_ImmediateAckServer):
+            def write_line(self, text: str) -> bool:
+                written = super().write_line(text)
+                command_id = json.loads(text)["id"]
+                self._inbox.clear()
+                if result is not None:
+                    self._inbox.append(
+                        json.dumps(
+                            {
+                                "v": 1,
+                                "id": "another-command" if result == "unrelated" else command_id,
+                                "result": "accepted" if result == "unrelated" else result,
+                                "detail": None,
+                            }
+                        )
+                    )
+                if pause_at == "write":
+                    clock[0] = 20.5
+                return written
+
+            def read_line(self) -> str | None:
+                if pause_at == "poll" and not reads:
+                    reads.append(clock[0])
+                    return None
+                reads.append(clock[0])
+                return super().read_line()
+
+        monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock[0] = 20.5
+
+        monkeypatch.setattr(strategy.time, "sleep", sleep)
+        server = _PausedCallerServer()
+        channel = _WindowsPipeChannel("c1", server=server)
+        channel._connected_event.set()
+
+>       assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+E       AssertionError: assert False is ('accepted' == 'accepted'
+E        +  where False = send_and_wait('reload', 'reload /w/g.json')
+E        +    where send_and_wait = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x00000179A43494F0>.send_and_wait
+E
+E           accepted)
+
+_PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
+channel    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x00000179A43494F0>
+clock      = [20.5]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000179A4349940>
+pause_at   = 'poll'
+reads      = [0.0]
+result     = 'accepted'
+server     = <tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer object at 0x00000179A43497C0>
+sleep      = <function test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>.sleep at 0x00000179A4363240>
+sleeps     = [0.01]
+strategy   = <module 'civiccast.egress.gst.strategy' from 'C:\\Dev\\Claude\\civiccast-u73\\civiccast\\egress\\gst\\strategy.py'>
+
+tests\egress\test_worker_pipe_seam.py:634: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  civiccast.egress.gst.strategy:strategy.py:589 worker command e1715ae6-88aa-41b3-a534-da01b7d9b389 lost-ack -> reissue_desired_state
+__ test_reload_checks_buffered_receipt_after_caller_descheduling[poll-error] __
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000179A434A750>
+result = 'error', pause_at = 'poll'
+
+    @pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+    @pytest.mark.parametrize("pause_at", ["write", "poll"])
+    def test_reload_checks_buffered_receipt_after_caller_descheduling(
+        monkeypatch: pytest.MonkeyPatch, result: str | None, pause_at: str
+    ) -> None:
+        """A caller pause is not evidence that the worker failed to acknowledge.
+
+        The clock crosses the unchanged deadline after writing. Only a correlated
+        positive receipt may succeed; an empty pipe must expire without another wait.
+        """
+        from civiccast.egress.gst import strategy
+
+        clock = [0.0]
+        reads: list[float] = []
+        sleeps: list[float] = []
+
+        class _PausedCallerServer(_ImmediateAckServer):
+            def write_line(self, text: str) -> bool:
+                written = super().write_line(text)
+                command_id = json.loads(text)["id"]
+                self._inbox.clear()
+                if result is not None:
+                    self._inbox.append(
+                        json.dumps(
+                            {
+                                "v": 1,
+                                "id": "another-command" if result == "unrelated" else command_id,
+                                "result": "accepted" if result == "unrelated" else result,
+                                "detail": None,
+                            }
+                        )
+                    )
+                if pause_at == "write":
+                    clock[0] = 20.5
+                return written
+
+            def read_line(self) -> str | None:
+                if pause_at == "poll" and not reads:
+                    reads.append(clock[0])
+                    return None
+                reads.append(clock[0])
+                return super().read_line()
+
+        monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock[0] = 20.5
+
+        monkeypatch.setattr(strategy.time, "sleep", sleep)
+        server = _PausedCallerServer()
+        channel = _WindowsPipeChannel("c1", server=server)
+        channel._connected_event.set()
+
+        assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+>       assert reads == ([20.5] if pause_at == "write" else [0.0, 20.5])
+E       assert [0.0] == [0.0, 20.5]
+E
+E         Right contains one more item: 20.5
+E         Use -v to get more diff
+
+_PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
+channel    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x00000179A434A120>
+clock      = [20.5]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000179A434A750>
+pause_at   = 'poll'
+reads      = [0.0]
+result     = 'error'
+server     = <tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer object at 0x00000179A43493D0>
+sleep      = <function test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>.sleep at 0x00000179A439CE00>
+sleeps     = [0.01]
+strategy   = <module 'civiccast.egress.gst.strategy' from 'C:\\Dev\\Claude\\civiccast-u73\\civiccast\\egress\\gst\\strategy.py'>
+
+tests\egress\test_worker_pipe_seam.py:635: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  civiccast.egress.gst.strategy:strategy.py:589 worker command 4bd6a5cd-8309-442e-b8fa-ebbbd5be3af5 lost-ack -> reissue_desired_state
+__ test_reload_checks_buffered_receipt_after_caller_descheduling[poll-None] ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000179A434A5A0>
+result = None, pause_at = 'poll'
+
+    @pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+    @pytest.mark.parametrize("pause_at", ["write", "poll"])
+    def test_reload_checks_buffered_receipt_after_caller_descheduling(
+        monkeypatch: pytest.MonkeyPatch, result: str | None, pause_at: str
+    ) -> None:
+        """A caller pause is not evidence that the worker failed to acknowledge.
+
+        The clock crosses the unchanged deadline after writing. Only a correlated
+        positive receipt may succeed; an empty pipe must expire without another wait.
+        """
+        from civiccast.egress.gst import strategy
+
+        clock = [0.0]
+        reads: list[float] = []
+        sleeps: list[float] = []
+
+        class _PausedCallerServer(_ImmediateAckServer):
+            def write_line(self, text: str) -> bool:
+                written = super().write_line(text)
+                command_id = json.loads(text)["id"]
+                self._inbox.clear()
+                if result is not None:
+                    self._inbox.append(
+                        json.dumps(
+                            {
+                                "v": 1,
+                                "id": "another-command" if result == "unrelated" else command_id,
+                                "result": "accepted" if result == "unrelated" else result,
+                                "detail": None,
+                            }
+                        )
+                    )
+                if pause_at == "write":
+                    clock[0] = 20.5
+                return written
+
+            def read_line(self) -> str | None:
+                if pause_at == "poll" and not reads:
+                    reads.append(clock[0])
+                    return None
+                reads.append(clock[0])
+                return super().read_line()
+
+        monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock[0] = 20.5
+
+        monkeypatch.setattr(strategy.time, "sleep", sleep)
+        server = _PausedCallerServer()
+        channel = _WindowsPipeChannel("c1", server=server)
+        channel._connected_event.set()
+
+        assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+>       assert reads == ([20.5] if pause_at == "write" else [0.0, 20.5])
+E       assert [0.0] == [0.0, 20.5]
+E
+E         Right contains one more item: 20.5
+E         Use -v to get more diff
+
+_PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
+channel    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x00000179A434AA20>
+clock      = [20.5]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000179A434A5A0>
+pause_at   = 'poll'
+reads      = [0.0]
+result     = None
+server     = <tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer object at 0x00000179A434A510>
+sleep      = <function test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>.sleep at 0x00000179A439D1C0>
+sleeps     = [0.01]
+strategy   = <module 'civiccast.egress.gst.strategy' from 'C:\\Dev\\Claude\\civiccast-u73\\civiccast\\egress\\gst\\strategy.py'>
+
+tests\egress\test_worker_pipe_seam.py:635: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  civiccast.egress.gst.strategy:strategy.py:589 worker command 0f54e0b7-b92e-486b-904b-e6c401e4f2e5 lost-ack -> reissue_desired_state
+_ test_reload_checks_buffered_receipt_after_caller_descheduling[poll-unrelated] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000179A434B8C0>
+result = 'unrelated', pause_at = 'poll'
+
+    @pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+    @pytest.mark.parametrize("pause_at", ["write", "poll"])
+    def test_reload_checks_buffered_receipt_after_caller_descheduling(
+        monkeypatch: pytest.MonkeyPatch, result: str | None, pause_at: str
+    ) -> None:
+        """A caller pause is not evidence that the worker failed to acknowledge.
+
+        The clock crosses the unchanged deadline after writing. Only a correlated
+        positive receipt may succeed; an empty pipe must expire without another wait.
+        """
+        from civiccast.egress.gst import strategy
+
+        clock = [0.0]
+        reads: list[float] = []
+        sleeps: list[float] = []
+
+        class _PausedCallerServer(_ImmediateAckServer):
+            def write_line(self, text: str) -> bool:
+                written = super().write_line(text)
+                command_id = json.loads(text)["id"]
+                self._inbox.clear()
+                if result is not None:
+                    self._inbox.append(
+                        json.dumps(
+                            {
+                                "v": 1,
+                                "id": "another-command" if result == "unrelated" else command_id,
+                                "result": "accepted" if result == "unrelated" else result,
+                                "detail": None,
+                            }
+                        )
+                    )
+                if pause_at == "write":
+                    clock[0] = 20.5
+                return written
+
+            def read_line(self) -> str | None:
+                if pause_at == "poll" and not reads:
+                    reads.append(clock[0])
+                    return None
+                reads.append(clock[0])
+                return super().read_line()
+
+        monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+        def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            clock[0] = 20.5
+
+        monkeypatch.setattr(strategy.time, "sleep", sleep)
+        server = _PausedCallerServer()
+        channel = _WindowsPipeChannel("c1", server=server)
+        channel._connected_event.set()
+
+        assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+>       assert reads == ([20.5] if pause_at == "write" else [0.0, 20.5])
+E       assert [0.0] == [0.0, 20.5]
+E
+E         Right contains one more item: 20.5
+E         Use -v to get more diff
+
+_PausedCallerServer = <class 'tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer'>
+channel    = <civiccast.egress.gst.strategy._WindowsPipeChannel object at 0x00000179A434B710>
+clock      = [20.5]
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x00000179A434B8C0>
+pause_at   = 'poll'
+reads      = [0.0]
+result     = 'unrelated'
+server     = <tests.egress.test_worker_pipe_seam.test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>._PausedCallerServer object at 0x00000179A434B890>
+sleep      = <function test_reload_checks_buffered_receipt_after_caller_descheduling.<locals>.sleep at 0x00000179A439D440>
+sleeps     = [0.01]
+strategy   = <module 'civiccast.egress.gst.strategy' from 'C:\\Dev\\Claude\\civiccast-u73\\civiccast\\egress\\gst\\strategy.py'>
+
+tests\egress\test_worker_pipe_seam.py:635: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  civiccast.egress.gst.strategy:strategy.py:589 worker command 0de21769-f820-4d2d-9b94-3e7a14100f15 lost-ack -> reissue_desired_state
+=========================== short test summary info ===========================
+FAILED tests/egress/test_worker_pipe_seam.py::test_reload_checks_buffered_receipt_after_caller_descheduling[poll-accepted]
+FAILED tests/egress/test_worker_pipe_seam.py::test_reload_checks_buffered_receipt_after_caller_descheduling[poll-error]
+FAILED tests/egress/test_worker_pipe_seam.py::test_reload_checks_buffered_receipt_after_caller_descheduling[poll-None]
+FAILED tests/egress/test_worker_pipe_seam.py::test_reload_checks_buffered_receipt_after_caller_descheduling[poll-unrelated]
+4 failed, 4 passed, 34 deselected in 1.72s

@@ -297,7 +297,7 @@ a { color: inherit; }
 /* In-product operator manual (/help) — the manual's own rendered heading
  * hierarchy (h1..h4) lives inside this scope, so its typography is set here
  * rather than relying on Tailwind's unstyled defaults. */
-.cc-manual-prose { color: var(--cc-ink); line-height: 1.65; }
+.cc-manual-prose { min-width: 0; overflow-wrap: anywhere; color: var(--cc-ink); line-height: 1.65; }
 .cc-manual-prose h1,
 .cc-manual-prose h2,
 .cc-manual-prose h3,
@@ -314,6 +314,7 @@ a { color: inherit; }
 .cc-manual-prose p { margin: 0 0 0.85rem; font-size: 0.9rem; }
 .cc-manual-prose ul,
 .cc-manual-prose ol { margin: 0 0 0.85rem; padding-left: 1.4rem; font-size: 0.9rem; display: grid; gap: 0.3rem; }
+.cc-manual-prose li { min-width: 0; }
 .cc-manual-prose li > ul,
 .cc-manual-prose li > ol { margin: 0.3rem 0 0; }
 .cc-manual-prose a { color: var(--cc-brand); text-decoration: underline; text-underline-offset: 2px; }
@@ -322,6 +323,7 @@ a { color: inherit; }
 .cc-manual-prose pre code { background: none; padding: 0; }
 .cc-manual-prose blockquote { margin: 0 0 0.85rem; padding: 0.5rem 0.9rem; border-left: 3px solid var(--cc-brand); background: var(--cc-brand-soft); border-radius: 0 6px 6px 0; font-size: 0.88rem; }
 .cc-manual-prose table { width: 100%; border-collapse: collapse; margin: 0 0 1rem; font-size: 0.85rem; }
+.cc-manual-table-scroll { max-width: 100%; overflow-x: auto; }
 .cc-manual-prose th,
 .cc-manual-prose td { border: 1px solid var(--cc-line); padding: 0.45rem 0.6rem; text-align: left; vertical-align: top; }
 .cc-manual-prose th { background: var(--cc-surface-2); font-weight: 600; }

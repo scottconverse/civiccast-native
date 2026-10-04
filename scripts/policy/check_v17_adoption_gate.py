@@ -57,7 +57,7 @@ REQUIRED_DOCS: dict[Path, tuple[str, ...]] = {
     Path("docs/index.html"): (
         CURRENT_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
-        "Physical DeckLink SDI capture and acceptance",
+        "Real cable-operator acceptance and SDI capture cards have not been tested.",
     ),
     Path("docs/install-windows.html"): (
         CURRENT_RELEASE_TAG,

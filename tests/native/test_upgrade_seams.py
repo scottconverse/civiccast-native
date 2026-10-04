@@ -518,3 +518,1132 @@ def test_ma01_the_flat_adapter_marks_the_run_filesystem_rollback_incapable(
     assert base.filesystem_rollback is True, "the generic bundle CAN revert a tree"
     adapted = seams_module.adapt_flat_installer_layout(base, context)
     assert adapted.filesystem_rollback is False
+
+
+@pytest.fixture
+def flat_recovery_case(tmp_path, monkeypatch):
+    from civiccast.native.upgrade import flat_recovery as recovery
+
+    # Pure filesystem/order proof, not Windows ACL/SCM/database integration.
+    monkeypatch.setattr(recovery, "_harden_state_root_acl", lambda path: None)
+    install = tmp_path / "install"
+    (install / "runtime").mkdir(parents=True)
+    payload = install / "runtime" / "product.py"
+    payload.write_bytes(b"previous application")
+    state = tmp_path / "recovery"
+    events = []
+    revision = ["old-head"]
+    backup = BackupRef(
+        backup_id="owned-backup",
+        backup_dir=str(state / "database"),
+        manifest_hash="a" * 64,
+        db_artifact="database.dump",
+        verified=True,
+        restore_drill_ok=True,
+    )
+
+    def restore_database(ref):
+        events.append("database")
+        assert payload.read_bytes() == b"replacement application"
+        revision[0] = "old-head"
+
+    def verify_previous(version, schema):
+        events.append("verify")
+        return (
+            version == "1"
+            and schema == "old-head"
+            and payload.read_bytes() == b"previous application"
+        )
+
+    seams = recovery.FlatRecoverySeams(
+        expected_install_root=install,
+        expected_state_root=state,
+        assert_owner=lambda owner: None,
+        contain=lambda: events.append("contain"),
+        capture_registration=lambda: {
+            "install_root": str(install),
+            "start": "auto",
+            "running": True,
+        },
+        restore_registration=lambda registration: events.append("registration"),
+        capture_config=lambda path: path.mkdir(),
+        restore_config=lambda path: events.append("config"),
+        backup=lambda directory: backup,
+        verify_backup=lambda ref: None,
+        restore_database=restore_database,
+        schema_revision=lambda: revision[0],
+        verify_previous_identity=verify_previous,
+        reactivate=lambda registration: events.append("reactivate"),
+    )
+    return recovery, install, payload, state, seams, events, revision
+
+
+def test_flat_outer_owner_restores_database_before_previous_application(flat_recovery_case):
+    recovery, install, payload, state, seams, events, revision = flat_recovery_case
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    recovery.mark_replacement(state, "owned-installer", seams)
+    payload.write_bytes(b"replacement application")
+    recovery.mark_database_mutation(state, "owned-installer", seams)
+    revision[0] = "new-head"
+    result = recovery.recover(state, "owned-installer", seams)
+    assert result.phase == "restored"
+    assert payload.read_bytes() == b"previous application"
+    assert events.index("database") < events.index("verify") < events.index("reactivate")
+    assert (
+        install.parent / ".install.failed-owned-installer" / "runtime" / "product.py"
+    ).read_bytes() == b"replacement application"
+
+
+def test_flat_outer_owner_rejects_owner_path_escape_before_containment(flat_recovery_case):
+    recovery, install, _payload, state, seams, events, _revision = flat_recovery_case
+    with pytest.raises(recovery.FlatRecoveryError, match="owner"):
+        recovery.prepare(
+            install_root=install,
+            state_root=state,
+            owner="../other",
+            old_version="1",
+            new_version="2",
+            seams=seams,
+        )
+    assert not events
+    assert not state.exists()
+
+
+def test_flat_outer_owner_never_reactivates_after_failed_database_restore(flat_recovery_case):
+    from dataclasses import replace
+
+    recovery, install, payload, state, seams, events, revision = flat_recovery_case
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    recovery.mark_replacement(state, "owned-installer", seams)
+    payload.write_bytes(b"replacement application")
+    recovery.mark_database_mutation(state, "owned-installer", seams)
+    revision[0] = "new-head"
+
+    def fail(ref):
+        raise RuntimeError("database restore failed")
+
+    with pytest.raises(RuntimeError, match="database restore failed"):
+        recovery.recover(state, "owned-installer", replace(seams, restore_database=fail))
+    assert recovery.load(state, "owned-installer", seams).phase == "halted"
+    assert payload.read_bytes() == b"replacement application"
+    assert "reactivate" not in events
+
+
+def test_flat_outer_owner_contains_even_when_terminal_journal_cannot_persist(
+    flat_recovery_case, monkeypatch
+):
+    recovery, install, payload, state, seams, events, _revision = flat_recovery_case
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    recovery.mark_replacement(state, "owned-installer", seams)
+    payload.write_bytes(b"replacement application")
+    persist = recovery._persist
+
+    def failing_persist(journal):
+        if journal.phase in {"restored", "halted"}:
+            raise OSError("terminal journal unavailable")
+        persist(journal)
+
+    monkeypatch.setattr(recovery, "_persist", failing_persist)
+    with pytest.raises(OSError, match="terminal journal unavailable"):
+        recovery.recover(state, "owned-installer", seams)
+    assert "reactivate" in events
+    assert events[-1] == "contain", "failed journal persistence skipped writer containment"
+
+
+def test_flat_outer_owner_rejects_tampered_sibling_before_containment(flat_recovery_case):
+    recovery, install, _payload, state, seams, events, _revision = flat_recovery_case
+    journal = recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="1",
+        seams=seams,
+    )
+    assert journal.backup is not None  # Same-version repair is not DB-backup NOOP.
+    recovery.mark_replacement(state, "owned-installer", seams)
+    journal = recovery.load(state, "owned-installer", seams)
+    journal.failed_tree = str(install.parent / "unrelated-application")
+    recovery._persist(journal)
+    before = list(events)
+    with pytest.raises(recovery.FlatRecoveryError, match="owner"):
+        recovery.recover(state, "owned-installer", seams)
+    assert events == before
+
+
+def test_flat_outer_owner_refuses_reparse_journal_before_read(flat_recovery_case, monkeypatch):
+    import stat
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    recovery, install, _payload, state, seams, _events, _revision = flat_recovery_case
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    journal_path = state / "flat-install-recovery.json"
+    original = Path.lstat
+
+    def reparse_stat(path, *args, **kwargs):
+        if path == journal_path:
+            return SimpleNamespace(st_mode=stat.S_IFLNK, st_file_attributes=0x400)
+        return original(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "lstat", reparse_stat)
+    with pytest.raises(recovery.FlatRecoveryError, match="reparse"):
+        recovery.load(state, "owned-installer", seams)
+
+
+def test_flat_outer_owner_checks_snapshot_before_replacement(flat_recovery_case):
+    recovery, install, _payload, state, seams, _events, _revision = flat_recovery_case
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    (state / "previous-application" / "runtime" / "product.py").write_bytes(
+        b"damaged recovery point"
+    )
+    with pytest.raises(recovery.FlatRecoveryError, match="snapshot"):
+        recovery.mark_replacement(state, "owned-installer", seams)
+    assert recovery.load(state, "owned-installer", seams).phase == "prepared"
+
+
+def test_flat_outer_owner_recovers_absent_application_after_interrupted_replacement(
+    flat_recovery_case,
+):
+    recovery, install, payload, state, seams, events, _revision = flat_recovery_case
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    recovery.mark_replacement(state, "owned-installer", seams)
+    retained = install.with_name("retained-interrupted-application")
+    install.rename(retained)
+    assert not install.exists()
+    restored = recovery.recover(state, "owned-installer", seams)
+    assert restored.phase == "restored"
+    assert payload.read_bytes() == b"previous application"
+    assert (retained / "runtime/product.py").read_bytes() == b"previous application"
+    assert events[-1] == "reactivate"
+
+
+def test_flat_outer_owner_binds_install_root_independently_of_journal(flat_recovery_case):
+    recovery, install, _payload, state, seams, events, _revision = flat_recovery_case
+    journal = recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    journal.install_root = str(install.parent / "different-install")
+    recovery._persist(journal)
+    before = list(events)
+    with pytest.raises(recovery.FlatRecoveryError, match="bound"):
+        recovery.load(state, "owned-installer", seams)
+    assert events == before
+
+
+def test_flat_outer_owner_binds_registration_root_before_containment(flat_recovery_case):
+    recovery, install, _payload, state, seams, events, _revision = flat_recovery_case
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    recovery.mark_replacement(state, "owned-installer", seams)
+    journal = recovery.load(state, "owned-installer", seams)
+    journal.registration["install_root"] = str(install.with_name("foreign-install"))
+    recovery._persist(journal)
+    events.clear()
+    with pytest.raises(recovery.FlatRecoveryError, match="registration root"):
+        recovery.recover(state, "owned-installer", seams)
+    assert events == []
+
+
+def test_flat_installer_parent_is_observed_not_claimed(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    expected = tmp_path / "setup.exe"
+    other = tmp_path / "other.exe"
+    parent = SimpleNamespace(
+        pid=123, create_time=lambda: 10.0, exe=lambda: str(expected), oneshot=nullcontext
+    )
+    monkeypatch.setattr(entry.os, "getppid", lambda: 123)
+    monkeypatch.setattr(entry.psutil, "Process", lambda pid: parent)
+    identity = entry.observe_installer_parent(expected)
+    entry.require_current_installer_parent(identity)
+    with pytest.raises(entry.FlatRecoveryError, match="expected installer"):
+        entry.observe_installer_parent(other)
+    # Same PID and pathname are not enough after process recycling.
+    parent.create_time = lambda: 11.0
+    assert entry.installer_parent_alive(identity) is False
+    with pytest.raises(entry.FlatRecoveryError, match="admitted"):
+        entry.require_current_installer_parent(identity)
+
+
+def test_flat_installer_parent_unreadable_is_not_reclaimable(tmp_path, monkeypatch):
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    identity = entry.InstallerParent(pid=123, birth=10.0, executable=str(tmp_path / "setup.exe"))
+
+    def denied(pid):
+        raise entry.psutil.AccessDenied(pid)
+
+    monkeypatch.setattr(entry.psutil, "Process", denied)
+    assert entry.installer_parent_alive(identity) is None
+
+    def gone(pid):
+        raise entry.psutil.NoSuchProcess(pid)
+
+    monkeypatch.setattr(entry.psutil, "Process", gone)
+    assert entry.installer_parent_alive(identity) is False
+
+
+def test_flat_installer_parent_matches_actual_process_incarnation():
+    """Exercise OS observation, without registry/service or installer mutations."""
+    from pathlib import Path
+
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    process = entry.psutil.Process(entry.os.getppid())
+    expected = Path(process.exe())
+    identity = entry.observe_installer_parent(expected)
+    assert identity.pid == process.pid
+    assert identity.birth == process.create_time()
+    assert entry.installer_parent_alive(identity) is True
+    entry.require_current_installer_parent(identity)
+
+
+def test_flat_parent_interlock_uses_actual_os_incarnation_before_write(monkeypatch):
+    from pathlib import Path
+
+    from civiccast.native.models import MaintenanceRecord
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    process = entry.psutil.Process(entry.os.getppid())
+    parent = entry.observe_installer_parent(Path(process.exe()))
+    calls = []
+
+    def take(owner, *, owner_pid):
+        calls.append((owner, owner_pid))
+        return MaintenanceRecord(
+            v=1,
+            state="held",
+            generation=3,
+            owner_run_id=owner,
+            owner_pid=owner_pid,
+            taken_utc="synthetic",
+            released_utc=None,
+        )
+
+    monkeypatch.setattr(entry, "take_interlock", take)
+    record = entry.take_installer_interlock(parent, "installer-owned")
+    assert calls == [("installer-owned", process.pid)]
+    assert record.owner_pid == process.pid and record.generation == 3
+    calls.clear()
+    recycled = parent.model_copy(update={"birth": parent.birth + 1})
+    with pytest.raises(entry.FlatRecoveryError, match="admitted"):
+        entry.take_installer_interlock(recycled, "installer-owned")
+    assert calls == []
+
+
+def test_flat_admission_serializes_intent_before_physical_lease(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    from pathlib import Path
+
+    from civiccast.native.models import InterlockRead, MaintenanceRecord
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    parent = entry.observe_installer_parent(Path(entry.psutil.Process(entry.os.getppid()).exe()))
+    root, install = tmp_path / "admission", tmp_path / "installation"
+    events = []
+    current = InterlockRead(status="free", record=None, detail="synthetic")
+
+    @contextmanager
+    def mutex():
+        events.append("locked")
+        try:
+            yield
+        finally:
+            events.append("unlocked")
+
+    def take(observed, owner):
+        nonlocal current
+        assert (root / "installer-admission.json").is_file(), (
+            "intent must be durable before D7 write"
+        )
+        intent = entry.load_installer_admission(
+            expected_install_root=install,
+            expected_admission_root=root,
+            expected_state_root=root / "recovery-owner",
+        )
+        assert intent.phase == "intent" and intent.parent == observed
+        assert events == ["locked"]  # durable intent precedes physical mutation under the mutex
+        events.append("taken")
+        record = MaintenanceRecord(
+            v=1,
+            state="held",
+            generation=1,
+            owner_run_id=owner,
+            owner_pid=observed.pid,
+            taken_utc="synthetic",
+        )
+        current = InterlockRead(status="held", record=record, detail="synthetic")
+        return record
+
+    monkeypatch.setattr(entry, "installer_admission_mutex", mutex)
+    monkeypatch.setattr(entry, "read_interlock", lambda: current)
+    monkeypatch.setattr(entry, "take_installer_interlock", take)
+    admission = entry.admit_installer(
+        parent=parent,
+        owner="owner",
+        expected_install_root=install,
+        admission_root=root,
+    )
+    assert admission.phase == "held" and admission.generation == 1
+    assert events == ["locked", "taken", "unlocked"]
+    with pytest.raises(entry.FlatRecoveryError, match="unsettled"):
+        entry.admit_installer(
+            parent=parent,
+            owner="other",
+            expected_install_root=install,
+            admission_root=root,
+        )
+    assert events.count("taken") == 1  # another installer may not replace the protected owner
+
+
+def test_flat_admission_durable_parent_is_separate_from_uncaptured_recovery(tmp_path):
+    from pathlib import Path
+
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    parent = entry.observe_installer_parent(Path(entry.psutil.Process(entry.os.getppid()).exe()))
+    root = tmp_path / "admission"
+    install = tmp_path / "installation"
+    recovery = root / "recovery-owner"
+    admission = entry.InstallerAdmission(
+        parent=parent,
+        owner="owner",
+        generation=1,
+        install_root=str(install),
+        admission_root=str(root),
+        state_root=str(recovery),
+        phase="intent",
+    )
+    entry.persist_installer_admission(admission)
+    loaded = entry.load_installer_admission(
+        expected_install_root=install,
+        expected_admission_root=root,
+        expected_state_root=recovery,
+    )
+    assert loaded == admission
+    assert not recovery.exists()  # core.prepare owns first creation, not admission/executor staging
+    with pytest.raises(entry.FlatRecoveryError, match="root binding"):
+        entry.load_installer_admission(
+            expected_install_root=tmp_path / "foreign",
+            expected_admission_root=root,
+            expected_state_root=recovery,
+        )
+    with pytest.raises(entry.FlatRecoveryError, match="distinct"):
+        entry.persist_installer_admission(admission.model_copy(update={"state_root": str(root)}))
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("owner_run_id", "other"), ("generation", 3), ("owner_pid", 456), ("state", "released")],
+)
+def test_flat_borrowed_interlock_rechecks_exact_lease(tmp_path, monkeypatch, field, value):
+    from civiccast.native.models import InterlockRead, MaintenanceRecord
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    parent = entry.InstallerParent(pid=123, birth=10.0, executable=str(tmp_path / "setup.exe"))
+    monkeypatch.setattr(entry, "require_current_installer_parent", lambda actual: None)
+    record = MaintenanceRecord(
+        v=1, state="held", generation=2, owner_run_id="installer", taken_utc="now", owner_pid=123
+    )
+
+    def read():
+        return InterlockRead(status="held", record=record, detail="test")
+
+    def forbidden():
+        pytest.fail("borrowed D3 must not take or release the physical lease")
+
+    seams = UpgradeSeams(
+        acquire_interlock=forbidden,
+        release_interlock=forbidden,
+        drain_and_verify_quiescence=lambda: True,
+        backup=lambda version: None,
+        restore_backup=lambda backup: None,
+        lay_tree=lambda version: "tree",
+        flip_junction=lambda tree: None,
+        read_junction=lambda: "tree",
+        migrate=lambda: None,
+        health_gate=lambda: True,
+        schema_revision=lambda: "head",
+        stop_service=lambda: None,
+    )
+    borrowed = entry.borrow_installer_interlock(
+        seams, parent=parent, owner="installer", generation=2, read=read
+    )
+    borrowed.acquire_interlock()
+    borrowed.release_interlock()
+    setattr(record, field, value)
+    with pytest.raises(entry.FlatRecoveryError, match="lease identity"):
+        borrowed.acquire_interlock()
+    with pytest.raises(entry.FlatRecoveryError, match="lease identity"):
+        borrowed.release_interlock()
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_flat_restore_privilege_is_scoped_and_restored(monkeypatch, failure):
+    import sys
+    from types import SimpleNamespace
+
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    events = []
+    original = [("restore-luid", 0)]
+    monkeypatch.setitem(
+        sys.modules,
+        "win32api",
+        SimpleNamespace(
+            GetCurrentProcess=lambda: "process",
+            SetLastError=lambda value: None,
+            GetLastError=lambda: 0,
+            CloseHandle=lambda handle: events.append(("close", handle)),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "win32con",
+        SimpleNamespace(
+            TOKEN_ADJUST_PRIVILEGES=32,
+            TOKEN_QUERY=8,
+            SE_PRIVILEGE_ENABLED=2,
+        ),
+    )
+
+    def adjust(token, disable, privileges):
+        events.append(("adjust", token, disable, privileges))
+        return original
+
+    monkeypatch.setitem(
+        sys.modules,
+        "win32security",
+        SimpleNamespace(
+            OpenProcessToken=lambda process, access: "token",
+            LookupPrivilegeValue=lambda system, name: "restore-luid",
+            AdjustTokenPrivileges=adjust,
+        ),
+    )
+    try:
+        with entry.restore_security_privilege():
+            events.append(("body",))
+            if failure:
+                raise ValueError("synthetic-body")
+    except ValueError:
+        assert failure
+    assert events == [
+        ("adjust", "token", False, [("restore-luid", 2)]),
+        ("body",),
+        ("adjust", "token", False, original),
+        ("close", "token"),
+    ]
+
+
+def test_flat_restore_privilege_missing_refuses_before_body(monkeypatch):
+    import sys
+    from types import SimpleNamespace
+
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    events = []
+    monkeypatch.setitem(
+        sys.modules,
+        "win32api",
+        SimpleNamespace(
+            GetCurrentProcess=lambda: "process",
+            GetLastError=lambda: 1300,
+            SetLastError=lambda value: None,
+            CloseHandle=lambda token: events.append("closed"),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "win32con",
+        SimpleNamespace(
+            TOKEN_ADJUST_PRIVILEGES=32,
+            TOKEN_QUERY=8,
+            SE_PRIVILEGE_ENABLED=2,
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "win32security",
+        SimpleNamespace(
+            OpenProcessToken=lambda *args: "token",
+            LookupPrivilegeValue=lambda *args: "restore-luid",
+            AdjustTokenPrivileges=lambda *args: events.append("adjust") or [],
+        ),
+    )
+    with (
+        pytest.raises(entry.FlatRecoveryError, match="privilege"),
+        entry.restore_security_privilege(),
+    ):
+        events.append("body")
+    assert events == ["adjust", "adjust", "closed"]
+
+
+@pytest.mark.parametrize(
+    "mode", ["absent", "nonzero", "timeout", "bootstrap", "overlap", "collision"]
+)
+def test_flat_executor_requires_verified_python_before_old_install_touch(
+    tmp_path, monkeypatch, mode
+):
+    import hashlib
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    bootstrap = tmp_path / "incoming.exe"
+    bootstrap.write_bytes(b"synthetic verified bootstrap boundary")
+    app = tmp_path / (
+        "CivicCast Native.exe" if mode == "collision" else "native-app-payload.ccpack"
+    )
+    server = tmp_path / "native-server-binaries.ccpack"
+    app.write_bytes(b"synthetic app")
+    server.write_bytes(b"synthetic server")
+    state = tmp_path / "protected-state"
+    state.mkdir()
+    monkeypatch.setattr(entry, "_harden_state_root_acl", lambda path: None)
+    monkeypatch.setenv("PGSERVICE", "synthetic-foreign-service")
+    monkeypatch.setenv("pgOptions", "synthetic-foreign-options")
+    calls = []
+
+    def run(args, **kwargs):
+        calls.append(args)
+        assert Path(args[0]).read_bytes() == bootstrap.read_bytes()
+        assert kwargs["creationflags"] == (
+            entry.subprocess.CREATE_NO_WINDOW if entry.os.name == "nt" else 0
+        )
+        assert kwargs["stdout"] == kwargs["stderr"] == entry.subprocess.DEVNULL
+        assert not any(
+            name.upper().startswith("PG") for name in kwargs.get("env", entry.os.environ)
+        )
+        assert entry.os.environ["PGSERVICE"] == "synthetic-foreign-service"
+        if mode == "timeout":
+            raise entry.subprocess.TimeoutExpired(args, 600)
+        destination = Path(args[args.index("--destination") + 1])
+        destination.mkdir(exist_ok=True)
+        return SimpleNamespace(returncode=1 if mode == "nonzero" else 0)
+
+    monkeypatch.setattr(entry.subprocess, "run", run)
+    expected = {
+        "absent": "interpreter",
+        "nonzero": "signed pack verification failed",
+        "timeout": "did not complete",
+        "bootstrap": "bootstrap binding",
+        "overlap": "overlaps",
+        "collision": "interpreter",
+    }[mode]
+    with pytest.raises(entry.FlatRecoveryError, match=expected):
+        entry.stage_recovery_executor(
+            bootstrap=bootstrap,
+            expected_bootstrap_sha256=(
+                "0" * 64
+                if mode == "bootstrap"
+                else hashlib.sha256(bootstrap.read_bytes()).hexdigest()
+            ),
+            app_pack=app,
+            server_pack=server,
+            state_root=state,
+            expected_install_root=state if mode == "overlap" else tmp_path / "old-install",
+            owner="installer-owned",
+        )
+    assert (
+        len(calls)
+        == {"absent": 2, "nonzero": 1, "timeout": 1, "bootstrap": 0, "overlap": 0, "collision": 2}[
+            mode
+        ]
+    )
+
+
+@pytest.mark.skipif(__import__("os").name != "nt", reason="Windows file DACL contract")
+def test_flat_outer_owner_preserves_original_file_dacl(flat_recovery_case):
+    import win32security
+
+    from civiccast.native.upgrade.journal import _current_process_sid_sddl
+
+    recovery, install, payload, state, seams, _events, _revision = flat_recovery_case
+    original = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(
+        f"D:P(A;;GA;;;{_current_process_sid_sddl()})", win32security.SDDL_REVISION_1
+    )
+    flags = win32security.DACL_SECURITY_INFORMATION
+    win32security.SetFileSecurity(
+        str(payload), flags | win32security.PROTECTED_DACL_SECURITY_INFORMATION, original
+    )
+
+    def descriptor():
+        return win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(
+            win32security.GetFileSecurity(str(payload), flags), win32security.SDDL_REVISION_1, flags
+        )
+
+    before = descriptor()
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    recovery.mark_replacement(state, "owned-installer", seams)
+    payload.write_bytes(b"replacement application")
+    recovery.recover(state, "owned-installer", seams)
+    assert descriptor() == before, "restored bytes inherited a different application DACL"
+
+
+@pytest.mark.parametrize(
+    "fault", [None, "directory", "executable", "birth", "malformed", "process-directory"]
+)
+def test_flat_verification_postmaster_is_exact_owned_incarnation(tmp_path, monkeypatch, fault):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    data = tmp_path / "scratch-pgdata"
+    data.mkdir()
+    executable = tmp_path / "old-tools" / "postgres.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"synthetic admitted tool boundary")
+    (data / "postmaster.pid").write_text(
+        "malformed"
+        if fault == "malformed"
+        else f"123\n{tmp_path if fault == 'directory' else data}\n101\n",
+        encoding="utf-8",
+    )
+    process = SimpleNamespace(
+        pid=123,
+        oneshot=lambda: nullcontext(),
+        create_time=lambda: 99.0 if fault == "birth" else 101.5,
+        exe=lambda: str(tmp_path / "foreign.exe" if fault == "executable" else executable),
+        cmdline=lambda: [
+            str(executable),
+            "-D",
+            str(tmp_path if fault == "process-directory" else data),
+        ],
+    )
+    monkeypatch.setattr(entry.psutil, "Process", lambda pid: process)
+    if fault is None:
+        identity = entry.verification_postmaster(data, executable, started_after=100.0)
+        assert identity.pid == 123 and identity.birth == 101.5
+        assert identity.executable == str(executable)
+    else:
+        with pytest.raises(entry.FlatRecoveryError):
+            entry.verification_postmaster(data, executable, started_after=100.0)
+
+
+@pytest.mark.parametrize("body_failure", [False, True])
+def test_flat_verification_target_reaps_only_bound_private_cluster(
+    tmp_path, monkeypatch, body_failure
+):
+    from types import SimpleNamespace
+
+    from civiccast.native import pg_ctl_exec, pgdata_acl
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    tools = tmp_path / "retained-old-tools"
+    tools.mkdir()
+    suffix = ".exe" if entry.os.name == "nt" else ""
+    for name in ("initdb", "pg_ctl", "postgres"):
+        (tools / f"{name}{suffix}").write_bytes(b"synthetic independently admitted tool")
+    root = tmp_path / "private-verifier"
+    events = []
+    identity = entry.InstallerParent(
+        pid=123, birth=101, executable=str(tools / f"postgres{suffix}")
+    )
+
+    def command(argv, **kwargs):
+        assert not any(name.upper().startswith("PG") for name in kwargs["env"])
+        assert kwargs["timeout_seconds"] in (120.0, 75.0, 45.0)
+        events.append(argv)
+        if "start" in argv:
+            (root / "pgdata" / "postmaster.pid").write_text("synthetic-bound-pidfile")
+        if "stop" in argv:
+            (root / "pgdata" / "postmaster.pid").unlink()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(pg_ctl_exec, "run_captured_argv", command)
+    monkeypatch.setattr(pgdata_acl, "normalize_pgdata_acl", lambda path: None)
+    monkeypatch.setattr(entry, "verification_postmaster", lambda *args, **kwargs: identity)
+    monkeypatch.setattr(entry, "installer_parent_alive", lambda observed: False)
+    monkeypatch.setenv("PGSERVICE", "synthetic-unrelated-service")
+    try:
+        with entry.disposable_verification_target(
+            old_pg_bin=tools, scratch_root=root, expected_install_root=tmp_path / "installation"
+        ) as target:
+            assert target.expected_pgdata == root / "pgdata"
+            assert "127.0.0.1" in target.database_url
+            assert "civiccast_verifier" in target.database_url
+            assert "synthetic-unrelated-service" not in target.database_url
+            if body_failure:
+                raise RuntimeError("synthetic verifier body failure")
+    except RuntimeError as exc:
+        assert body_failure and str(exc) == "synthetic verifier body failure"
+    assert len(events) == 3 and events[-1][1] == "stop", (
+        "owned verifier must stop on every body exit"
+    )
+    assert events[-1][events[-1].index("-D") + 1] == str(root / "pgdata")
+    assert not (root / "pgdata" / "postmaster.pid").exists()
+    assert entry.os.environ["PGSERVICE"] == "synthetic-unrelated-service"
+
+
+def test_flat_previous_tools_survive_replaceable_install_tree(tmp_path):
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    install = tmp_path / "install"
+    distribution = install / "server" / "pgsql"
+    tools = distribution / "bin"
+    tools.mkdir(parents=True)
+    for name in (
+        "initdb.exe",
+        "pg_ctl.exe",
+        "postgres.exe",
+        "pg_dump.exe",
+        "pg_restore.exe",
+        "psql.exe",
+    ):
+        (tools / name).write_bytes(name.encode())
+    (distribution / "share").mkdir()
+    (distribution / "share" / "postgres.bki").write_bytes(b"old support data")
+    retained = entry.retain_previous_postgres_tools(
+        pg_bin=tools, expected_install_root=install, destination=tmp_path / "retained"
+    )
+    install.rename(tmp_path / "installer-replaced-tree")
+    assert (retained / "postgres.exe").read_bytes() == b"postgres.exe"
+    assert (retained.parent / "share" / "postgres.bki").read_bytes() == b"old support data"
+
+
+def test_flat_previous_tool_retention_refuses_source_change(tmp_path, monkeypatch):
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    install = tmp_path / "install"
+    tools = install / "server" / "pgsql" / "bin"
+    tools.mkdir(parents=True)
+    for name in (
+        "initdb.exe",
+        "pg_ctl.exe",
+        "postgres.exe",
+        "pg_dump.exe",
+        "pg_restore.exe",
+        "psql.exe",
+    ):
+        (tools / name).write_bytes(name.encode())
+    copy = entry.shutil.copytree
+
+    def mutate_after_copy(*args, **kwargs):
+        result = copy(*args, **kwargs)
+        (tools / "postgres.exe").write_bytes(b"changed old executable")
+        return result
+
+    monkeypatch.setattr(entry.shutil, "copytree", mutate_after_copy)
+    with pytest.raises(entry.FlatRecoveryError, match="byte verification"):
+        entry.retain_previous_postgres_tools(
+            pg_bin=tools, expected_install_root=install, destination=tmp_path / "retained"
+        )
+
+
+def test_flat_previous_tool_retention_never_copies_pgdata(tmp_path):
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    install = tmp_path / "install"
+    tools = install / "server" / "pgsql" / "bin"
+    tools.mkdir(parents=True)
+    for name in (
+        "initdb.exe",
+        "pg_ctl.exe",
+        "postgres.exe",
+        "pg_dump.exe",
+        "pg_restore.exe",
+        "psql.exe",
+    ):
+        (tools / name).write_bytes(name.encode())
+    (tools.parent / "PG_VERSION").write_bytes(b"17")
+    target = tmp_path / "retained"
+    with pytest.raises(entry.FlatRecoveryError, match="not an old-tool distribution"):
+        entry.retain_previous_postgres_tools(
+            pg_bin=tools, expected_install_root=install, destination=target
+        )
+    assert not target.exists()
+
+
+@pytest.mark.parametrize("terminal", [False, True])
+def test_flat_admission_release_requires_durable_terminal_journal(
+    flat_recovery_case, monkeypatch, terminal
+):
+    from contextlib import nullcontext
+
+    from civiccast.native.models import InterlockRead, MaintenanceRecord
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    recovery, install, _payload, state, seams, _events, _revision = flat_recovery_case
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    if terminal:
+        recovery.mark_replacement(state, "owned-installer", seams)
+        recovery.commit(state, "owned-installer", seams)
+    parent = entry.observe_installer_parent(
+        entry.Path(entry.psutil.Process(entry.os.getppid()).exe())
+    )
+    admission = entry.InstallerAdmission(
+        parent=parent,
+        owner="owned-installer",
+        generation=7,
+        install_root=str(install),
+        admission_root=str(state.parent / "admission"),
+        state_root=str(state),
+        phase="held",
+    )
+    record = MaintenanceRecord(
+        v=1,
+        state="held",
+        generation=7,
+        owner_run_id="owned-installer",
+        owner_pid=parent.pid,
+        taken_utc="synthetic",
+    )
+    events = []
+    monkeypatch.setattr(entry, "installer_admission_mutex", nullcontext)
+    monkeypatch.setattr(entry, "load_installer_admission", lambda **_: admission)
+    monkeypatch.setattr(
+        entry,
+        "read_interlock",
+        lambda: InterlockRead(status="held", record=record, detail="synthetic"),
+    )
+    monkeypatch.setattr(
+        entry, "persist_installer_admission", lambda saved: events.append(saved.phase)
+    )
+
+    def release(**kwargs):
+        assert kwargs == {"owner_run_id": "owned-installer"}
+        assert events == ["committed"], "terminal admission must be durable before writer release"
+        events.append("release")
+        return record.model_copy(update={"state": "released"})
+
+    monkeypatch.setattr(entry, "release_interlock", release)
+    if terminal:
+        settled = entry.settle_installer_admission(admission=admission, seams=seams)
+        assert settled.phase == "committed" and events == ["committed", "release"]
+    else:
+        with pytest.raises(entry.FlatRecoveryError, match="durably terminal"):
+            entry.settle_installer_admission(admission=admission, seams=seams)
+        assert events == [], "nonterminal recovery must never release writers"
+
+
+@pytest.mark.parametrize("alive", [True, None, False])
+def test_flat_settled_admission_archive_requires_old_parent_absence(
+    flat_recovery_case, tmp_path, monkeypatch, alive
+):
+    from contextlib import nullcontext
+    from dataclasses import replace
+
+    from civiccast.native.models import InterlockRead, MaintenanceRecord
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    recovery, install, _payload, _state, seams, _events, _revision = flat_recovery_case
+    root = tmp_path / "admission"
+    root.mkdir()
+    state = root / "recovery-owned-installer"
+    seams = replace(seams, expected_state_root=state)
+    recovery.prepare(
+        install_root=install,
+        state_root=state,
+        owner="owned-installer",
+        old_version="1",
+        new_version="2",
+        seams=seams,
+    )
+    recovery.mark_replacement(state, "owned-installer", seams)
+    recovery.commit(state, "owned-installer", seams)
+    parent = entry.observe_installer_parent(
+        entry.Path(entry.psutil.Process(entry.os.getppid()).exe())
+    )
+    admission = entry.InstallerAdmission(
+        parent=parent,
+        owner="owned-installer",
+        generation=7,
+        install_root=str(install),
+        admission_root=str(root),
+        state_root=str(state),
+        phase="committed",
+    )
+    entry.persist_installer_admission(admission)
+    record = MaintenanceRecord(
+        v=1,
+        state="released",
+        generation=7,
+        owner_run_id="owned-installer",
+        owner_pid=parent.pid,
+        taken_utc="synthetic",
+        released_utc="synthetic",
+    )
+    monkeypatch.setattr(entry, "installer_admission_mutex", nullcontext)
+    monkeypatch.setattr(entry, "installer_parent_alive", lambda _: alive)
+    monkeypatch.setattr(
+        entry,
+        "read_interlock",
+        lambda: InterlockRead(status="free", record=record, detail="synthetic"),
+    )
+    active = root / "installer-admission.json"
+    original = active.read_bytes()
+    if alive is False:
+        archived = entry.archive_settled_installer_admission(admission=admission, seams=seams)
+        assert archived.read_bytes() == original and not active.exists()
+        assert recovery.load(state, "owned-installer", seams).phase == "committed"
+    else:
+        with pytest.raises(entry.FlatRecoveryError, match="definitively settled"):
+            entry.archive_settled_installer_admission(admission=admission, seams=seams)
+        assert active.read_bytes() == original
+
+
+@pytest.mark.parametrize(
+    ("old_alive", "changed"),
+    [
+        (True, None),
+        (None, None),
+        (False, None),
+        (False, "generation"),
+        (False, "owner_pid"),
+        (False, "owner_run_id"),
+    ],
+)
+def test_flat_interrupted_adoption_retains_exact_original_lease(
+    tmp_path, monkeypatch, old_alive, changed
+):
+    from contextlib import nullcontext
+
+    from civiccast.native.models import InterlockRead, MaintenanceRecord
+    from civiccast.native.upgrade import flat_recovery_entry as entry
+
+    actor = entry.observe_installer_parent(
+        entry.Path(entry.psutil.Process(entry.os.getppid()).exe())
+    )
+    old = actor.model_copy(update={"pid": actor.pid + 100000})
+    root, install = tmp_path / "admission", tmp_path / "install"
+    root.mkdir()
+    state = root / "recovery-owner"
+    previous = entry.InstallerAdmission(
+        parent=old,
+        owner="owner",
+        generation=9,
+        install_root=str(install),
+        admission_root=str(root),
+        state_root=str(state),
+        phase="held",
+    )
+    active = root / "installer-admission.json"
+    active.write_text(previous.model_dump_json(), encoding="utf-8")
+    original = active.read_bytes()
+    lease = MaintenanceRecord(
+        v=1,
+        state="held",
+        generation=9,
+        owner_run_id="owner",
+        owner_pid=old.pid,
+        taken_utc="synthetic",
+    )
+    if changed is not None:
+        lease = lease.model_copy(update={changed: "foreign" if changed == "owner_run_id" else 99})
+    real_alive = entry.installer_parent_alive
+    monkeypatch.setattr(entry, "installer_admission_mutex", nullcontext)
+    monkeypatch.setattr(
+        entry,
+        "installer_parent_alive",
+        lambda parent: old_alive if parent == old else real_alive(parent),
+    )
+    monkeypatch.setattr(
+        entry,
+        "read_interlock",
+        lambda: InterlockRead(status="held", record=lease, detail="synthetic"),
+    )
+    if old_alive is False and changed is None:
+        adopted = entry.adopt_interrupted_installer(
+            previous=previous,
+            actor=actor,
+            expected_install_root=install,
+            expected_admission_root=root,
+            expected_state_root=state,
+        )
+        assert adopted.parent == old and adopted.recovery_actor == actor
+        assert adopted.owner == "owner" and adopted.generation == 9
+        assert entry.read_interlock().record == lease, (
+            "adoption must not rewrite the physical lease"
+        )
+        assert (
+            entry.load_installer_admission(
+                expected_install_root=install,
+                expected_admission_root=root,
+                expected_state_root=state,
+            )
+            == adopted
+        )
+    else:
+        expected = "ownership changed" if old_alive is False else "definitively gone"
+        with pytest.raises(entry.FlatRecoveryError, match=expected):
+            entry.adopt_interrupted_installer(
+                previous=previous,
+                actor=actor,
+                expected_install_root=install,
+                expected_admission_root=root,
+                expected_state_root=state,
+            )
+        assert active.read_bytes() == original

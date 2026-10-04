@@ -1,6 +1,6 @@
 # In-app help specifications for beta.11
 
-Written by the documentation sprint (2026-10-03) for the incoming coder. **Nothing here has been implemented.** Each file covers one screen, page or installer step of CivicCast beta.10 and has six sections: where the text lives now (source file and line), the current text, what the screen really does, the mismatches between the two, ready-to-paste proposed text, and notes for the coder.
+Written by the documentation sprint (2026-10-03) for the incoming coder. The inventory and mismatch counts below describe that original beta.10 review, not the current development branch's remaining defects. Subsequent source repairs are recorded in the affected individual specifications, `CHANGELOG.md` and `HANDOFF.md`; they do not imply a published update or installed-station acceptance. Each file covers one screen, page or installer step and has six sections: where the text lives now (source file and line), the current text, what the screen really does, the mismatches between the two, proposed text, and notes for the coder.
 
 ## How to use these files
 
@@ -103,7 +103,7 @@ Total mismatch rows across the files: 645.
 
 ## Code fixes found while writing the help (not text work)
 
-These came from the manual writers, the fact-checkers and the help-file writers. Each is a product defect or gap, with the manual chapter or help file that describes it.
+These are the original findings from the manual writers, fact-checkers and help-file writers. This table is historical intake, not a current open-defect ledger. Consult each linked specification and the development changelog for later repairs and remaining verification limits.
 
 | Area | Problem | Where documented |
 | --- | --- | --- |

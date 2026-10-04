@@ -1197,12 +1197,21 @@ def test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob() ->
     assert baseline["schema_version"] == 2
     assert re.fullmatch(r"[0-9a-f]{40}", baseline["source_sha"])
     assert str(baseline["run_id"]).isdigit()
+    assert baseline.get("run_attempt") == 1
+    assert type(baseline["run_attempt"]) is int
     assert str(baseline["gate_a_run_id"]).isdigit()
     assert baseline["run_id"] != baseline["gate_a_run_id"]
     assert baseline["candidate_label"]
     assert re.fullmatch(r"[0-9a-f]{64}", baseline["installer_sha256"])
     assert re.fullmatch(r"[0-9a-f]{64}", baseline["station_index_sha256"])
+    assert baseline["station_index_sha256"] == (
+        "4860825284077fad4c0807cf78816b08a5be4d7c6aa4259bf92b1125d184849a"
+    )
+    assert "recovered from the original published signed installer" in baseline["notes"]
     assert baseline["product_version"]
+    assert "attempt 2" in baseline["notes"]
+    assert "105485113314" in baseline["notes"]
+    assert "8d5730a596989ab320b10edcf152d10883db1550" in baseline["notes"]
 
     workflow = _read(_WORKFLOW)
     assert "sandbox-lab/upgrade-baseline.json" in workflow
@@ -1215,6 +1224,22 @@ def test_upgrade_baseline_is_immutable_candidate_identity_not_a_latest_glob() ->
     assert "C:\\CivicCastTester\\kit-staging" in workflow
     assert "previous-kit-staging" in workflow
     assert "Previous full kit is absent" in workflow
+    # Both cross-version lanes must bind the successful original build attempt,
+    # now also bound to the recovered original embedded station index.
+    validators = workflow.split("      - name: Resolve and verify immutable previous candidate")[1:]
+    assert len(validators) == 2
+    for validator in validators:
+        identity = validator.split("      - name: Require the pinned previous full kit")[0]
+        assert "$previousRunAttempt = $baseline.run_attempt" in identity
+        assert "$previousRunAttempt -isnot [int]" in identity
+        assert "$previousRunAttempt -isnot [long]" in identity
+        assert "$previousRunAttempt -le 0" in identity
+        assert "--attempt $previousRunAttempt" in identity
+        assert "$run.attempt -ne $previousRunAttempt" in identity
+        assert "$run.status -ne 'completed'" in identity
+        assert "$run.conclusion -ne 'success'" in identity
+        assert "$run.headSha -ne $previousSha" in identity
+        assert "$run.workflowName -ne 'native-beta-candidate-artifacts'" in identity
     assert "latest" not in "\n".join(
         line.lower() for line in workflow.splitlines() if "previous" in line.lower()
     ), "the previous candidate must be an explicit immutable identity, never newest/latest"

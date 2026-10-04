@@ -662,6 +662,10 @@ def test_the_real_overload_control_producer_satisfies_the_evaluator(tmp_path: Pa
     assert control["dropped_overload_segments"] == 3
     assert control["active_vtt_cleared"] is True
     assert control["runtime_state"] in proof._FAIL_CLOSED_OVERLOAD_STATES
+    # This is a separate, explicitly immediate fail-closed control, not a
+    # claim that normal bounded catch-up must pause on its first scan.
+    assert control["overload_persistence_scans"] == 1
+    assert control["catch_up_shed_limit"] == 0
 
     # The evaluator must accept what the producer actually emits.
     report = _passing_report()

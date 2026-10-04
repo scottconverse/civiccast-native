@@ -647,6 +647,50 @@ Var CIVICCAST_POSTCLEAR_ARMED
   !insertmacro CIVICCAST_STEP "preinstall: classify existing install for upgrade"
   nsExec::ExecToLog '"$SYSDIR\sc.exe" query CivicCastSupervisor'
   Pop $R5
+  ; Only a registered product selects downgrade policy. Uninstalled metadata
+  ; must not block a fresh install. Use THIS setup's embedded bootstrap, not
+  ; the old Python runtime (which may be the very thing this install repairs).
+  ${If} $R5 == 0
+    SetRegView 64
+    StrCpy $R0 ""
+    ReadRegStr $R0 HKLM "Software\CivicCast\Native" "InstalledVersion"
+    SetRegView lastused
+    ${If} $R0 == ""
+      StrCpy $R0 "none"
+    ${EndIf}
+    StrCpy $R6 "$OUTDIR"
+    ClearErrors
+    InitPluginsDir
+    ${If} ${Errors}
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "Setup could not create its temporary safety-check directory. Nothing was stopped or replaced. Run the same signed setup again."
+    ${EndIf}
+    SetOutPath "$PLUGINSDIR"
+    ${If} ${Errors}
+      SetOutPath "$R6"
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "Setup could not select its temporary safety-check directory. Nothing was stopped or replaced. Run the same signed setup again."
+    ${EndIf}
+    File /oname=civiccast-install-preflight.exe "${MAINBINARYSRCPATH}"
+    ${If} ${Errors}
+      SetOutPath "$R6"
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "Setup could not prepare its version safety check. Nothing was stopped or replaced. Run the same signed setup again."
+    ${EndIf}
+    SetOutPath "$R6"
+    ${If} ${Errors}
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "Setup could not restore its installation output path. Nothing was stopped or replaced. Run the same signed setup again."
+    ${EndIf}
+    ; The pure command is silent and spawns no children, so nsExec's 5-second
+    ; inactivity timeout cannot be renewed by output. Every non-policy result
+    ; refuses BEFORE service-stop, taskkill or generated application writes.
+    nsExec::ExecToLog /TIMEOUT=5000 '"$PLUGINSDIR\civiccast-install-preflight.exe" --civiccast-install-version-preflight --installed-version "$R0" --candidate-version "${VERSION}"'
+    Pop $0
+    ${If} $0 == 13
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE} "A newer CivicCast version is installed. This older setup stopped before stopping the service or replacing application files. Run the same or a newer signed setup instead."
+    ${ElseIf} $0 != 0
+      !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "Setup could not verify the installed version safely (check exit $0). Nothing was stopped or replaced. Run the same signed setup again; if it persists, contact support with install-progress.log."
+    ${EndIf}
+  ${ElseIf} $R5 != 1060
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_UPGRADE_QUIESCE} "Setup could not determine whether CivicCast is installed (service-query exit $R5). Nothing was stopped or replaced. Resolve Windows service access and retry."
+  ${EndIf}
   ${If} ${FileExists} "$INSTDIR\CivicCast Native.exe"
     DetailPrint "Preparing the existing CivicCast (Native) installation for a data-preserving upgrade..."
     !insertmacro CIVICCAST_STEP "preinstall: existing install found; native service stop begin"
@@ -1478,8 +1522,8 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ; (activation / self-test), 78 (embedded pack trust) -- and this branch used
   ; to collapse all of them into one fixed sentence about the station folder
   ; and the pack cache. That sentence is correct for 66-with-a-cache-miss and
-  ; WRONG for the other four: 67 means the packs were fine and the station's
-  ; own self-test failed; 78 means the shipped trust key is a development key
+  ; WRONG for the other four: 67 covers activation after pack acquisition,
+  ; including disk space, extraction and self-test; 78 means the trust key is a development key
   ; without the matching opt-in, i.e. a BUILD defect; 64/65 are
   ; installer-authoring bugs. This file's own header (:374-377) states the
   ; rationale that was being discarded: "the exit code is the only signal a
@@ -1487,8 +1531,8 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ${If} $0 == 0
     DetailPrint "CivicCast (Native): station activation complete (or already activated; no-op)."
   ${ElseIf} $0 == 67
-    DetailPrint "CivicCast (Native): station activation self-test FAILED (exit $0) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup laid down the station's components, but the station's own self-test did not pass, so setup stopped rather than leave you with a station that looks installed and does not work.$\r$\n$\r$\nThis is NOT a missing-files problem -- the component packs were obtained and verified. The self-test that failed is named in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast were not deleted."
+    DetailPrint "CivicCast (Native): station activation FAILED (step code $0). The reason is in the preceding lines of this details list."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not finish setting up the station (step code 67). This can mean insufficient disk space, a failed extraction, a missing file, or a failed self-test of the station's programs.$\r$\n$\r$\nBefore closing setup, copy the details list: right-click inside it and choose Copy Details To Clipboard. That text contains the underlying reason. The installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log records the failed step, not that full reason.$\r$\n$\r$\nFix the reported cause and run setup again. Keep the copied details if you need help. Your recordings, database and settings in $COMMONPROGRAMDATA\CivicCast were not deleted."
   ${ElseIf} $0 == 66
     DetailPrint "CivicCast (Native): station activation could not obtain its component packs (exit $0) — see the installer log above."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not obtain the station's component packs from the signed station index it found.$\r$\n$\r$\nIf you installed from a CivicCast kit folder, make sure its station folder was copied across whole. If you ran setup.exe on its own, the packs it needs must already be in this machine's pack cache from a previous install.$\r$\n$\r$\nSee the installer log above for the exact underlying error -- it names either the missing pack or the signature/version check that refused one."

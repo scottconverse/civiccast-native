@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -71,6 +72,14 @@ def _scheduled_supervisor(app):
         for supervisor in app.state.background_supervisors
         if getattr(supervisor, "_name", None) == "civiccast-scheduled-recording"
     )
+
+
+def _await_storage_activation(app) -> None:
+    """Observe actual owned lifespan activation, not constructor-only wiring."""
+    deadline = time.monotonic() + 5.0
+    while not app.state.durable_storage_active and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert app.state.durable_storage_active is True
 
 
 def test_create_app_wires_scheduled_recording_runtime(monkeypatch, tmp_path: Path) -> None:
@@ -148,8 +157,10 @@ def test_managed_storage_boot_seeds_default_recording_target(monkeypatch, tmp_pa
 
     try:
         app = create_app()
-        target_store = app.dependency_overrides[get_recording_target_store]()
-        targets = {target.recording_target_id: target for target in target_store.list()}
+        with TestClient(app):
+            _await_storage_activation(app)
+            target_store = app.dependency_overrides[get_recording_target_store]()
+            targets = {target.recording_target_id: target for target in target_store.list()}
     finally:
         reset_engine()
         os.environ.pop("DATABASE_URL", None)
@@ -227,8 +238,10 @@ def test_native_station_boot_seeds_default_recording_target(
 
     try:
         app = create_app()
-        target_store = app.dependency_overrides[get_recording_target_store]()
-        targets = {target.recording_target_id: target for target in target_store.list()}
+        with TestClient(app):
+            _await_storage_activation(app)
+            target_store = app.dependency_overrides[get_recording_target_store]()
+            targets = {target.recording_target_id: target for target in target_store.list()}
     finally:
         reset_engine()
 
@@ -261,8 +274,10 @@ def test_native_station_boot_defers_to_an_existing_production_target(
 
     try:
         app = create_app()
-        target_store = app.dependency_overrides[get_recording_target_store]()
-        target_ids = {target.recording_target_id for target in target_store.list()}
+        with TestClient(app):
+            _await_storage_activation(app)
+            target_store = app.dependency_overrides[get_recording_target_store]()
+            target_ids = {target.recording_target_id for target in target_store.list()}
     finally:
         reset_engine()
 
@@ -275,9 +290,9 @@ def test_create_app_survives_an_unwritable_recording_target_directory(
 ) -> None:
     """An OSError from the seed's mkdir must never stop the control plane.
 
-    Before the guard, ``mkdir`` sat outside the function's try, so an OSError
-    propagated out of ``create_app`` -- the control plane never started, /health
-    never answered, and every downstream product-exercise row failed.
+    Before the guard, ``mkdir`` sat outside the function's try. Owned storage
+    activation must now survive that same error rather than leave startup
+    unfinished; the constructor deliberately does not perform this I/O.
     """
 
     _native_control_plane_env(monkeypatch, tmp_path)
@@ -296,12 +311,14 @@ def test_create_app_survives_an_unwritable_recording_target_directory(
     try:
         with caplog.at_level(logging.WARNING, logger="civiccast.app"):
             app = create_app()
-        target_store = app.dependency_overrides[get_recording_target_store]()
-        target_ids = {target.recording_target_id for target in target_store.list()}
+            with TestClient(app):
+                _await_storage_activation(app)
+                target_store = app.dependency_overrides[get_recording_target_store]()
+                target_ids = {target.recording_target_id for target in target_store.list()}
+                assert app.state.durable_storage_active is True
     finally:
         reset_engine()
 
-    assert app.state.durable_storage_active is True
     assert target_ids == set()
     assert any(
         "Could not create the default recording directory" in record.getMessage()

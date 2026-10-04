@@ -255,7 +255,7 @@ describe('StationProfileScreen', () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
     const { findByRole } = renderScreen()
     const link = await findByRole('link', { name: /read more in the manual/i })
-    expect(link.getAttribute('href')).toBe('/help#where-recordings-live')
+    expect(link.getAttribute('href')).toBe('/help#configuration-storage')
   })
 
   it('shows a save-error banner when the PUT fails', async () => {
@@ -363,7 +363,7 @@ describe('StationProfileScreen', () => {
       const manualLinks = getAllByRole('link', { name: /manual/i }).map((a) =>
         a.getAttribute('href'),
       )
-      expect(manualLinks).toContain('/help#live-captions-switch')
+      expect(manualLinks).toContain('/help#live-captions-what-the-settings-change')
       expect(new Set(manualLinks).size).toBe(manualLinks.length)
     })
 

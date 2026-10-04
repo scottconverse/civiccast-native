@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 
 _LOG = logging.getLogger(__name__)
 
@@ -53,20 +54,25 @@ class ThreadSupervisor:
         thread = self._thread
         return thread is not None and thread.is_alive()
 
-    def start(self) -> None:
+    def start(self, *, admission: Callable[[], AbstractContextManager[bool]] | None = None) -> None:
         if not self._enabled:
             return
         with self._lock:
             if self.running:
                 return
-            self._stop_event.clear()
-            self._thread = threading.Thread(
-                target=self._run_forever,
-                kwargs={"poll_seconds": self._poll_seconds, "stop_event": self._stop_event},
-                name=self._name,
-                daemon=True,
-            )
-            self._thread.start()
+            # Acquired after the supervisor lock, which may wait on stop/join.
+            # Only controlled thread setup/start is inside terminal admission.
+            with admission() if admission is not None else nullcontext(True) as allowed:
+                if not allowed:
+                    return
+                self._stop_event.clear()
+                self._thread = threading.Thread(
+                    target=self._run_forever,
+                    kwargs={"poll_seconds": self._poll_seconds, "stop_event": self._stop_event},
+                    name=self._name,
+                    daemon=True,
+                )
+                self._thread.start()
             _LOG.info("%s started (poll=%ss).", self._name, self._poll_seconds)
 
     def stop(self, timeout: float = 10.0) -> None:

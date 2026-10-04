@@ -1,0 +1,66 @@
+[
+  {
+    "path": "CHANGELOG.md",
+    "sha256": "F2EE5D309313284FDFBCB917BD4BC1B55A739F73F1901BC98C1760029F70F098"
+  },
+  {
+    "path": "civiccast/apps/portal-operator/e2e/live-room.spec.ts",
+    "sha256": "66807865B2F4114AC857EA4E312D06A227D49B09AB36E9AC42A252B1270A0CE0"
+  },
+  {
+    "path": "civiccast/apps/portal-operator/src/api/client.ts",
+    "sha256": "468B6FC8038E88FFAB10CA64C5DE553728600DAE2A58F36A3FD02C1ACC9719AE"
+  },
+  {
+    "path": "civiccast/apps/portal-operator/src/screens/LiveRoomScreen.test.tsx",
+    "sha256": "C4AC908B37FED352257FFDBB95BEA45667673B4F73109A33A0D539E2863C38B8"
+  },
+  {
+    "path": "civiccast/apps/portal-operator/src/screens/LiveRoomScreen.tsx",
+    "sha256": "27E4FB3D3E6A03684D38493DFCFD86DE208EF567661AA3CE3A924AC27F334026"
+  },
+  {
+    "path": "civiccast/apps/portal-operator/src/types/api.generated.ts",
+    "sha256": "90320C6D1B010214575DB09E14AEB529BC66318CAC31ABFF8EBBEA59DE03A398"
+  },
+  {
+    "path": "civiccast/docsite/manual.json",
+    "sha256": "E6117FEF5AC77488AFC58AF63A8FD4D5B1FA8BE4BA5BB966949A8CE1998AF475"
+  },
+  {
+    "path": "civiccast/docsite/manual.render.json",
+    "sha256": "94621CF19B8B4197AE1A9F8433B630CCDC51094CB8581F9EB8CE56EB3AC4BBF3"
+  },
+  {
+    "path": "civiccast/live/router.py",
+    "sha256": "73B8A92E0495A46E15D94721C50D2D6874A2C8B9BFA12A3EE31D5AD4BB79C87E"
+  },
+  {
+    "path": "docs/API-REFERENCE.md",
+    "sha256": "D057AE0CF2AE267CFAC924EB86BF1F8E685F3425D6DDE2DAB03DB51F4CB5CE30"
+  },
+  {
+    "path": "docs/USER-MANUAL.md",
+    "sha256": "A5DCFE60B55134A7B9C713F685FE12809017339613BCAC3A42E4FF8A3F7B0D7E"
+  },
+  {
+    "path": "docs/in-app-help/live.md",
+    "sha256": "B907CD9F4E7F99E8108318F70A1AC0C4FD1647AF1652D517CE58048A9EC4ED76"
+  },
+  {
+    "path": "docs/manual/src/13-running-meeting.md",
+    "sha256": "D3D406BB558346945B16DD48BB55B30EA43E097158DB707ABA29B409AF0A5079"
+  },
+  {
+    "path": "docs/manual/src/40-appendices.md",
+    "sha256": "3679F0AE0826107EADFDF66677DCFA535233B50ABFD11477B593C9EBFCD632F1"
+  },
+  {
+    "path": "docs/openapi.json",
+    "sha256": "4859AFF9964600B42D3F6DECA21B4FA73EAC96A3B0BA592870D230223BDB8A75"
+  },
+  {
+    "path": "tests/live/test_router.py",
+    "sha256": "DD5384261FCA64B7F874A2DFC5940057932EAAD92D3DD3C8852BCC27DAE5DEE2"
+  }
+]

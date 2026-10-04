@@ -72,6 +72,68 @@ def _word_window(start: float, words: list[tuple[str, float, float]]) -> Caption
 
 
 class TestModels:
+    @pytest.mark.parametrize("breaks", [[0], [2], [1, 1], [True], [1.0], [-1]])
+    def test_word_breaks_reject_malformed_boundaries(self, breaks) -> None:
+        hypothesis = _word_window(0, [("motion", 1, 2), ("carries", 2, 3)])
+        with pytest.raises(ValidationError):
+            CaptionHypothesis.model_validate({**hypothesis.model_dump(), "word_breaks": breaks})
+
+    @pytest.mark.parametrize("boundary_on", ["previous", "current", "both"])
+    def test_quality_gap_cannot_confirm_two_separated_single_words(self, boundary_on) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        words = [("motion", 6, 7), ("carries", 8, 9)]
+        first = _word_window(0, words).model_copy(
+            update={"word_breaks": [1] if boundary_on != "current" else []}
+        )
+        second = _word_window(5, words).model_copy(
+            update={"word_breaks": [1] if boundary_on != "previous" else []}
+        )
+        assert stabilizer.observe(first) == []
+        assert stabilizer.observe(second) == []
+        assert stabilizer.committed() == []
+
+    @pytest.mark.parametrize("boundary_on", ["previous", "current", "both"])
+    def test_quality_gap_keeps_confirmed_phrase_envelopes_separate(self, boundary_on) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        words = [("motion", 6, 6.5), ("carries", 6.5, 7), ("next", 8, 8.5), ("item", 8.5, 9)]
+        first = _word_window(0, words).model_copy(
+            update={"word_breaks": [2] if boundary_on != "current" else []}
+        )
+        second = _word_window(5, words).model_copy(
+            update={"word_breaks": [2] if boundary_on != "previous" else []}
+        )
+        assert stabilizer.observe(first) == []
+        cues = stabilizer.observe(second)
+        assert [(c.text, c.start_seconds, c.end_seconds) for c in cues] == [
+            ("motion carries", 6, 7),
+            ("next item", 8, 9),
+        ]
+
+    def test_unconfirmed_quality_gap_is_not_joined_in_review(self) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        first = _word_window(0, [("motion", 6, 7), ("carries", 8, 9)]).model_copy(
+            update={"word_breaks": [1]}
+        )
+        assert stabilizer.observe(first) == []
+        assert stabilizer.flush() == []
+        assert [cue.text for cue in stabilizer.expired_unconfirmed()] == ["motion", "carries"]
+
+    @pytest.mark.parametrize("expire", [False, True])
+    def test_quality_gap_survives_committed_word_filtering_for_review(self, expire) -> None:
+        stabilizer = CaptionStabilizer(live=True)
+        words = [("first", 6, 6.5), ("next", 8, 8.3), ("item", 8.3, 8.6), ("tail", 8.6, 9)]
+        assert (
+            stabilizer.observe(_word_window(0, words).model_copy(update={"word_breaks": [1]})) == []
+        )
+        assert [cue.text for cue in stabilizer.observe(_word_window(5, words[1:3]))] == [
+            "next item"
+        ]
+        if expire:
+            assert stabilizer.observe(_word_window(10, [("other", 11, 12)])) == []
+        else:
+            assert stabilizer.flush() == []
+        assert [cue.text for cue in stabilizer.expired_unconfirmed()] == ["first", "tail"]
+
     def test_audio_window_metadata_requires_a_complete_forward_pair(self) -> None:
         for metadata in (
             {"audio_window_start_seconds": 0},
@@ -603,6 +665,7 @@ class TestRuntimeBoundary:
         gpu = FasterWhisperRuntime(live=True, device="cuda", compute_type="float16")
 
         assert gpu.beam_size == 5
+
     def test_batch_cpu_threads_raises_on_unparseable_env_value(
         self,
         monkeypatch: pytest.MonkeyPatch,
@@ -1015,6 +1078,7 @@ class TestRuntimeBoundary:
                         text="motion carries",
                         avg_logprob=-0.1,
                         no_speech_prob=0.2,
+                        compression_ratio=1.0,
                     ),
                     SimpleNamespace(
                         start=1.5,
@@ -1022,6 +1086,7 @@ class TestRuntimeBoundary:
                         text="next agenda item",
                         avg_logprob=-0.1,
                         no_speech_prob=0.4,
+                        compression_ratio=1.0,
                     ),
                 ],
                 object(),
@@ -1050,6 +1115,8 @@ class TestRuntimeBoundary:
                     start=0.25,
                     end=2.5,
                     text="motion carries",
+                    avg_logprob=-0.1,
+                    compression_ratio=1.0,
                     words=[
                         SimpleNamespace(word=" motion", start=0.25, end=1.2, probability=0.8),
                         SimpleNamespace(word=" carries", start=1.2, end=2.5, probability=0.7),
@@ -1093,6 +1160,7 @@ class TestRuntimeBoundary:
                         text="motion carries",
                         avg_logprob=-0.1,
                         no_speech_prob=0.2,
+                        compression_ratio=1.0,
                     )
                 ],
                 object(),

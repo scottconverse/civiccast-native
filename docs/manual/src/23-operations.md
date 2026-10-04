@@ -107,7 +107,8 @@ All logs are in `C:\ProgramData\CivicCast\logs`.
 | --- | --- | --- |
 | `supervisor.log` | The supervisor: state changes, child starts, exits, restarts, readiness checks, the stop watchdog. The first line is `supervisor logging initialized` with the process id and the log destinations. | 10 MiB per file, 10 files kept. Each record is flushed to disk. |
 | `control_plane-app.log` | The CivicCast application's own log (playout, schedule, captions, alerts). | 10 MiB per file, 10 files kept. Written only when the control plane runs under the supervisor. |
-| `control_plane.log` | Raw standard output and error of the control plane, including the web server's access log (one line per request). | None. The file is opened for append and grows without limit. |
+| `control_plane-http.log` | Development builds: supervised web-server access and error records. | 10 MiB per file plus 10 backups. Ordinary flush, without forcing disk synchronization on every request. |
+| `control_plane.log` | Raw startup output, prints and native standard error of the control plane. Published beta.10 also writes web-server access/error records here. | None. The file is opened for append and can grow without limit. |
 | `postgres.log` | Postgres server messages. | None (the Postgres log collector is switched off). |
 | `postgres-launcher.log` | Short-lived output from starting Postgres. | None. |
 | `ollama.log` | Output of the Ollama child, when it runs. | None. |
@@ -121,6 +122,8 @@ Other logs you may need:
 - `C:\ProgramData\CivicCast\data\caption-tap\caption-retention-audit.jsonl`: one line per caption file the retention sweeper deleted (no rotation).
 
 > **Known issue (beta.10):** `control_plane.log` (every web request) and `postgres.log` are never rotated. On a busy station they grow forever. Check their size weekly and, when the service is stopped, move or truncate them. We could not confirm that Windows or the installer trims them.
+
+Development builds move supervised web-server access/error logging to the rotating `control_plane-http.log`. This is not a beta.10 shipped fix. Raw startup output, prints and native standard error in `control_plane.log` remain unrotated; the Postgres and other log limits above are unchanged. Interactive, unsupervised web-server logging is unchanged.
 
 To follow a log live:
 

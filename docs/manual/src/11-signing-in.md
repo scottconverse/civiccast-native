@@ -31,7 +31,7 @@ You should be taken to the **Readiness** screen. If a screen sent you here becau
 
 ![The First setup page on a configured station when you are signed out. The Setup complete card is at the top, with the Admin sign-in and Use recovery code cards below it.](manual/images/operator-signin-cards.png){width=90%}
 
-*Figure 2.1. The sign-in page of a station that is already set up.*
+*Figure 2.1. The current-source sign-in page using synthetic station data; not a live station.*
 
 > **Note:** Signing in on one browser does not sign out any other browser or device that is already signed in.
 
@@ -98,7 +98,7 @@ Altogether the console has 37 sidebar entries. On a phone or a narrow window, un
 
 ![The operator console with a signed-in user. The top bar is across the top, and the sidebar on the left shows its six sections.](manual/images/operator-shell-desktop.png){width=90%}
 
-*Figure 2.2. The console's top bar, sidebar and main area.*
+*Figure 2.2. The current-source console's top bar, sidebar and main area, using a synthetic signed-in operator example.*
 
 ### Which screens you can see
 
@@ -209,11 +209,11 @@ You should see a page headed **Operator manual** with a contents list on the lef
 
 - To find a section, type in **Search this manual**. It narrows the contents list to sections whose *title* contains your words. It does not search the text inside sections. If nothing matches you see `No section title matches "<text>".`
 - Click a contents entry to jump to that section.
-- **Report a beta issue** at the bottom of the sidebar opens the Manual at the section "Don't Have A GitHub Account?".
+- **Report a beta issue** at the bottom of the sidebar opens the Manual at the section "Report a beta issue".
 
-![The Manual screen showing the Manual contents list with a search box on the left and the start of the manual text on the right.](manual/images/operator-manual-contents.png){width=90%}
+![The Manual screen showing grouped Manual contents with a title filter on the left and the start of the manual text on the right.](manual/images/operator-manual-contents.png){width=90%}
 
-*Figure 2.3. The Manual screen.*
+*Figure 2.3. The current-source Manual screen using an isolated 635-heading manual fixture. This is an interface example, not acceptance of the bundled manual.*
 
 > **Known issue (beta.10):** The Manual built into the console is a copy made when the release was built, and it can be out of date. In the release source, it still says beta.10 "has not been published", which is no longer true. This manual was checked against the beta.10 software.
 
@@ -221,7 +221,7 @@ You should see a page headed **Operator manual** with a contents list on the lef
 
 > **Known issue (beta.10):** In testing we could not confirm whether the links inside the Manual's text that jump to another section work. The console reads a bare link of that kind as a page address, and it may show "Page not found". If one does, use the contents list on the left. Links to outside websites open in the same browser tab and replace the console; use your browser's **Back** button to return.
 
-> **Known issue (beta.10):** The section "Don't Have A GitHub Account?" tells you to press **Create support bundle** on "System Health". Only the Support admin role can use those buttons, and the screen is named **Readiness** in the sidebar. See [When something looks wrong](#ch-something-wrong) for who to contact.
+> **Support bundles:** Only the Support admin role can use **Create support bundle** on **Readiness**. See [When something looks wrong](#ch-something-wrong) for who to contact.
 
 ## Use the keyboard or a screen reader
 
@@ -265,9 +265,9 @@ Do this once, on the station computer, when CivicCast is installed and nobody ha
 
 You should see a green **Setup complete** card, a **First-run defaults** card, and a block of setup tools.
 
-![The Recovery kit ready panel on First setup, showing the admin username, the admin password, the recovery codes, and the Print kit and Save kit buttons.](manual/images/operator-setup-kit.png){width=90%}
+![The Recovery kit ready panel with unmistakably fake EXAMPLE ONLY credentials and EXAMPLE-NOT-VALID recovery codes, plus the Print kit and Save kit buttons.](manual/images/operator-setup-kit.png){width=90%}
 
-*Figure 2.4. The recovery kit panel.*
+*Figure 2.4. The current-source recovery kit panel using synthetic example data. The displayed password and recovery codes are not valid credentials and cannot access a station.*
 
 > **Warning:** The saved kit file contains the admin password in plain text, together with all eight codes. Keep it, or the printout, where only authorized people can find it. Do not email it, and do not leave it in a folder that syncs to the internet.
 

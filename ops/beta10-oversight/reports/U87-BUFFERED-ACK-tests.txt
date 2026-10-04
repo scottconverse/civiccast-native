@@ -1,0 +1,4 @@
+......................................s.............................     [100%]
+=========================== short test summary info ===========================
+SKIPPED [1] tests\egress\test_worker_pipe_seam.py:389: could not import 'gi': No module named 'gi'
+67 passed, 1 skipped in 6.98s

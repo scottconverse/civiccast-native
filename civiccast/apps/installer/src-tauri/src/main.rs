@@ -7,9 +7,12 @@ mod acquisition_catalog;
 mod acquisition_state;
 mod component_acquisition;
 mod hardware_inventory;
+mod flat_recovery_launcher;
 mod native_activation;
 mod native_distribution;
+mod native_first_install;
 mod native_install_verify;
+mod native_install_preflight;
 mod native_pack_staging;
 mod native_packs;
 mod native_repair;
@@ -20,6 +23,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::Duration;
@@ -2233,20 +2237,168 @@ try {{
     fn noop_persist_for_tests() {}
 
     #[test]
-    fn try_start_acquisition_once_is_true_exactly_once_then_false_forever() {
-        let started = std::sync::atomic::AtomicBool::new(false);
-        assert!(
-            try_start_acquisition_once(&started),
-            "the first caller must win and be told to start the driver"
-        );
-        assert!(
-            !try_start_acquisition_once(&started),
-            "a second caller must be told the driver already started"
-        );
-        assert!(
-            !try_start_acquisition_once(&started),
-            "a third caller must still be told the driver already started"
-        );
+    fn acquisition_admission_requires_fresh_persistence_and_preserves_repeat_progress() {
+        let state = Mutex::new(None);
+        let plan = mandatory_acquisition_test_plan();
+        let failed = admit_acquisition_plan(&state, &plan, |_| Err("persist failed".into()));
+        assert_eq!(failed.unwrap_err(), "persist failed");
+        assert!(state.lock().unwrap().is_none());
+        let mut initialized = false;
+        assert!(admit_acquisition_plan(&state, &plan, |_| {
+            initialized = true;
+            Ok(())
+        }).unwrap().0);
+        assert!(initialized);
+        assert!(!admit_acquisition_plan(&state, &plan, |_| {
+            panic!("same plan must not reset existing progress")
+        }).unwrap().0);
+    }
+
+    #[test]
+    fn acquisition_plan_same_selection_starts_exactly_once() {
+        let state = Mutex::new(None);
+        let plan = mandatory_acquisition_test_plan();
+        assert!(try_start_acquisition_plan(&state, &plan).unwrap().0);
+        assert!(!try_start_acquisition_plan(&state, &plan).unwrap().0);
+        let mut reordered = plan.clone();
+        reordered.reverse();
+        assert!(!try_start_acquisition_plan(&state, &reordered).unwrap().0);
+    }
+
+    fn mandatory_acquisition_test_plan() -> Vec<String> {
+        ["app_runtime", "server_binaries", "captions_medium", "local_ai_model"]
+            .into_iter().map(str::to_string).collect()
+    }
+
+    #[test]
+    fn acquisition_plan_rejects_malformed_or_missing_required_before_admission() {
+        let required = mandatory_acquisition_test_plan();
+        let mut invalid = vec![Vec::new()];
+        for id in &required {
+            invalid.push(required.iter().filter(|entry| *entry != id).cloned().collect());
+        }
+        for id in ["media_tools", "unknown", " captions_large", "https://credential.invalid"] {
+            let mut plan = required.clone();
+            plan.push(id.to_string());
+            invalid.push(plan);
+        }
+        let mut duplicate = required.clone();
+        duplicate.push(required[0].clone());
+        invalid.push(duplicate);
+        for plan in invalid {
+            let state = Mutex::new(None);
+            assert!(try_start_acquisition_plan(&state, &plan).is_err());
+            assert!(state.lock().unwrap().is_none());
+            assert!(try_start_acquisition_plan(&state, &required).unwrap().0);
+        }
+    }
+
+    #[test]
+    fn acquisition_plan_changed_selection_is_not_silently_accepted() {
+        let state = Mutex::new(None);
+        let required = mandatory_acquisition_test_plan();
+        try_start_acquisition_plan(&state, &required).unwrap();
+        let mut changed = required.clone();
+        changed.push("captions_large".to_string());
+        assert!(try_start_acquisition_plan(&state, &changed).is_err());
+        assert!(!try_start_acquisition_plan(&state, &required).unwrap().0);
+        assert!(!state.lock().unwrap().as_ref().unwrap().contains(&"captions_large".to_string()));
+    }
+
+    #[test]
+    fn acquisition_plan_concurrent_calls_admit_one_driver() {
+        let state = std::sync::Arc::new(Mutex::new(None));
+        let calls: Vec<_> = (0..8).map(|_| {
+            let state = state.clone();
+            thread::spawn(move || try_start_acquisition_plan(&state, &mandatory_acquisition_test_plan()).unwrap().0)
+        }).collect();
+        assert_eq!(calls.into_iter().map(|call| call.join().unwrap()).filter(|started| *started).count(), 1);
+    }
+
+    #[test]
+    fn acquisition_plan_filters_actual_catalog_before_optional_work() {
+        let trust = native_packs::PackTrust {
+            key_id: "test-key".to_string(),
+            public_key: ed25519_dalek::SigningKey::from_bytes(&[9; 32]).verifying_key(),
+        };
+        for optional in [false, true] {
+            let mut ids = mandatory_acquisition_test_plan();
+            if optional {
+                ids.extend(["captions_large".to_string(), "cuda_runtime".to_string()]);
+            }
+            let plan = canonical_acquisition_plan(&ids).unwrap();
+            let catalog = acquisition_catalog::production_catalog(Path::new("staged"), Path::new("download"), &trust, CIVICCAST_VERSION);
+            let selected = selected_acquisition_components(catalog, &plan);
+            assert_eq!(selected.iter().map(|component| component.id.clone()).collect::<Vec<_>>(), plan);
+            assert_eq!(selected.len(), if optional { 6 } else { 4 });
+            assert_eq!(selected.iter().any(|component| component.id == "captions_large"), optional);
+            assert_eq!(selected.iter().any(|component| component.id == "cuda_runtime"), optional);
+        }
+    }
+
+    #[test]
+    fn acquisition_plan_retry_cannot_change_selection_or_cancellation() {
+        let state = Mutex::new(None);
+        assert!(require_selected_acquisition_retry(&state, "captions_medium").is_err());
+        let required = mandatory_acquisition_test_plan();
+        try_start_acquisition_plan(&state, &required).unwrap();
+        for id in &required {
+            require_selected_acquisition_retry(&state, id).unwrap();
+        }
+        for id in ["captions_large", "cuda_runtime", "unknown"] {
+            assert!(require_selected_acquisition_retry(&state, id).is_err());
+        }
+        assert_eq!(state.lock().unwrap().as_ref().unwrap().len(), 4);
+    }
+
+    #[test]
+    fn acquisition_plan_selected_components_use_real_offline_driver_without_optional_side_effects() {
+        use sha2::{Digest, Sha256};
+        for optional in [false, true] {
+            let root = std::env::temp_dir().join(format!("civiccast-selection-driver-{}-{optional}", std::process::id()));
+            fs::create_dir_all(&root).unwrap();
+            let mut ids = mandatory_acquisition_test_plan();
+            if optional {
+                ids.extend(["captions_large".to_string(), "cuda_runtime".to_string()]);
+            }
+            let plan = canonical_acquisition_plan(&ids).unwrap();
+            let body = b"tiny verified component fixture";
+            let catalog = acquisition_catalog::PRODUCTION_CATALOG_IDS.iter().map(|id| {
+                let destination = root.join(format!("{id}.bin"));
+                if plan.iter().any(|selected| selected == id) {
+                    fs::write(&destination, body).unwrap();
+                }
+                acquisition_catalog::CatalogComponent {
+                    id: (*id).to_string(),
+                    items: vec![acquisition_catalog::CatalogItem {
+                        source: component_acquisition::ComponentSource::GitHubReleaseAsset {
+                            base_url: "https://example.invalid/must-not-transfer".to_string(),
+                            asset_name: format!("{id}.bin"),
+                        },
+                        expected: component_acquisition::ExpectedArtifact::Pinned {
+                            bytes: body.len() as u64, sha256: format!("{:x}", Sha256::digest(body)),
+                        },
+                        destination, staged_at: Vec::new(),
+                        trust: acquisition_catalog::AcquisitionTrust::PinnedFile,
+                    }],
+                }
+            }).collect();
+            let selected = selected_acquisition_components(catalog, &plan);
+            assert_eq!(selected.len(), plan.len());
+            for component in selected {
+                // Exercise the real trust/transport boundary, without trying
+                // to activate these deliberately tiny model-fixture bytes.
+                for item in &component.items {
+                    run_catalog_item(item, &component_acquisition::NoopProgress).unwrap();
+                }
+                assert_eq!(locally_satisfied_progress_rows(std::slice::from_ref(&component)).len(), 1);
+            }
+            for id in ["captions_large", "cuda_runtime"] {
+                assert_eq!(root.join(format!("{id}.bin")).exists(), optional);
+                assert!(!root.join(format!("{id}.bin.partial")).exists());
+            }
+            fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]
@@ -2538,7 +2690,8 @@ try {{
 
     #[test]
     fn mark_production_catalog_ids_errored_marks_exactly_the_production_ids() {
-        mark_production_catalog_ids_errored("no embedded pack signing key in this test build");
+        let ids = acquisition_catalog::PRODUCTION_CATALOG_IDS.iter().map(|id| (*id).to_string()).collect::<Vec<_>>();
+        mark_production_catalog_ids_errored(&ids, "no embedded pack signing key in this test build");
         let snapshot = acquisition_state::snapshot_json().expect("store has entries");
         for id in acquisition_catalog::PRODUCTION_CATALOG_IDS {
             assert!(
@@ -2878,6 +3031,7 @@ async fn read_local_installer_state() -> Result<String, String> {
 }
 
 fn read_local_installer_state_blocking() -> Result<String, String> {
+    if native_first_install::is_entry() { return native_first_install::progress_state(); }
     let Some(path) = newest_existing_installer_state_path()? else {
         return Ok("null".to_string());
     };
@@ -3148,6 +3302,7 @@ fn acquisition_persist_fields(existing_raw: Option<&str>) -> (String, String, St
 /// has no lane-transition context of its own (and, for the earliest calls in
 /// a fresh install, no installer-state.json may exist yet at all).
 fn persist_acquisition_progress() -> Result<(), String> {
+    if native_first_install::is_entry() { return native_first_install::persist_progress(); }
     let existing = newest_existing_installer_state_path()?
         .map(|path| fs::read_to_string(&path))
         .transpose()
@@ -3302,16 +3457,16 @@ fn component_locally_satisfied(component: &acquisition_catalog::CatalogComponent
 }
 
 /// Field failure, candidate #16 (4eca729): the production catalog is a
-/// FIXED list (`acquisition_catalog::PRODUCTION_CATALOG_IDS`) run by a
+/// fixed catalog (`acquisition_catalog::PRODUCTION_CATALOG_IDS`) run by a
 /// strictly sequential, single-threaded driver
 /// (`run_acquisition_components`) in that exact order --
 /// `app_runtime, server_binaries, captions_medium, captions_large,
 /// cuda_runtime, local_ai_model`. Two of the entries ahead of
 /// `local_ai_model` (`captions_large`, `cuda_runtime`) are OPTIONAL,
 /// large, and NOT guaranteed to be staged by the offline USB kit -- and
-/// the backend has no hardware- or selection-based gating on them at all
-/// (`start_acquisition` takes no arguments; every id in
-/// `PRODUCTION_CATALOG_IDS` always runs). On a station with poor or no
+/// the backend originally had no selection-based gating on them. The driver
+/// now receives the admitted operator selection, but selected optional work
+/// can still precede already-staged mandatory items. On a station with poor or no
 /// internet, whichever of those isn't staged offline can sit downloading
 /// for hours (the download engine's own timeout is
 /// `component_acquisition.rs`'s `6 * 60 * 60` seconds) before the driver
@@ -3640,19 +3795,19 @@ fn acquisition_download_root() -> PathBuf {
     acquisition_download_root_from(&program_data)
 }
 
-/// Marks every id in [`acquisition_catalog::PRODUCTION_CATALOG_IDS`] as a
+/// Marks every selected catalog id as a
 /// typed, loud error with `reason` as the detail -- used when the embedded
 /// pack trust cannot be established at all (see [`run_production_acquisition`]).
 /// Reuses [`component_acquisition::AcquisitionError::NetworkFailed`] /
 /// [`classify_acquisition_error`] rather than inventing a sixth error kind
 /// the frontend's five-variant contract (`types.ts`'s `AcquisitionErrorKind`)
 /// has no slot for.
-fn mark_production_catalog_ids_errored(reason: &str) {
+fn mark_production_catalog_ids_errored(selected_ids: &[String], reason: &str) {
     let (kind, detail) = classify_acquisition_error(&component_acquisition::AcquisitionError::NetworkFailed(
         reason.to_string(),
     ))
     .expect("a NetworkFailed is always a classified failure, never a cancel");
-    for id in acquisition_catalog::PRODUCTION_CATALOG_IDS {
+    for id in selected_ids {
         acquisition_state::upsert(acquisition_state::AcquisitionComponentProgress {
             id: id.to_string(),
             state: acquisition_state::AcquisitionComponentState::Error,
@@ -3679,7 +3834,7 @@ fn mark_production_catalog_ids_errored(reason: &str) {
 /// fails loud into every affected component's own error state instead of
 /// leaving the GUI stuck on "Waiting" forever, which is the exact defect
 /// this whole module exists to close.
-fn run_production_acquisition() {
+fn run_production_acquisition(selected_ids: Vec<String>) {
     let installer_dir = acquisition_installer_directory();
     let download_root = acquisition_download_root();
     match native_packs::embedded_pack_trust() {
@@ -3690,59 +3845,122 @@ fn run_production_acquisition() {
                 &trust,
                 CIVICCAST_VERSION,
             );
-            run_acquisition_components(&catalog);
+            let selected = selected_acquisition_components(catalog, &selected_ids);
+            run_acquisition_components(&selected);
         }
-        Err(reason) => mark_production_catalog_ids_errored(&reason),
+        Err(reason) => mark_production_catalog_ids_errored(&selected_ids, &reason),
     }
 }
 
-/// Idempotency guard for [`start_acquisition`]: `false` until the driver
-/// thread is launched, `true` for the rest of this process's lifetime
+/// Admitted plan for [`start_acquisition`]: absent until the driver starts,
+/// fixed for the rest of this process's lifetime
 /// (component-level retry after a failure goes through
-/// `retry_acquisition_component`, not a second full driver run). A `Mutex`
-/// would also work here, but a single `AtomicBool` swap is enough to make a
-/// second call an unconditional, lock-free no-op.
-static ACQUISITION_DRIVER_STARTED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+/// `retry_acquisition_component`, not a second full driver run). Same-plan
+/// requests are no-ops; a different plan must not be silently accepted.
+static ACQUISITION_DRIVER_PLAN: Mutex<Option<Vec<String>>> = Mutex::new(None);
 
 /// Starts the component-download driver, called once by the frontend when
 /// the downloading screen mounts (`AcquisitionFlow.tsx`'s
 /// `useAcquisitionComponents`). Synchronous and near-instant on purpose: the
-/// ONLY work done on the calling thread is the atomic idempotency check and
+/// ONLY work done on the calling thread is bounded plan validation/admission and
 /// spawning a background `std::thread` to run [`run_production_acquisition`]
 /// -- never `tauri::async_runtime::spawn_blocking`, which would still tie up
 /// an async-runtime worker for the whole multi-gigabyte transfer. A second
 /// call (a re-mount, a duplicate frontend invocation, or the user
-/// navigating back and forward) is a documented no-op: the compare-and-swap
-/// below only spawns the thread once per process. Never called from any
+/// navigating back and forward) is a no-op only for the same admitted plan:
+/// the admission below spawns the thread once per process. Never called from any
 /// silent-install (`/S`) path -- see this module's doc header and
 /// `nsis-hooks-native.nsh`, which drives D2/D4 entirely through this same
 /// binary's headless `--civiccast-*` CLI flags and never launches the Tauri
 /// GUI event loop at all, so this command can only ever be reached by an
 /// interactive user actually looking at the downloading screen.
-/// The exact compare-and-swap [`start_acquisition`] gates on, pulled out so
-/// a test can drive it against its OWN fresh flag (never the real
-/// process-wide [`ACQUISITION_DRIVER_STARTED`], which is one-way for the
-/// life of the process and shared with every other test in this binary).
+/// The exact admission [`start_acquisition`] gates on is pulled out so
+/// tests use their OWN fresh plan state (never the real process-wide plan).
 /// `true` means "you own this call, go start the driver"; `false` means
 /// "someone already owns it, this call is a no-op".
-fn try_start_acquisition_once(started: &std::sync::atomic::AtomicBool) -> bool {
-    started
-        .compare_exchange(
-            false,
-            true,
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-        )
-        .is_ok()
+fn canonical_acquisition_plan(selected_ids: &[String]) -> Result<Vec<String>, String> {
+    let mut seen = std::collections::HashSet::new();
+    for id in selected_ids {
+        if !acquisition_catalog::PRODUCTION_CATALOG_IDS.contains(&id.as_str())
+            || !seen.insert(id.as_str())
+        {
+            return Err("The download plan contains an unavailable or duplicate component. Return to the download plan.".to_string());
+        }
+    }
+    for required in ["app_runtime", "server_binaries", "captions_medium", "local_ai_model"] {
+        if !seen.contains(required) {
+            return Err("The download plan is missing a required component. Return to the download plan.".to_string());
+        }
+    }
+    Ok(acquisition_catalog::PRODUCTION_CATALOG_IDS
+        .iter()
+        .filter(|id| seen.contains(**id))
+        .map(|id| (*id).to_string())
+        .collect())
+}
+
+fn try_start_acquisition_plan(
+    state: &Mutex<Option<Vec<String>>>,
+    selected_ids: &[String],
+) -> Result<(bool, Vec<String>), String> {
+    admit_acquisition_plan(state, selected_ids, |_| Ok(()))
+}
+
+fn admit_acquisition_plan(
+    state: &Mutex<Option<Vec<String>>>,
+    selected_ids: &[String],
+    initialize: impl FnOnce(&[String]) -> Result<(), String>,
+) -> Result<(bool, Vec<String>), String> {
+    // Validate before taking the one-shot admission, so a malformed request
+    // cannot prevent the operator's corrected plan from starting.
+    let selected = canonical_acquisition_plan(selected_ids)?;
+    let mut admitted = state.lock().map_err(|_| "The download plan could not be read. Restart the installer.".to_string())?;
+    match admitted.as_ref() {
+        Some(existing) if existing == &selected => Ok((false, selected)),
+        Some(_) => Err("A different download plan is already active. Restart the installer to change the selected components.".to_string()),
+        None => {
+            // Publish fresh pending rows before admission becomes visible.
+            // Failed persistence must not certify stale completed rows.
+            initialize(&selected)?;
+            *admitted = Some(selected.clone());
+            Ok((true, selected))
+        }
+    }
+}
+
+fn selected_acquisition_components(
+    catalog: Vec<acquisition_catalog::CatalogComponent>,
+    selected_ids: &[String],
+) -> Vec<acquisition_catalog::CatalogComponent> {
+    catalog.into_iter().filter(|component| selected_ids.contains(&component.id)).collect()
+}
+
+fn require_selected_acquisition_retry(
+    state: &Mutex<Option<Vec<String>>>,
+    component_id: &str,
+) -> Result<(), String> {
+    let admitted = state.lock().map_err(|_| "The download plan could not be read. Restart the installer.".to_string())?;
+    if admitted.as_ref().is_some_and(|ids| ids.iter().any(|id| id == component_id)) {
+        Ok(())
+    } else {
+        Err("This component is not in the active download plan. Return to the download plan.".to_string())
+    }
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn start_acquisition() -> Result<String, String> {
-    if !try_start_acquisition_once(&ACQUISITION_DRIVER_STARTED) {
+fn start_acquisition(selected_ids: Vec<String>) -> Result<String, String> {
+    if native_first_install::is_entry() { native_first_install::validate_plan(&selected_ids)?; }
+    let (start, selected) = admit_acquisition_plan(&ACQUISITION_DRIVER_PLAN, &selected_ids, |ids| {
+        for id in ids {
+            acquisition_state::mark_pending(id);
+        }
+        persist_acquisition_progress()
+    })?;
+    if !start {
         return Ok("CivicCast is already downloading its components.".to_string());
     }
-    thread::spawn(run_production_acquisition);
+    if native_first_install::is_entry() { native_first_install::begin(selected)?; }
+    else { thread::spawn(move || run_production_acquisition(selected)); }
     Ok("CivicCast started downloading its components.".to_string())
 }
 
@@ -3760,6 +3978,7 @@ fn start_acquisition() -> Result<String, String> {
 /// already written stay in the `.partial`, so Resume resumes.
 #[tauri::command(rename_all = "camelCase")]
 fn cancel_acquisition() -> Result<String, String> {
+    if native_first_install::is_entry() { return native_first_install::cancel(); }
     component_acquisition::request_cancel();
     acquisition_state::mark_unfinished_canceled();
     let _ = persist_acquisition_progress();
@@ -3768,6 +3987,14 @@ fn cancel_acquisition() -> Result<String, String> {
 
 #[tauri::command(rename_all = "camelCase")]
 async fn retry_acquisition_component(component_id: String) -> Result<String, String> {
+    // Refuse before clearing cancellation, writing progress, or spawning work.
+    require_selected_acquisition_retry(&ACQUISITION_DRIVER_PLAN, &component_id)?;
+    if native_first_install::is_entry() {
+        let selected = ACQUISITION_DRIVER_PLAN.lock().map_err(|_| "The selected plan is unavailable.")?
+            .clone().ok_or("No first-install plan was admitted.")?;
+        native_first_install::begin(selected)?;
+        return Ok("Resuming the same verified selected installation.".into());
+    }
     tauri::async_runtime::spawn_blocking(move || retry_acquisition_component_blocking(component_id))
         .await
         .map_err(|error| format!("CivicCast could not retry the component download: {error}"))?
@@ -3792,6 +4019,18 @@ fn retry_acquisition_component_blocking(component_id: String) -> Result<String, 
             "Retry is queued. CivicCast will pick this file back up on the next check.".to_string(),
         ),
     }
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn first_install_plan() -> Result<std::collections::BTreeMap<String,u64>,String> {
+    tauri::async_runtime::spawn_blocking(native_first_install::load_plan).await
+        .map_err(|_| "The signed release plan could not be loaded.".to_string())?
+}
+
+#[tauri::command(rename_all = "camelCase")]
+async fn finish_first_install(action: native_first_install::SetupAction) -> Result<native_first_install::SetupOutcome,String> {
+    tauri::async_runtime::spawn_blocking(move || native_first_install::launch_setup(action)).await
+        .map_err(|_| "Windows Setup could not be opened for this verified installation.".to_string())?
 }
 
 fn validate_local_console_url(url: &str) -> Result<(), String> {
@@ -6285,6 +6524,32 @@ fn run_native_uninstall_preflight_cli(args: &[String]) -> Option<i32> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // This closed staging entry rejects mixed privileged-operation flags before
+    // any other dispatcher can interpret them. It never grants writer authority.
+    if let Some(exit_code) = flat_recovery_launcher::run_cli(&args, CIVICCAST_VERSION) {
+        std::process::exit(exit_code);
+    }
+    if let Some(exit_code) = native_install_preflight::exit_code(&args, CIVICCAST_VERSION) {
+        std::process::exit(exit_code);
+    }
+    let named_entry = std::env::current_exe().ok().and_then(|path| path.file_name().map(|name|
+        name.to_string_lossy().eq_ignore_ascii_case("CivicCast First Install.exe"))).unwrap_or(false);
+    if named_entry || args.iter().any(|arg| arg == "--civiccast-first-install") {
+        let user_state = std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_default().join(".civiccast");
+        let mode = if named_entry && args.is_empty() {
+            std::env::current_exe().map_err(|_| "The first-install location is unavailable.".to_string())
+                .and_then(|exe| fs::read(exe.with_file_name("first-install.json"))
+                    .map_err(|_| "Keep first-install.json beside CivicCast First Install.exe.".to_string()))
+                .and_then(|raw| native_first_install::read_entry_hint(&raw, CIVICCAST_VERSION, &user_state))
+        } else {
+            native_first_install::parse_mode(&args, &user_state)
+                .and_then(|mode| mode.ok_or("First-install arguments are missing.".into()))
+        };
+        let _ = native_first_install::MODE.set(mode);
+    }
+    // First-install admission is an exclusive entry: malformed mixed flags
+    // must not fall through to existing privileged maintenance actions.
+    if !native_first_install::is_entry() {
     if let Some(exit_code) = run_native_uninstall_policy_cli(&args) {
         std::process::exit(exit_code);
     }
@@ -6423,7 +6688,7 @@ fn main() {
     // this binary does not implement is fatal, and it names the flag.
     if let Some(unknown) = args
         .iter()
-        .find(|argument| argument.starts_with("--civiccast-"))
+        .find(|argument| argument.starts_with("--civiccast-") && !native_first_install::is_entry())
     {
         eprintln!(
             "CivicCast Installer {CIVICCAST_VERSION} does not implement {unknown}. This is \
@@ -6435,8 +6700,21 @@ fn main() {
         std::process::exit(native_service_registration::UNKNOWN_CIVICCAST_FLAG_EXIT_CODE);
     }
 
-    tauri::Builder::default()
-        .setup(|app| {
+    }
+    let mut context = tauri::generate_context!();
+    let entry_window = if native_first_install::is_entry() {
+        let config = context.config().app.windows.first().cloned();
+        for window in &mut context.config_mut().app.windows { window.create=false; }
+        config
+    } else { None };
+    let gui_result = tauri::Builder::default()
+        .setup(move |app| {
+            if let Some(config) = &entry_window {
+                tauri::WebviewWindowBuilder::from_config(app, config)?
+                    .initialization_script("Object.defineProperty(window,'__CIVICCAST_FIRST_INSTALL__',{value:true});")
+                    .build()?;
+                return Ok(());
+            }
             remove_stale_shutdown_markers();
             launch_shutdown_marker_watcher();
             // The native product is the only product this binary ever is --
@@ -6454,15 +6732,32 @@ fn main() {
             native_hardware_inventory,
             start_acquisition,
             cancel_acquisition,
-            retry_acquisition_component
+            retry_acquisition_component,
+            first_install_plan,
+            finish_first_install
         ])
         .on_window_event(|_window, event| {
-            if let tauri::WindowEvent::CloseRequested { .. } = event {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if native_first_install::is_entry() && !native_first_install::can_close() {
+                    api.prevent_close();
+                    return;
+                }
                 std::process::exit(0);
             }
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run CivicCast installer");
+        .run(context);
+    if gui_result.is_err() {
+        #[cfg(windows)]
+        if native_first_install::is_entry() {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_OK, MB_ICONERROR};
+            let title:Vec<u16>="CivicCast First Install".encode_utf16().chain(Some(0)).collect();
+            let message:Vec<u16>="The first-install window could not open. Install Microsoft Edge WebView2 Runtime and keep the matching first-install.json beside this executable, then try again. No CivicCast installation was started."
+                .encode_utf16().chain(Some(0)).collect();
+            unsafe { MessageBoxW(std::ptr::null_mut(),message.as_ptr(),title.as_ptr(),MB_OK|MB_ICONERROR); }
+        }
+        eprintln!("The CivicCast installer window could not open.");
+        std::process::exit(1);
+    }
 }
 
 

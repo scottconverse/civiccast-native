@@ -27,12 +27,12 @@ import { WatchScreen } from './screens/WatchScreen'
 // The operator console is a HashRouter app (civiccast/apps/portal-
 // operator/src/main.tsx), so the route lives entirely after the FIRST '#'
 // -- '/operator/help#...' would load the SPA shell but hand HashRouter the
-// raw fragment '#report-without-github' as its route, landing on Page not
+// raw fragment '#report-a-beta-issue' as its route, landing on Page not
 // found instead of the manual (caught in PR #74 review). The route itself
 // is '/operator/#/help', and the manual's own in-page anchor is a second
 // '#' nested inside that route string, which react-router's HashRouter
 // parses back out as ManualScreen's own location.hash.
-const BETA_FEEDBACK_URL = '/operator/#/help#report-without-github'
+const BETA_FEEDBACK_URL = '/operator/#/help#report-a-beta-issue'
 
 function getManifestOverride(): string | null {
   return new URLSearchParams(window.location.search).get('manifest')

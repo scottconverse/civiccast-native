@@ -578,6 +578,72 @@ def test_channel_send_and_wait_false_and_logs_expire_outcome_on_lost_ack(
     assert "reissue_desired_state" in caplog.text
 
 
+@pytest.mark.parametrize("result", ["accepted", "error", None, "unrelated"])
+@pytest.mark.parametrize("pause_at", ["write", "poll"])
+def test_reload_checks_buffered_receipt_after_caller_descheduling(
+    monkeypatch: pytest.MonkeyPatch, result: str | None, pause_at: str
+) -> None:
+    """A caller pause is not evidence that the worker failed to acknowledge.
+
+    The clock crosses the unchanged deadline after writing. Only a correlated
+    positive receipt may succeed; an empty pipe must expire without another wait.
+    """
+    from civiccast.egress.gst import strategy
+
+    clock = [0.0]
+    reads: list[float] = []
+    sleeps: list[float] = []
+
+    class _PausedCallerServer(_ImmediateAckServer):
+        def write_line(self, text: str) -> bool:
+            written = super().write_line(text)
+            command_id = json.loads(text)["id"]
+            self._inbox.clear()
+            if result is not None:
+                self._inbox.append(
+                    json.dumps(
+                        {
+                            "v": 1,
+                            "id": "another-command" if result == "unrelated" else command_id,
+                            "result": "accepted" if result == "unrelated" else result,
+                            "detail": None,
+                        }
+                    )
+                )
+            if pause_at == "write":
+                clock[0] = 20.5
+            return written
+
+        def read_line(self) -> str | None:
+            if pause_at == "poll" and not reads:
+                reads.append(clock[0])
+                return None
+            reads.append(clock[0])
+            return super().read_line()
+
+    monkeypatch.setattr(strategy.time, "monotonic", lambda: clock[0])
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        clock[0] = 20.5
+
+    monkeypatch.setattr(strategy.time, "sleep", sleep)
+    server = _PausedCallerServer()
+    channel = _WindowsPipeChannel("c1", server=server)
+    channel._connected_event.set()
+
+    assert channel.send_and_wait("reload", "reload /w/g.json") is (result == "accepted")
+    assert reads == ([20.5] if pause_at == "write" else [0.0, 20.5])
+    assert sleeps == ([] if pause_at == "write" else [0.01])
+    assert not channel._pending
+    if result == "accepted":
+        assert channel.last_failure_reason is None
+    elif result == "error":
+        assert channel.last_failure_reason == "worker acked 'error'"
+    else:
+        assert channel.last_failure_reason == "ack timeout after 5.0s (reissue_desired_state)"
+
+
 def test_channel_reconnect_replays_reload_and_swap_not_caption_or_stop() -> None:
     """CC-WS5-006 defect 3 (reconnect): through the production channel, after a
     reload+swap+caption have been sent, a reconnect reissues ONLY the current

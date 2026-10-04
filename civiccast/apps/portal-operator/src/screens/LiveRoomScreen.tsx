@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import {
@@ -16,6 +16,7 @@ import {
   goLiveOnAir,
   listChannelProfiles,
   listLiveSources,
+  listLiveSessions,
   listRecordingTargets,
   probeLiveSource,
   updateLiveSource,
@@ -61,9 +62,19 @@ import type {
 // has not loaded yet.
 const DEFAULT_CHANNEL_ID = 'government'
 const CHANNEL_STORAGE_KEY = 'civiccast.liveRoom.channelId'
-const SESSION_ID = 'council-live-room'
 const SESSION_TITLE = 'Council live room'
 const EMPTY_SOURCES: LiveSourceResponse[] = []
+
+function newMeetingId(): string {
+  // getRandomValues is available on LAN HTTP origins where randomUUID may
+  // require a secure context. Keep the fallback cryptographically random.
+  if (typeof crypto.randomUUID === 'function') return `meeting-${crypto.randomUUID()}`
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('')
+  return `meeting-${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? error.message
@@ -191,9 +202,11 @@ export function SafeToBroadcastPanel({
 function FinalizationPanel({
   session,
   onSessionRefresh,
+  canOperate,
 }: {
   session: LiveSessionResponse
   onSessionRefresh: (next: LiveSessionResponse) => void
+  canOperate: boolean
 }) {
   const active = session.state === 'ending' || session.state === 'recorded'
   const statusQuery = useQuery<LiveFinalizationStatusResponse, Error>({
@@ -218,8 +231,13 @@ function FinalizationPanel({
       onSessionRefresh(refreshed)
     }
   }, [refreshed, session.state, onSessionRefresh])
+  const canRetry = canOperate && session.state === 'ending' &&
+    !sessionQuery.isError && !statusQuery.isError
   const retryMutation = useMutation({
-    mutationFn: () => retryLiveFinalization(session.live_session_id),
+    mutationFn: () => {
+      if (!canRetry) throw new Error('Reopen current meeting controls as a meeting operator before retrying finalization.')
+      return retryLiveFinalization(session.live_session_id)
+    },
     onSuccess: () => statusQuery.refetch(),
   })
   if (!active) return null
@@ -273,13 +291,16 @@ function FinalizationPanel({
             <button
               type="button"
               onClick={() => retryMutation.mutate()}
-              disabled={retryMutation.isPending}
+              disabled={!canRetry || retryMutation.isPending}
               className="self-start rounded-md px-3 py-2 text-xs font-semibold"
               style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
             >
               Retry finalization
             </button>
           )}
+          {job.terminal && !canRetry && <p className="m-0 text-xs">
+            Retry is unavailable until a meeting operator successfully reopens current meeting controls.
+          </p>}
         </div>
       )}
       {job && job.state !== 'completed' && job.state !== 'failed' && (
@@ -1022,7 +1043,8 @@ export function PreflightList({ evaluation }: { evaluation: PreflightEvaluation 
 }
 
 export function LiveRoomScreen() {
-  const [session, setSession] = useState<LiveSessionResponse | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState('')
+  const contextVersion = useRef(0)
   const [preflight, setPreflight] = useState<PreflightEvaluation | null>(null)
   const [selectedSourceId, setSelectedSourceId] = useState('')
   const [operatorConfirmed, setOperatorConfirmed] = useState(false)
@@ -1041,6 +1063,12 @@ export function LiveRoomScreen() {
     }
   })
   const selectChannel = (next: string) => {
+    contextVersion.current += 1
+    setSelectedSessionId('')
+    setPreflight(null)
+    setOperatorConfirmed(false)
+    setPendingConfirm(null)
+    setActionError(null)
     setChannelId(next)
     try {
       window.localStorage.setItem(CHANNEL_STORAGE_KEY, next)
@@ -1103,8 +1131,38 @@ export function LiveRoomScreen() {
   })
 
   const sources = sourcesQuery.data ?? EMPTY_SOURCES
-  const canOperateMeeting =
+  const sessionsQuery = useQuery({
+    queryKey: ['live-sessions', channelId],
+    queryFn: () => listLiveSessions(channelId),
+    enabled: staffIdentityQuery.isSuccess,
+    retry: false,
+    refetchInterval: 10_000,
+  })
+  const sessionQuery = useQuery({
+    queryKey: ['live-room-session', channelId, selectedSessionId],
+    queryFn: () => getLiveSession(selectedSessionId),
+    enabled: !!selectedSessionId && staffIdentityQuery.isSuccess,
+    retry: false,
+    refetchInterval: 3000,
+  })
+  const freshSession = sessionQuery.data
+  const session = freshSession?.channel_id === channelId && freshSession.live_session_id === selectedSessionId
+    ? freshSession : null
+  const setSession = (next: LiveSessionResponse) => {
+    queryClient.setQueryData(['live-room-session', channelId, next.live_session_id], next)
+  }
+  const chooseSession = (id: string) => {
+    contextVersion.current += 1
+    setSelectedSessionId(id)
+    setPreflight(null)
+    setOperatorConfirmed(false)
+    setActionError(null)
+    setPendingConfirm(null)
+  }
+  const hasMeetingRole =
     staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'meeting_operator')
+  const canOperateMeeting = hasMeetingRole &&
+    !sessionQuery.isError && (!selectedSessionId || (!!session && session.live_session_id === selectedSessionId))
   const canEditSources =
     staffIdentityQuery.isSuccess && hasOperatorRole(staffIdentityQuery.data, 'setup_admin')
   // Matches the backend's POST /sources/{id}/probe gate exactly
@@ -1121,25 +1179,36 @@ export function LiveRoomScreen() {
   }, [selectedSourceId, sources])
 
   const runAction = async (work: () => Promise<LiveSessionResponse>) => {
+    const version = contextVersion.current
     setActionError(null)
     try {
       const next = await work()
-      setSession(next)
+      if (version === contextVersion.current && next.channel_id === channelId) setSession(next)
     } catch (err) {
-      setActionError(apiMessage(err, 'The live-room action failed.'))
+      if (version === contextVersion.current) setActionError(apiMessage(err, 'The live-room action failed.'))
     }
   }
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      createLiveSession({
-        live_session_id: SESSION_ID,
+    mutationFn: async () => {
+      const version = contextVersion.current
+      const next = await createLiveSession({
+        live_session_id: newMeetingId(),
         channel_id: channelId,
         title: SESSION_TITLE,
         notes: 'Created from the operator live room.',
-      }),
-    onSuccess: setSession,
-    onError: (err) => setActionError(apiMessage(err, 'Could not create session.')),
+      }).catch((err) => {
+        if (version === contextVersion.current) setActionError(apiMessage(err, 'Could not create session.'))
+        throw err
+      })
+      return { next, version }
+    },
+    onSuccess: ({ next, version }) => {
+      void queryClient.invalidateQueries({ queryKey: ['live-sessions', next.channel_id] })
+      if (version !== contextVersion.current || next.channel_id !== channelId) return
+      chooseSession(next.live_session_id)
+      setSession(next)
+    },
   })
 
   const preflightMutation = useMutation({
@@ -1153,10 +1222,17 @@ export function LiveRoomScreen() {
         ai_runtime_ready: null,
         operator_confirmed: operatorConfirmed,
       }
+      const version = contextVersion.current
       return evaluateLivePreflight(session.live_session_id, payload)
+        .then((evaluation) => ({ evaluation, version }))
+        .catch((err) => {
+          if (version === contextVersion.current) setActionError(apiMessage(err, 'Could not run pre-flight.'))
+          throw err
+        })
     },
-    onSuccess: setPreflight,
-    onError: (err) => setActionError(apiMessage(err, 'Could not run pre-flight.')),
+    onSuccess: ({ evaluation, version }) => {
+      if (version === contextVersion.current) setPreflight(evaluation)
+    },
   })
 
   // WP-07: checking a source and editing one both change what the ingest plan
@@ -1228,15 +1304,10 @@ export function LiveRoomScreen() {
   const ready = preflight?.ready ?? false
   const loading = sourcesQuery.isLoading || targetsQuery.isLoading || ingestPlanQuery.isLoading
   const loadError = sourcesQuery.error ?? targetsQuery.error
-
-  if (loadError) {
-    return (
-      <ErrorPanel
-        title="Could not load live room."
-        message={apiMessage(loadError, 'Live-room configuration failed to load.')}
-      />
-    )
-  }
+  const canCreateMeeting = canOperateMeeting && !createMutation.isPending &&
+    sessionsQuery.isSuccess && !sessionsQuery.isError &&
+    (!selectedSessionId || session?.state === 'recorded') &&
+    (sessionsQuery.data?.length ?? 0) === 0
 
   return (
     <div className="flex flex-col gap-5 px-6 py-5">
@@ -1270,13 +1341,17 @@ export function LiveRoomScreen() {
         onRetry={() => void safeQuery.refetch()}
       />
 
-      {staffIdentityQuery.isSuccess && !canOperateMeeting && (
+      {staffIdentityQuery.isSuccess && !hasMeetingRole && (
         <div className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}>
           Live-room controls require the meeting operator role. Source status and readiness checks remain visible.
         </div>
       )}
 
-      {loading ? (
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="flex flex-col gap-5">
+      {loadError ? (
+        <ErrorPanel title="Could not load live-room configuration." message={apiMessage(loadError, 'Live-room configuration failed to load.')} />
+      ) : loading ? (
         <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-surface-2)' }}>
           Loading live-room configuration...
         </div>
@@ -1286,8 +1361,7 @@ export function LiveRoomScreen() {
           error={sourceSetupQuery.error}
         />
       ) : (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="flex flex-col gap-5">
+        <>
             <PreviewPanel source={selectedSource} />
             <SourceSwitcher
               sources={sources}
@@ -1326,10 +1400,38 @@ export function LiveRoomScreen() {
               />
             ) : null}
             <RelayStatusPanel plan={ingestPlanQuery.data} error={ingestPlanQuery.error} />
-          </div>
+        </>
+      )}
+        </div>
           <aside className="flex flex-col gap-4">
             <section className="rounded-md p-4" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}>
               <h2 className="m-0 text-sm font-semibold">Session controls</h2>
+              <div className="mt-3 flex flex-col gap-2 text-xs">
+                {sessionsQuery.isPending && <p role="status">Checking existing meetings...</p>}
+                {sessionsQuery.isError && <div role="alert">
+                  Existing meetings could not be checked. Do not create a replacement meeting. Retry, or sign in again if your access expired.
+                  <button type="button" onClick={() => void sessionsQuery.refetch()}>Retry meeting list</button>
+                </div>}
+                {sessionsQuery.isSuccess && <>
+                  <label htmlFor="live-existing-meeting">Existing meeting</label>
+                  <select id="live-existing-meeting" value={selectedSessionId} onChange={(event) => chooseSession(event.target.value)}>
+                    <option value="">Choose a meeting to reopen</option>
+                    {(sessionsQuery.data ?? []).filter((row) => row.channel_id === channelId).map((row) => (
+                      <option key={row.live_session_id} value={row.live_session_id}>{row.title} — {LIVE_STATE_META[row.state].label} — {row.live_session_id}</option>
+                    ))}
+                    {session?.state === 'recorded' && <option value={session.live_session_id}>{session.title} — Recorded — {session.live_session_id}</option>}
+                  </select>
+                  <p>{sessionsQuery.data.length === 0
+                    ? 'No unfinished meetings on this channel. Completed recordings are in Assets.'
+                    : 'Choose the correct meeting by its ID and state. Reopening only reads its controls; it does not start, end, or take over a broadcast.'}</p>
+                </>}
+                {selectedSessionId && !session && !sessionQuery.isError && <p role="status">Reopening meeting controls...</p>}
+                {selectedSessionId && (sessionQuery.isError || sessionQuery.data && sessionQuery.data.channel_id !== channelId) && <div role="alert">
+                  Meeting controls could not be recovered for this channel. No broadcast action was taken.
+                  <button type="button" onClick={() => void sessionQuery.refetch()}>Retry meeting recovery</button>
+                </div>}
+                {session && <p>Selected meeting: {session.live_session_id}</p>}
+              </div>
               <div className="mt-3 flex flex-col gap-1">
                 <label
                   htmlFor="live-room-channel"
@@ -1342,7 +1444,6 @@ export function LiveRoomScreen() {
                   id="live-room-channel"
                   value={channelId}
                   onChange={(event) => selectChannel(event.target.value)}
-                  disabled={session != null}
                   className="rounded-md px-2 py-2 text-sm"
                   style={{
                     background: 'var(--cc-surface-2)',
@@ -1361,7 +1462,7 @@ export function LiveRoomScreen() {
                 </select>
                 <span className="text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
                   {session
-                    ? 'Channel is fixed while a session exists.'
+                    ? 'Changing channel leaves these controls; it does not end the meeting.'
                     : 'The session and ingest plan use this channel.'}
                 </span>
               </div>
@@ -1369,9 +1470,9 @@ export function LiveRoomScreen() {
                 <button
                   type="button"
                   onClick={() => createMutation.mutate()}
-                  disabled={!canOperateMeeting || createMutation.isPending || session != null}
+                  disabled={!canCreateMeeting}
                   className="rounded-md px-3 py-2 text-sm font-semibold"
-                  style={{ background: canOperateMeeting && !session ? 'var(--cc-brand)' : 'var(--cc-surface-3)', color: canOperateMeeting && !session ? 'var(--cc-brand-ink)' : 'var(--cc-ink-3)' }}
+                  style={{ background: canCreateMeeting ? 'var(--cc-brand)' : 'var(--cc-surface-3)', color: canCreateMeeting ? 'var(--cc-brand-ink)' : 'var(--cc-ink-3)' }}
                 >
                   Create live session
                 </button>
@@ -1442,15 +1543,17 @@ export function LiveRoomScreen() {
               </div>
             </section>
             {session && (
-              <FinalizationPanel session={session} onSessionRefresh={setSession} />
+              <FinalizationPanel key={session.live_session_id} session={session} canOperate={canOperateMeeting} onSessionRefresh={(next) => {
+                if (next.channel_id === channelId && next.live_session_id === selectedSessionId) {
+                  queryClient.setQueryData(['live-room-session', channelId, selectedSessionId], next)
+                }
+              }} />
             )}
             <section className="rounded-md p-4 text-xs" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink-2)' }}>
               Recording targets: <strong>{targetsQuery.data?.length ?? 0}</strong>
             </section>
           </aside>
         </div>
-      )}
-
       <PreflightList evaluation={preflight} />
 
       {pendingConfirm && (

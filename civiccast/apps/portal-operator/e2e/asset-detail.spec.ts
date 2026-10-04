@@ -94,6 +94,15 @@ async function mockBackend(
       body: JSON.stringify([]),
     })
   })
+  // The summary panel reads committed captions and generation jobs on mount.
+  // Keep its empty state real, rather than leaking unmocked proxy errors into
+  // the independent asset-operation error assertions below.
+  await page.route('**/api/staff/captions/review-items?**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+  })
+  await page.route('**/api/staff/summaries/jobs?**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+  })
   await page.route('**/api/staff/assets/council-2026-05-08', async (route) => {
     if (route.request().method() === 'PATCH') {
       const body = route.request().postDataJSON() as Record<string, unknown>

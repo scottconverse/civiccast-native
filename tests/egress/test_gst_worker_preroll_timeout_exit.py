@@ -104,7 +104,9 @@ class _FakeEngineInstanceRaisesPrerollTimeout:
     def __init__(self, *_a: object, **_kw: object) -> None:
         pass
 
-    def run_forever(self, *, control_fifo: str | None = None) -> dict[str, object]:
+    def run_forever(
+        self, *, control_fifo: str | None = None, hold_slate_at_plan_eos: bool = False
+    ) -> dict[str, object]:
         raise _FakePrerollTimeoutError(
             "pipeline did not reach PLAYING within 30.0s (get_state=async)"
         )

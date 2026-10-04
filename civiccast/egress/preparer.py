@@ -31,6 +31,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -65,6 +66,7 @@ from civiccast.egress.models import (
     EgressSourceSegment,
 )
 from civiccast.egress.runtime import FfmpegRunner
+from civiccast.egress.source_plan import _GeneratedSlateSegment
 from civiccast.stream._ffmpeg import (
     FfmpegCancelledError,
     FfmpegNotFoundError,
@@ -358,9 +360,9 @@ def preparation_timeout_seconds_from_env() -> float:
             _DEFAULT_PREPARATION_TIMEOUT_SECONDS,
         )
         return _DEFAULT_PREPARATION_TIMEOUT_SECONDS
-    if value <= 0:
+    if not math.isfinite(value) or value <= 0:
         _LOG.warning(
-            "%s must be positive; using %.1fs.",
+            "%s must be finite and positive; using %.1fs.",
             env_name,
             _DEFAULT_PREPARATION_TIMEOUT_SECONDS,
         )
@@ -545,8 +547,12 @@ class SourcePreparer:
         self._warm_scheduler = warm_scheduler
         self._window_leveler = window_leveler
         self._playout_trim_supported = playout_trim_supported
-        if preparation_timeout_seconds is not None and preparation_timeout_seconds <= 0:
-            raise ValueError("preparation_timeout_seconds must be greater than zero when set.")
+        if preparation_timeout_seconds is not None and (
+            not math.isfinite(preparation_timeout_seconds) or preparation_timeout_seconds <= 0
+        ):
+            raise ValueError(
+                "preparation_timeout_seconds must be finite and greater than zero when set."
+            )
         self._preparation_timeout_seconds = (
             preparation_timeout_seconds
             if preparation_timeout_seconds is not None
@@ -2465,16 +2471,30 @@ class SourcePreparer:
         return result
 
     def _check_loudness(
-        self, *, cancel_event: threading.Event | None, **kwargs: Any
+        self,
+        *,
+        cancel_event: threading.Event | None,
+        timeout_seconds: float | None = None,
+        **kwargs: Any,
     ) -> LoudnessGateResult:
+        effective_timeout = (
+            self._preparation_timeout_seconds if timeout_seconds is None else timeout_seconds
+        )
         self._raise_if_cancelled(cancel_event)
         try:
             if self._loudness_checker is check_streaming_loudness:
-                result = self._loudness_checker(**kwargs, cancel_event=cancel_event)
+                result = self._loudness_checker(
+                    **kwargs, cancel_event=cancel_event, timeout_seconds=effective_timeout
+                )
             else:
                 result = self._loudness_checker(**kwargs)
         except FfmpegCancelledError as exc:
             raise SourcePreparationCancelledError("Source preparation was cancelled.") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise SourcePrepareError(
+                f"FFmpeg loudness probe timed out after {effective_timeout:g}s; "
+                "the channel will use its configured fallback until the source can be prepared."
+            ) from exc
         self._raise_if_cancelled(cancel_event)
         return result
 
@@ -2507,6 +2527,28 @@ class SourcePreparer:
             raise SourcePrepareError(
                 f"Egress source {segment.label!r} is missing before preparation: {source_path}."
             )
+        if isinstance(segment, _GeneratedSlateSegment) and segment.verified_for(config):
+            # This process's generator already encoded this exact canonical
+            # profile with anullsrc. Never search an hour of known silence for
+            # program loudness or re-encode it; retain the existing copy-out,
+            # trim-free output and cancellation/plan cleanup contract.
+            self._raise_if_cancelled(cancel_event)
+            prepared = self._emit_prepared_from_cache(
+                source_path,
+                segment,
+                source_path=source_path,
+                output_path=output_path,
+                loudness_status="ok",
+                measured_lufs=None,
+                normalized=False,
+                cancel_event=cancel_event,
+            )
+            self._raise_if_cancelled(cancel_event)
+            if not segment.verified_for(config):
+                if Path(prepared[0].path) == output_path:
+                    output_path.unlink(missing_ok=True)
+                raise SourcePrepareError("Generated slate changed during preparation.")
+            return prepared
         key = self._cache_key(source_path, config)
         trimmed = segment.inpoint_seconds is not None or segment.outpoint_seconds is not None
         # U60: one local, read by every stage this call runs, so "this is a
@@ -2756,6 +2798,7 @@ class SourcePreparer:
                     probe_duration_seconds = _UNTRIMMED_LOUDNESS_PROBE_CAP_S
             loudness = self._check_loudness(
                 cancel_event=cancel_event,
+                timeout_seconds=timeout_seconds,
                 media_path=source_path,
                 target_lufs=config.loudness_target_lufs,
                 tolerance_lufs=config.loudness_tolerance_lufs,
@@ -2840,6 +2883,7 @@ class SourcePreparer:
                     )
                     second_loudness = self._check_loudness(
                         cancel_event=cancel_event,
+                        timeout_seconds=timeout_seconds,
                         media_path=source_path,
                         target_lufs=config.loudness_target_lufs,
                         tolerance_lufs=config.loudness_tolerance_lufs,

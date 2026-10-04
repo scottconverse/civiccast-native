@@ -645,7 +645,7 @@ class ProviderReadinessItem(BaseModel):
     manual_section: Annotated[str, Field(min_length=1, max_length=200)] | None = None
     """Anchor id (matching an id in civiccast/docsite/manual.json's table of
     contents) for this card's "Read more in the manual" link -- e.g.
-    "provider-cloudflare-r2" -> /help#provider-cloudflare-r2 in the operator
+    "cdn-and-provider-options" -> /help#cdn-and-provider-options in the operator
     console. None for a card that doesn't have a dedicated manual section."""
 
 

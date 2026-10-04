@@ -10,8 +10,8 @@ from the PDF/DOCX or from docs/USER-MANUAL.md itself. See docs/docsite-sync.md
 for the full staleness-proof explanation.
 
 Unlike the PDF/DOCX renderer, this script's only markdown engine is also
-pandoc (kept identical on purpose -- one rendering engine, one set of
-markdown-syntax quirks to reason about) but the *output* is a single
+pandoc, with raw HTML and interactive task lists disabled to preserve prose
+through the HTML sanitizer. The *output* is a single
 sanitized HTML fragment plus an id/level/title table of contents, written as
 civiccast/docsite/manual.json -- inside the civiccast/ package tree so the
 existing `packages = ["civiccast"]` wheel rule picks it up with no packaging
@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -36,6 +37,12 @@ SOURCE = ROOT / "docs" / "USER-MANUAL.md"
 OUT_DIR = ROOT / "civiccast" / "docsite"
 MANUAL_JSON = OUT_DIR / "manual.json"
 MANIFEST_NAME = "manual.render.json"
+ASSET_NAME = r"[0-9a-f]{64}\.(?:png|jpg|jpeg|gif|svg|webp)"
+
+
+def _asset_references(html: str) -> set[str]:
+    return set(re.findall(r"/api/public/manual/assets/(" + ASSET_NAME + r')(?=")', html))
+
 
 sys.path.insert(0, str(ROOT))
 from civiccast.docsite.render import embed_local_images, extract_toc, sanitize_html  # noqa: E402
@@ -66,26 +73,62 @@ def render_docsite_manual() -> Path:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     raw_html = subprocess.run(
-        ["pandoc", str(SOURCE), "-t", "html5", "--wrap=none"],
+        [
+            "pandoc",
+            str(SOURCE),
+            "-f",
+            "markdown-raw_html-task_lists",
+            "-t",
+            "html5",
+            "--wrap=none",
+        ],
         check=True,
         cwd=ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        timeout=120,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
     ).stdout
 
-    # Embed local images (e.g. the two architecture diagrams) as data: URIs
-    # BEFORE sanitizing: sanitize_html's allowlist only ever accepts an
-    # already-absolute/data/http(s) src, by design (relative paths don't
-    # resolve to anything once this HTML is served from manual.json with no
-    # filesystem underneath it) -- see embed_local_images's own docstring.
-    raw_html = embed_local_images(raw_html, base_dir=ROOT / "docs")
+    # Keep placeholders such as <time> as text, not raw HTML. Checklists
+    # remain readable list text rather than form controls removed by sanitizing.
+    # Package local images separately without base64 inflation in manual.json.
+    # Validate all paths/media before writing any shipping artifact; sanitizer
+    # retains these closed absolute API paths without changing its allowlist.
+    assets: dict[str, bytes] = {}
+    image_sources: dict[str, str] = {}
+    raw_html = embed_local_images(
+        raw_html, base_dir=ROOT / "docs", assets=assets, sources=image_sources
+    )
     html = sanitize_html(raw_html)
     if not html.strip():
         raise RuntimeError("Rendered docsite manual HTML is empty")
     toc = extract_toc(html)
     if not toc:
         raise RuntimeError("Rendered docsite manual has no headings with ids")
+
+    asset_dir = OUT_DIR / "assets"
+    asset_dir.mkdir(exist_ok=True)
+    if asset_dir.resolve() != OUT_DIR.resolve() / "assets":
+        raise RuntimeError("Manual asset directory escapes package directory")
+    # Only remove verifiably generated hash-named image bytes, never arbitrary
+    # files or a directory tree. Reject unknown content rather than package it.
+    stale: list[Path] = []
+    for path in asset_dir.iterdir():
+        if (
+            not re.fullmatch(ASSET_NAME, path.name)
+            or path.is_symlink()
+            or not path.is_file()
+            or _sha256_bytes(path.read_bytes()) != path.stem
+        ):
+            raise RuntimeError("Unexpected file in generated manual assets directory")
+        if path.name not in assets:
+            stale.append(path)
+    for name, data in assets.items():
+        (asset_dir / name).write_bytes(data)
+    for path in stale:
+        path.unlink()
 
     document = {
         "source": SOURCE.relative_to(ROOT).as_posix(),
@@ -110,6 +153,8 @@ def render_docsite_manual() -> Path:
             "path": MANUAL_JSON.relative_to(ROOT).as_posix(),
             "sha256": _sha256_bytes(payload_bytes),
         },
+        "assets": {name: _sha256_bytes(data) for name, data in sorted(assets.items())},
+        "image_sources": dict(sorted(image_sources.items())),
     }
     (OUT_DIR / MANIFEST_NAME).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return MANUAL_JSON
@@ -135,6 +180,28 @@ def check_current() -> None:
             "was hand-edited or only partially regenerated. Run: "
             "uv run python scripts/render_docsite_manual.py"
         )
+    document = json.loads(MANUAL_JSON.read_text(encoding="utf-8"))
+    recorded_assets = set(manifest.get("assets", {}))
+    if _asset_references(document["html"]) != recorded_assets:
+        raise RuntimeError("Manual HTML image references do not match recorded assets")
+    asset_dir = OUT_DIR / "assets"
+    if asset_dir.resolve() != OUT_DIR.resolve() / "assets":
+        raise RuntimeError("Manual asset directory escapes package directory")
+    actual_assets = {path.name for path in asset_dir.iterdir()} if asset_dir.exists() else set()
+    if actual_assets != recorded_assets:
+        raise RuntimeError("Manual packaged image inventory does not match recorded assets")
+    for name, expected in manifest.get("assets", {}).items():
+        if not re.fullmatch(ASSET_NAME, name):
+            raise RuntimeError("Invalid manual asset name")
+        path = OUT_DIR / "assets" / name
+        if path.is_symlink() or not path.is_file() or _sha256_bytes(path.read_bytes()) != expected:
+            raise RuntimeError(f"Manual asset missing or changed: {name}")
+    for source, expected in manifest.get("image_sources", {}).items():
+        path = (ROOT / "docs" / source).resolve()
+        if not path.is_relative_to((ROOT / "docs").resolve()):
+            raise RuntimeError("Manual image source escapes documentation directory")
+        if not path.is_file() or _sha256_bytes(path.read_bytes()) != expected:
+            raise RuntimeError(f"Manual image source missing or changed: {source}")
     # Deliberately NOT re-rendering pandoc here and byte-comparing the HTML
     # (an earlier version of this check did): pandoc's HTML output can
     # legitimately differ by patch version (attribute ordering, slug edge

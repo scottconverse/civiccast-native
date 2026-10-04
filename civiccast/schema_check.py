@@ -13,6 +13,9 @@ decision and a separate failure domain.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -20,6 +23,30 @@ from pathlib import Path
 from civiccast.db.url import normalize_database_url
 
 _LOG = logging.getLogger(__name__)
+_PHASE_OBSERVER: ContextVar[Callable[[str], None] | None] = ContextVar(
+    "civiccast_schema_check_phase", default=None
+)
+
+
+@contextmanager
+def observe_schema_phases(observer: Callable[[str], None] | None) -> Iterator[None]:
+    """Observe only fixed phase names on the existing caller thread."""
+    token = None
+    with suppress(Exception):
+        token = _PHASE_OBSERVER.set(observer)
+    try:
+        yield
+    finally:
+        if token is not None:
+            with suppress(Exception):
+                _PHASE_OBSERVER.reset(token)
+
+
+def _note_phase(phase: str) -> None:
+    with suppress(Exception):
+        observer = _PHASE_OBSERVER.get()
+        if observer is not None:
+            observer(phase)
 
 
 @dataclass(frozen=True)
@@ -156,8 +183,11 @@ def evaluate_schema_currency(
 _READ_DB_REVISION_CEILING_SECONDS = 15.0
 
 
-def read_db_revision(database_url: str) -> str | None:
+def read_db_revision(database_url: str, *, timeout_seconds: int | None = None) -> str | None:
     """Read alembic_version from the configured database (None if absent).
+
+    ``timeout_seconds`` binds an operation-local connect ceiling without changing
+    the application's existing global timeout policy for ordinary callers.
 
     ``database_url`` is normalized (:func:`civiccast.db.url.
     normalize_database_url`) before it reaches ``create_engine``: a bare
@@ -207,7 +237,7 @@ def read_db_revision(database_url: str) -> str | None:
         engine = create_engine(
             normalized_url,
             poolclass=None,
-            **connect_options(normalized_url),
+            **connect_options(normalized_url, timeout_seconds=timeout_seconds),
         )
         try:
             try:
@@ -247,10 +277,17 @@ def check_schema_currency(database_url: str | None) -> SchemaStatus:
     if not database_url:
         return SchemaStatus(state="not-configured")
     try:
+        _note_phase("head")
         head = expected_migration_head()
-        status = evaluate_schema_currency(
-            read_db_revision(database_url), head, known=known_revisions()
-        )
+        _note_phase("read")
+        revision = read_db_revision(database_url)
+        # A freshly read matching revision is current regardless of the graph.
+        # Mismatches still need graph membership to distinguish ahead from behind.
+        known = None
+        if revision != head:
+            _note_phase("graph")
+            known = known_revisions()
+        status = evaluate_schema_currency(revision, head, known=known)
     except Exception:
         _LOG.exception("Schema-currency check failed; reporting 'unknown'.")
         return SchemaStatus(state="unknown")

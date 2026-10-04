@@ -10,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
+
 from civiccast.captions.models import CaptionCue
 from civiccast.egress.caption_proof_worker import (
     CaptionProofWorker,
@@ -138,6 +140,99 @@ def test_emitted_stream_target_none_for_non_ts_sinks() -> None:
     store.upsert_config(_config(EgressSinkSpec(kind="sdi", label="sdi", uri="decklink://0")))
     assert _emitted_stream_target(store, "gov") is None
     assert _emitted_stream_target(store, "missing") is None
+
+
+def test_unicast_proof_never_opens_the_broadcast_receiver(tmp_path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        EgressConfig(
+            channel_id="gov",
+            enabled=True,
+            slate_message="slate",
+            sinks=[EgressSinkSpec(kind="udp-ts", label="headend", uri="udp://127.0.0.1:9001")],
+        )
+    )
+    calls = []
+
+    def run(args):
+        calls.append(args)
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    assert capture_emitted_segment(store, "gov", work_dir=tmp_path, runner=run) is None
+    assert calls == []
+
+
+def test_private_proof_changed_during_capture_is_discarded(tmp_path, monkeypatch) -> None:
+    from civiccast.egress import caption_proof_worker as module
+
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        _config(EgressSinkSpec(kind="udp-ts", label="headend", uri="udp://127.0.0.1:9001"))
+    )
+    identity = {"generation": "original", "port": 25001}
+    monkeypatch.setattr(module, "read_caption_proof_target", lambda *_args: dict(identity))
+    calls = []
+
+    def capture(args, **_kwargs):
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"captured")
+        identity["generation"] = "replacement"
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    assert capture_emitted_segment(store, "gov", work_dir=tmp_path, runner=capture) is None
+    assert calls[0][calls[0].index("-i") + 1].startswith("udp://127.0.0.1:25001?")
+    assert not (tmp_path / "gov" / "caption-proof" / "segment.ts").exists()
+
+
+def test_retired_capture_during_decode_is_not_published(tmp_path) -> None:
+    store = InMemoryEgressStore()
+    segment = tmp_path / "segment.ts"
+    segment.write_bytes(b"captured")
+    current = [True]
+
+    def decode(_args):
+        current[0] = False
+        return SimpleNamespace(returncode=0, stdout=_SRT, stderr="")
+
+    worker = _worker(store, expected=[_cue()], runner=decode, segment=segment)
+    worker._capture_is_current = lambda _channel: current[0]
+    result = worker.run_once()
+    assert result.scanned == 0
+    assert store.latest_caption_proof_sample("gov") is None
+
+
+@pytest.mark.parametrize("retire_during_decode", [False, True])
+def test_factory_fences_actual_selected_capture_through_decode(
+    tmp_path, monkeypatch, retire_during_decode
+) -> None:
+    from civiccast.egress import caption_proof_worker as module
+    from civiccast.egress import store as store_module
+
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        _config(EgressSinkSpec(kind="udp-ts", label="headend", uri="udp://127.0.0.1:9001"))
+    )
+    store.write_state(EgressStateRow(channel_id="gov", state="ON_AIR", updated_at=_clock()))
+    monkeypatch.setattr(store_module, "PostgresEgressStore", lambda _factory: store)
+    identity = {"generation": "original", "port": 25001}
+    monkeypatch.setattr(module, "read_caption_proof_target", lambda *_args: dict(identity))
+    sidecar = tmp_path / "expected.srt"
+    sidecar.write_text(_SRT)
+
+    def decode(args, **_kwargs):
+        if args[-1].endswith("segment.ts"):
+            Path(args[-1]).write_bytes(b"captured")
+            return SimpleNamespace(returncode=0, stdout="", stderr="")
+        if retire_during_decode:
+            identity["generation"] = "replacement"
+        return SimpleNamespace(returncode=0, stdout=_SRT, stderr="")
+
+    worker = module.build_caption_proof_worker(
+        lambda: None, work_dir=tmp_path, caption_sidecar_for=lambda _channel: sidecar, runner=decode
+    )
+    result = worker.run_once()
+    assert result.passed == (0 if retire_during_decode else 1)
+    assert (store.latest_caption_proof_sample("gov") is None) == retire_during_decode
 
 
 def test_capture_returns_none_when_runner_produces_no_bytes(tmp_path) -> None:

@@ -538,18 +538,27 @@ class _WindowsPipeChannel:
                 self._pending[command.id] = pending
             self.session.dispatch(command)
 
-            while time.monotonic() < deadline:
+            # A caller can be descheduled during/after the write while the
+            # worker has already acknowledged. Inspect one buffered receipt
+            # before declaring it lost; this never adds a wait past the deadline.
+            while True:
                 raw = self.server.read_line()
                 if raw is None:
+                    if time.monotonic() >= deadline:
+                        break
                     time.sleep(0.01)
                     continue
                 outcome = self.session.handle_ack_line(raw)
                 if outcome is None:
+                    if time.monotonic() >= deadline:
+                        break
                     continue
                 command_id, result, detail = outcome
                 with self._lock:
                     resolved = self._pending.pop(command_id, None)
                 if resolved is None:
+                    if time.monotonic() >= deadline:
+                        break
                     continue
                 resolved.result = result
                 resolved.detail = detail
@@ -569,6 +578,8 @@ class _WindowsPipeChannel:
                     else:
                         self.last_failure_reason = None
                     return succeeded
+                if time.monotonic() >= deadline:
+                    break
 
             with self._lock:
                 self._pending.pop(command.id, None)

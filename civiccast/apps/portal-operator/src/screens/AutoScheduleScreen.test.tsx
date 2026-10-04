@@ -216,6 +216,7 @@ vi.mock('../api/client', () => ({
 
 import type { StaffIdentityResponse } from '../types/api.generated'
 import {
+  compileAutoSchedule,
   getStaffIdentity,
   listAutoScheduleRules,
   listSavedSearches,
@@ -237,6 +238,35 @@ function renderScreen() {
 }
 
 describe('AutoScheduleScreen container role gate', () => {
+  it('explains rule approval, background compilation and manual-item separation', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['publish_operator']))
+    vi.mocked(listSavedSearches).mockResolvedValue([])
+    vi.mocked(listScheduleBlocks).mockResolvedValue([])
+    vi.mocked(listAutoScheduleRules).mockResolvedValue([])
+    const { findByText, container } = renderScreen()
+    await findByText('Compile now')
+    expect(container.textContent).toContain('An enabled rule approves the programs it generates for their scheduled times.')
+    expect(container.textContent).toContain('compiles enabled rules at startup and about every hour, without another approval.')
+    expect(container.textContent).toContain('Only manually-added schedule items need a separate Commit-to-Air approval.')
+    expect(container.textContent).toContain('Simulate previews without writing anything.')
+    expect(container.textContent).toContain('New programs are Published and approved to air at their scheduled times, without a separate commit. There is no confirmation box.')
+    expect(container.textContent).not.toContain('rules feed the commit gate before air')
+    expect(container.textContent).not.toContain('still need an operator commit')
+    expect(container.textContent).not.toContain('reviewing the preview before you compile is the approval step')
+  })
+
+  it('labels the compile result published rather than scheduled', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['publish_operator']))
+    vi.mocked(listSavedSearches).mockResolvedValue([])
+    vi.mocked(listScheduleBlocks).mockResolvedValue([])
+    vi.mocked(listAutoScheduleRules).mockResolvedValue([])
+    vi.mocked(compileAutoSchedule).mockResolvedValue({ items_created: 2, results: [] })
+    const { findByText, queryByText } = renderScreen()
+    fireEvent.click(await findByText('Compile now'))
+    expect(await findByText('Added 2 published items across 0 rules.')).toBeTruthy()
+    expect(queryByText('Added 2 scheduled items across 0 rules.')).toBeNull()
+  })
+
   it('shows create + compile controls for a publish operator', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['publish_operator']))
     vi.mocked(listSavedSearches).mockResolvedValue([])

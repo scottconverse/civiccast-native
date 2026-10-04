@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -49,6 +50,7 @@ from civiccast.egress.models import (
     EgressSourcePlan,
     EgressSourceSegment,
 )
+from civiccast.egress.preparer import SourcePreparationReport
 from civiccast.egress.store import InMemoryEgressStore
 
 _CHANNEL = "education"
@@ -444,3 +446,135 @@ def test_u67_a_healthy_rollover_never_reaches_the_watchdog(tmp_path: Path) -> No
     assert getattr(daemon, "_reload_stall_since", {}) == {}
     assert len(strategy.reload_requests) == 1, "no re-issue was ever needed"
     assert store.read_state(_CHANNEL).current_source_label == _NEXT_LABEL
+
+
+@pytest.mark.parametrize("poll_while_preparing", [False, True])
+@pytest.mark.parametrize("accept_reissue", [False, True])
+def test_watchdog_async_reissue_retains_recovery_until_it_actually_arms(
+    tmp_path: Path, poll_while_preparing: bool, accept_reissue: bool
+) -> None:
+    """Background preparation cannot erase the retry budget of a stuck worker."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    airing = _plan(tmp_path, _AIRING_LABEL)
+    next_plan = _plan(tmp_path, _NEXT_LABEL)
+    clock = _Clock()
+    release = Event()
+    entered = Event()
+    preparations = 0
+
+    class DecliningStrategy(_BoundaryStrategy):
+        def reload_content(self, *args, **kwargs) -> bool:
+            super().reload_content(*args, **kwargs)
+            return accept_reissue and len(self.reload_requests) > 1
+
+    strategy = DecliningStrategy(tmp_path)
+
+    def prepare(plan, config):
+        nonlocal preparations
+        preparations += 1
+        if preparations == 3:
+            entered.set()
+            assert release.wait(5), "test did not release the watchdog preparation"
+        return SourcePreparationReport(source_plan=plan, records=())
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "egress",
+        source_plan_provider=lambda channel_id: airing if preparations == 0 else next_plan,
+        source_preparer=prepare,
+        encoder_strategy=strategy,
+        monotonic=clock,
+    )
+    store.enqueue_command(_start_command())
+    daemon.process_once(_CHANNEL)
+    daemon.enable_async_preparation()
+    try:
+        daemon._request_reload(_CHANNEL)
+        daemon._preparations[_CHANNEL].future.result(timeout=5)
+        daemon.process_once(_CHANNEL)
+        assert _CHANNEL in daemon._pending_reloads
+        assert len(strategy.reload_requests) == 1
+
+        clock.advance(_WATCHDOG_SECONDS + 1)
+        daemon.process_once(_CHANNEL)
+        assert entered.wait(5)
+        if poll_while_preparing:
+            clock.advance(1)
+            daemon.process_once(_CHANNEL)
+        assert strategy.process.returncode is None, "never kill work still preparing"
+        pending = daemon._preparations[_CHANNEL]
+        release.set()
+        pending.future.result(timeout=5)
+        daemon.process_once(_CHANNEL)
+        assert len(strategy.reload_requests) == 2
+
+        if accept_reissue:
+            _settle(tmp_path, strategy, daemon)
+            assert store.read_state(_CHANNEL).current_source_label == _NEXT_LABEL
+        clock.advance(_GRACE_SECONDS + 1)
+        daemon.process_once(_CHANNEL)
+        if accept_reissue:
+            assert strategy.process.returncode is None
+            assert _CHANNEL not in daemon._pending_reloads
+            assert _CHANNEL not in daemon._reload_stall_rungs
+        else:
+            assert strategy.process.returncode == 0, "async refusal must reach worker restart"
+            assert _CHANNEL not in daemon._pending_reloads
+    finally:
+        release.set()
+        daemon.shutdown_preparation()
+
+
+def test_async_decline_preserves_long_airing_program_horizon(tmp_path: Path) -> None:
+    """A refused background hand-off must not restart an unexpired long program."""
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    airing = _plan(tmp_path, _AIRING_LABEL, duration_seconds=7200)
+    next_plan = _plan(tmp_path, _NEXT_LABEL)
+    clock = _Clock()
+    release = Event()
+
+    def prepare(plan, config):
+        if plan.segments[0].label == _NEXT_LABEL:
+            assert release.wait(5)
+        return SourcePreparationReport(source_plan=plan, records=())
+
+    class DecliningStrategy(_BoundaryStrategy):
+        def reload_content(self, *args, **kwargs) -> bool:
+            super().reload_content(*args, **kwargs)
+            return False
+
+    strategy = DecliningStrategy(tmp_path)
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path / "egress",
+        source_plan_provider=lambda channel_id: airing,
+        boundary_source_plan_provider=lambda *args, **kwargs: next_plan,
+        source_preparer=prepare,
+        encoder_strategy=strategy,
+        monotonic=clock,
+    )
+    store.enqueue_command(_start_command())
+    daemon.process_once(_CHANNEL)
+    daemon.enable_async_preparation()
+    try:
+        boundary = datetime.now(UTC) + timedelta(seconds=7200)
+        command_id = "long-program-background-reload"
+        daemon.record_rollover_plan_end(_CHANNEL, boundary, command_id=command_id)
+        store.enqueue_command(_reload_command(command_id, datetime.now(UTC)))
+        daemon.process_once(_CHANNEL)
+        release.set()
+        daemon._preparations[_CHANNEL].future.result(timeout=5)
+        daemon.process_once(_CHANNEL)
+        assert len(strategy.reload_requests) == 1
+        # Past the flat bound plus its restart grace, but well before this
+        # program's end: neither retry nor termination is warranted.
+        clock.advance(_WATCHDOG_SECONDS + _GRACE_SECONDS + 2)
+        daemon.process_once(_CHANNEL)
+        assert _CHANNEL not in daemon._reload_stall_rungs, "lost horizon triggered early recovery"
+        assert len(strategy.reload_requests) == 1, "lost horizon triggered an early retry"
+        assert strategy.process.returncode is None
+    finally:
+        release.set()
+        daemon.shutdown_preparation()

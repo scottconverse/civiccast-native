@@ -382,7 +382,9 @@ def test_tampered_pinned_manifest_is_refused(
     model = lock["models"]["gemma4-12b"]
     pinned_dir = tmp_path / "pinned"
     pinned_dir.mkdir()
-    (pinned_dir / f"{model['manifest_sha256']}.json").write_bytes(b"{}" + b" " * (model["manifest_bytes"] - 2))
+    (pinned_dir / f"{model['manifest_sha256']}.json").write_bytes(
+        b"{}" + b" " * (model["manifest_bytes"] - 2)
+    )
     monkeypatch.setattr(provisioner, "PINNED_MANIFEST_DIR", pinned_dir)
     with pytest.raises(provisioner.ModelProvisionError):
         provisioner.fetch_manifest("gemma4-12b", model, tmp_path / "cache")

@@ -1,5 +1,14 @@
 # CivicCast Captions
 
+Development decode-back capture must not compete for a unicast UDP broadcast
+socket. When the persistent TS relay is available, proof reads a private
+loopback copy of the same encoded TS after continuity/PCR correction. A missing
+or retired relay receipt leaves that capture unverified; it never falls back to
+the broadcast socket. The selected relay generation is checked again after
+decode, before proof persistence. Existing file and multicast capture remain
+supported. This change does not establish non-interference for inherited SRT
+capture, nor prove an installed beta.10 or sustained live soak.
+
 The captions module begins the 0.5 release rung. The current slices ship the
 backend contract, optional faster-whisper model execution, review queue API,
 operator review UI, HLS WebVTT publication helpers, and resident portal
@@ -41,10 +50,21 @@ Current surface:
 - `CaptionTapWorker`, the native multi-channel worker that consumes settled WAV
   segments concurrently, retains the exact reviewed audio, and atomically
   publishes committed cues to each egress channel's `captions/active.vtt`.
-  Backlog beyond the configured bound fails closed: the live sidecar is
-  cleared, stale segments are discarded (never transcribed, so never
-  reviewable, and no retention clock would have covered them), and the channel
-  is PAUSED for an exponentially growing window
+  A brief backlog is drained oldest-first. If completed ASR work has reduced
+  total outstanding audio (including in-flight segments), catch-up may continue
+  for at most two overload-persistence windows from the episode's first scan
+  (60 seconds with the default 15 scans and 2-second poll). This monotonic
+  deadline does not renew when queue depth oscillates or work is submitted;
+  queues without demonstrated net drain still shed at the normal persistence
+  threshold. A rebound to the episode's peak ends recovery permission.
+  This protects a recovering cold-start queue, not the latency of the first
+  model call. Quality gates and per-channel concurrency remain unchanged.
+  Sustained backlog first sheds the oldest settled audio down to the newest
+  legal batch and keeps captioning. Once the catch-up shed budget is exhausted
+  (or catch-up is disabled), it fails closed: the live sidecar is cleared,
+  stale segments are discarded (never transcribed, so never reviewable, and
+  no retention clock would have covered them), and the channel is PAUSED
+  for an exponentially growing window
   (`civiccast/captions/tap_backoff.py`: 60s, 120s, 240s ... capped at 900s)
   rather than retried on the next scan. `runtime-status.json` carries the
   channel's state -- `within-capacity`, `paused` (backing off, with
@@ -57,6 +77,13 @@ Current surface:
   burying the playout failure it was competing with. Captions are best effort
   and playout wins: see the ASR concurrency bound and CPU sizing in
   `docs/ops/background-workers.md`.
+- Opt-in caption batch diagnostics count ASR, review and publication outcomes
+  without treating persisted reviews as proof of aired captions. If a publication
+  diagnostic receipt is unavailable, its aggregate count remains unknown even
+  after later receipts arrive. Later cues still pass through the existing
+  publication checks; incrementing an unknown diagnostic count no longer stops
+  caption processing. This source correction does not fix startup backlog
+  shedding or establish packaged or installed acceptance.
 - Caption benchmark helpers plus `scripts/benchmark-caption-runtime.py`, which
   load mono signed 16-bit PCM WAV fixtures, run the same runtime adapter used by
   live captions, and emit JSON evidence with transcript text, optional WER,
@@ -77,6 +104,27 @@ Current surface:
 
 Runtime notes:
 
+- Native live runtime preparation loads both the Whisper model and the cached
+  CPU ONNX VAD session before channel automation starts, on the existing owned
+  background startup path. It performs no dummy audio inference. Batch/VOD and
+  VAD-disabled preparation remain model-only. Preparation failure preserves
+  best-effort startup and is logged; it never disables VAD or quality checks.
+  This moves known first-use session creation off live caption admission, but
+  does not prove the source of measured first-call latency or warm the first
+  Whisper encoder/language-detection call.
+- Live faster-whisper calls use one temperature (`0.0`) per internal decode
+  window. VAD, word timestamps, the configured beam size and vocabulary prompt
+  are preserved. This bounds retry count, not native execution time; a single
+  slow decode can still exceed live cadence. Batch/VOD uses the dependency's
+  existing fallback sequence instead.
+- Before live aggregation, emitted segments must have finite numeric compression
+  ratio and average log probability. Compression above `2.4` or log probability
+  below `-1.0`, including missing or invalid required metadata, withholds the
+  whole live audio window. Accepted fragments are not joined across refused
+  speech. Dependency silence suppression (`0.6`) and its high-log-probability
+  speech exception remain intact. A category-only `refused_windows=1` log records
+  each withheld window without transcript text. Refusals are missing caption
+  coverage, not proof of silence, and must be included in runtime acceptance.
 - The adapter defaults to `large-v3`, `device="auto"`, and
   `compute_type="int8"`. CPU CTranslate2 does not support `int8_float16`; CUDA
   proof may explicitly select it where the installed runtime supports it.
@@ -113,9 +161,9 @@ Runtime notes:
   (including the live-only `CIVICCAST_CAPTION_TAP_CPU_THREADS`) and
   `civiccast/captions/runtime.py`'s `_resolved_whisper_cpu_threads_env` for
   the implementation.
-- CivicCast converts each mono PCM s16le chunk to a temporary WAV before
-  calling `WhisperModel.transcribe`, then offsets segment timestamps back to
-  the chunk's live timeline.
+- Live mono 16 kHz PCM s16le passes directly to the model as a float32 array.
+  Other sample rates and batch/VOD chunks use a temporary WAV. Segment times are
+  offset back to the chunk's timeline in either path.
 - Custom vocabulary terms and the operator-provided initial prompt are passed
   through as the faster-whisper `initial_prompt`.
 - Empirical release evidence should run the Blackwell verifier first, then run

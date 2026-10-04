@@ -183,6 +183,7 @@ class BatchDiagnosticCollector:
         elapsed_seconds: float,
         queue_depth_after: int | None = None,
         committed_review_items: int = 0,
+        stage_counts: dict[str, int | None] | None = None,
     ) -> None:
         """Close a begun batch with its OUTCOME and reason.
 
@@ -218,6 +219,7 @@ class BatchDiagnosticCollector:
                     "expired_unconfirmed_cues": int(expired_unconfirmed_cues),
                     "elapsed_seconds": _round_seconds(elapsed_seconds),
                     "age_seconds": _round_seconds(time.monotonic() - begun.started_at),
+                    "stage_counts": _stage_counts(stage_counts),
                 }
             )
 
@@ -323,6 +325,32 @@ class NullBatchDiagnostic:
 
 def _round_seconds(value: float) -> float:
     return round(max(0.0, float(value)), 3)
+
+
+def _stage_counts(values: dict[str, int | None] | None) -> dict[str, int | None]:
+    """Closed numeric metadata only; unknown and malformed values are omitted."""
+
+    keys = (
+        "asr_batches",
+        "asr_empty_batches",
+        "asr_nonempty_batches",
+        "hypotheses",
+        "confirmed_cues",
+        "pending_before",
+        "pending_after",
+        "duplicate_review_items",
+        "refused_review_items",
+        "generation_discarded_segments",
+        "publish_accepted_batches",
+        "publish_rejected_batches",
+    )
+    result: dict[str, int | None] = {}
+    with contextlib.suppress(Exception):
+        for key in keys:
+            value = (values or {}).get(key)
+            if value is None or (type(value) is int and 0 <= value <= 2**63 - 1):
+                result[key] = value
+    return result
 
 
 def _env_truthy(raw: str) -> bool:

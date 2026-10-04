@@ -4599,6 +4599,7 @@ export interface SummaryGenerationJobRecord {
 export interface SummaryReviewQueueResponse {
   items: Array<SummaryDraft>
   next_cursor?: string | null
+  approval_required_summary_ids?: Array<string>
 }
 
 export interface SurfaceDetail {

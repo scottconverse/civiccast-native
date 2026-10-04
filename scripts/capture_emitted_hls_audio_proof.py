@@ -156,7 +156,7 @@ RELEASE_MIN_DURATION_SECONDS: Final[float] = 180.0
 REQUIRED_CHANNELS: Final[tuple[str, ...]] = ("public", "government", "education")
 
 #: Hard upper bounds so the "bounded" claim is real, not nominal.
-MAX_SEGMENTS_CAP: Final[int] = 600          # ~20 min at a 2 s cadence
+MAX_SEGMENTS_CAP: Final[int] = 600  # ~20 min at a 2 s cadence
 MAX_WAIT_SECONDS_CAP: Final[float] = 1800.0  # 30 min wall clock
 
 #: Segment names in a playlists we will snapshot: a bare file name ending
@@ -277,10 +277,7 @@ def scratch_parent_bounds_error(parent: Path, *, hls_root: Path) -> str | None:
             f"{root_r}; refusing to use a scratch location the tool must never delete"
         )
     if _is_within(parent_r, root_r):
-        return (
-            f"scratch directory {parent_r} is inside the read-only HLS root "
-            f"{root_r}; refusing"
-        )
+        return f"scratch directory {parent_r} is inside the read-only HLS root {root_r}; refusing"
     return None
 
 
@@ -296,9 +293,7 @@ def prepare_scratch_dir(parent: Path) -> ScratchDir:
 
     parent = _resolve(parent)
     parent.mkdir(parents=True, exist_ok=True)
-    owned = Path(
-        tempfile.mkdtemp(prefix="civiccast-hls-audio-proof-", dir=str(parent))
-    ).resolve()
+    owned = Path(tempfile.mkdtemp(prefix="civiccast-hls-audio-proof-", dir=str(parent))).resolve()
     return ScratchDir(parent=parent, owned_dir=owned)
 
 
@@ -320,6 +315,7 @@ def validate_segment_name(name: str) -> str | None:
     if not _SAFE_SEGMENT_RE.fullmatch(name):
         return f"unsafe segment name {name!r}: expected a bare *.ts file name"
     return None
+
 
 class CaptureError(RuntimeError):
     """A capture-time structural failure that must fail the window closed."""
@@ -423,7 +419,6 @@ def parse_playlist(path: Path) -> Playlist:
     )
 
 
-
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -489,7 +484,9 @@ def capture_channel(
     for index, name in enumerate(playlist.segments):
         if name in seen_names:
             continue
-        sequence = playlist.sequence_numbers[index] if index < len(playlist.sequence_numbers) else -1
+        sequence = (
+            playlist.sequence_numbers[index] if index < len(playlist.sequence_numbers) else -1
+        )
         if sequence in seen_sequences:
             continue
         seen_names.add(name)
@@ -497,7 +494,9 @@ def capture_channel(
             seen_sequences.add(sequence)
 
         source = channel_dir / name
-        extinf = playlist.segment_infos[index] if index < len(playlist.segment_infos) else float("nan")
+        extinf = (
+            playlist.segment_infos[index] if index < len(playlist.segment_infos) else float("nan")
+        )
         record: dict[str, Any] = {
             "name": name,
             "sequence": sequence,
@@ -659,9 +658,7 @@ def evaluate_pts_pcr_continuity(records: list[dict[str, Any]]) -> dict[str, Any]
             # ~expected.  Anything far from expected (including a wrap-induced
             # near-modulus value) is a gap or overlap.
             if abs(delta - expected) > _PTS_FRAME_TOLERANCE_TICKS:
-                problems.append(
-                    f"segment {index} PTS delta {delta} ticks != expected {expected}"
-                )
+                problems.append(f"segment {index} PTS delta {delta} ticks != expected {expected}")
 
     for index in range(1, len(pcr_values)):
         delta = _modular_delta(pcr_values[index - 1], pcr_values[index], PCR_MODULUS)
@@ -754,9 +751,7 @@ def accumulate_channel(
         progressed = False
         for index, name in enumerate(playlist.segments):
             sequence = (
-                playlist.sequence_numbers[index]
-                if index < len(playlist.sequence_numbers)
-                else -1
+                playlist.sequence_numbers[index] if index < len(playlist.sequence_numbers) else -1
             )
             name_error = validate_segment_name(name)
             if name_error is not None:
@@ -813,7 +808,8 @@ def accumulate_channel(
         evidence["captured_duration_seconds"] = sum(
             float(r["extinf_seconds"])
             for r in captured.values()
-            if isinstance(r.get("extinf_seconds"), float) and r["extinf_seconds"] == r["extinf_seconds"]
+            if isinstance(r.get("extinf_seconds"), float)
+            and r["extinf_seconds"] == r["extinf_seconds"]
         )
 
         if evidence["captured_duration_seconds"] >= target_duration_seconds:
@@ -915,6 +911,7 @@ def _copy_segment(
     )
     return record
 
+
 def parse_ebur128(stderr: str) -> dict[str, float | None]:
     """Extract integrated LUFS, LRA, and true peak from ffmpeg ebur128 output."""
 
@@ -934,9 +931,7 @@ def parse_ebur128(stderr: str) -> dict[str, float | None]:
     }
 
 
-def _default_run(
-    args: list[str], *, timeout: float = ANALYZER_TIMEOUT_SECONDS
-) -> dict[str, Any]:
+def _default_run(args: list[str], *, timeout: float = ANALYZER_TIMEOUT_SECONDS) -> dict[str, Any]:
     try:
         completed = subprocess.run(
             args,
@@ -1045,13 +1040,16 @@ def measure_window(
 
 def _resolve_tsp() -> Path | None:
     candidates = [
-        Path(r"C:\Program Files\CivicCast (Native)\packs\native-server-binaries\payload\tsduck\bin\tsp.exe"),
+        Path(
+            r"C:\Program Files\CivicCast (Native)\packs\native-server-binaries\payload\tsduck\bin\tsp.exe"
+        ),
     ]
     for candidate in candidates:
         if candidate.is_file():
             return candidate
     found = shutil.which("tsp")
     return Path(found) if found else None
+
 
 def _resolve_ffprobe() -> Path | None:
     candidates = [
@@ -1161,6 +1159,7 @@ def probe_window_continuity(
             entry.update(_default_probe(ffprobe, Path(record["snapshot_path"]), tsp=tsp))
         probed.append(entry)
     return evaluate_pts_pcr_continuity(probed)
+
 
 def _write_concat(records: list[dict[str, Any]], concat_path: Path) -> None:
     concat_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1330,13 +1329,10 @@ def verify_all(
     if not isinstance(max_segments, int) or max_segments < 1:
         blocking.append(f"max_segments={max_segments!r} must be a positive integer")
     elif max_segments > MAX_SEGMENTS_CAP:
-        blocking.append(
-            f"max_segments={max_segments} exceeds the hard cap {MAX_SEGMENTS_CAP}"
-        )
+        blocking.append(f"max_segments={max_segments} exceeds the hard cap {MAX_SEGMENTS_CAP}")
     if _is_finite(max_wait_seconds) and max_wait_seconds > MAX_WAIT_SECONDS_CAP:
         blocking.append(
-            f"max_wait_seconds={max_wait_seconds:g} exceeds the hard cap "
-            f"{MAX_WAIT_SECONDS_CAP:g}"
+            f"max_wait_seconds={max_wait_seconds:g} exceeds the hard cap {MAX_WAIT_SECONDS_CAP:g}"
         )
 
     # Bounds: reject NaN/inf/negative windows and non-positive waits outright.
@@ -1352,9 +1348,7 @@ def verify_all(
     # The scratch PARENT must never be the HLS root or contain it: the tool
     # deletes only its own freshly-created child, but a parent inside the tree
     # still means the tool would create files there.
-    parent = scratch_root or Path(
-        os.environ.get("TEMP") or os.environ.get("TMP") or "."
-    )
+    parent = scratch_root or Path(os.environ.get("TEMP") or os.environ.get("TMP") or ".")
     parent_error = scratch_parent_bounds_error(parent, hls_root=hls_root)
     if parent_error is not None:
         blocking.append(parent_error)
@@ -1448,9 +1442,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--channels", nargs="+", default=list(DEFAULT_CHANNELS))
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--duration-seconds", type=float, default=DEFAULT_DURATION_SECONDS)
-    parser.add_argument(
-        "--min-duration-seconds", type=float, default=DEFAULT_MIN_DURATION_SECONDS
-    )
+    parser.add_argument("--min-duration-seconds", type=float, default=DEFAULT_MIN_DURATION_SECONDS)
     parser.add_argument("--scratch-dir", type=Path, default=None)
     parser.add_argument("--keep-scratch", action="store_true")
     parser.add_argument("--max-wait-seconds", type=float, default=DEFAULT_MAX_WAIT_SECONDS)

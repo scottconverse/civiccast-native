@@ -39,6 +39,7 @@ evidence is not a pass.
 Anything the adjudicator cannot resolve is NOT a pass: a missing adjudication
 file, an error, or an UNRESOLVED window all leave the channel as BAD.
 """
+
 import hashlib
 import json
 import os
@@ -49,7 +50,8 @@ import sys
 import tempfile
 import time
 import wave
-from datetime import datetime, timezone
+from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 REQUIRED_VERIFY = ("caption_decode_back", "timestamp_continuity", "freshness")
@@ -139,7 +141,8 @@ def adjudicate(path, air_audio=None):
             argv += ["--air-audio", f"{ch}={air}"]
     try:
         out_dir.mkdir(parents=True, exist_ok=True)
-        subprocess.run(argv, capture_output=True, text=True, timeout=1800)
+        # Current Python + sibling adjudicator; operator evidence paths are argv, never shell code.
+        subprocess.run(argv, capture_output=True, text=True, timeout=1800)  # noqa: S603
     except (OSError, subprocess.SubprocessError):
         return None
     try:
@@ -208,13 +211,11 @@ def channel_air_audio(channel, chan, scratch_dir=None):
             for p in paths:
                 with p.open("rb") as src:
                     shutil.copyfileobj(src, fh, 1 << 20)
-        os.replace(part, want)
+        part.replace(want)
         for old in root.glob(f"{channel}-*.aac.ts"):
             if old != want:
-                try:
+                with suppress(OSError):
                     old.unlink()
-                except OSError:
-                    pass
         return want
     except OSError:
         return None
@@ -343,7 +344,9 @@ def label(channel, chan, adj):
         note = unreach_token(got) if got.get("borderline") else ""
         bits = "; ".join(b for b in (detail, note) if b)
         return f"{word}({bits})" if bits else word
-    return f"{status}(no adjudication)" if adj is not None else f"{status}(adjudicator gave no answer)"
+    return (
+        f"{status}(no adjudication)" if adj is not None else f"{status}(adjudicator gave no answer)"
+    )
 
 
 def caption_cues(chan):
@@ -399,7 +402,10 @@ def caption_outage(path, channel, v):
     # receipt (status OK, received>0) AND a span that actually decoded to a cue count. Absent or
     # stale receipt, or a decode with no cue count, is a caption FAIL: missing evidence is not a pass.
     if receipt.get("status") != "OK":
-        return True, f"no positive worker receipt ({receipt.get('detail') or receipt.get('status') or 'absent'})"
+        return (
+            True,
+            f"no positive worker receipt ({receipt.get('detail') or receipt.get('status') or 'absent'})",
+        )
     if caption_cues(v) is None:
         return True, "the span did not decode to a cue count"
     prev = previous_verify(path)
@@ -430,7 +436,7 @@ def utc_seconds(value):
     except ValueError:
         return None
     if got.tzinfo is None:
-        got = got.replace(tzinfo=timezone.utc)
+        got = got.replace(tzinfo=UTC)
     return got.timestamp()
 
 
@@ -660,7 +666,8 @@ def quiet_detail(v):
 
 mode, path = sys.argv[1], sys.argv[2]
 try:
-    d = json.load(open(path, encoding="utf-8"))
+    with Path(path).open(encoding="utf-8") as f:
+        d = json.load(f)
 except Exception as exc:  # missing or unreadable evidence is a failure, never a pass
     print(f"BAD unreadable evidence {path}: {exc}")
     sys.exit(0)
@@ -707,10 +714,7 @@ elif mode == "loudness":
     # A channel that carries no measurement is not adjudicable -- there is no
     # window for the source measurement to excuse -- so it does not pull the
     # adjudicator (and its ffmpeg passes) into a rung that has nothing to excuse.
-    if any(
-        (v or {}).get("status") != "PASS" and not instrument_reason(v)
-        for v in chans.values()
-    ):
+    if any((v or {}).get("status") != "PASS" and not instrument_reason(v) for v in chans.values()):
         # U66 item 1: hand the adjudicator the window the capture actually heard.
         # The adjudicator's correlation needs aired audio and the rung has never
         # passed any, which is how a loudness FAIL came back ruled at a position
@@ -752,6 +756,8 @@ elif mode == "loudness":
         else:
             labels.append(f"{c}={label(c, v, adj)} [{why}]")
             ok = False
-    print(("PASS " if ok else "BAD ") + " ".join(labels) + (f" missing={missing}" if missing else ""))
+    print(
+        ("PASS " if ok else "BAD ") + " ".join(labels) + (f" missing={missing}" if missing else "")
+    )
 else:
     print(f"BAD unknown mode {mode}")

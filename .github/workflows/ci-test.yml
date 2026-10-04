@@ -466,11 +466,13 @@ jobs:
         # enforces this floor stays within that margin of a FRESH collection
         # on every run (not a second hardcoded number), so this pin cannot
         # go stale again the way 1429 did without failing that test first.
+        # 2026-10-04: isolated committed 14e00b38 collection = 1931 pure;
+        # retain the same 50-test margin, excluding shared rollback WIP.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1774 \
+            --floor 1881 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -553,6 +555,15 @@ jobs:
       - name: Install project (dev)
         run: uv sync --group dev
 
+      - name: Provision reviewed FFmpeg for native media proofs
+        # The verifier deliberately resolves the installed native tools or PATH;
+        # a clean hosted Windows runner has neither. Reuse the component builder's
+        # existing locked acquisition (size/SHA/license pins), not an unpinned
+        # package-manager install or a skipped subcc proof.
+        timeout-minutes: 15
+        run: |
+          uv run python -c "import os; from pathlib import Path; from scripts.build_native_ffmpeg_pack import acquire_ffmpeg_pack_sources; root = acquire_ffmpeg_pack_sources(Path(os.environ['RUNNER_TEMP']) / 'civiccast-ffmpeg-test-cache'); Path(os.environ['GITHUB_PATH']).open('a', encoding='utf-8').write(str(root / 'bin') + '\n')"
+
       - name: Run tests/native (junit)
         # PR #143 review fix: -m "not integration" excludes
         # test_upgrade_engine_postgres.py's real-Postgres D3 engine proof.
@@ -601,12 +612,14 @@ jobs:
         # and fails if this floor drifts more than the margin below it, so
         # this pin cannot go stale again the way 1565 did without failing
         # that test first.
+        # 2026-10-04: isolated committed 14e00b38 collection = 2137 with
+        # -m "not integration" (2140 total); retain the 50-test margin.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 1978 \
+            --floor 2087 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit

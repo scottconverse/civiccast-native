@@ -213,12 +213,15 @@ def test_worker_off_mode_never_starts_thread(
 
 
 def test_inline_worker_thread_starts_and_stops_with_lifespan(app_env: Path) -> None:
-    """Inline mode starts the worker thread on lifespan enter, stops on exit."""
+    """Owned lifespan activation starts the inline worker; exit stops it."""
 
     app = create_app()
     with TestClient(app):
         supervisor = getattr(app.state, "finalization_worker_supervisor", None)
         assert supervisor is not None
+        deadline = time.monotonic() + 5.0
+        while not supervisor.running and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert supervisor.running is True
     assert supervisor.running is False
 

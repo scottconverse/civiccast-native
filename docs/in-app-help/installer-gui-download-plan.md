@@ -3,6 +3,8 @@
 Paths relative to `civiccast/apps/installer/`. AF = `src/AcquisitionFlow.tsx`; AP = `src/acquisition-progress.ts`; CC = `src/components-catalog.ts`.
 
 ## Where the text lives now
+
+Development first-install mode uses the same plan screens before elevation. Its signed current channel supplies sizes and available optional packs; only the selected mandatory plan and checked Large/CUDA packs transfer. `CivicCast First Install.exe` needs its matching `first-install.json`, Microsoft WebView2, and reachable whole-pack HTTPS delivery. It prepares and verifies the existing NSIS side-load layout before opening Windows Setup. The release hint is not authority, older release URLs are never a fallback, and download completion alone is not installation success. Public hosting and clean-machine installation remain unverified; published beta.10 still requires the full kit.
 Screen: AF:341-529. Row names, purposes and sizes: CC:57-161. Explanations under the two optional rows: AP:502-614. Totals and the disk check: AP:383-444; the time line: AF:458-462. The download itself starts on the next screen (AF:585; `src-tauri/src/main.rs:3740-3747`).
 
 ## Current text
@@ -33,7 +35,7 @@ The screen lists seven fixed catalog rows with fixed placeholder sizes; the tota
 | --- | --- | --- | --- |
 | HELP-50 | "Anything already on this computer or on your USB kit is used as-is ... only what is missing comes from the internet" | Reads as if `setup.exe` alone works. Windows setup, which runs before this screen, cannot finish without the kit's `packs` and `station` folders (exit 110 or 123) | SERIOUS |
 | HELP-51 | Row "Local AI model" 7.6 GB; total "9.7 GB" | The station needs three AI models (gemma4:12b, gemma4:e4b, translategemma:4b) and an AI engine; only the first is a row. The uninstall notice puts the model packs at about 21 GB | Moderate |
-| HELP-52 | "Untick it to skip the download" (AP:538-540, 605-607) | The download step is not told which rows are ticked. Unticking hides the row, while an item that is not on disk can still download in the background (code reading; UNVERIFIED on a real PC) | SERIOUS |
+| HELP-52 | "Untick it to skip the download" (AP:538-540, 605-607) | Corrected in development source: the actual screen passes selected IDs to native admission; unchecked optional entries never enter the driver. A refused plan cannot complete from old progress. Existing installer artifacts and clean-machine behavior still need verification | Source corrected; shipment unverified |
 | HELP-53 | "Database & messaging services" | The messaging server was removed from the product; only the database is installed | Low |
 | HELP-54 | Rows 1 and 2 shown as downloads, "Included" | Setup installs both first; they normally show "Found locally" and download nothing | Moderate |
 | HELP-55 | Sizes in GB with no time warning | The 7.6 GB model alone, if it must download, can take hours on a slow link (6-hour transfer limit, `component_acquisition.rs:545`) | Moderate |
@@ -54,3 +56,7 @@ Footer: "<total> total on this screen. This is not the whole model footprint: th
 - Needs a code fix, not text: pass the ticked ids into `start_acquisition` (`main.rs:3740-3747`; the driver in `run_acquisition_components` iterates `PRODUCTION_CATALOG_IDS`); use measured sizes instead of the placeholders (CC:4-13); add rows for the two other AI models or say plainly they ship with the kit (HELP-51); update the download source tag, which is `native-beta-1.0.0-beta.1-rc1`, not 1.0.0-beta.10 (HELP-60, `acquisition_catalog.rs:221`).
 - A real-box test is required before shipping any text that says unticking does or does not skip a download (HELP-52).
 - No NSIS or language-file changes.
+
+### Selection correction — 2026-10-04
+
+The screen/API/native command now carry one selected plan. Native validation keeps all four required components, rejects unknown or duplicate IDs before admission, and filters optional Large/CUDA before prescan, transfer and retry configuration. Repeating the same plan is a no-op; changing an admitted plan is refused until restart. Retry cannot add an unselected component or clear cancellation for it. Existing verification, offline reuse, transport and Windows setup are unchanged. The historical proposed text above describes the earlier defect; use the corrected Chapter 10 selection instructions for this source. This is not a clean-machine or shipped-installer claim.

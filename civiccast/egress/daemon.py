@@ -685,6 +685,8 @@ class _PendingPreparation:
     #: failure of exactly this preparation must NOT take the ordinary
     #: "fall back to restart" route -- see ``_poll_preparation``.
     slate_first: bool = False
+    #: Keep the same airing-plan horizon if this background reload declines.
+    rollover_plan_end_at: datetime | None = None
 
 
 @dataclass
@@ -1259,6 +1261,7 @@ class EgressDaemon:
         *,
         kind: str,
         slate_first: bool = False,
+        rollover_plan_end_at: datetime | None = None,
     ) -> _PreparationOutcome:
         with self._preparation_guard:
             if self._preparation_closed:
@@ -1306,6 +1309,7 @@ class EgressDaemon:
                 process=self._processes.get(channel_id),
                 config=self._store.get_config(channel_id),
                 slate_first=slate_first,
+                rollover_plan_end_at=rollover_plan_end_at,
             )
             _LOG.info("channel %s: %s source preparation queued", channel_id, kind)
             return _PreparationState.PENDING
@@ -1357,7 +1361,9 @@ class EgressDaemon:
                         # ``_request_reload``.
                         self._keep_slate_after_failed_hand_off(channel_id)
                     else:
-                        self._fall_back_to_restart_reload(channel_id)
+                        self._fall_back_to_restart_reload(
+                            channel_id, plan_end_at=pending.rollover_plan_end_at
+                        )
                 elif pending.kind == "start" and outcome is _PreparationState.START_EXPIRED:
                     self._start(
                         channel_id,
@@ -4924,6 +4930,7 @@ class EgressDaemon:
             ),
             kind="reload",
             slate_first=slate_first,
+            rollover_plan_end_at=rollover_plan_end_at,
         )
         if isinstance(result, _ReusePreparedPlan):
             # F3(b): the SYNCHRONOUS preparation path (no
@@ -6047,13 +6054,20 @@ class EgressDaemon:
         recorded at the instant the pin appears, from whatever rollover horizon
         the caller still has in hand (``plan_end_at``; ``None`` when the reload
         carried no recorded horizon). See ``_poll_reload_stall_watchdog``."""
+        continuing_reissue = (
+            channel_id in self._pending_reloads and self._reload_stall_rungs.get(channel_id, 0) > 0
+        )
         self._pending_reloads[channel_id] = (
             state.state if state else None,
             state.current_source_label if state else None,
         )
-        self._reload_stall_since[channel_id] = self._monotonic()
-        self._reload_stall_bound_s[channel_id] = _reload_stall_bound_seconds(plan_end_at)
-        self._reload_stall_rungs.pop(channel_id, None)
+        # A background re-issue can decline on a later tick. It is still the
+        # same failed hand-off, not a fresh full-budget stall. Successful arming,
+        # worker exit and operator stop clear the pin and end this episode.
+        if not continuing_reissue:
+            self._reload_stall_since[channel_id] = self._monotonic()
+            self._reload_stall_bound_s[channel_id] = _reload_stall_bound_seconds(plan_end_at)
+            self._reload_stall_rungs.pop(channel_id, None)
 
     def _poll_reload_stall_watchdog(self, channel_id: str) -> None:
         """U67: recover a channel whose ``_pending_reloads`` pin has outlived
@@ -6099,9 +6113,11 @@ class EgressDaemon:
         if self.has_pending_reload_settlement(channel_id):
             # Real work is outstanding: a preparation is running, or a reload
             # this daemon accepted is still settling. The pin is being driven,
-            # not stuck. Restart the clock for whatever comes after it.
-            self._reload_stall_since[channel_id] = now
-            self._reload_stall_rungs.pop(channel_id, None)
+            # not stuck. Its own deadline owns it, so do not terminate here.
+            # Ordinary work restarts the clock; a watchdog re-issue keeps its
+            # existing grace/rung until it really arms or declines.
+            if self._reload_stall_rungs.get(channel_id, 0) == 0:
+                self._reload_stall_since[channel_id] = now
             return
         since = self._reload_stall_since.get(channel_id)
         if since is None:
@@ -6139,14 +6155,9 @@ class EgressDaemon:
                 _TRANSITIONING_WATCHDOG_REISSUE_GRACE_SECONDS,
             )
             self._request_reload(channel_id)
-            # A re-issue that declines again comes back through
-            # ``_arm_pending_reload``, which resets this pin's clock and clears its
-            # rung -- correct for a NEW stall, wrong here: this is still the SAME
-            # stall, and without restoring the rung the grace below would never
-            # apply and the channel would simply re-issue forever at the full
-            # bound instead of ever reaching the restart. (A re-issue that
-            # SUCCEEDS leaves no pin at all -- ``_reload_steps`` drops it when the
-            # reload arms -- so the first branch above ends the episode.)
+            # Synchronous refusal and pending async preparation both retain the
+            # episode. A later refusal preserves it in _arm_pending_reload;
+            # successful arming drops the pin and ends this supervision.
             if channel_id in self._pending_reloads:
                 self._reload_stall_since[channel_id] = now
                 self._reload_stall_rungs[channel_id] = 1

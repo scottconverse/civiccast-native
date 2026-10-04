@@ -1,12 +1,68 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
+  manualImageUrl,
   downloadReportsExport,
   fireControlRoomCue,
   getControlRoomReadiness,
   getStationSetupState,
+  updatePaywallConfig,
+  upsertPaywallConfig,
   uploadAssetFile,
 } from './client'
+
+describe('paywall config request boundaries', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+  })
+
+  it('PATCHes the encoded config ID with only supplied mutable fields', async () => {
+    window.localStorage.setItem('civiccast.staffToken', 'fixture-staff-token')
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ signing_secret_present: true }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    await updatePaywallConfig('config/id', { enabled: true, provider: 'stripe', tiers: [] })
+    expect(fetchMock).toHaveBeenCalledWith('/api/staff/paywall/config/config%2Fid',
+      expect.objectContaining({
+        method: 'PATCH',
+        body: JSON.stringify({ enabled: true, provider: 'stripe', tiers: [] }),
+        headers: expect.objectContaining({ Authorization: 'Bearer fixture-staff-token' }),
+      }),
+    )
+  })
+
+  it('keeps explicit creation on the existing PUT route and body', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ signing_secret_present: false }), {
+      status: 200, headers: { 'Content-Type': 'application/json' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const payload = {
+      config_id: 'paywall-default', station_id: 'civiccast-station', enabled: false,
+      provider: 'stripe' as const, tiers: [], signing_secret: null,
+    }
+    await upsertPaywallConfig(payload)
+    expect(fetchMock).toHaveBeenCalledWith('/api/staff/paywall/config',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify(payload) }),
+    )
+  })
+})
+
+describe('offline manual image origin', () => {
+  afterEach(() => { delete window.__CIVICCAST_API_BASE__ })
+  it('uses the same configured API origin as the manual request', () => {
+    const path = `/api/public/manual/assets/${'a'.repeat(64)}.png`
+    expect(manualImageUrl(path)).toBe(path)
+    window.__CIVICCAST_API_BASE__ = 'http://127.0.0.1:8000/'
+    expect(manualImageUrl(path)).toBe(`http://127.0.0.1:8000${path}`)
+    for (const other of ['/api/public/manual/assets/../secret', 'https://example.org/a.png', '#anchor']) {
+      expect(manualImageUrl(other)).toBe(other)
+    }
+  })
+})
 
 describe('rehearsal media upload', () => {
   afterEach(() => {

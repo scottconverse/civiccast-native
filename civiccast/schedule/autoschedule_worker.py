@@ -10,9 +10,10 @@ enabled rule.
 
 ``compile_rules`` is idempotent, so a periodic run simply extends the rolling
 window as days pass and back-fills any newly-eligible slots; re-running over an
-already-filled horizon adds nothing. The created items are ``scheduled`` and
-still pass through the S4 commit gate before air — this worker never puts
-anything on air.
+already-filled horizon adds nothing. The created items are ``published``:
+an enabled rule approves its generated programs for their scheduled times,
+without a separate per-item commit. This does not mean immediate playback.
+When enabled, this worker compiles at startup and about hourly by default.
 
 Everything is injected (session factory, store, clock, the compile function) so
 the scheduler is unit-testable. The app wraps :meth:`run_forever` in a
@@ -94,7 +95,7 @@ class AutoScheduleCompileWorker:
                 report = self._compile_fn(session, self._store, now=self._clock(), tz=self._tz)
             if report.items_created:
                 _LOG.info(
-                    "auto-schedule compile added %d scheduled items across %d rules",
+                    "auto-schedule compile added %d published items across %d rules",
                     report.items_created,
                     len(report.results),
                 )

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts.policy.check_v15_resilience_gate import (
     REQUIRED_PATHS,
     REQUIRED_UPDATE_FIELDS,
@@ -58,3 +60,29 @@ def test_v15_resilience_gate_scans_json_proof_secrets(tmp_path: Path) -> None:
     violations = evaluate_v15_resilience_gate(tmp_path)
 
     assert any("API_TOKEN" in violation for violation in violations)
+
+
+@pytest.mark.parametrize("secret", [False, True])
+def test_v15_resilience_gate_scans_powershell_bom_proof(tmp_path: Path, secret: bool) -> None:
+    _write_openapi(tmp_path)
+    proof_dir = tmp_path / "docs/releases/evidence"
+    proof_dir.mkdir(parents=True)
+    payload = {"environment": {"API_TOKEN": {"value": "ccst_leaked_secret"}}} if secret else {}
+    (proof_dir / "support.json").write_text(json.dumps(payload), encoding="utf-8-sig")
+
+    violations = evaluate_v15_resilience_gate(tmp_path)
+
+    assert not any("invalid" in violation for violation in violations)
+    if secret:
+        assert any("API_TOKEN" in violation for violation in violations)
+    else:
+        assert violations == []
+
+
+def test_v15_resilience_gate_still_rejects_malformed_bom_proof(tmp_path: Path) -> None:
+    _write_openapi(tmp_path)
+    proof_dir = tmp_path / "docs/releases/evidence"
+    proof_dir.mkdir(parents=True)
+    (proof_dir / "support.json").write_text("not JSON", encoding="utf-8-sig")
+
+    assert any("invalid" in item for item in evaluate_v15_resilience_gate(tmp_path))

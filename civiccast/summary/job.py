@@ -451,11 +451,20 @@ class SummaryGenerationJobWorker:
         try:
             stored = self._summary_store.create_summary(draft)
         except SummaryStoreConflictError:
-            # A prior attempt's draft already landed (e.g. a retry re-ran after the
-            # store write succeeded but this process died before marking the job
-            # complete) -- the summary_id is still the fingerprint-stable id the
-            # pipeline would have produced, so this is recovery, not a new failure.
-            stored = draft
+            # The pipeline creates fresh IDs, not fingerprint-stable IDs. An
+            # arbitrary SQL constraint conflict does not prove this draft landed.
+            # Recover only an actual, identical persisted result for this attempt.
+            try:
+                recovered = self._summary_store.get_summary(draft.summary_id)
+            except Exception as exc:
+                return self._record_failure(running, now=now, error=str(exc))
+            if recovered is None or recovered != draft:
+                return self._record_failure(
+                    running,
+                    now=now,
+                    error="Summary persistence conflict: no matching stored draft. Retry generation.",
+                )
+            stored = recovered
         _LOG.info(
             "Summary generation complete for meeting %s (job %s): draft %s, status %s.",
             running.meeting_id,

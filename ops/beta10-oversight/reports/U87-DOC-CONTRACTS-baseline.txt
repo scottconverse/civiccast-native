@@ -1,0 +1,80 @@
+.FF..F.....F.....                                                        [100%]
+================================== FAILURES ===================================
+_______________ test_ui_surfaces_share_civiccast_design_tokens ________________
+
+    def test_ui_surfaces_share_civiccast_design_tokens() -> None:
+        """Stop installer, console, portal, and docs CSS from drifting apart."""
+
+        expected_imports = {
+            APPS_ROOT / "portal-operator" / "src" / "index.css": "./civiccast-tokens.css",
+            APPS_ROOT / "portal-public" / "src" / "index.css": (
+                "../../portal-operator/src/civiccast-tokens.css"
+            ),
+            APPS_ROOT / "installer" / "src" / "styles.css": (
+                "../../portal-operator/src/civiccast-tokens.css"
+            ),
+        }
+        missing = []
+        for path, expected in expected_imports.items():
+            if expected not in path.read_text(encoding="utf-8"):
+                missing.append(str(path.relative_to(REPO_ROOT)))
+        docs_index = (REPO_ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+
+        assert missing == []
+>       assert "--cc-paper" in docs_index
+E       assert '--cc-paper' in '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...      if (n) { select(n); n.focus(); e.preventDefault(); }\n      });\n    });\n  }());\n</script>\n</body>\n</html>\n'
+
+docs_index = '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...      if (n) { select(n); n.focus(); e.preventDefault(); }\n      });\n    });\n  }());\n</script>\n</body>\n</html>\n'
+expected   = '../../portal-operator/src/civiccast-tokens.css'
+expected_imports = {WindowsPath('C:/Dev/Claude/civiccast-u73/civiccast/apps/installer/src/styles.css'): '../../portal-operator/src/civicc...ev/Claude/civiccast-u73/civiccast/apps/portal-public/src/index.css'): '../../portal-operator/src/civiccast-tokens.css'}
+missing    = []
+path       = WindowsPath('C:/Dev/Claude/civiccast-u73/civiccast/apps/installer/src/styles.css')
+
+tests\policy\test_portal_css_tokens.py:61: AssertionError
+________________ test_v15_resilience_gate_passes_current_repo _________________
+
+    def test_v15_resilience_gate_passes_current_repo() -> None:
+        root = Path(__file__).resolve().parents[2]
+
+>       assert evaluate_v15_resilience_gate(root) == []
+E       AssertionError: assert ['docs/releas...n 1 (char 0)'] == []
+E
+E         Left contains 6 more items, first extra item: 'docs/releases/evidence/v1.0.0-beta.10-gate-a/run4-engine-timing-diagnosis-b6520847/egress-verify-engine.json: proof JSON is invalid: Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)'
+E         Use -v to get more diff
+
+root       = WindowsPath('C:/Dev/Claude/civiccast-u73')
+
+tests\policy\test_v15_resilience_gate.py:38: AssertionError
+_________________ test_v17_adoption_gate_passes_current_repo __________________
+
+    def test_v17_adoption_gate_passes_current_repo() -> None:
+        root = Path(__file__).resolve().parents[2]
+
+>       assert evaluate_v17_adoption_gate(root) == []
+E       assert ["docs/index....acceptance'."] == []
+E
+E         Left contains one more item: "docs/index.html: missing required phrase 'Physical DeckLink SDI capture and acceptance'."
+E         Use -v to get more diff
+
+root       = WindowsPath('C:/Dev/Claude/civiccast-u73')
+
+tests\policy\test_v17_adoption_gate.py:31: AssertionError
+______________ test_public_docs_do_not_overclaim_sdi_or_cg_proof ______________
+
+    def test_public_docs_do_not_overclaim_sdi_or_cg_proof() -> None:
+        public_page = (REPO_ROOT / "docs/index.html").read_text(encoding="utf-8")
+
+        assert "DeckLink SDI through the engine's own sink" not in public_page
+        assert "Multi-zone CG designer" not in public_page
+>       assert "Physical DeckLink SDI capture and acceptance" in public_page
+E       assert 'Physical DeckLink SDI capture and acceptance' in '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...      if (n) { select(n); n.focus(); e.preventDefault(); }\n      });\n    });\n  }());\n</script>\n</body>\n</html>\n'
+
+public_page = '<!doctype html>\n<html lang="en">\n<head>\n  <meta charset="utf-8">\n  <meta name="viewport" content="width=device-wi...      if (n) { select(n); n.focus(); e.preventDefault(); }\n      });\n    });\n  }());\n</script>\n</body>\n</html>\n'
+
+tests\test_audit_protocol_docs.py:63: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/policy/test_portal_css_tokens.py::test_ui_surfaces_share_civiccast_design_tokens
+FAILED tests/policy/test_v15_resilience_gate.py::test_v15_resilience_gate_passes_current_repo
+FAILED tests/policy/test_v17_adoption_gate.py::test_v17_adoption_gate_passes_current_repo
+FAILED tests/test_audit_protocol_docs.py::test_public_docs_do_not_overclaim_sdi_or_cg_proof
+4 failed, 13 passed in 10.24s

@@ -547,6 +547,10 @@ def test_u16_guard_slate_restart_rebinds_the_hls_relay_to_the_new_worker_session
 
     assert fixture.daemon.process_once("gov") == 1
     assert len(relay_calls) == 1, "the first worker session did not start a relay"
+    # Relay startup discards the predecessor's advertised window. The fake
+    # relay produces no files, so publish a new current-session window now.
+    assert not (fixture.hls_dir / "playlist.m3u8").exists()
+    _write_playlist(fixture.hls_dir, segments=("seg000000003.ts", "seg000000004.ts"))
     fixture.daemon._write_state("gov", "FALLBACK_SLATE")
 
     for _ in range(_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES):

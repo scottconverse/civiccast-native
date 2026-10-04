@@ -441,7 +441,13 @@ def test_normalized_nsis_repack_is_reproducible_and_restores_main_binary(
     monkeypatch.setattr(builder, "_find_makensis", lambda: tmp_path / "makensis.exe")
 
     def fake_run(command: list[str], *, cwd: Path, env: object = None) -> None:
-        assert command == [str(tmp_path / "makensis.exe"), "/V2", str(script)]
+        expected_digest = hashlib.sha256(main_binary.read_bytes()).hexdigest()
+        assert command == [
+            str(tmp_path / "makensis.exe"),
+            "/V2",
+            f"/DCIVICCAST_FLAT_EXECUTOR_SHA256={expected_digest}",
+            str(script),
+        ], "signed setup must embed the exact normalized bootstrap identity"
         assert cwd == nsis_dir
         assert env is None
         assert builder.TAURI_NSIS_BUNDLE_MARKER in main_binary.read_bytes()

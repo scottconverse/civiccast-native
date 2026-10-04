@@ -1,5 +1,14 @@
 # Alerts & monitoring (nav id: alerts)
 
+## Development update - 2026-10-03
+
+The alert and destination lists now show empty states only after successful reads.
+A failed alert read offers **Retry alerts** and does not claim that monitoring is
+healthy. A successful empty alert list says it does not verify station health and
+directs operators to Readiness. This corrects the empty-state behavior only; it
+does not resolve the rule/destination wiring or other findings below. The following
+inventory and proposed text describe the original beta.10 review.
+
 Sidebar: System Health > **Alerts**; page H1 "Alerts & monitoring"; small label "Operations". Manual authority: `docs/manual/src/17-something-wrong.md` section "Watch for alerts (Alerts)" (`#watch-for-alerts-alerts`), including "What happens in beta.10 when no destination is wired" (`#what-happens-in-beta.10-when-no-destination-is-wired`).
 
 ## Where the help text lives now

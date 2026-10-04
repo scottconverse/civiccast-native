@@ -43,11 +43,11 @@ jobs:
             echo "Operator portal not yet present — gate is a no-op for this commit."
           fi
 
-      - name: Set up Node 20
+      - name: Set up Node 24.15.0
         if: steps.portal-check.outputs.portal_present == 'true'
         uses: actions/setup-node@v6.4.0
         with:
-          node-version: "20"
+          node-version: "24.15.0"
           cache: "npm"
           cache-dependency-path: civiccast/apps/portal-operator/package-lock.json
 

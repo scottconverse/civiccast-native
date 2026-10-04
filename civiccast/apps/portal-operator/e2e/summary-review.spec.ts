@@ -153,7 +153,15 @@ async function mockSummaryBackend(
   await page.route('**/api/staff/assets', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) })
   })
-  await page.route('**/api/staff/summaries/review-items', async (route) => {
+  await page.route('**/api/staff/summaries/jobs?*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([{
+      job_id: 'original-generation', meeting_id: summary.meeting_id, summary_id: summary.summary_id,
+      state: 'complete', cues: [{ cue_id: 'cue-42', start_seconds: 188.2, end_seconds: 205.9,
+        text: 'Four council members voted yes; one voted no.', confidence: 1 }],
+      created_at: '2026-05-14T12:00:00Z', updated_at: '2026-05-14T12:00:00Z',
+    }]) })
+  })
+  await page.route('**/api/staff/summaries/review-items*', async (route) => {
     if (options.delayList) await new Promise((resolve) => setTimeout(resolve, 500))
     if (options.failList) {
       await route.fulfill({
@@ -217,7 +225,7 @@ async function openSummaryReview(page: import('@playwright/test').Page) {
 }
 
 test.describe('summary review', () => {
-  test('desktop success preserves focus while sourced claim seeks transcript', async ({ page }) => {
+  test('desktop success preserves focus while sourced claim loads caption words', async ({ page }) => {
     const errors: string[] = []
     page.on('console', (message) => {
       if (message.type() === 'error') errors.push(message.text())
@@ -230,12 +238,12 @@ test.describe('summary review', () => {
     await approve.focus()
     await page.getByRole('button', { name: /cue-42/ }).click()
     await expect(approve).toBeFocused()
-    await expect(page.getByText('cue-42 / 3:08-3:25')).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Source captions' }).getByText('Four council members voted yes; one voted no.')).toBeVisible()
 
     await approve.click()
     await page.getByRole('button', { name: 'Export signed record' }).click()
     await expect(page.getByText(/Signed record exported: record-1/)).toBeVisible()
-    await expect(page.getByText(/server validates the\s+PDF\/A-3B artifact/i)).toBeVisible()
+    await expect(page.getByText(/server runs PDF\/A-3\s+shape checks/i)).toBeVisible()
     await expect(errors).toEqual([])
     await page.screenshot({ path: `${evidenceDir}/v0.6-summary-review-success-desktop.png`, fullPage: true })
   })
@@ -249,12 +257,12 @@ test.describe('summary review', () => {
     await page.screenshot({ path: `${evidenceDir}/v0.6-summary-review-partial-mobile.png`, fullPage: true })
   })
 
-  test('mobile success can seek sourced transcript claim', async ({ page }) => {
+  test('mobile success can read sourced caption words', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 })
     await mockSummaryBackend(page)
     await openSummaryReview(page)
     await page.getByRole('button', { name: /cue-42/ }).click()
-    await expect(page.getByText('cue-42 / 3:08-3:25')).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Source captions' }).getByText('Four council members voted yes; one voted no.')).toBeVisible()
     await page.screenshot({ path: `${evidenceDir}/v0.6-summary-review-success-mobile.png`, fullPage: true })
   })
 

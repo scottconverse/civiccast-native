@@ -6,10 +6,55 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from civiccast.docsite.render import embed_local_images, extract_toc, sanitize_html
 
 
 class TestEmbedLocalImages:
+    def test_packaged_images_deduplicate_and_keep_prose(self, tmp_path: Path) -> None:
+        import hashlib
+
+        data = b"same image bytes"
+        (tmp_path / "one.png").write_bytes(data)
+        (tmp_path / "two.png").write_bytes(data)
+        assets: dict[str, bytes] = {}
+        sources: dict[str, str] = {}
+        original = (
+            '<img src="one.png" alt="One" /><p id="anchor">Text</p><img src="two.png" alt="Two" />'
+        )
+        html = embed_local_images(original, tmp_path, assets=assets, sources=sources)
+        name = hashlib.sha256(data).hexdigest() + ".png"
+        assert assets == {name: data}
+        assert html.count(f"/api/public/manual/assets/{name}") == 2
+        assert '<p id="anchor">Text</p>' in html
+        assert sources == {"one.png": name[:-4], "two.png": name[:-4]}
+
+    @pytest.mark.parametrize(
+        "media",
+        [
+            '<embed src="notes.txt" />',
+            "<object data='document.pdf'></object>",
+            '<video src="clip.mp4"></video>',
+            '<audio><source src="sound.ogg" /></audio>',
+        ],
+    )
+    def test_local_non_image_media_is_not_silently_discarded(
+        self, tmp_path: Path, media: str
+    ) -> None:
+        with pytest.raises(ValueError, match=r"manual image.*unsupported"):
+            embed_local_images(media, tmp_path)
+
+    @pytest.mark.parametrize(
+        "source", ["https://example.org/clip.mp4", "data:video/mp4,AAAA", "/already/absolute.mp4"]
+    )
+    def test_nonlocal_media_keeps_existing_sanitizer_behavior(
+        self, tmp_path: Path, source: str
+    ) -> None:
+        html = f'<video src="{source}"></video><p>After</p>'
+        assert embed_local_images(html, tmp_path) == html
+        assert sanitize_html(html) == "<p>After</p>"
+
     def test_embeds_a_relative_image_as_a_data_uri(self, tmp_path: Path) -> None:
         (tmp_path / "assets").mkdir()
         image_path = tmp_path / "assets" / "diagram.png"
@@ -37,22 +82,23 @@ class TestEmbedLocalImages:
             html = f'<img src="{src}" alt="x" />'
             assert embed_local_images(html, base_dir=tmp_path) == html
 
-    def test_leaves_a_missing_file_untouched(self, tmp_path: Path) -> None:
+    def test_missing_file_fails_instead_of_shipping_broken_image(self, tmp_path: Path) -> None:
         html = '<img src="assets/does-not-exist.png" alt="Missing" />'
-        assert embed_local_images(html, base_dir=tmp_path) == html
+        with pytest.raises(ValueError, match="manual image missing"):
+            embed_local_images(html, base_dir=tmp_path)
 
     def test_refuses_to_embed_a_path_traversal_outside_base_dir(self, tmp_path: Path) -> None:
         outside = tmp_path.parent / "outside-secret.png"
         outside.write_bytes(b"secret-bytes")
         html = '<img src="../outside-secret.png" alt="x" />'
-        out = embed_local_images(html, base_dir=tmp_path)
-        assert out == html
-        assert "base64" not in out
+        with pytest.raises(ValueError, match="manual image escapes"):
+            embed_local_images(html, base_dir=tmp_path)
 
-    def test_leaves_an_unsupported_file_type_untouched(self, tmp_path: Path) -> None:
+    def test_unsupported_file_type_fails(self, tmp_path: Path) -> None:
         (tmp_path / "readme.txt").write_text("not an image", encoding="utf-8")
         html = '<img src="readme.txt" alt="x" />'
-        assert embed_local_images(html, base_dir=tmp_path) == html
+        with pytest.raises(ValueError, match="manual image missing or unsupported"):
+            embed_local_images(html, base_dir=tmp_path)
 
     def test_embeds_multiple_images_independently(self, tmp_path: Path) -> None:
         (tmp_path / "one.png").write_bytes(b"one-bytes")
@@ -67,6 +113,54 @@ class TestEmbedLocalImages:
 
 
 class TestSanitizeHtml:
+    def test_keeps_ordered_list_start_after_a_figure(self) -> None:
+        html = (
+            "<ol><li>First</li><li>Second</li></ol>"
+            "<figure><figcaption>Instructions</figcaption></figure>"
+            '<ol start="3"><li>Third</li></ol>'
+        )
+        assert sanitize_html(html) == html
+
+    @pytest.mark.parametrize("start", ["1", "3", "0", "-2", "003"])
+    def test_keeps_only_integer_ordered_list_start(self, start: str) -> None:
+        html = f'<ol start="{start}"><li>Step</li></ol>'
+        assert sanitize_html(html) == html
+
+    @pytest.mark.parametrize(
+        "start",
+        [
+            "",
+            "3.5",
+            "+3",
+            " 3",
+            "3 ",
+            "3px",
+            "3\n",
+            "٣",
+            "javascript:alert(1)",
+            "3&quot; onclick=&quot;alert(1)",
+            "3&#10;onmouseover=alert(1)",
+        ],
+    )
+    def test_strips_malformed_ordered_list_start(self, start: str) -> None:
+        assert sanitize_html(f'<ol start="{start}"><li>Step</li></ol>') == (
+            "<ol><li>Step</li></ol>"
+        )
+
+    def test_list_start_does_not_relax_other_attributes_or_tags(self) -> None:
+        html = (
+            '<ol start="3" onclick="alert(1)" style="color:red" reversed type="a" '
+            'srcdoc="bad"><li start="4" onmouseover="bad()">Step</li></ol>'
+            '<ul start="3"><li>Bullet</li></ul><p start="3">Text</p>'
+        )
+        assert sanitize_html(html) == (
+            '<ol start="3"><li>Step</li></ol><ul><li>Bullet</li></ul><p>Text</p>'
+        )
+
+    def test_ordinary_ordered_list_is_unchanged(self) -> None:
+        html = "<ol><li>First</li><li>Second</li></ol>"
+        assert sanitize_html(html) == html
+
     def test_drops_script_tag_and_its_content(self) -> None:
         out = sanitize_html("<p>hello</p><script>alert(document.cookie)</script><p>world</p>")
         assert "<script" in "<p>hello</p><script>alert(document.cookie)</script><p>world</p>"

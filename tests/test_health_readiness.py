@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -58,8 +60,11 @@ def health_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     session inherits an engine pointed at a deleted tmp_path sqlite file.
     """
 
+    import civiccast.app as app_module
     from civiccast.db import reset_engine
 
+    monkeypatch.setattr(app_module, "_maybe_start_finalization_worker", lambda app: None)
+    monkeypatch.setattr(app_module, "_maybe_start_background_supervisors", lambda app: None)
     monkeypatch.setenv("CIVICCAST_AUTH_ACK", "1")
     monkeypatch.delenv("DATABASE_URL", raising=False)
     expected_migration_head.cache_clear()
@@ -72,8 +77,16 @@ def health_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
 
 
-def _health(client: TestClient) -> dict[str, str]:
+def _health(client: TestClient, expected: str | None = None) -> dict[str, str]:
     response = client.get("/health")
+    deadline = time.monotonic() + 2
+    while (
+        expected is not None
+        and response.json()["schema"] != expected
+        and time.monotonic() < deadline
+    ):
+        time.sleep(0.01)
+        response = client.get("/health")
     # Liveness never depends on readiness: the process is up, so it answers 200.
     assert response.status_code == 200, (
         "/health must stay 200 in every schema state -- the installer's Rust "
@@ -91,7 +104,7 @@ def test_no_database_is_degraded_not_healthy(
 
     # The schema check runs at LIFESPAN startup, so the client must enter it.
     with TestClient(create_app()) as client:
-        body = _health(client)
+        body = _health(client, "not-configured")
 
     assert body["schema"] == "not-configured"
     assert body["status"] == "degraded", (
@@ -114,7 +127,7 @@ def test_schema_at_head_is_healthy(
     from civiccast.app import create_app
 
     with TestClient(create_app()) as client:
-        body = _health(client)
+        body = _health(client, "current")
 
     assert body["schema"] == "current"
     assert body["status"] == "healthy"
@@ -143,7 +156,7 @@ def test_schema_behind_the_code_is_degraded(
     from civiccast.app import create_app
 
     with TestClient(create_app()) as client:
-        body = _health(client)
+        body = _health(client, "behind")
 
     assert body["schema"] == "behind"
     assert body["status"] == "degraded"
@@ -163,7 +176,10 @@ def test_unknown_schema_state_is_degraded_not_healthy(
 
     app = create_app()
     with TestClient(app) as client:
+        _health(client, "not-configured")
+        app.state.health_schema_owner._thread.join(1)
         app.state.schema_status = SchemaStatus(state="unknown")
+        app.state.schema_status_checked_monotonic = time.monotonic()
         body = _health(client)
 
     assert body["schema"] == "unknown"
@@ -192,7 +208,7 @@ def test_readiness_recovers_when_storage_is_prepared_mid_flight(
         database_url = _sqlite_at_revision(tmp_path, expected_migration_head())
         app.state.activate_durable_storage(database_url)
 
-        body = _health(client)
+        body = _health(client, "current")
 
     assert body["schema"] == "current"
     assert body["status"] == "healthy"
@@ -209,3 +225,104 @@ def test_api_health_alias_reports_the_same_readiness(
 
     assert alias.status_code == 200
     assert alias.json()["status"] == "degraded"
+
+
+@pytest.mark.parametrize("held_io", ["target", "backfill"])
+def test_configured_constructor_defers_held_target_io_until_owned_activation(
+    health_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, held_io: str
+) -> None:
+    import civiccast.app as app_module
+    from civiccast.schema_check import SchemaStatus
+
+    monkeypatch.setenv("DATABASE_URL", "sqlite:///:memory:")
+    monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(tmp_path / "uploads"))
+    monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
+    monkeypatch.setattr(app_module, "_maybe_start_finalization_worker", lambda app: None)
+    monkeypatch.setattr(app_module, "_maybe_start_background_supervisors", lambda app: None)
+    entered, release, constructed = threading.Event(), threading.Event(), threading.Event()
+    apps = []
+    errors = []
+
+    class TargetStore:
+        def list(self):
+            if held_io == "target":
+                held()
+            return []
+
+        def create(self, value):
+            return value
+
+    def held():
+        entered.set()
+        assert release.wait(8)
+
+    if held_io == "backfill":
+        monkeypatch.setattr(app_module, "backfill_json_events", lambda factory, path: held())
+
+    monkeypatch.setattr(app_module, "RecordingTargetStore", lambda factory: TargetStore())
+    monkeypatch.setattr(
+        "civiccast.schema_check.check_schema_currency",
+        lambda source: SchemaStatus(state="current", db_revision="head", expected_head="head"),
+    )
+
+    def construct():
+        try:
+            apps.append(app_module.create_app())
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            constructed.set()
+
+    thread = threading.Thread(target=construct)
+    thread.start()
+    try:
+        assert constructed.wait(2), (
+            "configured constructor must not wait for recording-target DB I/O"
+        )
+        assert not errors and not entered.is_set()
+        app = apps[0]
+        assert not app.state.durable_storage_active
+        app.state.lifespan_started = True
+        with TestClient(app) as client:
+            assert entered.wait(1)
+            body = _health(client)
+            assert body["status"] == "degraded" and body["schema_db_revision"] == "none"
+            assert not app.state.durable_storage_active
+            release.set()
+            body = _health(client, "current")
+            assert body["status"] == "healthy"
+            assert body["schema_db_revision"] == body["schema_expected_head"] == "head"
+    finally:
+        release.set()
+        thread.join(3)
+        assert not thread.is_alive()
+        for app in apps:
+            assert app.state.health_schema_owner.close(2)
+
+
+def test_source_switch_requires_activation_then_converges(
+    health_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from civiccast.app import create_app
+
+    old_root, new_root = tmp_path / "old", tmp_path / "new"
+    old_root.mkdir()
+    new_root.mkdir()
+    old_url = _sqlite_at_revision(old_root, expected_migration_head())
+    new_url = _sqlite_at_revision(new_root, expected_migration_head())
+    monkeypatch.setenv("DATABASE_URL", old_url)
+    app = create_app()
+    with TestClient(app) as client:
+        assert _health(client, "current")["status"] == "healthy"
+        monkeypatch.setenv("DATABASE_URL", new_url)
+        body = _health(client)
+        assert body["status"] == "degraded" and body["schema_db_revision"] == "none"
+        assert body["schema_expected_head"] == "unknown"
+        assert app.state.durable_storage_url == old_url
+        app.state.activate_durable_storage(new_url)
+        body = _health(client, "current")
+        assert body["status"] == "healthy"
+        assert app.state.durable_storage_url == new_url
+        assert (
+            body["schema_db_revision"] == body["schema_expected_head"] == expected_migration_head()
+        )

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from hashlib import sha256
 from pathlib import Path
@@ -321,6 +323,100 @@ def test_other_worker_observes_completed_managed_storage_without_restart(
         os.environ.pop("DATABASE_URL", None)
         os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
         gc.collect()
+
+
+def test_health_only_pickup_serializes_wiring_with_foreground_activation(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Persisted preparation converges through health alone, never partial green."""
+    import civiccast.app as app_module
+    from civiccast.db import reset_engine
+    from civiccast.live.recording_paths import DEFAULT_RECORDING_TARGET_ID
+    from civiccast.live.router import get_recording_target_store
+    from civiccast.schema_check import expected_migration_head
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
+    monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
+    monkeypatch.setenv("CIVICCAST_MANAGED_STORAGE_DIR", str(tmp_path / "managed"))
+    # No lifespan/native/background services: only actual local setup and wiring.
+    monkeypatch.setattr(app_module, "_maybe_start_finalization_worker", lambda app: None)
+    monkeypatch.setattr(app_module, "_maybe_start_background_supervisors", lambda app: None)
+    observer = create_app()
+    setup = TestClient(create_app())
+    client = TestClient(observer)
+    entered, release = threading.Event(), threading.Event()
+    calls = []
+    errors = []
+    original_wire = app_module._wire_durable_stores
+    foreground = None
+    try:
+        assert setup.post("/api/setup/storage", json={}).status_code == 200
+        database_url = os.environ.pop("DATABASE_URL")
+        os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
+
+        def held_wire(app):
+            calls.append(app)
+            entered.set()
+            assert release.wait(3)
+            original_wire(app)
+
+        monkeypatch.setattr(app_module, "_wire_durable_stores", held_wire)
+        observer.state.lifespan_started = True
+        start = time.monotonic()
+        assert client.get("/health").json()["status"] == "degraded"
+        assert time.monotonic() - start < 1
+        assert entered.wait(1)
+
+        def activate():
+            try:
+                observer.state.activate_durable_storage(database_url)
+            except Exception as exc:
+                errors.append(exc)
+
+        foreground = threading.Thread(target=activate)
+        foreground.start()
+        for path in ("/health", "/api/health", "/health"):
+            body = client.get(path).json()
+            assert body["status"] == "degraded"
+            assert body["schema_db_revision"] == "none"
+            assert body["schema_expected_head"] == "unknown"
+            assert observer.state.durable_storage_active is False
+        assert calls == [observer]
+        release.set()
+        foreground.join(2)
+        assert not foreground.is_alive() and not errors
+        deadline = time.monotonic() + 2
+        body = client.get("/health").json()
+        while body["status"] != "healthy" and time.monotonic() < deadline:
+            time.sleep(0.01)
+            body = client.get("/health").json()
+        assert body["status"] == "healthy" and body["schema"] == "current"
+        assert (
+            body["schema_db_revision"] == body["schema_expected_head"] == expected_migration_head()
+        )
+        assert calls == [observer]
+        assert observer.state.staff_token_store.__class__.__name__ == "PostgresStaffTokenStore"
+        target = next(
+            t
+            for t in observer.dependency_overrides[get_recording_target_store]().list()
+            if t.recording_target_id == DEFAULT_RECORDING_TARGET_ID
+        )
+        assert target.target_uri == (tmp_path / "managed" / "uploads" / "recordings").as_uri()
+        assert os.environ["CIVICCAST_UPLOAD_DIR"] == str(tmp_path / "managed" / "uploads")
+    finally:
+        release.set()
+        if foreground is not None:
+            foreground.join(2)
+            assert not foreground.is_alive()
+        observer.state.lifespan_started = False
+        assert observer.state.health_schema_owner.close(2)
+        assert setup.app.state.health_schema_owner.close(2)
+        client.close()
+        setup.close()
+        reset_engine()
+        os.environ.pop("DATABASE_URL", None)
+        os.environ.pop("CIVICCAST_UPLOAD_DIR", None)
 
 
 def test_public_storage_setup_succeeds_from_loopback_with_no_token_of_any_kind(

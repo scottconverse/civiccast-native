@@ -78,8 +78,8 @@ import os
 import sqlite3
 import tempfile
 import threading
-from collections.abc import Callable
-from contextlib import AbstractContextManager
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -242,11 +242,14 @@ class AsRunOutbox:
         *,
         db_path: Path | None = None,
         alert_session_factory: AlertSessionFactory | None = None,
+        defer_open: bool = False,
     ) -> None:
         self._store = store
         self._db_path = db_path or default_asrun_outbox_path()
         self._alert_session_factory = alert_session_factory
         self._lock = threading.Lock()
+        self._closing = threading.Event()
+        self._conn: sqlite3.Connection | None = None
         # Lazy startup replay (app-factory contract fix): AsRunOutbox is
         # constructed synchronously inside build_channel_automation, which
         # itself runs during create_app() (civiccast/app.py's
@@ -254,31 +257,63 @@ class AsRunOutbox:
         # _install_durable_store_wiring) -- a path that must NEVER touch the
         # SQLAlchemy-backed store (pinned by tests/schedule/test_app_wiring.py::
         # TestAppFactorySetEnv::test_create_app_does_not_call_engine_connect).
-        # Opening THIS journal file below is fine (a local sqlite3 handle, not
-        # the app's SQLAlchemy Engine) -- what must not happen at construction
-        # is replay_pending()'s store/alert-hub reads. Deferred to the first
-        # real drain attempt instead: see ensure_started().
+        # App wiring additionally defers LOCAL journal opening to owned storage
+        # activation. Standalone callers retain eager opening by default.
         self._did_startup_replay = False
-        try:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = self._open_connection()
-        except OSError as exc:
-            raise AsRunOutboxJournalError(
-                f"Could not open the as-run outbox journal at {self._db_path}: {exc}"
-            ) from exc
+        if not defer_open:
+            self.initialize()
+
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Serialize journal access; a late open is closed after terminal close."""
+        with self._lock:
+            try:
+                if self._closing.is_set():
+                    raise AsRunOutboxJournalError("The as-run journal is closed.")
+                if self._conn is None:
+                    try:
+                        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+                        self._conn = self._open_connection()
+                    except (OSError, sqlite3.Error) as exc:
+                        raise AsRunOutboxJournalError(
+                            "Could not initialize the as-run journal."
+                        ) from exc
+                if self._closing.is_set():
+                    raise AsRunOutboxJournalError("The as-run journal closed during preparation.")
+                yield self._conn
+            finally:
+                if self._closing.is_set() and self._conn is not None:
+                    self._conn.close()
+                    self._conn = None
+
+    def initialize(self) -> None:
+        """Open/schema-initialize once, without draining or accessing the store."""
+        with self._connection():
+            pass
 
     def _open_connection(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path), check_same_thread=False, isolation_level=None)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=FULL")
-        conn.executescript(_SCHEMA)
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=FULL")
+            conn.executescript(_SCHEMA)
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
-    def close(self) -> None:
-        """Release the journal's SQLite handle (tests / graceful shutdown)."""
-
-        with self._lock:
-            self._conn.close()
+    def close(self, *, wait: bool = True) -> bool:
+        """Terminal close; nonwaiting shutdown retains a held opener's cleanup."""
+        self._closing.set()
+        if not self._lock.acquire(blocking=wait):
+            return False
+        try:
+            if self._conn is not None:
+                self._conn.close()
+                self._conn = None
+            return True
+        finally:
+            self._lock.release()
 
     # -- journal-first write (the durable path) ---------------------------
 
@@ -307,8 +342,8 @@ class AsRunOutbox:
 
     def _journal(self, op: _OutboxRow) -> None:
         try:
-            with self._lock:
-                self._conn.execute(
+            with self._connection() as conn:
+                conn.execute(
                     "INSERT OR IGNORE INTO asrun_outbox "
                     "(event_id, channel_id, kind, payload_json, created_at) "
                     "VALUES (?, ?, ?, ?, ?)",
@@ -332,8 +367,8 @@ class AsRunOutbox:
         behind it) stays pending for the next call.
         """
 
-        with self._lock:
-            pending = self._conn.execute(
+        with self._connection() as conn:
+            pending = conn.execute(
                 "SELECT seq, event_id, channel_id, kind, payload_json FROM asrun_outbox "
                 "WHERE drained_at IS NULL ORDER BY seq LIMIT ?",
                 (max_batch,),
@@ -356,8 +391,8 @@ class AsRunOutbox:
                     exc,
                 )
                 break
-            with self._lock:
-                self._conn.execute(
+            with self._connection() as conn:
+                conn.execute(
                     "UPDATE asrun_outbox SET drained_at = ? WHERE seq = ?",
                     (_now_iso(), seq),
                 )
@@ -387,8 +422,8 @@ class AsRunOutbox:
         return self._pending_count()
 
     def _pending_count(self) -> int:
-        with self._lock:
-            row = self._conn.execute(
+        with self._connection() as conn:
+            row = conn.execute(
                 "SELECT COUNT(*) FROM asrun_outbox WHERE drained_at IS NULL"
             ).fetchone()
         return int(row[0]) if row else 0

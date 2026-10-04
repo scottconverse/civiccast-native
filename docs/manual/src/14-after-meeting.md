@@ -63,7 +63,7 @@ The **State** and **Status** columns describe the same video in two ways.
 
 ![The Assets list. Each row shows a title, state, status, duration, size, codec and published date, with Upload video, a search box and tabs above it.](manual/images/operator-assets-list.png){width=90%}
 
-*Figure: the Assets list.*
+*Figure: the current-source Assets list with synthetic example recordings and statuses. No actual media was accessed or packaged for this illustration.*
 
 ## Upload a video
 
@@ -82,7 +82,7 @@ When it finishes you should see "Uploaded: {title}". The text below says the vid
 
 ![The Upload video panel open above the Assets table, with the Title box and the Video file chooser.](manual/images/operator-assets-upload.png){width=90%}
 
-*Figure: the upload panel.*
+*Figure: the current-source upload panel above synthetic example assets. No file was selected or uploaded for this illustration.*
 
 ## Edit a video's public details
 
@@ -167,6 +167,8 @@ Three read-only cards are on the **Channels** screen, not on Assets. They descri
 
 See [Running the meeting](#ch-running-meeting) for the Channels screen.
 
+> **Note:** In the current development version, live captions do not retry a decoding attempt with different model settings. If the words fail the model's quality checks, CivicCast withholds that audio window. A gap does not mean there was no speech. This does not guarantee that captions keep up, and **Captions on** does not prove every spoken word was captioned. The separate recorded-video caption job keeps its existing retries and human review.
+
 ## Offline captions: how a recording gets its captions
 
 Captions for a recording are made in the background after you approve publishing on the Publish screen. There is no separate "make captions" button. The steps are:
@@ -189,7 +191,7 @@ The job can also be held. These are the reasons CivicCast puts on the row:
 
 ## Review and correct captions
 
-The **Review queue** (page heading "Caption review") is where a person checks the machine's caption lines before the public sees them.
+The **Review queue** (current-source page heading "Review queue", labeled "Caption review" above it) is where a person checks the machine's caption lines before the public sees them.
 
 1. In the left menu, click **Review queue**. It opens on the **Pending** tab. The other tabs are **All**, **Edited**, **Approved** and **Rejected**, and a **Search** box above them filters by asset ID or caption text.
 2. To work on one language, click **English** or **Spanish** in the **Language** row. **All languages** shows both.
@@ -231,7 +233,7 @@ Everyone can read the queue and play audio. Only a records clerk can approve, ed
 
 ![The Review queue on the Pending tab. Each card shows the Machine cue, an editable Reviewed text box, and Approve, Save edit and Reject buttons.](manual/images/operator-review-queue.png){width=90%}
 
-*Figure: the Review queue.*
+*Figure: the current-source Review queue with a synthetic pending English cue. No actual caption was fetched, edited, approved or rejected for this illustration.*
 
 ### If it did not work
 
@@ -246,7 +248,11 @@ Everyone can read the queue and play audio. Only a records clerk can approve, ed
 
 ## Review an AI summary
 
-CivicCast can write a draft summary of a meeting from its approved caption lines. The summary is saved for a records clerk to check. In beta.10, treat this feature as unfinished.
+CivicCast can write a draft summary of a meeting from its approved caption lines. A records clerk checks the draft against its sources before approving it.
+
+> **Note:** The steps below describe the unreleased source workflow updated on October 3, 2026. They do not mean these changes are installed at your station or included in the published beta.10 manual. Ask your IT person which version you are using.
+
+> **Known issue (beta.10):** The published beta.10 source had an approval-request mismatch, made approved summaries disappear from this page, and offered no download, verification or second-generation action. The approval failure was inferred from code, not confirmed on a running station. Do not assume that installation has the repaired workflow described below.
 
 ### Make a summary
 
@@ -255,37 +261,47 @@ CivicCast can write a draft summary of a meeting from its approved caption lines
 3. Click **Generate summary**. The chip reads "queued" and then "generating…". The screen says generating locally can take 1-6 minutes on a CPU-only station, and you can close the tab; the job keeps running.
 4. When it finishes the card says "Summary generated. Review it in Summary review".
 
-If there are no approved cues the card says "No committed transcript cues yet. Approve caption review items for this recording first, then a summary can be generated from them." You need the records_clerk or support_admin role. If the job fails, the card shows **Failed** with the reason and a **Retry** button, which only a records clerk can use. The local AI program (Ollama) must be running with the summary model installed. If it is not, the job fails and the card says "Local Ollama AI runtime is not reachable. Start Ollama and retry, or configure a different summary model in AI model settings."
+If there are no approved cues the card says "No committed transcript cues yet. Approve caption review items for this recording first, then a summary can be generated from them." Generating needs the records clerk or support admin role. If the job fails, the card shows **failed** with the reason and a **Retry** button, which only a records clerk can use. **Retry** uses that failed job's original caption input; it does not pick up later corrections. For local generation, the local AI program (Ollama) must be running with the summary model installed. A runtime failure can report "Local Ollama AI runtime is not reachable. Start Ollama and retry, or configure a different summary model in AI model settings."
+
+### Correct the source and generate again
+
+1. If a claim is wrong or lacks evidence, open **Review queue** and correct its caption lines. Click **Save edit**, then **Approve** so the corrected lines have status **Approved**.
+2. Return to the recording's **AI summary** card in **Assets**. Wait for any running generation job to finish.
+3. After the previous job completes, click **Generate again**. CivicCast checks your permissions and fetches the currently approved lines before queuing the new job. If this check fails or no approved lines remain, no replacement is queued.
+4. Read the new summary in **Summary review** and check its sources again.
+
+Earlier summaries and approvals are kept. The new summary needs its own approval; generating again does not correct an earlier signed record. A completed generation job can also produce a **Needs evidence** summary: completion is not approval. Summary review has no claim-editing, rejection or generation button; make corrections through the recording's caption review and **AI summary** card.
 
 ### Look at a summary
 
 1. In the left menu, click **Summary review** (page heading "Summary review", label "Summary + signed records").
-2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are buttons labeled with a cue ID and its time range.
-3. Click a cue button. The **Inline transcript player** box highlights that range.
+2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are **Source:** buttons labeled with a cue ID and its time range.
+3. Click a source button. **Source captions (not audio playback)** shows the caption words retained with the completed generation job for this exact recording and summary.
 
-The statuses are **Pending review**, **Approved**, **Rejected** and **Needs evidence**. A **Needs evidence** card has an empty paragraph and a red message: the model's output could not be tied to caption cues with timestamps. A yellow bar counts the summaries that need more evidence. The only list shown is Pending review and Needs evidence.
+The status labels are **Pending review**, **Approved**, **Rejected** and **Needs evidence**. The page includes pending summaries, evidence refusals and approved summaries; approved cards remain after refresh or reload. A **Needs evidence** result has an empty paragraph and a message explaining that the model's output could not be tied to caption cues with timestamps. Correct and approve the source lines, then generate again; do not approve an unsupported claim.
 
 If nothing is waiting, the page says "No summaries need review." and tells you to use **Generate summary** on a recording's detail page.
 
-> **Known issue (beta.10):** The **Inline transcript player** does not show the caption text and does not play audio. It shows only cue IDs and times. You cannot check a claim against the words from this page. Open the **Review queue** or the recording to read the cues.
+The source panel shows the full caption cue, even when the claim cites only part of its time range. It is text evidence, not an audio player or a word-aligned excerpt. If the original job or cue is missing, empty or ambiguous, the panel says so. It never substitutes today's edited captions or the claim itself. Older summaries may have no retained source snapshot. Check the recording and captions through your station's review workflow before approving an uncertain claim. A request failure offers **Retry source captions**.
 
-### What Approve summary can and cannot do
+### Approve and export a signed record
 
-> **Known issue (beta.10):** **Approve summary** most likely does not work. The button is enabled only for a Pending review summary that has at least one sourced claim, and only for a records clerk. When clicked, it sends the server three fields: an operator ID, an operator name and a note. The server accepts only the note and rejects any extra field. In our reading of the code the server should refuse the request (HTTP error 422), and the page would show a red box titled "Could not load summary review." with a technical message. We found this by reading the code, not by clicking the button on a running station. Treat the summary workflow as not usable in beta.10.
+1. Check each claim against its source captions. Only a records clerk can approve or export. The buttons remain disabled while CivicCast checks your identity or if that check fails.
+2. Click **Approve summary** only when the claims are supported. CivicCast records the approval under your signed-in identity, not a name supplied by the page. A summary cannot be approved if it has no sourced claims, is rejected or evidence-refused, or has any claim without timed source ranges.
+3. If an approved-status card instead shows **Reapprove summary**, its matching saved approval is missing. Check its evidence and explicitly reapprove it as the signed-in clerk. Export remains blocked until then; CivicCast does not invent an earlier approver.
+4. Click **Export signed record** on the approved card. You should see "Signed record exported:" followed by the record ID and **PDF SHA-256**, the checksum that identifies the final PDF file. If an older response does not supply that checksum, the page says it is unavailable.
+5. Click **Download PDF** to save the file with your station's retention records.
+6. Click **Verify record** to check the stored file's checksum and timestamp proof structure. A failed verification is not a verified record; retry or contact support before relying on it.
 
-A second problem sits behind the first. If **Approve summary** did succeed, the summary would become **Approved** and disappear from this page, because the page lists only Pending review and Needs evidence. **Export signed record** is enabled only for Approved summaries, so it could no longer be reached. Nothing in the console lists, downloads or checks signed records.
+A signed record is an export with integrity information and approval history, not automatically a legal record for your jurisdiction. Confirm the meeting details and follow your records officer's requirements.
 
-What is possible today:
+> **Warning:** The default signing timestamp is a deterministic test timestamp, not a trusted external timestamp. The screen identifies it as such. Even with a real timestamp service configured, **Verify record** does not independently validate that authority's trust chain. Verification of an older archived file does not retroactively prove who approved it.
 
-- You can generate a summary and read it on the Summary review page.
-- You cannot reject a summary, regenerate one from this page, download a signed record, or check one. There are no buttons for them.
-- Yellow-bar and refusal messages tell you to "regenerate". The AI summary card does not offer a second **Generate summary** once a job exists.
+Approval, export, download and verification failures have separate messages and **Retry** actions. A failed download does not undo a successful export; retry downloads that same file. Wait for an action to finish before retrying another.
 
-> **Warning:** Do not tell your records officer that summaries are approved or signed records exported from this screen in beta.10.
+> **For IT staff:** Approval accepts only an approval note; the server gets the approver from the authenticated sign-in. Signed-record export requires matching saved approval before rendering. See the API appendix.
 
-> **For IT staff:** The approve route is `POST /api/staff/summaries/{id}/approve`, which accepts `{"approval_note": ...}` only. The signed-record export is `POST /api/staff/records`, with download and verify routes under `/api/staff/records/{id}`. The signing timestamp is a deterministic test timestamp unless a real timestamp authority is configured. See the API appendix.
-
-![The Summary review page with one Pending review card showing sourced claims and the Inline transcript player box.](manual/images/operator-summary-review.png){width=90%}
+![Summary review with a synthetic Pending review draft and its source caption range selected. The actual interface shows retained generation words, not audio playback. No summary was approved or exported.](manual/images/operator-summary-review.png){width=90%}
 
 *Figure: Summary review.*
 
@@ -323,7 +339,7 @@ Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ing
 
 ![Media Lifecycle Settings with the Watch folders, Retention automation and Storage budget cards.](manual/images/operator-media-lifecycle-settings.png){width=90%}
 
-*Figure: Media Lifecycle Settings.*
+*Figure: current-source Media Lifecycle Settings with synthetic empty configuration and usage. No station folders, retention rules or storage settings were read or changed for this illustration.*
 
 ## If it did not work
 
@@ -343,4 +359,4 @@ Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ing
 - [Running the meeting](#ch-running-meeting)
 - [When something looks wrong](#ch-something-wrong)
 
-<!-- SOURCES: inventory/screens/assets.md; inventory/screens/review.md; inventory/screens/summary.md; inventory/screens/missingmedia.md; inventory/screens/medialifecycle.md; civiccast/apps/portal-operator/src/screens/{AssetsScreen,AssetDetailScreen,TrimEditorScreen,ReviewQueueScreen,SummaryReviewScreen,GenerateSummaryPanel,OfflineCaptionJobsPanel,MediaLifecyclePanel,MissingMediaScreen,MediaLifecycleSettingsScreen}.tsx; civiccast/summary/router.py:111-186 (SummaryApprovalRequest extra=forbid; approve_summary); civiccast/apps/portal-operator/src/screens/SummaryReviewScreen.tsx:10-14,234 (OPERATOR payload); civiccast/captions/review.py:318-345 and civiccast/captions/persistence.py:291-335 (approve keeps stored reviewed_text; reject clears it); civiccast/captions/vod.py:430-480 (approved/edited become cues, pending counted, rejected dropped); civiccast/captions/vod_job.py:893-1010 and 100-165 (Spanish required, hold reasons); civiccast/schedule/router.py:245-280 (limit 50, X-Total-Count), 372-470 (package uses trim_in/out); civiccast/schedule/media_lifecycle_store.py:395-460 (replace-source leaves manifest_url and published_at); civiccast/egress/source_plan.py:1092 (trim used on air); civiccast/schedule/media_lifecycle_worker.py:141-145 (-16 LUFS, tolerance 1); civiccast/publish/router.py:442-480 (caption job queued before publish) -->
+<!-- SOURCES: inventory/screens/assets.md; inventory/screens/review.md; inventory/screens/summary.md (historical beta.10 audit); inventory/screens/missingmedia.md; inventory/screens/medialifecycle.md; civiccast/apps/portal-operator/src/screens/{AssetsScreen,AssetDetailScreen,TrimEditorScreen,ReviewQueueScreen,SummaryReviewScreen,GenerateSummaryPanel,OfflineCaptionJobsPanel,MediaLifecyclePanel,MissingMediaScreen,MediaLifecycleSettingsScreen}.tsx; summary section reconciled against HEAD 9529f40dec75e0f980ee47385a3a9f9303583c9d on 2026-10-03: docs/in-app-help/summary.md (current development integration), docs/records-clerk-guide.md, SummaryReviewScreen.tsx (note-only approval, include-approved list, role/pending gates, orphan reapproval, download/verify/digest), GenerateSummaryPanel.tsx (fresh approved reviewed_text, Generate again versus failed-job Retry), components/review/TranscriptCuePlayer.tsx (retained exact meeting/summary job and cue evidence, unavailable/ambiguous states, full cue not audio); civiccast/summary/router.py (authenticated approver, job queue and retry), civiccast/summary/{job,generate,store}.py (new persisted drafts, original retry cues, evidence refusal/approval gates), civiccast/records/{router,exporter}.py (matching approval before export, final digest and timestamp structure); civiccast/captions/review.py:318-345 and civiccast/captions/persistence.py:291-335 (approve keeps stored reviewed_text; reject clears it); civiccast/captions/vod.py:430-480 (approved/edited become cues, pending counted, rejected dropped); civiccast/captions/vod_job.py:893-1010 and 100-165 (Spanish required, hold reasons); civiccast/schedule/router.py:245-280 (limit 50, X-Total-Count), 372-470 (package uses trim_in/out); civiccast/schedule/media_lifecycle_store.py:395-460 (replace-source leaves manifest_url and published_at); civiccast/egress/source_plan.py:1092 (trim used on air); civiccast/schedule/media_lifecycle_worker.py:141-145 (-16 LUFS, tolerance 1); civiccast/publish/router.py:442-480 (caption job queued before publish) -->

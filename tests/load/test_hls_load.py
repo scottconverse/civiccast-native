@@ -106,7 +106,7 @@ def _write_live_dir(tmp_path: Path) -> Path:
     live_dir.mkdir()
     (live_dir / "seg000000001.ts").write_bytes(b"x" * 1000)
     (live_dir / "seg000000002.ts").write_bytes(b"y" * 1000)
-    (live_dir / "playlist.m3u8").write_text(_MEDIA_PLAYLIST)
+    (live_dir / "playlist.m3u8").write_text(_MEDIA_PLAYLIST + "#EXT-X-ENDLIST\n")
     return live_dir
 
 
@@ -121,6 +121,8 @@ async def test_run_load_fetches_all_segments_for_every_viewer(tmp_path: Path) ->
             client=client,
             uplink_mbps=100,
             per_viewer_mbps=3,
+            # Static segment-count proof, not a wall-clock scheduling benchmark.
+            clock=lambda: 0.0,
         )
 
     assert report.viewers == 5
@@ -141,7 +143,7 @@ async def test_run_load_counts_missing_segments_as_hard_stalls(tmp_path: Path) -
     # Manifest lists two segments but only one exists on disk (the other has
     # "rolled out of the window") -> a hard stall for each viewer.
     (live_dir / "seg000000001.ts").write_bytes(b"x" * 1000)
-    (live_dir / "playlist.m3u8").write_text(_MEDIA_PLAYLIST)
+    (live_dir / "playlist.m3u8").write_text(_MEDIA_PLAYLIST + "#EXT-X-ENDLIST\n")
     transport = httpx.ASGITransport(app=_live_app(live_dir))
     async with httpx.AsyncClient(transport=transport, base_url="http://station") as client:
         report = await run_load(
@@ -149,6 +151,8 @@ async def test_run_load_counts_missing_segments_as_hard_stalls(tmp_path: Path) -
             viewers=3,
             duration_s=0.5,
             client=client,
+            # ENDLIST terminates each viewer without a real-time polling budget.
+            clock=lambda: 0.0,
         )
 
     assert report.segments_ok == 3  # seg1 for each of 3 viewers

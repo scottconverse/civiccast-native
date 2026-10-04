@@ -13,7 +13,11 @@ from civiccast.auth.models import OperatorIdentity
 from civiccast.records.models import PdfARecordMetadata, RecordExportResponse, Rfc3161TimestampProof
 from civiccast.records.pdfa import embed_timestamp_token, render_pdfa_record, validate_pdfa3_shape
 from civiccast.records.timestamp import DeterministicTimestampAuthority
-from civiccast.summary.store import SummaryStore
+from civiccast.summary.store import (
+    SummaryStore,
+    SummaryStoreConflictError,
+    require_approvable_summary,
+)
 
 
 def _default_timestamp_authority() -> TimestampAuthority:
@@ -78,7 +82,16 @@ class SignedRecordExporter:
             raise RecordExportError(
                 f"Summary {summary_id!r} must be approved before exporting a signed record."
             )
+        try:
+            require_approvable_summary(summary)
+        except SummaryStoreConflictError as exc:
+            raise RecordExportError(str(exc)) from exc
         approval = self._summary_store.get_approval(summary_id)
+        if approval is None or approval.summary_id != summary_id:
+            raise RecordExportError(
+                "Persisted approval is missing or does not match this summary. "
+                "Reapprove this summary as an authenticated records clerk before exporting."
+            )
         identity = operator_identity
 
         pdf_bytes = render_pdfa_record(summary, approval=approval)

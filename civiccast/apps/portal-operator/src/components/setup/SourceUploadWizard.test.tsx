@@ -57,6 +57,6 @@ describe('SourceUploadWizard manual link', () => {
   it('links the camera/test-media card into the manual\'s first-workflow walkthrough', async () => {
     renderWizard()
     const link = await screen.findByRole('link', { name: /read the full walkthrough in the manual/i })
-    expect(link.getAttribute('href')).toBe('/help#your-first-beta-workflow')
+    expect(link.getAttribute('href')).toBe('/help#ch-before-meeting')
   })
 })

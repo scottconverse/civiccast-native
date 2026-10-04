@@ -1475,7 +1475,7 @@ pub(crate) fn verify_extracted_tree(root: &Path, files: &[VerifiedPackFile]) -> 
     Ok(())
 }
 
-fn reject_reparse_path(path: &Path) -> Result<(), String> {
+pub(crate) fn reject_reparse_path(path: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("Could not inspect path {}: {error}", path.display()))?;
     if metadata.file_type().is_symlink() {

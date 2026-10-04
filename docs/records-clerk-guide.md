@@ -97,13 +97,47 @@ For each important claim:
 
 1. Open the timestamp link.
 2. Confirm the transcript supports the claim.
-3. Edit the summary if the claim is unsupported or too strong.
-4. Reject the claim if you cannot verify it.
+3. Correct the caption lines in Review queue and approve the saved corrections.
+   Open the recording in Assets and choose **Generate again** on its AI summary
+   card. Summary review itself does not edit or reject claims.
+4. Do not approve a claim you cannot verify.
 
-If a number in the summary does not appear in the transcript, remove or rewrite
-the claim before approval.
+If a number does not appear in the transcript, correct the source cues and
+generate a replacement before approval. Refused or rejected summaries, empty summaries,
+and claims without timestamp-backed ranges cannot be approved.
+
+**Generate again** is available after the previous generation job finishes.
+It refreshes your permissions and the recording's approved caption lines before
+queuing another job. Lines marked only Edited are not included. If there are
+no approved lines or a request fails, correct the problem and try again; no
+replacement is queued from old cached wording. A running job must finish first.
+Generating requires records clerk or support admin; retrying a failed job
+requires records clerk and uses that failed job's original input.
+
+Earlier summaries and approvals are kept. The new summary must be checked and
+approved separately; generating again does not correct an earlier signed record.
+
+Approval and export require the **records clerk** role. The buttons stay
+disabled while CivicCast checks your identity or if that check fails. Approval
+is recorded under your authenticated identity, not a name supplied by the page.
+Approved summaries remain on the screen after a refresh or reload so you can
+return to their export action.
 
 ## Signed Records
+
+In Summary review, choose a **Source:** cue-and-time button to read the caption
+words retained with the completed generation job for that exact meeting and
+summary. The source panel is text evidence, not an audio player. When a claim
+cites only part of a cue, the panel labels and displays the full cue; it does
+not pretend to align individual words to the shorter time range.
+
+Loading, request failure (with **Retry source captions**), missing input, empty
+captions, and conflicting jobs or cue ranges are shown explicitly. Legacy
+summaries without a retained matching job have no original source snapshot
+available here. CivicCast does not substitute current edited captions or the
+claim itself. Do not approve an uncertain claim; check the recording and
+source captions through your station's review workflow. The summary audit
+fingerprint is not proof that today's caption wording matches generation input.
 
 A signed record is a CivicCast export with integrity metadata and approval
 history. It is not automatically a jurisdiction-specific legal record; check
@@ -116,6 +150,29 @@ Before exporting:
 - Confirm approved captions and summary status match station policy.
 - Confirm the signer or approver shown by CivicCast is correct.
 - Keep the export with the station's retention records.
+
+An approved-status summary without matching persisted approval shows
+**Reapprove summary** and cannot export. Check the source evidence and explicitly
+reapprove as the authenticated clerk; CivicCast does not invent a prior approver.
+Existing archived records retain their integrity verification behavior, which
+does not retrospectively certify human approval provenance.
+After **Export signed record** succeeds, choose **Download PDF** to save the
+artifact. A download failure does not undo the export; its retry action tries
+the download again. Choose **Verify record** to check the stored artifact digest
+and timestamp proof structure. A failed result is not a verified record, even
+when the request itself succeeds; retry or contact support before relying on
+it. The console identifies deterministic test timestamps explicitly. This check
+does not independently validate an external authority's trust chain. Approval,
+export, download, and verification failures have their own retry messages.
+The displayed **PDF SHA-256** identifies the final downloaded file, not the
+earlier timestamp input. If an older response omits the final-file checksum,
+the console says it is unavailable rather than substituting another checksum.
+Retry buttons wait until other approval, export, download, or verification
+requests finish, to avoid overlapping actions.
+
+The default timestamp authority is deterministic, not a trusted external
+timestamp service. Do not treat a default export as independently timestamped
+unless your administrator has configured a real authority.
 
 ## Publish Approval
 
@@ -164,7 +221,7 @@ signed record.
 | Situation | Records Action |
 | --- | --- |
 | Captions are incomplete | Follow station policy: publish video first, hold captions, or publish auto-generated captions with a label. |
-| Summary claim is unsupported | Edit or reject the claim before approval. |
+| Summary claim is unsupported | Correct and approve the source cues, then use Generate again on the recording's Assets page; do not approve an unverified claim. |
 | Archive target is unavailable | Ask an admin whether the meeting can publish now or must wait for the required archive. |
 | Subscriber notification fails | Publish the record if required surfaces are ready, then retry notification after the issue is fixed. |
 | Wrong meeting metadata | Correct the metadata before signed-record export. |

@@ -12,6 +12,7 @@ gate the supervisor's own maintenance-readiness check depends on.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,19 @@ def _named_supervisor(app: object, name: str) -> object:
     return matches[0]
 
 
+def _await_ready(client: TestClient) -> None:
+    """Normal startup is owned activation; healthy must mean completion."""
+    deadline = time.monotonic() + 2
+    body = client.get("/health").json()
+    while body["status"] != "healthy" and time.monotonic() < deadline:
+        time.sleep(0.01)
+        body = client.get("/health").json()
+    assert body["status"] == "healthy" and body["schema"] == "current"
+    from civiccast.schema_check import expected_migration_head
+
+    assert body["schema_db_revision"] == body["schema_expected_head"] == expected_migration_head()
+
+
 def test_normal_mode_is_the_default_when_env_is_absent(app_env: Path) -> None:
     """expected-red-in-design: no supervisor env at all -> mode "normal", the
     exact WSL/plain-boot posture (nothing new gated), and every worker/write
@@ -101,6 +115,7 @@ def test_normal_mode_is_the_default_when_env_is_absent(app_env: Path) -> None:
         assert "workers_started" not in health.json()
         assert "mutating_disabled" not in health.json()
 
+        _await_ready(client)
         automation = _named_supervisor(app, "civiccast-channel-automation")
         assert automation.running is True
         finalization = app.state.finalization_worker_supervisor
@@ -197,8 +212,9 @@ def test_explicit_normal_mode_value_is_normal(
     from civiccast.app import create_app
 
     app = create_app()
-    with TestClient(app):
+    with TestClient(app) as client:
         assert app.state.supervisor_mode == "normal"
+        _await_ready(client)
         automation = _named_supervisor(app, "civiccast-channel-automation")
         assert automation.running is True
 

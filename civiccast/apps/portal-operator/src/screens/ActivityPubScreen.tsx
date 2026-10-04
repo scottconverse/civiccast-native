@@ -153,7 +153,7 @@ export function DisabledPanel({ status }: { status: ActivityPubStatusResponse })
         follow this station and see when a new meeting is published, the same way someone
         might follow a page on a social network. <strong>Most stations do not need this</strong>{' '}
         and can leave it off.{' '}
-        <Link to={manualLink('provider-federation')} style={{ color: 'var(--cc-brand)' }}>
+        <Link to={manualLink('federation-activitypub')} style={{ color: 'var(--cc-brand)' }}>
           Read more in the manual
         </Link>
         .

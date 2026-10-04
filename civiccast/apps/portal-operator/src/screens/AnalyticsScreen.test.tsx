@@ -94,8 +94,12 @@ describe('AnalyticsScreen', () => {
   it('shows the honest telemetry-off banner when ingest is not configured', async () => {
     vi.mocked(getAnalyticsReport).mockResolvedValue(baseReport({ ingest_configured: false }))
     vi.mocked(getAnalyticsRollups).mockResolvedValue(emptyRollups())
-    const { findByText } = renderScreen()
+    const { findByText, queryByText } = renderScreen()
     expect(await findByText(/audience telemetry is off/i)).toBeTruthy()
+    expect(await findByText(/ask your IT person to configure counting/i)).toBeTruthy()
+    expect(await findByText(/there is no switch in Setup/i)).toBeTruthy()
+    expect(await findByText(/separate Reports screen, available to support admins/i)).toBeTruthy()
+    expect(queryByText(/Turn it on in Setup|Reports tab/i)).toBeNull()
   })
 
   it('does not show the telemetry-off banner when ingest is configured', async () => {

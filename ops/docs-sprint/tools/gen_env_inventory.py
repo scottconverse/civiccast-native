@@ -41,10 +41,8 @@ doc_text = ""
 for p in list((root / "docs").rglob("*.md")) + list(root.glob("*.md")):
     if "history" in p.parts or "evidence" in p.parts:
         continue
-    try:
+    with contextlib.suppress(OSError):
         doc_text += p.read_text(encoding="utf-8", errors="replace") + "\n"
-    except OSError:
-        pass
 
 names = sorted(seen)
 one_c = [n for n in names if n.startswith("CIVICAST_")]

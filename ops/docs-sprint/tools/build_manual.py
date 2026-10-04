@@ -127,7 +127,8 @@ def render_mermaid(text: str, diagrams: bool) -> str:
                 "-b",
                 "white",
             ]
-            r = subprocess.run(cmd, cwd=MMDC_DIR, capture_output=True, text=True)  # noqa: S603 - fixed argv, no shell
+            # Local node/mermaid installation and generated diagram paths; no document text in argv.
+            r = subprocess.run(cmd, cwd=MMDC_DIR, capture_output=True, text=True)  # noqa: S603
             if r.returncode != 0 or not png.exists():
                 print(f"MERMAID FAILED for {h}:\n{r.stderr[-600:]}\n{code[:300]}", file=sys.stderr)
                 return f"```\n{code}```\n"

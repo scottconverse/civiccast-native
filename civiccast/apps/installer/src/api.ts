@@ -2,6 +2,7 @@
 // Copyright (c) The CivicCast Authors
 
 import type { HardwareInventory, InstallerProgress, InstallerState } from "./types";
+import type { ComponentId } from "./components-catalog";
 
 export const LOCAL_OPERATOR_CONSOLE_URL = "http://127.0.0.1:8000/operator/";
 
@@ -867,10 +868,10 @@ export interface AcquisitionStartResult {
  * not happen and what the operator can do next.
  */
 export const START_ACQUISITION_FAILED_MESSAGE =
-  "CivicCast could not start downloading its components. Nothing is being downloaded " +
-  "right now. Use Open installer log below and send that log to support.";
+  "CivicCast could not start this download plan. An earlier plan may still be running. " +
+  "Close and reopen the installer to change the selected components, or use Open installer log below for support.";
 
-export async function startAcquisition(): Promise<AcquisitionStartResult> {
+export async function startAcquisition(selectedIds: readonly ComponentId[]): Promise<AcquisitionStartResult> {
   if (!nativeInstallerBridgeAvailable()) {
     // No native bridge at all (a browser preview): NOT a failure of the
     // product -- keep the existing honest preview wording and do not raise a
@@ -884,11 +885,30 @@ export async function startAcquisition(): Promise<AcquisitionStartResult> {
     const message = await invokeNativeInstallerAny<string>([
       "start_acquisition",
       "startAcquisition"
-    ]);
+    ], { selectedIds: [...selectedIds] });
+    // A browser fallback from an older installer session cannot certify
+    // the newly admitted native plan if the next native progress read fails.
+    window.localStorage.removeItem("civiccast.installerProgress");
     return { ok: true, message };
   } catch {
     return { ok: false, message: START_ACQUISITION_FAILED_MESSAGE };
   }
+}
+
+export function isFirstInstallEntry(): boolean {
+  return (window as Window & { __CIVICCAST_FIRST_INSTALL__?: boolean }).__CIVICCAST_FIRST_INSTALL__ === true;
+}
+
+export async function firstInstallPlan(): Promise<Record<string, number>> {
+  return invokeNativeInstallerAny<Record<string, number>>(["first_install_plan", "firstInstallPlan"]);
+}
+
+export async function finishFirstInstall(action: "start" | "check" | "retry" = "start"): Promise<"running" | "unconfirmed" | "failed" | "completed"> {
+  // This version-bound entry owns the command contract. Never retry a
+  // potentially side-effecting Setup launch through a fallback alias.
+  const outcome = await invokeNativeInstaller<unknown>("finish_first_install",{action});
+  if (outcome !== "running" && outcome !== "unconfirmed" && outcome !== "failed" && outcome !== "completed") throw new Error("Windows Setup returned no verified completion state.");
+  return outcome;
 }
 
 /**

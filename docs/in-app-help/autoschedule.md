@@ -7,11 +7,23 @@ Console group: Run Meeting. Spec written against beta.10. Paths are under `civic
 - `autoschedule-format.ts:26-37` (slot labels); `status-language.ts` (`stateLabel`, asset state words).
 - `civiccast/schedule/autoschedule_materializer.py:285-297` (items are written as Published) and `autoschedule_worker.py:50-57` (hourly compile).
 
+## Current-source disposition - 2026-10-03
+
+HELP-01 through HELP-04 below are resolved in current source by wording only.
+An enabled rule is the approval for its generated programs: the materializer
+writes Published items for their scheduled times. Simulate previews without
+writing; it is not an approval gate. Automatic scheduling, when enabled, compiles
+enabled rules at startup and about hourly without another approval. Manually-added
+items still require Commit-to-Air. Controls and scheduling policy are unchanged.
+This source correction is not proof of an installed-station update. Other listed
+findings remain outside this unit. The historical inventory under
+`ops/docs-sprint/inventory/screens/autoschedule.md` is preserved.
+
 ## Current text
 | String | Where | Source line |
 |---|---|---|
 | "Run Meeting" / "Auto-schedule" | Eyebrow, heading | AutoScheduleScreen.tsx:859 |
-| "Define saved searches and dayparts, connect them with rules, then preview and compile to fill the schedule automatically. Compiling a rule approves its picked items to air — reviewing the preview before you compile is the approval step. Only manually-added schedule items need a separate Commit-to-Air approval." | Page intro | AutoScheduleScreen.tsx:863-866 |
+| "An enabled rule approves the programs it generates for their scheduled times. Use Simulate to preview its picks without writing anything. When automatic scheduling is enabled, CivicCast compiles enabled rules at startup and about every hour, without another approval. Only manually-added schedule items need a separate Commit-to-Air approval." | Page intro | AutoScheduleScreen.tsx:863-866 |
 | "Viewing and managing {saved searches / dayparts / auto-schedule rules} requires the publish operator, setup admin, or support admin role." | Access note | AutoScheduleScreen.tsx:75 |
 | "Saved searches" / "Named queries over your library. A rule fills its daypart by picking from one of these." / "Add saved search" / "Close" | Section | AutoScheduleScreen.tsx:276-283 |
 | Placeholders "Example: Recent council meetings", "Example: City Council", "Example: budget" | Search form | AutoScheduleScreen.tsx:184, 188, 192 |
@@ -23,20 +35,20 @@ Console group: Run Meeting. Spec written against beta.10. Paths are under `civic
 | "Dayparts" / "Recurring time windows on a channel that a rule fills (e.g. weeknights 6–10pm). Times are the station's local wall-clock (set by CIVICCAST_STATION_TZ; UTC if unset)." / "Add daypart" | Section | AutoScheduleScreen.tsx:458-466 |
 | Placeholders "public", "Prime time" / "Start" / "End" / "00:00 = midnight (end of day). An end before the start wraps past midnight." / "Days" / "Create daypart" | Daypart form | AutoScheduleScreen.tsx:370, 374, 377, 381, 383, 387, 419 |
 | "No dayparts yet." / "A daypart is a block of air time you hand over to auto-schedule — weekday evenings, overnight repeats. Create one here and rules can start filling it." | Empty | AutoScheduleScreen.tsx:483-484 |
-| "Auto-schedule rules" / "Each rule fills a daypart from a saved search. Simulate to preview; rules feed the commit gate before air." / "Add rule" | Section | AutoScheduleScreen.tsx:752-759 |
+| "Auto-schedule rules" / "Each enabled rule fills a daypart from a saved search. Its picks are approved to air at their scheduled times; Simulate previews without writing anything." / "Add rule" | Section | AutoScheduleScreen.tsx:752-759 |
 | "Pick strategy" / "Newest first" / "First match" / "Random" / "Saved search" / "Daypart" / "Choose…" | Rule form | AutoScheduleScreen.tsx:654-673 |
 | "Rolling window (days, 14–60)" / "No-repeat window (days)" / "Rolling window must be a whole number from 14 to 60 days." / placeholder "Fill prime with council" | Rule form | AutoScheduleScreen.tsx:680, 684, 689, 651 |
 | "Create rule" / "No rules yet." / "A rule connects a saved search to a daypart so the channel fills itself with matching programs. Create a saved search and a daypart first, then add a rule here to connect them." | Rule form, empty | AutoScheduleScreen.tsx:715, 776-777 |
 | "Simulate" / "Simulating..." / "Would schedule N of M upcoming slots." / "This rule points at a saved search or daypart that no longer exists." | Rule card | AutoScheduleScreen.tsx:600, 538, 530 |
 | "Will air" / "Already scheduled" / "No eligible video" / "No usable duration" | Slot labels | autoschedule-format.ts:26-37 |
-| "Compile schedule" / "Run every enabled rule and add its picks to the schedule. The new items still need an operator commit before they air." / "Compile now" / "Compiling..." | Compile card | AutoScheduleScreen.tsx:823, 825, 829 |
-| "Added N scheduled items across M rules." | Result | AutoScheduleScreen.tsx:839 |
+| "Compile schedule" / "Run every enabled rule now. New programs are Published and approved to air at their scheduled times, without a separate commit. There is no confirmation box." / "Compile now" / "Compiling..." | Compile card | AutoScheduleScreen.tsx:823, 825, 829 |
+| "Added N published items across M rules." | Result | AutoScheduleScreen.tsx:839 |
 | "The saved search could not be saved." / "The daypart could not be saved." / "The rule could not be saved." / "Simulation failed." / "Compile failed." | Errors | AutoScheduleScreen.tsx:293, 476, 769, 612, 834 |
 
 ## What the screen really does
 Auto-schedule picks recordings for a time of day by rule. A saved search says which recordings qualify, a daypart is a repeating window of time on a channel, and a rule joins the two. For each open day inside the rolling window, one recording is placed at the daypart's start time with its own length; if anything is already scheduled inside that day's daypart, that day is left alone. Items placed this way are written as Published, so they are approved to air with no separate approval step, and the station also compiles by itself about once an hour. Simulate writes nothing and is the only preview. Deleting a rule does not remove programs it already placed. Only Publish operators and Setup admins can change anything; Support admins can look and run Simulate.
 
-## Mismatches
+## Historical mismatches (HELP-01 through HELP-04 resolved in current source)
 | ID | Text says | What happens (code) | Severity |
 |---|---|---|---|
 | HELP-01 | "The new items still need an operator commit before they air." (:825) | Items are born Published (`autoschedule_materializer.py:285-297`), so they are already approved. The page intro (:864-866) is correct and contradicts this line. | blocks work (puts programs on the air) |
@@ -52,7 +64,12 @@ Auto-schedule picks recordings for a time of day by rule. A saved search says wh
 | NEW-1 | Page has no "who can use this" line | Others who reach the URL see the access note; the Support admin sees no Add/Edit/Delete/Compile and nothing says why. | cosmetic |
 | NEW-2 | "Include states" lists Waiting for media, Rejected, etc. | Only Validated and Recorded can air (`civiccast/schedule/commit_service.py:66-68`); other boxes pick videos that cannot play. | misleading |
 
-## Proposed text
+## Historical proposed text (not the current implementation)
+
+The approval-related proposals below are retained as historical context, not active
+instructions: picks are approved for their scheduled times, not necessarily played
+immediately. The current-source disposition above governs HELP-01 through HELP-04.
+
 - Page intro (:863-866): "Auto-schedule fills a channel's air time by rule. Programs it places are approved to air at once. There is no separate approval step. Use Simulate to see what a rule would do before you compile. CivicCast also compiles every saved rule by itself about once an hour, so a saved rule can put programs on the air without anyone pressing a button."
 - Who can use this (new): "Publish operator or Setup admin: create, edit, delete and compile. Support admin: look and use Simulate only."
 - Daypart help (:460-461): "A repeating window of time on a channel that a rule fills, for example weeknights 6 to 10 PM. Times use the station's time zone, set in the Timezone box on the Station Profile screen. Until it is set, times are UTC."
@@ -68,7 +85,7 @@ Auto-schedule picks recordings for a time of day by rule. A saved search says wh
 - Simulate labels: "Will air" = "A program will be placed", "Already scheduled" = "Skipped: something is already scheduled in this daypart that day", keep "No eligible video", "No usable duration" = "Video has no length".
 
 ## Notes for the coder
-- Files: `AutoScheduleScreen.tsx`, `autoschedule-format.ts`; docstrings in `civiccast/schedule/autoschedule_worker.py:11-12` and `autoschedule_router.py:416` still say items are Scheduled and "never put anything on air"; the code writes Published. A code owner should confirm that decision is current (inventory note).
+- Files: `AutoScheduleScreen.tsx`, `autoschedule-format.ts`. Worker/router docstrings and the worker's count log now match the settled Published-items policy. Scheduling and approval behavior are unchanged; the owner decision is not an open question.
 - Tests that pin strings: `AutoScheduleScreen.test.tsx` pins "Delete" and "Confirm delete?" (:17-19), "Create saved search", the placeholders 'Example: Recent council meetings' and 'Example: City Council' (:33-36), the label 'Min length (minutes)', "Create daypart", the placeholders 'public' and 'Prime time' (:61-62), "Save changes", 'Waiting for media' (:119), /14 to 60 days/ (:127-129), the label 'Rolling window (days, 14–60)', "Create rule", 'Fill prime with council', 'Saved search', 'Daypart' labels (:153-161), and 'Would schedule 1 of 2 upcoming slots.' (:186). Keep the label text of form fields and update the placeholder tests if you change placeholders. `Sidebar.test.tsx:27, 45, 50` pins the nav label.
-- Code fixes, not text fixes: decide whether compiled items should start Published or Scheduled (HELP-01, HELP-04 follow from the answer); a way to disable a rule and set priority or dates (HELP-09); a channel menu for dayparts (HELP-06); a way to remove programs a rule placed; a Cancel button for Published rows on Schedule.
+- Approval policy is settled by the owner decision dated 2026-07-08 in `autoschedule_materializer.py`: enabled rule picks start Published, while manually-added items start Scheduled until committed. This unit changes copy only. Other proposed code fixes remain separate: a way to disable a rule and set priority or dates (HELP-09); a channel menu for dayparts (HELP-06); a way to remove programs a rule placed; a Cancel button for Published rows on Schedule.
 - Not verified: what happens to already-placed items when a rule, search or daypart is edited or deleted; whether the server refuses a daypart for an unknown channel; how overlapping dayparts on one channel are resolved.

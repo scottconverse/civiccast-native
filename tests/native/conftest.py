@@ -24,6 +24,9 @@ def _restore_supervisor_logger_state() -> None:
         # records in the supervisor process reach supervisor.log); restore it
         # the same way or caplog assertions elsewhere become order-dependent.
         logging.getLogger("civiccast"),
+        logging.getLogger("uvicorn"),
+        logging.getLogger("uvicorn.error"),
+        logging.getLogger("uvicorn.access"),
     ]
     originals = [(lg, list(lg.handlers), lg.level, lg.propagate) for lg in loggers]
     try:

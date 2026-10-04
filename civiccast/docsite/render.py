@@ -12,6 +12,7 @@ HTML by pandoc at build time (see ``scripts/render_docsite_manual.py``).
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -29,13 +30,41 @@ _MIME_BY_SUFFIX = {
 _IMG_SRC_RE = re.compile(r'(<img\b[^>]*\bsrc=")([^"]+)(")')
 
 
-def embed_local_images(html: str, base_dir: Path) -> str:
+class _LocalMediaValidator(HTMLParser):
+    """Reject local media that the sanitizer cannot retain as an image."""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        media_attrs = {
+            "embed": {"src"},
+            "object": {"data"},
+            "video": {"src", "poster"},
+            "audio": {"src"},
+            "source": {"src"},
+        }.get(tag, set())
+        for name, value in attrs:
+            if (
+                name in media_attrs
+                and value is not None
+                and not re.match(r"^(https?://|data:|#|mailto:|/)", value, re.IGNORECASE)
+            ):
+                raise ValueError(f"manual image uses unsupported local media: {value}")
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+
+
+def embed_local_images(
+    html: str,
+    base_dir: Path,
+    *,
+    assets: dict[str, bytes] | None = None,
+    sources: dict[str, str] | None = None,
+) -> str:
     """Inline every relative ``<img src="...">`` in ``html`` as a base64
     ``data:`` URI, resolved against ``base_dir`` (``docs/`` for the manual).
 
     Pandoc leaves an image reference exactly as written in the Markdown
-    source (``docs/USER-MANUAL.md``'s two architecture diagrams use
-    ``assets/architecture/....png``, relative to ``docs/``) -- there is no
+    source (diagrams and screenshots are relative to ``docs/``) -- there is no
     server-relative path that would resolve once this HTML is embedded in
     ``civiccast/docsite/manual.json`` and served from ``/api/public/manual``
     with no filesystem underneath it, and ``render.py``'s own sanitizer
@@ -46,10 +75,21 @@ def embed_local_images(html: str, base_dir: Path) -> str:
     manual fully self-contained and working with no internet connection,
     matching the rest of this pipeline's offline-first posture.
 
-    An image this can't resolve (missing file, remote URL, already a data
-    URI) is left exactly as-is -- sanitize_html's existing allowlist is the
-    backstop that decides whether an untouched src ultimately survives.
+    Missing, unsupported or escaping local paths raise ValueError so a build
+    cannot silently ship a broken image. Remote URLs and already embedded data
+    URIs are left unchanged for the sanitizer; remote images still need internet.
+    Pandoc emits non-image Markdown targets as embed/audio/video markup; local
+    references in that unsupported markup fail before the sanitizer drops them.
+
+    When ``assets`` is supplied, collect deduplicated image bytes under SHA-256
+    filenames and emit the closed public manual asset path instead of base64.
+    The packaged UI resolves this path against its configured station API origin.
+    ``sources`` records source image hashes for build-time drift checking.
     """
+
+    validator = _LocalMediaValidator()
+    validator.feed(html)
+    validator.close()
 
     def _replace(match: re.Match[str]) -> str:
         prefix, src, suffix = match.group(1), match.group(2), match.group(3)
@@ -58,12 +98,21 @@ def embed_local_images(html: str, base_dir: Path) -> str:
         candidate = (base_dir / src).resolve()
         try:
             candidate.relative_to(base_dir.resolve())
-        except ValueError:
-            return match.group(0)  # refuse to embed anything outside base_dir
+        except ValueError as exc:
+            raise ValueError(f"manual image escapes documentation directory: {src}") from exc
         mime = _MIME_BY_SUFFIX.get(candidate.suffix.lower())
         if mime is None or not candidate.is_file():
-            return match.group(0)
-        encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+            raise ValueError(f"manual image missing or unsupported: {src}")
+        data = candidate.read_bytes()
+        if sources is not None:
+            sources[candidate.relative_to(base_dir.resolve()).as_posix()] = hashlib.sha256(
+                data
+            ).hexdigest()
+        if assets is not None:
+            name = hashlib.sha256(data).hexdigest() + candidate.suffix.lower()
+            assets[name] = data
+            return f"{prefix}/api/public/manual/assets/{name}{suffix}"
+        encoded = base64.b64encode(data).decode("ascii")
         return f"{prefix}data:{mime};base64,{encoded}{suffix}"
 
     return _IMG_SRC_RE.sub(_replace, html)
@@ -86,6 +135,9 @@ _ALLOWED_TAGS = frozenset(
         "ul",
         "ol",
         "li",
+        "dl",
+        "dt",
+        "dd",
         "table",
         "thead",
         "tbody",
@@ -99,8 +151,7 @@ _ALLOWED_TAGS = frozenset(
         "pre",
         "blockquote",
         "img",
-        # Pandoc wraps every standalone Markdown image (docs/USER-MANUAL.md
-        # has two: the system and egress-proof architecture diagrams) in
+        # Pandoc wraps standalone Markdown images in
         # <figure>/<figcaption>. An earlier version of this allowlist did
         # not include them, and _SanitizingParser drops a disallowed tag
         # together with all of its content -- so both diagrams AND their
@@ -122,6 +173,7 @@ _ALLOWED_TAGS = frozenset(
 _ALLOWED_ATTRS: dict[str, frozenset[str]] = {
     "a": frozenset({"href", "id", "title"}),
     "img": frozenset({"src", "alt", "title", "width", "height"}),
+    "ol": frozenset({"start"}),
     "*": frozenset({"id", "class", "aria-hidden"}),
 }
 
@@ -176,6 +228,10 @@ class _SanitizingParser(HTMLParser):
         kept: list[str] = []
         for name, value in attrs:
             if name not in allowed_names or value is None:
+                continue
+            # Pandoc resumes numbered instructions after a figure with
+            # <ol start="3">. Retain only ASCII integers, not arbitrary HTML.
+            if name == "start" and re.fullmatch(r"-?[0-9]+", value) is None:
                 continue
             if name in ("href", "src"):
                 safe = _safe_url(value)

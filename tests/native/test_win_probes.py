@@ -287,6 +287,7 @@ def test_interlock_round_trips_held_and_released(hkcu_test_key: str) -> None:
     record = take_interlock("run-abc", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
     assert record.state == "held"
     assert record.generation == 1
+    assert record.owner_pid == os.getpid()
 
     read_back = read_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
     assert read_back.status == "held"
@@ -299,6 +300,33 @@ def test_interlock_round_trips_held_and_released(hkcu_test_key: str) -> None:
 
     read_back2 = read_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
     assert read_back2.status == "free"
+
+
+def test_interlock_can_bind_observed_installer_parent(hkcu_test_key: str) -> None:
+    from civiccast.native.win_probes import take_interlock
+
+    parent = os.getppid()
+    assert parent != os.getpid()
+    record = take_interlock(
+        "installer-parent",
+        root=winreg.HKEY_CURRENT_USER,
+        key_path=hkcu_test_key,
+        owner_pid=parent,
+    )
+    read_back = read_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    assert record.owner_pid == parent
+    assert read_back.record is not None and read_back.record.owner_pid == parent
+
+
+@pytest.mark.parametrize("pid", [0, -1, True, 1.5])
+def test_interlock_invalid_owner_pid_refuses_before_write(hkcu_test_key: str, pid) -> None:
+    from civiccast.native.win_probes import take_interlock
+
+    with pytest.raises(ValueError, match="owner PID"):
+        take_interlock(
+            "installer-parent", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key, owner_pid=pid
+        )
+    assert read_interlock(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key).status == "free"
 
 
 def test_interlock_generation_increments_across_successive_takes(hkcu_test_key: str) -> None:
@@ -2417,3 +2445,96 @@ def test_scan_registered_distros_without_a_registry_is_unknown_not_absent(monkey
     monkeypatch.setattr(builtins, "__import__", _no_winreg)
 
     assert scan_registered_distros() is None
+
+
+def test_interlock_acquisition_serializes_all_current_callers(hkcu_test_key, monkeypatch):
+    import threading
+
+    from civiccast.native import win_probes
+
+    original_read = win_probes.read_interlock
+    first_observed_free = threading.Event()
+    allow_first_write = threading.Event()
+    successes = []
+    failures = []
+
+    def read(**kwargs):
+        result = original_read(**kwargs)
+        if threading.current_thread().name == "owned-first" and result.status == "free":
+            first_observed_free.set()
+            assert allow_first_write.wait(5), "bounded test release did not arrive"
+        return result
+
+    monkeypatch.setattr(win_probes, "read_interlock", read)
+
+    def acquire(owner):
+        try:
+            successes.append(
+                win_probes.take_interlock(
+                    owner, root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key
+                )
+            )
+        except RuntimeError as exc:
+            failures.append(type(exc))
+
+    first = threading.Thread(target=acquire, args=("owned-first",), name="owned-first")
+    second = threading.Thread(target=acquire, args=("owned-second",), name="owned-second")
+    first.start()
+    try:
+        assert first_observed_free.wait(5)
+        second.start()
+        second.join(2)
+        assert not second.is_alive(), "contending acquisition must refuse without indefinite wait"
+    finally:
+        allow_first_write.set()
+        first.join(5)
+        if second.ident is not None:
+            second.join(5)
+    assert not first.is_alive() and not second.is_alive()
+    assert len(successes) == 1 and len(failures) == 1, (
+        "both callers acquired the same D7 generation"
+    )
+    actual = original_read(root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    assert actual.record == successes[0]
+
+
+def test_interlock_release_cannot_publish_a_stale_read_over_a_new_owner(hkcu_test_key, monkeypatch):
+    import threading
+
+    from civiccast.native import win_probes
+
+    win_probes.take_interlock("old-owner", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key)
+    original_read = win_probes.read_interlock
+    observed = threading.Event()
+    resume = threading.Event()
+    failures = []
+
+    def read(**kwargs):
+        result = original_read(**kwargs)
+        if threading.current_thread().name == "owned-release" and result.status == "held":
+            observed.set()
+            assert resume.wait(5)
+        return result
+
+    monkeypatch.setattr(win_probes, "read_interlock", read)
+
+    def release():
+        try:
+            win_probes.release_interlock(
+                owner_run_id="old-owner", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key
+            )
+        except Exception as exc:
+            failures.append(type(exc))
+
+    child = threading.Thread(target=release, name="owned-release")
+    child.start()
+    try:
+        assert observed.wait(5)
+        with pytest.raises(RuntimeError):
+            win_probes.release_interlock(
+                owner_run_id="old-owner", root=winreg.HKEY_CURRENT_USER, key_path=hkcu_test_key
+            )
+    finally:
+        resume.set()
+        child.join(5)
+    assert not child.is_alive() and not failures

@@ -244,6 +244,15 @@ export function HomeScreen() {
     setSubmissionState('submitting')
     setSubmissionMessage('')
     try {
+      // datetime-local omits the zone. Resolve it in the contributor's browser
+      // before uploading; the scheduling API requires an unambiguous instant.
+      const requestedDate = submissionForm.requestedAirDate
+        ? new Date(submissionForm.requestedAirDate)
+        : null
+      if (requestedDate && Number.isNaN(requestedDate.getTime())) {
+        throw new Error('Choose a valid requested air date and time, or leave it blank.')
+      }
+      const requestedAirDate = requestedDate?.toISOString() ?? null
       const agreement =
         submissionAgreement ??
         await fetchJson<SubmissionAgreementCatalog>('/api/public/contribute/agreements/current')
@@ -275,7 +284,7 @@ export function HomeScreen() {
           description: submissionForm.description,
           tags,
           producer_name: submissionForm.producerName,
-          requested_air_date: submissionForm.requestedAirDate || null,
+          requested_air_date: requestedAirDate,
           media,
           agreements: [
             {
@@ -664,7 +673,7 @@ export function HomeScreen() {
               placeholder="arts, community"
             />
             <ContributorInput
-              label="Requested air date"
+              label={`Requested air date (your time: ${Intl.DateTimeFormat().resolvedOptions().timeZone})`}
               required={false}
               type="datetime-local"
               value={submissionForm.requestedAirDate}

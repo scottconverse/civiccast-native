@@ -24,8 +24,10 @@ passed in order to keep failing the one it was chasing.  Answer 12 deletes it:
 * an artifact over that bound on *every* attempt still ships, with an error line
   rather than a stop -- the selector has nothing better to keep, and a channel
   that airs a slightly hot artifact beats one that airs nothing;
-* the one re-encode round stays, and so does the :data:`TP_GUARD_TARGET_DBTP` of
-  -1.0 dBTP as best effort, with one warning when the selector's keep misses it.
+* U43 subsequently replaced the emitted-TP ceiling step with one decoded-peak
+  pad (capped at 6 dB), compensated drive and one measured trim correction;
+  U42's fixed encoder variants follow only while the kept artifact is still hot.
+  The -1.0 dBTP target remains best effort, with one warning when it is missed.
 
 These tests are the guard's whole contract: they hold the module to the answer
 the coordinator gave, not to the shape it had before.
@@ -35,6 +37,9 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
+import time
+import traceback
 from pathlib import Path
 
 import numpy as np
@@ -101,7 +106,16 @@ def _select(attempts: list[lr.LeveledAttempt]) -> lr.LeveledSelection:
 def test_the_gate_constants_are_the_answered_ones() -> None:
     assert lr.TP_GUARD_TARGET_DBTP == -1.0
     assert lr.TP_GUARD_MAX_PEAK_DBFS == 0.1
-    assert lr.TP_GUARD_MAX_ROUNDS == 1
+    # U43-answer.md / U43-answer-2.md supersede answer 11's ceiling search.
+    assert lr.TP_GUARD_PAD_MARGIN_DB == 0.5
+    assert lr.TP_GUARD_MAX_PAD_DB == 6.0
+    variants = lr.TP_GUARD_ENCODER_VARIANTS
+    assert variants == (
+        lr.EncoderVariant(bitrate_kbps=256),
+        lr.EncoderVariant(bitrate_kbps=256, extra_args=("-aac_coder", "fast")),
+    )
+    assert not hasattr(lr, "guard_ceiling_dbtp")
+    assert not hasattr(lr, "guard_next_ceiling")
     # Answer 12 deleted the last-resort branch, constant and all.
     assert not hasattr(lr, "TP_GUARD_LAST_RESORT_DBTP")
     assert not hasattr(lr, "TP_GUARD_HARD_DBTP")
@@ -136,35 +150,28 @@ def test_loudness_gates_are_unchanged_by_the_answer_11_reshuffle() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The one re-encode-only round
+# U43's measured pad and corrected drive (the closed ceiling step is retired)
 # ---------------------------------------------------------------------------
 
 
-def test_the_step_is_the_overshoot_plus_the_margin() -> None:
-    # Already lawful: no round is owed.
-    assert lr.guard_ceiling_dbtp(-1.5, -1.4) is None
-    assert lr.guard_ceiling_dbtp(-1.5, -1.0) is None
-    # Emitted at exactly 0.0 dBTP from a -1.5 dBTP ceiling: 1.0 + 0.3 below it.
-    assert lr.guard_ceiling_dbtp(-1.5, 0.0) == -2.8
-    # Emitted -0.4 from -1.8: 0.6 + 0.3 below the ceiling it came from.
-    assert lr.guard_ceiling_dbtp(-1.8, -0.4) == -2.7
+def test_the_pad_is_the_decoded_overshoot_plus_margin_with_a_cap() -> None:
+    # The decoded bound, not the emitted TP, pays for this round.
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=1.3, emitted_dbtp=-2.0)) == 1.7
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=20.0)) == 6.0
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=1.3), max_pad_db=1.0) == 1.0
 
 
-def test_a_hot_emit_buys_exactly_one_re_encode_round() -> None:
-    assert lr.guard_next_ceiling([]) is None
-    # -0.2 dBTP emitted from a -1.5 dBTP ceiling: 0.8 overshoot + 0.3 margin.
-    hot = _attempt(limit_dbtp=-1.5, emitted_dbtp=-0.2)
-    assert lr.guard_next_ceiling([hot]) == -2.6
-    # The bound is spent after that one round, however hot the re-encode reads.
-    assert (
-        lr.guard_next_ceiling([hot, _attempt(round_index=1, limit_dbtp=-2.0, emitted_dbtp=-0.1)])
-        is None
-    )
+def test_the_pad_drive_uses_its_measured_whole_program_error() -> None:
+    # U43 answer 2: correct exactly once, rather than retaining excess drive.
+    assert lr.guard_pad_trim_db(-15.47, trim_db=1.7, target_lufs=-16.0) == 1.17
+    assert lr.guard_pad_trim_db(-16.28, trim_db=1.7, target_lufs=-16.0) == 1.98
+    assert lr.guard_pad_trim_db(None, trim_db=1.7, target_lufs=-16.0) is None
 
 
-def test_the_round_is_not_owed_when_the_emit_is_lawful_or_unmeasurable() -> None:
-    assert lr.guard_next_ceiling([_attempt(emitted_dbtp=-1.4)]) is None
-    assert lr.guard_next_ceiling([_attempt(emitted_dbtp=None)]) is None
+def test_the_pad_is_not_owed_for_a_lawful_or_unscanned_decode() -> None:
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=0.1, emitted_dbtp=3.0)) is None
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=-1.0)) is None
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=None, emitted_dbtp=3.0)) is None
 
 
 # ---------------------------------------------------------------------------
@@ -444,9 +451,377 @@ def test_run_ride_writes_no_tee_unless_it_is_asked(
     assert set(tmp_path.iterdir()) == before | {sink_saw}
 
 
+@pytest.mark.parametrize("blocked_pipe", ["read", "write", "finalwait"])
+@pytest.mark.parametrize("stop_reason", ["cancel", "deadline"])
+def test_run_ride_interrupts_owned_blocked_pipes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, blocked_pipe: str, stop_reason: str
+) -> None:
+    """Actual child pipes, not a fake read/write, must release on owned stop."""
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    cancel = threading.Event()
+    finished = threading.Event()
+    stop_threads_before = {
+        thread.ident for thread in threading.enumerate() if thread.name == "civiccast-ride-stop"
+    }
+    outcomes = []
+    decoder_ready = tmp_path / "decoder-ready"
+    sink_ready = tmp_path / "sink-ready"
+    prefix = "import sys,time; from pathlib import Path; Path(sys.argv[1]).touch(); "
+    decoder = prefix + (
+        "time.sleep(30)"
+        if blocked_pipe == "read"
+        else (
+            "import os; os.close(1); time.sleep(30)"
+            if blocked_pipe == "finalwait"
+            else "sys.stdout.buffer.write(bytes(4*1024*1024)); sys.stdout.buffer.flush()"
+        )
+    )
+    sink = prefix + ("time.sleep(30)" if blocked_pipe == "write" else "sys.stdin.buffer.read()")
+
+    def ride():
+        try:
+            outcomes.append(
+                lr.run_ride(
+                    decoder_args=["-c", decoder, str(decoder_ready)],
+                    sink_args=["-c", sink, str(sink_ready)],
+                    curve=[(0.0, 0.0)],
+                    params=lr.RideParams(target_lufs=-16.0),
+                    cancel_event=cancel,
+                    timeout_s=0.5 if stop_reason == "deadline" else 10,
+                )
+            )
+        except Exception as exc:
+            outcomes.append(exc)
+        finally:
+            finished.set()
+
+    thread = threading.Thread(target=ride, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 3
+        while not (decoder_ready.exists() and sink_ready.exists()) and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert decoder_ready.exists() and sink_ready.exists(), "both actual children started"
+        if stop_reason == "cancel":
+            cancel.set()
+        assert finished.wait(2), f"{stop_reason} could not interrupt blocked {blocked_pipe}"
+        thread.join(1)
+        assert not thread.is_alive()
+        assert all(child.poll() is not None for child in children), "owned child leaked"
+        assert {
+            thread.ident for thread in threading.enumerate() if thread.name == "civiccast-ride-stop"
+        } == stop_threads_before, "owned stop thread leaked"
+        assert len(outcomes) == 1
+        if stop_reason == "cancel":
+            assert isinstance(outcomes[0], lr.LoudnessRideCancelledError), (
+                "".join(traceback.format_exception(outcomes[0]))
+                if isinstance(outcomes[0], Exception)
+                else outcomes[0]
+            )
+        else:
+            assert isinstance(outcomes[0], lr.LoudnessRideError), (
+                "".join(traceback.format_exception(outcomes[0]))
+                if isinstance(outcomes[0], Exception)
+                else outcomes[0]
+            )
+            assert "timed out" in str(outcomes[0])
+    finally:
+        cancel.set()
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=2)
+        thread.join(2)
+        assert not thread.is_alive(), "test-owned ride thread did not settle after cleanup"
+
+
+def test_run_ride_sink_spawn_failure_cleans_decoder_and_tee(tmp_path, monkeypatch):
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        if children:
+            raise OSError("synthetic sink spawn failure")
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    before = {
+        thread.ident for thread in threading.enumerate() if thread.name == "civiccast-ride-stop"
+    }
+    tee = tmp_path / "tee.pcm"
+    with pytest.raises(OSError, match="synthetic sink spawn failure"):
+        lr.run_ride(
+            decoder_args=["-c", "import time; time.sleep(30)"],
+            sink_args=["-c", "pass"],
+            curve=[(0.0, 0.0)],
+            params=lr.RideParams(target_lufs=-16.0),
+            pcm_path=tee,
+            cancel_event=threading.Event(),
+            timeout_s=10,
+        )
+    assert children[0].poll() is not None
+    assert {
+        thread.ident for thread in threading.enumerate() if thread.name == "civiccast-ride-stop"
+    } == before
+    tee.unlink()  # Closed on Windows; caller still owns its retained tee.
+
+
+def test_run_ride_completed_children_win_deadline_race(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    monkeypatch.setattr(
+        lr,
+        "time",
+        SimpleNamespace(
+            perf_counter=lambda: (
+                1000.0
+                if len(children) == 2 and all(p.poll() is not None for p in children)
+                else 0.0
+            )
+        ),
+    )
+    result = lr.run_ride(
+        decoder_args=["-c", "pass"],
+        sink_args=["-c", "import sys; sys.stdin.buffer.read()"],
+        curve=[(0.0, 0.0)],
+        params=lr.RideParams(target_lufs=-16.0),
+        timeout_s=1,
+    )
+    assert result.frames == 0
+    assert all(child.returncode == 0 for child in children)
+
+
+def test_run_ride_zero_exit_sink_cannot_drop_buffered_pcm(tmp_path, monkeypatch):
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    marker = tmp_path / "sink-exited"
+    decoder = (
+        "import sys,time; from pathlib import Path; "
+        "p=Path(sys.argv[1]); "
+        "exec('while not p.exists(): time.sleep(0.01)'); "
+        "time.sleep(0.1); sys.stdout.buffer.write(bytes(128)); sys.stdout.buffer.flush()"
+    )
+    with pytest.raises(lr.LoudnessRideError, match=r"sink|pipe"):
+        lr.run_ride(
+            decoder_args=["-c", decoder, str(marker)],
+            sink_args=[
+                "-c",
+                "import sys; from pathlib import Path; Path(sys.argv[1]).touch()",
+                str(marker),
+            ],
+            curve=[(0.0, 0.0)],
+            params=lr.RideParams(target_lufs=-16.0),
+            timeout_s=3,
+        )
+
+
+@pytest.mark.parametrize("owned_stop", [False, True])
+def test_run_ride_pipe_oserror_preserves_owned_stop_only(monkeypatch, owned_stop):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    cancel = threading.Event()
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        if len(children) == 1:
+            pipe = child.stdout
+
+            def read(size):
+                if owned_stop:
+                    cancel.set()
+                    child.wait(timeout=2)  # Owner killed it, then Windows pipe raises EINVAL.
+                raise OSError(22, "synthetic pipe error")
+
+            child.stdout = SimpleNamespace(read=read, close=pipe.close)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    expected = lr.LoudnessRideCancelledError if owned_stop else OSError
+    with pytest.raises(expected):
+        lr.run_ride(
+            decoder_args=["-c", "import time; time.sleep(30)"],
+            sink_args=["-c", "import sys; sys.stdin.buffer.read()"],
+            curve=[(0.0, 0.0)],
+            params=lr.RideParams(target_lufs=-16.0),
+            cancel_event=cancel,
+            timeout_s=5,
+        )
+    assert all(child.poll() is not None for child in children)
+
+
 # ---------------------------------------------------------------------------
 # The re-encode runner
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("blocked_at", ["read", "wait"])
+@pytest.mark.parametrize("stop_reason", ["cancel", "deadline"])
+def test_peak_scan_interrupts_owned_blocked_child(tmp_path, monkeypatch, blocked_at, stop_reason):
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    marker = tmp_path / "scan-started"
+    code = (
+        "import os,sys,time; from pathlib import Path; "
+        "Path(sys.argv[1]).touch(); "
+        + ("os.close(1); " if blocked_at == "wait" else "")
+        + "time.sleep(30)"
+    )
+    monkeypatch.setattr(lr, "build_peak_scan_args", lambda **kwargs: ["-c", code, str(marker)])
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    cancel = threading.Event()
+    done = threading.Event()
+    outcomes = []
+    before = {t.ident for t in threading.enumerate() if t.name == "civiccast-peak-stop"}
+
+    def scan():
+        try:
+            outcomes.append(
+                lr.scan_peak_dbfs(
+                    tmp_path / "artifact",
+                    params=lr.RideParams(target_lufs=-16),
+                    cancel_event=cancel,
+                    timeout_s=0.5 if stop_reason == "deadline" else 10,
+                )
+            )
+        except BaseException as exc:
+            outcomes.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=scan)
+    thread.start()
+    try:
+        until = time.monotonic() + 2
+        while not marker.exists() and time.monotonic() < until:
+            time.sleep(0.01)
+        assert marker.exists()
+        if stop_reason == "cancel":
+            cancel.set()
+        assert done.wait(2), f"{stop_reason} cannot interrupt peak scan blocked {blocked_at}"
+        thread.join(1)
+        expected = (
+            lr.LoudnessRideCancelledError if stop_reason == "cancel" else lr.LoudnessRideError
+        )
+        assert isinstance(outcomes[0], expected), outcomes
+        if stop_reason == "deadline":
+            assert "timed out" in str(outcomes[0])
+        assert all(p.poll() is not None for p in children)
+        assert {t.ident for t in threading.enumerate() if t.name == "civiccast-peak-stop"} == before
+    finally:
+        cancel.set()
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=2)
+        thread.join(2)
+        assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_peak_scan_completed_decode_preserves_peak_and_errors(monkeypatch, tmp_path, exit_code):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    code = (
+        "import struct,sys; sys.stdout.buffer.write(struct.pack('<fff',0.0,-0.5,0.25)); "
+        f"sys.stdout.buffer.flush(); sys.exit({exit_code})"
+    )
+    monkeypatch.setattr(lr, "build_peak_scan_args", lambda **kwargs: ["-c", code])
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    monkeypatch.setattr(
+        lr,
+        "time",
+        SimpleNamespace(
+            perf_counter=lambda: 1000.0 if children and children[0].poll() is not None else 0.0,
+        ),
+    )
+    if exit_code:
+        with pytest.raises(lr.LoudnessRideError, match="decode exited 7"):
+            lr.scan_peak_dbfs(
+                tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), timeout_s=1
+            )
+    else:
+        assert lr.scan_peak_dbfs(
+            tmp_path / "artifact",
+            params=lr.RideParams(target_lufs=-16),
+            timeout_s=1,
+        ) == pytest.approx(-6.020599913279624)
+    assert children[0].returncode == exit_code
+
+
+@pytest.mark.parametrize("owned_stop", [False, True])
+def test_peak_scan_pipe_oserror_preserves_owned_stop_only(monkeypatch, tmp_path, owned_stop):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    monkeypatch.setattr(
+        lr, "build_peak_scan_args", lambda **kwargs: ["-c", "import time; time.sleep(30)"]
+    )
+    cancel = threading.Event()
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        pipe = child.stdout
+
+        def read(size):
+            if owned_stop:
+                cancel.set()
+                child.wait(timeout=2)
+            raise OSError(22, "synthetic peak pipe error")
+
+        child.stdout = SimpleNamespace(read=read, close=pipe.close)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    expected = lr.LoudnessRideCancelledError if owned_stop else OSError
+    with pytest.raises(expected):
+        lr.scan_peak_dbfs(
+            tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), cancel_event=cancel
+        )
+    assert children[0].poll() is not None
 
 
 def test_run_reencode_reports_the_wall_time_and_raises_on_a_bad_pcm(

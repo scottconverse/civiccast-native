@@ -60,7 +60,7 @@ posture established in v0.3.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -90,6 +90,9 @@ from civiccast.live.models import (
 from civiccast.live.preflight import PreflightEvaluation, PreflightInputs
 from civiccast.live.relay import build_ingest_plan
 from civiccast.live.surge_service import get_surge_switch_service
+
+if TYPE_CHECKING:
+    from civiccast.live.store import LiveSessionStore
 
 # ---------------------------------------------------------------------------
 # Dependency seams (overridden by the app factory when DATABASE_URL is set)
@@ -533,6 +536,23 @@ def create_session(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"LiveSession already exists: {exc.live_session_id}",
         ) from exc
+
+
+@staff_router.get("/sessions", response_model=list[LiveSessionResponse])
+def list_active_sessions(
+    channel_id: str,
+    live_session_store: Any = Depends(get_live_session_store),
+) -> list[LiveSessionResponse]:
+    """Read unfinished meetings for explicit recovery; global staff auth applies.
+
+    Completed recordings belong in Assets, not this control-recovery picker.
+    """
+    store = cast(
+        "LiveSessionStore", _require_store(live_session_store, surface="live session recovery")
+    )
+    return store.list_sessions(
+        channel_id=channel_id, states=("idle", "preflight", "on_air", "ending")
+    )
 
 
 @staff_router.get(

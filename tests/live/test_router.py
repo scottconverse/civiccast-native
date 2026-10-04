@@ -45,7 +45,7 @@ from sqlalchemy.pool import StaticPool
 # civiccast hook that lets the schema-qualified CREATE TABLE
 # civiccast.live_sessions resolve).
 import civiccast.live.models
-import civiccast.schedule.models  # noqa: F401
+import civiccast.schedule.models
 from civiccast.app import create_app
 from civiccast.db import Base, bind_engine, reset_engine
 from civiccast.egress.models import EgressConfig, EgressSinkSpec, EgressStateRow
@@ -122,6 +122,16 @@ def session_factory(engine: Engine):  # type: ignore[no-untyped-def]
             yield session
 
     return factory
+
+
+@pytest.fixture(autouse=True)
+def _live_route_auth_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the test bootstrap token, not an inherited operator credential.
+
+    Individual role tests may still explicitly configure their own tokens
+    after this fixture runs. Production lifecycle-store fallback is unchanged.
+    """
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS", raising=False)
 
 
 @pytest.fixture(autouse=True)
@@ -297,6 +307,58 @@ def _all_pass_inputs(
 # ===========================================================================
 # Session create + read
 # ===========================================================================
+
+
+class TestSessionRecovery:
+    def test_list_keeps_ending_but_excludes_completed_recordings(
+        self, client, monkeypatch, session_factory
+    ):
+        from civiccast.auth.tokens import generate_configured_staff_token
+
+        token = generate_configured_staff_token()
+        monkeypatch.setenv("CIVICCAST_STAFF_TOKENS", f"{token}:test:Test:meeting_operator")
+        client.headers["Authorization"] = f"Bearer {token}"
+        _seed_session(client, live_session_id="finished", channel_id="government")
+        _seed_session(client, live_session_id="finalizing", channel_id="government")
+        with session_factory() as session:
+            session.query(civiccast.live.models.LiveSession).filter_by(
+                live_session_id="finished"
+            ).one().state = "recorded"
+            session.query(civiccast.live.models.LiveSession).filter_by(
+                live_session_id="finalizing"
+            ).one().state = "ending"
+            session.commit()
+        response = client.get("/api/staff/live/sessions?channel_id=government")
+        assert response.status_code == 200
+        assert [(row["live_session_id"], row["state"]) for row in response.json()] == [
+            ("finalizing", "ending")
+        ]
+
+    def test_list_active_sessions_is_channel_scoped_and_read_only(self, client, monkeypatch):
+        from civiccast.auth.tokens import generate_configured_staff_token
+
+        token = generate_configured_staff_token()
+        monkeypatch.setenv("CIVICCAST_STAFF_TOKENS", f"{token}:test:Test:meeting_operator")
+        client.headers["Authorization"] = f"Bearer {token}"
+        _seed_session(client, live_session_id="meeting-one", channel_id="government")
+        _seed_session(client, live_session_id="meeting-two", channel_id="education")
+        response = client.get("/api/staff/live/sessions?channel_id=government")
+        assert response.status_code == 200, response.text
+        assert [row["live_session_id"] for row in response.json()] == ["meeting-one"]
+        assert response.json()[0]["state"] == "idle"
+        assert client.get("/api/staff/live/sessions/meeting-one").json()["state"] == "idle"
+        del client.headers["Authorization"]
+        assert client.get("/api/staff/live/sessions?channel_id=government").status_code == 401
+
+    def test_active_list_requires_channel_and_works_for_read_only_role(self, client, monkeypatch):
+        from civiccast.auth.tokens import generate_configured_staff_token
+
+        token = generate_configured_staff_token()
+        monkeypatch.setenv("CIVICCAST_STAFF_TOKENS", f"{token}:test:Test:records_clerk")
+        client.headers["Authorization"] = f"Bearer {token}"
+        assert client.get("/api/staff/live/sessions?channel_id=government").json() == []
+        assert client.get("/api/staff/live/sessions").status_code == 422
+        assert client.post("/api/staff/live/sessions", json=_session_payload()).status_code == 403
 
 
 class TestCreateSession:

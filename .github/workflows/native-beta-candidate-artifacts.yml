@@ -84,6 +84,14 @@ on:
           builds always upload.
         type: boolean
         default: false
+      first_install_base_url:
+        description: >-
+          Optional exact HTTPS directory where this candidate's first-install
+          assets will be published. Must support complete model packs larger
+          than 2 GiB; ordinary GitHub release assets cannot host those packs.
+          No publication is performed by this workflow.
+        type: string
+        default: ""
   push:
     branches:
       - release/native-beta-1.0.0-beta.1-rc1
@@ -715,6 +723,9 @@ jobs:
           $setup = Get-ChildItem "civiccast/apps/installer/src-tauri/target/release/bundle/nsis/CivicCast (Native)_*_x64-setup.exe" | Select-Object -First 1
           if (-not $setup) { throw "Native setup executable is missing." }
           Copy-Item -LiteralPath $setup.FullName -Destination "artifacts/native-beta/$($setup.Name)"
+          $firstInstall = "civiccast/apps/installer/src-tauri/target/release/CivicCast Native.exe"
+          if (-not (Test-Path -LiteralPath $firstInstall)) { throw "Fresh first-install executable is missing." }
+          Copy-Item -LiteralPath $firstInstall -Destination "artifacts/native-beta/CivicCast First Install.exe"
 
       - name: Verify the compiled bootstrap trusts the freshly signed packs
         shell: pwsh
@@ -884,6 +895,8 @@ jobs:
           if (-not $setup) { throw "Native setup executable is missing." }
           $signature = Get-AuthenticodeSignature $setup.FullName
           if ($signature.Status -ne "Valid") { throw "Native setup signature is not Valid: $($signature.Status)" }
+          $firstInstallSignature = Get-AuthenticodeSignature "artifacts/native-beta/CivicCast First Install.exe"
+          if ($firstInstallSignature.Status -ne "Valid") { throw "First-install signature is not Valid." }
           # No trailing commas: in PowerShell they splice the next line into
           # ONE Get-Item call whose path array includes the literal string
           # "Get-Item" -- run 31209319382 died here on this step's first-ever
@@ -891,6 +904,7 @@ jobs:
           # Newline-separated statements inside @() each contribute output.
           $assets = @(
             Get-Item "artifacts/native-beta/$($setup.Name)"
+            Get-Item "artifacts/native-beta/CivicCast First Install.exe"
             Get-Item "artifacts/native-beta/packs/native-app-payload.ccpack"
             Get-Item "artifacts/native-beta/packs/native-server-binaries.ccpack"
             Get-Item "artifacts/native-beta/packs/native-ffmpeg-runtime.ccpack"
@@ -964,6 +978,9 @@ jobs:
           name: native-beta-candidate-binaries-${{ github.sha }}
           path: |
             artifacts/native-beta/CivicCast (Native)_*_x64-setup.exe
+            artifacts/native-beta/CivicCast First Install.exe
+            artifacts/native-beta/candidate-receipt.json
+            artifacts/native-beta/SHA256SUMS.txt
             artifacts/native-beta/packs/native-app-payload.ccpack
             artifacts/native-beta/packs/native-server-binaries.ccpack
             artifacts/native-beta/packs/native-ffmpeg-runtime.ccpack
@@ -1435,6 +1452,44 @@ jobs:
           }
 
           Write-Host "Assembled kit at ${kit}: $($setup.Name) + .\station\station-index.json + $($stationPacks.Count) station pack(s) + $($packSource.Count) installer pack(s) + QUICKSTART-OPERATOR.md."
+
+      - name: Set up first-install packaging runtime
+        if: inputs.first_install_base_url != ''
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "0.12.3"
+
+      - name: Assemble signed first-install delivery for the specified host
+        if: inputs.first_install_base_url != ''
+        timeout-minutes: 30
+        shell: pwsh
+        env:
+          FIRST_INSTALL_BASE_URL: ${{ inputs.first_install_base_url }}
+          PACK_SIGNING_KEY_ID: ${{ vars.CIVICCAST_PACK_SIGNING_KEY_ID }}
+          PACK_SIGNING_PRIVATE_KEY: ${{ secrets.CIVICCAST_PACK_SIGNING_PRIVATE_KEY }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if ([string]::IsNullOrWhiteSpace($env:PACK_SIGNING_PRIVATE_KEY)) { throw "Pack signing key is missing." }
+          $selfHosted = $env:BUILD_TARGET -eq "self-hosted"
+          $candidateSource = if ($selfHosted) { Join-Path $env:CANDIDATE_ROOT "candidate" } else { "candidate" }
+          $receipt = @(Get-ChildItem -LiteralPath $candidateSource -Recurse -Filter "candidate-receipt.json")
+          if ($receipt.Count -ne 1) { throw "Expected one exact candidate receipt." }
+          $kit = if ($selfHosted) { "C:\CivicCastTester\kit-staging\${{ github.sha }}" } else { "kit" }
+          $keyPath = Join-Path $env:RUNNER_TEMP "civiccast-first-install-signing-key.pem"
+          try {
+            [System.IO.File]::WriteAllText($keyPath, $env:PACK_SIGNING_PRIVATE_KEY, [System.Text.UTF8Encoding]::new($false))
+            $version = (Get-Content civiccast/apps/installer/src-tauri/tauri.native.conf.json -Raw | ConvertFrom-Json).version
+            $epoch = (git show -s --format=%ct HEAD).Trim()
+            uv run --no-project --python 3.12 --with cryptography==50.0.0 python -I -B scripts/build_native_first_install.py `
+              --candidate $receipt[0].Directory.FullName --station (Join-Path $kit "station") `
+              --output (Join-Path $kit "first-install") --product-version $version `
+              --source-sha "${{ github.sha }}" --channel beta --created-epoch $epoch `
+              --base-url $env:FIRST_INSTALL_BASE_URL --signing-private-key $keyPath `
+              --signing-key-id $env:PACK_SIGNING_KEY_ID
+            if ($LASTEXITCODE -ne 0) { throw "First-install delivery assembly failed." }
+          } finally {
+            if (Test-Path -LiteralPath $keyPath) { [System.IO.File]::Delete($keyPath) }
+          }
 
       # Skipped by default on the self-hosted lane: this kit is ~21.9 GB and
       # already sits at C:\CivicCastTester\kit-staging\<sha>\ on the same box

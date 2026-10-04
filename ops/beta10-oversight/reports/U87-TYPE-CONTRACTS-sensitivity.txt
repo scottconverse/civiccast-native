@@ -1,0 +1,44 @@
+FFFF                                                                     [100%]
+================================== FAILURES ===================================
+__ test_unknown_publication_count_never_interrupts_later_segments[accepted] ___
+tests\captions\test_caption_stage_outcomes.py:388: in test_unknown_publication_count_never_interrupts_later_segments
+    result = tap._process_channel("public", channel_dir, segments, batch_id="test")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+civiccast\captions\tap_worker.py:1962: in _process_channel
+    _increment_stage_count(stage_counts, key)
+<string>:1: in <lambda>
+    ???
+E   TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+____ test_unknown_publication_count_never_interrupts_later_segments[reset] ____
+tests\captions\test_caption_stage_outcomes.py:388: in test_unknown_publication_count_never_interrupts_later_segments
+    result = tap._process_channel("public", channel_dir, segments, batch_id="test")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+civiccast\captions\tap_worker.py:1928: in _process_channel
+    _increment_stage_count(stage_counts, "publish_rejected_batches")
+<string>:1: in <lambda>
+    ???
+E   TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+_ test_unknown_publication_count_never_interrupts_later_segments[storage-refused] _
+tests\captions\test_caption_stage_outcomes.py:388: in test_unknown_publication_count_never_interrupts_later_segments
+    result = tap._process_channel("public", channel_dir, segments, batch_id="test")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+civiccast\captions\tap_worker.py:1937: in _process_channel
+    _increment_stage_count(stage_counts, "publish_rejected_batches")
+<string>:1: in <lambda>
+    ???
+E   TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+__ test_unknown_publication_count_never_interrupts_later_segments[rejected] ___
+tests\captions\test_caption_stage_outcomes.py:388: in test_unknown_publication_count_never_interrupts_later_segments
+    result = tap._process_channel("public", channel_dir, segments, batch_id="test")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+civiccast\captions\tap_worker.py:1962: in _process_channel
+    _increment_stage_count(stage_counts, key)
+<string>:1: in <lambda>
+    ???
+E   TypeError: unsupported operand type(s) for +: 'NoneType' and 'int'
+=========================== short test summary info ===========================
+FAILED tests/captions/test_caption_stage_outcomes.py::test_unknown_publication_count_never_interrupts_later_segments[accepted]
+FAILED tests/captions/test_caption_stage_outcomes.py::test_unknown_publication_count_never_interrupts_later_segments[reset]
+FAILED tests/captions/test_caption_stage_outcomes.py::test_unknown_publication_count_never_interrupts_later_segments[storage-refused]
+FAILED tests/captions/test_caption_stage_outcomes.py::test_unknown_publication_count_never_interrupts_later_segments[rejected]
+4 failed, 20 deselected in 1.41s

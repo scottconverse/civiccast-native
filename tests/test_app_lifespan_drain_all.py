@@ -14,6 +14,7 @@ call contract, not about actually running ffmpeg.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import pytest
@@ -68,14 +69,25 @@ def test_lifespan_shutdown_calls_stop_all_channels_before_background_stop(
         assert client.get("/health").status_code == 200
         # RAT-004 wiring precondition: the real daemon is reachable here.
         assert hasattr(app.state, "egress_daemon")
-        spy = _DrainAllSpy()
-        app.state.egress_daemon = spy
         automation = next(
             s
             for s in app.state.background_supervisors
             if getattr(s, "_name", None) == "civiccast-channel-automation"
         )
+        # Lifespan queues startup on the schema owner; HTTP 200 alone does not
+        # prove background startup has finished. Wait for the actual condition.
+        deadline = time.monotonic() + 3.0
+        while not automation.running and time.monotonic() < deadline:
+            time.sleep(0.01)
         assert automation.running is True
+
+        class OrderedDrainSpy(_DrainAllSpy):
+            def stop_all_channels(self, *, deadline_seconds: float) -> object:
+                assert automation.running, "automation stopped before channel drain"
+                return super().stop_all_channels(deadline_seconds=deadline_seconds)
+
+        spy = OrderedDrainSpy()
+        app.state.egress_daemon = spy
 
     # By the time the TestClient context manager exits, shutdown has run.
     assert spy.calls == [15.0]  # default deadline per the design addendum

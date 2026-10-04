@@ -1186,7 +1186,11 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # independent hostile-environment case plus six windows_only parameterized
     # cache-boundary cases. Actual collect-only runs returned (1824, 2031), so
     # the pure lane advances by one and the full lane advances by seven.
-    assert (collect("not windows_only"), collect()) == (1824, 2031)
+    # 2026-10-04 CI reconciliation: real collection from an isolated archive
+    # of committed 14e00b38 returned (1931, 2140), excluding shared rollback
+    # WIP. The Windows execution lane excludes three integration cases, so
+    # its workflow floor uses 2137 minus the unchanged 50-test margin.
+    assert (collect("not windows_only"), collect()) == (1931, 2140)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

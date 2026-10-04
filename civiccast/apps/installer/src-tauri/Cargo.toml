@@ -32,6 +32,9 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_Console",
     "Win32_System_Registry",
     "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 # Native hardware inventory (task #hardware-inventory): DXGI GPU enumeration
 # (IDXGIFactory1::EnumAdapters1 / DXGI_ADAPTER_DESC1) needs COM-interface

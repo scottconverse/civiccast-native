@@ -25,7 +25,7 @@
 //      AgendasScreen cascade-warn pattern).
 //
 //   B. Tiers section — table of existing tiers + an add-tier form. Each row
-//      can be removed locally; "Save" persists the whole tiers list via PUT.
+//      can be removed locally; "Save" patches the whole tiers list.
 //      `price_id` is validated against the Stripe shape (must start with
 //      "price_") inline; a misshapen id surfaces a warn under the field.
 //
@@ -53,6 +53,7 @@ import {
   getPaywallConfig,
   getStaffIdentity,
   issueCompGrant,
+  updatePaywallConfig,
   upsertPaywallConfig,
 } from '../api/client'
 import type {
@@ -284,7 +285,7 @@ function PaywallEditor({
   onConfigInvalidated: () => void
 }) {
   // The form mirrors the loaded config — operator edits sit here until they
-  // click Save, which fires PUT with the whole local state.
+  // click Save. PATCH preserves a write-only saved secret when its box is blank.
   const [enabled, setEnabled] = useState<boolean>(initialConfig.enabled)
   const [provider, setProvider] = useState<PaywallProvider>(initialConfig.provider)
   const [signingSecret, setSigningSecret] = useState<string>(
@@ -312,7 +313,23 @@ function PaywallEditor({
   const [dirtySinceSave, setDirtySinceSave] = useState(false)
 
   const upsertMut = useMutation({
-    mutationFn: (payload: PaywallConfigInput) => upsertPaywallConfig(payload),
+    mutationFn: async (payload: PaywallConfigInput) => {
+      try {
+        return await updatePaywallConfig(payload.config_id, {
+          enabled: payload.enabled,
+          provider: payload.provider,
+          tiers: payload.tiers,
+          ...(payload.signing_secret === null ? {} : { signing_secret: payload.signing_secret }),
+        })
+      } catch (err) {
+        // GET's safe disabled default has the same ID as a real row. Only
+        // PATCH's missing-row verdict admits creation; never replace on error.
+        if (err instanceof ApiError && err.status === 404) {
+          return upsertPaywallConfig(payload)
+        }
+        throw err
+      }
+    },
     onSuccess: () => {
       setDirtySinceSave(false)
       onConfigInvalidated()
@@ -652,6 +669,9 @@ function ConfigCard({
             </button>
           )}
         </div>
+        <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Saved secrets are never shown. Leave this blank to keep the saved secret.
+        </span>
         <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
           Rotating this invalidates all unredeemed magic links and breaks webhook
           verification until Stripe is updated.

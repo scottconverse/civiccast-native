@@ -52,6 +52,7 @@ def check_loudness(
     probe_duration_seconds: float | None = None,
     threads: int | None = None,
     cancel_event: threading.Event | None = None,
+    timeout_seconds: float | None = None,
 ) -> LoudnessGateResult:
     """Measure a media asset's integrated loudness and gate it against a target.
 
@@ -72,6 +73,11 @@ def check_loudness(
     loudness, and it can differ for material that varies significantly
     across its length -- callers that need the whole-file measurement must
     leave both ``None``.
+
+    ``timeout_seconds`` optionally bounds subprocess wall time, not the media
+    window. None preserves the wrapper's existing default ceiling; preparation
+    supplies its per-call budget. Timeout and cancellation retain the wrapper's
+    distinct exceptions rather than fabricating a measurement.
 
     ``threads`` (item 66 round-4, Opus review; position fixed round-5):
     caps ffmpeg's decode AND filter-graph threading at that many threads
@@ -131,7 +137,15 @@ def check_loudness(
     if probe_duration_seconds is not None:
         args.extend(["-t", f"{probe_duration_seconds:g}"])
     args.extend(["-filter_complex", "ebur128=peak=true", "-f", "null", "-"])
-    if cancel_event is None:
+    if timeout_seconds is not None:
+        # Explicit probe budgets use the wrapper's polling/owned-cleanup mode
+        # even for a warm without an external cancellation owner.
+        result = run_ffmpeg(
+            args,
+            cancel_event=cancel_event if cancel_event is not None else threading.Event(),
+            timeout=timeout_seconds,
+        )
+    elif cancel_event is None:
         result = run_ffmpeg(args)
     else:
         result = run_ffmpeg(args, cancel_event=cancel_event)
@@ -170,6 +184,7 @@ def check_streaming_loudness(
     probe_duration_seconds: float | None = None,
     threads: int | None = None,
     cancel_event: threading.Event | None = None,
+    timeout_seconds: float | None = None,
 ) -> LoudnessGateResult:
     """Back-compat wrapper: gate streaming audio against its -16 LUFS target.
 
@@ -192,6 +207,7 @@ def check_streaming_loudness(
         probe_duration_seconds=probe_duration_seconds,
         threads=threads,
         cancel_event=cancel_event,
+        timeout_seconds=timeout_seconds,
     )
 
 

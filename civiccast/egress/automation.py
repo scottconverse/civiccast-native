@@ -51,7 +51,12 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from civiccast.egress.daemon import AlertEvaluatorHook, EgressDaemon
+from civiccast.egress.daemon import (
+    AlertEvaluatorHook,
+    BoundarySourcePlanProvider,
+    EgressDaemon,
+    SourcePlanProvider,
+)
 from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
 from civiccast.egress.errors import SourcePrepareError
 from civiccast.egress.gst.reload_policy import rollover_trigger_at
@@ -790,15 +795,16 @@ class ChannelAutomationService:
         self,
         store: EgressStore,
         daemon: EgressDaemon,
-        source_plan_provider: Any,
+        source_plan_provider: SourcePlanProvider,
         *,
         settings: ChannelAutomationSettings,
-        boundary_source_plan_provider: Any = None,
+        boundary_source_plan_provider: BoundarySourcePlanProvider | None = None,
         ndi_supervisor_factory: Any = None,
         sdi_supervisor_factory: Any = None,
         monotonic: Any = None,
         as_run_outbox: AsRunOutbox | None = None,
         automation_alerts: _ChannelAutomationAlerts | None = None,
+        storage_preparation: Callable[[], None] | None = None,
     ) -> None:
         self._store = store
         self._daemon = daemon
@@ -819,6 +825,8 @@ class ChannelAutomationService:
         # needing a dedicated thread -- it rides the same poll cadence that
         # already drives every other channel-automation concern.
         self._as_run_outbox = as_run_outbox
+        self._storage_preparation = storage_preparation
+        self._storage_preparation_lock = threading.Lock()
         # Pacing prevents command storms WITHOUT the one-shot deadlock that
         # left a dark channel unstarted for an hour (issue #152, found live
         # in the CA-8 run): a dark auto_start channel is retried every
@@ -1168,6 +1176,18 @@ class ChannelAutomationService:
 
         return self._daemon
 
+    @property
+    def as_run_outbox(self) -> AsRunOutbox | None:
+        """The shared journal resource, owned by app activation/shutdown."""
+        return self._as_run_outbox
+
+    def prepare_storage(self) -> None:
+        """Complete deferred auxiliary startup once, before automation starts."""
+        with self._storage_preparation_lock:
+            if self._storage_preparation is not None:
+                self._storage_preparation()
+                self._storage_preparation = None
+
     def run_forever(
         self,
         *,
@@ -1228,6 +1248,7 @@ class ChannelAutomationService:
     def run_once(self, *, now: datetime | None = None) -> list[str]:
         """One pass over every enabled channel; returns the channel ids seen."""
 
+        self.prepare_storage()
         self._drain_as_run_outbox()
         # BETA.10 U06: the startup sweep runs ONCE, so a persisted on-air row
         # whose encoder was still alive at that instant and died afterwards was
@@ -2405,7 +2426,7 @@ class ChannelAutomationService:
             fresh_plan = self._resolve_rollover_tail(channel_id, max(now, plan_end_at), fresh_plan)
         force_fallback = fresh_plan is None or not fresh_plan.segments
         fresh_end = plan_end_at
-        if not force_fallback:
+        if not force_fallback and fresh_plan is not None:
             fresh_seconds = sum(segment.duration_seconds for segment in fresh_plan.segments)
             fresh_start = (
                 max(now, plan_end_at) if self._boundary_source_plan_provider is not None else now
@@ -3141,6 +3162,7 @@ def build_channel_automation(
     work_dir: Path | None = None,
     alert_evaluator_hook: AlertEvaluatorHook | None = None,
     channel_start_hook: Callable[[str], None] | None = None,
+    defer_storage: bool = False,
 ) -> ChannelAutomationService:
     """Construct the wired automation service (same shape as the egress CLI).
 
@@ -3176,18 +3198,13 @@ def build_channel_automation(
     resolved_work_dir.mkdir(parents=True, exist_ok=True)
     caption_tap_settings = CaptionTapWorkerSettings.from_env()
     store = PostgresEgressStore(session_factory)
-    # ENG-003 / S9-4: clear any relay co-process a previous server left holding its
-    # NDI name, recording each reap as a durable proof event. Never blocks startup.
-    try:
-        reap_predecessor_relays(boot_epoch=time.time(), store=store)
-    except Exception:
-        _LOG.exception("Predecessor relay reap failed; continuing startup.")
+    boot_epoch = time.time()
     # BUG C2 fix (S23 §6.1 durable outbox): one AsRunOutbox for the process,
     # rooted at the real station-data-dir journal, shared by the recorder
     # (opportunistic drain on every write) and this service's periodic
-    # drain tick. Constructing it here only opens the LOCAL journal file
-    # (plain sqlite3, not the app's SQLAlchemy engine) -- cheap and safe to
-    # do synchronously. The startup replay itself is deliberately NOT run
+    # drain tick. App construction defers even LOCAL journal opening to
+    # accounted activation; standalone factory callers retain eager opening.
+    # The startup replay itself is deliberately NOT run
     # here: build_channel_automation runs inside civiccast.app.create_app()
     # (via _wire_stage_f_workers / _wire_durable_stores /
     # _install_durable_store_wiring when DATABASE_URL is set at boot), a
@@ -3203,6 +3220,7 @@ def build_channel_automation(
         ReportingStore(session_factory),
         db_path=default_asrun_outbox_path(),
         alert_session_factory=session_factory,
+        defer_open=defer_storage,
     )
     # DEFECT C: one alert-firing/clearing instance shared between the daemon's
     # per-command failure hook (fires mid-pass) and the service's whole-pass
@@ -3301,7 +3319,7 @@ def build_channel_automation(
         # #151: channel-lifetime TS relay (TSDuck continuity --fix + pcradjust)
         # so encoder relaunches never reset the mux session at a udp-ts
         # headend. auto mode: active only when tsp is available.
-        ts_relay_supervisor=TsRelaySupervisor(),
+        ts_relay_supervisor=TsRelaySupervisor(work_dir=resolved_work_dir),
         # DEFECT A: the GStreamer engine's hls sinks are delivered by a
         # supervised ffmpeg relay (real segments + a real manifest) -- see
         # civiccast.egress.hls_relay's module docstring for why no native
@@ -3343,8 +3361,19 @@ def build_channel_automation(
     # pre-DB station bootstrap that holds a session_factory. Health goes off
     # "green healthy" via the critical alert (safe-to-air surface).
     _egress_degraded_reason = os.environ.get(EGRESS_DEGRADED_REASON_ENV, "").strip()
-    if _egress_degraded_reason:
-        _raise_egress_degraded_alert(session_factory, reason=_egress_degraded_reason)
+
+    def prepare_storage() -> None:
+        # Auxiliary SQL/proof writes belong to activation, never create_app.
+        as_run_outbox.initialize()
+        try:
+            reap_predecessor_relays(boot_epoch=boot_epoch, store=store)
+        except Exception:
+            _LOG.exception("Predecessor relay reap failed; continuing startup.")
+        if _egress_degraded_reason:
+            _raise_egress_degraded_alert(session_factory, reason=_egress_degraded_reason)
+
+    if not defer_storage:
+        prepare_storage()
     return ChannelAutomationService(
         store,
         daemon,
@@ -3360,4 +3389,5 @@ def build_channel_automation(
         # DEFECT C: whole-pass failures raise/clear through the same
         # instance the daemon's command_failure_hook above uses.
         automation_alerts=automation_alerts,
+        storage_preparation=prepare_storage if defer_storage else None,
     )

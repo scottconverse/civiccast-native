@@ -1,4 +1,4 @@
-import type { SourcedClaim } from '../../types/api.generated'
+import type { SourcedClaim, TranscriptRange } from '../../types/api.generated'
 
 function fmtRange(startSeconds: number, endSeconds: number): string {
   const fmt = (value: number) => {
@@ -10,10 +10,10 @@ function fmtRange(startSeconds: number, endSeconds: number): string {
 
 export function SourcedClaimList({
   claims,
-  onSeek,
+  onSource,
 }: {
   claims: SourcedClaim[]
-  onSeek: (cueId: string) => void
+  onSource: (range: TranscriptRange) => void
 }) {
   if (claims.length === 0) {
     return (
@@ -43,7 +43,7 @@ export function SourcedClaimList({
                 onMouseDown={(event) => event.preventDefault()}
                 onClick={() => {
                   const active = document.activeElement
-                  onSeek(range.cue_id)
+                  onSource(range)
                   if (active instanceof HTMLElement) {
                     window.requestAnimationFrame(() => active.focus())
                   }
@@ -55,7 +55,7 @@ export function SourcedClaimList({
                   color: 'var(--cc-brand-2)',
                 }}
               >
-                {range.cue_id} {fmtRange(range.start_seconds, range.end_seconds)}
+                Source: {range.cue_id} {fmtRange(range.start_seconds, range.end_seconds)}
               </button>
             ))}
           </div>

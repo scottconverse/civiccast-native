@@ -33,20 +33,19 @@ def test_encode_chain_specs_default_openh264_has_h264parse() -> None:
     assert factories == [
         "videoconvert",
         "videoscale",
-        "videorate",
         "capsfilter",
         "openh264enc",
         "h264parse",
     ]
     assert specs[-1].props["config-interval"] == -1
-    assert specs[4].props["bitrate"] == 4000
+    assert specs[3].props["bitrate"] == 4000
     # The live-HLS sink stream-copies this encoder's output (so A/53 caption
     # SEI survives), which means the sink can no longer force keyframes. The
     # ~2s HLS segment contract therefore depends on openh264enc emitting an
     # intra frame every segment_seconds worth of frames: gop-size is in
     # FRAMES, and the 30fps default is 60 -> 2s. Without this the copy path
     # silently cuts on whatever GOP the encoder happens to use.
-    assert specs[4].props["gop-size"] == 60
+    assert specs[3].props["gop-size"] == 60
 
 
 def test_encode_chain_specs_explicit_x264_has_x264_controls() -> None:
@@ -55,12 +54,11 @@ def test_encode_chain_specs_explicit_x264_has_x264_controls() -> None:
     assert factories == [
         "videoconvert",
         "videoscale",
-        "videorate",
         "capsfilter",
         "x264enc",
         "h264parse",
     ]
-    assert specs[4].props["key-int-max"] == 60
+    assert specs[3].props["key-int-max"] == 60
 
 
 def test_encode_chain_specs_openh264_gop_follows_profile_gop() -> None:
@@ -90,7 +88,7 @@ def test_encode_chain_specs_hevc_uses_h265parse() -> None:
     specs = encode_chain_specs(encoder="nvh265enc")
     assert specs[-1].factory == "h265parse"
     assert specs[-1].props["config-interval"] == -1
-    assert specs[4].factory == "nvh265enc"
+    assert specs[3].factory == "nvh265enc"
 
 
 def test_encode_chain_specs_cbr_adds_hrd_option_string() -> None:

@@ -25,9 +25,9 @@ from civiccast.egress.daemon import EgressDaemon
 from civiccast.egress.models import (
     CanonicalProfile,
     EgressConfig,
+    EgressSinkSpec,
     EgressSourcePlan,
     EgressSourceSegment,
-    EgressSinkSpec,
 )
 from civiccast.egress.store import InMemoryEgressStore
 
@@ -71,9 +71,7 @@ class _RecordingWarmer:
         self.calls.append((config, plan))
 
 
-def _daemon(
-    store: InMemoryEgressStore, tmp_path: Path, warmer: object | None
-) -> EgressDaemon:
+def _daemon(store: InMemoryEgressStore, tmp_path: Path, warmer: object | None) -> EgressDaemon:
     return EgressDaemon(
         store,
         work_dir=tmp_path,

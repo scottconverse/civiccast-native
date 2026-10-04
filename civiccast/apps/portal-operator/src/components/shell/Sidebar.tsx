@@ -392,7 +392,7 @@ export function Sidebar({ route, onNavigate, roles, navigationLocked = false }: 
         style={{ borderTop: '1px solid var(--cc-line)', color: 'var(--cc-ink-3)' }}
       >
         <Link
-          to="/help#report-without-github"
+          to="/help#report-a-beta-issue"
           className="text-xs font-semibold underline underline-offset-2"
           style={{ color: 'var(--cc-brand)' }}
         >
