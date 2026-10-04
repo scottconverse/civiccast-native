@@ -1015,6 +1015,7 @@ class TestRuntimeBoundary:
                         text="motion carries",
                         avg_logprob=-0.1,
                         no_speech_prob=0.2,
+                        compression_ratio=1.0,
                     ),
                     SimpleNamespace(
                         start=1.5,
@@ -1022,6 +1023,7 @@ class TestRuntimeBoundary:
                         text="next agenda item",
                         avg_logprob=-0.1,
                         no_speech_prob=0.4,
+                        compression_ratio=1.0,
                     ),
                 ],
                 object(),
@@ -1050,6 +1052,8 @@ class TestRuntimeBoundary:
                     start=0.25,
                     end=2.5,
                     text="motion carries",
+                    avg_logprob=-0.1,
+                    compression_ratio=1.0,
                     words=[
                         SimpleNamespace(word=" motion", start=0.25, end=1.2, probability=0.8),
                         SimpleNamespace(word=" carries", start=1.2, end=2.5, probability=0.7),
@@ -1093,6 +1097,7 @@ class TestRuntimeBoundary:
                         text="motion carries",
                         avg_logprob=-0.1,
                         no_speech_prob=0.2,
+                        compression_ratio=1.0,
                     )
                 ],
                 object(),

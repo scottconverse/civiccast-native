@@ -24,7 +24,15 @@ def chunk(rate=16000):
 
 
 def segment(**extra):
-    return SimpleNamespace(text="motion carries", start=0, end=2, **extra)
+    fields = {
+        "text": "motion carries",
+        "start": 0,
+        "end": 2,
+        "compression_ratio": 1.0,
+        "avg_logprob": -0.1,
+    }
+    fields.update(extra)
+    return SimpleNamespace(**fields)
 
 
 def metrics(runtime):
@@ -256,7 +264,13 @@ def test_kwargs_transcript_and_runtime_exceptions_unchanged(live, monkeypatch):
         "initial_prompt": None,
     }
     if live:
-        expected["word_timestamps"] = True
+        expected.update(
+            word_timestamps=True,
+            temperature=(0.0,),
+            compression_ratio_threshold=2.4,
+            log_prob_threshold=-1.0,
+            no_speech_threshold=0.6,
+        )
     assert calls == [expected]
     error = RuntimeError("decode")
 
@@ -296,6 +310,7 @@ def test_raising_metadata_property_cannot_fail_decode(field):
 
         class BrokenSegment:
             text, start, end = "motion carries", 0, 2
+            compression_ratio, avg_logprob = 1.0, -0.1
 
             @property
             def temperature(self):

@@ -102,7 +102,8 @@ def build_caption_runtime(service: AiModelService, *, live: bool = False) -> Cap
 
     ``live=True`` builds the runtime for the LIVE caption tap, which shares the
     box with playout and is therefore sized conservatively (a core-count-aware,
-    capped CTranslate2 intra-thread count, greedy decoding on CPU -- see
+    capped CTranslate2 intra-thread count, a single-temperature decode on every
+    device and fail-closed live quality refusal -- see
     :func:`civiccast.captions.runtime.default_live_tap_cpu_threads`). The
     default, ``live=False``, is the batch/VOD sizing: a finalization pass is
     allowed to use the machine.

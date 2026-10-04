@@ -77,6 +77,19 @@ Current surface:
 
 Runtime notes:
 
+- Live faster-whisper calls use one temperature (`0.0`) per internal decode
+  window. VAD, word timestamps, the configured beam size and vocabulary prompt
+  are preserved. This bounds retry count, not native execution time; a single
+  slow decode can still exceed live cadence. Batch/VOD uses the dependency's
+  existing fallback sequence instead.
+- Before live aggregation, emitted segments must have finite numeric compression
+  ratio and average log probability. Compression above `2.4` or log probability
+  below `-1.0`, including missing or invalid required metadata, withholds the
+  whole live audio window. Accepted fragments are not joined across refused
+  speech. Dependency silence suppression (`0.6`) and its high-log-probability
+  speech exception remain intact. A category-only `refused_windows=1` log records
+  each withheld window without transcript text. Refusals are missing caption
+  coverage, not proof of silence, and must be included in runtime acceptance.
 - The adapter defaults to `large-v3`, `device="auto"`, and
   `compute_type="int8"`. CPU CTranslate2 does not support `int8_float16`; CUDA
   proof may explicitly select it where the installed runtime supports it.
@@ -113,9 +126,9 @@ Runtime notes:
   (including the live-only `CIVICCAST_CAPTION_TAP_CPU_THREADS`) and
   `civiccast/captions/runtime.py`'s `_resolved_whisper_cpu_threads_env` for
   the implementation.
-- CivicCast converts each mono PCM s16le chunk to a temporary WAV before
-  calling `WhisperModel.transcribe`, then offsets segment timestamps back to
-  the chunk's live timeline.
+- Live mono 16 kHz PCM s16le passes directly to the model as a float32 array.
+  Other sample rates and batch/VOD chunks use a temporary WAV. Segment times are
+  offset back to the chunk's timeline in either path.
 - Custom vocabulary terms and the operator-provided initial prompt are passed
   through as the faster-whisper `initial_prompt`.
 - Empirical release evidence should run the Blackwell verifier first, then run

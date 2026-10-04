@@ -377,6 +377,12 @@ def _resolved_whisper_cpu_threads_env(default: int, *, live: bool) -> int:
 #: a VOD pass does not. Overridable with ``CIVICCAST_WHISPER_BEAM_SIZE``.
 LIVE_TAP_CPU_BEAM_SIZE = 1
 
+# Match faster-whisper's quality thresholds, but never spend live cadence on
+# temperature retries. This bounds attempts per decode window, not native time.
+LIVE_DECODE_TEMPERATURES = (0.0,)
+LIVE_COMPRESSION_RATIO_THRESHOLD = 2.4
+LIVE_LOG_PROB_THRESHOLD = -1.0
+
 #: Files a tier's pinned inventory carries for PROVENANCE rather than for
 #: inference: CTranslate2/faster-whisper never opens them, and an upstream
 #: snapshot may legitimately omit them (the pinned ``medium`` snapshot does).
@@ -835,7 +841,7 @@ class FasterWhisperRuntime:
         vocabulary: CustomVocabulary | None = None,
     ) -> Iterable[CaptionHypothesis]:
         with suppress(Exception):
-            note_executing('runtime', sys._getframe().f_code, self)
+            note_executing("runtime", sys._getframe().f_code, self)
         self.reset_decode_metrics()
         initial_prompt = _build_initial_prompt(vocabulary)
         for chunk in chunks:
@@ -991,7 +997,17 @@ class FasterWhisperRuntime:
                 task=self.task,
                 vad_filter=self.vad_filter,
                 initial_prompt=initial_prompt,
-                **({"word_timestamps": True} if self._live else {}),
+                **(
+                    {
+                        "word_timestamps": True,
+                        "temperature": LIVE_DECODE_TEMPERATURES,
+                        "compression_ratio_threshold": LIVE_COMPRESSION_RATIO_THRESHOLD,
+                        "log_prob_threshold": LIVE_LOG_PROB_THRESHOLD,
+                        "no_speech_threshold": 0.6,
+                    }
+                    if self._live
+                    else {}
+                ),
             )
         finally:
             elapsed = time.perf_counter() - started
@@ -1034,7 +1050,13 @@ class FasterWhisperRuntime:
 
             live_segments: list[CaptionHypothesis] = []
             live_words: list[CaptionWord] = []
+            refused_quality: str | None = None
             for index, segment in enumerate(segments):
+                if self._live:
+                    reason = _live_segment_quality_refusal(segment)
+                    if reason is not None:
+                        refused_quality = refused_quality or reason
+                        continue
                 text = str(getattr(segment, "text", "")).strip()
                 if not text:
                     continue
@@ -1064,6 +1086,14 @@ class FasterWhisperRuntime:
                         )
                 else:
                     yield hypothesis
+            if refused_quality is not None:
+                # Never join accepted fragments across withheld speech. One
+                # bounded category/count record per window; no transcript.
+                with suppress(Exception):
+                    logger.info(
+                        "Live caption quality refusal: refused_windows=1 reason=%s", refused_quality
+                    )
+                return
             if live_segments:
                 # Segment boundaries vary between overlapping ASR windows.
                 # Confirm one window against another, not two fragments from
@@ -1080,6 +1110,33 @@ class FasterWhisperRuntime:
                     audio_window_end_seconds=chunk.end_seconds,
                     words=live_words,
                 )
+
+
+def _live_segment_quality_refusal(segment: Any) -> str | None:
+    """Fail closed before live aggregation; VOD fallback remains unchanged.
+
+    Missing/nonfinite quality is not proof of safe output. Do not reapply a
+    no-speech-only cutoff: faster-whisper preserves its high-logprob speech
+    exception before emitting segments, and we must preserve it too.
+    """
+    try:
+        compression = segment.compression_ratio
+        logprob = segment.avg_logprob
+        if not (
+            type(compression) in (int, float)
+            and isfinite(compression)
+            and compression >= 0
+            and type(logprob) in (int, float)
+            and isfinite(logprob)
+        ):
+            return "unproven_metadata"
+    except Exception:
+        return "unproven_metadata"
+    if compression > LIVE_COMPRESSION_RATIO_THRESHOLD:
+        return "compression_ratio"
+    if logprob < LIVE_LOG_PROB_THRESHOLD:
+        return "log_probability"
+    return None
 
 
 def _diagnostic_number(value: object, name: str) -> float | None:

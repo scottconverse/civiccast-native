@@ -15,6 +15,11 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Live captions no longer retry the same decode window at progressively higher
+  temperatures. A failed quality check withholds that window rather than emitting
+  unreliable text; recorded-video decoding keeps its existing retry behavior.
+  This bounds retries, not the duration of a single decode. Three-channel caption
+  coverage and sustained performance still require live acceptance testing.
 - A missing, unreadable or damaged built-in manual now shows a plain-English
   installation-repair message instead of developer commands or a generic server
   error.

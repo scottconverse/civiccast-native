@@ -1972,6 +1972,8 @@ Three read-only cards are on the **Channels** screen, not on Assets. They descri
 
 See [Running the meeting](#ch-running-meeting) for the Channels screen.
 
+> **Note:** In the current development version, live captions do not retry a decoding attempt with different model settings. If the words fail the model's quality checks, CivicCast withholds that audio window. A gap does not mean there was no speech. This does not guarantee that captions keep up, and **Captions on** does not prove every spoken word was captioned. The separate recorded-video caption job keeps its existing retries and human review.
+
 ### Offline captions: how a recording gets its captions
 
 Captions for a recording are made in the background after you approve publishing on the Publish screen. There is no separate "make captions" button. The steps are:
