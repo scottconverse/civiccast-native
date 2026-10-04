@@ -53,6 +53,7 @@ import concurrent.futures
 import ctypes
 import hashlib
 import logging
+import math
 import os
 import re
 import sys
@@ -584,6 +585,16 @@ class _ChannelScanResult:
     stage_counts: dict[str, int | None] | None = None
 
 
+@dataclass
+class _BacklogRecoveryEpisode:
+    started: float
+    budget_seconds: float
+    peak_depth: int
+    peak_completed: int
+    first_seen: dict[str, float] = field(default_factory=dict)
+    recovering: bool = False
+
+
 class CaptionTapWorker:
     """Consume forked audio segments into the durable caption review queue."""
 
@@ -692,6 +703,12 @@ class CaptionTapWorker:
         #: overshoot must be drained, not punished. Touched only from the scan
         #: thread, under the per-channel session lock.
         self._overload_scan_streak: dict[str, int] = {}
+        # Episode state belongs to the scan thread. Channel workers increment
+        # completed audio under the same per-channel session lock used by scans.
+        # Submission is NOT drain progress: depth includes in-flight files.
+        self._overload_episodes: dict[str, _BacklogRecoveryEpisode] = {}
+        self._completed_audio: dict[str, int] = {}
+        self._overload_poll_seconds = CaptionTapWorkerSettings().poll_seconds
         #: Channels already told (once per episode, INFO) that this scan is
         #: behind and is transcribing the oldest segments rather than pausing.
         self._overload_deferral_announced: set[str] = set()
@@ -800,6 +817,9 @@ class CaptionTapWorker:
     ) -> None:
         """Run the scan loop until ``stop_event`` is set; scan errors are logged."""
 
+        if not math.isfinite(poll_seconds) or poll_seconds <= 0:
+            raise ValueError("Caption tap poll_seconds must be finite and greater than zero.")
+        self._overload_poll_seconds = poll_seconds
         try:
             while stop_event is None or not stop_event.is_set():
                 try:
@@ -935,14 +955,39 @@ class CaptionTapWorker:
         under the limit clears the streak, so a single overshoot followed by a
         drained queue never pauses a channel.
 
-        ``segments`` is evidence for the U69 diagnostic ONLY -- it lets the
-        streak-start line carry the age of the oldest queued segment. It is
-        never consulted for the decision, which is unchanged.
+        A bounded, demonstrably draining episode may continue oldest-first
+        after the normal window. The episode never renews: its maximum lifetime
+        and oldest-observed-audio age are two existing persistence windows.
+        File mtimes are diagnostic only; policy ages use the monotonic clock.
         """
 
-        if depth <= self._max_backlog_segments:
+        outstanding = depth + len(self._inflight_names(channel_id))
+        if outstanding <= self._max_backlog_segments:
             self._reset_overload_persistence(channel_id)
             return False
+        now = self._monotonic()
+        completed = self._completed_audio.get(channel_id, 0)
+        episode = self._overload_episodes.get(channel_id)
+        if episode is None:
+            episode = _BacklogRecoveryEpisode(
+                started=now,
+                budget_seconds=2 * self._overload_persistence_scans * self._overload_poll_seconds,
+                peak_depth=outstanding,
+                peak_completed=completed,
+            )
+            self._overload_episodes[channel_id] = episode
+        elif not episode.recovering and outstanding > episode.peak_depth:
+            episode.peak_depth = outstanding
+            episode.peak_completed = completed
+        names = {path.name for _index, path in segments or ()}
+        present = names | self._inflight_names(channel_id)
+        episode.first_seen = {
+            name: seen for name, seen in episode.first_seen.items() if name in present
+        }
+        for name in names:
+            episode.first_seen.setdefault(name, now)
+        if depth <= self._max_backlog_segments:
+            return False  # Do not renew the episode while its batch is in flight.
         streak = self._overload_scan_streak.get(channel_id, 0) + 1
         self._overload_scan_streak[channel_id] = streak
         if streak == 1 and self._shed_diagnostic_active:
@@ -964,12 +1009,29 @@ class CaptionTapWorker:
                 overload_streak=streak,
                 persistence_scans=self._overload_persistence_scans,
             )
-        return streak >= self._overload_persistence_scans
+        oldest_age = max((now - episode.first_seen[name] for name in names), default=0.0)
+        if now - episode.started >= episode.budget_seconds or oldest_age >= episode.budget_seconds:
+            return True
+        if streak < self._overload_persistence_scans:
+            return False
+        drained = episode.peak_depth - outstanding
+        if (
+            self._overload_persistence_scans > 1
+            and self._catch_up_shed_limit > 0
+            and segments
+            and 0 < drained <= completed - episode.peak_completed
+            and now - episode.started < episode.budget_seconds
+            and oldest_age < episode.budget_seconds
+        ):
+            episode.recovering = True
+            return False
+        return True
 
     def _reset_overload_persistence(self, channel_id: str) -> None:
         """Forget a channel's over-limit streak and its once-per-episode notice."""
 
         self._overload_scan_streak.pop(channel_id, None)
+        self._overload_episodes.pop(channel_id, None)
         self._overload_deferral_announced.discard(channel_id)
 
     def _announce_deferred_backlog(self, channel_id: str, depth: int) -> None:
@@ -1244,6 +1306,7 @@ class CaptionTapWorker:
         self._channel_publishers.pop(channel_id, None)
         self._previous_segments.pop(channel_id, None)
         self._backoff.forget(channel_id)
+        self._completed_audio.pop(channel_id, None)
         # The over-limit streak belongs to the session that just ended, exactly
         # like the backoff state above it -- and so does the catch-up shed
         # budget: a channel that comes back on air is a different mix of load
@@ -1903,6 +1966,7 @@ class CaptionTapWorker:
                         ):
                             self._move(segment, channel_dir / "processed")
                     self._previous_segments[channel_id] = (index, raw_chunk)
+                    self._completed_audio[channel_id] = self._completed_audio.get(channel_id, 0) + 1
                     consumed += 1
         # One healthy scan. The policy forgives the channel's escalation only
         # after several of these in a row, so a channel that flaps does not

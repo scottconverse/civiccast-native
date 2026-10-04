@@ -214,26 +214,53 @@ def test_mixed_quality_speech_reaches_three_channel_vtt_and_feed(
     tmp_path: Path, all_rejected: bool
 ) -> None:
     """Exercise actual decode conversion, PCM overlap, stabilization and output."""
+
     def segment(text, start, end, words, *, rejected=False):
         return SimpleNamespace(
-            text=text, start=start, end=end, avg_logprob=-0.1,
-            compression_ratio=3.0 if rejected else 1.0, no_speech_prob=0.0,
-            words=[SimpleNamespace(word=text, start=a, end=b, probability=0.95)
-                   for text, a, b in words],
+            text=text,
+            start=start,
+            end=end,
+            avg_logprob=-0.1,
+            compression_ratio=3.0 if rejected else 1.0,
+            no_speech_prob=0.0,
+            words=[
+                SimpleNamespace(word=text, start=a, end=b, probability=0.95) for text, a, b in words
+            ],
         )
 
     runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
-    runtime._model = SimpleNamespace(transcribe=lambda *args, **kwargs: ([
-        segment("motion carries", 0.5, 2.0,
-                [("motion", 0.5, 1.2), ("carries", 1.2, 2.0)], rejected=all_rejected),
-        segment("rejected hallucination", 2.1, 3.0,
-                [("rejected", 2.1, 2.5), ("hallucination", 2.5, 3.0)], rejected=True),
-        segment("next item", 3.1, 4.5,
-                [("next", 3.1, 3.7), ("item", 3.7, 4.5)], rejected=all_rejected),
-    ], SimpleNamespace(duration_after_vad=4.5)))
+    runtime._model = SimpleNamespace(
+        transcribe=lambda *args, **kwargs: (
+            [
+                segment(
+                    "motion carries",
+                    0.5,
+                    2.0,
+                    [("motion", 0.5, 1.2), ("carries", 1.2, 2.0)],
+                    rejected=all_rejected,
+                ),
+                segment(
+                    "rejected hallucination",
+                    2.1,
+                    3.0,
+                    [("rejected", 2.1, 2.5), ("hallucination", 2.5, 3.0)],
+                    rejected=True,
+                ),
+                segment(
+                    "next item",
+                    3.1,
+                    4.5,
+                    [("next", 3.1, 3.7), ("item", 3.7, 4.5)],
+                    rejected=all_rejected,
+                ),
+            ],
+            SimpleNamespace(duration_after_vad=4.5),
+        )
+    )
     tap_root = tmp_path / "tap"
-    worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore(),
-                     segment_seconds=5.0, atomic_segments=True)
+    worker = _worker(
+        tap_root, runtime, InMemoryCaptionReviewStore(), segment_seconds=5.0, atomic_segments=True
+    )
     worker._sweep_retention()
     assert worker.wait_for_retention_sweep()
     channels = ["public", "government", "education"]
@@ -243,13 +270,18 @@ def test_mixed_quality_speech_reaches_three_channel_vtt_and_feed(
     result = worker.run_once()
     assert result.consumed_segments == 6
     delivered = []
+
     def send(channel, work_dir, **payload):
         delivered.append((channel, payload))
         return True
+
     feed = CaptionFeedWorker(
-        work_dir=tmp_path / "egress", on_air_channels=lambda: channels,
+        work_dir=tmp_path / "egress",
+        on_air_channels=lambda: channels,
         caption_cue_provider=lambda channel: load_caption_cues_from_timed_text(
-            _active_vtt(tap_root, channel)), send_caption_cue=send,
+            _active_vtt(tap_root, channel)
+        ),
+        send_caption_cue=send,
     )
     for channel in channels:
         cues = load_caption_cues_from_timed_text(_active_vtt(tap_root, channel))
@@ -3284,6 +3316,131 @@ class TestCaptionTapCatchUp:
     stops for longer than the backlog it sheds. The exponential pause ladder is
     retained, unchanged, for the case this cannot fix.
     """
+
+    def test_cold_first_decode_recovering_queue_keeps_valid_speech(self, tmp_path: Path) -> None:
+        """Forty cold seconds are not persistent under-capacity once audio drains."""
+        clock = _FakeClock()
+
+        class ColdRuntime(_TimedToneRuntime):
+            def transcribe(self, chunks, vocabulary=None):
+                if not self.seen_chunks:
+                    clock.advance(40.453)
+                yield from super().transcribe(chunks, vocabulary)
+
+        tap_root = tmp_path / "tap"
+        runtime = ColdRuntime()
+        worker = _worker(
+            tap_root,
+            runtime,
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+            segment_seconds=5,
+            monotonic=clock,
+        )
+        worker._sweep_retention()
+        assert worker.wait_for_retention_sweep(timeout=5)
+        for index in range(8):
+            _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav", seconds=5)
+        assert worker.run_once().consumed_segments == 2
+        queued = worker._settled_segments(tap_root / "public")
+        # Scans continue during a slow first call; actual audio completion and
+        # the observed 8 -> 6 drain must matter at the persistence boundary.
+        for _ in range(_OVERLOAD_PERSISTENCE_WINDOW - 2):
+            worker._note_backlog_depth("public", len(queued), segments=queued)
+        recovered = worker.run_once()
+        assert recovered.dropped_overload_segments == 0, "recovering cold queue discarded speech"
+        assert recovered.consumed_segments == 2
+        assert worker.run_once().dropped_overload_segments == 0
+        assert worker.run_once().dropped_overload_segments == 0
+        processed = tap_root / "public" / "processed"
+        assert len(list(processed.glob("chunk-*.wav"))) == 8
+        assert len(runtime.seen_chunks) == 8
+        cues = load_caption_cues_from_timed_text(_active_vtt(tap_root, "public"))
+        assert set(range(35)) <= _spoken_seconds(cues), "valid pre-gap words were lost"
+
+    @pytest.mark.parametrize("case", ["flat", "increasing", "not-completed", "removed-without-asr"])
+    def test_recovery_requires_real_net_completed_audio(self, tmp_path: Path, case: str) -> None:
+        worker = _worker(tmp_path / "tap", _TimedToneRuntime(), InMemoryCaptionReviewStore())
+        paths = [(i, tmp_path / f"chunk-{i:06d}.wav") for i in range(9)]
+        for _ in range(_OVERLOAD_PERSISTENCE_WINDOW - 1):
+            assert not worker._note_backlog_depth("public", 8, segments=paths[:8])
+        depth, completed = {
+            "flat": (8, 2),
+            "increasing": (9, 2),
+            "not-completed": (6, 0),
+            "removed-without-asr": (3, 2),
+        }[case]
+        worker._completed_audio["public"] = completed
+        assert worker._note_backlog_depth("public", depth, segments=paths[:depth])
+
+    def test_recovery_oscillation_cannot_renew_monotonic_deadline(self, tmp_path: Path) -> None:
+        clock = _FakeClock()
+        worker = _worker(
+            tmp_path / "tap", _TimedToneRuntime(), InMemoryCaptionReviewStore(), monotonic=clock
+        )
+        paths = [(i, tmp_path / f"chunk-{i:06d}.wav") for i in range(8)]
+        for _ in range(_OVERLOAD_PERSISTENCE_WINDOW - 1):
+            assert not worker._note_backlog_depth("public", 8, segments=paths)
+        worker._completed_audio["public"] = 2
+        clock.advance(40)
+        assert not worker._note_backlog_depth("public", 6, segments=paths[2:])
+        for depth in (7, 6, 7, 6):
+            assert not worker._note_backlog_depth("public", depth, segments=paths[-depth:])
+        clock.advance(20)
+        assert worker._note_backlog_depth("public", 6, segments=paths[2:])
+
+    @pytest.mark.parametrize("poll", [0, -1, float("inf"), float("nan")])
+    def test_recovery_rejects_unbounded_or_busy_poll(self, tmp_path: Path, poll: float) -> None:
+        worker = _worker(tmp_path / "tap", _ScriptedRuntime(), InMemoryCaptionReviewStore())
+        with pytest.raises(ValueError, match="poll_seconds"):
+            worker.run_forever(poll_seconds=poll, stop_event=threading.Event())
+
+    def test_inflight_submission_is_not_recovery_and_stale_completion_is_not_progress(
+        self, tmp_path: Path
+    ) -> None:
+        entered, release = threading.Event(), threading.Event()
+
+        class HeldRuntime(_TimedToneRuntime):
+            def transcribe(self, chunks, vocabulary=None):
+                entered.set()
+                assert release.wait(3)
+                yield from super().transcribe(chunks, vocabulary)
+
+        tap_root = tmp_path / "tap"
+        clock = _FakeClock()
+        worker = _worker(
+            tap_root,
+            HeldRuntime(),
+            InMemoryCaptionReviewStore(),
+            atomic_segments=True,
+            monotonic=clock,
+        )
+        worker._sweep_retention()
+        assert worker.wait_for_retention_sweep(timeout=5)
+        for index in range(4):
+            _write_wav(tap_root / "public" / f"chunk-{index:06d}.wav")
+        try:
+            worker.run_once(wait_for_results=False)
+            assert entered.wait(1)
+            episode = worker._overload_episodes["public"]
+            assert episode.peak_depth == 4
+            for _ in range(_OVERLOAD_PERSISTENCE_WINDOW):
+                worker.run_once(wait_for_results=False)
+                assert worker._overload_episodes["public"] is episode
+                assert worker._completed_audio.get("public", 0) == 0
+                assert not episode.recovering
+            # Reset while the actual ASR is held: its completion cannot count
+            # as successful audio for the new session or restore episode state.
+            worker.begin_channel_session("public")
+            release.set()
+            futures = list(worker._channel_futures)
+            for future in futures:
+                future.result(timeout=2)
+            assert worker._completed_audio.get("public", 0) == 0
+            assert "public" not in worker._overload_episodes
+        finally:
+            release.set()
+            worker._shutdown_channel_executor()
 
     def test_a_stall_on_three_channels_sheds_and_keeps_captioning(self, tmp_path: Path) -> None:
         """The measured failure itself: 3 channels, ~15 s of stalled audio each.

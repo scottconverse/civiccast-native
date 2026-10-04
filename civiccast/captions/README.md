@@ -41,10 +41,21 @@ Current surface:
 - `CaptionTapWorker`, the native multi-channel worker that consumes settled WAV
   segments concurrently, retains the exact reviewed audio, and atomically
   publishes committed cues to each egress channel's `captions/active.vtt`.
-  Backlog beyond the configured bound fails closed: the live sidecar is
-  cleared, stale segments are discarded (never transcribed, so never
-  reviewable, and no retention clock would have covered them), and the channel
-  is PAUSED for an exponentially growing window
+  A brief backlog is drained oldest-first. If completed ASR work has reduced
+  total outstanding audio (including in-flight segments), catch-up may continue
+  for at most two overload-persistence windows from the episode's first scan
+  (60 seconds with the default 15 scans and 2-second poll). This monotonic
+  deadline does not renew when queue depth oscillates or work is submitted;
+  queues without demonstrated net drain still shed at the normal persistence
+  threshold. A rebound to the episode's peak ends recovery permission.
+  This protects a recovering cold-start queue, not the latency of the first
+  model call. Quality gates and per-channel concurrency remain unchanged.
+  Sustained backlog first sheds the oldest settled audio down to the newest
+  legal batch and keeps captioning. Once the catch-up shed budget is exhausted
+  (or catch-up is disabled), it fails closed: the live sidecar is cleared,
+  stale segments are discarded (never transcribed, so never reviewable, and
+  no retention clock would have covered them), and the channel is PAUSED
+  for an exponentially growing window
   (`civiccast/captions/tap_backoff.py`: 60s, 120s, 240s ... capped at 900s)
   rather than retried on the next scan. `runtime-status.json` carries the
   channel's state -- `within-capacity`, `paused` (backing off, with
