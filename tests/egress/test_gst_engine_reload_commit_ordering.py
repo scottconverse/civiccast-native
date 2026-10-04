@@ -3502,7 +3502,9 @@ def test_u30_a_dropped_outgoing_eos_is_named_before_it_is_dropped(
 
     assert result == engine_module.Gst.PadProbeReturn.DROP
     err = capsys.readouterr().err
-    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 stream=video pending_txn=9" in err
+    assert (
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 stream=video pending_txn=9" in err
+    )
     # The settle line that already existed still follows it (the fixture's fake
     # ``GLib.idle_add`` runs the queued callback inline).
     assert "CTRL reload: outgoing EOS observed stream=video (1/1 stream(s))" in err
@@ -3529,7 +3531,9 @@ def test_u30_a_dropped_eos_from_a_superseded_transaction_says_so(
 
     assert result == engine_module.Gst.PadProbeReturn.DROP
     err = capsys.readouterr().err
-    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 stream=video pending_txn=9" in err
+    assert (
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 stream=video pending_txn=9" in err
+    )
     assert "outgoing EOS observed" not in err
     assert not engine._pending_reload.get("old_leg_eos")
 
@@ -4550,7 +4554,9 @@ def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(
     assert observed["probe_return"] == engine_module.Gst.PadProbeReturn.DROP, observed
     assert observed["old_leg_eos_during_build"] is True, observed
     err = capsys.readouterr().err
-    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 stream=video pending_txn=1" in err
+    assert (
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 stream=video pending_txn=1" in err
+    )
     assert "CTRL reload: outgoing EOS observed stream=video (1/2 stream(s))" in err
 
     # A build that RAISES must leave nothing behind. A DROP probe left installed
@@ -4782,7 +4788,7 @@ def test_u37_deferred_rebase_switch_waits_for_the_mux_pad_to_drain(
     assert [(mask, callback.__name__) for _id, mask, callback in audio_pad.probes] == [
         (_FakePadProbeType.BUFFER, "_mux_tail_cutoff_probe"),
         (_FakePadProbeType.EVENT_DOWNSTREAM, "_mux_tail_segment_probe"),
-        (_U37_OBSERVER_MASK, "_observe_rebase_arrivals")
+        (_U37_OBSERVER_MASK, "_observe_rebase_arrivals"),
     ]
 
     err = capsys.readouterr().err
