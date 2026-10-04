@@ -5,8 +5,15 @@ This file is a pointer, not a log.
 ## Active development checkpoint - 2026-10-04
 
 - Remote checkpoint is `f9f210c03f375b318a5d2edc7e76eab2e07e1b57`,
-  verified on draft PR 232. Current test run 37202959271 and installer compile
-  37202959249 are pending; the 7b8a0edd results below are historical.
+  verified on draft PR 232. Current test run 37202959271 is pending; installer
+  compile 37202959249 and docs 37202959261 passed. Lint 37202959246 failed.
+  The 7b8a0edd results below are historical. Local audio repair commits
+  `6951bcf8` and `1ddc6da7` are not yet pushed or installed.
+- The caption-proof lifespan fixture now implements the actual health-owner
+  start contract and asserts start/run/close ordering. Baseline failed on its
+  obsolete request-only fake (1 failed, 33 passed in 13.48s); the same three
+  caption/lifecycle/outbox files pass 34 checks in 11.71s after correction.
+  No runtime behavior or assertion was removed by this fixture correction.
 - Speech-level run_ride cancellation now interrupts blocked reads, writes and
   final child waits. Closed output pipes cannot certify a successful render;
   Windows stop-related I/O errors preserve the typed cancellation result.
@@ -68,13 +75,19 @@ This file is a pointer, not a log.
   publication. Request-only inverse tests fail the intended assertions;
   69 affected checks and an independent 35 owner/lifecycle checks pass.
   Live sustained acceptance is still pending.
-- Selected v20 runtime window: October 4, 05:40:28-07:40:28 MDT, unchanged
-  two-hour ceiling. First regular sample was 05:42:37 MDT after local reader
-  invocation/identity-query errors; the initial gap is not sampled acceptance.
-  Candidate PID 3860, birth 05:34:04.556294 MDT, supervisor PID 24736.
-  Actual health (34 anchors) and caption code identity checks passed before
-  sampling. All three channels were advancing at initial readiness. This is
-  only the frozen 16-file selection, not the full branch or a packaged release.
+- Selected v20 runtime attempt FAILED on October 4 at 06:45:39 MDT after
+  242 samples, not a completed two-hour acceptance. First regular sample was
+  05:42:37 MDT after reader invocation/identity-query errors; the initial gap
+  is not sampled acceptance. Public caption cue times stopped advancing for
+  63 seconds while public HLS and VTT writes, government/education captions,
+  and healthy/current health continued. Silence versus missing speech remains
+  unproven because final candidate audio was not preserved reliably.
+  Candidate PID 3860, birth 05:34:04.556294 MDT, supervisor PID 24736;
+  actual health (34 anchors) and caption code identity checks passed.
+  This was only the frozen 16-file selection, not the full branch or a package.
+  All 16 original files and proof state were restored, service was running,
+  and 06:49:20-06:49:35 MDT samples verified all three channels progressing.
+  Evidence: oversight `reports/U87-V20-FUNCTIONAL-RESULT-2026-10-04.md`.
 - Reviewed local fixture reconciliation preserves the recording target,
   unwritable-directory and worker shutdown assertions, but observes actual
   lifespan activation rather than constructor-only state (18 independent passes).

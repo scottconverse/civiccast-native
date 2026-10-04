@@ -192,7 +192,9 @@ def test_lifespan_closes_unused_proof_without_join(monkeypatch):
     from civiccast.app import _app_lifespan
 
     events = []
-    owner = SimpleNamespace(request=lambda **kwargs: None, close=lambda: events.append("owner"))
+    owner = SimpleNamespace(
+        start=lambda: events.append("owner-start"), close=lambda: events.append("owner")
+    )
     app = SimpleNamespace(state=SimpleNamespace(health_schema_owner=owner))
     monkeypatch.setattr(identity, "close_executable_proof", lambda: events.append("proof-close"))
 
@@ -201,7 +203,7 @@ def test_lifespan_closes_unused_proof_without_join(monkeypatch):
             events.append("running")
 
     asyncio.run(run())
-    assert events == ["running", "owner", "proof-close"]
+    assert events == ["owner-start", "running", "owner", "proof-close"]
 
 
 def test_prepared_capture_cannot_be_relabelled_by_later_class_mutation(monkeypatch, caplog):
