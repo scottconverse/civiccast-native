@@ -47,7 +47,6 @@ def _touch_segments(channel_dir: Path, names: list[str], *, size: int = 1024) ->
         (channel_dir / name).write_bytes(b"\x47" * size)
 
 
-
 def _stub_probe_ok(_ffprobe, _segment):  # pragma: no cover - test stub
     return {
         "status": verify.Verdict.PASS,
@@ -64,6 +63,7 @@ def _stub_ffmpeg_ok(_ffmpeg, _segment):  # pragma: no cover - test stub
 
 def _stub_tsp_ok(_tsp, _segment):  # pragma: no cover - test stub
     return {"status": verify.Verdict.PASS}
+
 
 # --- Playlist parsing ------------------------------------------------------
 
@@ -227,36 +227,57 @@ _LOUDNESS_STDERR_SILENT = """
 
 
 def test_parse_last_float_extracts_latest_lufs() -> None:
-    assert verify._parse_last_float(r"\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS\b", _LOUDNESS_STDERR_CLEAN) == -15.7
+    assert (
+        verify._parse_last_float(r"\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS\b", _LOUDNESS_STDERR_CLEAN)
+        == -15.7
+    )
 
 
-def test_loudness_window_within_target_passes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_loudness_window_within_target_passes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     seg = tmp_path / "seg000000001.ts"
     seg.write_bytes(b"\x47" * 100)
 
     monkeypatch.setattr(
         verify,
         "_run",
-        lambda *a, **k: {"ok": True, "returncode": 0, "stdout": "", "stderr": _LOUDNESS_STDERR_CLEAN},
+        lambda *a, **k: {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": _LOUDNESS_STDERR_CLEAN,
+        },
     )
 
-    result = verify.measure_window_audio(Path("ffmpeg"), [seg], tmp_path / "list.txt", segment_seconds=[180.0])
+    result = verify.measure_window_audio(
+        Path("ffmpeg"), [seg], tmp_path / "list.txt", segment_seconds=[180.0]
+    )
 
     assert result["status"] == verify.Verdict.PASS
     assert result["integrated_lufs"] == pytest.approx(-15.7)
 
 
-def test_loudness_window_flags_silent_audio(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_loudness_window_flags_silent_audio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     seg = tmp_path / "seg000000001.ts"
     seg.write_bytes(b"\x47" * 100)
 
     monkeypatch.setattr(
         verify,
         "_run",
-        lambda *a, **k: {"ok": True, "returncode": 0, "stdout": "", "stderr": _LOUDNESS_STDERR_SILENT},
+        lambda *a, **k: {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": _LOUDNESS_STDERR_SILENT,
+        },
     )
 
-    result = verify.measure_window_audio(Path("ffmpeg"), [seg], tmp_path / "list.txt", segment_seconds=[180.0])
+    result = verify.measure_window_audio(
+        Path("ffmpeg"), [seg], tmp_path / "list.txt", segment_seconds=[180.0]
+    )
 
     assert result["status"] == verify.Verdict.FAIL
     assert result["silent"] is True
@@ -264,7 +285,9 @@ def test_loudness_window_flags_silent_audio(monkeypatch: pytest.MonkeyPatch, tmp
     assert result["status"] == verify.Verdict.FAIL
 
 
-def test_loudness_window_flags_out_of_target_audio(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_loudness_window_flags_out_of_target_audio(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     seg = tmp_path / "seg000000001.ts"
     seg.write_bytes(b"\x47" * 100)
     stderr = _LOUDNESS_STDERR_CLEAN.replace("-15.7", "-22.0")
@@ -275,7 +298,9 @@ def test_loudness_window_flags_out_of_target_audio(monkeypatch: pytest.MonkeyPat
         lambda *a, **k: {"ok": True, "returncode": 0, "stdout": "", "stderr": stderr},
     )
 
-    result = verify.measure_window_audio(Path("ffmpeg"), [seg], tmp_path / "list.txt", segment_seconds=[180.0])
+    result = verify.measure_window_audio(
+        Path("ffmpeg"), [seg], tmp_path / "list.txt", segment_seconds=[180.0]
+    )
 
     assert result["status"] == verify.Verdict.FAIL
     assert result["within_target"] is False
@@ -307,12 +332,7 @@ def _subcc_runner(srt_text: str, *, returncode: int = 0, stderr: str = ""):
     return _run
 
 
-_SRT_ONE_CUE = (
-    "1\n"
-    "00:00:00,000 --> 00:00:01,600\n"
-    "CIVICCAST CEA708 TEST.\n"
-    "\n"
-)
+_SRT_ONE_CUE = "1\n00:00:00,000 --> 00:00:01,600\nCIVICCAST CEA708 TEST.\n\n"
 
 
 def test_subcc_real_positive_fixture_decodes_a_cue() -> None:
@@ -400,7 +420,12 @@ def test_caption_decoder_available_uses_subcc_readeia608(monkeypatch: pytest.Mon
     monkeypatch.setattr(
         verify,
         "_run",
-        lambda *a, **k: {"ok": True, "returncode": 0, "stdout": " ... readeia608 ... ", "stderr": ""},
+        lambda *a, **k: {
+            "ok": True,
+            "returncode": 0,
+            "stdout": " ... readeia608 ... ",
+            "stderr": "",
+        },
     )
 
     probe = verify.caption_decoder_available()
@@ -423,7 +448,9 @@ def test_caption_decoder_unavailable_without_readeia608(monkeypatch: pytest.Monk
     assert probe["available"] is False
 
 
-def test_caption_decode_error_is_unverified(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_caption_decode_error_is_unverified(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     seg = tmp_path / "seg000000001.ts"
     seg.write_bytes(b"\x47" * 100)
     monkeypatch.setattr(verify.subprocess, "run", _subcc_runner("", returncode=1, stderr="nope"))
@@ -452,7 +479,9 @@ def _stub_all_av(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(verify, "extract_first_pcr", lambda *a, **k: 5_000_000_000)
 
 
-def test_window_decodes_every_chosen_segment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_window_decodes_every_chosen_segment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """The window must call the decoder once per chosen segment (not just newest)."""
 
     root, names = _channel_with_segments(tmp_path)
@@ -469,18 +498,27 @@ def test_window_decodes_every_chosen_segment(monkeypatch: pytest.MonkeyPatch, tm
             "decoded_cue_count": 1,
         }
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(verify, "_decode_captions", recording_decode)
     _stub_all_av(monkeypatch)
 
     verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert calls == names
 
 
-def test_window_sparse_captions_still_passes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_window_sparse_captions_still_passes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Sparse captions (some segments cue, some clean-but-empty) -> PASS.
 
     Stable-TS diagnostics (2026-09-24) decoded cues in only 4 of 9 sampled
@@ -509,23 +547,34 @@ def test_window_sparse_captions_still_passes(monkeypatch: pytest.MonkeyPatch, tm
             "decoded_cue_count": 0,
         }
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(verify, "_decode_captions", fake_decode)
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert len(result["caption_decode_back"]["per_segment"]) == 3
     assert result["caption_decode_back"]["status"] == verify.Verdict.PASS
 
 
-def test_window_all_segments_captionless_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_window_all_segments_captionless_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """No cues anywhere in a CLEAN window -> caption FAIL (no weakening)."""
     root, _names = _channel_with_segments(tmp_path)
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(
         verify,
         "_decode_captions",
@@ -541,14 +590,21 @@ def test_window_all_segments_captionless_fails(monkeypatch: pytest.MonkeyPatch, 
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.FAIL
     assert result["status"] == verify.Verdict.FAIL
 
 
-def test_window_any_unverified_segment_forces_unverified(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_window_any_unverified_segment_forces_unverified(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A vanished/undecodable segment keeps the window UNVERIFIED, not PASS/FAIL."""
     root, names = _channel_with_segments(tmp_path)
 
@@ -564,15 +620,23 @@ def test_window_any_unverified_segment_forces_unverified(monkeypatch: pytest.Mon
             "decoded_cue_count": 1,
         }
 
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": True, "detail": "ok"}
+    )
     monkeypatch.setattr(verify, "_decode_captions", fake_decode)
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.UNVERIFIED
+
 
 def test_decoder_absent_fails_closed_through_verify_channel(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -585,13 +649,16 @@ def test_decoder_absent_fails_closed_through_verify_channel(
         "caption_decoder_available",
         lambda: {"available": False, "decoder": "ffmpeg-subcc", "detail": "no ffmpeg"},
     )
-    monkeypatch.setattr(
-        verify, "_decode_captions", lambda *a, **k: {"status": verify.Verdict.PASS}
-    )
+    monkeypatch.setattr(verify, "_decode_captions", lambda *a, **k: {"status": verify.Verdict.PASS})
     _stub_all_av(monkeypatch)
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     assert result["caption_decode_back"]["status"] == verify.Verdict.NOT_PROVEN
@@ -735,7 +802,16 @@ def test_cli_accepts_subset_but_marked_non_release(
 
     out = tmp_path / "evidence.json"
     exit_code = verify.main(
-        ["--hls-root", str(tmp_path), "--channels", "public", "--dwell-seconds", "0", "--out", str(out)]
+        [
+            "--hls-root",
+            str(tmp_path),
+            "--channels",
+            "public",
+            "--dwell-seconds",
+            "0",
+            "--out",
+            str(out),
+        ]
     )
     report = json.loads(out.read_text(encoding="utf-8"))
 
@@ -744,18 +820,24 @@ def test_cli_accepts_subset_but_marked_non_release(
     assert report["verdict"] != verify.Verdict.PASS
 
 
-def test_verify_all_does_not_claim_the_acceptance_ladder(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_all_does_not_claim_the_acceptance_ladder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(
         verify,
         "verify_channel",
         lambda channel_id, *a, **k: {"channel_id": channel_id, "status": verify.Verdict.FAIL},
     )
-    monkeypatch.setattr(verify, "tool_versions", lambda: {
-        "ffprobe": {"path": None, "version": None, "ok": False},
-        "ffmpeg": {"path": None, "version": None, "ok": False},
-        "tsp": {"path": None, "version": None, "ok": False},
-        "gstreamer_runtime": {"path": None, "present": False},
-    })
+    monkeypatch.setattr(
+        verify,
+        "tool_versions",
+        lambda: {
+            "ffprobe": {"path": None, "version": None, "ok": False},
+            "ffmpeg": {"path": None, "version": None, "ok": False},
+            "tsp": {"path": None, "version": None, "ok": False},
+            "gstreamer_runtime": {"path": None, "present": False},
+        },
+    )
 
     report = verify.verify_all(tmp_path, dwell_seconds=0.0)
 
@@ -783,7 +865,11 @@ def test_freshness_fails_when_playlist_frozen_and_mtimes_unchanged(tmp_path: Pat
     current_mtimes = dict.fromkeys(names, 1000.0)
 
     freshness = verify.evaluate_freshness(
-        first, current, first_mtimes=first_mtimes, current_mtimes=current_mtimes, channel_dir=channel
+        first,
+        current,
+        first_mtimes=first_mtimes,
+        current_mtimes=current_mtimes,
+        channel_dir=channel,
     )
 
     assert freshness["status"] == verify.Verdict.FAIL
@@ -802,7 +888,11 @@ def test_freshness_passes_when_segment_mtime_advances(tmp_path: Path) -> None:
     current_mtimes = dict.fromkeys(names, 2000.0)
 
     freshness = verify.evaluate_freshness(
-        playlist, playlist, first_mtimes=first_mtimes, current_mtimes=current_mtimes, channel_dir=channel
+        playlist,
+        playlist,
+        first_mtimes=first_mtimes,
+        current_mtimes=current_mtimes,
+        channel_dir=channel,
     )
 
     assert freshness["status"] == verify.Verdict.PASS
@@ -836,6 +926,7 @@ def test_stale_channel_fails_even_with_valid_segments(tmp_path: Path) -> None:
 
     assert result["status"] == verify.Verdict.FAIL
     assert result["freshness"]["status"] == verify.Verdict.FAIL
+
 
 def test_silence_floor_is_the_deciding_signal_when_configured_target_is_loose(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -919,12 +1010,21 @@ def test_segment_deleted_after_capture_does_not_false_pass(
     monkeypatch.setattr(verify, "tsduck_analyze", tsp_analyze)
     monkeypatch.setattr(verify, "extract_first_pcr", lambda *a, **k: 5_000_000_000)
     monkeypatch.setattr(
-        verify, "measure_window_audio", lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"}
+        verify,
+        "measure_window_audio",
+        lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"},
     )
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"}
+    )
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
 
     # Every analyzed path must be a PRIVATE verifier snapshot under a
@@ -957,17 +1057,29 @@ def test_snapshot_hash_matches_live_source_hash(
     monkeypatch.setattr(verify, "tsduck_analyze", _stub_tsp_ok)
     monkeypatch.setattr(verify, "extract_first_pcr", lambda *a, **k: 5_000_000_000)
     monkeypatch.setattr(
-        verify, "measure_window_audio", lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"}
+        verify,
+        "measure_window_audio",
+        lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"},
     )
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"}
+    )
 
     result = verify.verify_channel(
-        "public", root, ffprobe=Path("ffprobe"), ffmpeg=Path("ffmpeg"), tsp=Path("tsp"), max_segments=3
+        "public",
+        root,
+        ffprobe=Path("ffprobe"),
+        ffmpeg=Path("ffmpeg"),
+        tsp=Path("tsp"),
+        max_segments=3,
     )
     for rec in result["segment_identity"]:
         assert rec.get("snapshot_sha256") == live_hashes[rec["segment"]]
 
-def test_loudness_short_window_is_unverified_not_pass(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+
+def test_loudness_short_window_is_unverified_not_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """An 8s window is NOT release-grade: measured LUFS reported, status
     UNVERIFIED -- never PASS -- while target/tolerance are unchanged."""
     seg = tmp_path / "seg000000001.ts"
@@ -975,7 +1087,12 @@ def test_loudness_short_window_is_unverified_not_pass(monkeypatch: pytest.Monkey
     monkeypatch.setattr(
         verify,
         "_run",
-        lambda *a, **k: {"ok": True, "returncode": 0, "stdout": "", "stderr": _LOUDNESS_STDERR_CLEAN},
+        lambda *a, **k: {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": _LOUDNESS_STDERR_CLEAN,
+        },
     )
 
     result = verify.measure_window_audio(
@@ -988,14 +1105,21 @@ def test_loudness_short_window_is_unverified_not_pass(monkeypatch: pytest.Monkey
     assert result["status"] != verify.Verdict.PASS
 
 
-def test_loudness_long_window_within_target_passes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_loudness_long_window_within_target_passes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """A 120s-or-longer window at target IS release-grade PASS (positive control)."""
     seg = tmp_path / "seg000000001.ts"
     seg.write_bytes(b"\x47" * 100)
     monkeypatch.setattr(
         verify,
         "_run",
-        lambda *a, **k: {"ok": True, "returncode": 0, "stdout": "", "stderr": _LOUDNESS_STDERR_CLEAN},
+        lambda *a, **k: {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": _LOUDNESS_STDERR_CLEAN,
+        },
     )
 
     result = verify.measure_window_audio(
@@ -1006,14 +1130,21 @@ def test_loudness_long_window_within_target_passes(monkeypatch: pytest.MonkeyPat
     assert result["status"] == verify.Verdict.PASS
 
 
-def test_loudness_silent_short_window_still_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_loudness_silent_short_window_still_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """Silence is FAIL regardless of window length (never softened to UNVERIFIED)."""
     seg = tmp_path / "seg000000001.ts"
     seg.write_bytes(b"\x47" * 100)
     monkeypatch.setattr(
         verify,
         "_run",
-        lambda *a, **k: {"ok": True, "returncode": 0, "stdout": "", "stderr": _LOUDNESS_STDERR_SILENT},
+        lambda *a, **k: {
+            "ok": True,
+            "returncode": 0,
+            "stdout": "",
+            "stderr": _LOUDNESS_STDERR_SILENT,
+        },
     )
 
     result = verify.measure_window_audio(
@@ -1075,9 +1206,13 @@ def test_analysis_uses_snapshot_when_live_path_rotates_after_capture(
         monkeypatch.setattr(verify, "tsduck_analyze", _stub_tsp_ok)
         monkeypatch.setattr(verify, "extract_first_pcr", lambda *a, **k: 5_000_000_000)
         monkeypatch.setattr(
-            verify, "measure_window_audio", lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"}
+            verify,
+            "measure_window_audio",
+            lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"},
         )
-        monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"})
+        monkeypatch.setattr(
+            verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"}
+        )
 
         result = verify.verify_channel(
             "public",
@@ -1100,6 +1235,7 @@ def test_analysis_uses_snapshot_when_live_path_rotates_after_capture(
             assert entry.get("probe", {}).get("detail") != "segment listed but missing on disk"
     finally:
         import shutil as _sh
+
         _sh.rmtree(shot["scratch"], ignore_errors=True)
 
 
@@ -1141,7 +1277,9 @@ def test_old_rotated_references_outside_chosen_window_do_not_false_fail(
             verify, "extract_first_pcr", lambda _tsp, seg: 5_000_000_000 + 200_000 * _pts[seg.name]
         )
         monkeypatch.setattr(
-            verify, "measure_window_audio", lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"}
+            verify,
+            "measure_window_audio",
+            lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"},
         )
         monkeypatch.setattr(
             verify,
@@ -1257,7 +1395,6 @@ def test_snapshot_segment_fails_closed_on_torn_source(tmp_path: Path) -> None:
     assert snap is None and sha is None
 
 
-
 def test_safe_rmtree_refuses_temp_root_and_foreign_prefixed_dir() -> None:
     """BLOCKER regression: ownership is proven, not guessed by name/prefix.
 
@@ -1309,7 +1446,9 @@ def test_safe_rmtree_deletes_verifier_owned_temp_dir(tmp_path: Path) -> None:
     assert not owned.exists()
 
 
-def test_verify_channel_cleans_its_own_scratch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_verify_channel_cleans_its_own_scratch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     """verify_channel must not leak its scratch, even with a presnapshot given."""
 
     root = tmp_path / "live-hls"
@@ -1324,12 +1463,17 @@ def test_verify_channel_cleans_its_own_scratch(monkeypatch: pytest.MonkeyPatch, 
     monkeypatch.setattr(verify, "tsduck_analyze", _stub_tsp_ok)
     monkeypatch.setattr(verify, "extract_first_pcr", lambda *a, **k: 5_000_000_000)
     monkeypatch.setattr(
-        verify, "measure_window_audio", lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"}
+        verify,
+        "measure_window_audio",
+        lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"},
     )
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"}
+    )
 
     # Count verifier scratch dirs before/after verify_channel.
     import tempfile as _tf
+
     base = Path(_tf.gettempdir())
     before = {p.name for p in base.glob("civiccast-verify-*") if p.is_dir()}
     try:
@@ -1344,6 +1488,7 @@ def test_verify_channel_cleans_its_own_scratch(monkeypatch: pytest.MonkeyPatch, 
         )
     finally:
         import shutil as _sh
+
         _sh.rmtree(shot["scratch"], ignore_errors=True)
     after = {p.name for p in base.glob("civiccast-verify-*") if p.is_dir()}
     leaked = after - before
@@ -1364,6 +1509,7 @@ def test_snapshot_channels_no_records_does_not_orphan_owned_scratch(tmp_path: Pa
         assert shot["scratch"].is_dir()
     finally:
         import shutil as _sh
+
         _sh.rmtree(shot["scratch"], ignore_errors=True)
 
 
@@ -1378,10 +1524,7 @@ def test_captured_identity_is_authoritative_not_overwritten_by_live(
     names = _write_playlist(ch / "playlist.m3u8", media_sequence=100, count=3)
     _touch_segments(ch, names)
     shot = verify.snapshot_channels(root, ("public",), max_segments=3)
-    captured = {
-        r["segment"]: r["snapshot_sha256"]
-        for r in shot["channels"]["public"]["records"]
-    }
+    captured = {r["segment"]: r["snapshot_sha256"] for r in shot["channels"]["public"]["records"]}
     # Rotate/overwrite the live files with DIFFERENT bytes.
     for n in names:
         (ch / n).write_bytes(b"\x47" * 8)
@@ -1391,9 +1534,13 @@ def test_captured_identity_is_authoritative_not_overwritten_by_live(
     monkeypatch.setattr(verify, "tsduck_analyze", _stub_tsp_ok)
     monkeypatch.setattr(verify, "extract_first_pcr", lambda *a, **k: 5_000_000_000)
     monkeypatch.setattr(
-        verify, "measure_window_audio", lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"}
+        verify,
+        "measure_window_audio",
+        lambda *a, **k: {"status": verify.Verdict.PASS, "detail": "ok"},
     )
-    monkeypatch.setattr(verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"})
+    monkeypatch.setattr(
+        verify, "caption_decoder_available", lambda: {"available": False, "detail": "n/a"}
+    )
 
     result = verify.verify_channel(
         "public",
@@ -1411,6 +1558,7 @@ def test_captured_identity_is_authoritative_not_overwritten_by_live(
             assert rec.get("sha256") in (None, captured[rec["segment"]])
     finally:
         import shutil as _sh
+
         _sh.rmtree(shot["scratch"], ignore_errors=True)
 
 
@@ -1462,9 +1610,7 @@ def test_verify_channel_rejects_bad_max_segments(tmp_path: Path) -> None:
     names = _write_playlist(ch / "playlist.m3u8", media_sequence=1, count=3)
     _touch_segments(ch, names)
     with pytest.raises(ValueError):
-        verify.verify_channel(
-            "public", root, ffprobe=None, ffmpeg=None, tsp=None, max_segments=0
-        )
+        verify.verify_channel("public", root, ffprobe=None, ffmpeg=None, tsp=None, max_segments=0)
 
 
 def test_validate_channel_ids_rejects_traversal() -> None:
@@ -1485,7 +1631,9 @@ def test_snapshot_channels_rejects_traversal_channel_id(tmp_path: Path) -> None:
         verify.snapshot_channels(root, ("public", "../outside"), max_segments=3)
 
 
-def test_verify_all_rejects_bad_max_segments_and_channel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_verify_all_rejects_bad_max_segments_and_channel(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = tmp_path / "live-hls"
     (root / "public").mkdir(parents=True)
     with pytest.raises(ValueError):

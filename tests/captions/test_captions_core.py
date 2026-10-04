@@ -83,9 +83,11 @@ class TestModels:
         stabilizer = CaptionStabilizer(live=True)
         words = [("motion", 6, 7), ("carries", 8, 9)]
         first = _word_window(0, words).model_copy(
-            update={"word_breaks": [1] if boundary_on != "current" else []})
+            update={"word_breaks": [1] if boundary_on != "current" else []}
+        )
         second = _word_window(5, words).model_copy(
-            update={"word_breaks": [1] if boundary_on != "previous" else []})
+            update={"word_breaks": [1] if boundary_on != "previous" else []}
+        )
         assert stabilizer.observe(first) == []
         assert stabilizer.observe(second) == []
         assert stabilizer.committed() == []
@@ -93,21 +95,25 @@ class TestModels:
     @pytest.mark.parametrize("boundary_on", ["previous", "current", "both"])
     def test_quality_gap_keeps_confirmed_phrase_envelopes_separate(self, boundary_on) -> None:
         stabilizer = CaptionStabilizer(live=True)
-        words = [("motion", 6, 6.5), ("carries", 6.5, 7),
-                 ("next", 8, 8.5), ("item", 8.5, 9)]
+        words = [("motion", 6, 6.5), ("carries", 6.5, 7), ("next", 8, 8.5), ("item", 8.5, 9)]
         first = _word_window(0, words).model_copy(
-            update={"word_breaks": [2] if boundary_on != "current" else []})
+            update={"word_breaks": [2] if boundary_on != "current" else []}
+        )
         second = _word_window(5, words).model_copy(
-            update={"word_breaks": [2] if boundary_on != "previous" else []})
+            update={"word_breaks": [2] if boundary_on != "previous" else []}
+        )
         assert stabilizer.observe(first) == []
         cues = stabilizer.observe(second)
         assert [(c.text, c.start_seconds, c.end_seconds) for c in cues] == [
-            ("motion carries", 6, 7), ("next item", 8, 9)]
+            ("motion carries", 6, 7),
+            ("next item", 8, 9),
+        ]
 
     def test_unconfirmed_quality_gap_is_not_joined_in_review(self) -> None:
         stabilizer = CaptionStabilizer(live=True)
         first = _word_window(0, [("motion", 6, 7), ("carries", 8, 9)]).model_copy(
-            update={"word_breaks": [1]})
+            update={"word_breaks": [1]}
+        )
         assert stabilizer.observe(first) == []
         assert stabilizer.flush() == []
         assert [cue.text for cue in stabilizer.expired_unconfirmed()] == ["motion", "carries"]
@@ -115,12 +121,13 @@ class TestModels:
     @pytest.mark.parametrize("expire", [False, True])
     def test_quality_gap_survives_committed_word_filtering_for_review(self, expire) -> None:
         stabilizer = CaptionStabilizer(live=True)
-        words = [("first", 6, 6.5), ("next", 8, 8.3),
-                 ("item", 8.3, 8.6), ("tail", 8.6, 9)]
-        assert stabilizer.observe(_word_window(0, words).model_copy(
-            update={"word_breaks": [1]})) == []
+        words = [("first", 6, 6.5), ("next", 8, 8.3), ("item", 8.3, 8.6), ("tail", 8.6, 9)]
+        assert (
+            stabilizer.observe(_word_window(0, words).model_copy(update={"word_breaks": [1]})) == []
+        )
         assert [cue.text for cue in stabilizer.observe(_word_window(5, words[1:3]))] == [
-            "next item"]
+            "next item"
+        ]
         if expire:
             assert stabilizer.observe(_word_window(10, [("other", 11, 12)])) == []
         else:
@@ -658,6 +665,7 @@ class TestRuntimeBoundary:
         gpu = FasterWhisperRuntime(live=True, device="cuda", compute_type="float16")
 
         assert gpu.beam_size == 5
+
     def test_batch_cpu_threads_raises_on_unparseable_env_value(
         self,
         monkeypatch: pytest.MonkeyPatch,

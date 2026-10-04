@@ -48,15 +48,35 @@ store = PostgresSummaryStore(sessions)
 store.create_summary(_summary())
 jobs = PostgresSummaryGenerationJobStore(sessions)
 for job_id, meeting_id, summary_id, text in (
-    ("original-generation", "meeting-1", "summary-1", "The original caption says: two voted yes and one voted no."),
-    ("newer-other-summary", "meeting-1", "different-summary", "Different generation words must not appear."),
+    (
+        "original-generation",
+        "meeting-1",
+        "summary-1",
+        "The original caption says: two voted yes and one voted no.",
+    ),
+    (
+        "newer-other-summary",
+        "meeting-1",
+        "different-summary",
+        "Different generation words must not appear.",
+    ),
     ("other-meeting", "another-meeting", "summary-1", "Wrong meeting words must not appear."),
 ):
-    jobs.enqueue(SummaryGenerationJobRecord(
-        job_id=job_id, meeting_id=meeting_id, summary_id=summary_id, state="complete",
-        cues=[CaptionCue(cue_id="cue-1", start_seconds=18, end_seconds=24, text=text, confidence=1)],
-        created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
-    ))
+    jobs.enqueue(
+        SummaryGenerationJobRecord(
+            job_id=job_id,
+            meeting_id=meeting_id,
+            summary_id=summary_id,
+            state="complete",
+            cues=[
+                CaptionCue(
+                    cue_id="cue-1", start_seconds=18, end_seconds=24, text=text, confidence=1
+                )
+            ],
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+    )
 records = InMemoryRecordStore()
 app = FastAPI()
 app.middleware("http")(staff_auth_middleware)

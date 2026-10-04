@@ -225,9 +225,8 @@ class CaptionStabilizer:
             previous.break_before = break_before
             if not previous.committed and len(previous.votes) >= self.stable_windows:
                 previous.committed = True
-                separated = (
-                    any(p.break_before for p in old[last_confirmed_i + 1 : i + 1])
-                    or any(last_confirmed_j < boundary <= j for boundary in breaks)
+                separated = any(p.break_before for p in old[last_confirmed_i + 1 : i + 1]) or any(
+                    last_confirmed_j < boundary <= j for boundary in breaks
                 )
                 confirmed.append((j, common, separated))
                 last_confirmed_i, last_confirmed_j = i, j
@@ -269,7 +268,9 @@ class CaptionStabilizer:
                     "word_breaks": [],
                 }
             )
-            cues.append(self._commit(self._new_pending(common_phrase, stable_count=self.stable_windows)))
+            cues.append(
+                self._commit(self._new_pending(common_phrase, stable_count=self.stable_windows))
+            )
         return cues
 
     def _review_words(self, words: list[_PendingWord], hypothesis: CaptionHypothesis) -> None:

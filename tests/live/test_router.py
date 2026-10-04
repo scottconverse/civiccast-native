@@ -310,7 +310,9 @@ def _all_pass_inputs(
 
 
 class TestSessionRecovery:
-    def test_list_keeps_ending_but_excludes_completed_recordings(self, client, monkeypatch, session_factory):
+    def test_list_keeps_ending_but_excludes_completed_recordings(
+        self, client, monkeypatch, session_factory
+    ):
         from civiccast.auth.tokens import generate_configured_staff_token
 
         token = generate_configured_staff_token()
@@ -319,12 +321,18 @@ class TestSessionRecovery:
         _seed_session(client, live_session_id="finished", channel_id="government")
         _seed_session(client, live_session_id="finalizing", channel_id="government")
         with session_factory() as session:
-            session.query(civiccast.live.models.LiveSession).filter_by(live_session_id="finished").one().state = "recorded"
-            session.query(civiccast.live.models.LiveSession).filter_by(live_session_id="finalizing").one().state = "ending"
+            session.query(civiccast.live.models.LiveSession).filter_by(
+                live_session_id="finished"
+            ).one().state = "recorded"
+            session.query(civiccast.live.models.LiveSession).filter_by(
+                live_session_id="finalizing"
+            ).one().state = "ending"
             session.commit()
         response = client.get("/api/staff/live/sessions?channel_id=government")
         assert response.status_code == 200
-        assert [(row["live_session_id"], row["state"]) for row in response.json()] == [("finalizing", "ending")]
+        assert [(row["live_session_id"], row["state"]) for row in response.json()] == [
+            ("finalizing", "ending")
+        ]
 
     def test_list_active_sessions_is_channel_scoped_and_read_only(self, client, monkeypatch):
         from civiccast.auth.tokens import generate_configured_staff_token

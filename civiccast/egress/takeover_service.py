@@ -193,7 +193,9 @@ class TakeoverService:
             # Relay/no-opinion is never evidence about a configured source.
             # A concurrent fresh check may legitimately be reused here.
             if not verdict.ok or not verdict.source_found:
-                raise TakeoverNotReadyError(verdict.reason if not verdict.ok else _SOURCE_UNAVAILABLE)
+                raise TakeoverNotReadyError(
+                    verdict.reason if not verdict.ok else _SOURCE_UNAVAILABLE
+                )
             verified_path = selected.model_copy(update={"health_state": RELAY_HEALTH_READY})
             ingest_plan = ingest_plan.model_copy(
                 update={
@@ -236,7 +238,9 @@ class TakeoverService:
                 and selected.provider == "operator-configured"
                 and not verdict.source_found
             ):
-                raise TakeoverNotReadyError(verdict.reason if not verdict.ok else _SOURCE_UNAVAILABLE)
+                raise TakeoverNotReadyError(
+                    verdict.reason if not verdict.ok else _SOURCE_UNAVAILABLE
+                )
             if verdict.secret_ref:
                 # A handle, never a secret: this plan is serialized into the
                 # durable takeover audit row and into the engine's graph file.

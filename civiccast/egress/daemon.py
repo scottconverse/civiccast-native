@@ -6055,8 +6055,7 @@ class EgressDaemon:
         the caller still has in hand (``plan_end_at``; ``None`` when the reload
         carried no recorded horizon). See ``_poll_reload_stall_watchdog``."""
         continuing_reissue = (
-            channel_id in self._pending_reloads
-            and self._reload_stall_rungs.get(channel_id, 0) > 0
+            channel_id in self._pending_reloads and self._reload_stall_rungs.get(channel_id, 0) > 0
         )
         self._pending_reloads[channel_id] = (
             state.state if state else None,

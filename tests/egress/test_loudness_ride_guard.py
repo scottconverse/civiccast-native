@@ -707,10 +707,14 @@ def test_peak_scan_interrupts_owned_blocked_child(tmp_path, monkeypatch, blocked
 
     def scan():
         try:
-            outcomes.append(lr.scan_peak_dbfs(
-                tmp_path / "artifact", params=lr.RideParams(target_lufs=-16),
-                cancel_event=cancel, timeout_s=0.5 if stop_reason == "deadline" else 10,
-            ))
+            outcomes.append(
+                lr.scan_peak_dbfs(
+                    tmp_path / "artifact",
+                    params=lr.RideParams(target_lufs=-16),
+                    cancel_event=cancel,
+                    timeout_s=0.5 if stop_reason == "deadline" else 10,
+                )
+            )
         except BaseException as exc:
             outcomes.append(exc)
         finally:
@@ -727,7 +731,9 @@ def test_peak_scan_interrupts_owned_blocked_child(tmp_path, monkeypatch, blocked
             cancel.set()
         assert done.wait(2), f"{stop_reason} cannot interrupt peak scan blocked {blocked_at}"
         thread.join(1)
-        expected = lr.LoudnessRideCancelledError if stop_reason == "cancel" else lr.LoudnessRideError
+        expected = (
+            lr.LoudnessRideCancelledError if stop_reason == "cancel" else lr.LoudnessRideError
+        )
         assert isinstance(outcomes[0], expected), outcomes
         if stop_reason == "deadline":
             assert "timed out" in str(outcomes[0])
@@ -762,15 +768,23 @@ def test_peak_scan_completed_decode_preserves_peak_and_errors(monkeypatch, tmp_p
         return child
 
     monkeypatch.setattr(lr.subprocess, "Popen", spawn)
-    monkeypatch.setattr(lr, "time", SimpleNamespace(
-        perf_counter=lambda: 1000.0 if children and children[0].poll() is not None else 0.0,
-    ))
+    monkeypatch.setattr(
+        lr,
+        "time",
+        SimpleNamespace(
+            perf_counter=lambda: 1000.0 if children and children[0].poll() is not None else 0.0,
+        ),
+    )
     if exit_code:
         with pytest.raises(lr.LoudnessRideError, match="decode exited 7"):
-            lr.scan_peak_dbfs(tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), timeout_s=1)
+            lr.scan_peak_dbfs(
+                tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), timeout_s=1
+            )
     else:
         assert lr.scan_peak_dbfs(
-            tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), timeout_s=1,
+            tmp_path / "artifact",
+            params=lr.RideParams(target_lufs=-16),
+            timeout_s=1,
         ) == pytest.approx(-6.020599913279624)
     assert children[0].returncode == exit_code
 
@@ -780,7 +794,9 @@ def test_peak_scan_pipe_oserror_preserves_owned_stop_only(monkeypatch, tmp_path,
     from types import SimpleNamespace
 
     monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
-    monkeypatch.setattr(lr, "build_peak_scan_args", lambda **kwargs: ["-c", "import time; time.sleep(30)"])
+    monkeypatch.setattr(
+        lr, "build_peak_scan_args", lambda **kwargs: ["-c", "import time; time.sleep(30)"]
+    )
     cancel = threading.Event()
     popen = subprocess.Popen
     children = []
@@ -802,7 +818,9 @@ def test_peak_scan_pipe_oserror_preserves_owned_stop_only(monkeypatch, tmp_path,
     monkeypatch.setattr(lr.subprocess, "Popen", spawn)
     expected = lr.LoudnessRideCancelledError if owned_stop else OSError
     with pytest.raises(expected):
-        lr.scan_peak_dbfs(tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), cancel_event=cancel)
+        lr.scan_peak_dbfs(
+            tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), cancel_event=cancel
+        )
     assert children[0].poll() is not None
 
 

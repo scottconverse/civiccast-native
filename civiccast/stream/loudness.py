@@ -141,7 +141,8 @@ def check_loudness(
         # Explicit probe budgets use the wrapper's polling/owned-cleanup mode
         # even for a warm without an external cancellation owner.
         result = run_ffmpeg(
-            args, cancel_event=cancel_event if cancel_event is not None else threading.Event(),
+            args,
+            cancel_event=cancel_event if cancel_event is not None else threading.Event(),
             timeout=timeout_seconds,
         )
     elif cancel_event is None:

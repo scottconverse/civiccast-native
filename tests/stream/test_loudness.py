@@ -28,8 +28,11 @@ def test_explicit_probe_timeout_uses_owned_wrapper_mode(tmp_path, monkeypatch, c
     monkeypatch.setattr(loudness_module, "run_ffmpeg", run)
     cancel = threading.Event() if caller_cancel else None
     result = loudness_module.check_streaming_loudness(
-        media_path=media, target_lufs=-16, tolerance_lufs=1,
-        timeout_seconds=0.3, cancel_event=cancel,
+        media_path=media,
+        target_lufs=-16,
+        tolerance_lufs=1,
+        timeout_seconds=0.3,
+        cancel_event=cancel,
     )
     assert result.status == "ok"
     assert captured["timeout"] == 0.3

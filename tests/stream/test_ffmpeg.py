@@ -565,9 +565,8 @@ class TestRunFfmpeg:
         ):
             run_ffmpeg(["-version"], lower_priority=True)
 
-        expected = (
-            getattr(ffmpeg_module.subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0)
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        expected = getattr(ffmpeg_module.subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0) | getattr(
+            subprocess, "CREATE_NO_WINDOW", 0
         )
         assert spawn.call_args.kwargs["creationflags"] == expected
 

@@ -603,9 +603,7 @@ def _mux_tail_cutoff_probe(
         state = pending.get("outgoing_end", {}).get(pad)
         buffer = info.get_buffer()
         if state is not None and buffer is not None:
-            computed = GstPlayoutEngine._buffer_end_running_time(
-                pad, buffer, state["segment"]
-            )
+            computed = GstPlayoutEngine._buffer_end_running_time(pad, buffer, state["segment"])
             if computed is not None:
                 seen = pending.setdefault("mux_tail_seen", {})
                 if computed[0] > seen.get(pad.get_name(), -1):
@@ -3461,7 +3459,9 @@ class GstPlayoutEngine:
         concat_pads: list[Any] = []
         if concat is not None:
             with contextlib.suppress(Exception):
-                concat_pads = sorted(getattr(concat, "sinkpads", None) or [], key=self._u59_pad_index)
+                concat_pads = sorted(
+                    getattr(concat, "sinkpads", None) or [], key=self._u59_pad_index
+                )
         for index, piece in enumerate(pieces):
             if index >= len(concat_pads):
                 break
@@ -3751,9 +3751,7 @@ class GstPlayoutEngine:
                 if piece_span is not None:
                     completed += piece_span
             piece_field = f"piece={active_index + 1}/{len(pieces)}"
-            pos_field = (
-                f"pos={_DIAGNOSTIC_NONE}" if span is None else f"pos={span:.3f}s"
-            )
+            pos_field = f"pos={_DIAGNOSTIC_NONE}" if span is None else f"pos={span:.3f}s"
             leg_rt_field = (
                 f"leg_rt={_DIAGNOSTIC_NONE}"
                 if span is None and completed <= 0.0
@@ -3810,8 +3808,9 @@ class GstPlayoutEngine:
             video_rate, audio_rate = rates
             leg = self._u59_airing_leg()
             video_nominal, audio_nominal = self._u59_nominal_rates(leg)
-            self._u59_accumulate_leg_lag(now, leg, video_rate, audio_rate,
-                                        video_nominal, audio_nominal, interval)
+            self._u59_accumulate_leg_lag(
+                now, leg, video_rate, audio_rate, video_nominal, audio_nominal, interval
+            )
             growth = self._u59_lag_growth(now)
             if growth is None or growth < _U59_LAG_BOUND_S:
                 self._u59_lag_streak = 0
@@ -3866,9 +3865,7 @@ class GstPlayoutEngine:
             self._u59_lag_in_episode = False
         video_seconds = video_rate * interval / video_nominal
         audio_seconds = audio_rate * interval / audio_nominal
-        self._u59_lag_total = float(self._u59_lag_total or 0.0) + (
-            audio_seconds - video_seconds
-        )
+        self._u59_lag_total = float(self._u59_lag_total or 0.0) + (audio_seconds - video_seconds)
         samples = [*self._u59_lag_samples, (now, self._u59_lag_total)]
         self._u59_lag_samples = tuple(self._u59_prune_lag_samples(samples, now))
 
@@ -3885,7 +3882,7 @@ class GstPlayoutEngine:
         cutoff = now - _U59_LAG_WINDOW_S
         inside = [sample for sample in samples if sample[0] > cutoff]
         before = [sample for sample in samples if sample[0] <= cutoff]
-        return ([before[-1]] if before else []) + inside[-(_U59_LAG_SAMPLES - 1):]
+        return ([before[-1]] if before else []) + inside[-(_U59_LAG_SAMPLES - 1) :]
 
     def _u59_lag_growth(self, now: float) -> float | None:
         """The lag's growth across the window ending now, or ``None`` while the
@@ -3937,19 +3934,13 @@ class GstPlayoutEngine:
         witness; live 2026-09-28 06:24 is the case where the lag witness fired and
         the rate one did not."""
         lag_t = getattr(self, "_u59_lag_fired_t", None)
-        if (
-            lag_t is not None
-            and 0.0 <= moment - float(lag_t) <= _U59_RATE_RECENT_FIRE_S
-        ):
+        if lag_t is not None and 0.0 <= moment - float(lag_t) <= _U59_RATE_RECENT_FIRE_S:
             return (
                 "video delivery fell short at the end of the leg "
                 f"(leg delivery lag fired {moment - float(lag_t):.1f}s ago)"
             )
         rate_t = getattr(self, "_u59_fired_t", None)
-        if (
-            rate_t is not None
-            and 0.0 <= moment - float(rate_t) <= _U59_RATE_RECENT_FIRE_S
-        ):
+        if rate_t is not None and 0.0 <= moment - float(rate_t) <= _U59_RATE_RECENT_FIRE_S:
             return (
                 "video delivery fell short at the end of the leg "
                 f"(leg chain-in video below floor {moment - float(rate_t):.1f}s ago)"
@@ -6515,11 +6506,7 @@ class GstPlayoutEngine:
             return
         offsets: list[str] = []
         for index, pad in enumerate(pending.get("new_src_pads") or ()):
-            label = (
-                _NEW_LEG_STREAM_LABELS[index]
-                if index < len(_NEW_LEG_STREAM_LABELS)
-                else None
-            )
+            label = _NEW_LEG_STREAM_LABELS[index] if index < len(_NEW_LEG_STREAM_LABELS) else None
             if label is None or not hasattr(pad, "set_offset"):
                 continue
             with contextlib.suppress(Exception):
@@ -7156,9 +7143,7 @@ class GstPlayoutEngine:
                 continue
             old_pad = pending.get(f"old_{stream}_pad")
             seed = outgoing.get(old_pad) if old_pad is not None else None
-            state = pending["outgoing_end"].setdefault(
-                pad, {"end": None, "segment": None}
-            )
+            state = pending["outgoing_end"].setdefault(pad, {"end": None, "segment": None})
             if state.get("segment") is None and seed is not None:
                 state["segment"] = seed.get("segment")
             if seed is not None and seed.get("end") is not None:
@@ -7167,9 +7152,7 @@ class GstPlayoutEngine:
                 # come off until an arrival reaches it.
                 pending.setdefault("mux_tail_target", {})[pad_name] = int(seed["end"])
             try:
-                probe_id = pad.add_probe(
-                    Gst.PadProbeType.BUFFER, _mux_tail_cutoff_probe, pending
-                )
+                probe_id = pad.add_probe(Gst.PadProbeType.BUFFER, _mux_tail_cutoff_probe, pending)
             except Exception as exc:
                 print(
                     f"WARN: mux tail cutoff not installed on {pad_name} "
@@ -7269,8 +7252,7 @@ class GstPlayoutEngine:
         seen = pending.get("mux_tail_seen") or {}
         reach = _MUX_TAIL_ARRIVED_EPSILON_NS
         if not all(
-            seen.get(pad_name, -1) >= int(target) - reach
-            for pad_name, target in targets.items()
+            seen.get(pad_name, -1) >= int(target) - reach for pad_name, target in targets.items()
         ):
             return False
         last = pending.get("mux_last_arrival_t")

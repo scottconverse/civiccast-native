@@ -114,6 +114,7 @@ TS_CLOCK_HZ: Final[int] = 90_000
 
 REQUIRED_CHANNELS: Final[tuple[str, ...]] = ("public", "government", "education")
 
+
 def validate_max_segments(max_segments: int) -> int:
     """Return ``max_segments`` iff it is an int in the explicit safe range.
 
@@ -152,6 +153,7 @@ def validate_channel_ids(channel_ids: tuple[str, ...]) -> tuple[str, ...]:
         ):
             raise ValueError(f"unsafe channel id rejected: {cid!r}")
     return channel_ids
+
 
 #: Bounded decode/measure budget: number of newest listed segments to analyze.
 DEFAULT_MAX_SEGMENTS: Final[int] = 4
@@ -222,6 +224,7 @@ def _make_scratch_dir() -> Path:
         _OWNED_SCRATCH.add(str(resolved))
         return created
     raise RuntimeError("no writable scratch directory available")
+
 
 def _safe_rmtree(path: Path) -> None:
     """rmtree ONLY a scratch dir THIS process created (exact ownership).
@@ -347,12 +350,15 @@ def _run(cmd: list[str], *, timeout: float = ANALYZER_TIMEOUT_SECONDS) -> dict[s
         "stderr": completed.stderr or "",
     }
 
+
 # --- Tool discovery (installed runtime first, then PATH) --------------------
 
 
 def _civiccast_native_root() -> Path | None:
     candidates = [
-        Path(os.environ["CIVICCAST_NATIVE_ROOT"]) if os.environ.get("CIVICCAST_NATIVE_ROOT") else None,
+        Path(os.environ["CIVICCAST_NATIVE_ROOT"])
+        if os.environ.get("CIVICCAST_NATIVE_ROOT")
+        else None,
         Path(r"C:\Program Files\CivicCast (Native)"),
     ]
     for candidate in candidates:
@@ -532,7 +538,10 @@ def _decode_captions(segment: Path) -> dict[str, Any]:
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"status": Verdict.UNVERIFIED, "detail": f"subcc decode process error: {type(exc).__name__}"}
+        return {
+            "status": Verdict.UNVERIFIED,
+            "detail": f"subcc decode process error: {type(exc).__name__}",
+        }
 
     srt_text = completed.stdout or ""
     # Count SRT cues without retaining their text. A cue block is a payload line
@@ -590,13 +599,17 @@ class Playlist:
 
 def parse_playlist(path: Path) -> Playlist:
     if not path.is_file():
-        return Playlist(path=path, media_sequence=None, target_duration=None, parse_error="playlist missing")
+        return Playlist(
+            path=path, media_sequence=None, target_duration=None, parse_error="playlist missing"
+        )
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError as exc:
         return Playlist(path=path, media_sequence=None, target_duration=None, parse_error=repr(exc))
     if not lines or lines[0].strip() != "#EXTM3U":
-        return Playlist(path=path, media_sequence=None, target_duration=None, parse_error="missing #EXTM3U")
+        return Playlist(
+            path=path, media_sequence=None, target_duration=None, parse_error="missing #EXTM3U"
+        )
     media_sequence: int | None = None
     target_duration: float | None = None
     segments: list[str] = []
@@ -664,7 +677,10 @@ def probe_segment(ffprobe: Path, segment: Path) -> dict[str, Any]:
         ]
     )
     if not result["ok"]:
-        return {"status": Verdict.FAIL, "detail": f"ffprobe failed: {result['error'] or result['stderr'][-300:]}"}
+        return {
+            "status": Verdict.FAIL,
+            "detail": f"ffprobe failed: {result['error'] or result['stderr'][-300:]}",
+        }
     try:
         payload = json.loads(result["stdout"])
     except json.JSONDecodeError as exc:
@@ -734,7 +750,10 @@ def measure_audio(ffmpeg: Path, segment: Path) -> dict[str, Any]:
         ]
     )
     if result["returncode"] != 0:
-        return {"status": Verdict.FAIL, "detail": f"ebur128 analysis failed: {result['stderr'][-300:]}"}
+        return {
+            "status": Verdict.FAIL,
+            "detail": f"ebur128 analysis failed: {result['stderr'][-300:]}",
+        }
     integrated = _parse_last_float(r"\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS\b", result["stderr"])
     lra = _parse_last_float(r"\bLRA:\s*(-?\d+(?:\.\d+)?)\s+LU\b", result["stderr"])
     true_peak = _parse_last_float(r"\bPeak:\s*(-?\d+(?:\.\d+)?)\s+dBFS\b", result["stderr"])
@@ -764,6 +783,7 @@ def measure_audio(ffmpeg: Path, segment: Path) -> dict[str, Any]:
         "tolerance_lufs": OTT_LOUDNESS_TOLERANCE_LUFS,
         "detail": detail,
     }
+
 
 def measure_window_audio(
     ffmpeg: Path,
@@ -808,7 +828,10 @@ def measure_window_audio(
         ]
     )
     if result["returncode"] != 0:
-        return {"status": Verdict.FAIL, "detail": f"ebur128 window analysis failed: {result['stderr'][-300:]}"}
+        return {
+            "status": Verdict.FAIL,
+            "detail": f"ebur128 window analysis failed: {result['stderr'][-300:]}",
+        }
     integrated = _parse_last_float(r"\bI:\s*(-?\d+(?:\.\d+)?)\s+LUFS\b", result["stderr"])
     lra = _parse_last_float(r"\bLRA:\s*(-?\d+(?:\.\d+)?)\s+LU\b", result["stderr"])
     true_peak = _parse_last_float(r"\bPeak:\s*(-?\d+(?:\.\d+)?)\s+dBFS\b", result["stderr"])
@@ -864,13 +887,17 @@ def measure_window_audio(
         "detail": detail,
     }
 
+
 def tsduck_analyze(tsp: Path, segment: Path) -> dict[str, Any]:
     """MPEG-TS sync/continuity/PAT-PMT/PCR evidence for one segment via TSDuck."""
 
     result = _run([str(tsp), "-I", "file", str(segment), "-P", "analyze", "--json", "-O", "drop"])
     raw = result["stdout"] or ""
     if not result["ok"]:
-        return {"status": Verdict.UNVERIFIED, "detail": f"tsp analyze exited {result['returncode']}: {result['stderr'][-300:]}"}
+        return {
+            "status": Verdict.UNVERIFIED,
+            "detail": f"tsp analyze exited {result['returncode']}: {result['stderr'][-300:]}",
+        }
     start = raw.find("{")
     end = raw.rfind("}")
     if start < 0 or end < 0:
@@ -883,7 +910,9 @@ def tsduck_analyze(tsp: Path, segment: Path) -> dict[str, Any]:
     ts = report.get("ts") or {}
     packets = ts.get("packets") or {}
     pid_rows = report.get("pids") or []
-    discontinuities = sum(int((row.get("packets") or {}).get("discontinuities", 0)) for row in pid_rows)
+    discontinuities = sum(
+        int((row.get("packets") or {}).get("discontinuities", 0)) for row in pid_rows
+    )
     invalid_syncs = int(packets.get("invalid-syncs", 0))
     transport_errors = int(packets.get("transport-errors", 0))
     pat_seen = any(int(row.get("id", -1)) == 0 for row in pid_rows)
@@ -894,9 +923,13 @@ def tsduck_analyze(tsp: Path, segment: Path) -> dict[str, Any]:
     if invalid_syncs != 0 or transport_errors != 0:
         problems.append(f"invalid-syncs={invalid_syncs}, transport-errors={transport_errors}")
     if discontinuities > CONTINUITY_TOLERANCE:
-        problems.append(f"{discontinuities} continuity discontinuities (tolerance {CONTINUITY_TOLERANCE})")
+        problems.append(
+            f"{discontinuities} continuity discontinuities (tolerance {CONTINUITY_TOLERANCE})"
+        )
     if not pat_seen or not pmt_seen:
-        problems.append(f"PAT {'seen' if pat_seen else 'missing'}, PMT {'seen' if pmt_seen else 'missing'}")
+        problems.append(
+            f"PAT {'seen' if pat_seen else 'missing'}, PMT {'seen' if pmt_seen else 'missing'}"
+        )
     if pcr_pids <= 0:
         problems.append("no PID carries PCR")
     return {
@@ -908,7 +941,9 @@ def tsduck_analyze(tsp: Path, segment: Path) -> dict[str, Any]:
         "pat_seen": pat_seen,
         "pmt_seen": pmt_seen,
         "pcr_pids": pcr_pids,
-        "detail": "; ".join(problems) if problems else "sync OK, zero discontinuities, PAT/PMT/PCR present",
+        "detail": "; ".join(problems)
+        if problems
+        else "sync OK, zero discontinuities, PAT/PMT/PCR present",
     }
 
 
@@ -991,8 +1026,6 @@ def evaluate_timestamp_continuity(per_segment: list[dict[str, Any]]) -> dict[str
     }
 
 
-
-
 def extract_first_pcr(tsp: Path, segment: Path) -> int | None:
     """First PCR (90 kHz) in a segment via TSDuck pcrextract CSV output.
 
@@ -1015,6 +1048,7 @@ def extract_first_pcr(tsp: Path, segment: Path) -> int | None:
         if len(parts) >= 6 and parts[3].upper() == "PCR":
             return _as_int(parts[5])
     return None
+
 
 # --- Channel verification --------------------------------------------------
 
@@ -1060,9 +1094,7 @@ def evaluate_freshness(
 
     first_seq = first.media_sequence
     now_seq = current.media_sequence
-    seq_advanced = (
-        first_seq is not None and now_seq is not None and now_seq > first_seq
-    )
+    seq_advanced = first_seq is not None and now_seq is not None and now_seq > first_seq
     evidence["sequence_advanced"] = seq_advanced
 
     mtime_advanced = None
@@ -1097,6 +1129,7 @@ def _segment_mtimes(channel_dir: Path, playlist: Playlist) -> dict[str, float]:
             except OSError:
                 continue
     return mtimes
+
 
 def snapshot_channels(
     hls_root: Path,
@@ -1192,6 +1225,7 @@ def _snapshot_one_channel(
         records.append(record)
     return {"playlist": playlist, "records": records}
 
+
 def verify_channel(
     channel_id: str,
     hls_root: Path,
@@ -1211,7 +1245,9 @@ def verify_channel(
     # front, before any expensive analysis) so a later channel cannot rotate out
     # of the live window. Fall back to a local snapshot for direct callers/tests.
     playlist = (
-        presnapshot["playlist"] if presnapshot is not None else parse_playlist(channel_dir / "playlist.m3u8")
+        presnapshot["playlist"]
+        if presnapshot is not None
+        else parse_playlist(channel_dir / "playlist.m3u8")
     )
     evidence: dict[str, Any] = {
         "channel_id": channel_id,
@@ -1357,7 +1393,11 @@ def _verify_channel_body(
         name = record["segment"]
         # Analyze the EARLY private snapshot, never the live path (race-prone).
         path = _analysis_path(record)
-        entry: dict[str, Any] = {"segment": name, "present": record["present"], "snapshot": bool(path)}
+        entry: dict[str, Any] = {
+            "segment": name,
+            "present": record["present"],
+            "snapshot": bool(path),
+        }
         if path is None or not path.is_file():
             entry["probe"] = {
                 "status": Verdict.FAIL,
@@ -1366,13 +1406,19 @@ def _verify_channel_body(
             analyzed.append(entry)
             continue
         entry["probe"] = (
-            probe_segment(ffprobe, path) if ffprobe else {"status": Verdict.UNVERIFIED, "detail": "ffprobe unavailable"}
+            probe_segment(ffprobe, path)
+            if ffprobe
+            else {"status": Verdict.UNVERIFIED, "detail": "ffprobe unavailable"}
         )
         entry["decode"] = (
-            decode_segment(ffmpeg, path) if ffmpeg else {"status": Verdict.UNVERIFIED, "detail": "ffmpeg unavailable"}
+            decode_segment(ffmpeg, path)
+            if ffmpeg
+            else {"status": Verdict.UNVERIFIED, "detail": "ffmpeg unavailable"}
         )
         entry["ts"] = (
-            tsduck_analyze(tsp, path) if tsp else {"status": Verdict.UNVERIFIED, "detail": "tsp unavailable"}
+            tsduck_analyze(tsp, path)
+            if tsp
+            else {"status": Verdict.UNVERIFIED, "detail": "tsp unavailable"}
         )
         entry["pcr_first"] = extract_first_pcr(tsp, path) if tsp else None
         entry["duration"] = (entry["probe"] or {}).get("duration")
@@ -1380,7 +1426,9 @@ def _verify_channel_body(
         analyzed.append(entry)
     evidence["segments_analyzed"] = analyzed
 
-    present_paths = [p for p in (_analysis_path(r) for r in chosen_records) if p is not None and p.is_file()]
+    present_paths = [
+        p for p in (_analysis_path(r) for r in chosen_records) if p is not None and p.is_file()
+    ]
     # Scratch OWNERSHIP: when verify_all supplies a shared pre-snapshot scratch,
     # the caller owns (and cleans up) it; we must not delete it here, or a later
     # channel's already-captured copies would vanish. Only a locally-created
@@ -1545,7 +1593,11 @@ def verify_all(
 
     overall_fail = any(c["status"] == Verdict.FAIL for c in channels.values())
     overall_unverified = any(c["status"] == Verdict.UNVERIFIED for c in channels.values())
-    overall = Verdict.FAIL if overall_fail else (Verdict.UNVERIFIED if overall_unverified else Verdict.PASS)
+    overall = (
+        Verdict.FAIL
+        if overall_fail
+        else (Verdict.UNVERIFIED if overall_unverified else Verdict.PASS)
+    )
     if not exact_required_set and overall == Verdict.PASS:
         # A subset (or an off-station channel) cannot assert a three-channel
         # release-grade pass; demote rather than overclaim.
@@ -1563,8 +1615,7 @@ def verify_all(
             if exact_required_set
             else (
                 "NON-RELEASE subset/dev run: verdict cannot be PASS for release; "
-                "release-grade requires exactly "
-                + ", ".join(REQUIRED_CHANNELS)
+                "release-grade requires exactly " + ", ".join(REQUIRED_CHANNELS)
             )
         ),
         "started_utc": started,
@@ -1592,7 +1643,9 @@ def verify_all(
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Beta.10 bounded read-only live-HLS media verifier")
+    parser = argparse.ArgumentParser(
+        description="Beta.10 bounded read-only live-HLS media verifier"
+    )
     parser.add_argument(
         "--hls-root",
         type=Path,

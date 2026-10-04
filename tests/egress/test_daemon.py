@@ -283,7 +283,9 @@ def test_failed_caption_reset_does_not_read_stale_sidecar(tmp_path: Path) -> Non
     assert "captions disabled" in (store.read_state("gov").last_error or "")
 
 
-def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_session(tmp_path: Path) -> None:
+def test_duplicate_start_on_a_live_process_is_delivered_without_resetting_the_session(
+    tmp_path: Path,
+) -> None:
     """A distinct second START is delivered as a no-op, not a session reset.
 
     The store dedupes repeated command ids.  A genuinely distinct second START
@@ -2309,7 +2311,9 @@ def test_stop_clears_the_recorded_rollover_plan_end(tmp_path: Path) -> None:
     # ``_request_reload``'s) is unconditional regardless of any command_id,
     # so the matching rule under test elsewhere is irrelevant here.
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)}
+    assert daemon._rollover_plan_end_at == {
+        "gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)
+    }
 
     store.enqueue_command(_command("stop"))
     daemon.process_once("gov")
@@ -2445,7 +2449,9 @@ def test_drain_with_no_live_process_clears_the_recorded_rollover_plan_end(
     # command_id=None: unscoped -- ``_drain``'s process-is-None pop is
     # unconditional, so no id needs to match here.
     daemon.record_rollover_plan_end("gov", datetime(2020, 1, 1, tzinfo=UTC), command_id=None)
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)}
+    assert daemon._rollover_plan_end_at == {
+        "gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)
+    }
 
     store.enqueue_command(_command("drain"))
     daemon.process_once("gov")  # _drain: process is None -> STOPPED
@@ -2774,7 +2780,9 @@ def test_unscoped_record_never_matches_a_real_queued_reload_and_needs_an_off_air
     # the unscoped entry is still sitting there, untouched, for lack of a
     # match; it did NOT wrongly bind to whichever reload drained first.
     assert strategy.switch_at_end_of_current_calls == [True, True]
-    assert daemon._rollover_plan_end_at == {"gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)}
+    assert daemon._rollover_plan_end_at == {
+        "gov": (None, datetime(2020, 1, 1, tzinfo=UTC), False, None)
+    }
 
     # Only a genuine off-air transition clears it -- an operator stop, here.
     store.enqueue_command(

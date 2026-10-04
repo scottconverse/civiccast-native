@@ -79,14 +79,18 @@ def test_fresh_matching_revision_does_not_wait_for_irrelevant_graph(monkeypatch)
         assert not worker.is_alive()
 
 
-@pytest.mark.parametrize("revision,expected", [("old", "behind"), ("new", "ahead"), (None, "behind")])
+@pytest.mark.parametrize(
+    "revision,expected", [("old", "behind"), ("new", "ahead"), (None, "behind")]
+)
 def test_mismatching_or_missing_revision_still_uses_graph(monkeypatch, revision, expected):
     import civiccast.schema_check as checks
 
     phases, graph_calls = [], []
     monkeypatch.setattr(checks, "expected_migration_head", lambda: "head")
     monkeypatch.setattr(checks, "read_db_revision", lambda source: revision)
-    monkeypatch.setattr(checks, "known_revisions", lambda: graph_calls.append(1) or frozenset({"head", "old"}))
+    monkeypatch.setattr(
+        checks, "known_revisions", lambda: graph_calls.append(1) or frozenset({"head", "old"})
+    )
     with checks.observe_schema_phases(phases.append):
         result = checks.check_schema_currency("synthetic")
     assert result == SchemaStatus(expected, revision, "head")

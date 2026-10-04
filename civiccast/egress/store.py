@@ -190,9 +190,7 @@ class InMemoryEgressStore:
             if command.command_id in self._consumed_command_ids or any(
                 existing.command_id == command.command_id for existing in self._commands
             ):
-                raise ValueError(
-                    f"recovery command id already exists: {command.command_id!r}"
-                )
+                raise ValueError(f"recovery command id already exists: {command.command_id!r}")
             self._commands = [*self._commands, command]
             self._states[row.channel_id] = row
 

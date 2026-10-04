@@ -71,9 +71,7 @@ class _RecordingWarmer:
         self.calls.append((config, plan))
 
 
-def _daemon(
-    store: InMemoryEgressStore, tmp_path: Path, warmer: object | None
-) -> EgressDaemon:
+def _daemon(store: InMemoryEgressStore, tmp_path: Path, warmer: object | None) -> EgressDaemon:
     return EgressDaemon(
         store,
         work_dir=tmp_path,
