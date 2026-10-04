@@ -40,10 +40,102 @@ BOOTSTRAP_HOOKS_NSH = (
 
 VC_REDIST_BEGIN = '!insertmacro CIVICCAST_STEP "step vc-redist: begin"'
 STAGE_PACKS_BEGIN = '!insertmacro CIVICCAST_STEP "step stage-packs: begin"'
+# Resolve the toolchain before the existing hermetic-state fixture redirects
+# LOCALAPPDATA; only compiler reads use this location, output stays in tmp_path.
+_TOOLCHAIN_LOCAL_APPDATA = os.environ.get("LOCALAPPDATA", "")
 
 
 def _hooks_source() -> str:
     return BOOTSTRAP_HOOKS_NSH.read_text(encoding="utf-8")
+
+
+def test_downgrade_preflight_uses_new_binary_before_stopping_existing_service() -> None:
+    block = _code(_slice(_hooks_source(), "!macro NSIS_HOOK_PREINSTALL", "!macroend"))
+    check = block.find("--civiccast-install-version-preflight")
+    assert check >= 0, "downgrade refusal currently occurs only AFTER old files are replaced"
+    assert check < block.index("--civiccast-stop-native-service")
+    assert check < block.index("taskkill")
+    before_check = block[:check]
+    assert "${If} $R5 == 0" in before_check, "only SCM-registered installs may select downgrade"
+    assert "SetRegView 64" in before_check
+    assert before_check.index("SetRegView lastused") > before_check.index("ReadRegStr $R0")
+    assert 'ReadRegStr $R0 HKLM "Software\\CivicCast\\Native" "InstalledVersion"' in before_check
+    assert 'File /oname=civiccast-install-preflight.exe "${MAINBINARYSRCPATH}"' in before_check
+    assert 'SetOutPath "$R6"' in before_check, "temporary extraction must restore output path"
+    assert "/TIMEOUT=5000" in before_check
+    assert "${If} ${Errors}" in before_check, "failed temporary extraction must refuse"
+    init = before_check.index("InitPluginsDir")
+    select = before_check.index('SetOutPath "$PLUGINSDIR"')
+    extract = before_check.index("File /oname=civiccast-install-preflight.exe")
+    assert before_check.index("ClearErrors") < init
+    assert "ClearErrors" not in before_check[init:extract]
+    assert "${If} ${Errors}" in before_check[init:select]
+    assert "CIVICCAST_FAIL" in before_check[init:select]
+    assert "${If} ${Errors}" in before_check[select:extract]
+    assert "CIVICCAST_FAIL" in before_check[select:extract]
+    assert "runtime\\python.exe" not in before_check, "a broken old runtime must remain repairable"
+    after_check = block[check:]
+    assert "${If} $0 == 13" in after_check
+    assert "${ElseIf} $0 != 0" in after_check, "unexpected launch/timeout errors must fail closed"
+    assert "${CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE}" in after_check
+
+
+def test_version_preflight_is_dispatched_before_first_install_or_privileged_modes() -> None:
+    main = (BOOTSTRAP_HOOKS_NSH.parent / "src" / "main.rs").read_text("utf-8")
+    body = main.split("fn main() {", 1)[1]
+    assert "native_install_preflight::exit_code" in body
+    assert body.index("native_install_preflight::exit_code") < body.index("let named_entry")
+    assert body.index("native_install_preflight::exit_code") < body.index(
+        "run_native_uninstall_policy_cli"
+    )
+
+
+def test_preinstall_new_bootstrap_file_variable_compiles_with_existing_nsis(tmp_path: Path) -> None:
+    """Compile the actual hook with Tauri 2.11.2's MAINBINARYSRCPATH contract.
+
+    This never executes setup or queries/stops a service. The embedded file is
+    inert test data; actual native CLI execution is verified separately.
+    """
+    import pytest
+
+    makensis = Path(_TOOLCHAIN_LOCAL_APPDATA) / "tauri/NSIS/Bin/makensis.exe"
+    if not makensis.is_file():
+        on_path = shutil.which("makensis")
+        if not on_path:
+            pytest.skip("existing NSIS compiler unavailable")
+        makensis = Path(on_path)
+    payload = tmp_path / "new bootstrap.exe"
+    payload.write_bytes(b"compile-only; never executed")
+    main = (BOOTSTRAP_HOOKS_NSH.parent / "src/main.rs").read_text("utf-8")
+    identity = re.search(r'const CIVICCAST_VERSION: &str = "([^"]+)";', main)
+    assert identity is not None
+    script = tmp_path / "preinstall.nsi"
+    output = tmp_path / "compile-only.exe"
+    script.write_text(
+        f'''Unicode true
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+!define VERSION "{identity.group(1)}"
+!define MAINBINARYSRCPATH "{payload}"
+!include "{BOOTSTRAP_HOOKS_NSH}"
+Name "Compile only"
+OutFile "{output}"
+InstallDir "$TEMP\\CivicCast-compile-only"
+Section
+  !insertmacro NSIS_HOOK_PREINSTALL
+SectionEnd
+''',
+        encoding="utf-8",
+    )
+    completed = subprocess.run(
+        [str(makensis), "/V2", str(script)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert output.is_file()
 
 
 def _slice(source: str, start_marker: str, end_marker: str) -> str:

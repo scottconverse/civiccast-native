@@ -11,6 +11,7 @@ mod native_activation;
 mod native_distribution;
 mod native_first_install;
 mod native_install_verify;
+mod native_install_preflight;
 mod native_pack_staging;
 mod native_packs;
 mod native_repair;
@@ -6522,6 +6523,9 @@ fn run_native_uninstall_preflight_cli(args: &[String]) -> Option<i32> {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(exit_code) = native_install_preflight::exit_code(&args, CIVICCAST_VERSION) {
+        std::process::exit(exit_code);
+    }
     let named_entry = std::env::current_exe().ok().and_then(|path| path.file_name().map(|name|
         name.to_string_lossy().eq_ignore_ascii_case("CivicCast First Install.exe"))).unwrap_or(false);
     if named_entry || args.iter().any(|arg| arg == "--civiccast-first-install") {

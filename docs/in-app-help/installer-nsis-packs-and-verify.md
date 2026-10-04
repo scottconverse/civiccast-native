@@ -24,6 +24,8 @@ All strings are in the `NSIS_HOOK_POSTINSTALL` macro (Hooks:702-1025). Dialog te
 | Log line "step stage-packs: child reported: <text>" | `install-progress.log` | Hooks:861 |
 
 ## What really happens
+Development setups now check the registered install's version before stopping the service or replacing files. The check runs the new setup's embedded bootstrap from a temporary folder, not the old Python runtime, so a broken old runtime can still be repaired. A known newer installed version refuses with exit 129; a failed preflight refuses with exit 120. An absent service does not select this downgrade check from stale registry metadata. This is development source behavior, not a claim about the published beta.10 setup or a complete rollback facility.
+
 Setup installs the bundled Microsoft Visual C++ runtime, then runs the program's own `--civiccast-stage-packs` step against the folder that holds `setup.exe` (`$EXEDIR\packs`). It needs four signed packs there (server binaries, application, ffmpeg, Ollama) and uses the optional GPU pack if present; each is checked, copied into the install folder and extracted (Hooks:852; `native_pack_staging.rs:99-154`). Nothing is downloaded: no channel address is passed, so a missing pack is a hard stop (Hooks:773-785). Setup then re-checks each extracted folder against its signed pack (steps D2). Any failure stops the CivicCast service, sets it to manual start, shows the dialog and exits with the code. The missing pack names are written to the log line "step stage-packs: child reported:" (Hooks:861), so the dialog's "installer log" claim is true for exit 110. Extraction of tens of gigabytes writes nothing to the list; the log shows a 107 second gap in one run.
 
 ## Mismatches

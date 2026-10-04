@@ -377,6 +377,8 @@ Why not uninstall first: the upgrade engine decides what to do from two markers 
 
 > **Known issue (beta.10):** The dialogs for exit 128 and 129 say setup "did nothing" or stopped "before changing anything". That is not what the code does. Setup stops the service and replaces the program files first, and only then runs the upgrade engine, which is where 128 and 129 are decided. The database is not touched, but the service is left stopped and the program files on disk are those of the setup you ran. After an exit 129 they are the **older** version, so do not start the service until you have run the newer setup.
 
+Development setups add a downgrade preflight before stopping a registered service or replacing application files. They run the new setup's embedded bootstrap from a temporary folder, without depending on the old Python runtime. A known newer registered install is refused with exit 129, leaving its files and service unchanged; a failed preflight refuses with exit 120. Fresh installs with no registered service are not refused merely because old version metadata remains. This does not change the published beta.10 behavior above, and is not a full application-and-database rollback guarantee.
+
 After a failed upgrade the program files are the **new** version and the station is off air. There is no button that goes back to the old version. The recovery is to fix the cause named in the log and run setup again.
 
 ## Repair
