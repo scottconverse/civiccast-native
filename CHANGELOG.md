@@ -15,6 +15,12 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Live meeting controls can reopen unfinished sessions from the server after a
+  refresh or same-tab navigation. Operators explicitly choose the channel and
+  meeting; recovery never starts, ends, or takes over a broadcast. New meetings
+  receive unique IDs after the prior session is recorded. Failed discovery blocks
+  replacement creation and offers retry; completed recordings remain in Assets.
+
 - The built-in manual preserves instruction numbering when a screenshot splits
   a numbered list, instead of restarting the next step at 1.
 

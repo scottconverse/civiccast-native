@@ -1320,10 +1320,10 @@ If a Setup admin needs to change a source's address, they click **Edit source**,
 
 A live session is CivicCast's record of one meeting being broadcast. These steps are in the order the buttons enable themselves. *Pre-flight* is a set of nine tests CivicCast runs before it lets you mark the session on air.
 
-> **Warning:** the Live screen forgets your session if you leave it. See the last Known issue in this task before you open any other screen in the same browser tab. Keep Live in its own browser tab for the whole meeting.
+You can reopen an unfinished meeting after refreshing or returning from another screen. Choose its channel, then select the correct **Existing meeting** by its ID and state. CivicCast reads the saved state; reopening does not start or end a stream, change the channel feed, or take over a source. It never picks a meeting for you, even when only one exists. Pre-flight results and your confirmation are not restored: check them again before starting.
 
 1. Choose your channel and source and run **Check source** until it says **Delivering** (see the previous task).
-2. In the **Session controls** box, click **Create live session**. The tag at the top changes from "No session" to **Idle**. The session is always named "Council live room".
+2. In the **Session controls** box, wait for the existing-meeting check. If the channel has no unfinished meetings, click **Create live session**. The tag changes from "No session" to **Idle**. The title is "Council live room", but each meeting gets a new unique ID, shown in the controls. If an unfinished meeting is listed, reopen it instead of creating a replacement.
 3. Click **Start pre-flight**. The tag changes to **Pre-flight**. This button only moves the session to the next step. It checks nothing.
 4. Tick the box "Operator confirms the meeting details and acknowledges the server-side pre-flight result."
 5. Click **Run pre-flight**. The **Pre-flight checklist** at the bottom of the page fills with nine rows. You can run it as many times as you like.
@@ -1352,9 +1352,9 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 
 > **Known issue (beta.10):** three more things on this screen are easy to misread. First, the **Safe to broadcast** panel near the top is worked out from the last test on the Readiness screen, not from the checklist on this page, so it can say "Check before meeting" while this page says "Pre-flight ready". Second, the hint on a failed Operator confirmation row says to tick the box "below", but the box is in **Session controls**, above the checklist. Third, the empty checklist says "Run pre-flight to populate the nine-check contract." It means "Click **Run pre-flight** to check the camera, the recording drive, the internet and your confirmation."
 
-> **Known issue (beta.10):** **Create live session** appears to work only once. The session id is fixed ("council-live-room"). In the code we read, a second **Create live session**, on a later night, is refused with "LiveSession already exists: council-live-room", and nothing on the screen lists or reopens an old session. We read this in the code and did not repeat it on a running station. Until the product changes, plan on one live session per station and ask your IT person how to clear it. The next Known issue explains what happens if you refresh the page.
+After the session reaches **Recorded**, you can create the next meeting with a new ID. **Ending** is not complete: reopen that session to watch finalization or retry it after a failure. **Retry finalization** is disabled unless a Meeting operator has successfully recovered current meeting controls and the finalization status can be read. Completed meetings leave this recovery list; their recordings are in **Assets**. Changing the channel clears the selected controls without ending any meeting.
 
-> **Known issue (beta.10):** if a Live action fails, the red box ends with the same advice every time: "Next step. Confirm the CivicCast server is running and connected to its database, then refresh this screen." That advice is wrong for most failures (a missing role, a failed check, a duplicate session). **Do not refresh the Live page during a meeting.** CivicCast keeps your session only in the open page. If you refresh it, close the tab, or click to another screen (such as **Channels**) in the same tab, the buttons go back to **Create live session** and **End Live Stream** is disabled. By the "already exists" refusal described above, you would then be unable to create the session again, and this screen would give you no way to end the session. To use **Channels** or the **Control Room** during the meeting, open them in a second browser tab or window.
+If the existing-meeting check fails, **Create live session** stays disabled. Use **Retry meeting list**; sign in again if access expired. If reopening fails, no broadcast action was taken; use **Retry meeting recovery**. Do not create a replacement to work around a failed read. Live action errors still include generic server/database advice; use the specific error above it to decide what to correct.
 
 ### End a live session and find the recording
 
@@ -1371,7 +1371,7 @@ If it fails, the panel shows the reason (or "Finalization failed."). Fix the cau
 
 > **Warning:** the box says "Residents watching the live stream lose it immediately." In the code we read, that is not true. **End Live Stream** only marks the session as ended and starts the saving of the recording. It does not stop the channel's feed, so the channel keeps broadcasting. To take the channel off the air, use **Stop** or **Finish current item, then stop** on the Channels screen.
 
-> **Known issue (beta.10):** the saving step looks for a recording file named after the session in the recording location (for example `council-live-room.mp4`). Nothing on this screen creates that file, and in testing we could not confirm which part of CivicCast does. If the panel stays on **Waiting** or fails, ask your IT person to check that the recording location is receiving the meeting recording. By default CivicCast gives up waiting for the file 30 minutes after **End Live Stream**, and the panel then reads "No recording file was found for this session (expected ...)". While CivicCast is still retrying by itself the tag reads "Retrying". **Retry finalization** appears only after CivicCast has given up. It is shown to every role, but only a Meeting operator can use it.
+> **Known issue (beta.10):** the saving step looks for a recording file named after the session in the recording location (for example `meeting-<unique ID>.mp4`). Nothing on this screen creates that file, and in testing we could not confirm which part of CivicCast does. If the panel stays on **Waiting** or fails, ask your IT person to check that the recording location is receiving the meeting recording. By default CivicCast gives up waiting for the file 30 minutes after **End Live Stream**, and the panel then reads "No recording file was found for this session (expected ...)". While CivicCast is still retrying by itself the tag reads "Retrying". **Retry finalization** appears only after CivicCast has given up. It is shown to every role, but only a Meeting operator can use it.
 
 ### Start a channel
 
@@ -1446,7 +1446,7 @@ What "Keep this channel on air" really does, from the code we read:
 A *takeover* puts a live source on a channel right now, ahead of whatever is scheduled. You then hand the channel back to its schedule when you are done.
 
 1. On the **Live** screen, click your source's card and click **Check source** until it says **Delivering**.
-2. Go to **Channels** (if a live session is open on **Live**, do this in a second browser tab) and click the channel. Find the box **Live takeover**. It says "This channel is on its scheduled program."
+2. Go to **Channels** and click the channel. Find the box **Live takeover**. It says "This channel is on its scheduled program." Return to Live and reopen the correct **Existing meeting** when you need its controls.
 3. Click **Take live**. If it is grey, the line beside it says "No live source is ready yet." Go back to step 1. By default the button goes grey again 30 seconds after your last good **Check source**. The Channels screen asks for this state every 15 seconds, so after a fresh **Check source** the button can take up to about 15 seconds to turn on.
 4. A small form appears with the question "Why are you going live? (optional)". Type a reason if you like.
 5. Click **Confirm take live**, or **Cancel**. The button reads "Going live…" while CivicCast works.
@@ -1742,18 +1742,18 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 4. If you use the Control Room: open a **Test Mode** session, dry-run and record one cue, and end it. Check that no amber "Production control unavailable" bar appears.
 5. If you use remote guests: open the room, send the invite links, and ask guests to join early so they are in the waiting room.
 6. On **Channels**, check whether **Keep this channel on air** is ticked, and whether you expect it to be.
-7. On **Live**, click **Create live session** now. If it is refused with "LiveSession already exists: council-live-room", tell IT now, not when the meeting starts. If it works, leave that browser tab open and do not refresh it; you will not need to create the session again in step 9.
+7. On **Live**, check **Existing meeting**. Reopen an unfinished meeting if one is listed; otherwise click **Create live session**. Note the selected meeting ID.
 
 **At the start**
 
 8. If you want a lower-third banner, set it first (see step 11). Then, if the channel is stopped, click **Start**, confirm **Start feed**, and watch for **On air** or **Showing slate**.
-9. On the open **Live** tab (create the live session now if you did not in step 7), click **Start pre-flight**, tick the confirmation box, click **Run pre-flight**, and click **Start Live Stream** only when the channel really is broadcasting. Do not refresh the page after this.
+9. On **Live**, create or reopen the correct meeting. Click **Start pre-flight** if it is Idle, tick the confirmation box, click **Run pre-flight**, and click **Start Live Stream** only when the channel really is broadcasting. After reopening, confirmation and the checklist must be checked again.
 10. To go to the camera, run **Check source** (it expires after 30 seconds by default), then **Take live**, **Confirm take live**. The red badge shows only who took over, not the source, so read the **Source:** line in the **Outgoing channel feed** box (it can take up to 30 seconds to update) and watch the channel's own output.
 11. A lower-third banner is meant to take effect at the channel's next start (we have not watched one appear). On a channel that is already running it appears only when the channel next restarts or swaps content.
 
 **During the meeting**
 
-12. Keep **Live** and the Control Room page open in their own tabs. Do not refresh them.
+12. Keep the Control Room page in its own tab and do not refresh it. Live can be reopened by choosing its channel and **Existing meeting**.
 13. If you use an On-Air Control Room session, open a new one before 30 minutes have passed.
 14. Admit remote guests one at a time. Remember that **On air** for the first guest takes the whole channel live.
 15. Watch the channel's own output, not the screen's tags. After **Stop**, **Restart feed** or **Return to schedule**, the tag can take up to 30 seconds to change.
@@ -1772,9 +1772,9 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 | --- | --- |
 | "Live-room controls require the meeting operator role. Source status and readiness checks remain visible." | Your sign-in lacks the Meeting operator role. Ask your Setup admin. |
 | "Source preview unavailable - CivicCast has not verified incoming video or audio from <source>." | The Live screen never shows video in beta.10. It is not a fault. |
-| A red box "Live action failed." ending "refresh this screen" | Read the first line for the real reason. Do **not** refresh during a meeting. |
+| A red box "Live action failed." ending "refresh this screen" | Read the first line for the specific reason. After a refresh, reopen the correct **Existing meeting**; do not create a replacement. |
 | "Go on air blocked: a fresh source-bound server-side pre-flight did not pass." | A required checklist row failed when you clicked. Fix it, run **Run pre-flight**, try again. |
-| "LiveSession already exists: council-live-room" | A live session has already been created on this station. See the Known issue in "Run a live session". Ask IT. |
+| A duplicate live-session ID error | Recheck **Existing meeting** and reopen the correct session. New meetings use unique IDs; do not reset station data. |
 | "Start was queued but the feed did not start." | The feed program did not respond in 20 seconds. Check Readiness, then click **Start** again. |
 | "No live source is ready yet." (Take live is grey) | No source passed **Check source** in the last 30 seconds (by default). Run **Check source** on Live. |
 | "Channel '<id>' is already under live takeover." | The channel is already live. Use **Return to schedule** first if you want to change it. |
@@ -2054,7 +2054,11 @@ Everyone can read the queue and play audio. Only a records clerk can approve, ed
 
 ### Review an AI summary
 
-CivicCast can write a draft summary of a meeting from its approved caption lines. The summary is saved for a records clerk to check. In beta.10, treat this feature as unfinished.
+CivicCast can write a draft summary of a meeting from its approved caption lines. A records clerk checks the draft against its sources before approving it.
+
+> **Note:** The steps below describe the unreleased source workflow updated on October 3, 2026. They do not mean these changes are installed at your station or included in the published beta.10 manual. Ask your IT person which version you are using.
+
+> **Known issue (beta.10):** The published beta.10 source had an approval-request mismatch, made approved summaries disappear from this page, and offered no download, verification or second-generation action. The approval failure was inferred from code, not confirmed on a running station. Do not assume that installation has the repaired workflow described below.
 
 #### Make a summary
 
@@ -2063,35 +2067,45 @@ CivicCast can write a draft summary of a meeting from its approved caption lines
 3. Click **Generate summary**. The chip reads "queued" and then "generating…". The screen says generating locally can take 1-6 minutes on a CPU-only station, and you can close the tab; the job keeps running.
 4. When it finishes the card says "Summary generated. Review it in Summary review".
 
-If there are no approved cues the card says "No committed transcript cues yet. Approve caption review items for this recording first, then a summary can be generated from them." You need the records_clerk or support_admin role. If the job fails, the card shows **Failed** with the reason and a **Retry** button, which only a records clerk can use. The local AI program (Ollama) must be running with the summary model installed. If it is not, the job fails and the card says "Local Ollama AI runtime is not reachable. Start Ollama and retry, or configure a different summary model in AI model settings."
+If there are no approved cues the card says "No committed transcript cues yet. Approve caption review items for this recording first, then a summary can be generated from them." Generating needs the records clerk or support admin role. If the job fails, the card shows **failed** with the reason and a **Retry** button, which only a records clerk can use. **Retry** uses that failed job's original caption input; it does not pick up later corrections. For local generation, the local AI program (Ollama) must be running with the summary model installed. A runtime failure can report "Local Ollama AI runtime is not reachable. Start Ollama and retry, or configure a different summary model in AI model settings."
+
+#### Correct the source and generate again
+
+1. If a claim is wrong or lacks evidence, open **Review queue** and correct its caption lines. Click **Save edit**, then **Approve** so the corrected lines have status **Approved**.
+2. Return to the recording's **AI summary** card in **Assets**. Wait for any running generation job to finish.
+3. After the previous job completes, click **Generate again**. CivicCast checks your permissions and fetches the currently approved lines before queuing the new job. If this check fails or no approved lines remain, no replacement is queued.
+4. Read the new summary in **Summary review** and check its sources again.
+
+Earlier summaries and approvals are kept. The new summary needs its own approval; generating again does not correct an earlier signed record. A completed generation job can also produce a **Needs evidence** summary: completion is not approval. Summary review has no claim-editing, rejection or generation button; make corrections through the recording's caption review and **AI summary** card.
 
 #### Look at a summary
 
 1. In the left menu, click **Summary review** (page heading "Summary review", label "Summary + signed records").
-2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are buttons labeled with a cue ID and its time range.
-3. Click a cue button. The **Inline transcript player** box highlights that range.
+2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are **Source:** buttons labeled with a cue ID and its time range.
+3. Click a source button. **Source captions (not audio playback)** shows the caption words retained with the completed generation job for this exact recording and summary.
 
-The statuses are **Pending review**, **Approved**, **Rejected** and **Needs evidence**. A **Needs evidence** card has an empty paragraph and a red message: the model's output could not be tied to caption cues with timestamps. A yellow bar counts the summaries that need more evidence. The only list shown is Pending review and Needs evidence.
+The status labels are **Pending review**, **Approved**, **Rejected** and **Needs evidence**. The page includes pending summaries, evidence refusals and approved summaries; approved cards remain after refresh or reload. A **Needs evidence** result has an empty paragraph and a message explaining that the model's output could not be tied to caption cues with timestamps. Correct and approve the source lines, then generate again; do not approve an unsupported claim.
 
 If nothing is waiting, the page says "No summaries need review." and tells you to use **Generate summary** on a recording's detail page.
 
-> **Known issue (beta.10):** The **Inline transcript player** does not show the caption text and does not play audio. It shows only cue IDs and times. You cannot check a claim against the words from this page. Open the **Review queue** or the recording to read the cues.
+The source panel shows the full caption cue, even when the claim cites only part of its time range. It is text evidence, not an audio player or a word-aligned excerpt. If the original job or cue is missing, empty or ambiguous, the panel says so. It never substitutes today's edited captions or the claim itself. Older summaries may have no retained source snapshot. Check the recording and captions through your station's review workflow before approving an uncertain claim. A request failure offers **Retry source captions**.
 
-#### What Approve summary can and cannot do
+#### Approve and export a signed record
 
-> **Known issue (beta.10):** **Approve summary** most likely does not work. The button is enabled only for a Pending review summary that has at least one sourced claim, and only for a records clerk. When clicked, it sends the server three fields: an operator ID, an operator name and a note. The server accepts only the note and rejects any extra field. In our reading of the code the server should refuse the request (HTTP error 422), and the page would show a red box titled "Could not load summary review." with a technical message. We found this by reading the code, not by clicking the button on a running station. Treat the summary workflow as not usable in beta.10.
+1. Check each claim against its source captions. Only a records clerk can approve or export. The buttons remain disabled while CivicCast checks your identity or if that check fails.
+2. Click **Approve summary** only when the claims are supported. CivicCast records the approval under your signed-in identity, not a name supplied by the page. A summary cannot be approved if it has no sourced claims, is rejected or evidence-refused, or has any claim without timed source ranges.
+3. If an approved-status card instead shows **Reapprove summary**, its matching saved approval is missing. Check its evidence and explicitly reapprove it as the signed-in clerk. Export remains blocked until then; CivicCast does not invent an earlier approver.
+4. Click **Export signed record** on the approved card. You should see "Signed record exported:" followed by the record ID and **PDF SHA-256**, the checksum that identifies the final PDF file. If an older response does not supply that checksum, the page says it is unavailable.
+5. Click **Download PDF** to save the file with your station's retention records.
+6. Click **Verify record** to check the stored file's checksum and timestamp proof structure. A failed verification is not a verified record; retry or contact support before relying on it.
 
-A second problem sits behind the first. If **Approve summary** did succeed, the summary would become **Approved** and disappear from this page, because the page lists only Pending review and Needs evidence. **Export signed record** is enabled only for Approved summaries, so it could no longer be reached. Nothing in the console lists, downloads or checks signed records.
+A signed record is an export with integrity information and approval history, not automatically a legal record for your jurisdiction. Confirm the meeting details and follow your records officer's requirements.
 
-What is possible today:
+> **Warning:** The default signing timestamp is a deterministic test timestamp, not a trusted external timestamp. The screen identifies it as such. Even with a real timestamp service configured, **Verify record** does not independently validate that authority's trust chain. Verification of an older archived file does not retroactively prove who approved it.
 
-- You can generate a summary and read it on the Summary review page.
-- You cannot reject a summary, regenerate one from this page, download a signed record, or check one. There are no buttons for them.
-- Yellow-bar and refusal messages tell you to "regenerate". The AI summary card does not offer a second **Generate summary** once a job exists.
+Approval, export, download and verification failures have separate messages and **Retry** actions. A failed download does not undo a successful export; retry downloads that same file. Wait for an action to finish before retrying another.
 
-> **Warning:** Do not tell your records officer that summaries are approved or signed records exported from this screen in beta.10.
-
-> **For IT staff:** The approve route is `POST /api/staff/summaries/{id}/approve`, which accepts `{"approval_note": ...}` only. The signed-record export is `POST /api/staff/records`, with download and verify routes under `/api/staff/records/{id}`. The signing timestamp is a deterministic test timestamp unless a real timestamp authority is configured. See the API appendix.
+> **For IT staff:** Approval accepts only an approval note; the server gets the approver from the authenticated sign-in. Signed-record export requires matching saved approval before rendering. See the API appendix.
 
 ![Summary review with a synthetic Pending review draft and its source caption range selected. The actual interface shows retained generation words, not audio playback. No summary was approved or exported.](manual/images/operator-summary-review.png){width=90%}
 
@@ -2151,7 +2165,7 @@ Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ing
 - [Running the meeting](#ch-running-meeting)
 - [When something looks wrong](#ch-something-wrong)
 
-<!-- SOURCES: inventory/screens/assets.md; inventory/screens/review.md; inventory/screens/summary.md; inventory/screens/missingmedia.md; inventory/screens/medialifecycle.md; civiccast/apps/portal-operator/src/screens/{AssetsScreen,AssetDetailScreen,TrimEditorScreen,ReviewQueueScreen,SummaryReviewScreen,GenerateSummaryPanel,OfflineCaptionJobsPanel,MediaLifecyclePanel,MissingMediaScreen,MediaLifecycleSettingsScreen}.tsx; civiccast/summary/router.py:111-186 (SummaryApprovalRequest extra=forbid; approve_summary); civiccast/apps/portal-operator/src/screens/SummaryReviewScreen.tsx:10-14,234 (OPERATOR payload); civiccast/captions/review.py:318-345 and civiccast/captions/persistence.py:291-335 (approve keeps stored reviewed_text; reject clears it); civiccast/captions/vod.py:430-480 (approved/edited become cues, pending counted, rejected dropped); civiccast/captions/vod_job.py:893-1010 and 100-165 (Spanish required, hold reasons); civiccast/schedule/router.py:245-280 (limit 50, X-Total-Count), 372-470 (package uses trim_in/out); civiccast/schedule/media_lifecycle_store.py:395-460 (replace-source leaves manifest_url and published_at); civiccast/egress/source_plan.py:1092 (trim used on air); civiccast/schedule/media_lifecycle_worker.py:141-145 (-16 LUFS, tolerance 1); civiccast/publish/router.py:442-480 (caption job queued before publish) -->
+<!-- SOURCES: inventory/screens/assets.md; inventory/screens/review.md; inventory/screens/summary.md (historical beta.10 audit); inventory/screens/missingmedia.md; inventory/screens/medialifecycle.md; civiccast/apps/portal-operator/src/screens/{AssetsScreen,AssetDetailScreen,TrimEditorScreen,ReviewQueueScreen,SummaryReviewScreen,GenerateSummaryPanel,OfflineCaptionJobsPanel,MediaLifecyclePanel,MissingMediaScreen,MediaLifecycleSettingsScreen}.tsx; summary section reconciled against HEAD 9529f40dec75e0f980ee47385a3a9f9303583c9d on 2026-10-03: docs/in-app-help/summary.md (current development integration), docs/records-clerk-guide.md, SummaryReviewScreen.tsx (note-only approval, include-approved list, role/pending gates, orphan reapproval, download/verify/digest), GenerateSummaryPanel.tsx (fresh approved reviewed_text, Generate again versus failed-job Retry), components/review/TranscriptCuePlayer.tsx (retained exact meeting/summary job and cue evidence, unavailable/ambiguous states, full cue not audio); civiccast/summary/router.py (authenticated approver, job queue and retry), civiccast/summary/{job,generate,store}.py (new persisted drafts, original retry cues, evidence refusal/approval gates), civiccast/records/{router,exporter}.py (matching approval before export, final digest and timestamp structure); civiccast/captions/review.py:318-345 and civiccast/captions/persistence.py:291-335 (approve keeps stored reviewed_text; reject clears it); civiccast/captions/vod.py:430-480 (approved/edited become cues, pending counted, rejected dropped); civiccast/captions/vod_job.py:893-1010 and 100-165 (Spanish required, hold reasons); civiccast/schedule/router.py:245-280 (limit 50, X-Total-Count), 372-470 (package uses trim_in/out); civiccast/schedule/media_lifecycle_store.py:395-460 (replace-source leaves manifest_url and published_at); civiccast/egress/source_plan.py:1092 (trim used on air); civiccast/schedule/media_lifecycle_worker.py:141-145 (-16 LUFS, tolerance 1); civiccast/publish/router.py:442-480 (caption job queued before publish) -->
 
 \newpage
 
@@ -8890,7 +8904,7 @@ Code 123 hides a second number from the activation step: 66 (pack or index missi
 | Setup, HTTP 403 | First setup can only be done from the station computer itself. | Open the console in a browser on the station, not from another computer or a remote viewer's own computer. |
 | API, HTTP 503 | Durable storage is not ready yet. (Some areas, such as Publish, CG Board and Contributors, say instead: Durable storage is not ready. Open Setup and choose Prepare storage, or set DATABASE_URL for a technical deployment.) | The database is not ready. Check the service and `postgres.log`. |
 | API, HTTP 503 | `{"error": "maintenance"}` | The station is in maintenance mode, normally because an upgrade is running. Reads still work; changes resume when the hold is released. |
-| Live | LiveSession already exists: council-live-room | The Live screen uses one fixed session id, so a second session cannot be created until IT resets it. |
+| Live | A duplicate live-session ID error | Recheck Existing meeting and reopen the correct session. New meetings use unique IDs; do not reset station data. |
 | Live | Go on air blocked: a fresh source-bound server-side pre-flight did not pass. No broadcast was started. Correct the failed checks and run pre-flight again. | Fix the red pre-flight items. |
 | Remote Contribution | Remote contribution is not configured (no self-hosted VDO.Ninja URL). A compositor + VDO.Ninja + coturn must be commissioned before guests can join. | Those services are not set up. |
 | Remote Contribution | Channel takeover failed; guest ... not placed on-air. | There was no ready live source to take over to. |

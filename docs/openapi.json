@@ -3869,7 +3869,7 @@
           "auto-schedule"
         ],
         "summary": "Compile all enabled rules into schedule_items now",
-        "description": "Run the rolling-window materializer for every enabled rule. The created\nitems are ``scheduled`` and still flow through the S4 commit gate.",
+        "description": "Run the rolling-window materializer for every enabled rule. The created\nitems are ``published`` and approved by the enabled rule for their scheduled\ntimes, without a separate per-item commit. Compile does not imply immediate\nplayback; manually-added items still require Commit-to-Air approval.",
         "operationId": "compile_now_api_staff_auto_schedule_compile_post",
         "responses": {
           "200": {
@@ -4504,14 +4504,14 @@
         "description": "Persist a new ``LiveSession`` at state ``idle``.\n\nNo auth in this rung -- same posture as the rest of ``/api/staff/*``.\nPydantic validation (slug pattern, max lengths) surfaces as 422 before\nthis handler runs; duplicate-id collisions surface as 409.",
         "operationId": "create_session_api_staff_live_sessions_post",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/LiveSessionCreate"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -4532,6 +4532,71 @@
           },
           "503": {
             "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "get": {
+        "tags": [
+          "staff",
+          "live"
+        ],
+        "summary": "List Active Sessions",
+        "description": "Read unfinished meetings for explicit recovery; global staff auth applies.\n\nCompleted recordings belong in Assets, not this control-recovery picker.",
+        "operationId": "list_active_sessions_api_staff_live_sessions_get",
+        "parameters": [
+          {
+            "name": "channel_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/LiveSessionResponse"
+                  },
+                  "title": "Response List Active Sessions Api Staff Live Sessions Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -18709,6 +18774,18 @@
         ],
         "summary": "List sourced summaries awaiting operator review",
         "operationId": "list_review_items_api_staff_summaries_review_items_get",
+        "parameters": [
+          {
+            "name": "include_approved",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Approved"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -18716,6 +18793,16 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SummaryReviewQueueResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -60665,6 +60752,13 @@
               }
             ],
             "title": "Next Cursor"
+          },
+          "approval_required_summary_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Approval Required Summary Ids"
           }
         },
         "additionalProperties": false,

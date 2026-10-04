@@ -535,6 +535,21 @@ def create_session(
         ) from exc
 
 
+@staff_router.get("/sessions", response_model=list[LiveSessionResponse])
+def list_active_sessions(
+    channel_id: str,
+    live_session_store: Any = Depends(get_live_session_store),
+) -> list[LiveSessionResponse]:
+    """Read unfinished meetings for explicit recovery; global staff auth applies.
+
+    Completed recordings belong in Assets, not this control-recovery picker.
+    """
+    store = _require_store(live_session_store, surface="live session recovery")
+    return store.list_sessions(
+        channel_id=channel_id, states=("idle", "preflight", "on_air", "ending")
+    )
+
+
 @staff_router.get(
     "/sessions/{live_session_id}",
     response_model=LiveSessionResponse,

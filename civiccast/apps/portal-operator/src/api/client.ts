@@ -1381,6 +1381,12 @@ export function getLiveSession(liveSessionId: string): Promise<LiveSessionRespon
   )
 }
 
+export function listLiveSessions(channelId: string): Promise<LiveSessionResponse[]> {
+  return request<LiveSessionResponse[]>(
+    `/api/staff/live/sessions?channel_id=${encodeURIComponent(channelId)}`,
+  )
+}
+
 export function startLivePreflight(
   liveSessionId: string,
 ): Promise<LiveSessionResponse> {

@@ -5,7 +5,7 @@ This file is a pointer, not a log.
 ## Active development checkpoint - 2026-10-03
 
 - Branch: `codex/u73-caption-measurements`.
-- Code/proof anchor: `2e4db2b61a36179d55bf4a15dd0f2ce954e206de`
+- Earlier help proof anchor: `2e4db2b61a36179d55bf4a15dd0f2ce954e206de`
   (help links, operator guidance, source illustrations and regenerated built-in
   manual, including continued numbered lists). This is the code checkpoint,
   not a self-reference to the later documentation commit containing this note.
@@ -16,9 +16,17 @@ This file is a pointer, not a log.
   workflows run on pull requests; a branch push is not evidence of green CI.
 - Candidate PDF/DOCX files remain unaccepted and were not included in that
   checkpoint. Installed help and the full operator workflows still need proof.
-- The latest local diagnostic attempt ended before its observation window.
-  Baseline restoration passed; a helper polling-boundary repair is under
-  independent offline review. No successful soak or caption-fix claim follows.
+- Live meeting recovery now uses explicit channel/session selection and unique
+  meeting IDs. Read-only staff and failed authoritative reads cannot enable
+  finalization retry. Independent corrected-snapshot checks passed: 42 focused
+  UI tests, both prior failing review assertions, four affected isolated browser
+  cases, build and manual reproducibility. These are not installed-station tests.
+- The latest local diagnostic stopped after two samples when responsive HTTP
+  health reported unknown schema readiness. Automatic recovery hit a helper
+  task wake-up race; explicit same-request recovery subsequently verified the
+  original files, proof settings and three-channel readiness. Health refresh
+  phase timing remains under investigation. No successful soak or caption-fix
+  claim follows.
 - Still required before a final recommendation: complete health and caption
   runtime proof, repository/product reconciliation, material operator workflow
   repairs, the exact-package installation lifecycle, and sustained three-channel

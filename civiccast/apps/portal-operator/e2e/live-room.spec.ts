@@ -238,6 +238,8 @@ async function mockLiveBackend(
   page: import('@playwright/test').Page,
   options: MockLiveOptions = {},
 ) {
+  // Every browser fixture stays offline, including shell/background reads.
+  await page.route('**/api/**', async (route) => route.fulfill({ json: {} }))
   const {
     sources = [sourceA, sourceB],
     relays = [relayConfig],
@@ -245,6 +247,7 @@ async function mockLiveBackend(
     preflightReady = true,
     roles = ['meeting_operator'],
   } = options
+  let currentSessionState = 'idle'
   await page.route('**/api/setup/station-state', async (route) => {
     await route.fulfill({
       status: 200,
@@ -367,7 +370,11 @@ async function mockLiveBackend(
       body: JSON.stringify(session('idle')),
     })
   })
+  await page.route('**/api/staff/live/sessions?**', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })
+  })
   await page.route('**/api/staff/live/sessions/*/start-preflight', async (route) => {
+    currentSessionState = 'preflight'
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -443,6 +450,7 @@ async function mockLiveBackend(
     })
   })
   await page.route('**/api/staff/live/sessions/*/go-on-air', async (route) => {
+    currentSessionState = 'on_air'
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -450,10 +458,11 @@ async function mockLiveBackend(
     })
   })
   await page.route('**/api/staff/live/sessions/*/end-broadcast', async (route) => {
+    currentSessionState = 'ending'
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(session('ending')),
+      body: JSON.stringify(session(currentSessionState)),
     })
   })
   // Beta B2 finalization panel defaults: no job yet, session still ending.
@@ -468,7 +477,7 @@ async function mockLiveBackend(
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify(session('ending')),
+      body: JSON.stringify(session(currentSessionState)),
     })
   })
 }
@@ -484,6 +493,96 @@ async function openLive(
     await expect(page.getByRole('heading', { name: 'Live' })).toBeVisible()
   }
 }
+
+test.describe('operator live room recovery @recovery', () => {
+  const browserErrors = new Map<import('@playwright/test').Page, string[]>()
+  test.beforeEach(async ({ page }) => {
+    const errors: string[] = []
+    browserErrors.set(page, errors)
+    page.on('pageerror', (error) => errors.push(error.message))
+    page.on('console', (message) => { if (message.type() === 'error') errors.push(message.text()) })
+    await page.route('**/api/**', async (route) => route.fulfill({ json: {} }))
+    await page.route('**/api/version', async (route) => route.fulfill({ json: { version: '1.0.0-beta.10' } }))
+    await page.route('**/api/staff/installer/sample-seed-status', async (route) => route.fulfill({ json: { seeded: false } }))
+  })
+  test.afterEach(async ({ page }, testInfo) => {
+    await page.screenshot({ path: testInfo.outputPath('recovery.png'), fullPage: true })
+    expect(browserErrors.get(page)).toEqual([])
+    browserErrors.delete(page)
+  })
+  test('explicitly recovers after refresh and same-tab navigation without mutations', async ({ page }) => {
+    await mockLiveBackend(page)
+    const row = { ...session('on_air'), live_session_id: 'meeting-recovery-one' }
+    const mutations: string[] = []
+    page.on('request', (request) => {
+      if (request.url().includes('/live/sessions') && request.method() !== 'GET') mutations.push(request.url())
+    })
+    await page.route('**/api/staff/live/sessions?**', async (route) => {
+      await route.fulfill({ json: [row, { ...row, live_session_id: 'meeting-recovery-two' }] })
+    })
+    await page.route('**/api/staff/live/sessions/meeting-recovery-one', async (route) => route.fulfill({ json: row }))
+    await page.goto('/#/live')
+    await expect(page.getByLabel('Existing meeting')).toHaveValue('')
+    await expect(page.getByRole('button', { name: 'End Live Stream', exact: true })).toBeDisabled()
+    await page.getByLabel('Existing meeting').selectOption(row.live_session_id)
+    await expect(page.getByRole('button', { name: 'End Live Stream', exact: true })).toBeEnabled()
+    await page.reload()
+    await expect(page.getByLabel('Existing meeting')).toHaveValue('')
+    await page.getByLabel('Existing meeting').selectOption(row.live_session_id)
+    await expect(page.getByRole('button', { name: 'End Live Stream', exact: true })).toBeEnabled()
+    await page.goto('/#/manual')
+    await page.goto('/#/live')
+    await page.getByLabel('Existing meeting').selectOption(row.live_session_id)
+    await expect(page.getByRole('button', { name: 'End Live Stream', exact: true })).toBeEnabled()
+    expect(mutations).toEqual([])
+  })
+
+  test('recovers ending finalization without configured sources and retries only on click', async ({ page }) => {
+    await mockLiveBackend(page, { sources: [] })
+    const row = { ...session('ending'), live_session_id: 'meeting-finalizing' }
+    let retries = 0
+    await page.route('**/api/staff/live/sessions?**', async (route) => route.fulfill({ json: [row] }))
+    await page.route('**/api/staff/live/sessions/meeting-finalizing', async (route) => route.fulfill({ json: row }))
+    await page.route('**/api/staff/live/sessions/*/finalization', async (route) => route.fulfill({ json: {
+      state: 'failed', terminal: true, failure_reason: 'Recording file missing', attempts: 1, max_attempts: 1,
+    } }))
+    await page.route('**/api/staff/live/sessions/*/finalization/retry', async (route) => {
+      retries += 1
+      await route.fulfill({ json: { state: 'pending' } })
+    })
+    await page.goto('/#/live')
+    await page.getByLabel('Existing meeting').selectOption(row.live_session_id)
+    await expect(page.getByText('Recording file missing', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Create live session', exact: true })).toBeDisabled()
+    expect(retries).toBe(0)
+    await page.getByRole('button', { name: 'Retry finalization', exact: true }).click()
+    await expect.poll(() => retries).toBe(1)
+  })
+
+  test('ignores delayed old-channel recovery', async ({ page }) => {
+    await mockLiveBackend(page)
+    const row = { ...session('on_air'), live_session_id: 'meeting-delayed' }
+    let release!: () => void
+    let started = false
+    const wait = new Promise<void>((resolve) => { release = resolve })
+    await page.route('**/api/staff/live/sessions?**', async (route) => route.fulfill({ json:
+      new URL(route.request().url()).searchParams.get('channel_id') === 'government' ? [row] : [],
+    }))
+    await page.route('**/api/staff/live/sessions/meeting-delayed', async (route) => {
+      started = true
+      await wait
+      await route.fulfill({ json: row })
+    })
+    await page.goto('/#/live')
+    await page.getByLabel('Existing meeting').selectOption(row.live_session_id)
+    await expect.poll(() => started).toBe(true)
+    await page.getByLabel('Broadcast channel').selectOption('education')
+    release()
+    await expect(page.getByLabel('Existing meeting')).toHaveValue('')
+    await expect(page.getByText(`Selected meeting: ${row.live_session_id}`)).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'End Live Stream', exact: true })).toBeDisabled()
+  })
+})
 
 test.describe('operator live room', () => {
   test.describe.configure({ mode: 'serial' })
@@ -546,6 +645,9 @@ test.describe('operator live room', () => {
   })
 
   test('loading state is visible while configuration loads', async ({ page }) => {
+    await page.route('**/api/**', async (route) => route.fulfill({ json: {} }))
+    await page.route('**/api/staff/cable/channels', async (route) => route.fulfill({ json: [] }))
+    await page.route('**/api/staff/live/sessions?**', async (route) => route.fulfill({ json: [] }))
     await page.route('**/api/setup/station-state', async (route) => {
       await route.fulfill({
         status: 200,
@@ -661,8 +763,9 @@ test.describe('operator live room', () => {
 
   test('configuration error state is actionable', async ({ page }) => {
     await openLive(page, { failConfiguration: true })
-    await expect(page.getByText('Could not load live room.')).toBeVisible()
+    await expect(page.getByText('Could not load live-room configuration.')).toBeVisible()
     await expect(page.getByText(/connected to its database/)).toBeVisible()
+    await expect(page.getByLabel('Existing meeting')).toBeVisible()
   })
 
   test('blocked pre-flight keeps Start Live Stream disabled with next steps', async ({
@@ -745,8 +848,11 @@ test.describe('operator live room', () => {
     await page.getByRole('button', { name: 'Create live session' }).click()
     await expect.poll(() => createdChannelId).toBe('education')
 
-    // Channel is fixed once a session exists.
-    await expect(page.getByLabel('Broadcast channel')).toBeDisabled()
+    // Leaving a channel clears its controls without ending the meeting.
+    await expect(page.getByLabel('Broadcast channel')).toBeEnabled()
+    await page.getByLabel('Broadcast channel').selectOption('government')
+    await expect(page.getByLabel('Existing meeting')).toHaveValue('')
+    await expect(page.getByRole('button', { name: 'End Live Stream', exact: true })).toBeDisabled()
   })
 
   test('Beta B2: terminal finalization failure shows the reason and a retry button', async ({

@@ -3222,6 +3222,15 @@ Update relay health from a station probe.
 - Request body: `LiveRelayHealthUpdate`
 - Responses: 200 `LiveRelayConfigResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 LiveRelayConfig not found; 422 Invalid payload; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
 
+### `GET /api/staff/live/sessions`
+
+List Active Sessions.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `channel_id` (query, required): `string`
+- Request body: none
+- Responses: 200 `Array<LiveSessionResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `POST /api/staff/live/sessions`
 
 Create a live session (staff).
@@ -4271,7 +4280,7 @@ Manually retry a failed summary generation job.
 List sourced summaries awaiting operator review.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
-- Parameters: none
+- Parameters: `include_approved` (query, optional): `boolean`
 - Request body: none
 - Responses: 200 `SummaryReviewQueueResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
@@ -9087,6 +9096,7 @@ rule (S13 §5.1).
 
 ### `SummaryReviewQueueResponse`
 
+- `approval_required_summary_ids` (optional): `Array<string>`
 - `items` (required): `Array<SummaryDraft>`
 - `next_cursor` (optional): `string | null`
 
