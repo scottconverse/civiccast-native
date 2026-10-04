@@ -4,6 +4,23 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Packaged candidate source is `84a283077f4ba9359113c7bbf4189095393c08bc`,
+  verified remotely on PR 232; original self-hosted build 37204600121 is
+  running. Its signed station bundle passed; installer/package proof is pending.
+  Candidate CI: installer compile 37204558280 and docs 37204558277 passed;
+  lint 37204558284 failed and tests 37204558265 are still pending overall
+  with the Windows job failed. No merge or release claim.
+- Next-source copy checkpoint `32fbee33` corrects the activation step-67
+  dialog: disk/extraction/missing-file failures are possible, and full child
+  details are in the setup window, not the step log. Existing NSIS checks
+  passed 40 tests; independent copy review accepted. Not in the active build.
+- Four old guard tests called ceiling-search APIs explicitly retired by U43.
+  They now assert the settled decoded-peak pad, cap, variant order and measured
+  trim correction without restoring old product behavior. Author run passed
+  42 tests in 7.10s; independent root rerun passed 42 in 7.34s. Three wrong-pad/
+  trim inverse assertions failed. One earlier three-second child startup miss
+  passed unchanged in isolation and both final runs; no deadline was widened.
+  Evidence: oversight `evidence/u87-recorder-product/guard-reconcile-*.log`.
 - Previous remote checkpoint is `f9f210c03f375b318a5d2edc7e76eab2e07e1b57`,
   verified on draft PR 232. Its test run 37202959271 was pending; installer
   compile 37202959249 and docs 37202959261 passed. Lint 37202959246 failed.

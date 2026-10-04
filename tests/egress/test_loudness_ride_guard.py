@@ -24,8 +24,10 @@ passed in order to keep failing the one it was chasing.  Answer 12 deletes it:
 * an artifact over that bound on *every* attempt still ships, with an error line
   rather than a stop -- the selector has nothing better to keep, and a channel
   that airs a slightly hot artifact beats one that airs nothing;
-* the one re-encode round stays, and so does the :data:`TP_GUARD_TARGET_DBTP` of
-  -1.0 dBTP as best effort, with one warning when the selector's keep misses it.
+* U43 subsequently replaced the emitted-TP ceiling step with one decoded-peak
+  pad (capped at 6 dB), compensated drive and one measured trim correction;
+  U42's fixed encoder variants follow only while the kept artifact is still hot.
+  The -1.0 dBTP target remains best effort, with one warning when it is missed.
 
 These tests are the guard's whole contract: they hold the module to the answer
 the coordinator gave, not to the shape it had before.
@@ -104,7 +106,16 @@ def _select(attempts: list[lr.LeveledAttempt]) -> lr.LeveledSelection:
 def test_the_gate_constants_are_the_answered_ones() -> None:
     assert lr.TP_GUARD_TARGET_DBTP == -1.0
     assert lr.TP_GUARD_MAX_PEAK_DBFS == 0.1
-    assert lr.TP_GUARD_MAX_ROUNDS == 1
+    # U43-answer.md / U43-answer-2.md supersede answer 11's ceiling search.
+    assert lr.TP_GUARD_PAD_MARGIN_DB == 0.5
+    assert lr.TP_GUARD_MAX_PAD_DB == 6.0
+    variants = lr.TP_GUARD_ENCODER_VARIANTS
+    assert variants == (
+        lr.EncoderVariant(bitrate_kbps=256),
+        lr.EncoderVariant(bitrate_kbps=256, extra_args=("-aac_coder", "fast")),
+    )
+    assert not hasattr(lr, "guard_ceiling_dbtp")
+    assert not hasattr(lr, "guard_next_ceiling")
     # Answer 12 deleted the last-resort branch, constant and all.
     assert not hasattr(lr, "TP_GUARD_LAST_RESORT_DBTP")
     assert not hasattr(lr, "TP_GUARD_HARD_DBTP")
@@ -139,35 +150,28 @@ def test_loudness_gates_are_unchanged_by_the_answer_11_reshuffle() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The one re-encode-only round
+# U43's measured pad and corrected drive (the closed ceiling step is retired)
 # ---------------------------------------------------------------------------
 
 
-def test_the_step_is_the_overshoot_plus_the_margin() -> None:
-    # Already lawful: no round is owed.
-    assert lr.guard_ceiling_dbtp(-1.5, -1.4) is None
-    assert lr.guard_ceiling_dbtp(-1.5, -1.0) is None
-    # Emitted at exactly 0.0 dBTP from a -1.5 dBTP ceiling: 1.0 + 0.3 below it.
-    assert lr.guard_ceiling_dbtp(-1.5, 0.0) == -2.8
-    # Emitted -0.4 from -1.8: 0.6 + 0.3 below the ceiling it came from.
-    assert lr.guard_ceiling_dbtp(-1.8, -0.4) == -2.7
+def test_the_pad_is_the_decoded_overshoot_plus_margin_with_a_cap() -> None:
+    # The decoded bound, not the emitted TP, pays for this round.
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=1.3, emitted_dbtp=-2.0)) == 1.7
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=20.0)) == 6.0
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=1.3), max_pad_db=1.0) == 1.0
 
 
-def test_a_hot_emit_buys_exactly_one_re_encode_round() -> None:
-    assert lr.guard_next_ceiling([]) is None
-    # -0.2 dBTP emitted from a -1.5 dBTP ceiling: 0.8 overshoot + 0.3 margin.
-    hot = _attempt(limit_dbtp=-1.5, emitted_dbtp=-0.2)
-    assert lr.guard_next_ceiling([hot]) == -2.6
-    # The bound is spent after that one round, however hot the re-encode reads.
-    assert (
-        lr.guard_next_ceiling([hot, _attempt(round_index=1, limit_dbtp=-2.0, emitted_dbtp=-0.1)])
-        is None
-    )
+def test_the_pad_drive_uses_its_measured_whole_program_error() -> None:
+    # U43 answer 2: correct exactly once, rather than retaining excess drive.
+    assert lr.guard_pad_trim_db(-15.47, trim_db=1.7, target_lufs=-16.0) == 1.17
+    assert lr.guard_pad_trim_db(-16.28, trim_db=1.7, target_lufs=-16.0) == 1.98
+    assert lr.guard_pad_trim_db(None, trim_db=1.7, target_lufs=-16.0) is None
 
 
-def test_the_round_is_not_owed_when_the_emit_is_lawful_or_unmeasurable() -> None:
-    assert lr.guard_next_ceiling([_attempt(emitted_dbtp=-1.4)]) is None
-    assert lr.guard_next_ceiling([_attempt(emitted_dbtp=None)]) is None
+def test_the_pad_is_not_owed_for_a_lawful_or_unscanned_decode() -> None:
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=0.1, emitted_dbtp=3.0)) is None
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=-1.0)) is None
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=None, emitted_dbtp=3.0)) is None
 
 
 # ---------------------------------------------------------------------------
