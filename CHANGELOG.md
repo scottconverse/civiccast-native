@@ -31,6 +31,9 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- A refused background program change retains the current program's end time,
+  preventing the recovery watchdog from retrying a long program prematurely.
+
 - Take live can freshly verify an expired successful source check instead of
   refusing it before checking. A deleted configured source is no longer treated
   as a relay with no source-specific verdict; failed checks never record or

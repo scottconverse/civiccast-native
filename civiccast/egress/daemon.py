@@ -685,6 +685,8 @@ class _PendingPreparation:
     #: failure of exactly this preparation must NOT take the ordinary
     #: "fall back to restart" route -- see ``_poll_preparation``.
     slate_first: bool = False
+    #: Keep the same airing-plan horizon if this background reload declines.
+    rollover_plan_end_at: datetime | None = None
 
 
 @dataclass
@@ -1259,6 +1261,7 @@ class EgressDaemon:
         *,
         kind: str,
         slate_first: bool = False,
+        rollover_plan_end_at: datetime | None = None,
     ) -> _PreparationOutcome:
         with self._preparation_guard:
             if self._preparation_closed:
@@ -1306,6 +1309,7 @@ class EgressDaemon:
                 process=self._processes.get(channel_id),
                 config=self._store.get_config(channel_id),
                 slate_first=slate_first,
+                rollover_plan_end_at=rollover_plan_end_at,
             )
             _LOG.info("channel %s: %s source preparation queued", channel_id, kind)
             return _PreparationState.PENDING
@@ -1357,7 +1361,9 @@ class EgressDaemon:
                         # ``_request_reload``.
                         self._keep_slate_after_failed_hand_off(channel_id)
                     else:
-                        self._fall_back_to_restart_reload(channel_id)
+                        self._fall_back_to_restart_reload(
+                            channel_id, plan_end_at=pending.rollover_plan_end_at
+                        )
                 elif pending.kind == "start" and outcome is _PreparationState.START_EXPIRED:
                     self._start(
                         channel_id,
@@ -4924,6 +4930,7 @@ class EgressDaemon:
             ),
             kind="reload",
             slate_first=slate_first,
+            rollover_plan_end_at=rollover_plan_end_at,
         )
         if isinstance(result, _ReusePreparedPlan):
             # F3(b): the SYNCHRONOUS preparation path (no

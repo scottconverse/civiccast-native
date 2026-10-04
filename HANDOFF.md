@@ -4,6 +4,11 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Background reload refusal now carries the original airing-program horizon
+  into restart recovery (A-006). A two-hour program previously entered recovery
+  after 1952 simulated seconds because that horizon was lost. The reproduction
+  now passes; daemon/watchdog tests pass 206 checks and command isolation passes
+  3 checks. Pending independent review; not installed in the frozen v20 run.
 - Take live now admits a stale enabled configured source to a fresh check,
   instead of disabling the action before verification. Ready sources retain
   priority; failed, unknown and disabled sources remain blocked. Both ready
