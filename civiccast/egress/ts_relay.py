@@ -34,12 +34,18 @@ kind is untouched.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
+import re
+import socket
 import subprocess
 import threading
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from civiccast.egress.compliance import locate_tsduck
@@ -52,6 +58,72 @@ _BASE_PORT_ENV = "CIVICCAST_TS_RELAY_BASE_PORT"
 _DEFAULT_BASE_PORT = 17800
 # Pinned outgoing source ports live one block above the listen ports.
 _LOCAL_PORT_OFFSET = 1000
+
+
+def _process_birth(pid: int) -> float | None:
+    try:
+        import psutil
+
+        return psutil.Process(pid).create_time()
+    except (OSError, psutil.Error):
+        return None
+
+
+def _destination_digest(destination: str) -> str:
+    parsed = urlsplit(destination)
+    return hashlib.sha256(f"{parsed.hostname}:{parsed.port}".encode()).hexdigest()
+
+
+def _proof_path(work_dir: Path, channel_id: str, destination: str) -> Path:
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,100}", channel_id) is None:
+        raise ValueError("Unsafe channel identifier")
+    digest = _destination_digest(destination)
+    path = work_dir / channel_id / "caption-proof" / f"relay-target-{digest}.json"
+    for entry in (path, *path.parents):
+        if entry.exists() and (
+            entry.is_symlink() or getattr(entry, "is_junction", lambda: False)()
+        ):
+            raise ValueError("Unsafe proof target path")
+    return path
+
+
+def read_caption_proof_target(
+    work_dir: Path, config: EgressConfig, destination: str | None = None
+) -> dict | None:
+    """A live relay's private copy, never the broadcast receiver socket."""
+    try:
+        targets = [sink.uri for sink in config.sinks if sink.kind == "udp-ts"]
+        if destination is None:
+            destination = next(iter(targets), None)
+        if destination not in targets:
+            return None
+        path = _proof_path(work_dir, config.channel_id, destination)
+        if path.is_symlink() or any(parent.is_symlink() for parent in path.parents):
+            return None
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if set(data) != {"generation", "pid", "birth", "port", "target"}:
+            return None
+        if (
+            not isinstance(data["generation"], str)
+            or re.fullmatch(r"[0-9a-f]{32}", data["generation"]) is None
+        ):
+            return None
+        if (
+            type(data["pid"]) is not int
+            or data["pid"] <= 0
+            or type(data["port"]) is not int
+            or not 1024 <= data["port"] <= 65535
+        ):
+            return None
+        if type(data["birth"]) not in (int, float) or data["birth"] != _process_birth(data["pid"]):
+            return None
+        if data["target"] != _destination_digest(destination):
+            return None
+        if any(urlsplit(uri).port == data["port"] for uri in targets):
+            return None
+        return data
+    except (OSError, ValueError, TypeError, KeyError):
+        return None
 
 
 def relay_mode() -> str:
@@ -69,9 +141,10 @@ def build_tsp_relay_args(
     dest_port: int,
     local_out_port: int,
     rcvbuf_bytes: int = 16 * 1024 * 1024,
+    proof_port: int | None = None,
 ) -> list[str]:
     """The persistent relay pipeline: ip-in -> fix CC -> smooth PCR -> ip-out."""
-    return [
+    args = [
         tsp_path,
         "--realtime",
         "-I",
@@ -86,6 +159,11 @@ def build_tsp_relay_args(
         "--fix",
         "-P",
         "pcradjust",
+    ]
+    if proof_port is not None:
+        args += ["-P", "ip", f"127.0.0.1:{proof_port}"]
+    return [
+        *args,
         "-O",
         "ip",
         f"{dest_host}:{dest_port}",
@@ -99,6 +177,8 @@ class _Relay:
     listen_port: int
     dest: str
     process: subprocess.Popen[bytes]
+    proof_port: int | None = None
+    proof_generation: str | None = None
 
 
 class TsRelaySupervisor:
@@ -109,9 +189,11 @@ class TsRelaySupervisor:
         *,
         popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
         locate: Callable[[], object] = locate_tsduck,
+        work_dir: Path | None = None,
     ) -> None:
         self._popen = popen
         self._locate = locate
+        self._work_dir = work_dir
         self._guard = threading.Lock()
         self._relays: dict[str, _Relay] = {}
         self._next_port = int(os.environ.get(_BASE_PORT_ENV, "").strip() or str(_DEFAULT_BASE_PORT))
@@ -167,6 +249,9 @@ class TsRelaySupervisor:
         untouched (the returned object is the SAME config instance then).
         """
         if not self._active():
+            with self._guard:
+                for key, relay in self._relays.items():
+                    self._invalidate_proof(key.split("|", 1)[0], relay)
             return config
         if not any(sink.kind == "udp-ts" for sink in config.sinks):
             return config
@@ -201,6 +286,7 @@ class TsRelaySupervisor:
             if relay is not None and relay.process.poll() is None:
                 return self._local_uri(relay.listen_port, parsed.query)
             if relay is not None:
+                self._invalidate_proof(channel_id, relay)
                 listen_port = relay.listen_port
             elif self._free_ports:
                 listen_port = self._free_ports.pop()  # reuse a stopped channel's port
@@ -209,12 +295,35 @@ class TsRelaySupervisor:
                 self._next_port += 1
             tsp = self._tsp()
             assert tsp is not None  # _active() gated
+            proof_port = None
+            generation = uuid.uuid4().hex
+            if self._work_dir is not None:
+                forbidden = {listen_port, listen_port + _LOCAL_PORT_OFFSET, parsed.port}
+                for current in self._relays.values():
+                    forbidden.update(
+                        (
+                            current.listen_port,
+                            current.listen_port + _LOCAL_PORT_OFFSET,
+                            current.proof_port,
+                        )
+                    )
+                    forbidden.add(urlsplit(current.dest).port)
+                for _attempt in range(32):
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as claim:
+                        if os.name == "nt":
+                            claim.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+                        claim.bind(("127.0.0.1", 0))
+                        candidate = claim.getsockname()[1]
+                    if candidate not in forbidden:
+                        proof_port = candidate
+                        break
             args = build_tsp_relay_args(
                 tsp,
                 listen_port=listen_port,
                 dest_host=parsed.hostname,
                 dest_port=parsed.port,
                 local_out_port=listen_port + _LOCAL_PORT_OFFSET,
+                proof_port=proof_port,
             )
             try:
                 # S603: fixed argv from the resolved tsp binary + validated URI parts.
@@ -227,7 +336,32 @@ class TsRelaySupervisor:
                     sink.uri,
                 )
                 return None
-            self._relays[key] = _Relay(listen_port=listen_port, dest=sink.uri, process=process)
+            relay = _Relay(
+                listen_port=listen_port,
+                dest=sink.uri,
+                process=process,
+                proof_port=proof_port,
+                proof_generation=generation,
+            )
+            self._relays[key] = relay
+            if proof_port is not None and self._work_dir is not None:
+                try:
+                    birth = _process_birth(process.pid)
+                    if birth is not None:
+                        path = _proof_path(self._work_dir, channel_id, sink.uri)
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        data = {
+                            "generation": generation,
+                            "pid": process.pid,
+                            "birth": birth,
+                            "port": proof_port,
+                            "target": _destination_digest(sink.uri),
+                        }
+                        temp = path.with_name(f".{generation}.tmp")
+                        temp.write_text(json.dumps(data), encoding="utf-8")
+                        temp.replace(path)
+                except (OSError, ValueError):
+                    _LOG.warning("Caption proof copy unavailable for channel %s.", channel_id)
             _LOG.info(
                 "TS relay up for %s: 127.0.0.1:%d -> %s (pinned source port %d).",
                 channel_id,
@@ -247,11 +381,26 @@ class TsRelaySupervisor:
         with self._guard:
             for key in [k for k in self._relays if k.startswith(f"{channel_id}|")]:
                 relay = self._relays.pop(key)
+                self._invalidate_proof(channel_id, relay)
                 relay.process.terminate()
                 self._free_ports.append(relay.listen_port)
 
     def stop_all(self) -> None:
         with self._guard:
-            for relay in self._relays.values():
+            for key, relay in self._relays.items():
+                self._invalidate_proof(key.split("|", 1)[0], relay)
                 relay.process.terminate()
             self._relays.clear()
+
+    def _invalidate_proof(self, channel_id: str, relay: _Relay) -> None:
+        if self._work_dir is None:
+            return
+        try:
+            path = _proof_path(self._work_dir, channel_id, relay.dest)
+            if (
+                json.loads(path.read_text(encoding="utf-8")).get("generation")
+                == relay.proof_generation
+            ):
+                path.unlink()
+        except (OSError, ValueError):
+            pass

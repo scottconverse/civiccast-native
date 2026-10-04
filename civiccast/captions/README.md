@@ -1,5 +1,14 @@
 # CivicCast Captions
 
+Development decode-back capture must not compete for a unicast UDP broadcast
+socket. When the persistent TS relay is available, proof reads a private
+loopback copy of the same encoded TS after continuity/PCR correction. A missing
+or retired relay receipt leaves that capture unverified; it never falls back to
+the broadcast socket. The selected relay generation is checked again after
+decode, before proof persistence. Existing file and multicast capture remain
+supported. This change does not establish non-interference for inherited SRT
+capture, nor prove an installed beta.10 or sustained live soak.
+
 The captions module begins the 0.5 release rung. The current slices ship the
 backend contract, optional faster-whisper model execution, review queue API,
 operator review UI, HLS WebVTT publication helpers, and resident portal

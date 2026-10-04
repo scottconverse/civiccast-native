@@ -31,6 +31,12 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Development caption decode-back proof no longer opens a configured unicast
+  UDP broadcast receiver. With an available persistent TS relay, it captures a
+  private loopback copy after continuity/PCR correction and rejects retired
+  relay generations before publishing proof. Missing copies remain unverified;
+  this source correction is not an installed beta.10 or sustained-soak result.
+
 - Development native live caption preparation initializes the cached CPU VAD
   session before channel admission, alongside the existing model preparation.
   It does not run dummy inference, change language detection or relax quality

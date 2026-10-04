@@ -19,6 +19,7 @@ caption source). Follows the ``ThreadSupervisor`` ``run_forever``/``run_once`` s
 from __future__ import annotations
 
 import contextlib
+import ipaddress
 import logging
 import subprocess
 import threading
@@ -41,7 +42,9 @@ from civiccast.egress.caption_proof import (
     _run_bounded_ffmpeg,
     sample_caption_decode_back,
 )
+from civiccast.egress.models import EgressConfig
 from civiccast.egress.store import EgressStore
+from civiccast.egress.ts_relay import read_caption_proof_target
 from civiccast.stream._ffmpeg import run_ffmpeg
 
 _LOG = logging.getLogger(__name__)
@@ -97,6 +100,7 @@ class CaptionProofWorker:
         clock: Clock = lambda: datetime.now(UTC),
         is_enabled: Callable[[], bool] | None = None,
         ffmpeg_timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
+        capture_is_current: Callable[[str], bool] | None = None,
     ) -> None:
         self._store = store
         self._on_air_channels = on_air_channels
@@ -107,6 +111,7 @@ class CaptionProofWorker:
         self._clock = clock
         self._is_enabled = is_enabled or (lambda: True)
         self._ffmpeg_timeout_seconds = ffmpeg_timeout_seconds
+        self._capture_is_current = capture_is_current or (lambda _channel: True)
         self._disabled_announced = False
 
     def run_forever(
@@ -159,6 +164,9 @@ class CaptionProofWorker:
                 clock=self._clock,
                 timeout_seconds=self._ffmpeg_timeout_seconds,
             )
+            if not self._capture_is_current(channel_id):
+                skipped += 1
+                continue
             self._store.append_caption_proof_sample(sample)
             sampled.append(channel_id)
             if sample.status == "PASS":
@@ -180,7 +188,9 @@ class CaptionProofWorker:
 _CAPTURE_SINK_SCHEMES = ("udp", "srt")
 
 
-def _emitted_stream_target(store: EgressStore, channel_id: str) -> tuple[str, bool] | None:
+def _emitted_stream_target(
+    store: EgressStore, channel_id: str, work_dir: Path | None = None
+) -> tuple[str, bool] | None:
     """``(uri, is_file)`` for the channel's emitted stream to decode back, or None.
 
     Prefers a file/local-ts sink (the written TS — read its tail); else a live
@@ -189,10 +199,27 @@ def _emitted_stream_target(store: EgressStore, channel_id: str) -> tuple[str, bo
     if config is None:
         return None
     for sink in config.sinks:
-        if sink.kind in ("file", "local-ts"):
+        if sink.kind in ("file", "local-ts") and (
+            urlsplit(sink.uri).scheme in ("", "file") or (len(sink.uri) > 2 and sink.uri[1] == ":")
+        ):
             parsed = urlsplit(sink.uri)
             return (parsed.path if parsed.scheme == "file" else sink.uri, True)
     for sink in config.sinks:
+        parsed = urlsplit(sink.uri)
+        if parsed.scheme.lower() == "udp":
+            try:
+                if ipaddress.ip_address(parsed.hostname or "").is_multicast:
+                    return (sink.uri, False)
+            except ValueError:
+                pass
+            proof = (
+                read_caption_proof_target(work_dir, config, sink.uri)
+                if work_dir is not None
+                else None
+            )
+            if proof:
+                return (f"udp://127.0.0.1:{proof['port']}?localaddr=127.0.0.1&reuse=0", False)
+            continue
         if urlsplit(sink.uri).scheme.lower() in _CAPTURE_SINK_SCHEMES:
             return (sink.uri, False)
     return None
@@ -213,10 +240,23 @@ def capture_emitted_segment(
     LAST ``capture_seconds`` are copied (``-sseof``) so a 24/7 channel's growing file is
     never decoded whole. Returns the segment path, or None if there is nothing to
     capture / the capture produced no bytes (then the channel is skipped, fail-closed)."""
-    target = _emitted_stream_target(store, channel_id)
+    target = _emitted_stream_target(store, channel_id, work_dir)
     if target is None:
         return None
     uri, is_file = target
+    config = store.get_config(channel_id)
+    proof_identity = None
+    if config is not None and uri.startswith("udp://127.0.0.1:"):
+        for sink in config.sinks:
+            candidate = read_caption_proof_target(work_dir, config, sink.uri)
+            if candidate is not None and candidate["port"] == urlsplit(uri).port:
+                proof_identity = candidate
+                proof_destination = sink.uri
+                break
+    if uri.startswith("udp://127.0.0.1:") and (
+        proof_identity is None or urlsplit(uri).port != proof_identity["port"]
+    ):
+        return None
     out = work_dir / channel_id / "caption-proof" / "segment.ts"
     out.parent.mkdir(parents=True, exist_ok=True)
     seconds = f"{capture_seconds:g}"
@@ -244,6 +284,12 @@ def capture_emitted_segment(
             out.unlink(missing_ok=True)
         return None
     if result.returncode != 0 or not out.exists() or out.stat().st_size == 0:
+        return None
+    if proof_identity is not None and (
+        config != store.get_config(channel_id)
+        or read_caption_proof_target(work_dir, config, proof_destination) != proof_identity
+    ):
+        out.unlink(missing_ok=True)
         return None
     return out
 
@@ -277,6 +323,7 @@ def build_caption_proof_worker(
 
     store = PostgresEgressStore(session_factory)
     resolved_work_dir = (work_dir or default_egress_work_dir()).expanduser()
+    capture_fences: dict[str, tuple[EgressConfig, str | None, dict | None]] = {}
 
     def _on_air() -> list[str]:
         channels: list[str] = []
@@ -287,13 +334,41 @@ def build_caption_proof_worker(
         return channels
 
     def _capture(channel_id: str) -> Path | None:
-        return capture_emitted_segment(
+        capture_fences.pop(channel_id, None)
+        config = store.get_config(channel_id)
+        target = _emitted_stream_target(store, channel_id, resolved_work_dir)
+        if config is None or target is None:
+            return None
+        destination = None
+        identity = None
+        if target[0].startswith("udp://127.0.0.1:"):
+            for sink in config.sinks:
+                candidate = read_caption_proof_target(resolved_work_dir, config, sink.uri)
+                if candidate is not None and candidate["port"] == urlsplit(target[0]).port:
+                    destination, identity = sink.uri, candidate
+                    break
+            if identity is None:
+                return None
+        segment = capture_emitted_segment(
             store,
             channel_id,
             work_dir=resolved_work_dir,
             capture_seconds=capture_seconds,
             runner=runner,
             timeout_seconds=ffmpeg_timeout_seconds,
+        )
+        if segment is not None:
+            capture_fences[channel_id] = (config, destination, identity)
+        return segment
+
+    def _capture_is_current(channel_id: str) -> bool:
+        fence = capture_fences.get(channel_id)
+        if fence is None:
+            return False
+        config, destination, identity = fence
+        return config == store.get_config(channel_id) and (
+            identity is None
+            or read_caption_proof_target(resolved_work_dir, config, destination) == identity
         )
 
     def _expected(channel_id: str) -> list[CaptionCue]:
@@ -310,6 +385,7 @@ def build_caption_proof_worker(
         store=store,
         on_air_channels=_on_air,
         capture_segment=_capture,
+        capture_is_current=_capture_is_current,
         expected_cues_provider=_expected,
         mode=mode,
         runner=runner,

@@ -3314,7 +3314,7 @@ def build_channel_automation(
         # #151: channel-lifetime TS relay (TSDuck continuity --fix + pcradjust)
         # so encoder relaunches never reset the mux session at a udp-ts
         # headend. auto mode: active only when tsp is available.
-        ts_relay_supervisor=TsRelaySupervisor(),
+        ts_relay_supervisor=TsRelaySupervisor(work_dir=resolved_work_dir),
         # DEFECT A: the GStreamer engine's hls sinks are delivered by a
         # supervised ffmpeg relay (real segments + a real manifest) -- see
         # civiccast.egress.hls_relay's module docstring for why no native

@@ -89,6 +89,63 @@ def test_args_pin_ports_and_fix_continuity() -> None:
     assert "--local-port 18800" in joined  # pinned source port — one session forever
 
 
+def test_private_copy_follows_continuity_without_changing_output() -> None:
+    args = build_tsp_relay_args(
+        "tsp",
+        listen_port=17800,
+        dest_host="127.0.0.1",
+        dest_port=9001,
+        local_out_port=18800,
+        proof_port=25001,
+    )
+    assert "-P pcradjust -P ip 127.0.0.1:25001 -O ip 127.0.0.1:9001 --local-port 18800" in " ".join(
+        args
+    )
+
+
+def test_private_copy_identity_and_stop_are_destination_scoped(tmp_path, monkeypatch) -> None:
+    from civiccast.egress import ts_relay
+
+    monkeypatch.setenv("CIVICCAST_TS_RELAY", "auto")
+    monkeypatch.setattr(ts_relay, "_process_birth", lambda pid: 123.0 if pid == 42 else None)
+    processes = []
+
+    def launch(*_args, **_kwargs):
+        proc = _FakeProcess()
+        proc.pid = 42
+        processes.append(proc)
+        return proc
+
+    sup = TsRelaySupervisor(
+        popen=launch, locate=lambda: SimpleNamespace(installed=True, path="tsp"), work_dir=tmp_path
+    )
+    config = _config(
+        _udp_sink("udp://127.0.0.1:9001"),
+        _udp_sink("udp://127.0.0.1:9002").model_copy(update={"label": "second"}),
+    )
+    sup.apply(config)
+    first = ts_relay.read_caption_proof_target(tmp_path, config, config.sinks[0].uri)
+    second = ts_relay.read_caption_proof_target(tmp_path, config, config.sinks[1].uri)
+    assert first is not None and second is not None
+    assert first["generation"] != second["generation"]
+    assert first["port"] != second["port"]
+    assert first["port"] not in (17800, 17801, 18800, 18801, 9001, 9002)
+    changed = config.model_copy(
+        update={
+            "sinks": [
+                config.sinks[0].model_copy(update={"uri": "udp://127.0.0.1:9001?pkt_size=1316"})
+            ]
+        }
+    )
+    sup.apply(changed)
+    assert len(processes) == 2
+    assert ts_relay.read_caption_proof_target(tmp_path, changed) == first
+    monkeypatch.setattr(ts_relay, "_process_birth", lambda _pid: 124.0)
+    assert ts_relay.read_caption_proof_target(tmp_path, config) is None
+    sup.stop_channel("gov")
+    assert not list(tmp_path.rglob("relay-target-*.json"))
+
+
 def test_relaunches_reuse_the_same_relay(monkeypatch: pytest.MonkeyPatch) -> None:
     sup, calls, _procs = _supervisor(monkeypatch)
     first = sup.apply(_config(_udp_sink()))
