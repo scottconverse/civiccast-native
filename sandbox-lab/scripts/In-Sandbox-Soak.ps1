@@ -1652,23 +1652,20 @@ if ($CaptionsOff) {
         Write-HarnessErrorVerdictAndExit -Reason "-CaptionsOff was requested but could not be confirmed (PUT ok=$captionsPutOk, GET ok=$captionsGetOk, live_captions_enabled read back as '$captionsReadBackValue', expected false) -- never an unconfirmed premise for a flag the operator explicitly asked to test"
     }
 } else {
-    # Round-2 finding 4 (MEDIUM): -CaptionsOff was NOT requested, but
-    # $summary.captions_enabled must still be a MEASURED value, not the
-    # hardcoded $true it was initialized to above -- one unconditional GET
-    # /api/staff/station/profile, same endpoint the -CaptionsOff branch
-    # above already reads, judged by the SAME conservative rule
-    # (Get-MeasuredCaptionsEnabled, CaptionsOffCheck.ps1, factored out of
-    # Get-CaptionsOffVerification for exactly this reuse). Never a
-    # HARNESS_ERROR here -- the operator did not ask this lane to verify
-    # anything about captions on this run, so a failed/unparsed GET simply
-    # falls back to the same conservative $true default the hardcoded
-    # value already was, just now via the same judged code path instead of
-    # a bare literal.
+    # -CaptionsOff was NOT requested.
+    # The default speech soak requires captions ON. First-admin defaults
+    # them OFF, so explicitly enable through the existing product API and
+    # confirm the resolved setting before channels start or the clock runs.
+    $captionsPutR = Invoke-CivicCastApi -Method 'Put' -Url "$Base/api/staff/station/profile" -BodyObj ([ordered]@{ live_captions_enabled = $true }) -BearerToken $token
+    $captionsPutOk = ($captionsPutR.status -eq 200)
     $captionsGetR = Invoke-CivicCastApi -Method 'Get' -Url "$Base/api/staff/station/profile" -BearerToken $token
     Write-SoakLog "captions_check (no -CaptionsOff): GET status=$($captionsGetR.status) body=$($captionsGetR.body_raw) error=$($captionsGetR.error)"
     $captionsGetOk = ($captionsGetR.status -eq 200 -and $null -ne $captionsGetR.body_json)
     $captionsReadBackValue = $(if ($captionsGetOk) { $captionsGetR.body_json.live_captions_enabled } else { $null })
     $summary.captions_enabled = Get-MeasuredCaptionsEnabled -GetOk $captionsGetOk -ReadBackValue $captionsReadBackValue
+    if (-not $captionsPutOk -or -not $captionsGetOk -or $captionsReadBackValue -isnot [bool] -or -not $captionsReadBackValue) {
+        Write-HarnessErrorVerdictAndExit -Reason "default speech soak requires confirmed live captions ON (PUT ok=$captionsPutOk, GET ok=$captionsGetOk)"
+    }
     Write-SoakLog "captions_check: measured captions_enabled=$($summary.captions_enabled) (get_ok=$captionsGetOk read_back=$captionsReadBackValue)"
     Save-Json -Obj $summary -Path (Join-Path $LocalDir 'summary.json')
 }
