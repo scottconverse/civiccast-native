@@ -278,8 +278,13 @@ def check_schema_currency(database_url: str | None) -> SchemaStatus:
         head = expected_migration_head()
         _note_phase("read")
         revision = read_db_revision(database_url)
-        _note_phase("graph")
-        status = evaluate_schema_currency(revision, head, known=known_revisions())
+        # A freshly read matching revision is current regardless of the graph.
+        # Mismatches still need graph membership to distinguish ahead from behind.
+        known = None
+        if revision != head:
+            _note_phase("graph")
+            known = known_revisions()
+        status = evaluate_schema_currency(revision, head, known=known)
     except Exception:
         _LOG.exception("Schema-currency check failed; reporting 'unknown'.")
         return SchemaStatus(state="unknown")

@@ -263,12 +263,12 @@ def test_diagnostic_real_schema_check_phase_is_not_guessed(monkeypatch, phase):
         checks, "expected_migration_head", lambda: held("head") if phase == "head" else "head"
     )
     monkeypatch.setattr(
-        checks, "read_db_revision", lambda source: held("head") if phase == "read" else "head"
+        checks, "read_db_revision", lambda source: held("head") if phase == "read" else ("old" if phase == "graph" else "head")
     )
     monkeypatch.setattr(
         checks,
         "known_revisions",
-        lambda: held(frozenset({"head"})) if phase == "graph" else frozenset({"head"}),
+        lambda: held(frozenset({"head", "old"})) if phase == "graph" else frozenset({"head"}),
     )
     owner = HealthSchemaOwner(
         state, sync_storage=lambda: None, source=lambda: "PRIVATE_URL", ttl_seconds=5
@@ -280,7 +280,7 @@ def test_diagnostic_real_schema_check_phase_is_not_guessed(monkeypatch, phase):
         assert owner.request().state == "unknown"
         release.set()
         owner._thread.join(1)
-        assert owner.request().state == "current"
+        assert owner.request().state == ("behind" if phase == "graph" else "current")
         assert owner.diagnostic_snapshot()["phase"] == "complete"
     finally:
         release.set()
@@ -395,9 +395,9 @@ def test_schema_phase_observer_is_scoped_and_failure_is_non_semantic(monkeypatch
 
     with checks.observe_schema_phases(observer):
         assert checks.check_schema_currency("PRIVATE_URL").state == "current"
-    assert calls == ["head", "read", "graph"]
+    assert calls == ["head", "read"]
     checks.check_schema_currency("PRIVATE_URL")
-    assert calls == ["head", "read", "graph"], "phase observer leaked beyond its scope"
+    assert calls == ["head", "read"], "phase observer leaked beyond its scope"
 
 
 @pytest.mark.parametrize("diagnostic_operation", ["replace", "_RefreshDiagnostic"])

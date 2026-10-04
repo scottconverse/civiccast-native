@@ -218,6 +218,15 @@ refresh behavior. Diagnostic failures are suppressed so they cannot control
 actual refresh work or publication. This is source-level diagnostic fault
 isolation only: it does not prove a live bottleneck or its cause.
 
+Schema refresh still reads the database revision freshly. When that revision
+equals the expected head, it skips migration-graph construction, which cannot
+change the `current` classification; `graph` is emitted only for mismatches
+(including a missing revision). Owner TTL, source/epoch/close fences, bounded
+database reads and behind/ahead classification remain unchanged. Isolated
+regression tests prove the matching-revision path does not wait on a held graph;
+this does not establish the internal cause of a live graph-stage stall or a
+caption repair.
+
 Acceptance needs an independent, same-interpreter compiled source oracle and
 trusted process PID, birth time, executable, origin and fresh log window. A
 receipt's own identity fields cannot establish those facts. Reject missing,

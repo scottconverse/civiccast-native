@@ -20,6 +20,10 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Schema readiness skips irrelevant migration-graph construction after a fresh
+  database revision matches the expected head. Mismatched or missing revisions
+  still use the graph; freshness, timeout and lifecycle fences are unchanged.
+
 - Live meeting controls can reopen unfinished sessions from the server after a
   refresh or same-tab navigation. Operators explicitly choose the channel and
   meeting; recovery never starts, ends, or takes over a broadcast. New meetings

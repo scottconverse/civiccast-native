@@ -42,6 +42,70 @@ class TestEvaluate:
         assert evaluate_schema_currency(None, "0037_asset_meeting_body").state == "behind"
 
 
+def test_fresh_matching_revision_does_not_wait_for_irrelevant_graph(monkeypatch):
+    """Exercise the actual check, not just the pure equality evaluator."""
+    import threading
+
+    import civiccast.schema_check as checks
+
+    entered, release, completed = threading.Event(), threading.Event(), threading.Event()
+    reads, results = [], []
+    monkeypatch.setattr(checks, "expected_migration_head", lambda: "head")
+    monkeypatch.setattr(checks, "read_db_revision", lambda source: reads.append(source) or "head")
+
+    def held_graph():
+        entered.set()
+        assert release.wait(2)
+        return frozenset({"head"})
+
+    monkeypatch.setattr(checks, "known_revisions", held_graph)
+
+    def check():
+        try:
+            results.append(checks.check_schema_currency("synthetic"))
+        finally:
+            completed.set()
+
+    worker = threading.Thread(target=check)
+    worker.start()
+    try:
+        assert completed.wait(0.2), "fresh matching revision waited for irrelevant migration graph"
+        assert not entered.is_set(), "equal revision must not construct the graph"
+        assert reads == ["synthetic"]
+        assert results == [SchemaStatus("current", "head", "head")]
+    finally:
+        release.set()
+        worker.join(2)
+        assert not worker.is_alive()
+
+
+@pytest.mark.parametrize("revision,expected", [("old", "behind"), ("new", "ahead"), (None, "behind")])
+def test_mismatching_or_missing_revision_still_uses_graph(monkeypatch, revision, expected):
+    import civiccast.schema_check as checks
+
+    phases, graph_calls = [], []
+    monkeypatch.setattr(checks, "expected_migration_head", lambda: "head")
+    monkeypatch.setattr(checks, "read_db_revision", lambda source: revision)
+    monkeypatch.setattr(checks, "known_revisions", lambda: graph_calls.append(1) or frozenset({"head", "old"}))
+    with checks.observe_schema_phases(phases.append):
+        result = checks.check_schema_currency("synthetic")
+    assert result == SchemaStatus(expected, revision, "head")
+    assert graph_calls == [1] and phases == ["head", "read", "graph"]
+
+
+def test_matching_head_does_not_bypass_failed_fresh_read(monkeypatch):
+    import civiccast.schema_check as checks
+
+    monkeypatch.setattr(checks, "expected_migration_head", lambda: "head")
+
+    def failed_read(source):
+        raise TimeoutError("synthetic read deadline")
+
+    monkeypatch.setattr(checks, "read_db_revision", failed_read)
+    monkeypatch.setattr(checks, "known_revisions", lambda: pytest.fail("graph after failed read"))
+    assert checks.check_schema_currency("synthetic") == SchemaStatus("unknown")
+
+
 def test_expected_head_matches_the_single_migration_head() -> None:
     # Repo-global single head; advance with every migration (the live
     # Postgres full-chain test derives the same head). 0057_underwriting_spots

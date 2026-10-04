@@ -30,6 +30,14 @@ This file is a pointer, not a log.
   assertions, 47 affected checks and three additional in-flight epoch fences
   passed. The diagnostics do not change readiness rules or prove the live cause.
   No successful soak or caption-fix claim follows.
+- The subsequent nine-sample diagnostic reproduced a readiness failure after
+  entering migration-graph inspection. Original runtime files, proof settings
+  and three-channel readiness were restored and verified. A source-only repair
+  now skips that graph when a fresh database revision exactly matches expected
+  head; 52 independent checks passed and the original held-graph negative control
+  failed as intended. Installed verification remains pending. A broader shutdown test failed
+  identically on baseline and patch; its separate test correction is not part
+  of this product-fix checkpoint.
 - Still required before a final recommendation: complete health and caption
   runtime proof, repository/product reconciliation, material operator workflow
   repairs, the exact-package installation lifecycle, and sustained three-channel
