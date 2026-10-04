@@ -1634,8 +1634,6 @@ def scan_peak_dbfs(
     bytes_per_frame = params.channels * 4
     t_start = time.perf_counter()
     peak = 0.0
-    cancelled = False
-    timed_out = False
     carry = b""
     proc = subprocess.Popen(  # noqa: S603 - explicit list, resolved binary, shell=False
         [ffmpeg, *build_peak_scan_args(artifact_path=artifact_path, params=params)],
@@ -1643,14 +1641,45 @@ def scan_peak_dbfs(
         stderr=subprocess.DEVNULL,
         creationflags=_CREATE_NO_WINDOW | _BELOW_NORMAL_PRIORITY_CLASS,
     )
+    finished = threading.Event()
+    stop_reason: str | None = None
+    stopped_at: float | None = None
+    failed = False
+
+    def kill_child() -> None:
+        if proc.poll() is None:
+            with contextlib.suppress(OSError):
+                proc.kill()
+
+    def watch_stop() -> None:
+        nonlocal stop_reason, stopped_at
+        while not finished.wait(0.05):
+            # A completed decode wins a racing deadline, including buffered
+            # PCM the caller has not yet consumed. Decode errors stay errors.
+            if proc.poll() is not None:
+                return
+            if cancel_event is not None and cancel_event.is_set():
+                stop_reason = "cancelled"
+            elif timeout_s is not None and time.perf_counter() - t_start > timeout_s:
+                stop_reason = "timed out"
+            if stop_reason is not None:
+                stopped_at = time.perf_counter()
+                kill_child()
+                return
+
+    watcher = (
+        threading.Thread(target=watch_stop, name="civiccast-peak-stop")
+        if cancel_event is not None or timeout_s is not None
+        else None
+    )
+    watcher_started = False
     try:
+        if watcher is not None:
+            watcher.start()
+            watcher_started = True
         assert proc.stdout is not None
         while True:
-            if cancel_event is not None and cancel_event.is_set():
-                cancelled = True
-                break
-            if timeout_s is not None and time.perf_counter() - t_start > timeout_s:
-                timed_out = True
+            if stop_reason is not None:
                 break
             raw = proc.stdout.read(CHUNK_FRAMES * bytes_per_frame)
             if not raw:
@@ -1663,18 +1692,39 @@ def scan_peak_dbfs(
             if usable:
                 samples = np.frombuffer(chunk[:usable], dtype="<f4")
                 peak = max(peak, float(np.max(np.abs(samples))))
+    except OSError:
+        failed = True
+        if stop_reason is None:
+            raise
+    except BaseException:
+        failed = True
+        raise
     finally:
+        if failed or stop_reason is not None:
+            if stopped_at is None:
+                stopped_at = time.perf_counter()
+            kill_child()
         if proc.stdout is not None:
             with contextlib.suppress(OSError):
                 proc.stdout.close()
-        if cancelled or timed_out:
-            with contextlib.suppress(OSError):
-                proc.kill()
-    rc = proc.wait()
+        try:
+            while True:
+                try:
+                    rc = proc.wait(timeout=0.05)
+                    break
+                except subprocess.TimeoutExpired:
+                    if stopped_at is not None and time.perf_counter() - stopped_at > 5:
+                        raise LoudnessRideError(
+                            "the peak-scan child did not exit after owned cleanup"
+                        ) from None
+        finally:
+            finished.set()
+            if watcher is not None and watcher_started:
+                watcher.join(timeout=1)
 
-    if cancelled:
+    if stop_reason == "cancelled":
         raise LoudnessRideCancelledError("the artifact's true-peak scan was cancelled")
-    if timed_out:
+    if stop_reason == "timed out":
         raise LoudnessRideError(f"the artifact's true-peak scan timed out after {timeout_s:g}s")
     if rc != 0:
         raise LoudnessRideError(f"the artifact's decode exited {rc}")

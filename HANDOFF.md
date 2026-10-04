@@ -11,8 +11,10 @@ This file is a pointer, not a log.
   final child waits. Closed output pipes cannot certify a successful render;
   Windows stop-related I/O errors preserve the typed cancellation result.
   Independent focused run: 13 passed, 21 deselected in 5.11s. Four inherited
-  closed-algorithm expectations remain red. Peak-scan cancellation is the
-  next separate repair; no whole-preparation or installed cancellation claim.
+  closed-algorithm expectations remain red. Peak-scan cancellation is also
+  repaired: root independently passed 21 focused checks in 6.49s, including
+  actual blocked reads/waits, peak calculation and stop/error distinctions.
+  Probe timeout remains open; no whole-preparation or installed cancellation claim.
   Evidence: oversight `evidence/u87-recorder-product/ride-cancel-receipt-v2.md`.
 - Background reload refusal now carries the original airing-program horizon
   into restart recovery (A-006). A two-hour program previously entered recovery

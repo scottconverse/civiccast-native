@@ -33,8 +33,10 @@ came across and what deliberately did not.
 
 - Speech-level rendering can cancel or time out while its decoder or encoder
   pipe is blocked, and cleans up its owned children. An encoder that closes
-  early cannot be reported as a successful audio render. This does not yet
-  establish cancellation coverage for every preparation pass.
+  early cannot be reported as a successful audio render. The mandatory peak
+  scan also interrupts a blocked decoder read or final wait on cancellation
+  or deadline, without changing its measured peak calculation. This does not
+  yet establish cancellation coverage for every preparation pass.
 
 - A refused background program change retains the current program's end time,
   preventing the recovery watchdog from retrying a long program prematurely.

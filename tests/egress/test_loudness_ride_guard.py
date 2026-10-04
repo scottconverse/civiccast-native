@@ -675,6 +675,133 @@ def test_run_ride_pipe_oserror_preserves_owned_stop_only(monkeypatch, owned_stop
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize("blocked_at", ["read", "wait"])
+@pytest.mark.parametrize("stop_reason", ["cancel", "deadline"])
+def test_peak_scan_interrupts_owned_blocked_child(tmp_path, monkeypatch, blocked_at, stop_reason):
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    marker = tmp_path / "scan-started"
+    code = (
+        "import os,sys,time; from pathlib import Path; "
+        "Path(sys.argv[1]).touch(); "
+        + ("os.close(1); " if blocked_at == "wait" else "")
+        + "time.sleep(30)"
+    )
+    monkeypatch.setattr(lr, "build_peak_scan_args", lambda **kwargs: ["-c", code, str(marker)])
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    cancel = threading.Event()
+    done = threading.Event()
+    outcomes = []
+    before = {t.ident for t in threading.enumerate() if t.name == "civiccast-peak-stop"}
+
+    def scan():
+        try:
+            outcomes.append(lr.scan_peak_dbfs(
+                tmp_path / "artifact", params=lr.RideParams(target_lufs=-16),
+                cancel_event=cancel, timeout_s=0.5 if stop_reason == "deadline" else 10,
+            ))
+        except BaseException as exc:
+            outcomes.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=scan)
+    thread.start()
+    try:
+        until = time.monotonic() + 2
+        while not marker.exists() and time.monotonic() < until:
+            time.sleep(0.01)
+        assert marker.exists()
+        if stop_reason == "cancel":
+            cancel.set()
+        assert done.wait(2), f"{stop_reason} cannot interrupt peak scan blocked {blocked_at}"
+        thread.join(1)
+        expected = lr.LoudnessRideCancelledError if stop_reason == "cancel" else lr.LoudnessRideError
+        assert isinstance(outcomes[0], expected), outcomes
+        if stop_reason == "deadline":
+            assert "timed out" in str(outcomes[0])
+        assert all(p.poll() is not None for p in children)
+        assert {t.ident for t in threading.enumerate() if t.name == "civiccast-peak-stop"} == before
+    finally:
+        cancel.set()
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=2)
+        thread.join(2)
+        assert not thread.is_alive()
+
+
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_peak_scan_completed_decode_preserves_peak_and_errors(monkeypatch, tmp_path, exit_code):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    code = (
+        "import struct,sys; sys.stdout.buffer.write(struct.pack('<fff',0.0,-0.5,0.25)); "
+        f"sys.stdout.buffer.flush(); sys.exit({exit_code})"
+    )
+    monkeypatch.setattr(lr, "build_peak_scan_args", lambda **kwargs: ["-c", code])
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    monkeypatch.setattr(lr, "time", SimpleNamespace(
+        perf_counter=lambda: 1000.0 if children and children[0].poll() is not None else 0.0,
+    ))
+    if exit_code:
+        with pytest.raises(lr.LoudnessRideError, match="decode exited 7"):
+            lr.scan_peak_dbfs(tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), timeout_s=1)
+    else:
+        assert lr.scan_peak_dbfs(
+            tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), timeout_s=1,
+        ) == pytest.approx(-6.020599913279624)
+    assert children[0].returncode == exit_code
+
+
+@pytest.mark.parametrize("owned_stop", [False, True])
+def test_peak_scan_pipe_oserror_preserves_owned_stop_only(monkeypatch, tmp_path, owned_stop):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(lr, "_ffmpeg_binary", lambda: sys.executable)
+    monkeypatch.setattr(lr, "build_peak_scan_args", lambda **kwargs: ["-c", "import time; time.sleep(30)"])
+    cancel = threading.Event()
+    popen = subprocess.Popen
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        pipe = child.stdout
+
+        def read(size):
+            if owned_stop:
+                cancel.set()
+                child.wait(timeout=2)
+            raise OSError(22, "synthetic peak pipe error")
+
+        child.stdout = SimpleNamespace(read=read, close=pipe.close)
+        return child
+
+    monkeypatch.setattr(lr.subprocess, "Popen", spawn)
+    expected = lr.LoudnessRideCancelledError if owned_stop else OSError
+    with pytest.raises(expected):
+        lr.scan_peak_dbfs(tmp_path / "artifact", params=lr.RideParams(target_lufs=-16), cancel_event=cancel)
+    assert children[0].poll() is not None
+
+
 def test_run_reencode_reports_the_wall_time_and_raises_on_a_bad_pcm(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
