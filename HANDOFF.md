@@ -31,6 +31,17 @@ This file is a pointer, not a log.
   finishes; they have not been pushed. Next remote checkpoint must include the
   reviewed native-floor and claims-test corrections, preserve runtime evidence
   identity, and refresh PR 232 and this handoff after confirming the remote SHA.
+- Local follow-up commits: `6f224618` raises native execution floors to
+  1881/2087 from isolated committed-source collection (1931 pure, 2140 total,
+  2137 excluding integration). Root rerun: `34 passed in 32.03s`. `7be11a8f`
+  isolates each claims-detector mutation from existing unrelated drift; root
+  adjacent parser/role/drift run: `14 passed, 111 deselected in 10.77s`.
+  Real current-source binding failures remain, with no historical hash refresh.
+  Detailed external receipts: U87-NATIVE-COLLECTION-FLOORS.md and
+  U87-CLAIMS-DRIFT-RECONCILIATION.md in the oversight reports directory.
+  product_type_contracts now independently reviews v13's immutable rollback
+  snapshot; u86 prepares existing operator/browser checks for the next exact
+  Sandbox candidate. Neither agent operates the host station or starts a VM.
 - Buffered worker acknowledgement repair: `ade67360`.
   Root independently ran 67 affected tests (1 existing gi skip), then 274
   strategy/daemon tests (6 existing POSIX skips). Whole-tree Ruff passed and
