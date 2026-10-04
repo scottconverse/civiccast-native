@@ -9,8 +9,10 @@ This file is a pointer, not a log.
   CI prerequisites and documentation policy; they do not change shipping runtime.
   Draft PR 232 body is bound to the frozen source,
   terminal original-soak FAIL and restored original baseline. Exact self-hosted
-  candidate build 37230261698 active: K1 station bundle succeeded and native
-  asset job 111520319907 is running. Large/binary uploads false; no new tag,
+  candidate build 37230261698 completed SUCCESS in all three jobs, including
+  signed artifact verification, packaged GStreamer worker smoke and final kit.
+  Automatic Gate A 37232341060 started at 20:30:14Z and is active; v13 owns it.
+  Large/binary uploads false; no new tag,
   release or station cutover. Current CI: tests 37230256695 active; lint
   37230256681 failed solely at Ruff formatting (23 files); docs 37230256692 and
   installer compile 37230256805 succeeded. Windows dual-runtime guard passed.
@@ -39,9 +41,18 @@ This file is a pointer, not a log.
   Real current-source binding failures remain, with no historical hash refresh.
   Detailed external receipts: U87-NATIVE-COLLECTION-FLOORS.md and
   U87-CLAIMS-DRIFT-RECONCILIATION.md in the oversight reports directory.
-  product_type_contracts now independently reviews v13's immutable rollback
-  snapshot; u86 prepares existing operator/browser checks for the next exact
-  Sandbox candidate. Neither agent operates the host station or starts a VM.
+  Independent rollback v2 review corrected two reproduced defects: foreign
+  registration-root redirection and failure to recover an absent application
+  tree. Reviewed eight-file snapshot: 126 passed, 4 deselected in 7.34s,
+  plus sensitive defect/staging interruption/corruption checks. This is offline
+  core/primitives proof, not installed rollback. product_type_contracts now
+  implements the isolated database factory; v13 owns entry/admission/NSIS wiring.
+  u86 prepared guest-local existing Node/Playwright tooling for actual installed
+  help/paywall/take-live actions, without a new bridge/server/harness. Guest
+  invocation remains v13-owned. No authenticated installed UI PASS yet.
+  Existing deb2 resource samples are analyzed in oversight reports/
+  U87-DEB2-RESOURCE-OBSERVATION.md: cyclic worker working-set changes, not a
+  demonstrated leak or long-run resource-stability PASS.
 - Buffered worker acknowledgement repair: `ade67360`.
   Root independently ran 67 affected tests (1 existing gi skip), then 274
   strategy/daemon tests (6 existing POSIX skips). Whole-tree Ruff passed and
