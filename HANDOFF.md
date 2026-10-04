@@ -14,9 +14,19 @@ This file is a pointer, not a log.
   no worker appeared during its window while generated silent-slate preparation
   resampled loudness; the existing test substituted FFmpeg fallback. This is
   not a product-engine transport pass. The unchanged 20-minute health observation
-  continues; sustained three-channel speech acceptance remains pending.
+  passed four samples with zero unhealthy results; host teardown is pending.
+  Sustained three-channel speech acceptance remains pending.
   Candidate CI: installer compile 37204558280 and docs 37204558277 passed;
   lint 37204558284 and tests 37204558265 failed. No merge or release claim.
+- Next-source generated-slate preparation now reuses verified internal canonical
+  silence without program loudness analysis or re-encoding. Provenance binds
+  bytes, file identity, profile and segment fields; disk names and serialized
+  plans cannot claim that trust. Root independently passed 12 focused checks
+  and the real-FFmpeg one-hour check (1 passed in 5.21s): generation 2.375s,
+  preparation 0.969s, 3600.026622s audio/video, one continuous stream-copy output.
+  Author affected run passed 208 with two unchanged-HEAD cache-fixture failures;
+  final focused run including real media passed 21. Actual packaged startup
+  remains to be rerun; no timeout or test-verdict relaxation was made.
 - Next-source supervised HTTP access/error logs rotate separately in
   `control_plane-http.log` (10 MiB plus ten backups), without forced fsync on
   each request. Existing application diagnostics retain their durable handler.

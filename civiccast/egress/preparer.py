@@ -66,6 +66,7 @@ from civiccast.egress.models import (
     EgressSourceSegment,
 )
 from civiccast.egress.runtime import FfmpegRunner
+from civiccast.egress.source_plan import _GeneratedSlateSegment
 from civiccast.stream._ffmpeg import (
     FfmpegCancelledError,
     FfmpegNotFoundError,
@@ -549,7 +550,9 @@ class SourcePreparer:
         if preparation_timeout_seconds is not None and (
             not math.isfinite(preparation_timeout_seconds) or preparation_timeout_seconds <= 0
         ):
-            raise ValueError("preparation_timeout_seconds must be finite and greater than zero when set.")
+            raise ValueError(
+                "preparation_timeout_seconds must be finite and greater than zero when set."
+            )
         self._preparation_timeout_seconds = (
             preparation_timeout_seconds
             if preparation_timeout_seconds is not None
@@ -2468,8 +2471,11 @@ class SourcePreparer:
         return result
 
     def _check_loudness(
-        self, *, cancel_event: threading.Event | None,
-        timeout_seconds: float | None = None, **kwargs: Any
+        self,
+        *,
+        cancel_event: threading.Event | None,
+        timeout_seconds: float | None = None,
+        **kwargs: Any,
     ) -> LoudnessGateResult:
         effective_timeout = (
             self._preparation_timeout_seconds if timeout_seconds is None else timeout_seconds
@@ -2521,6 +2527,28 @@ class SourcePreparer:
             raise SourcePrepareError(
                 f"Egress source {segment.label!r} is missing before preparation: {source_path}."
             )
+        if isinstance(segment, _GeneratedSlateSegment) and segment.verified_for(config):
+            # This process's generator already encoded this exact canonical
+            # profile with anullsrc. Never search an hour of known silence for
+            # program loudness or re-encode it; retain the existing copy-out,
+            # trim-free output and cancellation/plan cleanup contract.
+            self._raise_if_cancelled(cancel_event)
+            prepared = self._emit_prepared_from_cache(
+                source_path,
+                segment,
+                source_path=source_path,
+                output_path=output_path,
+                loudness_status="ok",
+                measured_lufs=None,
+                normalized=False,
+                cancel_event=cancel_event,
+            )
+            self._raise_if_cancelled(cancel_event)
+            if not segment.verified_for(config):
+                if Path(prepared[0].path) == output_path:
+                    output_path.unlink(missing_ok=True)
+                raise SourcePrepareError("Generated slate changed during preparation.")
+            return prepared
         key = self._cache_key(source_path, config)
         trimmed = segment.inpoint_seconds is not None or segment.outpoint_seconds is not None
         # U60: one local, read by every stage this call runs, so "this is a

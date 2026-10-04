@@ -158,6 +158,27 @@ def test_slate_source_generator_returns_source_plan(tmp_path: Path) -> None:
     assert Path(captured["args"][-1]).name.startswith(".")
 
 
+def test_slate_generator_regenerates_untrusted_disk_cache_after_restart(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"owned canonical silent bytes")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    config = _config()
+    generator = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
+    original = generator(config)
+    assert len(calls) == 2  # canonical base plus continuous fill
+    generator(config)
+    assert len(calls) == 2  # still-valid same-process proof reuses bytes
+    Path(original.segments[0].path).write_bytes(b"untrusted old fill")
+    restarted = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)
+    regenerated = restarted(config)
+    assert len(calls) == 4
+    assert Path(regenerated.segments[0].path).read_bytes() == b"owned canonical silent bytes"
+
+
 def test_slate_source_generator_falls_back_to_plain_color(tmp_path: Path) -> None:
     calls: list[list[str]] = []
 

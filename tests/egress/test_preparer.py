@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -42,7 +43,8 @@ from civiccast.egress.preparer import (
     build_loudnorm_probe_args,
     preparation_timeout_seconds_from_env,
 )
-from civiccast.stream._ffmpeg import FfmpegResult
+from civiccast.egress.source_plan import SlateSourceGenerator
+from civiccast.stream._ffmpeg import FfmpegResult, run_ffmpeg
 from civiccast.stream.loudness import LoudnessGateResult
 
 
@@ -321,11 +323,15 @@ def test_prepare_loudness_probe_stops_real_owned_child(tmp_path, monkeypatch, st
         # Substitute only the decoder executable/argv; production wrapper owns
         # real pipes, timeout polling and termination of the resulting child.
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        child = popen([
-            sys.executable, "-c",
-            "import sys,time; from pathlib import Path; Path(sys.argv[1]).touch(); time.sleep(30)",
-            str(marker),
-        ], **kwargs)
+        child = popen(
+            [
+                sys.executable,
+                "-c",
+                "import sys,time; from pathlib import Path; Path(sys.argv[1]).touch(); time.sleep(30)",
+                str(marker),
+            ],
+            **kwargs,
+        )
         children.append(child)
         return child
 
@@ -338,9 +344,13 @@ def test_prepare_loudness_probe_stops_real_owned_child(tmp_path, monkeypatch, st
 
     def prepare():
         try:
-            outcomes.append(preparer.prepare(
-                plan, _config(), cancel_event=None if stop_reason == "deadline-no-event" else cancel,
-            ))
+            outcomes.append(
+                preparer.prepare(
+                    plan,
+                    _config(),
+                    cancel_event=None if stop_reason == "deadline-no-event" else cancel,
+                )
+            )
         except BaseException as exc:
             outcomes.append(exc)
         finally:
@@ -357,7 +367,9 @@ def test_prepare_loudness_probe_stops_real_owned_child(tmp_path, monkeypatch, st
             cancel.set()
         assert done.wait(2), "loudness probe ignored the preparation timeout"
         thread.join(1)
-        expected = SourcePreparationCancelledError if stop_reason == "cancel" else SourcePrepareError
+        expected = (
+            SourcePreparationCancelledError if stop_reason == "cancel" else SourcePrepareError
+        )
         assert isinstance(outcomes[0], expected), outcomes
         if stop_reason.startswith("deadline"):
             assert "loudness" in str(outcomes[0]) and "timed out after 0.3s" in str(outcomes[0])
@@ -374,7 +386,9 @@ def test_prepare_loudness_probe_stops_real_owned_child(tmp_path, monkeypatch, st
 
 
 @pytest.mark.parametrize("override", [None, 17.0])
-def test_prepare_segment_both_loudness_samples_use_selected_timeout(tmp_path, monkeypatch, override):
+def test_prepare_segment_both_loudness_samples_use_selected_timeout(
+    tmp_path, monkeypatch, override
+):
     import civiccast.stream.loudness as loudness_module
 
     calls = []
@@ -392,16 +406,29 @@ def test_prepare_segment_both_loudness_samples_use_selected_timeout(tmp_path, mo
 
     monkeypatch.setattr(loudness_module, "run_ffmpeg", probe)
     preparer = SourcePreparer(
-        work_dir=tmp_path / "work", ffmpeg_runner=conform,
-        preparation_timeout_seconds=3.0, warm_scheduler=lambda job: None,
+        work_dir=tmp_path / "work",
+        ffmpeg_runner=conform,
+        preparation_timeout_seconds=3.0,
+        warm_scheduler=lambda job: None,
     )
-    segment = _source_plan(tmp_path).segments[0].model_copy(update={
-        "inpoint_seconds": None, "outpoint_seconds": None, "duration_seconds": 4000.0,
-    })
+    segment = (
+        _source_plan(tmp_path)
+        .segments[0]
+        .model_copy(
+            update={
+                "inpoint_seconds": None,
+                "outpoint_seconds": None,
+                "duration_seconds": 4000.0,
+            }
+        )
+    )
     cancel = threading.Event()
     preparer._prepare_segment(
-        segment, config=_config(), output_path=tmp_path / "prepared.ts",
-        cancel_event=cancel, timeout_seconds=override,
+        segment,
+        config=_config(),
+        output_path=tmp_path / "prepared.ts",
+        cancel_event=cancel,
+        timeout_seconds=override,
     )
     assert len(calls) == 2
     assert all(call["timeout"] == (3.0 if override is None else override) for call in calls)
@@ -904,6 +931,179 @@ def test_repeated_identical_segments_prepare_once(tmp_path: Path) -> None:
     assert len(ffmpeg_calls) == 1
     assert len(report.source_plan.segments) == 5
     assert len({seg.path for seg in report.source_plan.segments}) == 1
+
+
+def test_generated_silent_slate_uses_preconformed_copy_without_program_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+    probes: list[dict] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        Path(args[-1]).write_bytes(b"generated canonical silent slate")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    config = _config()
+    plan = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)(config)
+    assert len(plan.segments) == 1
+    assert plan.segments[0].duration_seconds == 3600
+    calls.clear()
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 3600.0)
+    preparer = SourcePreparer(
+        work_dir=tmp_path,
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
+        warm_scheduler=lambda _job: None,
+    )
+    report = preparer.prepare(plan, config)
+    assert probes == []
+    assert len(calls) == 1
+    assert calls[0][calls[0].index("-c") + 1] == "copy"
+    assert len(report.source_plan.segments) == 1
+    assert report.source_plan.segments[0].duration_seconds == 3600
+    assert report.records[0].measured_lufs is None
+    assert report.records[0].normalized is False
+
+
+@pytest.mark.parametrize("change", ["serialized", "bytes", "profile", "path", "trim", "duration"])
+def test_generated_slate_provenance_cannot_bypass_changed_or_untrusted_media(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    def runner(args: list[str]) -> FfmpegResult:
+        Path(args[-1]).write_bytes(b"canonical silent generated bytes")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    config = _config()
+    plan = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)(config)
+    segment = plan.segments[0]
+    if change == "serialized":
+        plan = EgressSourcePlan.model_validate_json(plan.model_dump_json())
+    elif change == "bytes":
+        path = Path(segment.path)
+        original = path.stat()
+        path.write_bytes(b"X" * original.st_size)
+        os.utime(path, ns=(original.st_atime_ns, original.st_mtime_ns))
+    elif change == "profile":
+        config = config.model_copy(
+            update={
+                "canonical_profile": config.canonical_profile.model_copy(
+                    update={"audio_channels": 1}
+                )
+            }
+        )
+    elif change == "path":
+        other = tmp_path / "other.ts"
+        other.write_bytes(Path(segment.path).read_bytes())
+        segment.path = str(other)
+    elif change == "trim":
+        segment.inpoint_seconds = 1.0
+    else:
+        segment.duration_seconds = 1800
+    monkeypatch.setattr(preparer_module, "probe_media_duration_seconds", lambda _path: 3600.0)
+    probes: list[dict] = []
+    preparer = SourcePreparer(
+        work_dir=tmp_path,
+        ffmpeg_runner=runner,
+        loudness_checker=lambda **kwargs: probes.append(kwargs) or _loudness(),
+        warm_scheduler=lambda _job: None,
+    )
+    preparer.prepare(plan, config)
+    assert len(probes) == 1
+
+
+def test_generated_slate_changed_during_copy_is_not_admitted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def generate(args: list[str]) -> FfmpegResult:
+        Path(args[-1]).write_bytes(b"canonical generated slate")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    config = _config()
+    plan = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=generate)(config)
+
+    def copy_and_change(args: list[str]) -> FfmpegResult:
+        generate(args)
+        Path(plan.segments[0].path).write_bytes(b"changed")
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    preparer = SourcePreparer(work_dir=tmp_path, ffmpeg_runner=copy_and_change)
+    with pytest.raises(SourcePrepareError, match="changed during preparation"):
+        preparer.prepare(plan, config)
+    assert list((tmp_path / "gov" / "prepared").glob("*/segment-*.ts")) == []
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="real FFmpeg and ffprobe are required",
+)
+def test_generated_slate_real_ffmpeg_continuous_hour_prepares_without_loudness(
+    tmp_path: Path,
+) -> None:
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> FfmpegResult:
+        calls.append(args)
+        return run_ffmpeg(args, timeout=30.0)
+
+    def unexpected_probe(**_kwargs: object) -> LoudnessGateResult:
+        pytest.fail("known generated silence invoked a program loudness probe")
+
+    config = _config()
+    started = time.monotonic()
+    plan = SlateSourceGenerator(work_dir=tmp_path, ffmpeg_runner=runner)(config)
+    generated_at = time.monotonic()
+    assert len(calls) == 2
+    report = SourcePreparer(
+        work_dir=tmp_path, ffmpeg_runner=runner, loudness_checker=unexpected_probe
+    ).prepare(plan, config)
+    prepared_at = time.monotonic()
+    assert len(calls) == 3
+    assert calls[-1][calls[-1].index("-c") + 1] == "copy"
+    output = Path(report.source_plan.segments[0].path)
+    result = subprocess.run(
+        [
+            shutil.which("ffprobe"),
+            "-v",
+            "error",
+            "-show_streams",
+            "-show_format",
+            "-of",
+            "json",
+            str(output),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    assert result.returncode == 0, result.stderr
+    metadata = json.loads(result.stdout)
+    assert {stream["codec_type"] for stream in metadata["streams"]} == {"audio", "video"}
+    video = next(stream for stream in metadata["streams"] if stream["codec_type"] == "video")
+    audio = next(stream for stream in metadata["streams"] if stream["codec_type"] == "audio")
+    assert (video["width"], video["height"]) == (
+        config.canonical_profile.width,
+        config.canonical_profile.height,
+    )
+    assert audio["channels"] == config.canonical_profile.audio_channels
+    assert int(audio["sample_rate"]) == config.canonical_profile.audio_sample_rate
+    assert 3599 < float(metadata["format"]["duration"]) < 3602
+    assert all(3599 < float(stream["duration"]) < 3602 for stream in metadata["streams"])
+    assert len(report.source_plan.segments) == 1
+    assert report.records[0].measured_lufs is None
+    assert report.records[0].normalized is False
+    print(
+        json.dumps(
+            {
+                "generate_seconds": generated_at - started,
+                "prepare_seconds": prepared_at - generated_at,
+                "duration_seconds": metadata["format"]["duration"],
+                "bytes": output.stat().st_size,
+                "output": str(output),
+            }
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3800,6 +4000,8 @@ def test_prepare_accepts_a_decodable_prepared_segment(tmp_path: Path) -> None:
 
     assert report.source_plan.channel_id == "gov"
     assert report.records[0].prepared_path.endswith("segment-0001.ts")
+
+
 # U29 — the warm's timeout, priority and retry budget
 #
 # Observed on the live station (2026-09-25, reports/U29.md): the LPM rotation's
