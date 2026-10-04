@@ -1276,21 +1276,84 @@ def run_ride(
     pcm_file: BinaryIO | None = pcm_path.open("wb") if pcm_path is not None else None
 
     t_start = time.perf_counter()
-    decoder = subprocess.Popen(  # noqa: S603 - explicit list, resolved binary, shell=False
-        [ffmpeg, *decoder_args],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        creationflags=_CREATE_NO_WINDOW | _BELOW_NORMAL_PRIORITY_CLASS,
-    )
-    err_file = tempfile.NamedTemporaryFile(  # noqa: SIM115 - held open for the child
-        prefix="civiccast-ride-", suffix=".log", delete=False
-    )
+    try:
+        err_file = tempfile.NamedTemporaryFile(  # noqa: SIM115 - held open for the child
+            prefix="civiccast-ride-", suffix=".log", delete=False
+        )
+    except BaseException:
+        if pcm_file is not None:
+            pcm_file.close()
+        raise
     err_path = Path(err_file.name)
+    decoder: subprocess.Popen[bytes] | None = None
     sink: subprocess.Popen[bytes] | None = None
     frames_done = 0
-    cancelled = False
-    timed_out = False
+    finished = threading.Event()
+    guard = threading.Lock()
+    children: list[subprocess.Popen[bytes]] = []
+    stop_reason: str | None = None
+    stopped_at: float | None = None
+    startup_complete = False
+    failed = False
+    unwinding = False
+    broken_pipe = False
+
+    def kill_children() -> None:
+        for child in children:
+            if child.poll() is None:
+                with contextlib.suppress(OSError):
+                    child.kill()
+
+    def register(child: subprocess.Popen[bytes]) -> None:
+        with guard:
+            children.append(child)
+            # Cancellation may have landed during the second child's spawn.
+            if stop_reason is not None:
+                kill_children()
+
+    def watch_stop() -> None:
+        nonlocal stop_reason, stopped_at
+        while not finished.wait(0.05):
+            with guard:
+                # Completed children win a racing stop/deadline; do not turn a
+                # successfully finished render into a timeout after the fact.
+                if startup_complete and all(child.poll() is not None for child in children):
+                    return
+                if cancel_event is not None and cancel_event.is_set():
+                    stop_reason = "cancelled"
+                elif timeout_s is not None and time.perf_counter() - t_start > timeout_s:
+                    stop_reason = "timed out"
+                if stop_reason is not None:
+                    stopped_at = time.perf_counter()
+                    kill_children()
+                    return
+
+    watcher: threading.Thread | None = None
+    watcher_started = False
+    if cancel_event is not None or timeout_s is not None:
+        watcher = threading.Thread(target=watch_stop, name="civiccast-ride-stop")
+
+    def wait_child(child: subprocess.Popen[bytes]) -> int:
+        while True:
+            try:
+                return child.wait(timeout=0.05)
+            except subprocess.TimeoutExpired:
+                if stopped_at is not None and time.perf_counter() - stopped_at > 5:
+                    raise LoudnessRideError(
+                        "the ride child did not exit after owned cleanup"
+                    ) from None
+
     try:
+        if watcher is not None:
+            watcher.start()
+            watcher_started = True
+        decoder = subprocess.Popen(  # noqa: S603 - explicit list, resolved binary, shell=False
+            [ffmpeg, *decoder_args],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            creationflags=_CREATE_NO_WINDOW | _BELOW_NORMAL_PRIORITY_CLASS,
+        )
+        register(decoder)
         sink = subprocess.Popen(  # noqa: S603 - explicit list, resolved binary, shell=False
             [ffmpeg, *sink_args],
             stdin=subprocess.PIPE,
@@ -1298,14 +1361,13 @@ def run_ride(
             stderr=err_file,
             creationflags=_CREATE_NO_WINDOW | _BELOW_NORMAL_PRIORITY_CLASS,
         )
+        register(sink)
+        with guard:
+            startup_complete = True
         assert decoder.stdout is not None
         assert sink.stdin is not None
         while True:
-            if cancel_event is not None and cancel_event.is_set():
-                cancelled = True
-                break
-            if timeout_s is not None and time.perf_counter() - t_start > timeout_s:
-                timed_out = True
+            if stop_reason is not None:
                 break
             raw = decoder.stdout.read(bytes_per_chunk)
             if not raw:
@@ -1325,36 +1387,87 @@ def run_ride(
     except BrokenPipeError:
         # The sink died first (a bad filter, a bad codec, a full disk).  Its
         # exit code below is the real error; the broken pipe is a symptom.
-        pass
+        failed = True
+        broken_pipe = True
+    except OSError:
+        failed = True
+        if stop_reason is None:
+            unwinding = True
+            raise
+    except BaseException:
+        failed = True
+        unwinding = True
+        raise
     finally:
-        for stream in (decoder.stdout, sink.stdin if sink is not None else None):
+        if failed or stop_reason is not None:
+            with guard:
+                if stopped_at is None:
+                    stopped_at = time.perf_counter()
+                kill_children()
+        for stream in (
+            decoder.stdout if decoder is not None else None,
+            sink.stdin if sink is not None else None,
+        ):
             if stream is not None:
-                with contextlib.suppress(BrokenPipeError, OSError):
+                try:
                     stream.close()
+                except BrokenPipeError:
+                    broken_pipe = True
+                except OSError:
+                    # Windows may report a broken buffered flush as EINVAL
+                    # rather than BrokenPipeError. Finish owned cleanup first;
+                    # a sink pipe that did not flush cannot certify delivery.
+                    if sink is not None and stream is sink.stdin:
+                        broken_pipe = True
         if pcm_file is not None:
             with contextlib.suppress(OSError):
                 pcm_file.close()
-        if cancelled or timed_out:
-            for proc in (sink, decoder):
-                if proc is not None and proc.poll() is None:
-                    proc.kill()
         # Drain the decoder's stderr into its own void so a chatty failure
         # cannot leave the pipe full and the wait below hanging.
-        if decoder.stderr is not None:
+        if decoder is not None and decoder.stderr is not None:
             decoder.stderr.close()
-        err_file.close()
-
-    decoder.wait()
-    sink_rc = sink.wait() if sink is not None else -1
+        if stop_reason is None:
+            err_file.close()
+        else:
+            with contextlib.suppress(OSError):
+                err_file.close()
+        waited = False
+        try:
+            for child in children:
+                wait_child(child)
+            waited = True
+        finally:
+            finished.set()
+            if watcher is not None and watcher_started:
+                watcher.join(timeout=1)
+            if unwinding or not waited:
+                with contextlib.suppress(OSError):
+                    err_path.unlink(missing_ok=True)
+    assert decoder is not None and sink is not None
+    sink_rc = sink.returncode
     try:
-        err = err_path.read_text(encoding="utf-8", errors="replace")
+        # An aborted render needs no measurement. Preserve its stop reason if
+        # Windows has not yet released the killed child's stderr handle.
+        err = (
+            ""
+            if stop_reason is not None
+            else err_path.read_text(encoding="utf-8", errors="replace")
+        )
     finally:
-        err_path.unlink(missing_ok=True)
+        if stop_reason is None:
+            err_path.unlink(missing_ok=True)
+        else:
+            with contextlib.suppress(OSError):
+                err_path.unlink(missing_ok=True)
 
-    if cancelled:
+    if stop_reason == "cancelled":
         raise LoudnessRideCancelledError("the speech-leveling ride was cancelled")
-    if timed_out:
+    if stop_reason == "timed out":
         raise LoudnessRideError(f"the speech-leveling ride timed out after {timeout_s:g}s")
+    if broken_pipe:
+        raise LoudnessRideError(
+            "the ride's audio sink closed its pipe before all PCM was delivered"
+        )
     if decoder.returncode != 0:
         raise LoudnessRideError(
             f"the ride's source decode exited {decoder.returncode}; "

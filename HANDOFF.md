@@ -4,11 +4,22 @@ This file is a pointer, not a log.
 
 ## Active development checkpoint - 2026-10-04
 
+- Remote checkpoint is `f9f210c03f375b318a5d2edc7e76eab2e07e1b57`,
+  verified on draft PR 232. Current test run 37202959271 and installer compile
+  37202959249 are pending; the 7b8a0edd results below are historical.
+- Speech-level run_ride cancellation now interrupts blocked reads, writes and
+  final child waits. Closed output pipes cannot certify a successful render;
+  Windows stop-related I/O errors preserve the typed cancellation result.
+  Independent focused run: 13 passed, 21 deselected in 5.11s. Four inherited
+  closed-algorithm expectations remain red. Peak-scan cancellation is the
+  next separate repair; no whole-preparation or installed cancellation claim.
+  Evidence: oversight `evidence/u87-recorder-product/ride-cancel-receipt-v2.md`.
 - Background reload refusal now carries the original airing-program horizon
   into restart recovery (A-006). A two-hour program previously entered recovery
   after 1952 simulated seconds because that horizon was lost. The reproduction
   now passes; daemon/watchdog tests pass 206 checks and command isolation passes
-  3 checks. Pending independent review; not installed in the frozen v20 run.
+  3 checks. Independent review passed 10 recovery checks with no material
+  finding; not installed in the frozen v20 run.
 - Take live now admits a stale enabled configured source to a fresh check,
   instead of disabling the action before verification. Ready sources retain
   priority; failed, unknown and disabled sources remain blocked. Both ready
@@ -40,7 +51,7 @@ This file is a pointer, not a log.
   acceptance. Source chapters, built-in manual and PDF/DOCX were regenerated;
   both current-source artifact checks pass. Evidence is in the local oversight
   folder `evidence/u87-paywall-save/receipt.md`.
-- Current remote checkpoint: `7b8a0eddf53997fdd23e614ca773f47e163c333a`,
+- Previous remote checkpoint: `7b8a0eddf53997fdd23e614ca773f47e163c333a`,
   pushed to draft PR 232. Installer compile 37198987646, docs 37198987589,
   policy 37198987576, egress and accessibility checks passed. Test 37198987580
   completed red: unit 106 failed/11331 passed/78 skipped/5 deselected;
