@@ -13,7 +13,12 @@ This file is a pointer, not a log.
   signed artifact verification, packaged GStreamer worker smoke and final kit.
   Automatic Gate A 37232341060 started at 20:30:14Z and is active; v13 owns it.
   Large/binary uploads false; no new tag,
-  release or station cutover. Current CI: tests 37230256695 active; lint
+  release or station cutover. Current CI: tests 37230256695 terminal FAILURE,
+  `71 failed, 11465 passed, 79 skipped, 5 deselected in 2428.31s (0:40:28)`;
+  this ran frozen eb94 before the local correction batch. Do not poll its
+  terminal watch session. u86 is reconciling remaining egress test contracts
+  with current product behavior, without restoring deliberately discarded code.
+  Lint
   37230256681 failed solely at Ruff formatting (23 files); docs 37230256692 and
   installer compile 37230256805 succeeded. Windows dual-runtime guard passed.
   v13 remains sole lab operator; no manual VM may overlap automatic Gate A.
@@ -32,8 +37,8 @@ This file is a pointer, not a log.
   format (21 changed, two already corrected), with before/after AST equality for
   every file and a passing 23-file format check. This is mechanical formatting,
   not another runtime fix; the in-flight eb94 package is unchanged.
-  These local commits are deliberately batched while the current long CI run
-  finishes; they have not been pushed. Next remote checkpoint must include the
+  These local commits were batched while the long CI run finished; they have
+  not been pushed. That run is now terminal. Next remote checkpoint must include the
   reviewed native-floor and claims-test corrections, preserve runtime evidence
   identity, and refresh PR 232 and this handoff after confirming the remote SHA.
 - Local follow-up commits: `6f224618` raises native execution floors to
@@ -42,6 +47,16 @@ This file is a pointer, not a log.
   isolates each claims-detector mutation from existing unrelated drift; root
   adjacent parser/role/drift run: `14 passed, 111 deselected in 10.77s`.
   Real current-source binding failures remain, with no historical hash refresh.
+  Root reran docsite build-content, help-deep-links, router and health-outbox
+  modules together: `44 passed in 29.67s`. CI's doc-render failures explicitly
+  name missing Pandoc; the local prerequisite repair addresses that cause.
+  The two-second constructor test failed on CI without entering either held
+  model builder; it passes locally and remains under timing-contract review.
+  Fresh CI artifacts are retained at oversight evidence/u87-ci-eb94-37230256695.
+  Producer metadata binds run 37230256695 attempt 1 to exact eb94. Six registered
+  PostgreSQL backup/restore, SQLite restore positive/falsification and release-
+  truth positive/unknown-live nodes all passed with zero skips in its JUnit.
+  This does not turn the overall CI result green or prove installer rollback.
   Detailed external receipts: U87-NATIVE-COLLECTION-FLOORS.md and
   U87-CLAIMS-DRIFT-RECONCILIATION.md in the oversight reports directory.
   Independent rollback v2 review corrected two reproduced defects: foreign
