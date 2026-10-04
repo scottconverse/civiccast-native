@@ -99,7 +99,9 @@ def _scan_committed_json_proof_secrets(root: Path) -> list[str]:
     violations: list[str] = []
     for proof_path in _iter_proof_json_files(root):
         relative = proof_path.relative_to(root).as_posix()
-        text = proof_path.read_text(encoding="utf-8", errors="ignore")
+        # Windows PowerShell writes UTF-8 with a BOM; decode it without changing
+        # committed evidence bytes or bypassing the JSON/secret checks below.
+        text = proof_path.read_text(encoding="utf-8-sig", errors="ignore")
         if RAW_SECRET_PATTERN.search(text):
             violations.append(f"{relative}: contains a raw secret-looking token or private key.")
             continue

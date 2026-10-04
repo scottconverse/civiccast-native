@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
+import pytest
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -60,6 +62,33 @@ def test_public_docs_do_not_overclaim_sdi_or_cg_proof() -> None:
 
     assert "DeckLink SDI through the engine's own sink" not in public_page
     assert "Multi-zone CG designer" not in public_page
-    assert "Physical DeckLink SDI capture and acceptance" in public_page
-    assert "Real cable-operator headend acceptance" in public_page
-    assert "Sustained production use at a real PEG station" in public_page
+    # Keep the limitations, not the retired landing page's exact phrasing.
+    plain = " ".join(re.sub(r"<[^>]+>", " ", public_page).split())
+    assert "Real cable-operator acceptance and SDI capture cards have not been tested." in plain
+    assert "Cable headend and SDI cards are unproven." in plain
+    assert "Not run at a real station. No human field tester has signed off." in plain
+
+
+@pytest.mark.parametrize(
+    "limitation",
+    [
+        "Real cable-operator acceptance and SDI capture cards have not been tested.",
+        "are unproven.",
+        "No human field tester has signed off.",
+    ],
+)
+def test_public_limitations_cannot_be_removed(
+    monkeypatch: pytest.MonkeyPatch, limitation: str
+) -> None:
+    read_text = Path.read_text
+
+    def omitted(path: Path, *args: object, **kwargs: object) -> str:
+        text = read_text(path, *args, **kwargs)
+        if path == REPO_ROOT / "docs/index.html":
+            assert limitation in text
+            return text.replace(limitation, "")
+        return text
+
+    monkeypatch.setattr(Path, "read_text", omitted)
+    with pytest.raises(AssertionError):
+        test_public_docs_do_not_overclaim_sdi_or_cg_proof()

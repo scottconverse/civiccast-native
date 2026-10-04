@@ -1,0 +1,62 @@
+FF                                                                       [100%]
+================================== FAILURES ===================================
+_________ test_v15_resilience_gate_scans_powershell_bom_proof[False] __________
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1004/test_v15_resilience_gate_scans0')
+secret = False
+
+    @pytest.mark.parametrize("secret", [False, True])
+    def test_v15_resilience_gate_scans_powershell_bom_proof(
+        tmp_path: Path, secret: bool
+    ) -> None:
+        _write_openapi(tmp_path)
+        proof_dir = tmp_path / "docs/releases/evidence"
+        proof_dir.mkdir(parents=True)
+        payload = {"environment": {"API_TOKEN": {"value": "ccst_leaked_secret"}}} if secret else {}
+        (proof_dir / "support.json").write_text(json.dumps(payload), encoding="utf-8-sig")
+
+        violations = evaluate_v15_resilience_gate(tmp_path)
+
+>       assert not any("invalid" in violation for violation in violations)
+E       assert not True
+E        +  where True = any(<generator object test_v15_resilience_gate_scans_powershell_bom_proof.<locals>.<genexpr> at 0x0000020ECF93B1D0>)
+
+payload    = {}
+proof_dir  = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1004/test_v15_resilience_gate_scans0/docs/releases/evidence')
+secret     = False
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1004/test_v15_resilience_gate_scans0')
+violations = ['docs/releases/evidence/support.json: proof JSON is invalid: Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)']
+
+tests\policy\test_v15_resilience_gate.py:77: AssertionError
+__________ test_v15_resilience_gate_scans_powershell_bom_proof[True] __________
+
+tmp_path = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1004/test_v15_resilience_gate_scans1')
+secret = True
+
+    @pytest.mark.parametrize("secret", [False, True])
+    def test_v15_resilience_gate_scans_powershell_bom_proof(
+        tmp_path: Path, secret: bool
+    ) -> None:
+        _write_openapi(tmp_path)
+        proof_dir = tmp_path / "docs/releases/evidence"
+        proof_dir.mkdir(parents=True)
+        payload = {"environment": {"API_TOKEN": {"value": "ccst_leaked_secret"}}} if secret else {}
+        (proof_dir / "support.json").write_text(json.dumps(payload), encoding="utf-8-sig")
+
+        violations = evaluate_v15_resilience_gate(tmp_path)
+
+>       assert not any("invalid" in violation for violation in violations)
+E       assert not True
+E        +  where True = any(<generator object test_v15_resilience_gate_scans_powershell_bom_proof.<locals>.<genexpr> at 0x0000020ECF9F81E0>)
+
+payload    = {'environment': {'API_TOKEN': {'value': 'ccst_leaked_secret'}}}
+proof_dir  = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1004/test_v15_resilience_gate_scans1/docs/releases/evidence')
+secret     = True
+tmp_path   = WindowsPath('C:/Users/scott/AppData/Local/Temp/pytest-of-scott/pytest-1004/test_v15_resilience_gate_scans1')
+violations = ['docs/releases/evidence/support.json: proof JSON is invalid: Unexpected UTF-8 BOM (decode using utf-8-sig): line 1 column 1 (char 0)']
+
+tests\policy\test_v15_resilience_gate.py:77: AssertionError
+=========================== short test summary info ===========================
+FAILED tests/policy/test_v15_resilience_gate.py::test_v15_resilience_gate_scans_powershell_bom_proof[False]
+FAILED tests/policy/test_v15_resilience_gate.py::test_v15_resilience_gate_scans_powershell_bom_proof[True]
+2 failed, 4 deselected in 1.61s
