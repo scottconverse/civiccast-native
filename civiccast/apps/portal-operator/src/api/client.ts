@@ -291,6 +291,11 @@ function runtimeApiBase(): string {
   return (window.__CIVICCAST_API_BASE__ ?? '').replace(/\/$/, '')
 }
 
+export function manualImageUrl(path: string): string {
+  return /^\/api\/public\/manual\/assets\/[0-9a-f]{64}\.(png|jpg|jpeg|gif|svg|webp)$/.test(path)
+    ? `${runtimeApiBase()}${path}` : path
+}
+
 /**
  * sessionStorage flag set when the shared 401 handler discards a stored
  * staff token that the server no longer accepts (see queryClient.ts).

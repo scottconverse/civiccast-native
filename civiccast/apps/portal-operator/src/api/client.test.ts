@@ -1,12 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiError,
+  manualImageUrl,
   downloadReportsExport,
   fireControlRoomCue,
   getControlRoomReadiness,
   getStationSetupState,
   uploadAssetFile,
 } from './client'
+
+describe('offline manual image origin', () => {
+  afterEach(() => { delete window.__CIVICCAST_API_BASE__ })
+  it('uses the same configured API origin as the manual request', () => {
+    const path = `/api/public/manual/assets/${'a'.repeat(64)}.png`
+    expect(manualImageUrl(path)).toBe(path)
+    window.__CIVICCAST_API_BASE__ = 'http://127.0.0.1:8000/'
+    expect(manualImageUrl(path)).toBe(`http://127.0.0.1:8000${path}`)
+    for (const other of ['/api/public/manual/assets/../secret', 'https://example.org/a.png', '#anchor']) {
+      expect(manualImageUrl(other)).toBe(other)
+    }
+  })
+})
 
 describe('rehearsal media upload', () => {
   afterEach(() => {

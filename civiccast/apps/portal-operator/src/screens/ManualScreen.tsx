@@ -3,7 +3,7 @@
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useHref, useLocation, useNavigate } from 'react-router'
-import { ApiError, getManual } from '../api/client'
+import { ApiError, getManual, manualImageUrl } from '../api/client'
 import { manualLink } from './manual-link'
 import type { ManualTocEntry } from '../types/api.generated'
 
@@ -97,6 +97,9 @@ export function ManualScreen() {
     // preserving real router-aware hrefs for copy, middle-click and new tabs.
     const template = document.createElement('template')
     template.innerHTML = manualQuery.data?.html ?? ''
+    for (const image of template.content.querySelectorAll('img[src]')) {
+      image.setAttribute('src', manualImageUrl(image.getAttribute('src') ?? ''))
+    }
     for (const link of template.content.querySelectorAll('a[href]')) {
       const href = link.getAttribute('href') ?? ''
       if (href.startsWith('#') && href.length > 1) {

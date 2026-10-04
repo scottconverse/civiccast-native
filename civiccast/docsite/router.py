@@ -12,11 +12,29 @@ to reach it without first needing to already be signed in.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import Response
 
 from civiccast.docsite.models import ManualDocument
-from civiccast.docsite.service import ManualUnavailableError, load_manual
+from civiccast.docsite.service import ManualUnavailableError, load_manual, load_manual_asset
 
 router = APIRouter(prefix="/api/public/manual", tags=["manual"])
+
+
+@router.get("/assets/{name}", include_in_schema=False)
+def get_manual_asset(name: str) -> Response:
+    try:
+        data, media_type = load_manual_asset(name)
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="Manual image unavailable") from exc
+    return Response(
+        data,
+        media_type=media_type,
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+            "Cache-Control": "public, max-age=31536000, immutable",
+        },
+    )
 
 
 @router.get("", response_model=ManualDocument, summary="Get the in-product operator manual")

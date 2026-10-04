@@ -12,6 +12,24 @@ from civiccast.docsite.render import embed_local_images, extract_toc, sanitize_h
 
 
 class TestEmbedLocalImages:
+    def test_packaged_images_deduplicate_and_keep_prose(self, tmp_path: Path) -> None:
+        import hashlib
+
+        data = b"same image bytes"
+        (tmp_path / "one.png").write_bytes(data)
+        (tmp_path / "two.png").write_bytes(data)
+        assets: dict[str, bytes] = {}
+        sources: dict[str, str] = {}
+        original = (
+            '<img src="one.png" alt="One" /><p id="anchor">Text</p><img src="two.png" alt="Two" />'
+        )
+        html = embed_local_images(original, tmp_path, assets=assets, sources=sources)
+        name = hashlib.sha256(data).hexdigest() + ".png"
+        assert assets == {name: data}
+        assert html.count(f"/api/public/manual/assets/{name}") == 2
+        assert '<p id="anchor">Text</p>' in html
+        assert sources == {"one.png": name[:-4], "two.png": name[:-4]}
+
     @pytest.mark.parametrize(
         "media",
         [

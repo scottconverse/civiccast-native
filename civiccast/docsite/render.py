@@ -12,6 +12,7 @@ HTML by pandoc at build time (see ``scripts/render_docsite_manual.py``).
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -52,7 +53,13 @@ class _LocalMediaValidator(HTMLParser):
         self.handle_starttag(tag, attrs)
 
 
-def embed_local_images(html: str, base_dir: Path) -> str:
+def embed_local_images(
+    html: str,
+    base_dir: Path,
+    *,
+    assets: dict[str, bytes] | None = None,
+    sources: dict[str, str] | None = None,
+) -> str:
     """Inline every relative ``<img src="...">`` in ``html`` as a base64
     ``data:`` URI, resolved against ``base_dir`` (``docs/`` for the manual).
 
@@ -73,6 +80,11 @@ def embed_local_images(html: str, base_dir: Path) -> str:
     URIs are left unchanged for the sanitizer; remote images still need internet.
     Pandoc emits non-image Markdown targets as embed/audio/video markup; local
     references in that unsupported markup fail before the sanitizer drops them.
+
+    When ``assets`` is supplied, collect deduplicated image bytes under SHA-256
+    filenames and emit the closed public manual asset path instead of base64.
+    The packaged UI resolves this path against its configured station API origin.
+    ``sources`` records source image hashes for build-time drift checking.
     """
 
     validator = _LocalMediaValidator()
@@ -91,7 +103,16 @@ def embed_local_images(html: str, base_dir: Path) -> str:
         mime = _MIME_BY_SUFFIX.get(candidate.suffix.lower())
         if mime is None or not candidate.is_file():
             raise ValueError(f"manual image missing or unsupported: {src}")
-        encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
+        data = candidate.read_bytes()
+        if sources is not None:
+            sources[candidate.relative_to(base_dir.resolve()).as_posix()] = hashlib.sha256(
+                data
+            ).hexdigest()
+        if assets is not None:
+            name = hashlib.sha256(data).hexdigest() + candidate.suffix.lower()
+            assets[name] = data
+            return f"{prefix}/api/public/manual/assets/{name}{suffix}"
+        encoded = base64.b64encode(data).decode("ascii")
         return f"{prefix}data:{mime};base64,{encoded}{suffix}"
 
     return _IMG_SRC_RE.sub(_replace, html)

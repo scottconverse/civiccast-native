@@ -3280,7 +3280,7 @@ The installer's own text explains the difference: on a capable card Large "capti
 
 > **Note:** The rule uses video memory as a stand-in for card capability. The code records that an older NVIDIA card with enough memory but no tensor cores can be *slower* on the card than on the processor (one older card missed all 30 deadlines in testing). The station operator can override the device with the `CIVICCAST_WHISPER_DEVICE` environment variable; see [Chapter 11](#ch-configuration).
 
-> **Known issue (beta.10):** The station uses the **highest caption engine that is installed**. If Large is present, live captions use Large, even on a computer where the setup screens say Large is too slow to run live. The first-run window can download Large even when you untick it (see [Chapter 10](#ch-installing)). On a computer without a capable NVIDIA card, check after install that Large is not present, or expect live captions to fall behind. We have not measured Large on a processor.
+> **Known issue (beta.10):** The station uses the **highest caption engine that is installed**. If Large is present, live captions use Large, even on a computer where the setup screens say Large is too slow to run live. Earlier installers can download Large even when you untick it; the development correction passes that selection to the download engine (see [Chapter 10](#ch-installing)). On a computer without a capable NVIDIA card, check after install that Large is not present, or expect live captions to fall behind. We have not measured Large on a processor.
 
 The AI that writes summaries and translations is chosen by a second rule.
 
@@ -3346,7 +3346,7 @@ Do not open the internal ports on the firewall. If another program on the same c
 
 The station does not need the internet to run. The Gate A run had networking disabled, and its station installed, came up and passed its checks. The code even hides the built-in `/docs` page because "a council-chamber station is frequently firewalled outbound and sometimes air-gapped".
 
-> **Known issue (beta.10):** The first-run window tries to fetch its optional downloads from the internet even when you untick them, and a source it reads names an old frozen release (`scottconverse/civiccast-releases`, tag `native-beta-1.0.0-beta.1-rc1`), not the beta.10 page. On a station with poor internet those rows can take hours (the transfer timeout is six hours), and with no internet they fail. Setup itself does not depend on them. See [Chapter 10](#ch-installing).
+> **Known issue (beta.10):** Earlier first-run installers try to fetch optional downloads even when you untick them; the development correction now honors that selection. A source still names an old frozen release (`scottconverse/civiccast-releases`, tag `native-beta-1.0.0-beta.1-rc1`), not the beta.10 page; the selection fix does not change that source. Selected downloads can take hours on a poor connection (the transfer timeout is six hours), and with no internet they fail unless verified local files are available. Setup itself does not depend on these optional downloads. See [Chapter 10](#ch-installing).
 
 If a security appliance does TLS inspection or an allow-list, allow the three destinations above for the one-time first-run downloads, or run from the full kit and block them.
 
@@ -3627,7 +3627,9 @@ After setup, the window titled **CivicCast (Native) Setup** appears (we could no
 
 **What CivicCast Needs.** "These are the large pieces CivicCast runs on. Anything already on this computer or on your USB kit is used as-is and is not downloaded again; only what is missing comes from the internet." It lists seven rows with sizes: CivicCast application runtime (482 MB), Database & messaging services (94 MB), Video and audio tools (137 MB, "Not included": it was installed by setup), Caption engine — Medium (1.5 GB), Caption engine — Large (optional, 3.1 GB), GPU caption acceleration (optional, 1.3 GB) and Local AI model (summaries & translation) (7.6 GB). The footer shows the total (9.7 GB by default, about 14.1 GB with both optional rows) and **Continue**. These sizes are placeholders; the real total is corrected once.
 
-> **Known issue (beta.10):** "Untick it to skip the download" is not true. The next screen's download engine always runs all six downloadable items in a fixed order (application runtime, database services, Medium, Large, GPU acceleration, local AI model); the checkboxes only change what the screen shows. Items already on the computer count as satisfied ("Found locally — verified"). The code's own comment says the Large caption engine and the GPU library are "not guaranteed to be staged by the offline USB kit". On a computer with poor internet those rows can take hours (the transfer timeout is six hours). With no internet they fail quickly with "The connection dropped". The window stays on this screen until every row finishes. Also the "Local AI model" row lists one model, but the station needs three (all three arrive with the kit).
+The corrected first-run download window passes your selection to the download engine. Untick **Large** or **GPU caption acceleration** to skip that optional download. The application runtime, database services, Medium caption engine and local AI model remain required. Items already on the computer still count as satisfied only after verification ("Found locally — verified"). Resume and retry use the same selected plan; to change the plan after downloading starts, close and reopen the installer. A refused plan cannot finish using progress saved by an earlier plan.
+
+> **Delivery boundary:** This selection correction is verified in development source, not in a newly shipped installer or a clean-machine install. Earlier beta.10 installers can still download optional items that you untick. The correction does not change Windows setup's kit requirement. The "Local AI model" row still lists one model, while the station needs three (all three arrive with the kit).
 
 **Downloading** (or **Setting Up** if everything is found locally). "Keep CivicCast Installer open. If a download is interrupted, use Resume download." Each row shows a state:
 
@@ -9913,7 +9915,7 @@ This appendix lists what CivicCast is licensed under and what other people's sof
 | CivicCast code | Apache License 2.0 |
 | CivicCast documentation (this manual) | Creative Commons Attribution 4.0 International (CC BY 4.0) |
 
-CivicCast is an independent open-source project. It is not affiliated with, sponsored by or approved by Tightrope Media Systems, Cablecast or any other named vendor. Those names are trademarks of their owners; references to other products are for compatibility and comparison only.
+CivicCast is an independent open-source project. It is not affiliated with, sponsored by or approved by any third-party vendor. Product names are trademarks of their owners; references to other products are for compatibility and comparison only. See the project's [Legal Notices](https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md) for the named notices.
 
 ### What the project says it has not done
 

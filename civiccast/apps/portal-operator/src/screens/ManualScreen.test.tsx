@@ -22,6 +22,7 @@ vi.mock('../api/client', () => ({
     }
   },
   getManual: vi.fn(),
+  manualImageUrl: (path: string) => path,
 }))
 
 import { getManual } from '../api/client'

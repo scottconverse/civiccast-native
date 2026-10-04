@@ -1465,7 +1465,7 @@ This appendix lists what CivicCast is licensed under and what other people's sof
 | CivicCast code | Apache License 2.0 |
 | CivicCast documentation (this manual) | Creative Commons Attribution 4.0 International (CC BY 4.0) |
 
-CivicCast is an independent open-source project. It is not affiliated with, sponsored by or approved by Tightrope Media Systems, Cablecast or any other named vendor. Those names are trademarks of their owners; references to other products are for compatibility and comparison only.
+CivicCast is an independent open-source project. It is not affiliated with, sponsored by or approved by any third-party vendor. Product names are trademarks of their owners; references to other products are for compatibility and comparison only. See the project's [Legal Notices](https://github.com/scottconverse/civiccast/blob/main/LEGAL-NOTICES.md) for the named notices.
 
 ## What the project says it has not done
 

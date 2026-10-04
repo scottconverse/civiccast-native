@@ -181,8 +181,30 @@ class TestManualEndpoint:
         # JSON endpoint with no filesystem underneath it.
         html = client.get("/api/public/manual").json()["html"]
         assert "<figure>" in html
-        assert "data:image/png;base64," in html
+        assert "/api/public/manual/assets/" in html
         assert 'src="assets/' not in html
+
+    def test_all_bundled_images_load_without_auth(self, client: TestClient) -> None:
+        import re
+
+        html = client.get("/api/public/manual").json()["html"]
+        paths = set(re.findall(r'src="(/api/public/manual/assets/[^"]+)"', html))
+        assert paths
+        for path in paths:
+            response = client.get(path)
+            assert response.status_code == 200
+            assert response.headers["content-type"].startswith("image/")
+            assert response.headers["x-content-type-options"] == "nosniff"
+            assert (
+                hashlib.sha256(response.content).hexdigest() == path.rsplit("/", 1)[1].split(".")[0]
+            )
+
+    @pytest.mark.parametrize(
+        "name", ["manual.json", "..%2Fmanual.json", "a" * 64 + ".html", "a" * 64 + ".png"]
+    )
+    def test_asset_lookup_never_serves_arbitrary_paths(self, client: TestClient, name: str) -> None:
+        response = client.get(f"/api/public/manual/assets/{name}")
+        assert response.status_code == 404
 
     def test_no_staff_token_required(self, client: TestClient) -> None:
         # Regression guard: this must stay reachable from the un-authenticated

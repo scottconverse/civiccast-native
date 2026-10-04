@@ -5,15 +5,34 @@ runtime -- see civiccast/docsite/__init__.py for the full contract)."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from functools import lru_cache
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from civiccast.docsite.models import ManualDocument
+from civiccast.docsite.render import _MIME_BY_SUFFIX
 
 _MANUAL_JSON_PATH = Path(__file__).resolve().parent / "manual.json"
+
+
+def load_manual_asset(name: str) -> tuple[bytes, str]:
+    """Read only content-addressed bundled images; never an arbitrary path."""
+    if not re.fullmatch(r"[0-9a-f]{64}\.(?:png|jpg|jpeg|gif|svg|webp)", name):
+        raise FileNotFoundError
+    directory = _MANUAL_JSON_PATH.parent / "assets"
+    if directory.resolve() != _MANUAL_JSON_PATH.parent.resolve() / "assets":
+        raise FileNotFoundError
+    path = (directory / name).resolve()
+    if path.parent != directory.resolve():
+        raise FileNotFoundError
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != name.split(".")[0]:
+        raise FileNotFoundError
+    return data, _MIME_BY_SUFFIX[path.suffix]
 
 
 class ManualUnavailableError(RuntimeError):
