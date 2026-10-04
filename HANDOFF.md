@@ -5,11 +5,25 @@ This file is a pointer, not a log.
 ## Active development checkpoint - 2026-10-04
 
 - Packaged candidate source is `84a283077f4ba9359113c7bbf4189095393c08bc`,
-  verified remotely on PR 232; original self-hosted build 37204600121 is
-  running. Its signed station bundle passed; installer/package proof is pending.
+  verified remotely on PR 232; original self-hosted build 37204600121 passed.
+  Both setup and First Install executables have valid Authenticode signatures.
+  Automatic clean Gate A 37207093775 is running against that exact kit;
+  database provisioning and mandatory station activation/self-tests passed.
+  The installer exited 0, Edge rendered both interfaces, and the real upload/
+  publish/offline-caption loop passed. T4 product-engine output did not pass:
+  no worker appeared during its window while generated silent-slate preparation
+  resampled loudness; the existing test substituted FFmpeg fallback. This is
+  not a product-engine transport pass. The unchanged 20-minute health observation
+  continues; sustained three-channel speech acceptance remains pending.
   Candidate CI: installer compile 37204558280 and docs 37204558277 passed;
-  lint 37204558284 failed and tests 37204558265 are still pending overall
-  with the Windows job failed. No merge or release claim.
+  lint 37204558284 and tests 37204558265 failed. No merge or release claim.
+- Next-source supervised HTTP access/error logs rotate separately in
+  `control_plane-http.log` (10 MiB plus ten backups), without forced fsync on
+  each request. Existing application diagnostics retain their durable handler.
+  Root independently passed 16 affected logging/spawn checks in 4.82s; the
+  forced-fsync counterexample failed. Both manual artifact freshness checks
+  passed. Raw startup/print/native stderr and Postgres remain unbounded;
+  this is not a total process-output cap or installed-package evidence.
 - Next-source copy checkpoint `32fbee33` corrects the activation step-67
   dialog: disk/extraction/missing-file failures are possible, and full child
   details are in the setup window, not the step log. Existing NSIS checks
@@ -40,7 +54,8 @@ This file is a pointer, not a log.
   final child waits. Closed output pipes cannot certify a successful render;
   Windows stop-related I/O errors preserve the typed cancellation result.
   Independent focused run: 13 passed, 21 deselected in 5.11s. Four inherited
-  closed-algorithm expectations remain red. Peak-scan cancellation is also
+  closed-algorithm expectations were reconciled in the later local checkpoint
+  described above; that test-only change is not in package 84a. Peak-scan cancellation is also
   repaired: root independently passed 21 focused checks in 6.49s, including
   actual blocked reads/waits, peak calculation and stop/error distinctions.
   Preparation loudness probes now receive their base or warm per-call budget,

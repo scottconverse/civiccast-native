@@ -31,6 +31,12 @@ came across and what deliberately did not.
 
 ### Fixed
 
+- Development supervised web-server access/error logging now rotates in
+  `control_plane-http.log` (10 MiB plus 10 backups), without forced disk
+  synchronization per request. Application diagnostic durability is unchanged.
+  Raw startup output, prints and native stderr remain unrotated; this is not
+  a shipped beta.10 fix or a bound on all process output.
+
 - Station activation failure text now distinguishes possible disk-space,
   extraction and self-test failures and directs operators to preserve the
   setup details list instead of promising a detailed reason in the step log.

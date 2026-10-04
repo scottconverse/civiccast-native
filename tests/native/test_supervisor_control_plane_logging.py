@@ -22,17 +22,20 @@ writes -- ``log_root``/the env var are always injected or monkeypatched.
 from __future__ import annotations
 
 import logging
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
 
 import pytest
+from uvicorn.config import LOGGING_CONFIG
 
 from civiccast.native.supervisor.children import (
     CIVICCAST_SUPERVISED_ENV_VAR,
     control_plane_child_spec,
 )
 from civiccast.native.supervisor.service import (
+    CONTROL_PLANE_HTTP_LOG_NAME,
     CONTROL_PLANE_LOG_NAME,
     LOG_BACKUP_COUNT,
     LOG_MAX_BYTES,
@@ -44,6 +47,85 @@ from civiccast.native.supervisor.service import (
 # ---------------------------------------------------------------------------
 # service.configure_control_plane_logging
 # ---------------------------------------------------------------------------
+
+
+def test_http_logging_does_not_force_fsync_but_app_logging_stays_durable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import civiccast.native.supervisor.service as service_module
+
+    configure_control_plane_logging(log_root=tmp_path)
+    calls: list[int] = []
+    monkeypatch.setattr(service_module.os, "fsync", calls.append)
+    logging.getLogger("uvicorn.access").info("access-canary")
+    logging.getLogger("uvicorn.error").error("error-canary")
+    assert calls == []
+    logging.getLogger("civiccast").info("durable-canary")
+    assert len(calls) == 1
+
+
+def test_uvicorn_records_rotate_without_console_duplicates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import civiccast.native.supervisor.service as service_module
+
+    names = ("civiccast", "uvicorn", "uvicorn.error", "uvicorn.access")
+    saved = {
+        name: (
+            list(logging.getLogger(name).handlers),
+            logging.getLogger(name).level,
+            logging.getLogger(name).propagate,
+        )
+        for name in names
+    }
+    try:
+        # Real Uvicorn console configuration used before its app factory runs.
+        # Apply only Uvicorn's logger/console shape, without dictConfig closing
+        # or disabling unrelated pytest/application handlers process-wide.
+        for name, config in LOGGING_CONFIG["loggers"].items():
+            logger = logging.getLogger(name)
+            logger.handlers = [
+                logging.StreamHandler(sys.stderr) for _ in config.get("handlers", [])
+            ]
+            logger.setLevel(config.get("level", logging.NOTSET))
+            logger.propagate = config.get("propagate", True)
+        monkeypatch.setattr(service_module, "LOG_MAX_BYTES", 256)
+        monkeypatch.setattr(service_module, "LOG_BACKUP_COUNT", 2)
+        configure_control_plane_logging(log_root=tmp_path)
+        configure_control_plane_logging(log_root=tmp_path)
+        handler = logging.getLogger("uvicorn").handlers[0]
+        assert type(handler) is logging.handlers.RotatingFileHandler
+        assert isinstance(logging.getLogger("civiccast").handlers[0], _DurableRotatingFileHandler)
+        for name in names[1:]:
+            assert logging.getLogger(name).handlers == [handler]
+        fsync_calls: list[int] = []
+        monkeypatch.setattr(service_module.os, "fsync", fsync_calls.append)
+        for index in range(20):
+            logging.getLogger("uvicorn.access").info(
+                '%s - "%s %s HTTP/%s" %d', "client", "GET", "/health", "1.1", 200
+            )
+            logging.getLogger("uvicorn.error").error("error-canary-%02d", index)
+        assert fsync_calls == []
+        logging.getLogger("civiccast").info("durable-canary")
+        assert len(fsync_calls) == 1
+        files = list(tmp_path.glob(f"{CONTROL_PLANE_HTTP_LOG_NAME}*"))
+        assert len(files) == 3
+        assert all(path.stat().st_size < 256 for path in files)
+        content = "".join(path.read_text(encoding="utf-8") for path in files)
+        assert content.count("error-canary-19") == 1
+        assert "GET /health HTTP/1.1" in content
+        captured = capsys.readouterr()
+        assert captured.out == captured.err == ""
+    finally:
+        current = {h for name in names for h in logging.getLogger(name).handlers}
+        original = {h for handlers, _, _ in saved.values() for h in handlers}
+        for name, (handlers, level, propagate) in saved.items():
+            logger = logging.getLogger(name)
+            logger.handlers = handlers
+            logger.setLevel(level)
+            logger.propagate = propagate
+        for handler in current - original:
+            handler.close()
 
 
 def test_configure_control_plane_logging_creates_its_own_rotating_log(tmp_path: Path) -> None:
