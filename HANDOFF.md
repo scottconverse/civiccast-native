@@ -18,7 +18,14 @@ This file is a pointer, not a log.
   terminal original-soak FAIL and restored original baseline. Exact self-hosted
   candidate build 37230261698 completed SUCCESS in all three jobs, including
   signed artifact verification, packaged GStreamer worker smoke and final kit.
-  Automatic Gate A 37232341060 started at 20:30:14Z and is active; v13 owns it.
+  Automatic Gate A 37232341060 is terminal FAILURE: clean-install job passed;
+  cross-version validation stopped before upgrade installation because the
+  default-main validator selected the failed aggregate baseline-run conclusion,
+  rather than its successful original attempt. The branch already repairs that
+  validator. This is not an observed upgrade-product failure or an upgrade PASS.
+  Corrected exact-source build 37236684992 is active on remote 2fd8a22a;
+  v13 owns its watcher and the subsequent corrected-branch Gate A dispatch.
+  The prior disposable VM is gone; no duplicate lab operation is authorized.
   Large/binary uploads false; no new tag,
   release or station cutover. Current-source tests 37235135807 are active; the
   Windows native job has passed. Current docs 37235135808, installer compile
@@ -27,8 +34,10 @@ This file is a pointer, not a log.
   local 6789602a corrects it, not yet pushed. Historical tests 37230256695 FAILURE:
   `71 failed, 11465 passed, 79 skipped, 5 deselected in 2428.31s (0:40:28)`;
   this ran frozen eb94 before the local correction batch. Do not poll its
-  terminal watch session. u86 is reconciling current-source claims with executed
-  evidence, without rebinding unfinished DR source or rewriting historical proof.
+  terminal watch session. Local 572d119e reconciles 15 current-source claims roles
+  across five reviewed source blobs, without rebinding unfinished DR source or
+  rewriting historical proof. u86 is independently reviewing the secure-PG
+  repaired-byte snapshot while the database and installer agents finish recovery.
   Lint
   37230256681 failed solely at Ruff formatting (23 files); docs 37230256692 and
   installer compile 37230256805 succeeded. Windows dual-runtime guard passed.
@@ -51,7 +60,9 @@ This file is a pointer, not a log.
   passes (performance case excluded), independent root retained-byte PASS,
   scoped Ruff PASS and relay-module mypy PASS. Receipt: oversight reports/
   U87-RELAY-TAIL-RETENTION.md. The prior performance timing counterexample remains
-  open; neither this fix nor root's earlier passing run erases it. This source
+  recorded; a subsequent controlled single-case run passed at 1.20 seconds
+  supervised versus 1.25 seconds baseline. That does not erase the earlier
+  overlapping-run failure or establish performance on an idle machine. This source
   also requires a new package; eb94 installation evidence remains historical.
 - Rollback database replacement implementation is partially blocked by the
   local Agent Pipeline plugin's text-based tool guard, which rejects SQL text
