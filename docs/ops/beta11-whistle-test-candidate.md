@@ -3,7 +3,7 @@
 This is a local development patch on the owner's installed beta.9 station,
 not a signed beta.11 installer or a release-readiness claim. The source branch
 is `codex/beta11-whistle`, based on main `8c3ab70bdc802f42ee573d83b284418c620c18ae`.
-The second candidate version is `1.0.0-beta.11.dev1`.
+The third candidate version is `1.0.0-beta.11.dev2`.
 
 Native live captions use one persistent, serial Whistle CPU process per channel,
 with at most three channels. Batch captions continue to use Whisper. Whistle
@@ -12,14 +12,26 @@ under three simultaneous calls in the installed preflight, exceeding the five-se
 cadence and shedding audio. Channel persistence/publishing may still overlap.
 The first candidate (`dev0`, `bf68de5c5f01342d27dd26826692e2b209965068`) failed that
 capacity preflight; its two-hour acceptance observation was never started.
-Whistle
-failures replay retained audio into a separate serial Whisper process, and the
+The second (`dev1`, `50310e2e34b9e4b46bcc2d3163eecf23d7ef2037`) began observation
+at 16:32:44 MDT and was aborted after the first government emitted-caption check
+failed: recognized speech expired without committed captions, with a stale worker
+receipt. No completed two-hour pass is claimed for either attempt.
+
+Whistle failures replay retained audio into a separate serial Whisper process, and the
 affected channel stays on Whisper until runtime restart. A failed Whisper process
 may be replaced once, with the retained window replayed once. Further failures
 require a runtime restart. Input writing and response waiting share a ten-second
 deadline; children start suspended, enter verified Windows memory/CPU jobs before
 native loading, and die on job close. Each Whistle job has a 1 GiB memory limit;
 the fallback job has 4 GiB. Each job has a 25% CPU hard cap.
+
+Delivery health also triggers fallback after 30 seconds of advancing audio with
+recognized speech but no committed cues. Silence and an actual committed cue reset
+the watch. Before observing the current pass, the pipeline selects fallback and
+replays its retained chunks, preserving vocabulary. It observes the selected results
+once; the stabilizer's two distinct PCM window rule and previous history remain
+unchanged. This does not recover earlier expired speech from the preceding 30 seconds.
+The fallback trigger is isolated to the affected channel.
 
 Needle usage telemetry is forcibly disabled with `NEEDLE_TELEMETRY=0` and
 `DO_NOT_TRACK=1` before import. Startup also checks its pinned Python telemetry
@@ -48,6 +60,8 @@ Evidence directory on this machine:
 The staging and install scripts are `stage-beta11.py` and `install-beta11.ps1`.
 The successful first patch backup is `work\beta11-backup-2`; the first install
 attempt restored the original files after its sanity check hit PowerShell quoting.
+The serialized update backup is `work\beta11-backup-serialized`. Delivery-health
+changes additionally patch `pipeline.py`, whose installed baseline matches checkout.
 The existing `Install-Candidate.ps1` / `Rollback-Candidate.ps1` handle replaced
 application files; added dependency/asset paths are recorded separately. Installation
 stops the service before copying, verifies installed hashes/imports, and restarts

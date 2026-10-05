@@ -359,3 +359,109 @@ def test_station_serializes_native_whistle_inference(tmp_path):
         second.result(timeout=3)
     r.close()
     assert not overlapping, "two native Whistle calls ran concurrently"
+
+
+def test_delivery_fallback_selects_same_window_before_stabilization(tmp_path):
+    r, calls, workers = runtime(tmp_path)
+    for index, start in enumerate((100, 105, 110, 115), 1):
+        audio = chunk(index=index).model_copy(
+            update={"start_seconds": start, "end_seconds": start + 10}
+        )
+        native = list(r.transcribe([audio]))
+        selected = r.prepare_stabilization([audio], native)
+        assert selected[0].text == "five to two"
+        r.note_caption_commits([audio], [])
+    audio = chunk(index=5).model_copy(update={"start_seconds": 120, "end_seconds": 130})
+    native = list(r.transcribe([audio]))
+    selected = r.prepare_stabilization([audio], native)
+    assert selected[0].text == "fallback words"
+    assert calls[-1][0] == "whisper" and calls[-1][1:3] == calls[-2][1:3]
+    assert workers[0].closed
+    assert "public" in r._failed and "government" not in r._failed
+    r.close()
+
+
+def test_delivery_watch_resets_on_silence_or_committed_cue(tmp_path):
+    r, _, _ = runtime(tmp_path)
+    audio = chunk()
+    native = list(r.transcribe([audio]))
+    r.prepare_stabilization([audio], native)
+    assert r._delivery_watch
+    r.prepare_stabilization(
+        [audio.model_copy(update={"start_seconds": 110, "end_seconds": 120})], []
+    )
+    assert not r._delivery_watch
+    current = audio.model_copy(update={"start_seconds": 120, "end_seconds": 130})
+    r.prepare_stabilization([current], native)
+    r.note_caption_commits([current], [object()])
+    assert not r._delivery_watch
+    r.close()
+
+
+def test_pipeline_replay_votes_once_and_preserves_two_window_confirmation(tmp_path):
+    from civiccast.captions.models import CaptionHypothesis, CaptionWord
+    from civiccast.captions.pipeline import CaptionPipeline
+    from civiccast.captions.stabilize import CaptionStabilizer
+
+    r, _, _ = runtime(tmp_path)
+    original = r._factory
+
+    def factory(engine):
+        w = original(engine)
+        if engine == "whisper":
+
+            def request(audio, vocabulary):
+                return [
+                    CaptionHypothesis(
+                        source_id=audio.chunk_id,
+                        start_seconds=127,
+                        end_seconds=129,
+                        text="fallback words",
+                        words=[
+                            CaptionWord(
+                                text="fallback", start_seconds=127, end_seconds=128, confidence=1
+                            ),
+                            CaptionWord(
+                                text="words", start_seconds=128, end_seconds=129, confidence=1
+                            ),
+                        ],
+                        audio_window_start_seconds=audio.start_seconds,
+                        audio_window_end_seconds=audio.end_seconds,
+                    ).model_dump()
+                ]
+
+            w.request = request
+        return w
+
+    r._factory = factory
+    pipeline = CaptionPipeline(r, stabilizer=CaptionStabilizer(live=True))
+    results = []
+    for index, start in enumerate((100, 105, 110, 115, 120), 1):
+        audio = chunk(index=index).model_copy(
+            update={"start_seconds": start, "end_seconds": start + 10}
+        )
+        result = pipeline.process([audio], asset_id="public")
+        results.append(result)
+    assert results[-1].hypotheses[0].text == "fallback words"
+    assert not results[-1].committed_cues
+    assert not pipeline.process([audio], asset_id="public").committed_cues
+    next_audio = chunk(index=6).model_copy(update={"start_seconds": 125, "end_seconds": 135})
+    confirmed = pipeline.process([next_audio], asset_id="public").committed_cues
+    assert len(confirmed) == 1 and confirmed[0].text == "fallback words"
+    r.close()
+
+
+def test_new_channel_pipeline_rearms_watch_after_timestamp_reset(tmp_path):
+    from civiccast.captions.pipeline import CaptionPipeline
+    r, _, _ = runtime(tmp_path)
+    old = chunk().model_copy(update={"start_seconds": 1000, "end_seconds": 1010})
+    r.prepare_stabilization([old], list(r.transcribe([old])))
+    r._failed.add("education")
+    CaptionPipeline(r, phase_timing_channel="public")
+    assert "public" not in r._delivery_last_end
+    assert "education" in r._failed
+    for index, start in enumerate((0, 5, 10, 15, 20), 1):
+        audio = chunk(index=index).model_copy(update={"start_seconds": start, "end_seconds": start+10})
+        selected = r.prepare_stabilization([audio], list(r.transcribe([audio])))
+    assert selected[0].text == "fallback words" and "public" in r._failed
+    r.close()

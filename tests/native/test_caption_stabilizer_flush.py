@@ -180,7 +180,6 @@ class TestCaptionTapWorkerStreamEndFlush:
         tmp_path: Path,
     ) -> None:
         tap_root = tmp_path / "tap"
-        _write_tap_wav(tap_root / "government" / "chunk-000000.wav")
         runtime = _OnceRuntime()
         store = InMemoryCaptionReviewStore()
         worker = CaptionTapWorker(
@@ -191,6 +190,8 @@ class TestCaptionTapWorkerStreamEndFlush:
             segment_seconds=1.0,
             atomic_segments=True,
         )
+        # Worker startup deliberately discards files from previous sessions.
+        _write_tap_wav(tap_root / "government" / "chunk-000000.wav")
 
         scan = worker.run_once()
 

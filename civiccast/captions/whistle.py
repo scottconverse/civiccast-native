@@ -283,6 +283,8 @@ class WhistleRuntime:
         self._closed = False
         self._primary_error = None
         self._fallback_restarts = 0
+        self._delivery_watch = {}
+        self._delivery_last_end = {}
 
     def on_cuda(self):
         return False  # Whistle itself is always CPU, regardless of fallback.
@@ -345,6 +347,54 @@ class WhistleRuntime:
                         getattr(getattr(created, "_process", None), "pid", "n/a"),
                     )
             return primary.request(chunk, vocabulary)
+
+    def begin_caption_session(self, channel):
+        """Rearm delivery tracking at a real pipeline/session boundary."""
+        with self._guard:
+            if self._closed:
+                raise RuntimeError("caption runtime has been closed")
+            self._delivery_watch.pop(channel, None)
+            self._delivery_last_end.pop(channel, None)
+
+    def prepare_stabilization(self, chunks, hypotheses, vocabulary=None):
+        """Select fallback before the stabilizer sees this retained window.
+
+        Recognized speech without commits for 30 seconds of advancing audio
+        indicates a primary that cannot supply usable captions. Earlier expired
+        windows remain expired; replay preserves only the currently retained batch.
+        """
+        if not chunks:
+            return hypotheses
+        channel = chunks[0].chunk_id.rsplit("-tap-", 1)[0]
+        end = chunks[-1].end_seconds
+        with self._guard:
+            if self._closed:
+                raise RuntimeError("caption runtime has been closed")
+            if channel in self._failed or end <= self._delivery_last_end.get(channel, -1):
+                return hypotheses
+            self._delivery_last_end[channel] = end
+            if not any(h.text.strip() for h in hypotheses):
+                self._delivery_watch.pop(channel, None)
+                return hypotheses
+            since = self._delivery_watch.setdefault(channel, chunks[0].start_seconds)
+            if end - since < 30:
+                return hypotheses
+            self._failed.add(channel)
+            worker = self._primaries.pop(channel, None)
+        if worker:
+            worker.close()
+        _LOG.warning(
+            "Whistle recognized speech without caption commits for 30 audio seconds on %s; switching to Whisper",
+            channel,
+        )
+        return list(self.transcribe(chunks, vocabulary))
+
+    def note_caption_commits(self, chunks, cues):
+        if chunks and cues:
+            channel = chunks[0].chunk_id.rsplit("-tap-", 1)[0]
+            with self._guard:
+                if chunks[-1].end_seconds >= self._delivery_last_end.get(channel, -1):
+                    self._delivery_watch.pop(channel, None)
 
     def transcribe(self, chunks, vocabulary=None):
         for chunk in chunks:
