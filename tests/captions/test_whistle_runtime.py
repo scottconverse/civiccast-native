@@ -324,3 +324,38 @@ def test_audio_send_to_blocked_child_is_deadline_bounded():
     with pytest.raises(TimeoutError, match="input deadline"):
         child.request(chunk(), None)
     assert released.is_set()
+
+
+def test_station_serializes_native_whistle_inference(tmp_path):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    first_entered, second_entered, release = threading.Event(), threading.Event(), threading.Event()
+    r, _, _ = runtime(tmp_path)
+
+    def factory(engine):
+        worker = Worker(engine, [])
+        original = worker.request
+
+        def request(audio, vocabulary):
+            if audio.chunk_id.startswith("public"):
+                first_entered.set()
+                assert release.wait(3)
+            else:
+                second_entered.set()
+            return original(audio, vocabulary)
+
+        worker.request = request
+        return worker
+
+    r._factory = factory
+    with ThreadPoolExecutor(2) as pool:
+        first = pool.submit(lambda: list(r.transcribe([chunk()])))
+        assert first_entered.wait(3)
+        second = pool.submit(lambda: list(r.transcribe([chunk("government")])))
+        overlapping = second_entered.wait(0.15)
+        release.set()
+        first.result(timeout=3)
+        second.result(timeout=3)
+    r.close()
+    assert not overlapping, "two native Whistle calls ran concurrently"

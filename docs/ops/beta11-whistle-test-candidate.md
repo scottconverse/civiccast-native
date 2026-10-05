@@ -3,10 +3,16 @@
 This is a local development patch on the owner's installed beta.9 station,
 not a signed beta.11 installer or a release-readiness claim. The source branch
 is `codex/beta11-whistle`, based on main `8c3ab70bdc802f42ee573d83b284418c620c18ae`.
-The candidate version is `1.0.0-beta.11.dev0`.
+The second candidate version is `1.0.0-beta.11.dev1`.
 
 Native live captions use one persistent, serial Whistle CPU process per channel,
 with at most three channels. Batch captions continue to use Whisper. Whistle
+inference is serialized across the station: the native DLL's CPU pools competed
+under three simultaneous calls in the installed preflight, exceeding the five-second
+cadence and shedding audio. Channel persistence/publishing may still overlap.
+The first candidate (`dev0`, `bf68de5c5f01342d27dd26826692e2b209965068`) failed that
+capacity preflight; its two-hour acceptance observation was never started.
+Whistle
 failures replay retained audio into a separate serial Whisper process, and the
 affected channel stays on Whisper until runtime restart. A failed Whisper process
 may be replaced once, with the retained window replayed once. Further failures
@@ -40,6 +46,8 @@ patch bytes; this hybrid patch is not wholly built from the candidate commit.
 Evidence directory on this machine:
 `C:\Users\scott\Documents\Codex\2026-10-04\rea\work`.
 The staging and install scripts are `stage-beta11.py` and `install-beta11.ps1`.
+The successful first patch backup is `work\beta11-backup-2`; the first install
+attempt restored the original files after its sanity check hit PowerShell quoting.
 The existing `Install-Candidate.ps1` / `Rollback-Candidate.ps1` handle replaced
 application files; added dependency/asset paths are recorded separately. Installation
 stops the service before copying, verifies installed hashes/imports, and restarts

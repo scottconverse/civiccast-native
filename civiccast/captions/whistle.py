@@ -279,6 +279,7 @@ class WhistleRuntime:
         self._locks = {}
         self._guard = threading.RLock()
         self._fallback_lock = threading.Lock()
+        self._primary_lock = threading.Lock()
         self._closed = False
         self._primary_error = None
         self._fallback_restarts = 0
@@ -322,6 +323,29 @@ class WhistleRuntime:
                 )
                 return self._fallback_worker().request(chunk, vocabulary)
 
+    def _primary_request(self, channel, chunk, vocabulary):
+        # The pinned native DLL creates its own CPU pool. Separate per-channel
+        # pools compete badly; serialize inference, retaining channel isolation
+        # and concurrent downstream persistence/publishing.
+        with self._primary_lock:
+            with self._guard:
+                if self._closed:
+                    raise RuntimeError("caption runtime has been closed")
+                primary = self._primaries.get(channel)
+            if primary is None:
+                created = self._factory("whistle")
+                with self._guard:
+                    if self._closed:
+                        created.close()
+                        raise RuntimeError("caption runtime has been closed")
+                    self._primaries[channel] = primary = created
+                    _LOG.info(
+                        "Whistle primary active: channel=%s pid=%s",
+                        channel,
+                        getattr(getattr(created, "_process", None), "pid", "n/a"),
+                    )
+            return primary.request(chunk, vocabulary)
+
     def transcribe(self, chunks, vocabulary=None):
         for chunk in chunks:
             if (
@@ -343,23 +367,7 @@ class WhistleRuntime:
                         raise RuntimeError(self._primary_error)
                     if channel in self._failed:
                         raise RuntimeError("primary previously failed")
-                    if channel not in self._primaries:
-                        created = self._factory("whistle")
-                        with self._guard:
-                            if self._closed:
-                                created.close()
-                                raise RuntimeError("caption runtime has been closed")
-                            self._primaries[channel] = created
-                            _LOG.info(
-                                "Whistle primary active: channel=%s pid=%s",
-                                channel,
-                                getattr(getattr(created, "_process", None), "pid", "n/a"),
-                            )
-                    with self._guard:
-                        if self._closed:
-                            raise RuntimeError("caption runtime has been closed")
-                        primary = self._primaries[channel]
-                    payload = primary.request(chunk, vocabulary)
+                    payload = self._primary_request(channel, chunk, vocabulary)
                     results = _hypotheses(chunk, payload)
                 except Exception as exc:
                     if channel not in self._failed:
