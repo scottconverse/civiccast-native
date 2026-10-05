@@ -228,6 +228,9 @@ def default_max_channel_workers(runtime: CaptionRuntime | None = None) -> int:
     station the operator has personally sized.
     """
 
+    isolated_workers = getattr(runtime, "channel_workers", None)
+    if isinstance(isolated_workers, int) and 1 <= isolated_workers <= 3:
+        return isolated_workers
     on_cuda = getattr(runtime, "on_cuda", None)
     if runtime is None or not callable(on_cuda) or not on_cuda():
         return 1
@@ -803,6 +806,9 @@ class CaptionTapWorker:
                     self._retention_shutdown_timeout,
                 )
             self._shutdown_channel_executor()
+            close_runtime = getattr(self._runtime, "close", None)
+            if callable(close_runtime):
+                close_runtime()
 
     def _ensure_channel_executor(self) -> concurrent.futures.ThreadPoolExecutor:
         """Return the bounded channel executor, creating it after sizing resolves."""

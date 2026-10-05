@@ -99,6 +99,8 @@ s3-cdn = [
 ]
 captions-runtime = [
   "faster-whisper>=1.2.1,<2",
+  "ctranslate2==4.8.1",
+  "cactus-needle==3.1.0",
 ]
 # Agenda Bridge Phase 4 (js_portal) — crawl4ai + Playwright Chromium for
 # JS-hydrated municipal agenda portals (CivicPlus, Granicus, Legistar-JS)

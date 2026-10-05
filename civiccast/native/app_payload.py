@@ -244,7 +244,7 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: identity, which deterministically changes the reviewed wheel's bytes).
 #: Nothing else in the lock changed.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "5538f0e6b35a10a7e4bcff969397cf731d49fcc0a4366842f8a611fcd2817e9c"
+    "e6e117de393948e356e44b624d9521c3f788c27c008ff7d3dad739b6f2639eb6"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).
@@ -374,6 +374,7 @@ APP_DISTRIBUTION_LICENSE: Final[dict[str, str]] = {
     "deprecated": "MIT",
     "fastapi": "MIT",
     "faster-whisper": "MIT",
+    "cactus-needle": "Apache-2.0",
     "filelock": "MIT",
     "flatbuffers": "Apache-2.0",
     "fsspec": "BSD-3-Clause",
