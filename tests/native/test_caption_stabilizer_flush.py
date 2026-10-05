@@ -175,7 +175,7 @@ def _active_vtt(tap_root: Path, channel_id: str) -> Path:
 class TestCaptionTapWorkerStreamEndFlush:
     """Stream-end triggers flush; the scan stats expose a matching counter."""
 
-    def test_flush_channel_commits_stuck_pending_and_scan_stats_expose_the_counter(
+    def test_live_first_pass_commits_and_flush_has_nothing_pending(
         self,
         tmp_path: Path,
     ) -> None:
@@ -196,17 +196,13 @@ class TestCaptionTapWorkerStreamEndFlush:
         scan = worker.run_once()
 
         assert scan.consumed_segments == 1
-        # Documents the defect end-to-end: one observation is not enough to
-        # earn re-confirmation, so nothing commits mid-scan.
-        assert scan.committed_review_items == 0
-        assert store.list(asset_id="government") == []
-
+        # Live publication no longer waits for a second transcription.
+        assert scan.committed_review_items == 1
         flushed_scan = worker.flush_channel("government")
-
-        assert flushed_scan.committed_review_items == 1
+        assert flushed_scan.committed_review_items == 0
         rows = store.list(asset_id="government")
         assert len(rows) == 1
-        assert rows[0].low_confidence is True
+        assert rows[0].low_confidence is False
         assert rows[0].original_text == "the council will come to order"
         vtt = _active_vtt(tap_root, "government").read_text(encoding="utf-8")
         assert "the council will come to order" in vtt

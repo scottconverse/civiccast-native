@@ -60,9 +60,6 @@ class CaptionPipeline:
         self._stabilizer = stabilizer or CaptionStabilizer()
         self._phase_timing = phase_timing
         self._phase_timing_channel = phase_timing_channel
-        begin_session = getattr(runtime, "begin_caption_session", None)
-        if phase_timing_channel is not None and callable(begin_session):
-            begin_session(phase_timing_channel)
 
     def _phase(self, name: str):
         """Return an opt-in timing context without affecting pipeline work."""
@@ -85,23 +82,17 @@ class CaptionPipeline:
         """Transcribe chunks and prepare stable cue review rows.
 
         The pipeline keeps the stabilizer instance alive across calls, so a
-        live worker can pass one small batch at a time while the two-window
-        stability contract still holds.
+        live worker publishes each recognition and deduplicates overlapping audio.
+        Offline pipelines retain their configured confirmation policy.
         """
         with self._phase("runtime_transcribe"):
             hypotheses = list(self._runtime.transcribe(chunks, vocabulary=vocabulary))
-            select = getattr(self._runtime, "prepare_stabilization", None)
-            if callable(select):
-                hypotheses = select(chunks, hypotheses, vocabulary=vocabulary)
         with self._phase("caption_stabilize"):
             committed_cues: list[CaptionCue] = []
             expired_before = self._stabilizer.expired_unconfirmed_count
             for hypothesis in hypotheses:
                 committed_cues.extend(self._stabilizer.observe(hypothesis))
             expired_unconfirmed_cues = self._stabilizer.expired_unconfirmed()[expired_before:]
-            note_commits = getattr(self._runtime, "note_caption_commits", None)
-            if callable(note_commits):
-                note_commits(chunks, committed_cues)
 
         # Expired-unconfirmed cues never air (never enter committed_cues /
         # the active track) but still land in the same review queue as any
