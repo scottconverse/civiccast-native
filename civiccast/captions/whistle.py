@@ -451,6 +451,66 @@ class WhistleRuntime:
                 _LOG.exception("Speech child cleanup failed; continuing remaining child cleanup")
 
 
+class MixedCaptionRuntime:
+    """Keep ordinary Whisper channels on their existing live runtime."""
+
+    channel_workers = 3
+    num_workers = 3
+    device = "mixed"
+    compute_type = "mixed"
+
+    def __init__(self, whistle, whisper, whistle_channels):
+        if not whistle_channels or len(whistle_channels) > 3:
+            raise ValueError("Select between one and three Whistle channels")
+        self._whistle = whistle
+        self._whisper = whisper
+        self._whistle_channels = frozenset(whistle_channels)
+        self._whisper_lock = threading.Lock()
+        self._closed = False
+
+    def on_cuda(self):
+        return self._whisper.on_cuda()
+
+    def prepare(self):
+        if self._closed:
+            raise RuntimeError("caption runtime has been closed")
+        self._whisper.prepare()
+        self._whistle.prepare()
+        _LOG.info("Mixed live captions: Whistle channels=%s; other channels use existing Whisper", sorted(self._whistle_channels))
+
+    def transcribe(self, chunks, vocabulary=None):
+        if self._closed:
+            raise RuntimeError("caption runtime has been closed")
+        for chunk in chunks:
+            channel = chunk.chunk_id.rsplit("-tap-", 1)[0]
+            if channel in self._whistle_channels:
+                yield from self._whistle.transcribe([chunk], vocabulary)
+            elif self._whisper.on_cuda():
+                yield from self._whisper.transcribe([chunk], vocabulary)
+            else:
+                # Preserve the tap's original single-call CPU safety profile.
+                with self._whisper_lock:
+                    yield from self._whisper.transcribe([chunk], vocabulary)
+
+    def begin_caption_session(self, channel):
+        if channel in self._whistle_channels:
+            self._whistle.begin_caption_session(channel)
+
+    def prepare_stabilization(self, chunks, hypotheses, vocabulary=None):
+        if chunks and chunks[0].chunk_id.rsplit("-tap-", 1)[0] in self._whistle_channels:
+            return self._whistle.prepare_stabilization(chunks, hypotheses, vocabulary)
+        return hypotheses
+
+    def note_caption_commits(self, chunks, cues):
+        if chunks and chunks[0].chunk_id.rsplit("-tap-", 1)[0] in self._whistle_channels:
+            self._whistle.note_caption_commits(chunks, cues)
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            self._whistle.close()
+
+
 def _hypotheses(chunk, payload):
     if not payload.get("text", "").strip():
         return []

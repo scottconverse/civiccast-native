@@ -3,7 +3,17 @@
 This is a local development patch on the owner's installed beta.9 station,
 not a signed beta.11 installer or a release-readiness claim. The source branch
 is `codex/beta11-whistle`, based on main `8c3ab70bdc802f42ee573d83b284418c620c18ae`.
-The third candidate version is `1.0.0-beta.11.dev2`.
+The fourth candidate version is `1.0.0-beta.11.dev3`.
+The owner selected a mixed two-hour test: government and education retain the
+existing Whisper live runtime; public uses Whistle CPU with isolated Whisper
+fallback. `CIVICCAST_WHISTLE_CHANNELS=public` in the service environment selects
+this routing. Other service settings are preserved. Without that override,
+the default still selects Whistle for all live channels. The mixed test does not
+certify three simultaneous Whistle channels. A controlled primary failure occurs
+near the end of the test, so it does not turn most of the observation into three
+Whisper channels. Candidate dev2 was installed and emitted captions on all three
+stations, but its two-hour observation had not started when the owner changed
+the test configuration.
 
 Native live captions use one persistent, serial Whistle CPU process per channel,
 with at most three channels. Batch captions continue to use Whisper. Whistle

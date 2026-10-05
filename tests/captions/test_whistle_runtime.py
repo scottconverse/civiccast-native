@@ -151,7 +151,7 @@ def test_native_live_factory_selects_whistle_but_batch_stays_whisper(tmp_path, m
             device="cpu",
             compute_type="int8",
             cpu_threads=1,
-            num_workers=1,
+            num_workers=3,
             beam_size=1,
             language="en",
             task="transcribe",
@@ -160,6 +160,13 @@ def test_native_live_factory_selects_whistle_but_batch_stays_whisper(tmp_path, m
     )
     service = SimpleNamespace(effective_model_tag=lambda feature: "whisper-medium")
     assert isinstance(build_caption_runtime(service, live=True), WhistleRuntime)
+    assert isinstance(build_caption_runtime(service), FasterWhisperRuntime)
+    from civiccast.captions.whistle import MixedCaptionRuntime
+    monkeypatch.setenv("CIVICCAST_WHISTLE_CHANNELS", "public")
+    mixed = build_caption_runtime(service, live=True)
+    assert isinstance(mixed, MixedCaptionRuntime)
+    assert mixed._whistle_channels == {"public"}
+    assert mixed._whisper.num_workers == 3  # Existing Whisper profile stays intact.
     assert isinstance(build_caption_runtime(service), FasterWhisperRuntime)
 
 
@@ -465,3 +472,70 @@ def test_new_channel_pipeline_rearms_watch_after_timestamp_reset(tmp_path):
         selected = r.prepare_stabilization([audio], list(r.transcribe([audio])))
     assert selected[0].text == "fallback words" and "public" in r._failed
     r.close()
+
+
+def test_mixed_routing_keeps_two_channels_on_existing_whisper(tmp_path):
+    from civiccast.captions.whistle import MixedCaptionRuntime
+    primary, calls, _ = runtime(tmp_path)
+    class ExistingWhisper:
+        def __init__(self):
+            self.calls = []
+            self.prepared = False
+        def prepare(self):
+            self.prepared = True
+        def transcribe(self, chunks, vocabulary=None):
+            self.calls.extend(chunks)
+            return []
+        def on_cuda(self):
+            return True
+    whisper = ExistingWhisper()
+    mixed = MixedCaptionRuntime(primary, whisper, {"public"})
+    public = chunk()
+    assert next(mixed.transcribe([public])).text == "five to two"
+    assert list(mixed.transcribe([chunk("government"), chunk("education")])) == []
+    assert [audio.chunk_id.split("-tap-")[0] for audio in whisper.calls] == ["government", "education"]
+    assert [call[0] for call in calls] == ["whistle"]
+    assert mixed.channel_workers == 3
+    assert mixed.on_cuda()
+    mixed.begin_caption_session("government")
+    selected = mixed.prepare_stabilization([chunk("government")], [], None)
+    assert selected == [] and "government" not in primary._delivery_last_end
+    mixed.prepare()
+    assert whisper.prepared
+    mixed.close()
+    import pytest
+    with pytest.raises(RuntimeError, match="closed"):
+        list(mixed.transcribe([public]))
+
+
+def test_mixed_cpu_whisper_keeps_single_call_safety(tmp_path):
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from civiccast.captions.whistle import MixedCaptionRuntime
+    primary, _, _ = runtime(tmp_path)
+    guard = threading.Lock()
+    start = threading.Barrier(2)
+    active = peak = 0
+    class CPUWhisper:
+        def on_cuda(self):
+            return False
+        def transcribe(self, chunks, vocabulary=None):
+            nonlocal active, peak
+            with guard:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.08)
+            with guard:
+                active -= 1
+            return []
+    mixed = MixedCaptionRuntime(primary, CPUWhisper(), {"public"})
+    def run(channel):
+        start.wait(timeout=2)
+        return list(mixed.transcribe([chunk(channel)]))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(run, channel) for channel in ("government", "education")]
+        assert [future.result(timeout=3) for future in futures] == [[], []]
+    assert peak == 1
+    mixed.close()
