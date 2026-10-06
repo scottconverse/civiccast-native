@@ -279,6 +279,7 @@ class WhistleRuntime:
         self._locks = {}
         self._guard = threading.RLock()
         self._fallback_lock = threading.Lock()
+        self._primary_lock = threading.Lock()
         self._closed = False
         self._primary_error = None
         self._fallback_restarts = 0
@@ -323,41 +324,43 @@ class WhistleRuntime:
                 return self._fallback_worker().request(chunk, vocabulary)
 
     def _primary_request(self, channel, chunk, vocabulary):
-        # Per-channel locks isolate each process. Different station primaries
-        # may transcribe simultaneously; there is no station-wide inference lock.
-        with self._guard:
-            if self._closed:
-                raise RuntimeError("caption runtime has been closed")
-            primary = self._primaries.get(channel)
-        if primary is None:
-            created = self._factory("whistle")
+        # Serialize station-wide native recognition after the concurrent
+        # three-station run exceeded the request deadline and lost queued audio.
+        # This does not require transcript agreement before captions can air.
+        with self._primary_lock:
             with self._guard:
                 if self._closed:
-                    created.close()
                     raise RuntimeError("caption runtime has been closed")
-                self._primaries[channel] = primary = created
-                _LOG.info(
-                    "Whistle primary active: channel=%s pid=%s",
+                primary = self._primaries.get(channel)
+            if primary is None:
+                created = self._factory("whistle")
+                with self._guard:
+                    if self._closed:
+                        created.close()
+                        raise RuntimeError("caption runtime has been closed")
+                    self._primaries[channel] = primary = created
+                    _LOG.info(
+                        "Whistle primary active: channel=%s pid=%s",
+                        channel,
+                        getattr(getattr(created, "_process", None), "pid", "n/a"),
+                    )
+            started = time.monotonic()
+            try:
+                result = primary.request(chunk, vocabulary)
+            except Exception:
+                _LOG.warning(
+                    "Whistle inference failed: channel=%s seconds=%.3f",
                     channel,
-                    getattr(getattr(created, "_process", None), "pid", "n/a"),
+                    time.monotonic() - started,
                 )
-        started = time.monotonic()
-        try:
-            result = primary.request(chunk, vocabulary)
-        except Exception:
-            _LOG.warning(
-                "Whistle inference failed: channel=%s seconds=%.3f",
+                raise
+            _LOG.info(
+                "Whistle inference completed: channel=%s chunk=%s seconds=%.3f",
                 channel,
+                chunk.chunk_id,
                 time.monotonic() - started,
             )
-            raise
-        _LOG.info(
-            "Whistle inference completed: channel=%s chunk=%s seconds=%.3f",
-            channel,
-            chunk.chunk_id,
-            time.monotonic() - started,
-        )
-        return result
+            return result
 
     def transcribe(self, chunks, vocabulary=None):
         for chunk in chunks:

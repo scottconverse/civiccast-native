@@ -334,36 +334,49 @@ def test_audio_send_to_blocked_child_is_deadline_bounded():
     assert released.is_set()
 
 
-def test_three_station_primaries_can_enter_inference_together(tmp_path):
+def test_station_serializes_all_three_native_primaries(tmp_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
     r, _, _ = runtime(tmp_path)
-    entered = {c: threading.Event() for c in ("public", "government", "education")}
-    release = threading.Event()
+    first_entered, overlapping, release = threading.Event(), threading.Event(), threading.Event()
+    count_lock = threading.Lock()
+    active = 0
 
     def factory(engine):
         worker = Worker(engine, [])
         original = worker.request
 
         def request(audio, vocabulary):
-            channel = audio.chunk_id.split("-tap-")[0]
-            entered[channel].set()
-            assert release.wait(3)
-            return original(audio, vocabulary)
+            nonlocal active
+            with count_lock:
+                active += 1
+                if active > 1:
+                    overlapping.set()
+            first_entered.set()
+            try:
+                assert release.wait(3)
+                return original(audio, vocabulary)
+            finally:
+                with count_lock:
+                    active -= 1
 
         worker.request = request
         return worker
 
     r._factory = factory
     with ThreadPoolExecutor(3) as pool:
-        futures = [pool.submit(lambda c=c: list(r.transcribe([chunk(c)]))) for c in entered]
-        simultaneous = all(event.wait(0.5) for event in entered.values())
+        futures = [
+            pool.submit(lambda c=c: list(r.transcribe([chunk(c)])))
+            for c in ("public", "government", "education")
+        ]
+        assert first_entered.wait(3)
+        did_overlap = overlapping.wait(0.25)
         release.set()
         for future in futures:
             future.result(timeout=3)
     r.close()
-    assert simultaneous, "one station blocked other station primaries from entering inference"
+    assert not did_overlap, "native station requests overlapped despite the global lock"
 
 
 def test_overlap_or_silence_does_not_demote_healthy_whistle(tmp_path):
