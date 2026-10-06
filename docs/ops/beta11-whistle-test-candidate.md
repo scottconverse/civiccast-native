@@ -99,7 +99,7 @@ deadline, switched to Whisper, and other stations later dropped queued audio.
 This is distinct from the removed caption-agreement rule. Dev6 restores the lock.
 
 The owner authorized a four-hour run of all three stations on Whistle primary
-with Whisper fallback available. Status: running since 2026-10-05 22:06:38 MDT; expected end 2026-10-06 02:07 MDT. Evidence: `ops/beta10-oversight/evidence/rung-beta11-dev6-whistle-all3-4h-20261005-220637`. No completed four-hour result is claimed yet. Use the existing read-only
+with Whisper fallback available. Status: completed 2026-10-05 22:06:38 to 2026-10-06 02:07:06 MDT (four hours 28 seconds). All 23 three-station caption/freshness/timing checks passed; no Whisper fallback, pause, restart or resource stop. Raw observer verdict FAIL: first public loudness window -17.7 LUFS, unresolved source position. Seven later three-station loudness rounds passed. Seven catch-up events discarded 85 seconds of audio (public 55, government 20, education 10); two caption file I/O errors and two education boundary-reload retries remain findings. This is sustained engine operation, not a loss-free caption pass or release acceptance. Evidence: `ops/beta10-oversight/evidence/rung-beta11-dev6-whistle-all3-4h-20261005-220637`. Use the existing read-only
 output observer: freshness every 30 seconds, decoded captions/A/V continuity
 every ten minutes, emitted-audio loudness every 30 minutes. Retain resource logs
 and inference durations throughout. Stop on unsafe resource pressure; report
@@ -108,5 +108,5 @@ not constitute a Whistle-only pass. No forced failure during this soak.
 
 CPU-only primary feasibility is preferred, not a release requirement; the host
 has a GPU-backed Whisper standby. No broad accuracy claim is supported by a
-reviewed reference transcript. The four-hour result, signed installer, clean
-machine acceptance, publication and production cutover remain unproven here.
+reviewed reference transcript. The four-hour measurements are recorded above. Signed installer, clean-machine
+acceptance, publication and production cutover remain unproven here.

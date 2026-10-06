@@ -2,7 +2,7 @@
 
 This file is a pointer, not a log.
 
-- Current beta.11 caption decision and local candidate: [`docs/ops/beta11-whistle-test-candidate.md`](docs/ops/beta11-whistle-test-candidate.md). Whistle primary, Whisper backup/GPU option; dev6 global lock restored; four-hour soak running since October 5 at 22:06 MDT; expected finish October 6 at 02:07 MDT.
+- Current beta.11 caption decision and local candidate: [`docs/ops/beta11-whistle-test-candidate.md`](docs/ops/beta11-whistle-test-candidate.md). Whistle primary, Whisper backup/GPU option; dev6 global lock restored; four-hour soak completed October 6 at 02:07 MDT: no fallback; 23/23 output checks passed, but 85s caption audio loss and unresolved loudness/I/O findings prevent a clean pass.
 
 - Current project status: [`PROJECT-STATUS.md`](PROJECT-STATUS.md).
 - Current coordinator handoff (decisions, rules, how to resume):
