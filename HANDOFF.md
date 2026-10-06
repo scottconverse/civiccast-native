@@ -2,6 +2,8 @@
 
 This file is a pointer, not a log.
 
+- Current beta.11 caption decision and local candidate: [`docs/ops/beta11-whistle-test-candidate.md`](docs/ops/beta11-whistle-test-candidate.md). Whistle primary, Whisper backup/GPU option; dev6 global lock restored; four-hour soak pending.
+
 - Current project status: [`PROJECT-STATUS.md`](PROJECT-STATUS.md).
 - Current coordinator handoff (decisions, rules, how to resume):
   [`ops/beta10-oversight/HANDOFF-2026-10-01.md`](ops/beta10-oversight/HANDOFF-2026-10-01.md).

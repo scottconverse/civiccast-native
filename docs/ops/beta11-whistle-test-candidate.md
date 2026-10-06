@@ -3,17 +3,15 @@
 This is a local development patch on the owner's installed beta.9 station,
 not a signed beta.11 installer or a release-readiness claim. The source branch
 is `codex/beta11-whistle`, based on main `8c3ab70bdc802f42ee573d83b284418c620c18ae`.
-The fourth candidate version is `1.0.0-beta.11.dev3`.
-The owner selected a mixed two-hour test: government and education retain the
-existing Whisper live runtime; public uses Whistle CPU with isolated Whisper
-fallback. `CIVICCAST_WHISTLE_CHANNELS=public` in the service environment selects
-this routing. Other service settings are preserved. Without that override,
-the default still selects Whistle for all live channels. The mixed test does not
-certify three simultaneous Whistle channels. A controlled primary failure occurs
-near the end of the test, so it does not turn most of the observation into three
-Whisper channels. Candidate dev2 was installed and emitted captions on all three
-stations, but its two-hour observation had not started when the owner changed
-the test configuration.
+Current installed version: `1.0.0-beta.11.dev6`, source commit
+`e385f5b7f2d18a5ae0a2eb28e83d5dd3c3846381` (documentation follows separately).
+Owner decision: Whistle is primary for all three live stations; Whisper is the
+backup and the selectable primary for supported NVIDIA CUDA machines.
+`CIVICCAST_LIVE_CAPTION_ENGINE=whistle` selects primary plus fallback;
+`whisper` selects Whisper directly. No mixed-channel override is installed.
+Whisper device selection uses `CIVICCAST_WHISPER_DEVICE=auto|cuda|cpu`.
+CUDA requires supported NVIDIA hardware and the installed CUDA libraries;
+AMD/Intel discrete graphics do not imply Whisper GPU acceleration.
 
 Native live captions use one persistent, serial Whistle CPU process per channel,
 with at most three channels. Batch captions continue to use Whisper. Whistle
@@ -35,13 +33,10 @@ deadline; children start suspended, enter verified Windows memory/CPU jobs befor
 native loading, and die on job close. Each Whistle job has a 1 GiB memory limit;
 the fallback job has 4 GiB. Each job has a 25% CPU hard cap.
 
-Delivery health also triggers fallback after 30 seconds of advancing audio with
-recognized speech but no committed cues. Silence and an actual committed cue reset
-the watch. Before observing the current pass, the pipeline selects fallback and
-replays its retained chunks, preserving vocabulary. It observes the selected results
-once; the stabilizer's two distinct PCM window rule and previous history remain
-unchanged. This does not recover earlier expired speech from the preceding 30 seconds.
-The fallback trigger is isolated to the affected channel.
+Live captions publish first recognition without requiring agreement between
+overlapping transcriptions. Timed overlap trimming prevents repeated audio from
+being published twice. The no-committed-cue watchdog was removed; native process
+failure and request timeout still trigger fallback. Batch policy is unchanged.
 
 Needle usage telemetry is forcibly disabled with `NEEDLE_TELEMETRY=0` and
 `DO_NOT_TRACK=1` before import. Startup also checks its pinned Python telemetry
@@ -89,12 +84,29 @@ and a suspended native child triggering bounded fallback/cleanup. Medium Whisper
 viability is not established. CUDA smoke and installed station output must be judged
 from their recorded results, rather than unit tests.
 
-The authorized acceptance run is two hours with public, government, and education
-simultaneously on air. Use the existing read-only output observer, retaining decoded
-caption evidence, HLS freshness, A/V timestamp continuity, loudness, station logs,
-and shed/timing diagnostics. Stop on unsafe resource pressure or sustained output
-failure. A controlled Whistle failure must also demonstrate installed fallback.
-Report measured results and gaps; do not infer correctness from engine agreement.
-There is no reviewed transcript establishing broad caption accuracy, and no longer
-soak, clean-machine install, signed installer, publication, or production cutover
-is authorized by this test.
+## Measured results and current acceptance run
+
+All-three Whistle with serialization completed two hours on 2026-10-05:
+12/12 three-channel caption checks and 4/4 audio checks passed, no fallback,
+with one five-second education catch-up discard. All-three Whisper completed
+83 minutes before the owner opened a game and the memory safeguard stopped
+the service; the owner accepted that duration. Eight caption checks and three
+audio checks passed before interruption.
+
+Removing the global lock in dev5 confirmed three concurrent native calls,
+but full-window calls took 8.750–9.360 seconds. Education exceeded the ten-second
+deadline, switched to Whisper, and other stations later dropped queued audio.
+This is distinct from the removed caption-agreement rule. Dev6 restores the lock.
+
+The owner authorized a four-hour run of all three stations on Whistle primary
+with Whisper fallback available. Status: pending start. Use the existing read-only
+output observer: freshness every 30 seconds, decoded captions/A/V continuity
+every ten minutes, emitted-audio loudness every 30 minutes. Retain resource logs
+and inference durations throughout. Stop on unsafe resource pressure; report
+fallbacks and audio shedding separately from output delivery. A fallback does
+not constitute a Whistle-only pass. No forced failure during this soak.
+
+CPU-only primary feasibility is preferred, not a release requirement; the host
+has a GPU-backed Whisper standby. No broad accuracy claim is supported by a
+reviewed reference transcript. The four-hour result, signed installer, clean
+machine acceptance, publication and production cutover remain unproven here.

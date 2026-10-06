@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — beta.11 caption candidate
+
+- Native live captions use Whistle on CPU, with Whisper fallback after a primary failure. Operators can select Whisper for NVIDIA CUDA acceleration; recorded-media captions retain Whisper.
+- Live captions publish first recognition instead of waiting for overlapping transcriptions to agree.
+- Whistle inference is serialized across stations; concurrent native calls exceeded the request deadline in the measured three-station trial. Needle telemetry is disabled.
+- Updated the operator manual and packaged in-product help. A four-hour three-station soak is pending; this is not a release-readiness claim.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

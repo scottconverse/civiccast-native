@@ -152,7 +152,7 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 ![The confirmation box "End the live stream?" over the Live screen.](manual/images/operator-live-endconfirm.png){width=70%}
 
 *Figure: the End Live Stream confirmation. Its wording about residents does not match what the code does; see the warning below.*
-3. Watch the **Recording finalization** panel that appears. It shows **Waiting**, then "Attempt N of M. The recording is being checked and packaged.", then "Recording saved as asset <id>. Find it in the Assets library."
+3. Watch the **Recording finalization** panel that appears. It shows **Waiting**, then "Attempt N of M. The recording is being checked and packaged.", then "Recording saved as asset &lt;id&gt;. Find it in the Assets library."
 
 If it fails, the panel shows the reason (or "Finalization failed."). Fix the cause, then click **Retry finalization**. See [After the meeting](#ch-after-meeting) for what to do with the saved recording.
 
@@ -168,7 +168,7 @@ The **Channels** screen controls each channel's actual video feed.
 2. In the row of channel cards under the heading, click the card for the channel you want. Each card shows the channel's name and its id (for example `government`). The first channel is selected for you.
 3. Find the box **Outgoing channel feed**. It shows a state tag. The words you can see there are **On air**, **Showing slate**, **Starting**, **Stopping**, **Finishing current item**, **Changing source**, **Stopped** and **Needs attention**.
 4. Click **Start**.
-5. A box titled "Start the outgoing feed for <channel>?" says "<channel> goes live to its configured outputs and becomes visible to residents." Click **Start feed**.
+5. A box titled "Start the outgoing feed for &lt;channel&gt;?" says "&lt;channel&gt; goes live to its configured outputs and becomes visible to residents." Click **Start feed**.
 6. The button reads "Queuing..." for a moment. The screen then checks the feed every 2 seconds for 20 seconds.
 
 You should see the state tag change to **Starting** and then **On air**, or **Showing slate** if nothing is scheduled right now. "Starting" means CivicCast is preparing the first program, which can take a while on a cold start.
@@ -183,10 +183,10 @@ Clicking **Start** only *queues* a command. The feed program picks it up afterwa
 
 If **Start** is grey, a line under the button says why:
 
-* "No outgoing-feed configuration for <id>. Apply a headend preset or the local rehearsal preset first." The channel has never been set up. Ask a Setup admin.
-* "Outgoing feed for <id> is disabled in its egress configuration. Enable it in Outgoing feed configuration, then start."
+* "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." The channel has never been set up. Ask a Setup admin.
+* "Outgoing feed for &lt;id&gt; is disabled in its egress configuration. Enable it in Outgoing feed configuration, then start."
 * "Checking for an outgoing-feed configuration..." Wait a moment.
-* "Could not check the outgoing-feed configuration for <id>. Retry the check, then start." Click **Retry check**.
+* "Could not check the outgoing-feed configuration for &lt;id&gt;. Retry the check, then start." Click **Retry check**.
 
 If you see "Outgoing feed controls require the meeting operator role.", your sign-in cannot use these buttons.
 
@@ -196,9 +196,9 @@ Use the same **Outgoing channel feed** box.
 
 | Button | Box that appears | Confirm button |
 | --- | --- | --- |
-| **Stop** | "Stop the outgoing feed for <channel>?" - "This takes <channel> off the air. Residents watching lose the stream until the feed is started again." | **Stop feed** |
-| **Restart feed** | "Restart the outgoing feed for <channel>?" - "The stream drops briefly for residents while <channel> restarts." | **Restart feed** |
-| **Finish current item, then stop** | "Finish the current item, then stop <channel>?" - "<channel> plays out its current item and then goes off the air until the feed is started again." | **Finish, then stop** |
+| **Stop** | "Stop the outgoing feed for &lt;channel&gt;?" - "This takes &lt;channel&gt; off the air. Residents watching lose the stream until the feed is started again." | **Stop feed** |
+| **Restart feed** | "Restart the outgoing feed for &lt;channel&gt;?" - "The stream drops briefly for residents while &lt;channel&gt; restarts." | **Restart feed** |
+| **Finish current item, then stop** | "Finish the current item, then stop &lt;channel&gt;?" - "&lt;channel&gt; plays out its current item and then goes off the air until the feed is started again." | **Finish, then stop** |
 
 ![The confirmation box "Stop the outgoing feed for" the selected channel, with Stop feed and Cancel buttons.](manual/images/operator-channels-stop-confirm.png){width=70%}
 
@@ -244,7 +244,7 @@ You should see a red badge reading "Live takeover" with the name of the person a
 
 *Figure: the Live takeover box during a takeover.*
 
-> **Warning:** **Confirm take live** overrides the schedule and changes what is on the air. There is no pop-up. The second click is the confirmation. If the source's last good check is older than the window (30 seconds by default) when you confirm, the code we read refuses the takeover before it re-checks anything. The error can then read something like "Live ingest path '<channel>:local' is disabled.", which names CivicCast's built-in placeholder path and not your camera. Click **Check source** again and retry. If the channel is already under takeover, the error says "Channel '<id>' is already under live takeover."
+> **Warning:** **Confirm take live** overrides the schedule and changes what is on the air. There is no pop-up. The second click is the confirmation. If the source's last good check is older than the window (30 seconds by default) when you confirm, the code we read refuses the takeover before it re-checks anything. The error can then read something like "Live ingest path '&lt;channel&gt;:local' is disabled.", which names CivicCast's built-in placeholder path and not your camera. Click **Check source** again and retry. If the channel is already under takeover, the error says "Channel '&lt;id&gt;' is already under live takeover."
 
 To hand the channel back:
 
@@ -284,7 +284,7 @@ To undo an approval:
 
 > **Warning:** **Confirm take-off** cancels the program's schedule item. It will not play, not merely pause. The engine is told to read the schedule again, and the approval is marked **Rolled back** with your reason.
 
-> **Known issue (beta.10):** four things in this box are loose with words. The tag **Queued to air** means the command was queued, nothing more. The tag "On air (confirmed)" is never shown, because no code sets that state. A row for a future program says "aired <time>" even though it has not played. And if the list of past approvals cannot be loaded (for example, for a role that is not allowed to see it), the box still says "Nothing has been committed to air on this channel yet." instead of showing an error.
+> **Known issue (beta.10):** four things in this box are loose with words. The tag **Queued to air** means the command was queued, nothing more. The tag "On air (confirmed)" is never shown, because no code sets that state. A row for a future program says "aired &lt;time&gt;" even though it has not played. And if the list of past approvals cannot be loaded (for example, for a role that is not allowed to see it), the box still says "Nothing has been committed to air on this channel yet." instead of showing an error.
 
 Without the Publish operator or Setup admin role, **Review & prepare** is grey and the box says "You can review the schedule here. Putting a program on air or taking it off requires the publish operator or setup admin role."
 ## Put a lower-third banner on a channel
@@ -358,11 +358,11 @@ You should see the banner "Test action recorded." Test Mode never touches your e
 5. Tick the box "I understand On-Air cue actions may be sent to production devices".
 6. A list called "On-Air prerequisites" shows "Ready:" or "Needs attention:" for **Control-room readiness**, **Safe-state cue selected** and **On-Air responsibility acknowledged**. When all three are ready, click **Open On-Air Session**.
 
-You should see an amber banner: "ON-AIR MODE - cue actions can be sent to production devices. Safe-state cue: <cue id>." The banner shows the cue's internal id, not its name. The **Safe State** panel under it shows the name.
+You should see an amber banner: "ON-AIR MODE - cue actions can be sent to production devices. Safe-state cue: &lt;cue id&gt;." The banner shows the cue's internal id, not its name. The **Safe State** panel under it shows the name.
 
 > **Warning:** in an On-Air session a cue really is sent to your equipment, and that can change the picture going to the channel. Always click the cue first (the dry run) and read the plan card.
 
-If someone else already has the surface open, you see: "A session is already open on this surface, locked by <name> since <time>. A setup admin or support admin can force-close it to release the lock."
+If someone else already has the surface open, you see: "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;. A setup admin or support admin can force-close it to release the lock."
 
 > **Known issue (beta.10):** an On-Air session expires **30 minutes** after you open it, and the screen never shows how much time is left. After that, the next attempt to fire a cue is refused ("On-Air Mode expired before this cue could fire. Open a new On-Air session to continue.") and the session is closed. Council meetings often run longer than 30 minutes. Write down the time you opened the session, and open a new On-Air session before 30 minutes pass. Any cue the session had already sent is not undone.
 
@@ -476,7 +476,7 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 2. Click the room in the **Rooms** list.
 3. Click **Open room**. A box titled "Director view (embed in your switcher)" shows a link. This is the page you keep open to see and arrange the guests. Click **Copy**. The link is shown only right after you click **Open room**. If you reload the page it is gone, so click **Open room** again.
 4. Under "Invite a guest", type the **Guest name**, choose a **Contribution role** (**Council member**, **Presenter** or **Public comment**), and click **Generate invite link**.
-5. Copy the box labelled "Guest link for <name> — send this", and send it to that guest. Like the director link, this box is shown only right after you generate the link. If you reload the page or select another room it is gone, and the invite list shows only the guest's name, role and **Used** or **Pending**. Generate a new link if you did not copy it.
+5. Copy the box labelled "Guest link for &lt;name&gt; — send this", and send it to that guest. Like the director link, this box is shown only right after you generate the link. If you reload the page or select another room it is gone, and the invite list shows only the guest's name, role and **Used** or **Pending**. Generate a new link if you did not copy it.
 
 > **Note:** each guest link works for one guest, once, and expires after 4 hours. The screen says "single-use" but does not mention the 4 hours. Guests who join as **Public comment** must first accept terms before they can join. "Sent invites" lists each link as **Used** or **Pending**. A room holds up to 6 guests by default.
 
@@ -492,7 +492,7 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 *Figure: the Guests list for an open room.*
 
-> **Warning:** the guest's **On air** button does **more than show that guest**. It also switches the *whole channel* to its live source, exactly like **Take live** on Channels, for up to an hour. There is no confirmation box. CivicCast records the change under the name "remote-contribution", not your name. If the channel cannot be taken live (for example, no source passes its check), you get "Channel takeover failed; guest <id> not placed on-air." and the guest goes back to the waiting room. If the channel is already under takeover, nothing more happens and the guest joins the live picture.
+> **Warning:** the guest's **On air** button does **more than show that guest**. It also switches the *whole channel* to its live source, exactly like **Take live** on Channels, for up to an hour. There is no confirmation box. CivicCast records the change under the name "remote-contribution", not your name. If the channel cannot be taken live (for example, no source passes its check), you get "Channel takeover failed; guest &lt;id&gt; not placed on-air." and the guest goes back to the waiting room. If the channel is already under takeover, nothing more happens and the guest joins the live picture.
 
 ### Mute, take off the air, or drop a guest
 
@@ -500,7 +500,7 @@ While a guest is **On air**, two more buttons appear next to them.
 
 * **Mute** changes the guest's tag to **Muted**. A muted guest has only **On air** (which un-mutes) and **Drop**.
 * **Off air** returns the guest's tag to **In waiting room**. The guest stays admitted, so **On air** is still available.
-* **Drop** opens a box "Drop <name>?" (for an on-air guest: "<name> is on air right now — dropping ends their connection immediately and their video/audio cuts from the broadcast mid-session. They would need a new invite to rejoin."). Click **Drop guest**, or **Cancel**.
+* **Drop** opens a box "Drop &lt;name&gt;?" (for an on-air guest: "&lt;name&gt; is on air right now — dropping ends their connection immediately and their video/audio cuts from the broadcast mid-session. They would need a new invite to rejoin."). Click **Drop guest**, or **Cancel**.
 
 > **Warning:** **Mute** and **Off air** have no confirmation box. **Drop** and **Close room** ask first, and a dropped guest needs a new invite.
 
@@ -551,29 +551,29 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 17. Drop any remaining guests and click **Close room**.
 18. End any Control Room session: click **End session**.
 19. If you want the channel off the air, click **Finish current item, then stop** (or **Stop**) and confirm. If **Keep this channel on air** is ticked, ask your Setup admin to untick it first.
-20. On **Live**, click **End Live Stream**, confirm, and watch **Recording finalization** until it says "Recording saved as asset <id>." Then follow [After the meeting](#ch-after-meeting).
+20. On **Live**, click **End Live Stream**, confirm, and watch **Recording finalization** until it says "Recording saved as asset &lt;id&gt;." Then follow [After the meeting](#ch-after-meeting).
 
 ## If it did not work
 
 | What you see | What it means and what to do |
 | --- | --- |
 | "Live-room controls require the meeting operator role. Source status and readiness checks remain visible." | Your sign-in lacks the Meeting operator role. Ask your Setup admin. |
-| "Source preview unavailable - CivicCast has not verified incoming video or audio from <source>." | The Live screen never shows video in beta.10. It is not a fault. |
+| "Source preview unavailable - CivicCast has not verified incoming video or audio from &lt;source&gt;." | The Live screen never shows video in beta.10. It is not a fault. |
 | A red box "Live action failed." ending "refresh this screen" | Read the first line for the real reason. Do **not** refresh during a meeting. |
 | "Go on air blocked: a fresh source-bound server-side pre-flight did not pass." | A required checklist row failed when you clicked. Fix it, run **Run pre-flight**, try again. |
 | "LiveSession already exists: council-live-room" | A live session has already been created on this station. See the Known issue in "Run a live session". Ask IT. |
 | "Start was queued but the feed did not start." | The feed program did not respond in 20 seconds. Check Readiness, then click **Start** again. |
 | "No live source is ready yet." (Take live is grey) | No source passed **Check source** in the last 30 seconds (by default). Run **Check source** on Live. |
-| "Channel '<id>' is already under live takeover." | The channel is already live. Use **Return to schedule** first if you want to change it. |
+| "Channel '&lt;id&gt;' is already under live takeover." | The channel is already live. Use **Return to schedule** first if you want to change it. |
 | "Outgoing feed controls require the meeting operator role." | Your sign-in cannot start or stop channels. |
 | A program says **Not safe to air yet** | Read the reason: missing media, or a clash with another program. Fix it on **Schedule** and review again. |
 | **Couldn't reach the engine** on a committed program | The approval was saved, but the command to the feed did not go through. Check that the feed is running, and ask IT. |
 | "Production control unavailable — the TSR control service is not running or not configured." | The Control Room helper is down. Tell IT. |
 | "On-Air Mode expired before this cue could fire. Open a new On-Air session to continue." | The 30-minute limit passed. Open a new On-Air session. |
 | "The cue preview is stale ... Dry Run the cue again before Live Fire." | The cue or device changed after your dry run. Click the cue again. |
-| "A session is already open on this surface, locked by <name> since <time>." | Someone, maybe you before a refresh, has the surface open. Ask IT. |
+| "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;." | Someone, maybe you before a refresh, has the surface open. Ask IT. |
 | "Remote contribution isn't configured yet." | Guest video software has not been set up. Tell IT. |
-| "Channel takeover failed; guest <id> not placed on-air." | The channel had no ready live source. Run **Check source** on Live and click **On air** again. |
+| "Channel takeover failed; guest &lt;id&gt; not placed on-air." | The channel had no ready live source. Run **Check source** on Live and click **On air** again. |
 | "Durable storage is not ready. Open Setup and choose Prepare storage ..." | The station's database is not ready. Tell IT. |
 | "This action requires one of these CivicCast roles: ..." | Your sign-in lacks a role for that button. The names listed are the role names in short form. |
 
