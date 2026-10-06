@@ -334,39 +334,36 @@ def test_audio_send_to_blocked_child_is_deadline_bounded():
     assert released.is_set()
 
 
-def test_station_serializes_native_whistle_inference(tmp_path):
+def test_three_station_primaries_can_enter_inference_together(tmp_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
 
-    first_entered, second_entered, release = threading.Event(), threading.Event(), threading.Event()
     r, _, _ = runtime(tmp_path)
+    entered = {c: threading.Event() for c in ("public", "government", "education")}
+    release = threading.Event()
 
     def factory(engine):
         worker = Worker(engine, [])
         original = worker.request
 
         def request(audio, vocabulary):
-            if audio.chunk_id.startswith("public"):
-                first_entered.set()
-                assert release.wait(3)
-            else:
-                second_entered.set()
+            channel = audio.chunk_id.split("-tap-")[0]
+            entered[channel].set()
+            assert release.wait(3)
             return original(audio, vocabulary)
 
         worker.request = request
         return worker
 
     r._factory = factory
-    with ThreadPoolExecutor(2) as pool:
-        first = pool.submit(lambda: list(r.transcribe([chunk()])))
-        assert first_entered.wait(3)
-        second = pool.submit(lambda: list(r.transcribe([chunk("government")])))
-        overlapping = second_entered.wait(0.15)
+    with ThreadPoolExecutor(3) as pool:
+        futures = [pool.submit(lambda c=c: list(r.transcribe([chunk(c)]))) for c in entered]
+        simultaneous = all(event.wait(0.5) for event in entered.values())
         release.set()
-        first.result(timeout=3)
-        second.result(timeout=3)
+        for future in futures:
+            future.result(timeout=3)
     r.close()
-    assert not overlapping, "two native Whistle calls ran concurrently"
+    assert simultaneous, "one station blocked other station primaries from entering inference"
 
 
 def test_overlap_or_silence_does_not_demote_healthy_whistle(tmp_path):
