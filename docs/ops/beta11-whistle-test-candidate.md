@@ -99,7 +99,7 @@ deadline, switched to Whisper, and other stations later dropped queued audio.
 This is distinct from the removed caption-agreement rule. Dev6 restores the lock.
 
 The owner authorized a four-hour run of all three stations on Whistle primary
-with Whisper fallback available. Status: pending start. Use the existing read-only
+with Whisper fallback available. Status: running since 2026-10-05 22:06:38 MDT; expected end 2026-10-06 02:07 MDT. Evidence: `ops/beta10-oversight/evidence/rung-beta11-dev6-whistle-all3-4h-20261005-220637`. No completed four-hour result is claimed yet. Use the existing read-only
 output observer: freshness every 30 seconds, decoded captions/A/V continuity
 every ten minutes, emitted-audio loudness every 30 minutes. Retain resource logs
 and inference durations throughout. Stop on unsafe resource pressure; report
