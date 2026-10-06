@@ -251,7 +251,7 @@ CivicCast captions in two different ways and they are configured separately.
 | --- | --- | --- |
 | What it is | A real-time speech-to-text tap on each on-air channel's audio, with the text embedded in the video as CEA-708 captions | A job that captions a published recording after the meeting |
 | Switch | **Show live captions on air** (Station Profile), default **off** in beta.10 | Cannot be switched off (see below) |
-| Where results go | To the caption review queue and into the picture | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
+| Where results go | Into the picture; the local beta.11 dev7 candidate keeps a rolling live window and creates no permanent per-cue review records | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
 | Needs | The caption model, CPU or GPU, and CPU to spare while playing out | The same model, and a working translation model |
 
 ### The caption tiers
@@ -269,6 +269,8 @@ The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service**
 
 ### Live captions: what the settings change
 
+**Local beta.11 dev7 candidate:** Whistle is the primary live engine, with Whisper as backup. Whistle inference uses the restored shared lock; low-confidence recognition still airs immediately, and overlapping audio is deduplicated without requiring two readings to agree. The beta.10 CPU/CUDA settings below describe its Whisper runtime and remain relevant when selecting Whisper; they do not describe Whistle concurrency.
+
 Live captions are produced by the caption tap. The native station turns it on (`CIVICCAST_CAPTION_TAP=inline`) unless the service environment says `CIVICCAST_CAPTION_TAP=off`, in which case the tap does not run at all. The console switch is the safe-direction override: `off` in the environment forces live captions off whatever the profile says, but no environment value can turn them on against a profile that is off.
 
 The tap works in 5-second audio segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scans every 2.0 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and tolerates a backlog of 2 segments per channel (`CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`) before it sheds the oldest audio and keeps captioning from the newest. On the CPU one live caption worker serves the whole station; with a CUDA runtime up to three channels run at once. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` forces another number. On the CPU the live tap uses between 1 and 2 CPU threads (one per 8 processors, capped at 2); `CIVICCAST_CAPTION_TAP_CPU_THREADS` and `CIVICCAST_WHISPER_CPU_THREADS` override that, but the live tap refuses `0` ("every core") and caps values above 2. The playout workers run at a higher priority than the control plane so captions never outrank the picture.
@@ -285,13 +287,13 @@ When a recording is published, a job transcribes it in 30-second chunks (`CIVICC
 
 ### Caption evidence and retention
 
-The live tap keeps its work in `C:\ProgramData\CivicCast\data\caption-tap`. It keeps raw audio chunks and short evidence clips so a reviewer can listen to a low-confidence cue. Retention is by age and cannot be changed with a setting:
+**Local beta.11 dev7 candidate:** Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. It does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. Each channel keeps at most 12 queued completed segments, plus inputs currently being processed and the segment being written. At the default five-second cadence, the queued limit is 60 seconds.
 
-- A raw audio chunk becomes eligible for deletion **24 hours** after it was made, once the evidence covering it is verified (or when no evidence window can ever cover it).
-- An evidence clip whose cue has been **approved or rejected** is deleted **90 days** after it was resolved.
-- A clip for a low-confidence cue that is still **pending** review is never deleted.
+The live caption window is limited to the most recent 300 seconds and at most 512 cues. Delivery tracking follows that window instead of accumulating for the whole on-air session. Archive-wide caption review/evidence discovery is not a live-caption or broadcast-readiness prerequisite. These limits are candidate implementation defaults, not controls on the configuration screen.
 
-Every deletion is written to `caption-retention-audit.jsonl` beside the data. A sweep runs every 60 seconds. There is no cap on disk use for this data; a full drive is not a refusal condition. The one refusal that remains is "caption-storage-volumes-diverge": if the caption tap folder and the evidence folder are on different drives, the channel is not ready and uses its slate. In the native layout both are under `ProgramData`, so you should not meet it.
+Original recordings, archived caption tracks and the recorded-caption review workflow are unchanged. Review recorded captions against the recording workflow; ordinary live captioning does not create an unattended review queue.
+
+**Historical beta.10 behavior:** The older live path retained raw chunks for an age-based sweep, resolved evidence for 90 days, and pending review evidence indefinitely. It wrote `caption-retention-audit.jsonl` and could block readiness when caption storage volumes diverged. Those archive dependencies are removed from ordinary live operation in the local candidate; this is not a claim that the published beta.10 installer has changed.
 
 ## Configure AI models {#configuration-ai}
 

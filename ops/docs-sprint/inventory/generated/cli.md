@@ -121,8 +121,8 @@ Run the real 0.5.0 disaster-recovery drill: backup, restore, crash-recovery.
 | Option / argument | Type | Default | Env var | What it does |
 | --- | --- | --- | --- | --- |
 | `--out` (required) | path |  |  | Directory to write dr-drill-report.md/.json into. |
-| `--backup-dir` | path |  |  | Backup destination (default: <out>/backup). |
-| `--work-dir` | path |  |  | Scratch dir for restore/crash drills (default: <out>/work). |
+| `--backup-dir` | path |  |  | Backup destination (default: &lt;out&gt;/backup). |
+| `--work-dir` | path |  |  | Scratch dir for restore/crash drills (default: &lt;out&gt;/work). |
 | `--database-url` | str |  |  | DATABASE_URL to drill (default: $DATABASE_URL). sqlite:// or postgresql://. |
 | `--media-root` | path |  |  | Media library root to manifest (optional). |
 

@@ -197,20 +197,18 @@ class TestCaptionTapWorkerStreamEndFlush:
 
         assert scan.consumed_segments == 1
         # Live publication no longer waits for a second transcription.
-        assert scan.committed_review_items == 1
+        assert scan.committed_review_items == 0
         flushed_scan = worker.flush_channel("government")
         assert flushed_scan.committed_review_items == 0
         rows = store.list(asset_id="government")
-        assert len(rows) == 1
-        assert rows[0].low_confidence is False
-        assert rows[0].original_text == "the council will come to order"
+        assert rows == []
         vtt = _active_vtt(tap_root, "government").read_text(encoding="utf-8")
         assert "the council will come to order" in vtt
 
         # Second flush is idempotent: nothing left to commit.
         second_flush = worker.flush_channel("government")
         assert second_flush.committed_review_items == 0
-        assert len(store.list(asset_id="government")) == 1
+        assert store.list(asset_id="government") == []
 
     def test_flush_channel_on_unknown_channel_is_a_safe_no_op(self, tmp_path: Path) -> None:
         tap_root = tmp_path / "tap"

@@ -46,7 +46,11 @@ class CaptionHlsPipelineResult:
 
 
 class CaptionPipeline:
-    """Run a caption runtime through stabilization and review preparation."""
+    """Run recognition and stabilization, optionally preparing review records.
+
+    Continuous live workers disable review construction. Recording/editing
+    workflows preserve their review preparation by default.
+    """
 
     def __init__(
         self,
@@ -55,11 +59,13 @@ class CaptionPipeline:
         stabilizer: CaptionStabilizer | None = None,
         phase_timing: object | None = None,
         phase_timing_channel: str | None = None,
+        prepare_review_items: bool = True,
     ) -> None:
         self._runtime = runtime
         self._stabilizer = stabilizer or CaptionStabilizer()
         self._phase_timing = phase_timing
         self._phase_timing_channel = phase_timing_channel
+        self._prepare_review_items = prepare_review_items
 
     def _phase(self, name: str):
         """Return an opt-in timing context without affecting pipeline work."""
@@ -105,6 +111,7 @@ class CaptionPipeline:
                 reviewer_note=reviewer_note,
             )
             for cue in (*committed_cues, *expired_unconfirmed_cues)
+            if self._prepare_review_items
         ]
         return CaptionPipelineResult(
             hypotheses=hypotheses,
@@ -205,6 +212,7 @@ class CaptionPipeline:
                 reviewer_note=reviewer_note,
             )
             for cue in (*committed_cues, *expired_unconfirmed_cues)
+            if self._prepare_review_items
         ]
         return CaptionPipelineResult(
             hypotheses=[],
@@ -263,7 +271,7 @@ class CaptionPipeline:
         return CaptionHlsPipelineResult(caption_result=caption_result, hls_outputs=hls_outputs)
 
     def committed(self) -> list[CaptionCue]:
-        """Return all stable cues committed by this pipeline instance."""
+        """Return stable cues retained by this pipeline's history policy."""
         return self._stabilizer.committed()
 
     def expired_unconfirmed(self) -> list[CaptionCue]:

@@ -3,8 +3,10 @@
 This is a local development patch on the owner's installed beta.9 station,
 not a signed beta.11 installer or a release-readiness claim. The source branch
 is `codex/beta11-whistle`, based on main `8c3ab70bdc802f42ee573d83b284418c620c18ae`.
-Current installed version: `1.0.0-beta.11.dev6`, source commit
-`e385f5b7f2d18a5ae0a2eb28e83d5dd3c3846381` (documentation follows separately).
+Current local caption-code candidate: `1.0.0-beta.11.dev7`, installed October 6 at 09:53 MDT. The base station health endpoint still identifies its installed beta.9 product; this is a local overlay, not a complete beta.11 installation. The preceding dev6 source commit was
+`e385f5b7f2d18a5ae0a2eb28e83d5dd3c3846381`.
+
+Dev7 removes automatic live review/evidence storage and retention readiness coupling, caps live caption history at 300 seconds/512 cues and waiting audio at 12 completed chunks while protecting owned/writer inputs, bounds delivery bookkeeping, and fixes reused-descriptor cleanup. Disposable beta caption tables were reset from 1,025,532 review rows and one offline job to zero; old caption working/evidence files were removed. Recorded-media review remains available. The installed tap includes the prior station diagnostics through a reviewed merge; it is intentionally not byte-identical to the source tap. In-product help was rebuilt and its complete 635-heading contents list checked over HTTP. The 15-minute three-station comparison completed at 10:10:25: 543 calls (181/channel), mean 1.198s, P95 1.422s, zero logged discards/fallback/pauses and six passing sampled caption checks; loudness remains unverified; report at `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CivicCast-beta11-bounded-live-implementation-2026-10-06.md`.
 Owner decision: Whistle is primary for all three live stations; Whisper is the
 backup and the selectable primary for supported NVIDIA CUDA machines.
 `CIVICCAST_LIVE_CAPTION_ENGINE=whistle` selects primary plus fallback;
@@ -110,3 +112,37 @@ CPU-only primary feasibility is preferred, not a release requirement; the host
 has a GPU-backed Whisper standby. No broad accuracy claim is supported by a
 reviewed reference transcript. The four-hour measurements are recorded above. Signed installer, clean-machine
 acceptance, publication and production cutover remain unproven here.
+
+## October 6 overnight diagnosis — runtime left unchanged
+
+At the 08:35 MDT log snapshot, 22,145 native requests had completed since
+22:06:38; 171 catch-up events discarded 2,480 seconds of station audio,
+summed across all three channels. These are transcription opportunities lost,
+not a measured count of missing spoken words. The 07:00 hour alone discarded
+635 seconds, while native median request time remained 1.203 seconds.
+
+Two nonblocking live GIL profiles identify retention as the strongest measured
+bottleneck: 563/632 samples (89.08%) in bulk review reconstruction in the first;
+349/397 samples (87.91%) in retention overall, including 244 bulk reconstruction
+samples, in the second. These are captured Python/GIL samples, not whole-host CPU
+or an overnight wall-time percentage. Both tap and readiness retention callers
+appear; discovery is serialized but not coalesced.
+
+Read-only SQL counted 1,023,540 review rows, of which only 24,592 carry audio
+evidence. The current bulk reader reconstructs all rows on each discovery pass.
+Evidence-only lightweight selection, shared discovery and bounded live caption
+history are the prioritized performance repairs, preserving retention/refusal
+policy. A temporary-file reproduction separately confirms stale descriptor
+cleanup can close an unrelated reused reader after sidecar replacement failure.
+The installed sidecar matches the checked source. Exact historical descriptor
+reuse is not proven.
+
+Relay-log trimming is routine maintenance. Education worker output confirms
+incoming-leg preroll timeout and pre-commit decoder-error mechanisms with the
+current leg preserved; exact asset/event pairing needs reload-ID correlation.
+Public -17.7 LUFS remains a real failed measurement with unresolved source
+alignment; its original temporary captured segments are no longer present.
+
+Full diagnosis and proposed verification order on this machine:
+`C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CivicCast-caption-pipeline-deep-analysis-2026-10-06.md`.
+No runtime repair, restart, model load or new soak was performed for this analysis.

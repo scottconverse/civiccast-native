@@ -5,8 +5,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import floor
+from math import floor, isfinite
 from string import punctuation
+from uuid import uuid4
 
 from civiccast.captions.models import CaptionCue, CaptionHypothesis, CaptionWord
 
@@ -33,6 +34,10 @@ class CaptionStabilizer:
     # Live broadcasts publish a single recognition. Offline confirmation remains
     # available for batch processing; it never gates the live caption track.
     live: bool = False
+    # Continuous live delivery keeps recent cues only. Recording/offline
+    # callers retain their complete track unless they explicitly opt in.
+    history_seconds: float | None = None
+    max_history_cues: int | None = None
     _pending: list[_PendingCue] = field(default_factory=list, init=False)
     _committed: list[CaptionCue] = field(default_factory=list, init=False)
     _expired_unconfirmed: list[CaptionCue] = field(default_factory=list, init=False)
@@ -40,6 +45,9 @@ class CaptionStabilizer:
     _latest_observed_end_seconds: float = field(default=0.0, init=False)
     _last_word_window: tuple[float, float] | None = field(default=None, init=False)
     _last_live_words: list[CaptionWord] = field(default_factory=list, init=False)
+    _last_live_text: str = field(default="", init=False)
+    _live_cue_sequence: int = field(default=0, init=False)
+    _live_epoch: str = field(default_factory=lambda: uuid4().hex, init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.window_seconds <= 0:
@@ -48,6 +56,29 @@ class CaptionStabilizer:
             raise ValueError("stable_windows must be at least 1")
         if not 0 <= self.low_confidence_threshold <= 1:
             raise ValueError("low_confidence_threshold must be between 0 and 1")
+        if self.history_seconds is not None and (
+            not isfinite(self.history_seconds) or self.history_seconds <= 0
+        ):
+            raise ValueError("history_seconds must be finite and greater than zero")
+        if self.max_history_cues is not None and (
+            isinstance(self.max_history_cues, bool)
+            or not isinstance(self.max_history_cues, int)
+            or self.max_history_cues < 1
+        ):
+            raise ValueError("max_history_cues must be a positive integer")
+        if self._bounded_live_history and not self.live:
+            raise ValueError("bounded history is available only for live caption delivery")
+
+    @property
+    def _bounded_live_history(self) -> bool:
+        return self.history_seconds is not None or self.max_history_cues is not None
+
+    def _prune_live_history(self, end_seconds: float) -> None:
+        if self.history_seconds is not None:
+            cutoff = end_seconds - self.history_seconds
+            self._committed = [cue for cue in self._committed if cue.end_seconds >= cutoff]
+        if self.max_history_cues is not None:
+            self._committed = self._committed[-self.max_history_cues :]
 
     def observe(self, hypothesis: CaptionHypothesis) -> list[CaptionCue]:
         """Observe one runtime hypothesis and return newly committed cues."""
@@ -105,7 +136,12 @@ class CaptionStabilizer:
         if previous is not None and end <= previous[1]:
             return []
         self._last_word_window = (start, end)
+        self._prune_live_history(end)
         if not hypothesis.text.strip():
+            # Silence still advances the audio watermark, but it is not a
+            # text overlap with the last spoken phrase. Keeping that phrase
+            # here would suppress genuinely repeated speech after silence.
+            self._last_live_text = ""
             return []
         boundary = max(start, previous[1]) if previous is not None else start
         words = hypothesis.words or []
@@ -141,8 +177,8 @@ class CaptionStabilizer:
             confidence = min(hypothesis.confidence, *(w.confidence for w in words))
         else:
             tokens = hypothesis.text.split()
-            if previous is not None and start < previous[1] and self._committed:
-                old = self._committed[-1].text.split()
+            if previous is not None and start < previous[1] and self._last_live_text:
+                old = self._last_live_text.split()
 
                 def norm(xs):
                     return [x.casefold().strip(punctuation) for x in xs]
@@ -171,6 +207,23 @@ class CaptionStabilizer:
             }
         )
         self._last_live_words = words if timed else []
+        self._last_live_text = text
+        if self._bounded_live_history:
+            # The epoch distinguishes replacement workers while the channel
+            # remains ON_AIR and downstream delivery caches remain alive.
+            # A scalar sequence keeps tracking independent of session length.
+            self._live_cue_sequence += 1
+            cue = CaptionCue(
+                cue_id=f"cue-live-{self._live_epoch}-{self._live_cue_sequence:012d}",
+                start_seconds=ready.start_seconds,
+                end_seconds=ready.end_seconds,
+                text=ready.text,
+                confidence=ready.confidence,
+                low_confidence=ready.confidence < self.low_confidence_threshold,
+            )
+            self._committed.append(cue)
+            self._prune_live_history(end)
+            return [cue]
         return [self._commit(self._new_pending(ready))]
 
     def _new_pending(self, hypothesis: CaptionHypothesis, *, stable_count: int = 1) -> _PendingCue:
@@ -182,7 +235,11 @@ class CaptionStabilizer:
         return pending
 
     def committed(self) -> list[CaptionCue]:
-        """Return committed cues in playback order."""
+        """Return retained committed cues in playback order.
+
+        Bounded live sessions expose a rolling window; recording pipelines
+        retain their complete track.
+        """
 
         return sorted(
             self._committed,

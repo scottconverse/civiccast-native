@@ -183,6 +183,7 @@ def _worker(  # type: ignore[no-untyped-def]
     batch_diagnostic: object | None = None,
 ):
     return CaptionTapWorker(
+        retain_review_evidence=True,
         tap_root=tap_root,
         caption_work_dir=tap_root.parent / "egress",
         runtime=runtime,
@@ -843,6 +844,7 @@ class TestCaptionTapWorker:
             else {"overlap_seconds": CaptionTapWorkerSettings.from_env().overlap_seconds}
         )
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tmp_path / "tap",
             caption_work_dir=tmp_path / "egress",
             runtime=_ScriptedRuntime(),
@@ -985,6 +987,7 @@ class TestCaptionTapWorker:
         # of a 1 s segment collapses both windows onto start 0.0, not the live
         # shape this regression is about.)
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=runtime,
@@ -1099,6 +1102,7 @@ class TestCaptionTapWorker:
         clock = _FakeClock()
 
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -1203,6 +1207,7 @@ class TestCaptionTapWorker:
         channel = "government"
         (tap_root / channel).mkdir(parents=True)
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -1246,6 +1251,7 @@ class TestCaptionTapWorker:
 
     def _retention_worker(self, tap_root: Path, policy: object, clock: object):
         return CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -1363,6 +1369,7 @@ class TestCaptionTapWorker:
         slow = _SlowRetentionPolicy(delay_seconds=2.0)
         policy = _ScriptedRetentionPolicy(["ok", slow])
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -1421,6 +1428,7 @@ class TestCaptionTapWorker:
         blocking.release = threading.Event()
         policy = _ScriptedRetentionPolicy(["ok", blocking])
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -2205,6 +2213,7 @@ class TestCaptionTapPlayoutProtection:
                 return None
 
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -2292,6 +2301,7 @@ class TestCaptionTapPlayoutProtection:
                 return None
 
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -2340,6 +2350,7 @@ class TestCaptionTapPlayoutProtection:
                 return None
 
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=runtime,
@@ -2647,6 +2658,7 @@ class TestFirstRetentionSweepIsBounded:
         (tap_root / "public").mkdir(parents=True)
         slow = _SlowRetentionPolicy(delay_seconds=3.0)
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -2685,6 +2697,7 @@ class TestFirstRetentionSweepIsBounded:
         slow = _SlowRetentionPolicy(delay_seconds=3.0)
         slow.release = threading.Event()
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),
@@ -2731,6 +2744,7 @@ class TestAsyncCaptionQueue:
         channel_dir.mkdir(parents=True)
         runtime = _BlockingRuntime()
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tmp_path / "egress",
             runtime=runtime,
@@ -3114,6 +3128,7 @@ class TestCaptionTapBacklogPersistence:
         tap_root = tmp_path / "tap"
         channel = "government"
         worker = CaptionTapWorker(
+            retain_review_evidence=True,
             tap_root=tap_root,
             caption_work_dir=tap_root.parent / "egress",
             runtime=_ScriptedRuntime(),

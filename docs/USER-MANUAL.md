@@ -4131,7 +4131,7 @@ CivicCast captions in two different ways and they are configured separately.
 | --- | --- | --- |
 | What it is | A real-time speech-to-text tap on each on-air channel's audio, with the text embedded in the video as CEA-708 captions | A job that captions a published recording after the meeting |
 | Switch | **Show live captions on air** (Station Profile), default **off** in beta.10 | Cannot be switched off (see below) |
-| Where results go | To the caption review queue and into the picture | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
+| Where results go | Into the picture; the local beta.11 dev7 candidate keeps a rolling live window and creates no permanent per-cue review records | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
 | Needs | The caption model, CPU or GPU, and CPU to spare while playing out | The same model, and a working translation model |
 
 #### The caption tiers
@@ -4149,6 +4149,8 @@ The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service**
 
 #### Live captions: what the settings change
 
+**Local beta.11 dev7 candidate:** Whistle is the primary live engine, with Whisper as backup. Whistle inference uses the restored shared lock; low-confidence recognition still airs immediately, and overlapping audio is deduplicated without requiring two readings to agree. The beta.10 CPU/CUDA settings below describe its Whisper runtime and remain relevant when selecting Whisper; they do not describe Whistle concurrency.
+
 Live captions are produced by the caption tap. The native station turns it on (`CIVICCAST_CAPTION_TAP=inline`) unless the service environment says `CIVICCAST_CAPTION_TAP=off`, in which case the tap does not run at all. The console switch is the safe-direction override: `off` in the environment forces live captions off whatever the profile says, but no environment value can turn them on against a profile that is off.
 
 The tap works in 5-second audio segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scans every 2.0 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and tolerates a backlog of 2 segments per channel (`CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`) before it sheds the oldest audio and keeps captioning from the newest. On the CPU one live caption worker serves the whole station; with a CUDA runtime up to three channels run at once. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` forces another number. On the CPU the live tap uses between 1 and 2 CPU threads (one per 8 processors, capped at 2); `CIVICCAST_CAPTION_TAP_CPU_THREADS` and `CIVICCAST_WHISPER_CPU_THREADS` override that, but the live tap refuses `0` ("every core") and caps values above 2. The playout workers run at a higher priority than the control plane so captions never outrank the picture.
@@ -4165,13 +4167,13 @@ When a recording is published, a job transcribes it in 30-second chunks (`CIVICC
 
 #### Caption evidence and retention
 
-The live tap keeps its work in `C:\ProgramData\CivicCast\data\caption-tap`. It keeps raw audio chunks and short evidence clips so a reviewer can listen to a low-confidence cue. Retention is by age and cannot be changed with a setting:
+**Local beta.11 dev7 candidate:** Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. It does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. Each channel keeps at most 12 queued completed segments, plus inputs currently being processed and the segment being written. At the default five-second cadence, the queued limit is 60 seconds.
 
-- A raw audio chunk becomes eligible for deletion **24 hours** after it was made, once the evidence covering it is verified (or when no evidence window can ever cover it).
-- An evidence clip whose cue has been **approved or rejected** is deleted **90 days** after it was resolved.
-- A clip for a low-confidence cue that is still **pending** review is never deleted.
+The live caption window is limited to the most recent 300 seconds and at most 512 cues. Delivery tracking follows that window instead of accumulating for the whole on-air session. Archive-wide caption review/evidence discovery is not a live-caption or broadcast-readiness prerequisite. These limits are candidate implementation defaults, not controls on the configuration screen.
 
-Every deletion is written to `caption-retention-audit.jsonl` beside the data. A sweep runs every 60 seconds. There is no cap on disk use for this data; a full drive is not a refusal condition. The one refusal that remains is "caption-storage-volumes-diverge": if the caption tap folder and the evidence folder are on different drives, the channel is not ready and uses its slate. In the native layout both are under `ProgramData`, so you should not meet it.
+Original recordings, archived caption tracks and the recorded-caption review workflow are unchanged. Review recorded captions against the recording workflow; ordinary live captioning does not create an unattended review queue.
+
+**Historical beta.10 behavior:** The older live path retained raw chunks for an age-based sweep, resolved evidence for 90 days, and pending review evidence indefinitely. It wrote `caption-retention-audit.jsonl` and could block readiness when caption storage volumes diverged. Those archive dependencies are removed from ordinary live operation in the local candidate; this is not a claim that the published beta.10 installer has changed.
 
 ### Configure AI models {#configuration-ai}
 
@@ -4598,7 +4600,7 @@ Other logs you may need:
 
 - `C:\ProgramData\CivicCast\install-progress.log`: the installer's record of a first install.
 - `C:\ProgramData\CivicCast\upgrade\upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md`: the upgrade engine, described below.
-- `C:\ProgramData\CivicCast\data\caption-tap\caption-retention-audit.jsonl`: one line per caption file the retention sweeper deleted (no rotation).
+- `C:\ProgramData\CivicCast\data\caption-tap\caption-retention-audit.jsonl`: the historical beta.10 live retention audit (no rotation). Ordinary live captioning in the local beta.11 dev7 candidate does not run that archive sweep or append per-cue evidence records.
 
 > **Known issue (beta.10):** `control_plane.log` (every web request) and `postgres.log` are never rotated. On a busy station they grow forever. Check their size weekly and, when the service is stopped, move or truncate them. We could not confirm that Windows or the installer trims them.
 
@@ -4686,7 +4688,7 @@ This routine uses only checks that exist in beta.10.
 
 1. Read the result of the Sunday weekly self-test.
 2. Check the size of `control_plane.log`, `postgres.log` and `ollama.log` (they are not rotated).
-3. Check the size of `C:\ProgramData\CivicCast\data\caption-tap` and `C:\ProgramData\CivicCast\data\egress` (see the next section).
+3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The local beta.11 dev7 live-caption work area is bounded automatically and does not require weekly audio cleanup.
 4. Run `civiccast egress trim-health --older-than-days 30 --dry-run` and decide whether to trim (see the next section).
 5. Run the disaster-recovery drill (see below) at least when you have changed anything, and keep the report.
 6. Copy the things the drill does not back up (see below) to storage that is not on this computer.
@@ -4700,7 +4702,7 @@ This routine uses only checks that exist in beta.10.
 | `C:\ProgramData\CivicCast\data\pgdata` | The Postgres database | With use | No |
 | `C:\ProgramData\CivicCast\data\uploads` | Uploaded media | With use | No |
 | `C:\ProgramData\CivicCast\data\egress` | Playout working files, including `conform-cache` | Yes | Yes, see below |
-| `C:\ProgramData\CivicCast\data\caption-tap` | Raw caption audio chunks, evidence audio, `active.vtt` | Yes | Partly, see below |
+| `C:\ProgramData\CivicCast\data\caption-tap` | Temporary live-caption audio; `active.vtt` is in the channel's egress caption folder | Bounded in local beta.11 dev7 | Consumed chunks deleted; queued audio limited, see below |
 | `C:\ProgramData\CivicCast\logs` | Logs | Yes | Only the rotated logs |
 | `C:\ProgramData\CivicCast\upgrade` | Upgrade engine log, journal and pre-upgrade backups | Per upgrade | No |
 
@@ -4728,13 +4730,13 @@ The playout engine stores health telemetry in the database. Nothing trims it aut
 
 #### Caption data
 
-The caption retention sweeper runs every 60 seconds and works by age only:
+**Local beta.11 dev7 candidate:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
 
-- Raw caption audio chunks become eligible for deletion 24 hours after they were created, but only when their transcript evidence is verified or no window can cover them.
-- Evidence audio for a resolved review item is deleted 90 days after resolution. Pending review items never expire.
-- Analytics events are kept up to 366 days (`CIVICCAST_ANALYTICS_RETENTION_DAYS`, allowed range 1 to 366).
+The live caption file and delivery bookkeeping retain a rolling 300-second window with at most 512 cues. The live worker does not scan the caption-review archive, and archive evidence does not gate broadcast readiness. These bounds replace manual weekly live-caption cleanup. If working files exceed these bounds, report a fault rather than treating routine deletion by an operator as normal operation.
 
-> **Known issue (beta.10):** The audit of beta.10 found that caption data can still grow without a limit: review rows and evidence are not pruned, raw chunks that no window covers are kept (roughly 160 KB per 5 seconds of audio per channel, which is about 3 GB per channel per day if most chunks are uncovered), `active.vtt` grows, and the quarantine and collision folders are never pruned. If you turn live captions on, add `C:\ProgramData\CivicCast\data\caption-tap` to your weekly size check.
+Original recordings, archived caption tracks and recorded-caption review remain available and are unaffected by these temporary live-caption limits. Analytics retention is separate: events are kept up to 366 days (`CIVICCAST_ANALYTICS_RETENTION_DAYS`, allowed range 1 to 366).
+
+> **Historical finding (published beta.10):** The audit found unlimited live caption review/evidence accumulation, uncovered raw chunks, growing `active.vtt`, and unpruned quarantine/collision folders. The local beta.11 dev7 candidate changes the live path described above; the published beta.10 installer and its historical test results are unchanged. Long unattended operation of the new candidate still requires verification.
 
 ### Back up and restore
 
@@ -5108,17 +5110,17 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 | Data | Kept | Source |
 | --- | --- | --- |
-| Raw caption audio chunks | Eligible for deletion 24 hours after creation, once verified or when no window can cover them. A sweep runs every 60 seconds. | `captions/retention.py` |
-| Evidence audio for resolved caption reviews | Deleted 90 days after the review is resolved | same |
-| Pending caption reviews | Never expire | same |
-| Caption retention audit log | Not deleted, no rotation (`caption-retention-audit.jsonl`) | same |
+| Live-caption working audio (local beta.11 dev7) | Consumed chunks deleted; at most 12 queued completed segments per channel, plus in-flight inputs and the segment being written | `captions/tap_worker.py` |
+| Live-caption text and delivery tracking (local beta.11 dev7) | Rolling 300 seconds and at most 512 cues; no permanent per-cue review rows or evidence WAVs | `captions/stabilize.py`, `egress/caption_feed.py` |
+| Recorded-caption review and original recordings | Existing recording/review workflow remains unchanged; live working limits do not delete archived tracks or recordings | `captions/vod.py`, recording workflow |
+| Historical beta.10 caption retention audit | Existing `caption-retention-audit.jsonl` was not rotated; ordinary live captioning in the local candidate no longer runs that archive sweep | `captions/retention.py`, `captions/tap_worker.py` |
 | Analytics events | Up to 366 days (default; range 1 to 366) | analytics store |
 | Playout health telemetry | Not trimmed automatically; trim with `civiccast egress trim-health --older-than-days N` | CLI |
 | Staff token audit events, alert history, as-run records | No deletion setting found | not found |
 
-Caption pruning is by age only; volume caps were removed by an owner decision on 2026-09-20. Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off.
+Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off. The local beta.11 dev7 candidate separates transient live caption work from recorded-caption review. It does not make the live worker or broadcast readiness depend on archive-wide review/evidence retention discovery. No new evidence-retention or compliance requirement is introduced by this change.
 
-> **Known issue (beta.10):** Caption data can grow without a limit despite these rules (audit findings B-003, B-004, B-005 and B-009): review rows and evidence are not pruned, raw chunks with no covering window are kept, and the quarantine and collision folders are never pruned. If your retention policy needs a firm limit on caption audio, either leave live captions off or check the `caption-tap` folder yourself every week and delete what your policy requires. See [Chapter 12](#ch-operations).
+> **Historical finding (published beta.10):** Audit findings B-003, B-004, B-005 and B-009 recorded unlimited live caption data growth. The local beta.11 dev7 candidate removes automatic live review/evidence accumulation and bounds working audio and caption history. Weekly manual caption cleanup is not its operating design. The published beta.10 installer has not changed; see [Chapter 12](#ch-operations) for the candidate behavior and its verification limits.
 
 Where residents' own data may be requested for deletion, we found no console screen or command that deletes a subscriber or a viewer's records. Ask the coder to confirm before you promise a deletion process.
 
@@ -5162,7 +5164,7 @@ These come from the beta.10 whole-repository audit (`audit-lite-whole-repo-beta1
 | B-010 | The failed-login limiter has no memory bound. | Keep `/api/staff/*` on loopback. |
 | B-012 | `/api/hardware` shows the host name to anyone. | Treat the host name as public. |
 | B-019 | `civiccast model set-provider-key --key <value>` puts the key on the command line, visible to other programs in the process list. | Supply the key in the `CIVICCAST_PROVIDER_API_KEY` environment variable instead. |
-| B-003, B-004, B-005, B-009 | Caption data growth (see retention). | Check the folder weekly. |
+| B-003, B-004, B-005, B-009 | Historical beta.10 caption data growth (see retention). | Local beta.11 dev7 removes automatic live review/evidence accumulation and bounds live working state; verify the candidate before deployment. |
 | A-001, A-008 | A gap in the program-change watchdog, and no free-space guard on the 60 GB cache. | See [Chapter 12](#ch-operations). |
 | C-001 | Automated tests were red in about 110 places at the time of the audit. | Do not read the beta label as a passing test suite. |
 
@@ -6145,7 +6147,7 @@ CivicCast keeps its data in a database, in folders of files, in a few small file
 | Database | PostgreSQL, database `civiccast`, schema `civiccast`, role `civiccast_svc`, files in `C:\ProgramData\CivicCast\data\pgdata` | everything that is a record rather than a file: assets, schedule items and program slots, recording schedules and jobs, live sessions, channel configuration, state, commands and the proof chain, caption review items, summaries and approvals, publish runs, signed-record exports, subscriptions, alerts, reports, staff token records |
 | Uploads and recordings | `C:\ProgramData\CivicCast\data\uploads` | uploaded and captured media, finished recordings (in a `recordings` folder), and the packaged VOD copies (HLS playlists and segments, in a hidden `.civiccast-packages` folder, one per asset) |
 | Channel work folder | `C:\ProgramData\CivicCast\data\egress` | the conform cache; for each channel the prepared plan folders, its worker logs and relay logs, the reload status file, generated slates and bulletin slides, and (for a channel that serves live HLS) its rolling segments; and the HLS relay's log files (5 MiB each, two kept) |
-| Caption tap | `C:\ProgramData\CivicCast\data\caption-tap` | rolling five-second audio chunks of each channel, waiting to be captioned; each is moved to a `processed` folder after use, or to `quarantine` if unreadable |
+| Caption tap | `C:\ProgramData\CivicCast\data\caption-tap` | Local beta.11 dev7: temporary five-second audio chunks, deleted after processing; at most 12 queued completed segments per channel plus in-flight inputs and the segment being written |
 | Logs | `C:\ProgramData\CivicCast\logs` | `supervisor.log` (rotates at 10 MiB; ten older files are kept besides the current one), `control_plane.log`, the application's own log, `postgres.log` and `postgres-launcher.log` |
 | Installer records | `C:\ProgramData\CivicCast` | `install-progress.log`, the upgrade engine's journal, backups and recovery document under `upgrade`, and the database provisioning journal and recovery documents under `provision` |
 | Downloaded components | `C:\ProgramData\CivicCast\packs` and `components` | caption and AI model files that the first-run wizard downloaded, because the installer window cannot write to the Program Files folder |
@@ -6170,7 +6172,7 @@ CivicCast keeps its data in a database, in folders of files, in a few small file
 **What it does not do.**
 
 - **CivicCast does not back up your station by itself.** The only backups it takes are the one the upgrade engine takes before an upgrade (a database dump, with an integrity manifest, in `C:\ProgramData\CivicCast\upgrade\backups\pre-<version>`; the upgrade engine does not copy recordings) and the ones created by the `civiccast dr run-drill` command. We found no scheduled backup job. Your own backup must cover the database (a `pg_dump`, or a copy of `pgdata` with the service stopped), `C:\ProgramData\CivicCast\data\uploads`, and the files listed in the note above.
-- **There is no automatic clean-up of the command table**, and the only stores with a size limit enforced for you are the conform cache (60 GB by default), the prepared plan folders (5 GB by default) and the relay logs. Watch the free space on the drive that holds `C:\ProgramData\CivicCast\data`.
+- **There is no automatic clean-up of the command table.** The conform cache (60 GB by default), prepared plan folders (5 GB by default) and relay logs have limits. The local beta.11 dev7 candidate also bounds live caption working audio, recent caption history and delivery tracking; those bounds do not limit original recordings or archived caption tracks. Watch the free space on the drive that holds `C:\ProgramData\CivicCast\data`.
 - **Uninstalling does not remove your data.** The uninstaller removes the program files, the service, the firewall rule and the registry values, but leaves `C:\ProgramData\CivicCast`. Because the uninstaller deletes the stored database password, a reinstall over a surviving data folder has to set a new password on the existing database. The installer does this using a short-lived loopback-only access rule.
 
 <!-- SOURCES: ops/docs-sprint/inventory/screens/installer-install-layout.md sections 1-3 and 8; civiccast/native/supervisor/install_layout.py:79-338; civiccast/native/supervisor/children.py:272-314; civiccast/native/supervisor/service_env.py:1-60; civiccast/native/provision/conf.py:55-135; civiccast/native/station_runtime.py:1337, 1421-1437; civiccast/installer/station_state.py:595-608; civiccast/reporting/asrun_outbox.py:100-147; docs/history/2026-09-codex-work/BLACKWELL-CAPTION-FIX-REPORT-v6.md:55-64; civiccast/schema_check.py:244-279; civiccast/app.py:2376-2447; civiccast/dr/backup.py; civiccast/native/upgrade/orchestrator.py:198-215; civiccast/native/upgrade/seams.py:100-215; civiccast/native/upgrade/__main__.py (no media_root); civiccast/app.py:1255-1292 (retention/media-integrity flag only); docs/adr/0008, 0011, 0023-asrun-durable-outbox; civiccast/apps/installer/src-tauri/src/native_uninstall.rs:2145-2215 (credential cleared); civiccast/native/provision/conf.py:102-135 (transient trust rule); app-auth-db fact sheet subagent sections 3-5 -->
@@ -6314,16 +6316,18 @@ The loudness target is a setting of the channel and not a fixed number, because 
 
 CivicCast captions in two different ways, for two different needs. The *live* path captions a channel while it airs, so captions can be embedded in the stream. The *offline* path captions a finished recording after it is published, with a human review step before anything is attached. Figure 16-10 shows both, and marks the points where audio can be thrown away.
 
-![The caption pipelines. Boxes with a heavy red outline are where live audio can be shed under load. The offline path sheds nothing.](manual/diagrams/fb8ec8df162d.png){width=100%}
+**Local beta.11 dev7 candidate:** The live path below uses Whistle first, Whisper as backup, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. These changes describe the local candidate, not the published beta.10 installer or a completed long-duration proof.
+
+![The caption pipelines. Boxes with a heavy red outline are where live audio can be shed under load. The offline path sheds nothing.](manual/diagrams/d47be929560a.png){width=100%}
 
 **The live path, step by step.**
 
 1. **The audio tap.** Inside each channel's worker, a copy of the program audio is split off before it is encoded, converted to mono 16 kHz, and placed in a queue that never blocks the program: if it is full, it drops the oldest audio. This exists only if live captions are switched on for the station and a caption folder is set.
-2. **Chunks on disk.** A writer collects the audio into five-second WAV files named `chunk-NNNNNN.wav` in `C:\ProgramData\CivicCast\data\caption-tap\<channel>`, writing each under a temporary name and renaming it so a half-written file is never read.
+2. **Chunks on disk.** A writer collects the audio into five-second WAV files named `chunk-NNNNNN.wav` in `C:\ProgramData\CivicCast\data\caption-tap\<channel>`, writing each under a temporary name and renaming it so a half-written file is never read. The local candidate keeps at most 12 completed segments waiting per channel, plus inputs currently being processed and the segment being written. Consumed chunks are deleted; the previous overlap needed for recognition remains in memory.
 3. **The tap worker** scans every 2 seconds, takes the finished chunks of each channel, adds a five-second overlap from the previous chunk, and sends them to the speech recognizer.
-4. **The recognizer** is faster-whisper (the CTranslate2 engine) running inside the control plane, not Ollama. The Medium model is always installed; the Large (large-v3) model is added if the wizard chose it. It runs on the NVIDIA graphics card when the card has at least 8 GB of video memory and the GPU libraries are present, and on the processor otherwise. On a processor, one channel's audio is recognized at a time for the whole station. On a CUDA card, up to three channels are recognized at once.
-5. **The stabilizer** commits a caption only if the same words appear in two overlapping windows. Words that are not confirmed are filed for review and are never aired.
-6. **Output.** The result is written to `active.vtt` in the channel's work folder, and every new cue is also filed in the review queue. A separate *caption feed* worker reads `active.vtt` every 2 seconds and sends each new cue to the running worker, which turns it into closed captions (CEA-608/708 data) and inserts them into the video, so the captions travel inside the emitted stream. Cues are split into pages of 32 columns by 2 rows without discarding words.
+4. **The recognizer** uses Whistle as the local candidate's primary live engine. Its child processes use the CPU; the restored shared inference lock allows one primary request at a time across stations. Whisper remains the backup and can use the staged NVIDIA CUDA runtime. Both engines run locally; neither is Ollama. Recording/offline model choices remain separate.
+5. **The stabilizer** publishes the first recognition, including low-confidence text, and removes overlap already aired. It does not require two readings to agree. Recent cues are limited to 300 seconds and at most 512 cues. A per-session identifier and monotonic sequence distinguish fresh captions after a worker replacement without accumulating a session-long identifier map.
+6. **Output.** The rolling result is written to `active.vtt` in the channel's work folder. Live cues are not filed in a permanent review queue and do not generate evidence WAVs. A separate *caption feed* worker reads `active.vtt` every 2 seconds and sends each new cue to the running worker, which turns it into closed captions (CEA-608/708 data) and inserts them into the video, so the captions travel inside the emitted stream. Cues are split into pages of 32 columns by 2 rows without discarding words. Delivery acknowledgements are retained only while their cues remain in the provider's rolling window.
 7. **The proof.** A decode-back check reads the actual emitted stream and compares the captions it finds with what should have been sent. The channel's caption status is `on` only while a recent check has passed; a missing, stale or failed check reads `not-verified`, so the console does not claim captions it cannot prove (ADR 0018).
 
 > **Note:** Live captions are switched off in a new station profile until an administrator turns them on. The caption tap runs in its mode `inline` on a native station, but the audio tap and the embed are built only when the station's live-captions setting is on. Live captions are English only: the live path has no translation step.
@@ -6337,9 +6341,9 @@ CivicCast captions in two different ways, for two different needs. The *live* pa
 | The tap worker's backlog gate: short overload | Nothing yet. If a channel has more than 2 finished chunks waiting for fewer than 15 scans in a row (about 30 seconds), only the oldest 2 are processed and the rest wait | Captions continue, a little late |
 | The backlog gate: catch-up shed | After 15 scans in a row over the limit, the oldest waiting chunks are deleted and only the newest 2 are kept | Captions keep running from the newest audio; the skipped speech is never captioned, and one warning is logged |
 | The backlog gate: pause | If the station sheds 3 times within 5 minutes, the channel's captions are blanked and paused for 120 seconds, then 240, 480 and so on up to 900 seconds, with every new chunk deleted unrecognized during the pause | Captions are off for that channel; the status shows `paused` and the time to resume; the channel steps back down one rung at a time after sustained clean scans |
-| Retention not verified | Settled audio is deleted | Captions blank until retention is verified |
+| Queued working-audio limit (local beta.11 dev7) | Oldest waiting completed segments beyond 12; in-flight inputs and the segment being written are protected | Captions resume from retained audio; discards are reported, without creating a permanent review archive |
 | An operator switches captions off | Every chunk is deleted, the caption file is blanked | Captions off until switched on |
-| A new session or an unreadable chunk | The audio of the previous session, or the bad file (moved to `quarantine`) | Captions restart cleanly |
+| A new session or an unreadable chunk | Previous-session audio or unusable working audio is removed in ordinary candidate live mode | Captions restart cleanly; the error is logged without accumulating an audio quarantine archive |
 
 > **Known issue (beta.10):** Live-caption audio can be dropped under heavy load. In the 8-hour lab run on three channels, the caption worker logged 13 catch-up discard events. Seven of them were small events that coincided with disk scans the lab coordinator was running; the quiet-machine total, which leaves those seven out, was about 160 seconds of audio on two channels. Captions stayed on the air, but some spoken audio got no caption. The cause is that the caption worker falls behind during long first-time media preparations. A fix is the next work item and is not in this build. Captions matter legally for Colorado public-access use, so a station that needs loss-free live captions should weigh this limit. Some comments in the code say shed audio is filed as review evidence; in the code we read, it is deleted.
 
@@ -6347,9 +6351,9 @@ CivicCast captions in two different ways, for two different needs. The *live* pa
 
 > **Known issue (beta.10):** There is no English-only way to finish an offline caption job. The Spanish step is always on: a missing translator fails the job with instructions, and if every cue in one language is rejected the job is held open. A recording gets its caption track only after both languages are reviewed.
 
-Caption evidence is cleaned up on a schedule: the raw audio chunks are removed after 24 hours once their evidence is verified (or can never be), and resolved review evidence after 90 days. The older size caps were removed on 2026-09-20.
+**Historical beta.10 evidence retention:** Its live path used age-based cleanup for raw chunks and resolved review evidence, with no expiry for pending reviews; older size caps were removed on 2026-09-20. Ordinary live operation in the local candidate no longer generates that evidence archive or scans it for retention/readiness. Original recordings, archived caption tracks and recorded-caption review are unchanged.
 
-**Why it is built this way.** The reasons are in the code's own notes. On a processor-only tester machine with three channels on air, the first design could not keep up with live speech; the control plane burned about 247 percent of a core on caption work while the playout workers were starved into their own stall watchdog and restarted. Playout therefore runs at a higher priority than caption recognition, concurrency is bounded, and overload is shed and paused rather than retried. On the offline path, a human review step stands between the recognizer and the public, because the rule in the code is that no machine-written text reaches a public recording unreviewed. Live captions cannot wait for review, so they are held back by the stabilizer instead.
+**Why the paths are separate.** Continuous live captions must operate with bounded working resources rather than create an ever-growing human-review obligation. The local candidate publishes recognition immediately, deduplicates overlap and releases consumed audio. Playout retains priority, inference concurrency remains bounded, and overload remains visible. The historical processor-only design's resource pressure motivated those playout protections; it does not justify the removed agreement gate or automatic live evidence archive. Recording review remains a separate workflow using the original recording and complete caption tracks.
 
 <!-- SOURCES: civiccast/live/finalization.py:313-381, 413-469; civiccast/live/finalization_worker.py:70-113, 305-323, 680-760, 841-913; civiccast/live/models.py:75-79, 132-158, 398-408; civiccast/live/router.py:736-779; civiccast/recording/models.py:80-88; civiccast/recording/runtime.py:555-600, 647-697; civiccast/schedule/models.py:60-70; civiccast/schedule/router.py:140-196, 372-504, 711-760; civiccast/schedule/store.py:124-137, 235-257, 562, 582; civiccast/stream/config.py:65-96, 199; civiccast/stream/media_router.py:176-189, 224; civiccast/publish/router.py:239-314, 416-535, 538-654; civiccast/publish/service.py:53-130, 205-298, 506-828, 923-954; civiccast/publish/models.py:12-72, 160, 177; civiccast/platform/providers.py:40, 99-121; civiccast/platform/broker.py:66-107; civiccast/podcast/service.py:11-27; civiccast/subscribe/router.py:188-208; civiccast/activitypub/config.py:22, 66-76; civiccast/summary/*.py (generate.py:97-168, validate.py:21-37, extract.py, ollama.py:127-150, router.py:128-229, store.py:172-221); civiccast/records/router.py, exporter.py:19-126, pdfa.py:86-213, timestamp.py:18-41, rfc3161.py; civiccast/ai_runtime/ollama_client.py:14-30, 123-174; civiccast/egress/gst/engine.py:144-221, 1961-1972; civiccast/egress/gst/audio_tap.py:59-198, 309-400; civiccast/egress/gst/strategy.py:873-886; civiccast/captions/tap.py; civiccast/captions/tap_worker.py:44-60, 128-235, 327-343, 966-1048, 1264-1372, 1948-1991, 2128-2223, 2290-2429; civiccast/captions/tap_backoff.py:68-80, 173-263; civiccast/captions/stabilize.py:42-65; civiccast/captions/live_sidecar.py; civiccast/captions/runtime.py; civiccast/captions/vod_job.py:69-88, 379-408, 540-602, 884-1036; civiccast/captions/vod.py; civiccast/captions/review.py; civiccast/captions/retention.py:52-53, 310-317; civiccast/egress/caption_feed.py:46-231; civiccast/egress/caption_proof.py; civiccast/installer/models.py:276; civiccast/installer/station_state.py:279-314; civiccast/native/station_runtime.py:667-724, 820, 1390-1437; docs/adr/0010, 0011, 0018; docs/releases/v1.0.0-beta.10-verification.md (known limits 1); inventory/screens/recording.md, guide.md (UTC); captions/publish/records fact-sheet subagent -->
 

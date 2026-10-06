@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import tempfile
 import time
@@ -30,10 +31,28 @@ CaptionRuntimeState = Literal[
 
 
 class LiveWebVttPublisher:
-    """Publish one channel's complete stable cue set without partial readers."""
+    """Publish stable cues atomically, optionally bounding a live delivery window.
 
-    def __init__(self, active_path: Path) -> None:
+    Limits are opt-in because archived English/Spanish sidecars also use this
+    writer and must retain their complete reviewed caption tracks.
+    """
+
+    def __init__(
+        self,
+        active_path: Path,
+        *,
+        window_seconds: float | None = None,
+        max_cues: int | None = None,
+    ) -> None:
+        if window_seconds is not None and (
+            not math.isfinite(window_seconds) or window_seconds <= 0
+        ):
+            raise ValueError("caption history window must be finite and positive")
+        if max_cues is not None and max_cues < 1:
+            raise ValueError("caption history cue limit must be positive")
         self.active_path = active_path.expanduser().resolve()
+        self.window_seconds = window_seconds
+        self.max_cues = max_cues
 
     def reset(self) -> None:
         """Remove stale cues at worker startup while keeping a valid WebVTT file."""
@@ -41,9 +60,18 @@ class LiveWebVttPublisher:
         self.publish([])
 
     def publish(self, cues: list[CaptionCue]) -> None:
-        """Atomically replace ``active.vtt`` with the complete stable cue set."""
+        """Replace the sidecar with cues inside its configured delivery bounds."""
 
-        _atomic_write_text(self.active_path, render_webvtt(cues))
+        selected = cues
+        if selected and self.window_seconds is not None:
+            cutoff = max(cue.end_seconds for cue in selected) - self.window_seconds
+            # Keep a cue crossing the cutoff; do not clip its speech envelope.
+            selected = [cue for cue in selected if cue.end_seconds > cutoff]
+        if self.max_cues is not None:
+            selected = sorted(
+                selected, key=lambda cue: (cue.start_seconds, cue.end_seconds, cue.cue_id)
+            )[-self.max_cues :]
+        _atomic_write_text(self.active_path, render_webvtt(selected))
 
 
 def active_caption_sidecar(work_dir: Path, channel_id: str) -> Path:
@@ -137,13 +165,18 @@ def _atomic_write_text(destination: Path, content: str) -> None:
         dir=destination.parent,
     )
     temporary = Path(temporary_name)
+    owned_descriptor: int | None = descriptor
     try:
-        with os.fdopen(
+        handle = os.fdopen(
             descriptor,
             "w",
             encoding="utf-8",
             newline="\n",
-        ) as handle:
+        )
+        # fdopen now owns the descriptor. Its context closes it even when a
+        # write fails; replacement cleanup must never close a reused number.
+        owned_descriptor = None
+        with handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
@@ -162,8 +195,9 @@ def _atomic_write_text(destination: Path, content: str) -> None:
         assert last_error is not None
         raise last_error
     except Exception:
-        with suppress(OSError):
-            os.close(descriptor)
+        if owned_descriptor is not None:
+            with suppress(OSError):
+                os.close(owned_descriptor)
         temporary.unlink(missing_ok=True)
         raise
 

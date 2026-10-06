@@ -2,6 +2,8 @@
 
 ## Unreleased — beta.11 caption candidate
 
+- Live captions no longer create review records or audio-evidence archives automatically, and archive retention no longer gates broadcast readiness. Working audio, caption history and delivery bookkeeping have explicit bounds for unattended operation.
+- Fixed sidecar cleanup that could close a file descriptor reused by another writer. Rebuilt in-product help also preserves later manual sections when command examples contain angle brackets.
 - Native live captions use Whistle on CPU, with Whisper fallback after a primary failure. Operators can select Whisper for NVIDIA CUDA acceleration; recorded-media captions retain Whisper.
 - Live captions publish first recognition instead of waiting for overlapping transcriptions to agree.
 - Whistle inference is serialized across stations; concurrent native calls exceeded the request deadline in the measured three-station trial. Needle telemetry is disabled.
