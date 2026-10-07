@@ -2075,7 +2075,7 @@ mod tests {
         substituted_engine.files[0].sha256 = "00".repeat(32);
         assert!(validate_whistle_pack_contract(&substituted_engine)
             .expect_err("substituted engine DLL must fail")
-            .contains("substituted bytes"));
+            .contains("captions-whistle caption pack substituted unapproved bytes for libneedle.dll"));
 
         let mut substituted_wheel = valid_whistle_manifest();
         substituted_wheel.metadata.insert(

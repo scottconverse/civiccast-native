@@ -1489,11 +1489,16 @@ mod tests {
                     .join("payload.bin")
                     .is_file());
                 for component in &COMPONENTS[2..] {
-                    assert!(staging
-                        .join("components")
-                        .join(component)
-                        .join("payload.bin")
-                        .is_file());
+                    let component_root = if *component == "captions-whistle" {
+                        staging.join("packs").join("captions-whistle")
+                    } else {
+                        staging.join("components").join(component)
+                    };
+                    assert!(
+                        component_root.join("payload.bin").is_file(),
+                        "{component} must stage under expected runtime root {}",
+                        component_root.display()
+                    );
                 }
                 Ok(())
             },

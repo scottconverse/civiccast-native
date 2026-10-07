@@ -1316,7 +1316,7 @@ mod tests {
         )
         .expect("optional large-v3 pack must verify");
 
-        assert_eq!(verified.packs.len(), 6);
+        assert_eq!(verified.packs.len(), 7);
         let large_v3 = verified
             .packs
             .iter()
