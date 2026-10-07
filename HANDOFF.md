@@ -2,6 +2,8 @@
 
 This file is a pointer, not a log.
 
+- Latest compaction checkpoint, October 7 about 05:00 MDT: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CivicCast-COMPACTION-HANDOFF-2026-10-07.md`. Station and independent 20-minute monitor remain running; 51 eligible completed caption checks passed. Read that checkpoint for owner-directed gaming exclusion, current evidence locations and unresolved whole-drive disk attribution; re-query runtime before reporting fresh status.
+
 - October 6 at 18:01 MDT: owner accepted a **successful eight-hour three-station caption soak**. All 66 sampled channel checks passed; no supervisor restart or logged caption-audio loss/pauses/fallback. Record: [eight-hour dev7 soak](docs/ops/beta11-dev7-eight-hour-caption-soak-2026-10-06.md). Leave the station and monitor running; owner plans to check again tomorrow. This supersedes the earlier four-hour outcome as the latest caption milestone, while preserving its historical defects and current non-caption limitations.
 
 - Owner-directed continuous observation is active from October 6: leave the station running until the owner ends it. Windows task `CivicCast-beta11-readonly-20minute-observer` records every20minutes indefinitely, with no service control or model inference. Measurements and instructions: `C:\Users\scott\Documents\Codex\2026-10-04\rea\work\station-observer\README.md`. First checkpoint completed10:48:38MDT, task result0 and caption checks passed. When the owner ends observation, use these records to write the full performance report; stopping the monitor alone does not authorize stopping the station.
