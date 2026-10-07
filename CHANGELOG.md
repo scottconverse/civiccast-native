@@ -2,6 +2,7 @@
 
 ## Unreleased — beta.11 caption candidate
 
+- The local dev7 caption candidate completed a successful eight-hour three-station soak on October 6: all 66 sampled channel checks passed, with no station restart, logged caption-audio loss, caption pauses or Whistle fallback. Review/evidence accumulation remained zero. Observation continues; this does not claim release-grade loudness or full release readiness. Evidence: [eight-hour caption soak](docs/ops/beta11-dev7-eight-hour-caption-soak-2026-10-06.md).
 - Live captions no longer create review records or audio-evidence archives automatically, and archive retention no longer gates broadcast readiness. Working audio, caption history and delivery bookkeeping have explicit bounds for unattended operation.
 - Fixed sidecar cleanup that could close a file descriptor reused by another writer. Rebuilt in-product help also preserves later manual sections when command examples contain angle brackets.
 - Native live captions use Whistle on CPU, with Whisper fallback after a primary failure. Operators can select Whisper for NVIDIA CUDA acceleration; recorded-media captions retain Whisper.

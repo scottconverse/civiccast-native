@@ -1,5 +1,7 @@
 # beta.11 Whistle development test candidate
 
+**October 6 milestone: successful eight-hour dev7 three-station caption soak**, accepted by the owner. All 66 sampled channel checks passed; no supervisor restart, logged caption-audio loss, caption pauses or Whistle fallback. The station and 20-minute monitor remain running for a longer observation. See [milestone evidence and memory/storage results](beta11-dev7-eight-hour-caption-soak-2026-10-06.md); loudness and full release readiness remain unverified.
+
 This is a local development patch on the owner's installed beta.9 station,
 not a signed beta.11 installer or a release-readiness claim. The source branch
 is `codex/beta11-whistle`, based on main `8c3ab70bdc802f42ee573d83b284418c620c18ae`.
