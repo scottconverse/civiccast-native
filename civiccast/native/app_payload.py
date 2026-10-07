@@ -312,8 +312,12 @@ APP_BUILD_TOOLCHAIN: Final[dict[str, dict[str, str]]] = {
 #: own embedded `FFMPEG-PROVENANCE.json` now also records the PyAV sdist's
 #: identity, which deterministically changes the reviewed wheel's bytes).
 #: Nothing else in the lock changed.
+#: Re-pinned 2026-10-07 for pypdf 6.19.0 (uploaded-PDF parser fixes) and
+#: urllib3 2.8.0 (fixed botocore transport dependency). The generated app-lock
+#: diff preserves all other package versions and hashes; resolver attribution
+#: comments were refreshed, and the PyAV provenance override remains intact.
 APP_REQUIREMENTS_SHA256: Final[str] = (
-    "e6e117de393948e356e44b624d9521c3f788c27c008ff7d3dad739b6f2639eb6"
+    "70cf9a3661acea3fd856e5875dc77f4749fa4271aacd5dd575c72d75c99cea20"
 )
 #: Exact third-party license files the builder places outside site-packages.
 #: payload path -> (distribution, version, license, sha256).
