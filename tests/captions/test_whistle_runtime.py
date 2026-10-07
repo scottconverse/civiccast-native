@@ -257,11 +257,11 @@ def test_shutdown_during_primary_creation_reaps_late_child(tmp_path):
 
 
 def test_concurrent_child_close_releases_job_once(monkeypatch):
+    import sys
     import tempfile
     import threading
     from concurrent.futures import ThreadPoolExecutor
-
-    import win32job
+    from types import ModuleType
 
     from civiccast.captions.whistle import _SpeechProcess
 
@@ -279,7 +279,11 @@ def test_concurrent_child_close_releases_job_once(monkeypatch):
         entered.set()
         assert release.wait(3)
 
-    monkeypatch.setattr(win32job, "TerminateJobObject", terminate)
+    # This test covers cleanup locking, not pywin32. Keep the native-only API
+    # call deterministic on Linux test runners as well as on Windows.
+    win32job = ModuleType("win32job")
+    win32job.TerminateJobObject = terminate
+    monkeypatch.setitem(sys.modules, "win32job", win32job)
     child = object.__new__(_SpeechProcess)
     child._job, child._process, child._closed = job, None, False
     child._close_lock = threading.Lock()

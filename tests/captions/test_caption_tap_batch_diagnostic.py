@@ -418,33 +418,15 @@ def test_empty_asr_is_not_reported_as_committed(tmp_path: Path) -> None:
 
     import wave
 
-    from civiccast.captions.models import CaptionHypothesis
     from civiccast.captions.review import InMemoryCaptionReviewStore
     from civiccast.captions.tap import TAP_SAMPLE_RATE_HZ
     from civiccast.captions.tap_worker import CaptionTapWorker
 
     class EmptyRuntime:
-        """Transcribes to a VALID hypothesis that is filtered before commit.
-
-        A hypothesis with ``text=""`` is rejected by ``CaptionHypothesis``
-        validation (``text`` has ``min_length=1``).  That raised before the
-        committed/no-commit decision and the batch was recorded as
-        ``outcome="failed"``; the original assertion ``outcome != "committed"``
-        then passed for the wrong reason and could not detect a mutation that
-        always reported ``committed``.  Use valid, low-confidence text that the
-        stabilizer/review path drops so the batch genuinely reaches the
-        no-commit branch and is reported as ``no-commit``, not ``failed``.
-        """
+        """Model returns no hypotheses; the batch must reach the no-commit path."""
 
         def transcribe(self, chunks, vocabulary=None):  # type: ignore[no-untyped-def]
-            for _chunk in chunks:
-                yield CaptionHypothesis(
-                    source_id="empty",
-                    start_seconds=0.0,
-                    end_seconds=5.0,
-                    text="um",
-                    confidence=0.0,
-                )
+            return iter(())
 
     def write_wav(path: Path, seconds: float = 5.0) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)

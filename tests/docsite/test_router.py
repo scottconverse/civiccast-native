@@ -62,7 +62,7 @@ class TestManualEndpoint:
         # JSON endpoint with no filesystem underneath it.
         html = client.get("/api/public/manual").json()["html"]
         assert "<figure>" in html
-        assert "data:image/png;base64," in html
+        assert "data:image/webp;base64," in html
         assert 'src="assets/' not in html
 
     def test_no_staff_token_required(self, client: TestClient) -> None:

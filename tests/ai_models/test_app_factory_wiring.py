@@ -246,6 +246,7 @@ def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
     monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
     monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_dir))
     monkeypatch.setenv("CIVICCAST_CAPTION_RUNTIME", "faster-whisper")
+    monkeypatch.setenv("CIVICCAST_LIVE_CAPTION_ENGINE", "whisper")
     monkeypatch.setenv("CIVICCAST_WHISPER_MODEL_PATH", str(model_dir))
     monkeypatch.setenv("CIVICCAST_WHISPER_DEVICE", "cuda")
     monkeypatch.setenv("CIVICCAST_WHISPER_COMPUTE_TYPE", "int8_float16")
