@@ -696,6 +696,7 @@ fn station_manifest_value(distribution: &AcquiredDistribution) -> Value {
             "egress_engine": "gstreamer",
             "egress_embed_captions": true,
             "offline_only": true,
+            "whistle_assets_root": "packs/captions-whistle",
         },
     })
 }
