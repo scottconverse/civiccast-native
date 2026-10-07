@@ -29,6 +29,60 @@ on the release branch. It produces, per candidate commit (`<sha>`):
 Confirm the build run's conclusion is `success` and note its run id
 (`--build-run-id` below).
 
+### Beta 11 hosted preparation run (not an installable kit)
+
+While the accepted 24-hour station soak and monitor are still running, use
+the manual workflow with `build_target: hosted` and `prepare_only: true`.
+This keeps packaging and signing work off the station desktop. The workflow
+still builds, signs, and verifies the complete candidate and station bundle
+on `windows-latest`, then retains only these short-lived artifacts:
+
+- `native-beta-candidate-<sha>`: candidate reports, signing receipt, and
+  installer-pack checksums.
+- `native-beta-candidate-binaries-<sha>`: signed installer and runtime packs
+  (about 3.4 GB before the Whistle runtime addition). The setup embeds the
+  signed station index, `core.ccpack`, and `captions-whistle.ccpack` under
+  `station\` for setup-only upgrade activation.
+- `native-station-embed-<sha>`: the same signed station index and the embedded
+  `core.ccpack` plus `captions-whistle.ccpack` used to build those installer
+  resources.
+- `native-station-prepare-<sha>`: signed `captions-whistle.ccpack`, the exact
+  station index, the station bundle `SHA256SUMS.txt`, and its build report.
+
+The Whistle pack payload is 18,422,127 bytes (about 17.6 MiB). It is included
+in the installer and repeated in both small station artifacts, so budget for
+about 3.5 GB total, plus small indexes and reports; the run will confirm actual
+upload sizes. Each artifact has one-day retention, keeping this below the
+shared 10 GB Actions artifact budget. The run does not upload the full model
+bundle or assemble `native-beta-kit-<sha>`. These artifacts are not a complete
+first-install kit and cannot be used for Gate A or sent to a station. An
+existing setup-only upgrade can use the embedded Whistle pack and retain its
+local cached large models; the signed station index has no download URLs.
+The automatic `workflow_run` preflight sees the marker immediately; do not
+manually dispatch Gate A against this run after the marker expires, because a
+missing expired artifact cannot distinguish preparation-only from a full
+self-hosted build. If the candidate binaries expire before later kit assembly,
+rerun the candidate workflow at the same source SHA and use the fresh run id.
+
+The station build report and checksum list record the full signed bundle's
+identity, but the large model packs are not retained by this run. A later
+full-kit build must reconstruct those packs from the pinned, verified local
+model cache for the same source SHA, compare the rebuilt station index and
+pack hashes with the preparation artifacts, assemble the kit, and run Gate A.
+If those identities differ, the preparation run does not establish the full
+kit's identity.
+
+Gate A automatically receives a `workflow_run` event when this preparation
+workflow completes. After the preflight change is on the default branch, its
+hosted preflight sees `native-station-prepare-<sha>` on that exact run and
+skips all Windows Sandbox lanes. A pre-merge run still uses the default-
+branch Gate A definition, so that guard is not active yet; keep the local
+`blackwell-builder` runner offline and cancel any auto-queued Gate A run for
+the preparation candidate. Gate A has no separate registered Windows runner
+today. Do not bring the desktop runner online or start Windows Sandbox while
+the owner continues the station and monitor. Clean-machine Gate A remains
+outstanding until that work has ended and the owner schedules it.
+
 ## 2. Gate A: three required lanes
 
 `.github/workflows/gate-a-station-acceptance.yml` runs automatically after a

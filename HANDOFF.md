@@ -2,6 +2,10 @@
 
 This file is a pointer, not a log.
 
+- October 7: Beta 11 package preparation is authorized. Keep the current station and 20-minute monitor running. Whistle asset packaging/activation and consistent beta.11 identities are being integrated; a hosted `prepare_only` build route avoids the soak desktop and duplicate large-kit uploads. No final installer exists yet. [Candidate verification](docs/releases/v1.0.0-beta.11-verification.md) records runtime/source binding and remaining artifact/install checks. Do not start the offline desktop runner or launch Sandbox during the continuing soak.
+
+- October 7: owner accepted the **24-hour three-station caption soak as sufficient soak evidence for Beta 11 release**. [Results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md). Station and monitor remain running. This supersedes the eight-hour result as the latest soak milestone; packaged installer verification remains separate.
+
 - Latest compaction checkpoint, October 7 about 05:00 MDT: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CivicCast-COMPACTION-HANDOFF-2026-10-07.md`. Station and independent 20-minute monitor remain running; 51 eligible completed caption checks passed. Read that checkpoint for owner-directed gaming exclusion, current evidence locations and unresolved whole-drive disk attribution; re-query runtime before reporting fresh status.
 
 - October 6 at 18:01 MDT: owner accepted a **successful eight-hour three-station caption soak**. All 66 sampled channel checks passed; no supervisor restart or logged caption-audio loss/pauses/fallback. Record: [eight-hour dev7 soak](docs/ops/beta11-dev7-eight-hour-caption-soak-2026-10-06.md). Leave the station and monitor running; owner plans to check again tomorrow. This supersedes the earlier four-hour outcome as the latest caption milestone, while preserving its historical defects and current non-caption limitations.

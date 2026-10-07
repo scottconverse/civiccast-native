@@ -1,28 +1,26 @@
 ; SPDX-License-Identifier: Apache-2.0
 ; Copyright (c) The CivicCast Authors
 ;
-; Small native bootstrap hooks. The multi-gigabyte station payload is supplied
-; only through signed .ccpack files and is never embedded in this NSIS binary.
+; Small native bootstrap hooks. Large station payloads are supplied through
+; signed .ccpack files and stay out of this NSIS binary; the bounded Whistle
+; pack is embedded so setup-only installs can activate from a Beta 10 cache.
 ;
 ; This is the ONE LIVE native installer hook file: `tauri.native.conf.json`
 ; (`bundle.windows.nsis.installerHooks`) references this file, and
 ; `tests/policy/test_native_installer_identity.py` pins that reference on the
 ; EFFECTIVE (deep-merged) native config. `scripts/build_native_bootstrap.py`'s
 ; `validate_native_bootstrap_config` is a hard gate requiring exactly this
-; file name plus a `bundle.resources` map of exactly three tiny entries:
+; file name plus a `bundle.resources` map of exactly four entries:
 ;   resources/vc_redist.x64.exe       -> vc_redist.x64.exe
 ;   resources/station/station-index.json -> station/station-index.json
 ;   resources/station/core.ccpack        -> station/core.ccpack
-; -- no embedded multi-gigabyte payload, ever. The two station entries were
-; added 2026-09-02 (owner decision) so a DOWNLOAD-ONLY install/upgrade of
-; setup.exe alone still has the signed station index it must activate
-; against; the signed index is a few KB and `core.ccpack` is ~1.5 KB (its
-; payload is a placeholder NOTICE, never runtime bytes -- see
-; scripts/build_native_station_bundle.py::_core_placeholder_sources). The
-; model packs the index names stay out of this binary and are obtained from
-; the kit's own station directory or the per-SHA pack cache. See the
-; d4-activate-station step's own comment for the two-source resolution
-; order.
+;   resources/station/captions-whistle.ccpack -> station/captions-whistle.ccpack
+; The signed index and placeholder `core` pack are tiny; the mandatory Whistle
+; pack has a strict <25 MB cap and must match its required, URL-free index entry.
+; No other model packs are embedded; the remaining large packs come from the
+; kit's station directory or per-SHA cache. The station index/core resources
+; and their two-source resolution order were added 2026-09-02 (owner decision);
+; the Whistle resource closes setup-only activation for Beta 10 caches.
 ;
 ; WP2 hook-migration (2026-07-30): POSTINSTALL below now carries the D2/D4
 ; install-time chain that previously sat unreachable in the retired
@@ -1424,19 +1422,17 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ;       beside it in the same directory, and no cache round-trip happens.
   ;
   ;   (b) "$INSTDIR\station\station-index.json" -- the EMBEDDED copy. The
-  ;       tiny signed index plus the tiny `core` pack (~1.5 KB; `core`'s
-  ;       payload is a placeholder NOTICE, never runtime bytes -- see
-  ;       scripts/build_native_station_bundle.py::_core_placeholder_sources)
-  ;       ship inside setup.exe as Tauri bundle.resources and are laid down
-  ;       at $INSTDIR\station\ before this hook runs. This is what makes a
-  ;       DOWNLOAD-ONLY install/upgrade of setup.exe alone work: the ~21 GB
-  ;       of model packs the index names are then satisfied from the per-SHA
-  ;       cache under --cache-root rather than from the media directory
-  ;       (native_distribution.rs::copy_station_pack_to_cache).
-  ;       bundle.resources still carries ONLY these two tiny files plus the
-  ;       VC++ prerequisite -- no embedded multi-gigabyte payload, ever; the
-  ;       resource map is a hard gate in
-  ;       scripts/build_native_bootstrap.py::validate_native_bootstrap_config.
+  ;       signed index, placeholder `core` pack (~1.5 KB), and mandatory
+  ;       `captions-whistle.ccpack` (<25 MB; pinned local model+engine) ship
+  ;       inside setup.exe as Tauri bundle.resources and are laid down at
+  ;       $INSTDIR\station\ before this hook runs. This makes a DOWNLOAD-ONLY
+  ;       install/upgrade of setup.exe alone work with a Beta 10 cache: the
+  ;       required Whistle component comes from the embedded sidecar while
+  ;       the remaining ~21 GB of model packs must be satisfied from the
+  ;       per-SHA cache under --cache-root (native_distribution.rs::
+  ;       copy_station_pack_to_cache). The fixed resource map and signed-index
+  ;       hash/size checks prevent embedding a different or oversized pack;
+  ;       see scripts/build_native_bootstrap.py.
   ;
   ; Fails loud only when NEITHER exists. An unconditional silent skip here
   ; is the exact shape that produced K1 in the first place (an install that

@@ -62,7 +62,7 @@ HOSTED_EXPRESSION_ALLOWLIST = {
     # running on windows-latest for its default/push-triggered builds.
     (
         "native-beta-candidate-artifacts.yml",
-        "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('[\"self-hosted\",\"windows\",\"sandbox-lab\"]') || 'windows-latest' }}",
+        "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted' && !inputs.prepare_only) && fromJSON('[\"self-hosted\",\"windows\",\"sandbox-lab\"]') || 'windows-latest' }}",
     ),
 }
 

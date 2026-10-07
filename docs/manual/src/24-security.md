@@ -262,7 +262,7 @@ These come from the beta.10 whole-repository audit (`audit-lite-whole-repo-beta1
 | B-010 | The failed-login limiter has no memory bound. | Keep `/api/staff/*` on loopback. |
 | B-012 | `/api/hardware` shows the host name to anyone. | Treat the host name as public. |
 | B-019 | `civiccast model set-provider-key --key <value>` puts the key on the command line, visible to other programs in the process list. | Supply the key in the `CIVICCAST_PROVIDER_API_KEY` environment variable instead. |
-| B-003, B-004, B-005, B-009 | Historical beta.10 caption data growth (see retention). | Local beta.11 dev7 removes automatic live review/evidence accumulation and bounds live working state; verify the candidate before deployment. |
+| B-003, B-004, B-005, B-009 | Historical beta.10 caption data growth (see retention). | Beta.11 removes automatic live review/evidence accumulation and bounds live working state; verify the candidate before deployment. |
 | A-001, A-008 | A gap in the program-change watchdog, and no free-space guard on the 60 GB cache. | See [Chapter 12](#ch-operations). |
 | C-001 | Automated tests were red in about 110 places at the time of the audit. | Do not read the beta label as a passing test suite. |
 

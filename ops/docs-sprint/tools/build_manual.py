@@ -19,7 +19,7 @@ SRC = ROOT / "docs" / "manual" / "src"
 DIAG = ROOT / "docs" / "manual" / "diagrams"
 OUT = ROOT / "docs" / "USER-MANUAL.md"
 MMDC_DIR = Path(r"C:\Users\scott\Documents\Codex\2026-09-16\re\mmd-tool")
-VERSION = "v1.0.0-beta.10"
+VERSION = "v1.0.0-beta.11"
 
 PARTS = [
     ("Part I. Using CivicCast (for station staff and volunteers)", "1"),
@@ -181,7 +181,7 @@ def main():
         "title: CivicCast User Manual\n"
         f"subtitle: For station staff, volunteers and city IT staff - {VERSION} (native Windows line)\n"
         "author: The CivicCast Authors\n"
-        "date: 2026-10-03\n"
+        "date: 2026-10-07\n"
         "urlcolor: blue\n"
         "toccolor: black\n"
         "---\n\n"

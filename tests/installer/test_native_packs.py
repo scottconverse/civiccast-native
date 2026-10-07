@@ -604,6 +604,30 @@ def test_caption_pack_contract_rejects_missing_or_substituted_model_files() -> N
         native_packs._validate_component_contract(substituted)
 
 
+def test_whistle_pack_contract_rejects_unpinned_payload_and_metadata() -> None:
+    manifest = {
+        "component": "captions-whistle",
+        "files": [],
+        "metadata": {},
+    }
+
+    with pytest.raises(NativePackVerificationError, match=r"Whistle.*(metadata|file|payload)"):
+        native_packs._validate_component_contract(manifest)
+
+
+def test_whistle_pack_contract_accepts_exact_local_model_and_engine_inventory() -> None:
+    manifest = {
+        "component": native_packs.WHISTLE_COMPONENT,
+        "files": [
+            {"path": path, "bytes": size, "sha256": digest}
+            for path, (size, digest) in native_packs.WHISTLE_PACK_FILES.items()
+        ],
+        "metadata": dict(native_packs.WHISTLE_PACK_CONTRACT),
+    }
+
+    native_packs._validate_component_contract(manifest)
+
+
 def test_model_pack_rejects_signed_bytes_outside_the_reviewed_lock(
     tmp_path: Path,
 ) -> None:

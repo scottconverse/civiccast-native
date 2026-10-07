@@ -45,7 +45,7 @@ byte-for-byte compatible with the Rust side by the existing five-pack tests).
 ## The component set
 
 ``core``, ``captions-floor``, ``summary-gemma4-12b``, ``summary-gemma4-e4b``,
-``translation-translategemma-4b`` are REQUIRED (``native_distribution.rs::
+``translation-translategemma-4b`` and ``captions-whistle`` are REQUIRED (``native_distribution.rs::
 REQUIRED_COMPONENTS``); ``captions-large-v3`` is OPTIONAL
 (``native_activation.rs::OPTIONAL_COMPONENTS``) -- present when
 ``--captions-large-v3-root`` is given, simply absent when it is not, exactly
@@ -62,19 +62,20 @@ already live there, staged and D2-verified by the elevated installer's OWN
 here would be dead weight at best and a silent-overwrite hazard at worst.
 
 Every OTHER component's payload is EXACTLY the file tree found under its
-``--<component>-root`` input, verbatim, relative-path-preserved -- this
-script does not fabricate or download model weights (never in scope: the
-task's own instruction). Each root must already be a real, complete
-artifact -- e.g. ``--captions-floor-root`` pointing at a directory shaped
+``--<component>-root`` input, verbatim, relative-path-preserved. The
+``--captions-whistle-root`` is produced by
+``scripts/provision_native_whistle_assets.py`` from pinned upstream URLs;
+the signed pack verifier pins both payload files' exact size and SHA-256.
+Other roots must already be real, complete artifacts -- e.g.
+``--captions-floor-root`` pointing at a directory shaped
 ``models/faster-whisper-medium/{config.json,model.bin,tokenizer.json,
 vocabulary.txt}`` plus ``self-test/jfk.wav`` (the exact relative layout
 ``native_activation.rs``'s ``FLOOR_STAGED_ROOT``/``validate_staged_runtime_layout``
 pin, and the same layout the ollama-model roots must carry the standard
 ``blobs/`` + ``manifests/registry.ollama.ai/library/<repo>/<tag>`` shape
-``compose_ollama_model_store`` expects). This script does not deep-validate
-that internal shape (that is the self-test's job, at activation time, on a
-real station); it fails loud only when an entire required root is missing,
-empty, or not a real directory -- see :func:`_require_pack_root`.
+``compose_ollama_model_store`` expects). This script fails loud when an
+entire required root is missing, empty, or not a real directory -- see
+:func:`_require_pack_root`.
 
 ## Reuse, not a fork
 
@@ -149,6 +150,11 @@ from civiccast.installer.native_packs import (  # noqa: E402
     OLLAMA_MODEL_COMPONENTS,
     build_native_pack,
 )
+from civiccast.native.app_payload import (  # noqa: E402
+    WHISTLE_PACK_COMPONENT,
+    WHISTLE_PACK_CONTRACT,
+    WHISTLE_PACK_FILES,
+)
 
 _REPARSE_POINT: Final[int] = 0x400
 
@@ -162,6 +168,7 @@ REQUIRED_COMPONENTS: Final[tuple[str, ...]] = (
     "summary-gemma4-12b",
     "summary-gemma4-e4b",
     "translation-translategemma-4b",
+    WHISTLE_PACK_COMPONENT,
 )
 
 #: Mirrored from ``native_activation.rs::OPTIONAL_COMPONENTS``.
@@ -508,6 +515,7 @@ def build_station_bundle(
     *,
     output_dir: Path,
     captions_floor_root: Path,
+    captions_whistle_root: Path,
     gemma4_12b_root: Path,
     gemma4_e4b_root: Path,
     translategemma_4b_root: Path,
@@ -554,6 +562,9 @@ def build_station_bundle(
         ),
         "translation-translategemma-4b": _require_pack_root(
             translategemma_4b_root, component="translation-translategemma-4b", required=True
+        ),
+        WHISTLE_PACK_COMPONENT: _require_pack_root(
+            captions_whistle_root, component=WHISTLE_PACK_COMPONENT, required=True
         ),
     }
     optional_large_v3_root = _require_pack_root(
@@ -603,11 +614,12 @@ def build_station_bundle(
             # its component id, payload digests and tier layout are already
             # in the signed manifest, so a path adds no provenance the
             # manifest lacks.
-            metadata = (
-                _ollama_model_pack_metadata(component, root)
-                if component in OLLAMA_MODEL_COMPONENTS
-                else {}
-            )
+            if component in OLLAMA_MODEL_COMPONENTS:
+                metadata = _ollama_model_pack_metadata(component, root)
+            elif component == WHISTLE_PACK_COMPONENT:
+                metadata = dict(WHISTLE_PACK_CONTRACT)
+            else:
+                metadata = {}
             build_native_pack(
                 output=output,
                 component=component,
@@ -709,6 +721,7 @@ def _parser() -> argparse.ArgumentParser:
         "$EXEDIR\\station next to the installer",
     )
     parser.add_argument("--captions-floor-root", required=True, type=Path)
+    parser.add_argument("--captions-whistle-root", required=True, type=Path)
     parser.add_argument("--gemma4-12b-root", required=True, type=Path)
     parser.add_argument("--gemma4-e4b-root", required=True, type=Path)
     parser.add_argument("--translategemma-4b-root", required=True, type=Path)
@@ -744,6 +757,7 @@ def main(argv: list[str] | None = None) -> int:
         result = build_station_bundle(
             output_dir=args.output_dir,
             captions_floor_root=args.captions_floor_root,
+            captions_whistle_root=args.captions_whistle_root,
             gemma4_12b_root=args.gemma4_12b_root,
             gemma4_e4b_root=args.gemma4_e4b_root,
             translategemma_4b_root=args.translategemma_4b_root,

@@ -21,7 +21,12 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
     Ed25519PublicKey,
 )
 
-from civiccast.native.app_payload import CAPTION_PACK_CONTRACT
+from civiccast.native.app_payload import (
+    CAPTION_PACK_CONTRACT,
+    WHISTLE_PACK_COMPONENT,
+    WHISTLE_PACK_CONTRACT,
+    WHISTLE_PACK_FILES,
+)
 from civiccast.native.caption_tiers import (
     CAPTION_TIER_REGISTRY,
     CaptionTierBindingError,
@@ -34,6 +39,7 @@ PACK_MANIFEST_NAME = "manifest.json"
 PACK_SIGNATURE_NAME = "manifest.sig"
 PACK_PAYLOAD_PREFIX = "payload/"
 CAPTION_COMPONENT = "captions-large-v3"
+WHISTLE_COMPONENT = WHISTLE_PACK_COMPONENT
 CAPTION_SELF_TEST_PATH = f"self-test/{CAPTION_PACK_CONTRACT['self_test_audio_file']}"
 CAPTION_SELF_TEST_BYTES = int(str(CAPTION_PACK_CONTRACT["self_test_audio_bytes"]))
 CAPTION_SELF_TEST_SHA256 = str(CAPTION_PACK_CONTRACT["self_test_audio_sha256"])
@@ -573,6 +579,30 @@ def _validate_component_contract(manifest: dict[str, Any]) -> None:
             if manifest["metadata"].get(key) != expected:
                 raise NativePackVerificationError(
                     f"mandatory large-v3 caption pack metadata mismatch: {key}"
+                )
+    if component == WHISTLE_COMPONENT:
+        if manifest["metadata"] != WHISTLE_PACK_CONTRACT:
+            raise NativePackVerificationError(
+                "Whistle caption pack metadata does not match its reviewed contract"
+            )
+        observed = {entry["path"]: entry for entry in manifest["files"]}
+        expected_names = set(WHISTLE_PACK_FILES)
+        if set(observed) != expected_names:
+            missing = sorted(expected_names - set(observed))
+            extra = sorted(set(observed) - expected_names)
+            detail = []
+            if missing:
+                detail.append("missing " + ", ".join(missing))
+            if extra:
+                detail.append("unexpected " + ", ".join(extra))
+            raise NativePackVerificationError(
+                "Whistle caption pack payload inventory mismatch: " + "; ".join(detail)
+            )
+        for path, (expected_bytes, expected_sha256) in WHISTLE_PACK_FILES.items():
+            item = observed[path]
+            if item["bytes"] != expected_bytes or item["sha256"] != expected_sha256:
+                raise NativePackVerificationError(
+                    f"Whistle caption pack substituted unapproved bytes for {path}"
                 )
     if component in OLLAMA_MODEL_COMPONENTS:
         _validate_ollama_model_contract(manifest)

@@ -104,13 +104,52 @@ permissions:
   actions: read
 
 jobs:
+  candidate-eligibility:
+    name: Check whether this run is preparation-only
+    runs-on: ubuntu-latest
+    outputs:
+      eligible: ${{ steps.check.outputs.eligible }}
+    steps:
+      - name: Check exact candidate run for preparation marker
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id || inputs.run_id }}
+          CANDIDATE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::Gate A requires a numeric native-beta workflow run id."
+            exit 1
+          fi
+          candidate_sha="$CANDIDATE_SHA"
+          if [[ -z "$candidate_sha" ]]; then
+            candidate_sha="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" --jq .head_sha)"
+          fi
+          if [[ ! "$candidate_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Gate A could not resolve a full candidate source SHA."
+            exit 1
+          fi
+
+          artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts?per_page=100")"
+          prepare_only_count="$(printf '%s' "$artifacts" | jq --arg expected "native-station-prepare-$candidate_sha" '[.artifacts[] | select(.name == $expected and .expired == false)] | length')"
+          if [[ "$prepare_only_count" =~ ^[1-9][0-9]*$ ]]; then
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping Windows Sandbox Gate A for preparation-only candidate $candidate_sha."
+          else
+            echo "eligible=true" >> "$GITHUB_OUTPUT"
+            echo "Full Gate A remains eligible for candidate $candidate_sha."
+          fi
+
   station-acceptance:
     name: Windows Sandbox station-acceptance run + verdict
+    needs: candidate-eligibility
     # Skip (neutral, not failed) when the triggering candidate build itself
     # did not succeed -- there is no installable kit to judge in that case,
     # and a Gate A FAIL on top of an already-red candidate build would be
     # noise, not signal.
-    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.lane != 'cross-version-only' && inputs.lane != 'download-only-only') || github.event.workflow_run.conclusion == 'success' }}
+    if: ${{ always() && needs.candidate-eligibility.outputs.eligible == 'true' && ((github.event_name == 'workflow_dispatch' && inputs.lane != 'cross-version-only' && inputs.lane != 'download-only-only') || github.event.workflow_run.conclusion == 'success') }}
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 180
     steps:
@@ -456,8 +495,8 @@ jobs:
   # ==========================================================================
   station-acceptance-dirty:
     name: Cross-version install-over-existing lane + verdict
-    needs: station-acceptance
-    if: ${{ always() && ((github.event_name == 'workflow_dispatch' && (inputs.lane == 'cross-version-only' || needs.station-acceptance.result == 'success')) || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && needs.station-acceptance.result == 'success')) }}
+    needs: [candidate-eligibility, station-acceptance]
+    if: ${{ always() && needs.candidate-eligibility.outputs.eligible == 'true' && ((github.event_name == 'workflow_dispatch' && (inputs.lane == 'cross-version-only' || needs.station-acceptance.result == 'success')) || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && needs.station-acceptance.result == 'success')) }}
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 340
     steps:
@@ -857,8 +896,8 @@ jobs:
   # ==========================================================================
   station-acceptance-download-only:
     name: Download-only upgrade lane
-    needs: station-acceptance-dirty
-    if: ${{ always() && ((github.event_name == 'workflow_dispatch' && (inputs.lane == 'download-only-only' || needs.station-acceptance-dirty.result == 'success')) || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && needs.station-acceptance-dirty.result == 'success')) }}
+    needs: [candidate-eligibility, station-acceptance-dirty]
+    if: ${{ always() && needs.candidate-eligibility.outputs.eligible == 'true' && ((github.event_name == 'workflow_dispatch' && (inputs.lane == 'download-only-only' || needs.station-acceptance-dirty.result == 'success')) || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && needs.station-acceptance-dirty.result == 'success')) }}
     runs-on: [self-hosted, windows, sandbox-lab]
     timeout-minutes: 340
     steps:

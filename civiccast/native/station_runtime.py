@@ -154,6 +154,7 @@ def reverify_gstreamer_closure(gstreamer_runtime_root: Path) -> bool:
 REQUIRED_COMPONENT_ROOTS: Final[dict[str, str]] = {
     "core": ".",
     "captions-floor": "packs/captions-floor",
+    "captions-whistle": "packs/captions-whistle",
     "summary-gemma4-12b": "components/summary-gemma4-12b",
     "summary-gemma4-e4b": "components/summary-gemma4-e4b",
     "translation-translategemma-4b": "components/translation-translategemma-4b",
@@ -265,6 +266,7 @@ EXPECTED_RUNTIME_CONTRACT: Final[dict[str, object]] = {
     "egress_engine": "gstreamer",
     "egress_embed_captions": True,
     "offline_only": True,
+    "whistle_assets_root": "packs/captions-whistle",
 }
 #: Fields of a caption self-test receipt that do NOT vary by tier -- the
 #: runtime/library identity and execution posture are identical regardless

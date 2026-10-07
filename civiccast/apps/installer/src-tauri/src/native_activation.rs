@@ -34,12 +34,13 @@ use crate::native_packs::{self, PackTrust};
 // allowlist does not exempt from the exact-version check, every model pack
 // fails identity, and activation exits 66 -> installer 123: the PR #127
 // defect class, re-armed.
-pub(crate) const REQUIRED_COMPONENTS: [&str; 5] = [
+pub(crate) const REQUIRED_COMPONENTS: [&str; 6] = [
     "core",
     "captions-floor",
     "summary-gemma4-12b",
     "summary-gemma4-e4b",
     "translation-translategemma-4b",
+    "captions-whistle",
 ];
 // Verified and staged when present in a distribution, never required.
 // `pub(crate)` so `native_distribution::is_station_model_component` can
@@ -56,15 +57,21 @@ const LARGE_V3_STAGED_ROOT: &str = "components/captions-large-v3";
 // this tier, so the runtime's existing search-root resolution finds it
 // without a second, parallel on-disk convention.
 const FLOOR_STAGED_ROOT: &str = "packs/captions-floor";
+const WHISTLE_STAGED_ROOT: &str = "packs/captions-whistle";
+const OLLAMA_MODEL_COMPONENTS: [&str; 3] = [
+    "summary-gemma4-12b",
+    "summary-gemma4-e4b",
+    "translation-translategemma-4b",
+];
 
 /// Where a signed component pack lands once extracted into a station's
-/// staging tree, relative to that staging root. `captions-floor` is the one
-/// exception to the generic `components/<id>` convention (see
-/// `FLOOR_STAGED_ROOT`'s doc comment); every other known component --
-/// required or optional -- keeps the original layout.
+/// staging tree, relative to that staging root. The two caption model packs
+/// are the `packs/` exceptions to the generic `components/<id>` convention;
+/// every Ollama model and optional large-v3 pack keeps the original layout.
 fn staged_component_root(component: &str) -> String {
     match component {
         "captions-floor" => FLOOR_STAGED_ROOT.to_string(),
+        "captions-whistle" => WHISTLE_STAGED_ROOT.to_string(),
         "captions-large-v3" => LARGE_V3_STAGED_ROOT.to_string(),
         other => format!("components/{other}"),
     }
@@ -127,7 +134,7 @@ where
 pub(crate) fn compose_ollama_model_store(staging: &Path) -> Result<(), String> {
     let destination = staging.join("models").join("ollama");
     ensure_directory_or_create(&destination, "composed Ollama model store")?;
-    for component in &REQUIRED_COMPONENTS[2..] {
+    for component in OLLAMA_MODEL_COMPONENTS {
         let component_root = staging.join("components").join(component);
         ensure_existing_directory(&component_root, "staged native model component")?;
         for top_level in ["blobs", "manifests"] {
@@ -325,6 +332,8 @@ const REQUIRED_STAGED_RUNTIME_FILES: &[&str] = &[
     "packs/captions-floor/models/faster-whisper-medium/tokenizer.json",
     "packs/captions-floor/models/faster-whisper-medium/vocabulary.txt",
     "packs/captions-floor/self-test/jfk.wav",
+    "packs/captions-whistle/whistle.cact",
+    "packs/captions-whistle/libneedle.dll",
     "models/ollama/manifests/registry.ollama.ai/library/gemma4/12b",
     "models/ollama/manifests/registry.ollama.ai/library/gemma4/e4b",
     "models/ollama/manifests/registry.ollama.ai/library/translategemma/4b",
@@ -1273,13 +1282,31 @@ mod tests {
     #[cfg(target_os = "windows")]
     use std::time::Duration;
 
-    const COMPONENTS: [&str; 5] = [
+    const COMPONENTS: [&str; 6] = [
         "core",
         "captions-floor",
         "summary-gemma4-12b",
         "summary-gemma4-e4b",
         "translation-translategemma-4b",
+        "captions-whistle",
     ];
+
+    #[test]
+    fn whistle_pack_stages_at_the_runtime_caption_root() {
+        assert_eq!(
+            super::staged_component_root("captions-whistle"),
+            "packs/captions-whistle"
+        );
+        for required_file in [
+            "packs/captions-whistle/whistle.cact",
+            "packs/captions-whistle/libneedle.dll",
+        ] {
+            assert!(
+                super::REQUIRED_STAGED_RUNTIME_FILES.contains(&required_file),
+                "activation must require the runtime Whistle asset {required_file}"
+            );
+        }
+    }
 
     fn temporary_root(label: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -1685,6 +1712,16 @@ mod tests {
             ] {
                 let path = destination.join(relative);
                 std::fs::create_dir_all(path.parent().expect("floor file has a parent"))
+                    .map_err(|error| error.to_string())?;
+                std::fs::write(&path, pack.component.as_bytes())
+                    .map_err(|error| error.to_string())?;
+            }
+            return Ok(());
+        }
+        if pack.component == "captions-whistle" {
+            for relative in ["whistle.cact", "libneedle.dll"] {
+                let path = destination.join(relative);
+                std::fs::create_dir_all(destination)
                     .map_err(|error| error.to_string())?;
                 std::fs::write(&path, pack.component.as_bytes())
                     .map_err(|error| error.to_string())?;

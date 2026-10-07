@@ -29,6 +29,13 @@ const CAPTION_COMPONENT: &str = "captions-large-v3";
 /// only machine checks on it were the four values the publisher chose and
 /// signed in one operation.
 const CAPTION_FLOOR_COMPONENT: &str = "captions-floor";
+const WHISTLE_COMPONENT: &str = "captions-whistle";
+const WHISTLE_MODEL_SHA256: &str =
+    "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb";
+const WHISTLE_ENGINE_WHEEL_SHA256: &str =
+    "4f5fc86abfc50d551cdb237a34b501f36d82d4b6f5911ee7bec4e9532d44dd95";
+const WHISTLE_ENGINE_DLL_SHA256: &str =
+    "de2e2c39cd311fbd9971fad4736abc329ed970653674c203e149c4ef27fd1c62";
 const SOURCE_BOUND_COMPONENTS: [&str; 2] = [
     "native-app-payload",
     "native-server-binaries",
@@ -916,11 +923,54 @@ fn validate_component_contract(manifest: &PackManifest) -> Result<(), String> {
             &caption_tier_registry(),
         )?;
     }
+    if manifest.component == WHISTLE_COMPONENT {
+        validate_whistle_pack_contract(manifest)?;
+    }
     if matches!(
         manifest.component.as_str(),
         "summary-gemma4-12b" | "summary-gemma4-e4b" | "translation-translategemma-4b"
     ) {
         validate_ollama_model_contract(manifest)?;
+    }
+    Ok(())
+}
+
+fn validate_whistle_pack_contract(manifest: &PackManifest) -> Result<(), String> {
+    let expected_metadata: BTreeMap<String, Value> = serde_json::from_value(serde_json::json!({
+        "component": WHISTLE_COMPONENT,
+        "required": true,
+        "model_name": "whistle",
+        "model_source_url": "https://huggingface.co/Cactus-Compute/whistle/resolve/main/whistle.cact",
+        "model_bytes": 16919407_u64,
+        "model_sha256": WHISTLE_MODEL_SHA256,
+        "model_license": "Apache-2.0",
+        "engine_distribution": "cactus-needle",
+        "engine_version": "3.1.0",
+        "engine_wheel_source_url": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/python/cactus_needle-3.1.0-py3-none-win_amd64.whl",
+        "engine_wheel_sha256": WHISTLE_ENGINE_WHEEL_SHA256,
+        "engine_library": "libneedle.dll",
+        "engine_library_bytes": 1502720_u64,
+        "engine_library_sha256": WHISTLE_ENGINE_DLL_SHA256,
+        "engine_license": "Apache-2.0"
+    }))
+    .map_err(|error| format!("Whistle pack contract is invalid: {error}"))?;
+    if manifest.metadata != expected_metadata {
+        return Err(
+            "Whistle caption pack metadata does not match its reviewed contract".to_string(),
+        );
+    }
+
+    const EXPECTED_FILES: [(&str, u64, &str); 2] = [
+        ("libneedle.dll", 1_502_720, WHISTLE_ENGINE_DLL_SHA256),
+        ("whistle.cact", 16_919_407, WHISTLE_MODEL_SHA256),
+    ];
+    if manifest.files.len() != EXPECTED_FILES.len() {
+        return Err(
+            "Whistle caption pack payload must contain exactly its two reviewed files".to_string(),
+        );
+    }
+    for (path, bytes, sha256) in EXPECTED_FILES {
+        require_pinned_manifest_file(manifest, path, bytes, sha256)?;
     }
     Ok(())
 }
@@ -1502,13 +1552,15 @@ mod tests {
     use super::{
         canonical_json, caption_tier_registry, open_pack_file, reviewed_ollama_model,
         safe_archive_path, safe_relative_path, validate_component_contract,
-        validate_manifest_identity, validate_ollama_model_contract, verify_caption_pack_tiers,
-        CaptionTierSpec, PackManifest, PackManifestFile, PackTrust, CAPTION_COMPONENT,
+        validate_manifest_identity, validate_ollama_model_contract, validate_whistle_pack_contract,
+        verify_caption_pack_tiers, CaptionTierSpec, PackManifest, PackManifestFile, PackTrust,
+        CAPTION_COMPONENT,
         CAPTION_FLOOR_TIER_MODEL_FILES, CAPTION_FLOOR_TIER_MODEL_REPOSITORY,
         CAPTION_FLOOR_TIER_MODEL_REVISION, CAPTION_FLOOR_TIER_MODEL_ROOT, CAPTION_MODEL_FILES,
         CAPTION_MODEL_ROOT, CAPTION_NO_TIER_FILES, CAPTION_SELF_TEST_BYTES,
         CAPTION_SELF_TEST_PATH, CAPTION_SELF_TEST_SHA256, FLOOR_TIER_ID, LARGE_V3_TIER_ID,
-        PACK_PRODUCT,
+        PACK_PRODUCT, WHISTLE_COMPONENT, WHISTLE_ENGINE_DLL_SHA256, WHISTLE_ENGINE_WHEEL_SHA256,
+        WHISTLE_MODEL_SHA256,
     };
     use ed25519_dalek::SigningKey;
     use serde_json::{json, Value};
@@ -1967,6 +2019,72 @@ mod tests {
             files,
             metadata,
         }
+    }
+
+    fn valid_whistle_manifest() -> PackManifest {
+        let files = vec![
+            PackManifestFile {
+                path: "libneedle.dll".to_string(),
+                bytes: 1_502_720,
+                sha256: WHISTLE_ENGINE_DLL_SHA256.to_string(),
+            },
+            PackManifestFile {
+                path: "whistle.cact".to_string(),
+                bytes: 16_919_407,
+                sha256: WHISTLE_MODEL_SHA256.to_string(),
+            },
+        ];
+        let metadata: BTreeMap<String, Value> = serde_json::from_value(json!({
+            "component": WHISTLE_COMPONENT,
+            "required": true,
+            "model_name": "whistle",
+            "model_source_url": "https://huggingface.co/Cactus-Compute/whistle/resolve/main/whistle.cact",
+            "model_bytes": 16_919_407_u64,
+            "model_sha256": WHISTLE_MODEL_SHA256,
+            "model_license": "Apache-2.0",
+            "engine_distribution": "cactus-needle",
+            "engine_version": "3.1.0",
+            "engine_wheel_source_url": "https://huggingface.co/Cactus-Compute/needle3/resolve/main/python/cactus_needle-3.1.0-py3-none-win_amd64.whl",
+            "engine_wheel_sha256": WHISTLE_ENGINE_WHEEL_SHA256,
+            "engine_library": "libneedle.dll",
+            "engine_library_bytes": 1_502_720_u64,
+            "engine_library_sha256": WHISTLE_ENGINE_DLL_SHA256,
+            "engine_license": "Apache-2.0"
+        }))
+        .expect("Whistle metadata");
+        PackManifest {
+            schema_version: 1,
+            product: PACK_PRODUCT.to_string(),
+            component: WHISTLE_COMPONENT.to_string(),
+            product_version: "station-models-1".to_string(),
+            compatible_core: "station-models-1".to_string(),
+            signing_key_id: "test".to_string(),
+            file_count: files.len(),
+            total_bytes: files.iter().map(|item| item.bytes).sum(),
+            files,
+            metadata,
+        }
+    }
+
+    #[test]
+    fn whistle_contract_accepts_only_the_pinned_model_and_engine_files() {
+        let manifest = valid_whistle_manifest();
+        validate_whistle_pack_contract(&manifest).expect("pinned Whistle contract");
+
+        let mut substituted_engine = manifest.clone();
+        substituted_engine.files[0].sha256 = "00".repeat(32);
+        assert!(validate_whistle_pack_contract(&substituted_engine)
+            .expect_err("substituted engine DLL must fail")
+            .contains("substituted bytes"));
+
+        let mut substituted_wheel = manifest;
+        substituted_wheel.metadata.insert(
+            "engine_wheel_sha256".to_string(),
+            Value::String("00".repeat(32)),
+        );
+        assert!(validate_whistle_pack_contract(&substituted_wheel)
+            .expect_err("unreviewed engine wheel must fail")
+            .contains("reviewed contract"));
     }
 
     #[test]

@@ -96,6 +96,8 @@ from civiccast.native.app_payload import (  # noqa: E402
     WHISPER_MODEL_PAYLOAD_DIR,
     WHISPER_MODEL_REPO,
     WHISPER_MODEL_REVISION,
+    WHISTLE_ENGINE_CONTRACT,
+    WHISTLE_ENGINE_VERSION,
     assert_authorized_app_distributions,
     assert_no_prohibited_declared_licenses,
     canonical_distribution_name,
@@ -104,6 +106,10 @@ from civiccast.native.app_payload import (  # noqa: E402
 )
 from civiccast.native.app_payload import (  # noqa: E402
     license_for_payload_path as app_payload_license_for_path,
+)
+from civiccast.native.whistle_assets import (  # noqa: E402
+    WhistleAssetError,
+    stage_engine_library,
 )
 from scripts.build_native_pyav_wheel import (  # noqa: E402
     EXPECTED_WHEEL_BYTES as REVIEWED_PYAV_WHEEL_BYTES,
@@ -120,6 +126,7 @@ DEFAULT_PYAV_CACHE = ROOT / "build" / "native-pyav-cache"
 REVIEWED_PYAV_WHEEL_NAME = "av-18.0.0-cp311-abi3-win_amd64.whl"
 DEFAULT_EXTERNAL_LICENSE_CACHE = ROOT / "build" / "native-license-cache"
 DEFAULT_WHISPER_MODEL_CACHE = ROOT / "build" / "native-model-cache" / "faster-whisper-large-v3"
+DEFAULT_WHISTLE_ENGINE_CACHE = ROOT / "build" / "native-whistle-cache"
 #: Where the pinned interpreter zip is cached (git-ignored). The build verifies
 #: its bytes against INTERPRETER_SHA256 before extracting -- a cached file with
 #: the wrong hash is refused, so the cache can never poison the payload.
@@ -134,6 +141,7 @@ REQUIRED_RUNTIME_IMPORTS = frozenset(
         "ctranslate2",
         "faster_whisper",
         "huggingface_hub",
+        "needle",
         "numpy",
         "onnxruntime",
         "tokenizers",
@@ -496,6 +504,30 @@ def place_whisper_model(
     return index
 
 
+def place_whistle_engine(
+    site_packages: Path,
+    *,
+    cache: Path = DEFAULT_WHISTLE_ENGINE_CACHE,
+) -> dict[str, tuple[str, str, str]]:
+    """Stage the pinned Needle DLL in cactus-needle's canonical package path."""
+
+    package_root = site_packages / "needle"
+    if not package_root.is_dir():
+        _fail("cactus-needle 3.1.0 is not installed in the app payload")
+    destination = package_root / "libneedle3.dll"
+    try:
+        stage_engine_library(destination, cache=cache)
+    except WhistleAssetError as exc:
+        _fail(f"could not stage the pinned Whistle engine library: {exc}")
+    return {
+        "Lib/site-packages/needle/libneedle3.dll": (
+            "cactus-needle",
+            WHISTLE_ENGINE_VERSION,
+            "Apache-2.0",
+        )
+    }
+
+
 _PAYLOAD_RUNTIME_PROBE = r"""
 import importlib
 import json
@@ -512,6 +544,7 @@ required = (
     "ctranslate2",
     "faster_whisper",
     "huggingface_hub",
+    "needle",
     "numpy",
     "onnxruntime",
     "tokenizers",
@@ -1975,6 +2008,7 @@ def build_app_manifest(
             "source_state": source_identity,
         },
         "caption_pack": dict(CAPTION_PACK_CONTRACT),
+        "whistle_engine": dict(WHISTLE_ENGINE_CONTRACT),
         "app_lock_sha256": app_lock_sha256,
         "app_build_lock_sha256": APP_BUILD_REQUIREMENTS_SHA256,
         "build_toolchain_lock_sha256": APP_BUILD_TOOLCHAIN_LOCK_SHA256,
@@ -2128,6 +2162,7 @@ def build(
         msvc_runtime.resolve() if msvc_runtime is not None else locate_msvc_runtime(),
     )
     external_license_index = place_external_license_artifacts(out)
+    external_license_index.update(place_whistle_engine(site_packages))
     print("      Binding the required signed large-v3 caption-pack contract ...")
     runtime_report = run_payload_runtime_probe(out)
     runtime_imports = runtime_report.get("imports")

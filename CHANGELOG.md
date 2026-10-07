@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased — beta.11 caption candidate
+## [Unreleased]
+
+**v1.0.0-beta.11 — owner-held unpublished candidate.**
+
+- Owner accepted the 24-hour three-station caption soak as sufficient soak evidence for Beta 11; see [results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md). Packaged installer qualification remains separate.
 
 - The local dev7 caption candidate completed a successful eight-hour three-station soak on October 6: all 66 sampled channel checks passed, with no station restart, logged caption-audio loss, caption pauses or Whistle fallback. Review/evidence accumulation remained zero. Observation continues; this does not claim release-grade loudness or full release readiness. Evidence: [eight-hour caption soak](docs/ops/beta11-dev7-eight-hour-caption-soak-2026-10-06.md).
 - Live captions no longer create review records or audio-evidence archives automatically, and archive retention no longer gates broadcast readiness. Working audio, caption history and delivery bookkeeping have explicit bounds for unattended operation.
@@ -20,10 +24,6 @@ from [`scottconverse/civiccast`](https://github.com/scottconverse/civiccast) at
 **fresh history**. Entries before that date live in that repository's own
 CHANGELOG; nothing was deleted there. See [`BRANCHES.md`](BRANCHES.md) for what
 came across and what deliberately did not.
-
-## [Unreleased]
-
-Nothing yet.
 
 ## [1.0.0-beta.10] - 2026-10-02
 

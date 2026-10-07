@@ -75,7 +75,7 @@ One more rule of thumb: dedicate the computer. The station runs a database, a we
 
 ### Graphics card: what it changes
 
-**Beta.11 live-caption candidate.** Whistle is the default live speech engine on native Windows stations. It runs on the processor, so a dedicated GPU is not needed for the primary engine. Live captions publish the first recognition; they do not wait for a second transcription to agree. Whistle requests share one inference slot across the three stations.
+**Beta.11 live-caption candidate.** Whistle is the default live speech engine on native Windows stations. It runs on the processor, so a dedicated GPU is not needed for the primary engine. Live captions publish the first recognition; they do not wait for a second transcription to agree. Whistle processes one recognition request at a time across the three stations. The owner accepted a 24-hour three-station caption soak on one lab machine; this does not establish performance on every CPU.
 
 Whisper is the backup when Whistle fails or exceeds its request deadline. The affected station stays on Whisper until the runtime restarts. Whisper also remains the engine for recorded-media captions and can be selected as the primary live engine on a machine with a supported NVIDIA GPU and CUDA libraries. AMD or Intel graphics do not provide CUDA acceleration. CPU-only Whisper fallback at the Medium tier has not demonstrated real-time operation in this trial.
 

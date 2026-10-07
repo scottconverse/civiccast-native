@@ -484,7 +484,7 @@ The loudness target is a setting of the channel and not a fixed number, because 
 
 CivicCast captions in two different ways, for two different needs. The *live* path captions a channel while it airs, so captions can be embedded in the stream. The *offline* path captions a finished recording after it is published, with a human review step before anything is attached. Figure 16-10 shows both, and marks the points where audio can be thrown away.
 
-**Local beta.11 dev7 candidate:** The live path below uses Whistle first, Whisper as backup, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. These changes describe the local candidate, not the published beta.10 installer or a completed long-duration proof.
+**Beta.11 caption candidate:** The live path below uses Whistle first, Whisper as backup, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. These changes describe the local candidate, not the published beta.10 installer. The owner accepted a 24-hour three-station lab caption soak; verification of the packaged beta.11 installer remains separate.
 
 ```mermaid
 flowchart TB

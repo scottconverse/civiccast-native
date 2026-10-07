@@ -80,6 +80,7 @@ def _write_station(
         "egress_engine": "gstreamer",
         "egress_embed_captions": True,
         "offline_only": True,
+        "whistle_assets_root": "packs/captions-whistle",
     }
     runtime.update(runtime_updates or {})
     packs: list[dict[str, object]] = [
@@ -91,6 +92,11 @@ def _write_station(
             "component": "captions-floor",
             "root": "packs/captions-floor",
             "outer_sha256": "55" * 32,
+        },
+        {
+            "component": "captions-whistle",
+            "root": "packs/captions-whistle",
+            "outer_sha256": "66" * 32,
         },
         {
             "component": "summary-gemma4-12b",

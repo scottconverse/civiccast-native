@@ -1,22 +1,22 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.10 (native Windows line)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.11 (native Windows line)
 author: The CivicCast Authors
-date: 2026-10-03
+date: 2026-10-07
 urlcolor: blue
 toccolor: black
 ---
 
 # About this manual {#about}
 
-This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.10**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11 candidate**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
-CivicCast beta.10 was published on 2 October 2026 as a **GitHub pre-release, a "beta candidate"**. It is not a production release. This manual says plainly what was tested and what was not, so you can decide how much to rely on it.
+Beta.11 is being prepared for release. Its Whistle live-caption changes completed an owner-accepted 24-hour three-station lab soak. The packaged beta.11 installer has not yet completed installation verification. The previous beta.10 was published on 2 October 2026 as a GitHub pre-release; its installation evidence below is historical and does not verify beta.11. Neither version is a production release. This manual says plainly what was tested and what was not, so you can decide how much to rely on it.
 
-- **Tested and passed:** a clean install in a Windows test sandbox ran the installer, started the station, showed the staff console and the resident portal, ran a clerk workflow, produced captions, played a channel and ran a short five-minute soak. All 10 checks in the clean-install lane passed.
-- **Tested earlier, on an earlier build of the same engine:** an eight-hour lab run with three channels on one machine, and about 59 hours of two channels staying on the air on one lab station. Details and limits are in [Appendix H](#app-evidence).
+- **Beta.10 installer tested and passed:** a clean install in a Windows test sandbox ran the installer, started the station, showed the staff console and the resident portal, ran a clerk workflow, produced captions, played a channel and ran a short five-minute soak. All 10 checks in the clean-install lane passed.
+- **Earlier beta.10 operation evidence:** an eight-hour lab run with three channels on one machine, and about 59 hours of two channels staying on the air on one lab station. Details and limits are in [Appendix H](#app-evidence).
 - **Not tested:** upgrading from an earlier release, a first install with neither the full kit nor an earlier install, and use at a real station. No human field tester has signed off. Real cable-company acceptance and physical broadcast video cards are unproven.
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
@@ -3239,7 +3239,7 @@ One more rule of thumb: dedicate the computer. The station runs a database, a we
 
 #### Graphics card: what it changes
 
-**Beta.11 live-caption candidate.** Whistle is the default live speech engine on native Windows stations. It runs on the processor, so a dedicated GPU is not needed for the primary engine. Live captions publish the first recognition; they do not wait for a second transcription to agree. Whistle requests share one inference slot across the three stations.
+**Beta.11 live-caption candidate.** Whistle is the default live speech engine on native Windows stations. It runs on the processor, so a dedicated GPU is not needed for the primary engine. Live captions publish the first recognition; they do not wait for a second transcription to agree. Whistle processes one recognition request at a time across the three stations. The owner accepted a 24-hour three-station caption soak on one lab machine; this does not establish performance on every CPU.
 
 Whisper is the backup when Whistle fails or exceeds its request deadline. The affected station stays on Whisper until the runtime restarts. Whisper also remains the engine for recorded-media captions and can be selected as the primary live engine on a machine with a supported NVIDIA GPU and CUDA libraries. AMD or Intel graphics do not provide CUDA acceleration. CPU-only Whisper fallback at the Medium tier has not demonstrated real-time operation in this trial.
 
@@ -4149,11 +4149,11 @@ The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service**
 
 #### Live captions: what the settings change
 
-**Local beta.11 dev7 candidate:** Whistle is the primary live engine, with Whisper as backup. Whistle inference uses the restored shared lock; low-confidence recognition still airs immediately, and overlapping audio is deduplicated without requiring two readings to agree. The beta.10 CPU/CUDA settings below describe its Whisper runtime and remain relevant when selecting Whisper; they do not describe Whistle concurrency.
+**Beta.11 caption candidate:** Whistle is the primary live engine, with Whisper as backup. Whistle inference uses the restored shared lock; low-confidence recognition still airs immediately, and overlapping audio is deduplicated without requiring two readings to agree. The beta.10 CPU/CUDA settings below describe its Whisper runtime and remain relevant when selecting Whisper; they do not describe Whistle concurrency.
 
 Live captions are produced by the caption tap. The native station turns it on (`CIVICCAST_CAPTION_TAP=inline`) unless the service environment says `CIVICCAST_CAPTION_TAP=off`, in which case the tap does not run at all. The console switch is the safe-direction override: `off` in the environment forces live captions off whatever the profile says, but no environment value can turn them on against a profile that is off.
 
-The tap works in 5-second audio segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scans every 2.0 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and tolerates a backlog of 2 segments per channel (`CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`) before it sheds the oldest audio and keeps captioning from the newest. On the CPU one live caption worker serves the whole station; with a CUDA runtime up to three channels run at once. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` forces another number. On the CPU the live tap uses between 1 and 2 CPU threads (one per 8 processors, capped at 2); `CIVICCAST_CAPTION_TAP_CPU_THREADS` and `CIVICCAST_WHISPER_CPU_THREADS` override that, but the live tap refuses `0` ("every core") and caps values above 2. The playout workers run at a higher priority than the control plane so captions never outrank the picture.
+For the Whisper runtime, the tap works in 5-second audio segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scans every 2.0 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and tolerates a backlog of 2 segments per channel (`CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`) before it sheds the oldest audio and keeps captioning from the newest. On the CPU one live caption worker serves the whole station; with a CUDA runtime up to three channels run at once. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` forces another number. On the CPU the live tap uses between 1 and 2 CPU threads (one per 8 processors, capped at 2); `CIVICCAST_CAPTION_TAP_CPU_THREADS` and `CIVICCAST_WHISPER_CPU_THREADS` override that, but the live tap refuses `0` ("every core") and caps values above 2. The playout workers run at a higher priority than the control plane so captions never outrank the picture.
 
 A separate proof loop decodes the emitted stream, compares the captions it finds with the expected ones, and only then marks a channel's captions "on" (a fresh pass is required; otherwise the Channels screen shows "Not verified"). It runs every 30 seconds with a 15-second limit.
 
@@ -4167,7 +4167,7 @@ When a recording is published, a job transcribes it in 30-second chunks (`CIVICC
 
 #### Caption evidence and retention
 
-**Local beta.11 dev7 candidate:** Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. It does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. Each channel keeps at most 12 queued completed segments, plus inputs currently being processed and the segment being written. At the default five-second cadence, the queued limit is 60 seconds.
+**Beta.11 caption candidate:** Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. It does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. Each channel keeps at most 12 queued completed segments, plus inputs currently being processed and the segment being written. At the default five-second cadence, the queued limit is 60 seconds.
 
 The live caption window is limited to the most recent 300 seconds and at most 512 cues. Delivery tracking follows that window instead of accumulating for the whole on-air session. Archive-wide caption review/evidence discovery is not a live-caption or broadcast-readiness prerequisite. These limits are candidate implementation defaults, not controls on the configuration screen.
 
@@ -4730,7 +4730,7 @@ The playout engine stores health telemetry in the database. Nothing trims it aut
 
 #### Caption data
 
-**Local beta.11 dev7 candidate:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
+**Beta.11 caption candidate:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
 
 The live caption file and delivery bookkeeping retain a rolling 300-second window with at most 512 cues. The live worker does not scan the caption-review archive, and archive evidence does not gate broadcast readiness. These bounds replace manual weekly live-caption cleanup. If working files exceed these bounds, report a fault rather than treating routine deletion by an operator as normal operation.
 
@@ -5164,7 +5164,7 @@ These come from the beta.10 whole-repository audit (`audit-lite-whole-repo-beta1
 | B-010 | The failed-login limiter has no memory bound. | Keep `/api/staff/*` on loopback. |
 | B-012 | `/api/hardware` shows the host name to anyone. | Treat the host name as public. |
 | B-019 | `civiccast model set-provider-key --key <value>` puts the key on the command line, visible to other programs in the process list. | Supply the key in the `CIVICCAST_PROVIDER_API_KEY` environment variable instead. |
-| B-003, B-004, B-005, B-009 | Historical beta.10 caption data growth (see retention). | Local beta.11 dev7 removes automatic live review/evidence accumulation and bounds live working state; verify the candidate before deployment. |
+| B-003, B-004, B-005, B-009 | Historical beta.10 caption data growth (see retention). | Beta.11 removes automatic live review/evidence accumulation and bounds live working state; verify the candidate before deployment. |
 | A-001, A-008 | A gap in the program-change watchdog, and no free-space guard on the 60 GB cache. | See [Chapter 12](#ch-operations). |
 | C-001 | Automated tests were red in about 110 places at the time of the audit. | Do not read the beta label as a passing test suite. |
 
@@ -6316,7 +6316,7 @@ The loudness target is a setting of the channel and not a fixed number, because 
 
 CivicCast captions in two different ways, for two different needs. The *live* path captions a channel while it airs, so captions can be embedded in the stream. The *offline* path captions a finished recording after it is published, with a human review step before anything is attached. Figure 16-10 shows both, and marks the points where audio can be thrown away.
 
-**Local beta.11 dev7 candidate:** The live path below uses Whistle first, Whisper as backup, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. These changes describe the local candidate, not the published beta.10 installer or a completed long-duration proof.
+**Beta.11 caption candidate:** The live path below uses Whistle first, Whisper as backup, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. These changes describe the local candidate, not the published beta.10 installer. The owner accepted a 24-hour three-station lab caption soak; verification of the packaged beta.11 installer remains separate.
 
 ![The caption pipelines. Boxes with a heavy red outline are where live audio can be shed under load. The offline path sheds nothing.](manual/diagrams/d47be929560a.png){width=100%}
 

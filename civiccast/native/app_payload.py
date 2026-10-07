@@ -79,6 +79,21 @@ __all__ = [
     "WHISPER_MODEL_PAYLOAD_DIR",
     "WHISPER_MODEL_REPO",
     "WHISPER_MODEL_REVISION",
+    "WHISTLE_ENGINE_CONTRACT",
+    "WHISTLE_ENGINE_DLL_BYTES",
+    "WHISTLE_ENGINE_DLL_SHA256",
+    "WHISTLE_ENGINE_MEMBER",
+    "WHISTLE_ENGINE_VERSION",
+    "WHISTLE_ENGINE_WHEEL_BYTES",
+    "WHISTLE_ENGINE_WHEEL_SHA256",
+    "WHISTLE_ENGINE_WHEEL_URL",
+    "WHISTLE_MODEL_BYTES",
+    "WHISTLE_MODEL_LICENSE",
+    "WHISTLE_MODEL_SHA256",
+    "WHISTLE_MODEL_SOURCE_URL",
+    "WHISTLE_PACK_COMPONENT",
+    "WHISTLE_PACK_CONTRACT",
+    "WHISTLE_PACK_FILES",
     "AppPayloadError",
     "ProhibitedLicenseError",
     "UnauthorizedAppDistributionError",
@@ -92,7 +107,7 @@ __all__ = [
     "resolve_app_license",
 ]
 
-APP_MANIFEST_SCHEMA_VERSION: Final[int] = 7
+APP_MANIFEST_SCHEMA_VERSION: Final[int] = 8
 #: The pack "component" identity for the signed native-app-payload
 #: ``.ccpack`` (``scripts/build_native_app_payload_pack.py``): the CPython
 #: 3.12 embeddable interpreter + the ``civiccast`` wheel + its hash-pinned
@@ -161,6 +176,60 @@ WHISPER_MODEL_FILES: Final[dict[str, tuple[int, str]]] = {
         1_068_114,
         "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
     ),
+}
+WHISTLE_PACK_COMPONENT: Final[str] = "captions-whistle"
+WHISTLE_MODEL_SOURCE_URL: Final[str] = (
+    "https://huggingface.co/Cactus-Compute/whistle/resolve/main/whistle.cact"
+)
+WHISTLE_MODEL_BYTES: Final[int] = 16_919_407
+WHISTLE_MODEL_SHA256: Final[str] = (
+    "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb"
+)
+WHISTLE_MODEL_LICENSE: Final[str] = "Apache-2.0"
+WHISTLE_ENGINE_VERSION: Final[str] = "3.1.0"
+WHISTLE_ENGINE_WHEEL_URL: Final[str] = (
+    "https://huggingface.co/Cactus-Compute/needle3/resolve/main/"
+    "python/cactus_needle-3.1.0-py3-none-win_amd64.whl"
+)
+WHISTLE_ENGINE_WHEEL_BYTES: Final[int] = 683_889
+WHISTLE_ENGINE_WHEEL_SHA256: Final[str] = (
+    "4f5fc86abfc50d551cdb237a34b501f36d82d4b6f5911ee7bec4e9532d44dd95"
+)
+WHISTLE_ENGINE_MEMBER: Final[str] = "needle/libneedle3.dll"
+WHISTLE_ENGINE_DLL_BYTES: Final[int] = 1_502_720
+WHISTLE_ENGINE_DLL_SHA256: Final[str] = (
+    "de2e2c39cd311fbd9971fad4736abc329ed970653674c203e149c4ef27fd1c62"
+)
+WHISTLE_PACK_FILES: Final[dict[str, tuple[int, str]]] = {
+    "libneedle.dll": (WHISTLE_ENGINE_DLL_BYTES, WHISTLE_ENGINE_DLL_SHA256),
+    "whistle.cact": (WHISTLE_MODEL_BYTES, WHISTLE_MODEL_SHA256),
+}
+WHISTLE_PACK_CONTRACT: Final[dict[str, object]] = {
+    "component": WHISTLE_PACK_COMPONENT,
+    "required": True,
+    "model_name": "whistle",
+    "model_source_url": WHISTLE_MODEL_SOURCE_URL,
+    "model_bytes": WHISTLE_MODEL_BYTES,
+    "model_sha256": WHISTLE_MODEL_SHA256,
+    "model_license": WHISTLE_MODEL_LICENSE,
+    "engine_distribution": "cactus-needle",
+    "engine_version": WHISTLE_ENGINE_VERSION,
+    "engine_wheel_source_url": WHISTLE_ENGINE_WHEEL_URL,
+    "engine_wheel_sha256": WHISTLE_ENGINE_WHEEL_SHA256,
+    "engine_library": "libneedle.dll",
+    "engine_library_bytes": WHISTLE_ENGINE_DLL_BYTES,
+    "engine_library_sha256": WHISTLE_ENGINE_DLL_SHA256,
+    "engine_license": "Apache-2.0",
+}
+WHISTLE_ENGINE_CONTRACT: Final[dict[str, object]] = {
+    "distribution": "cactus-needle",
+    "version": WHISTLE_ENGINE_VERSION,
+    "license": "Apache-2.0",
+    "wheel_source_url": WHISTLE_ENGINE_WHEEL_URL,
+    "wheel_sha256": WHISTLE_ENGINE_WHEEL_SHA256,
+    "package_file": "Lib/site-packages/needle/libneedle3.dll",
+    "file_bytes": WHISTLE_ENGINE_DLL_BYTES,
+    "file_sha256": WHISTLE_ENGINE_DLL_SHA256,
 }
 CAPTION_PACK_COMPONENT: Final[str] = "captions-large-v3"
 CAPTION_PACK_CONTRACT: Final[dict[str, object]] = {

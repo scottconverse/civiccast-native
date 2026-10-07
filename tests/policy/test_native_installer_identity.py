@@ -557,28 +557,30 @@ def test_bootstrap_postinstall_resolves_the_station_index_kit_first_then_embedde
     assert "!insertmacro CIVICCAST_ALERT" not in activation_block
 
 
-def test_native_bootstrap_embeds_only_the_two_tiny_station_resources() -> None:
-    """The embedded-index fix must not become a hole in the "no embedded
-    multi-gigabyte payload, ever" rule that
-    scripts/build_native_bootstrap.py::validate_native_bootstrap_config
-    enforces. Exactly three resources, and the two station entries must land
-    under a `station/` subdirectory so the hook's $INSTDIR\\station\\... probe
-    finds them (Tauri maps resource VALUES relative to the install root)."""
+def test_native_bootstrap_embeds_only_the_bounded_whistle_station_pack() -> None:
+    """The embedded Whistle pack must not become a hole in the no-large-model
+    payload rule. Exactly four resources are allowed; the three station
+    entries must land under `station/` so the hook's $INSTDIR\\station\\...
+    probe finds them (Tauri maps resource VALUES relative to the install root).
+    The builder separately verifies the Whistle pack's signed-index identity
+    and strict 25 MB size ceiling."""
     resources = _deep_merge(_load(BASE_CONFIG), _load(NATIVE_CONFIG))["bundle"]["resources"]
 
     assert resources == {
         "resources/vc_redist.x64.exe": "vc_redist.x64.exe",
         "resources/station/station-index.json": "station/station-index.json",
         "resources/station/core.ccpack": "station/core.ccpack",
-    }, "bundle.resources must carry the VC++ prerequisite plus exactly the two tiny station files"
+        "resources/station/captions-whistle.ccpack": "station/captions-whistle.ccpack",
+    }, "bundle.resources must carry the VC++ prerequisite plus the exact station embed allowlist"
 
-    # No pack other than `core` may be embedded. `core`'s payload is a
-    # placeholder NOTICE (build_native_station_bundle.py::
-    # _core_placeholder_sources); every real component pack is multi-gigabyte
-    # model bytes and belongs in the kit or the per-SHA cache.
+    # Only the tiny placeholder `core` pack and bounded local Whistle pack may
+    # be embedded. Other component packs remain in the kit or per-SHA cache.
     embedded_packs = [value for value in resources.values() if value.endswith(".ccpack")]
-    assert embedded_packs == ["station/core.ccpack"], (
-        f"only the placeholder `core` pack may be embedded, found {embedded_packs}"
+    assert set(embedded_packs) == {
+        "station/core.ccpack",
+        "station/captions-whistle.ccpack",
+    } and len(embedded_packs) == 2, (
+        f"only the placeholder `core` and bounded Whistle packs may be embedded, found {embedded_packs}"
     )
 
 
@@ -588,7 +590,8 @@ def test_bootstrap_postinstall_verifies_the_extracted_pack_tree_not_the_retired_
     """ADAPTATION pin: the retired file's D2 checks re-verified the WP-6
     embedded $INSTDIR\\runtime / $INSTDIR\\native-runtime trees against an
     in-tree manifest file. Neither path is ever laid down by the bootstrap
-    build (bundle.resources carries only vc_redist.x64.exe), so that exact
+    build (bundle.resources carries only station activation resources and the
+    VC++ prerequisite), so that exact
     check must NOT reappear here -- it would unconditionally fail-abort every
     install. The adapted check re-verifies the pack-derived tree instead."""
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))

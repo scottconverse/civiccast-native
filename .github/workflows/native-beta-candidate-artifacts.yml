@@ -84,6 +84,15 @@ on:
           builds always upload.
         type: boolean
         default: false
+      prepare_only:
+        description: >-
+          Hosted only. Build, sign, and verify the complete candidate, then
+          upload the signed installer/packs (~3.4 GB), signed station index,
+          Whistle pack, checksums, and build reports. Do not upload the full
+          model bundle or assemble the installable kit. These preparation
+          artifacts are not installable and are not eligible for Gate A.
+        type: boolean
+        default: false
   push:
     branches:
       - release/native-beta-1.0.0-beta.1-rc1
@@ -95,7 +104,7 @@ concurrency:
   # (cancel-in-progress: false) instead of racing the same hardware. Hosted
   # dispatches/pushes never touch that box, so they keep the original
   # same-workflow-only serialization.
-  group: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && 'sandbox-lab' || 'native-beta-candidate-artifacts' }}
+  group: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted' && !inputs.prepare_only) && 'sandbox-lab' || 'native-beta-candidate-artifacts' }}
   cancel-in-progress: false
 
 permissions:
@@ -109,12 +118,12 @@ jobs:
     # pack as Tauri bundle.resources (tauri.native.conf.json), so a
     # download-only install/upgrade of setup.exe alone still has an index to
     # activate against (nsis-hooks-bootstrap.nsh, d4-activate-station,
-    # source (b)). Those two files are produced by build-native-station-bundle
+    # source (b)). Those three resources are produced by build-native-station-bundle
     # below, so this job now depends on it. Nothing about the USB kit changes:
     # assemble-native-beta-kit still co-locates the FULL bundle at
     # .\station\ next to setup.exe, and the hook still prefers that copy.
     needs: build-native-station-bundle
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted' && !inputs.prepare_only) && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     timeout-minutes: 180
     env:
       PACK_PUBLIC_KEY_BASE64: ${{ vars.CIVICCAST_PACK_PUBLIC_KEY_BASE64 }}
@@ -130,10 +139,15 @@ jobs:
         run: |
           $buildTarget = "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target) || 'hosted' }}"
           if ($buildTarget -notin @("hosted", "self-hosted")) { $buildTarget = "hosted" }
+          $prepareOnly = "${{ (github.event_name == 'workflow_dispatch' && inputs.prepare_only) || 'false' }}"
+          if ($prepareOnly -eq "true" -and $buildTarget -ne "hosted") {
+            throw "prepare_only is supported only with build_target=hosted."
+          }
           $uploadLarge = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_large_artifacts) || 'false' }}"
           $uploadCandidateBinaries = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_candidate_binaries) || 'false' }}"
           $candidateRoot = "C:\CivicCastTester\candidates\${{ github.sha }}"
           "BUILD_TARGET=$buildTarget" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PREPARE_ONLY=$prepareOnly" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UPLOAD_LARGE_ARTIFACTS=$uploadLarge" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UPLOAD_CANDIDATE_BINARIES=$uploadCandidateBinaries" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CANDIDATE_ROOT=$candidateRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -648,14 +662,15 @@ jobs:
             }
           }
 
-      # Hosted only. build-native-station-bundle publishes the two tiny files
+      # Hosted only. build-native-station-bundle publishes the index, core,
+      # and one bounded Whistle pack
       # this installer embeds as their OWN small artifact
-      # (native-station-embed-<sha>, a few KB) precisely so this job never has
+      # (native-station-embed-<sha>, ~18.4 MB) precisely so this job never has
       # to download the ~18.6 GB full-bundle artifact to obtain them.
       # actions/download-artifact has no file-level filter within one
       # artifact, so a second small artifact is the only way to fetch a
       # kilobyte instead of eighteen gigabytes here.
-      - name: Download the embedded station index and core pack (hosted)
+      - name: Download the embedded station index and station packs (hosted)
         if: env.BUILD_TARGET != 'self-hosted'
         timeout-minutes: 10
         uses: actions/download-artifact@v4
@@ -663,13 +678,14 @@ jobs:
           name: native-station-embed-${{ github.sha }}
           path: station-embed
 
-      - name: Stage the embedded station index and core pack for the Tauri build
+      - name: Stage embedded station resources for the Tauri build
         shell: pwsh
         run: |
-          # Places the signed station index and the tiny `core` pack at the
-          # bundle.resources source paths tauri.native.conf.json declares, so
-          # the built setup.exe lays them down at
+          # Places the signed station index, tiny `core` pack, and mandatory
+          # local Whistle pack at the bundle.resources paths in
+          # tauri.native.conf.json, so setup.exe lays them down at
           # $INSTDIR\station\station-index.json and $INSTDIR\station\core.ccpack.
+          # The Whistle pack also lands at $INSTDIR\station\captions-whistle.ccpack.
           # That is the fallback source nsis-hooks-bootstrap.nsh's
           # d4-activate-station step uses when setup.exe was downloaded on its
           # own (no kit .\station\ beside it).
@@ -691,7 +707,7 @@ jobs:
           $destination = "civiccast/apps/installer/src-tauri/resources/station"
           if (Test-Path -LiteralPath $destination) { Remove-Item -Recurse -Force $destination }
           New-Item -ItemType Directory -Force -Path $destination | Out-Null
-          foreach ($name in @("station-index.json", "core.ccpack")) {
+          foreach ($name in @("station-index.json", "core.ccpack", "captions-whistle.ccpack")) {
             $found = Get-ChildItem -Path $source -Recurse -Filter $name | Select-Object -First 1
             if (-not $found) { throw "Embedded station staging: $name not found under $source." }
             Copy-Item -LiteralPath $found.FullName -Destination (Join-Path $destination $name)
@@ -991,7 +1007,7 @@ jobs:
   # "Free ..." steps below.
   build-native-station-bundle:
     name: Provision and sign the native station bundle (K1)
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted' && !inputs.prepare_only) && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     timeout-minutes: 180
     env:
       PACK_SIGNING_KEY_ID: ${{ vars.CIVICCAST_PACK_SIGNING_KEY_ID }}
@@ -1006,9 +1022,14 @@ jobs:
         run: |
           $buildTarget = "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target) || 'hosted' }}"
           if ($buildTarget -notin @("hosted", "self-hosted")) { $buildTarget = "hosted" }
+          $prepareOnly = "${{ (github.event_name == 'workflow_dispatch' && inputs.prepare_only) || 'false' }}"
+          if ($prepareOnly -eq "true" -and $buildTarget -ne "hosted") {
+            throw "prepare_only is supported only with build_target=hosted."
+          }
           $uploadLarge = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_large_artifacts) || 'false' }}"
           $candidateRoot = "C:\CivicCastTester\candidates\${{ github.sha }}"
           "BUILD_TARGET=$buildTarget" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PREPARE_ONLY=$prepareOnly" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UPLOAD_LARGE_ARTIFACTS=$uploadLarge" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CANDIDATE_ROOT=$candidateRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           if ($buildTarget -eq "self-hosted") {
@@ -1171,6 +1192,32 @@ jobs:
           if (-not $provisioned) { throw "Could not provision the pinned captions-floor bundle root after 3 attempts." }
           Remove-Item -Recurse -Force $captionsFloorCache
 
+      - name: Provision the pinned Whistle model and engine root
+        shell: pwsh
+        run: |
+          # This producer fetches only the pinned Cactus Whistle model and
+          # the pinned cactus-needle Windows wheel, checks their byte counts
+          # and SHA-256 values, and extracts only needle/libneedle3.dll into
+          # the station pack's libneedle.dll path. The pack verifier repeats
+          # those checks before signing; no installer-side network fetch is
+          # needed at station activation.
+          $whistleRoot = "build/native-captions-whistle-root"
+          if (Test-Path -LiteralPath $whistleRoot) {
+            Remove-Item -Recurse -Force -LiteralPath $whistleRoot
+          }
+          $whistleCache = Join-Path $env:RUNNER_TEMP "civiccast-station-whistle-cache"
+          $provisioned = $false
+          foreach ($attempt in 1..3) {
+            uv run python -I -B scripts/provision_native_whistle_assets.py `
+              --cache $whistleCache `
+              --output $whistleRoot
+            if ($LASTEXITCODE -eq 0) { $provisioned = $true; break }
+            Write-Host "::warning::Whistle asset provisioning attempt $attempt failed (exit $LASTEXITCODE)"
+            if ($attempt -lt 3) { Start-Sleep -Seconds (15 * $attempt) }
+          }
+          if (-not $provisioned) { throw "Could not provision the pinned Whistle model and engine after 3 attempts." }
+          Remove-Item -Recurse -Force -LiteralPath $whistleCache
+
       - name: Build and sign the native station bundle
         shell: pwsh
         env:
@@ -1185,6 +1232,7 @@ jobs:
             uv run python -I -B scripts/build_native_station_bundle.py `
               --output-dir artifacts/native-station-bundle/station `
               --captions-floor-root build/native-captions-floor-root `
+              --captions-whistle-root build/native-captions-whistle-root `
               --gemma4-12b-root build/native-ollama-models/summary-gemma4-12b `
               --gemma4-e4b-root build/native-ollama-models/summary-gemma4-e4b `
               --translategemma-4b-root build/native-ollama-models/translation-translategemma-4b `
@@ -1213,6 +1261,7 @@ jobs:
           # reclaim.
           Remove-Item -Recurse -Force build/native-ollama-models
           Remove-Item -Recurse -Force build/native-captions-floor-root
+          Remove-Item -Recurse -Force build/native-captions-whistle-root
 
       - name: Verify the signed station bundle and write checksums
         shell: pwsh
@@ -1230,9 +1279,67 @@ jobs:
           }
           $lines | Set-Content -LiteralPath (Join-Path $stationDir "SHA256SUMS.txt") -Encoding utf8
 
-      # The two tiny files build-native-beta embeds into setup.exe as Tauri
-      # bundle.resources, published as their OWN small artifact so that job
-      # never downloads the ~18.6 GB full bundle to obtain a few kilobytes
+      # The prep artifact itself is Gate A's skip marker. upload-artifact's
+      # if-no-files-found: error only rejects an entirely empty path set, so
+      # validate every promised file and bind the new pack to both the signed
+      # station index and the generated checksum/report before that marker can
+      # exist. A missing required Whistle pack must never create a false skip.
+      - name: Verify the Beta 11 preparation evidence is complete
+        if: env.PREPARE_ONLY == 'true'
+        shell: pwsh
+        run: |
+          $stationDir = "artifacts/native-station-bundle/station"
+          $requiredFiles = @(
+            (Join-Path $stationDir "captions-whistle.ccpack"),
+            (Join-Path $stationDir "station-index.json"),
+            (Join-Path $stationDir "SHA256SUMS.txt"),
+            "artifacts/native-station-bundle/native-station-bundle-build-report.json"
+          )
+          foreach ($path in $requiredFiles) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Preparation evidence is missing required file: $path"
+            }
+            if ((Get-Item -LiteralPath $path).Length -le 0) {
+              throw "Preparation evidence file is empty: $path"
+            }
+          }
+
+          $whistlePath = Join-Path $stationDir "captions-whistle.ccpack"
+          $whistle = Get-Item -LiteralPath $whistlePath
+          $whistleHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $whistlePath).Hash.ToLowerInvariant()
+          $index = Get-Content -LiteralPath (Join-Path $stationDir "station-index.json") -Raw | ConvertFrom-Json
+          if ([string]::IsNullOrWhiteSpace([string]$index.signature)) {
+            throw "Preparation station index is missing its signature."
+          }
+          $whistleEntries = @($index.manifest.packs | Where-Object { $_.component -eq "captions-whistle" })
+          if ($whistleEntries.Count -ne 1) {
+            throw "Preparation station index must contain exactly one captions-whistle entry."
+          }
+          $entry = $whistleEntries[0]
+          if ($entry.filename -ne "captions-whistle.ccpack" -or -not $entry.required -or
+              [long]$entry.bytes -ne [long]$whistle.Length -or
+              ([string]$entry.sha256).ToLowerInvariant() -ne $whistleHash) {
+            throw "Preparation Whistle pack does not match its signed station-index entry."
+          }
+
+          $checksumText = Get-Content -LiteralPath (Join-Path $stationDir "SHA256SUMS.txt") -Raw
+          if (-not $checksumText.Contains("$whistleHash  captions-whistle.ccpack")) {
+            throw "Preparation checksums do not bind captions-whistle.ccpack to its current bytes."
+          }
+          $report = Get-Content -LiteralPath $requiredFiles[3] -Raw | ConvertFrom-Json
+          $reportEntry = $report.packs.'captions-whistle'
+          if ($reportEntry.filename -ne "captions-whistle.ccpack" -or
+              [long]$reportEntry.bytes -ne [long]$whistle.Length -or
+              ([string]$reportEntry.sha256).ToLowerInvariant() -ne $whistleHash -or
+              -not $reportEntry.required) {
+            throw "Preparation build report does not match captions-whistle.ccpack."
+          }
+          Write-Host "Verified all preparation evidence files and the Whistle pack's signed-index/checksum/report bindings."
+
+      # The signed station index, tiny core pack, and bounded Whistle pack
+      # build-native-beta embeds into setup.exe as Tauri bundle.resources.
+      # Publish these as their own small (~18.4 MB) artifact so the consumer
+      # never downloads the ~18.6 GB full bundle to obtain them
       # (actions/download-artifact has no file-level filter within one
       # artifact). Uploaded on EVERY lane, unconditionally -- unlike the full
       # bundle below, which the self-hosted lane skips by default -- because
@@ -1244,7 +1351,7 @@ jobs:
           $stationDir = "artifacts/native-station-bundle/station"
           $embedDir = "artifacts/native-station-embed"
           New-Item -ItemType Directory -Force -Path $embedDir | Out-Null
-          foreach ($name in @("station-index.json", "core.ccpack")) {
+          foreach ($name in @("station-index.json", "core.ccpack", "captions-whistle.ccpack")) {
             $source = Join-Path $stationDir $name
             if (-not (Test-Path -LiteralPath $source)) {
               throw "Signed station bundle is missing $name; the installer cannot embed it."
@@ -1259,6 +1366,25 @@ jobs:
         with:
           name: native-station-embed-${{ github.sha }}
           path: artifacts/native-station-embed/**
+          if-no-files-found: error
+          retention-days: 1
+
+      # This bounded evidence artifact doubles as the explicit prepare-only
+      # marker consumed by gate-a-station-acceptance.yml. It retains the new
+      # signed Whistle pack plus the complete signed index, bundle checksums,
+      # and build report; the large model packs are not uploaded and disappear
+      # with this ephemeral hosted job. Gate A skips a run carrying this artifact.
+      - name: Upload the Beta 11 preparation evidence
+        if: env.PREPARE_ONLY == 'true'
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 10
+        with:
+          name: native-station-prepare-${{ github.sha }}
+          path: |
+            artifacts/native-station-bundle/station/captions-whistle.ccpack
+            artifacts/native-station-bundle/station/station-index.json
+            artifacts/native-station-bundle/station/SHA256SUMS.txt
+            artifacts/native-station-bundle/native-station-bundle-build-report.json
           if-no-files-found: error
           retention-days: 1
 
@@ -1279,7 +1405,7 @@ jobs:
       # Set upload_large_artifacts: true on the dispatch to force it anyway
       # (e.g. to hand this candidate to a different machine for Gate A).
       - name: Upload the native station bundle artifact
-        if: env.BUILD_TARGET != 'self-hosted' || env.UPLOAD_LARGE_ARTIFACTS == 'true'
+        if: env.PREPARE_ONLY != 'true' && (env.BUILD_TARGET != 'self-hosted' || env.UPLOAD_LARGE_ARTIFACTS == 'true')
         uses: actions/upload-artifact@v4
         timeout-minutes: 45
         with:
@@ -1306,12 +1432,13 @@ jobs:
   # missing on a real install of the shipped kit.
   assemble-native-beta-kit:
     name: Assemble the installable native-beta kit (installer + station bundle)
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.prepare_only) }}
     needs: [build-native-beta, build-native-station-bundle]
     # Self-hosted: must be the SAME physical box as the two jobs above (only
     # one sandbox-lab runner is registered) so the local mirrors they wrote
     # under C:\CivicCastTester\candidates\<sha>\ are readable here without a
     # download.
-    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted') && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
+    runs-on: ${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == 'self-hosted' && !inputs.prepare_only) && fromJSON('["self-hosted","windows","sandbox-lab"]') || 'windows-latest' }}
     # This job only combines its dependencies' already-built outputs and
     # re-uploads. It has no business running for hours. Without this it
     # inherited the 360-minute default and, on 2026-08-20, run 32316394055
@@ -1331,9 +1458,11 @@ jobs:
         run: |
           $buildTarget = "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target) || 'hosted' }}"
           if ($buildTarget -notin @("hosted", "self-hosted")) { $buildTarget = "hosted" }
+          $prepareOnly = "${{ (github.event_name == 'workflow_dispatch' && inputs.prepare_only) || 'false' }}"
           $uploadLarge = "${{ (github.event_name == 'workflow_dispatch' && inputs.upload_large_artifacts) || 'false' }}"
           $candidateRoot = "C:\CivicCastTester\candidates\${{ github.sha }}"
           "BUILD_TARGET=$buildTarget" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PREPARE_ONLY=$prepareOnly" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "UPLOAD_LARGE_ARTIFACTS=$uploadLarge" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CANDIDATE_ROOT=$candidateRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           Write-Host "build_target=$buildTarget upload_large_artifacts=$uploadLarge candidate_root=$candidateRoot"
