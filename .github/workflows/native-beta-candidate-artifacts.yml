@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
 #
-# Produces the native-Windows beta's five co-delivered assets without cutting
-# a release. A release coordinator must verify the candidate and run the
+# Produces signed native-Windows beta-candidate outputs without cutting a
+# release. A release coordinator must verify the candidate and run the
 # clean-machine gate before manually publishing it to
 # scottconverse/civiccast-releases.
 #
 # NOT PRIVATE. This header used to call the output "this private artifact",
 # which was wrong and had been wrong for months: workflow artifacts on a
 # public repository are downloadable by any GitHub user for their whole
-# retention window (14 days here). That covers the signed station bundle
+# retention window (1 day here). That covers the signed station bundle
 # (~18.6 GB) and the assembled kit (~21.9 GB).
 #
 # Owner-confirmed 2026-08-20 that public is acceptable for these; the comment
@@ -96,6 +96,10 @@ on:
   push:
     branches:
       - release/native-beta-1.0.0-beta.1-rc1
+    # Every repository path can affect candidate bytes, signing provenance,
+    # or the co-delivered manual. Keep current all-push behavior explicit.
+    paths:
+      - "**"
 
 concurrency:
   # Self-hosted dispatches join Gate A's own "sandbox-lab" concurrency group
@@ -112,6 +116,76 @@ permissions:
   id-token: write
 
 jobs:
+  render-native-manual:
+    name: Render exact-source candidate manual
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v8.1.0
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install project (dev)
+        run: uv sync --all-extras --group dev
+
+      - name: Install pandoc and TeX (per ADR 0005)
+        timeout-minutes: 10
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            pandoc \
+            lmodern \
+            texlive-xetex \
+            texlive-fonts-recommended \
+            texlive-latex-recommended \
+            texlive-latex-extra
+
+      - name: Render USER-MANUAL and check currentness
+        run: |
+          chmod +x scripts/render-user-manual.sh
+          OUT_DIR=$PWD/artifacts/release-preparation/manual ./scripts/render-user-manual.sh
+          uv run python scripts/render_user_manual.py --out-dir artifacts/release-preparation/manual --check-current
+
+      - name: Check tracked in-product manual artifact (civiccast/docsite)
+        run: uv run python scripts/render_docsite_manual.py --check-current
+
+      - name: Check generated API artifacts
+        run: uv run python scripts/generate-openapi-artifacts.py --check
+
+      - name: Create exact-candidate manual receipt
+        run: >-
+          uv run python scripts/release/candidate_manual.py create
+          --manual-dir artifacts/release-preparation/manual
+          --source-sha "${{ github.sha }}"
+          --workflow-run-id "${{ github.run_id }}"
+
+      - name: Upload exact-candidate manual artifact
+        uses: actions/upload-artifact@v7.0.1
+        timeout-minutes: 10
+        with:
+          name: native-beta-manual-${{ github.sha }}
+          path: |
+            artifacts/release-preparation/manual/USER-MANUAL.pdf
+            artifacts/release-preparation/manual/USER-MANUAL.docx
+            artifacts/release-preparation/manual/USER-MANUAL.render.json
+            artifacts/release-preparation/manual/candidate-manual-receipt.json
+          if-no-files-found: error
+          retention-days: 1
+
   build-native-beta:
     name: Build and sign native-beta candidate assets
     # The installer now EMBEDS the signed station index and the tiny `core`
@@ -1433,7 +1507,7 @@ jobs:
   assemble-native-beta-kit:
     name: Assemble the installable native-beta kit (installer + station bundle)
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.prepare_only) }}
-    needs: [build-native-beta, build-native-station-bundle]
+    needs: [build-native-beta, build-native-station-bundle, render-native-manual]
     # Self-hosted: must be the SAME physical box as the two jobs above (only
     # one sandbox-lab runner is registered) so the local mirrors they wrote
     # under C:\CivicCastTester\candidates\<sha>\ are readable here without a
@@ -1451,6 +1525,13 @@ jobs:
       # produce and mirror the installer/station-bundle bytes themselves.
       - name: Checkout exact candidate
         uses: actions/checkout@v4
+
+      - name: Download exact-candidate manual artifact
+        timeout-minutes: 10
+        uses: actions/download-artifact@v4
+        with:
+          name: native-beta-manual-${{ github.sha }}
+          path: manual-artifact
 
       - name: Resolve build target and local candidate root
         id: build_target
@@ -1513,9 +1594,59 @@ jobs:
           $selfHosted = $env:BUILD_TARGET -eq "self-hosted"
           $candidateSource = if ($selfHosted) { Join-Path $env:CANDIDATE_ROOT "candidate" } else { "candidate" }
           $stationBundleSource = if ($selfHosted) { Join-Path $env:CANDIDATE_ROOT "station-bundle" } else { "station-bundle" }
+          $manualSource = "manual-artifact"
           $kit = if ($selfHosted) { "C:\CivicCastTester\kit-staging\${{ github.sha }}" } else { "kit" }
           if (-not (Test-Path -LiteralPath $candidateSource)) { throw "Kit assembly: candidate source directory not found: $candidateSource" }
           if (-not (Test-Path -LiteralPath $stationBundleSource)) { throw "Kit assembly: station bundle source directory not found: $stationBundleSource" }
+          if (-not (Test-Path -LiteralPath $manualSource)) { throw "Kit assembly: exact-candidate manual artifact is missing." }
+
+          # Bind all four downloaded files to the receipt from this exact
+          # workflow run before copying them into the kit. The publisher
+          # repeats the full manifest/source/hash validation before use.
+          $receiptPath = Join-Path $manualSource "candidate-manual-receipt.json"
+          $manifestPath = Join-Path $manualSource "USER-MANUAL.render.json"
+          if (-not (Test-Path -LiteralPath $receiptPath -PathType Leaf) -or
+              -not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "Kit assembly: exact-candidate manual receipt or render manifest is missing."
+          }
+          $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+          $candidateVersion = (Get-Content -LiteralPath "civiccast/apps/installer/src-tauri/tauri.native.conf.json" -Raw | ConvertFrom-Json).version
+          if ([int]$receipt.schema_version -ne 1 -or
+              $receipt.source_sha -ne "${{ github.sha }}" -or
+              $receipt.candidate_version -ne $candidateVersion -or
+              $receipt.workflow_run_id -ne "${{ github.run_id }}") {
+            throw "Kit assembly: manual receipt is not bound to this exact candidate version, SHA, and workflow run."
+          }
+          $manualText = [System.IO.File]::ReadAllText("docs/USER-MANUAL.md").Replace("`r`n", "`n").Replace("`r", "`n")
+          $manualSourceSha = [Convert]::ToHexString([System.Security.Cryptography.SHA256]::HashData([System.Text.Encoding]::UTF8.GetBytes($manualText))).ToLowerInvariant()
+          if ($manifest.source -ne "docs/USER-MANUAL.md" -or
+              $manifest.source_sha256 -ne $manualSourceSha -or
+              $receipt.manual_source_sha256 -ne $manualSourceSha) {
+            throw "Kit assembly: rendered manual does not match this candidate's USER-MANUAL.md."
+          }
+          $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
+          if ($receipt.render_manifest_sha256 -ne $manifestHash) {
+            throw "Kit assembly: manual render manifest hash does not match its receipt."
+          }
+          $documentNames = @("USER-MANUAL.pdf", "USER-MANUAL.docx")
+          $receiptFiles = @($receipt.files)
+          if ($receiptFiles.Count -ne $documentNames.Count) {
+            throw "Kit assembly: manual receipt must bind exactly PDF and DOCX files."
+          }
+          foreach ($name in $documentNames) {
+            $path = Join-Path $manualSource $name
+            $record = @($receiptFiles | Where-Object { $_.filename -eq $name })
+            if ($record.Count -ne 1 -or -not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Kit assembly: manual receipt or artifact is missing $name."
+            }
+            $file = Get-Item -LiteralPath $path
+            $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+            if ($file.Length -le 0 -or [long]$record[0].size_bytes -ne $file.Length -or
+                $record[0].sha256 -ne $hash) {
+              throw "Kit assembly: manual receipt does not match $name bytes."
+            }
+          }
           if (Test-Path -LiteralPath $kit) { Remove-Item -Recurse -Force $kit }
           New-Item -ItemType Directory -Force -Path $kit | Out-Null
 
@@ -1563,7 +1694,16 @@ jobs:
             throw "Kit assembly: QUICKSTART-OPERATOR.md is not co-located at the kit root next to the installer."
           }
 
-          Write-Host "Assembled kit at ${kit}: $($setup.Name) + .\station\station-index.json + $($stationPacks.Count) station pack(s) + $($packSource.Count) installer pack(s) + QUICKSTART-OPERATOR.md."
+          $kitManual = Join-Path $kit "manual"
+          New-Item -ItemType Directory -Force -Path $kitManual | Out-Null
+          Copy-Item -Path (Join-Path $manualSource '*') -Destination $kitManual
+          foreach ($name in @("USER-MANUAL.pdf", "USER-MANUAL.docx", "USER-MANUAL.render.json", "candidate-manual-receipt.json")) {
+            if (-not (Test-Path -LiteralPath (Join-Path $kitManual $name) -PathType Leaf)) {
+              throw "Kit assembly: verified manual file was not copied into .\manual\: $name"
+            }
+          }
+
+          Write-Host "Assembled kit at ${kit}: $($setup.Name) + .\station\station-index.json + $($stationPacks.Count) station pack(s) + $($packSource.Count) installer pack(s) + QUICKSTART-OPERATOR.md + exact-candidate manual package."
 
       # Skipped by default on the self-hosted lane: this kit is ~21.9 GB and
       # already sits at C:\CivicCastTester\kit-staging\<sha>\ on the same box

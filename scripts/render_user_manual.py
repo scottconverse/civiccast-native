@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SOURCE = ROOT / "docs" / "USER-MANUAL.md"
 DEFAULTS = ROOT / "docs" / "assets" / "manual.pandoc.yaml"
-DEFAULT_OUT = ROOT / "docs"
+DEFAULT_OUT = ROOT / "artifacts" / "release-preparation" / "manual"
 MANIFEST_NAME = "USER-MANUAL.render.json"
 REQUIRED = (
     "CivicCast User Manual",
@@ -218,14 +218,14 @@ def main() -> int:
     parser.add_argument(
         "--check-current",
         action="store_true",
-        help="render to a temporary directory and verify tracked artifacts match",
+        help="verify --out-dir matches the current source and render manifest",
     )
     args = parser.parse_args()
 
     try:
         if args.check_current:
             check_current(args.out_dir)
-            print("render_user_manual: PASS - tracked PDF and DOCX artifacts are current.")
+            print("render_user_manual: PASS - rendered PDF and DOCX artifacts are current.")
         elif args.check:
             check_manual(args.out_dir)
             print("render_user_manual: PASS - PDF and DOCX artifacts exist.")

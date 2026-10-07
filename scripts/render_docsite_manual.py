@@ -74,7 +74,7 @@ def render_docsite_manual() -> Path:
         encoding="utf-8",
     ).stdout
 
-    # Embed local images (e.g. the two architecture diagrams) as data: URIs
+    # Embed and compress local images as data: URIs
     # BEFORE sanitizing: sanitize_html's allowlist only ever accepts an
     # already-absolute/data/http(s) src, by design (relative paths don't
     # resolve to anything once this HTML is served from manual.json with no

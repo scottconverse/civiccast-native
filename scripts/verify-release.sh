@@ -9,6 +9,25 @@ cd "$ROOT"
 
 PYTHON="${PYTHON:-python}"
 RELEASE_RUN_ID="${CIVICCAST_RELEASE_RUN_ID:-2026-05-19-v1.2-ndi-output}"
+CANDIDATE_MANUAL_DIR="artifacts/release-preparation/manual"
+CANDIDATE_SOURCE_SHA="$(git rev-parse HEAD)"
+CANDIDATE_VERSION="$("$PYTHON" -c 'from civiccast._native_version import __version__; print(__version__)')"
+CANDIDATE_WORKFLOW_RUN_ID="${CIVICCAST_CANDIDATE_WORKFLOW_RUN_ID:-}"
+
+if [[ ! "$CANDIDATE_WORKFLOW_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+  echo "verify-release: set CIVICCAST_CANDIDATE_WORKFLOW_RUN_ID to the exact hosted candidate build run ID" >&2
+  exit 2
+fi
+
+echo "verify-release: exact hosted candidate manual"
+"$PYTHON" scripts/release/candidate_manual.py verify \
+  --manual-dir "$CANDIDATE_MANUAL_DIR" \
+  --source-sha "$CANDIDATE_SOURCE_SHA" \
+  --candidate-version "$CANDIDATE_VERSION" \
+  --workflow-run-id "$CANDIDATE_WORKFLOW_RUN_ID"
+"$PYTHON" scripts/render_user_manual.py \
+  --out-dir "$CANDIDATE_MANUAL_DIR" \
+  --check-current
 
 to_windows_path() {
   local input_path="$1"
@@ -140,9 +159,6 @@ run_npm_script \
 
 echo "verify-release: generated API artifacts"
 "$PYTHON" scripts/generate-openapi-artifacts.py --check
-
-echo "verify-release: rendered user manual"
-"$PYTHON" scripts/render_user_manual.py --check-current
 
 echo "verify-release: policy"
 "$PYTHON" scripts/policy/run_all.py --run "$RELEASE_RUN_ID"

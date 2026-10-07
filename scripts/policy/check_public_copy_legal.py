@@ -47,8 +47,8 @@ VENDOR_ALLOWLIST = frozenset(
 # unavoidable, not positioning: the migration adapters (code + tests) that
 # import FROM Cablecast/TelVue, and the competitive-research corpus (the same
 # "research" carve-out the patent watchlist above already gets). The HIGH_RISK
-# framing patterns below are what guard against a "replaces/beats Cablecast"
-# claim; a factual source_system="cablecast" is not that.
+# framing patterns below catch unsupported competitive claims; a factual
+# source_system="cablecast" is not one.
 VENDOR_ALLOWLIST_PREFIXES = (
     "civiccast/migrate/",
     "tests/migrate/",
@@ -84,6 +84,13 @@ HIGH_RISK_PATTERNS = (
     r"\bbeats\s+Cablecast\b",
 )
 
+CANONICAL_LEGAL_NOTICE = (
+    "CivicCast is an independent open-source project. It is not affiliated with, sponsored by "
+    "or approved by Tightrope Media Systems, Cablecast or any other named vendor. Those names "
+    "are trademarks of their owners; references to other products are for compatibility and "
+    "comparison only."
+)
+
 VENDOR_PATTERN = re.compile(r"\b(?:Cablecast|Tightrope)\b", re.IGNORECASE)
 
 
@@ -96,7 +103,13 @@ class PublicCopyViolation:
     kind: str = "high-risk phrase"
 
     def render(self) -> str:
-        return f"{self.path}:{self.line}: `{self.phrase}` {self.kind}: {self.text}"
+        text = self.text.strip()
+        if len(text) > 320:
+            index = text.lower().find(self.phrase.lower())
+            start = max(0, index - 120)
+            end = min(len(text), index + len(self.phrase) + 160)
+            text = ("…" if start else "") + text[start:end] + ("…" if end < len(self.text) else "")
+        return f"{self.path}:{self.line}: `{self.phrase}` {self.kind}: {text}"
 
 
 def _tracked_paths(root: Path) -> list[Path] | None:
@@ -155,8 +168,9 @@ def evaluate_public_copy_legal(root: Path = REPO_ROOT) -> list[PublicCopyViolati
         for line_number, line in enumerate(
             path.read_text(encoding="utf-8-sig").splitlines(), start=1
         ):
+            scan_line = line.replace(CANONICAL_LEGAL_NOTICE, "", 1)
             if not is_allowlisted:
-                vendor_match = VENDOR_PATTERN.search(line)
+                vendor_match = VENDOR_PATTERN.search(scan_line)
                 if vendor_match is not None:
                     violations.append(
                         PublicCopyViolation(
@@ -164,21 +178,19 @@ def evaluate_public_copy_legal(root: Path = REPO_ROOT) -> list[PublicCopyViolati
                             line=line_number,
                             phrase=vendor_match.group(0),
                             kind="outside legal/research allowlist",
-                            text=line.strip(),
+                            text=scan_line.strip(),
                         )
                     )
             for _label, pattern in compiled:
-                match = pattern.search(line)
+                match = pattern.search(scan_line)
                 if match is None:
-                    continue
-                if is_allowlisted:
                     continue
                 violations.append(
                     PublicCopyViolation(
                         path=relative,
                         line=line_number,
                         phrase=match.group(0),
-                        text=line.strip(),
+                        text=scan_line.strip(),
                     )
                 )
     return violations

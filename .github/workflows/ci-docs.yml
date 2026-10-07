@@ -66,11 +66,8 @@ jobs:
       - name: Render USER-MANUAL via scripts/render-user-manual.sh
         run: |
           chmod +x scripts/render-user-manual.sh
-          OUT_DIR=$PWD/artifacts ./scripts/render-user-manual.sh
-          uv run python scripts/render_user_manual.py --out-dir artifacts --check-current
-
-      - name: Check tracked USER-MANUAL release artifacts
-        run: uv run python scripts/render_user_manual.py --out-dir docs --check-current
+          OUT_DIR=$PWD/artifacts/release-preparation/manual ./scripts/render-user-manual.sh
+          uv run python scripts/render_user_manual.py --out-dir artifacts/release-preparation/manual --check-current
 
       - name: Check tracked in-product manual artifact (civiccast/docsite)
         run: uv run python scripts/render_docsite_manual.py --check-current
@@ -83,7 +80,7 @@ jobs:
         timeout-minutes: 10
         with:
           name: user-manual
-          path: artifacts/USER-MANUAL.*
+          path: artifacts/release-preparation/manual/USER-MANUAL.*
           if-no-files-found: error
           retention-days: 1
 

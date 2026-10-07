@@ -985,6 +985,52 @@ def test_prepare_only_artifact_is_the_gate_a_skip_marker() -> None:
     assert prep_artifact["with"]["retention-days"] == "1"
 
 
+def test_native_beta_candidate_workflow_has_a_manual_render_job_for_exact_source() -> None:
+    _, workflow = _workflow()
+    manual = workflow["jobs"]["render-native-manual"]
+    assert manual["runs-on"] == "ubuntu-latest"
+    assert manual["timeout-minutes"] == "40"
+    steps = {step["name"]: step for step in manual["steps"]}
+    assert steps["Checkout exact candidate"]["with"]["ref"] == "${{ github.sha }}"
+    assert "texlive-xetex" in steps["Install pandoc and TeX (per ADR 0005)"]["run"]
+    assert (
+        "OUT_DIR=$PWD/artifacts/release-preparation/manual"
+        in steps["Render USER-MANUAL and check currentness"]["run"]
+    )
+    assert steps["Create exact-candidate manual receipt"]["run"].count("github.sha") == 1
+    assert "github.run_id" in steps["Create exact-candidate manual receipt"]["run"]
+
+    upload = steps["Upload exact-candidate manual artifact"]
+    assert upload["with"]["name"] == "native-beta-manual-${{ github.sha }}"
+    assert upload["with"]["retention-days"] == "1"
+    assert set(upload["with"]["path"].splitlines()) == {
+        "artifacts/release-preparation/manual/USER-MANUAL.pdf",
+        "artifacts/release-preparation/manual/USER-MANUAL.docx",
+        "artifacts/release-preparation/manual/USER-MANUAL.render.json",
+        "artifacts/release-preparation/manual/candidate-manual-receipt.json",
+    }
+
+    assemble = workflow["jobs"]["assemble-native-beta-kit"]
+    assert "render-native-manual" in assemble["needs"]
+    assemble_steps = {step["name"]: step for step in assemble["steps"]}
+    download = assemble_steps["Download exact-candidate manual artifact"]
+    assert download["with"]["name"] == "native-beta-manual-${{ github.sha }}"
+    assert download["with"]["path"] == "manual-artifact"
+    colocate = assemble_steps["Co-locate the installer and station bundle into one kit"]["run"]
+    for contract in (
+        '$receipt.source_sha -ne "${{ github.sha }}"',
+        '$receipt.workflow_run_id -ne "${{ github.run_id }}"',
+        "$receipt.render_manifest_sha256 -ne $manifestHash",
+        "Copy-Item -Path (Join-Path $manualSource '*') -Destination $kitManual",
+        'Join-Path $kit "manual"',
+    ):
+        assert contract in colocate
+    assert (
+        assemble_steps["Upload the installable native-beta kit"]["with"]["path"].strip()
+        == "kit/**"
+    )
+
+
 def _assert_kit_carries_the_quickstart_card(job: dict[str, object]) -> None:
     """The field-tested first-run gap: a station volunteer who unboxes the USB
     kit has no plain-language walkthrough, only the installer screens and
@@ -1168,15 +1214,19 @@ def test_native_beta_candidate_workflow_contract_rejects_a_full_bundle_download_
         _assert_embedded_station_handoff(mutated_workflow)
 
 
-def test_native_beta_candidate_workflow_kit_assembly_is_unchanged_by_the_embed() -> None:
+def test_native_beta_candidate_workflow_kit_assembly_keeps_station_and_manual_inputs() -> None:
     r"""The USB kit is the air-gapped station's whole world: the embed must be
-    additive. assemble-native-beta-kit must still depend on BOTH jobs and
-    still co-locate the FULL station bundle (index + every component pack) at
-    .\station\ next to setup.exe."""
+    additive. assemble-native-beta-kit must still depend on the installer and
+    station jobs, add the exact-run manual artifact, and co-locate the FULL
+    station bundle (index + every component pack) at .\station\ next to setup.exe."""
     _, workflow = _workflow()
     kit = workflow["jobs"]["assemble-native-beta-kit"]
 
-    assert sorted(kit["needs"]) == ["build-native-beta", "build-native-station-bundle"]
+    assert sorted(kit["needs"]) == [
+        "build-native-beta",
+        "build-native-station-bundle",
+        "render-native-manual",
+    ]
     colocate = {step["name"]: step for step in kit["steps"]}[
         "Co-locate the installer and station bundle into one kit"
     ]["run"]

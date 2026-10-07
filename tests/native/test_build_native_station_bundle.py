@@ -91,7 +91,6 @@ def _bind_tiny_whistle_contract(monkeypatch: pytest.MonkeyPatch) -> dict[str, tu
             "engine_library_sha256": files["libneedle.dll"][1],
         }
     )
-    monkeypatch.setattr(builder, "WHISTLE_PACK_FILES", files)
     monkeypatch.setattr(builder, "WHISTLE_PACK_CONTRACT", contract)
     monkeypatch.setattr(native_packs, "WHISTLE_PACK_FILES", files)
     monkeypatch.setattr(native_packs, "WHISTLE_PACK_CONTRACT", contract)
@@ -770,7 +769,7 @@ def _bundle_from_root(
     but absolute paths."""
 
     parent.mkdir(parents=True, exist_ok=True)
-    whistle_files = builder.WHISTLE_PACK_FILES
+    whistle_files = native_packs.WHISTLE_PACK_FILES
     floor_root = _write_tree(
         parent / "captions-floor",
         {

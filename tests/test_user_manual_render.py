@@ -13,6 +13,7 @@ unconditionally so the gate is real on every push and PR.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -37,6 +38,7 @@ _REQUIRED_FRAGMENTS = (
     "Records Clerk Quick Guide",
     "Technical Operations Reference",
 )
+_TRACKED_MANUAL_BASELINE_VERSION = "v1.0.0-beta.10"
 
 
 def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
@@ -158,23 +160,25 @@ class TestUserManualVersionHeaderConsistency:
                 "---\ntitle: X\nsubtitle: no version here\n---\n"
             )
 
-    def test_tracked_pdf_running_header_matches_manual_subtitle(self) -> None:
-        """Falsifiable regression check against the artifacts as committed:
-        reads docs/USER-MANUAL.md's subtitle and docs/USER-MANUAL.pdf's page-2
-        running header (no re-render) and asserts they name the same version.
-        FAILS on the unfixed tracked PDF (title page rc18, header rc17);
-        PASSES once docs/USER-MANUAL.pdf is re-rendered from the fixed
-        template that derives both from the same subtitle."""
-        source_token = render_user_manual._source_version_token(
-            render_user_manual.SOURCE.read_text(encoding="utf-8")
+    def test_tracked_manual_remains_the_historical_beta10_baseline(self) -> None:
+        """The tracked downloads stay pinned to Beta 10 while candidate
+        renders are staged outside docs/ and publication links move to assets."""
+        manifest_path = render_user_manual.ROOT / "docs" / render_user_manual.MANIFEST_NAME
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        pdf_path = render_user_manual.ROOT / "docs" / "USER-MANUAL.pdf"
+        docx_path = render_user_manual.ROOT / "docs" / "USER-MANUAL.docx"
+
+        assert (
+            render_user_manual._rendered_header_version_token(pdf_path)
+            == _TRACKED_MANUAL_BASELINE_VERSION
         )
-        header_token = render_user_manual._rendered_header_version_token(
-            render_user_manual.ROOT / "docs" / "USER-MANUAL.pdf"
-        )
-        assert header_token == source_token, (
-            f"docs/USER-MANUAL.pdf running header says {header_token!r} but "
-            f"docs/USER-MANUAL.md's subtitle says {source_token!r}"
-        )
+        assert manifest["source"] == "docs/USER-MANUAL.md"
+        entries = {entry["path"]: entry for entry in manifest["artifacts"]}
+        assert set(entries) == {"docs/USER-MANUAL.pdf", "docs/USER-MANUAL.docx"}
+        for path in (pdf_path, docx_path):
+            entry = entries[path.relative_to(render_user_manual.ROOT).as_posix()]
+            assert entry["sha256"] == render_user_manual._sha256(path)
+            assert entry["size_bytes"] == path.stat().st_size
 
     @_PDF_RENDER_SKIP
     def test_fresh_render_running_header_matches_source_and_passes_check_current(self) -> None:

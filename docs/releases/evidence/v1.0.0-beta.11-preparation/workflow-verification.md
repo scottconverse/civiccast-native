@@ -108,4 +108,4 @@ suite and actionlint were rerun above for this receipt.
    auto-queued Gate A run. One-day artifacts are temporary, and a preparation
    run cannot substitute for a full Gate A kit.
 
-`proved: 150 affected policy/Gate A tests plus focused packaging suite, workflow lint/parsing, runner policy, Ruff, and diff check passed Â· lane: Critical`
+`proved: 150 affected policy/Gate A tests plus focused packaging suite, workflow lint/parsing, runner policy, Ruff, and diff check passed  |  lane: Critical`

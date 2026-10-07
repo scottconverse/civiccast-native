@@ -25,6 +25,9 @@ on the release branch. It produces, per candidate commit (`<sha>`):
   release.** It is either already on the target machine (an upgrade,
   reusing cached model packs per PR #127/#126) or delivered via the USB
   bundle (a first-time install).
+- `manual\` in the assembled kit -- `USER-MANUAL.pdf`, `USER-MANUAL.docx`,
+  the render manifest, and an exact-source/run receipt. Beta 11 publication
+  includes these four small files as release assets and in `SHA256SUMS.txt`.
 
 Confirm the build run's conclusion is `success` and note its run id
 (`--build-run-id` below).
@@ -48,6 +51,12 @@ on `windows-latest`, then retains only these short-lived artifacts:
   resources.
 - `native-station-prepare-<sha>`: signed `captions-whistle.ccpack`, the exact
   station index, the station bundle `SHA256SUMS.txt`, and its build report.
+- `native-beta-manual-<sha>`: the exact-SHA PDF, DOCX, render manifest, and
+  receipt bound to the candidate version and workflow run. It is rendered
+  with the same Pandoc/TeX and currentness checks as `ci-docs.yml`, has
+  one-day retention, and is copied into a full kit by the normal assembly job.
+  `prepare_only` produces this small manual artifact too, but still skips kit
+  assembly; it does not make a preparation run Gate A eligible.
 
 The Whistle pack payload is 18,422,127 bytes (about 17.6 MiB). It is included
 in the installer and repeated in both small station artifacts, so budget for
@@ -130,33 +139,40 @@ What it checks, in order, refusing (exit nonzero, no further action) on the
 first failure:
 
 1. **Layout** -- `setup.exe`, `packs\*.ccpack` (>=1), `station\` all present
-   in `--kit-dir`.
+   in `--kit-dir`; Beta 11 and later also require `manual\` with the exact
+   PDF, DOCX, render manifest, and candidate-manual receipt.
 2. **Version identity** -- `setup.exe`'s `VersionInfo.ProductVersion`
    (via PowerShell), `civiccast._native_version.__version__` (source tree),
    and `--tag` with its leading `v` stripped must all agree.
-3. **Authenticode signature** -- `Get-AuthenticodeSignature` on `setup.exe`
+3. **Candidate manual** -- Beta 11 and later must carry the four files from
+   `native-beta-manual-<sha>`. The publisher checks the receipt's source SHA,
+   candidate version, and build-run id, then verifies the current Markdown
+   source, render-manifest hash, and PDF/DOCX hashes and sizes before fetching
+   Gate A verdicts.
+4. **Authenticode signature** -- `Get-AuthenticodeSignature` on `setup.exe`
    must report `Status: Valid` (see `CODE_SIGNING_POLICY.md`).
-4. **Gate A verdicts** -- downloads all three lane verdict artifacts for
+5. **Gate A verdicts** -- downloads all three lane verdict artifacts for
    `--gate-a-run-id`, requires all three `PASS` and the same `source_sha`
    equal to `--source-sha`.
-5. **Hashing + manifest** -- SHA-256 of `setup.exe` and every
-   `packs\*.ccpack`, written to `SHA256SUMS.txt` and a
+6. **Hashing + manifest** -- SHA-256 of `setup.exe`, every
+   `packs\*.ccpack`, and all four manual files, written to `SHA256SUMS.txt` and a
    `<setup.exe>.sidecar.json` shaped to match
    `scripts/policy/check_sidecar_attestation_integrity.py`'s contract
    (`sha256`, `attestation: null`, `install_manifest.signed`) and what
    `scripts/download_windows_release_artifacts.ps1` already reads.
-6. **Release notes** -- rendered via
+7. **Release notes** -- rendered via
    `scripts/render_release_notes.render_native_beta_candidate_notes`
    (source SHA, build-run and Gate-A-run links, the per-lane PASS table, the
    `[Unreleased]` CHANGELOG section, an asset table with size + SHA-256,
    plain-English install/upgrade instructions, the SmartScreen note, and the
    beta-candidate boundary statement).
-7. **Pre-flight the asset set** -- every asset (setup.exe, each pack,
+8. **Pre-flight the asset set** -- every asset (setup.exe, each pack, each
+   manual file,
    SHA256SUMS.txt, the sidecar) must be under GitHub's documented 2 GiB
    per-file release-asset cap. The complete set is printed with sizes.
    Anything at or over the cap refuses BEFORE any remote mutation. (Also a
    pre-flight, first of all: `gh auth status` must succeed.)
-8. **Publish or dry-run** -- without `--dry-run`, in an order that can never
+9. **Publish or dry-run** -- without `--dry-run`, in an order that can never
    leave an orphan tag (no `git tag`/`git push` is ever run by hand):
    1. `gh release create <tag> --draft --target <source-sha> --prerelease
       --title ... --notes-file ... <every asset>` -- a **draft** creates no

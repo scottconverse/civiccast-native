@@ -60,6 +60,11 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.release.candidate_manual import (  # noqa: E402
+    CandidateManualError,
+    manual_required_for_version,
+    verify_candidate_manual,
+)
 from scripts.render_release_notes import render_native_beta_candidate_notes  # noqa: E402
 
 DEFAULT_REPOSITORY = "scottconverse/civiccast-native"
@@ -677,6 +682,21 @@ def _run(args: argparse.Namespace) -> None:
     version = verify_version_identity(setup, tag)
     print(f"publish_beta_candidate: version {version} agrees (setup.exe, source tree, tag)")
 
+    manual_dir = kit_dir / "manual"
+    manual_files: list[Path] = []
+    if manual_dir.exists() or manual_required_for_version(version):
+        try:
+            manual_files = verify_candidate_manual(
+                manual_dir=manual_dir,
+                source_sha=source_sha,
+                candidate_version=version,
+                workflow_run_id=args.build_run_id,
+                repo_root=REPO_ROOT,
+            )
+        except CandidateManualError as exc:
+            raise PublishError(f"candidate manual verification failed: {exc}") from exc
+        print("publish_beta_candidate: exact-build manual receipt and files verified")
+
     print("publish_beta_candidate: verifying Authenticode signature")
     verify_signature(setup)
     print("publish_beta_candidate: signature Valid")
@@ -693,7 +713,7 @@ def _run(args: argparse.Namespace) -> None:
     print("publish_beta_candidate: Gate A PASS on all three lanes, source_sha agrees")
 
     print("publish_beta_candidate: hashing assets and building manifest")
-    all_files = [setup, *packs]
+    all_files = [setup, *packs, *manual_files]
     sha256sums = build_sha256sums(all_files)
     sidecar = build_sidecar(setup, signed=True)
     sidecar_filename = f"{setup.name}{SIDECAR_SUFFIX}"
@@ -708,7 +728,7 @@ def _run(args: argparse.Namespace) -> None:
     sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8", newline="\n")
     sha256sums_path = out_dir / SHA256SUMS_ASSET_NAME
     sha256sums_path.write_text(sha256sums, encoding="utf-8", newline="\n")
-    asset_paths = [setup, *packs, sha256sums_path, sidecar_path]
+    asset_paths = [setup, *packs, *manual_files, sha256sums_path, sidecar_path]
 
     # Pre-flight: every asset under GitHub's 2 GiB cap, full set listed --
     # BEFORE any remote mutation, in dry-run and live mode alike.

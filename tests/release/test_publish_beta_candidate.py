@@ -12,6 +12,7 @@ against a real kit or real ``gh``/GitHub (see the task's final report).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -20,6 +21,12 @@ from pathlib import Path
 import pytest
 
 import scripts.release.publish_beta_candidate as m
+from scripts.release.candidate_manual import (
+    DOCX_FILENAME,
+    MANIFEST_FILENAME,
+    PDF_FILENAME,
+    create_candidate_manual_receipt,
+)
 
 SOURCE_SHA = "a" * 40
 # publish_beta_candidate.verify_version_identity fail-closed-compares the
@@ -61,7 +68,13 @@ def test_run_powershell_isolates_only_psmodulepath(monkeypatch: pytest.MonkeyPat
     assert result.stdout == "Valid\n"
 
 
-def _write_kit(kit_dir: Path, *, with_packs: bool = True, with_station: bool = True) -> Path:
+def _write_kit(
+    kit_dir: Path,
+    *,
+    with_packs: bool = True,
+    with_station: bool = True,
+    with_manual: bool = True,
+) -> Path:
     kit_dir.mkdir(parents=True, exist_ok=True)
     setup = kit_dir / "setup.exe"
     setup.write_bytes(b"fake signed installer bytes")
@@ -72,6 +85,35 @@ def _write_kit(kit_dir: Path, *, with_packs: bool = True, with_station: bool = T
         (packs_dir / "native-server-binaries.ccpack").write_bytes(b"pack-b")
     if with_station:
         (kit_dir / "station").mkdir(exist_ok=True)
+    if with_manual:
+        manual_dir = kit_dir / "manual"
+        manual_dir.mkdir(exist_ok=True)
+        pdf = manual_dir / PDF_FILENAME
+        docx = manual_dir / DOCX_FILENAME
+        pdf.write_bytes(b"fixture candidate pdf")
+        docx.write_bytes(b"fixture candidate docx")
+        artifacts = [
+            {
+                "path": f"artifacts/release-preparation/manual/{path.name}",
+                "sha256": m.sha256_file(path),
+                "size_bytes": path.stat().st_size,
+            }
+            for path in (pdf, docx)
+        ]
+        source = m.REPO_ROOT / "docs" / "USER-MANUAL.md"
+        source_hash = source.read_bytes().decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        manifest = {
+            "source": "docs/USER-MANUAL.md",
+            "source_sha256": hashlib.sha256(source_hash.encode("utf-8")).hexdigest(),
+            "artifacts": artifacts,
+        }
+        (manual_dir / MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
+        create_candidate_manual_receipt(
+            manual_dir=manual_dir,
+            source_sha=SOURCE_SHA,
+            workflow_run_id="111",
+            repo_root=m.REPO_ROOT,
+        )
     return setup
 
 
@@ -690,8 +732,18 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
         setup,
         kit_dir / "packs" / "native-app-payload.ccpack",
         kit_dir / "packs" / "native-server-binaries.ccpack",
+        *(
+            kit_dir / "manual" / name
+            for name in (
+                PDF_FILENAME,
+                DOCX_FILENAME,
+                MANIFEST_FILENAME,
+                "candidate-manual-receipt.json",
+            )
+        ),
     ]:
         assert m.sha256_file(path) in notes
+        assert f"{m.sha256_file(path)}  {path.name}" in sums
     # The asset table must also list SHA256SUMS.txt and the sidecar, with
     # their real hashes.
     assert (
@@ -713,10 +765,48 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
     )
     assert TAG not in truth_text
 
+
+def test_beta11_refuses_to_publish_without_candidate_manual_bundle(tmp_path, monkeypatch, capsys):
+    """Beta 11 release assets must include the exact build's rendered manual."""
+    repo_root = _base_repo_root(tmp_path)
+    kit_dir = tmp_path / "kit"
+    _write_kit(kit_dir, with_manual=False)
+    fake = _fake_command_factory()
+    monkeypatch.setattr(m, "run_command", fake)
+
+    rc = m.main(_args(tmp_path, kit_dir, dry_run=True, repo_root=repo_root))
+
+    assert rc == 1
+    assert "manual" in capsys.readouterr().err.lower()
+    assert not _gh_calls(fake.calls, "gh", "run", "download"), (
+        "missing manual must fail before fetching Gate A or attempting publication"
+    )
+    assert not _gh_calls(fake.calls, "gh", "release", "create")
+
     # no git/gh mutating calls were made
     calls = m.run_command.calls
     assert not _gh_calls(calls, "gh", "release")
     _assert_no_tag_or_public_release(calls)
+
+
+def test_beta11_refuses_manual_bytes_that_do_not_match_the_candidate_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    repo_root = _base_repo_root(tmp_path)
+    kit_dir = tmp_path / "kit"
+    _write_kit(kit_dir)
+    with (kit_dir / "manual" / PDF_FILENAME).open("ab") as handle:
+        handle.write(b"tampered")
+    fake = _fake_command_factory()
+    monkeypatch.setattr(m, "run_command", fake)
+
+    rc = m.main(_args(tmp_path, kit_dir, dry_run=True, repo_root=repo_root))
+
+    assert rc == 1
+    assert "manual" in capsys.readouterr().err.lower()
+    assert not _gh_calls(fake.calls, "gh", "run", "download")
+    assert not _gh_calls(fake.calls, "gh", "release")
+    _assert_no_tag_or_public_release(fake.calls)
 
 
 def test_dry_run_with_current_status_does_not_touch_real_file(tmp_path, monkeypatch):
@@ -760,6 +850,10 @@ def test_live_publish_draft_verify_undraft_order_and_release_truth(tmp_path, mon
         setup.name,
         "native-app-payload.ccpack",
         "native-server-binaries.ccpack",
+        PDF_FILENAME,
+        DOCX_FILENAME,
+        MANIFEST_FILENAME,
+        "candidate-manual-receipt.json",
         "SHA256SUMS.txt",
         f"{setup.name}.sidecar.json",
     ]
