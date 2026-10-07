@@ -10,6 +10,8 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
 
 from civiccast.native.app_payload import (
     WHISTLE_ENGINE_DLL_BYTES,
@@ -30,6 +32,39 @@ class WhistleAssetError(RuntimeError):
 
 
 _DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+def _validate_https_url(url: str) -> None:
+    """Reject non-HTTPS or malformed asset URLs before urllib handles them."""
+
+    try:
+        parsed = urlsplit(url)
+        _ = parsed.port
+    except ValueError as exc:
+        raise WhistleAssetError(f"Whistle asset URL is invalid: {url}") from exc
+    if (
+        parsed.scheme.lower() != "https"
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise WhistleAssetError(f"Whistle asset URL must use HTTPS: {url}")
+
+
+class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Keep urllib redirects on TLS; content hashes authenticate the bytes."""
+
+    def redirect_request(
+        self,
+        req: Any,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ) -> Any:
+        _validate_https_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def _file_identity(path: Path) -> tuple[int, str]:
@@ -86,31 +121,36 @@ def download_verified_file(
     digest = hashlib.sha256()
     size = 0
     try:
-        request = urllib.request.Request(url, headers={"User-Agent": "CivicCast-native-builder"})
-        with urllib.request.urlopen(request, timeout=120) as response:
-            with tempfile.NamedTemporaryFile(
-                mode="wb",
-                prefix=f".{destination.name}.",
-                suffix=".partial",
-                dir=destination.parent,
-                delete=False,
-            ) as handle:
-                temporary = Path(handle.name)
-                while True:
-                    read_limit = min(_DOWNLOAD_CHUNK_BYTES, expected_bytes - size + 1)
-                    chunk = response.read(read_limit)
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    if size > expected_bytes:
-                        raise WhistleAssetError(
-                            f"Whistle asset from {url} exceeds its reviewed size of "
-                            f"{expected_bytes} bytes"
-                        )
-                    digest.update(chunk)
-                    handle.write(chunk)
-                handle.flush()
-                os.fsync(handle.fileno())
+        _validate_https_url(url)
+        request = urllib.request.Request(  # noqa: S310  # nosec B310 - URL and redirects are restricted to HTTPS
+            url, headers={"User-Agent": "CivicCast-native-builder"}
+        )
+        opener = urllib.request.build_opener(_HttpsOnlyRedirectHandler())
+        with opener.open(
+            request, timeout=120
+        ) as response, tempfile.NamedTemporaryFile(
+            mode="wb",
+            prefix=f".{destination.name}.",
+            suffix=".partial",
+            dir=destination.parent,
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            while True:
+                read_limit = min(_DOWNLOAD_CHUNK_BYTES, expected_bytes - size + 1)
+                chunk = response.read(read_limit)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > expected_bytes:
+                    raise WhistleAssetError(
+                        f"Whistle asset from {url} exceeds its reviewed size of "
+                        f"{expected_bytes} bytes"
+                    )
+                digest.update(chunk)
+                handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
         actual = digest.hexdigest()
         if size != expected_bytes or actual != expected_sha256:
             raise WhistleAssetError(

@@ -153,7 +153,6 @@ from civiccast.installer.native_packs import (  # noqa: E402
 from civiccast.native.app_payload import (  # noqa: E402
     WHISTLE_PACK_COMPONENT,
     WHISTLE_PACK_CONTRACT,
-    WHISTLE_PACK_FILES,
 )
 
 _REPARSE_POINT: Final[int] = 0x400

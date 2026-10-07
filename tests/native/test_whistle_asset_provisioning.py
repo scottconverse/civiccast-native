@@ -9,6 +9,8 @@ import io
 import zipfile
 from pathlib import Path
 
+import pytest
+
 import civiccast.native.whistle_assets as assets
 
 
@@ -24,7 +26,12 @@ def test_downloader_stops_after_one_byte_over_the_pinned_size(
             return chunk
 
     response = TrackedResponse(b"much larger than the reviewed response")
-    monkeypatch.setattr(assets.urllib.request, "urlopen", lambda _request, timeout: response)
+
+    class FakeOpener:
+        def open(self, _request, *, timeout):
+            return response
+
+    monkeypatch.setattr(assets.urllib.request, "build_opener", lambda *_handlers: FakeOpener())
     destination = tmp_path / "asset.bin"
 
     try:
@@ -75,10 +82,11 @@ def test_provisioner_downloads_only_the_pinned_model_and_wheel_member(
         assets.WHISTLE_ENGINE_WHEEL_URL: wheel,
     }
 
-    def open_url(request, timeout):
-        return io.BytesIO(responses[request.full_url])
+    class FakeOpener:
+        def open(self, request, *, timeout):
+            return io.BytesIO(responses[request.full_url])
 
-    monkeypatch.setattr(assets.urllib.request, "urlopen", open_url)
+    monkeypatch.setattr(assets.urllib.request, "build_opener", lambda *_handlers: FakeOpener())
     output = tmp_path / "pack-root"
     result = assets.provision_whistle_assets(output, cache=tmp_path / "cache")
 
@@ -86,6 +94,31 @@ def test_provisioner_downloads_only_the_pinned_model_and_wheel_member(
     assert {path.name for path in output.iterdir()} == {"whistle.cact", "libneedle.dll"}
     assert (output / "whistle.cact").read_bytes() == model
     assert (output / "libneedle.dll").read_bytes() == dll
+
+
+def test_downloader_rejects_non_https_urls_before_opening(
+    tmp_path: Path, monkeypatch
+) -> None:
+    class FakeOpener:
+        def open(self, *_args, **_kwargs):
+            raise AssertionError("non-HTTPS URLs must be rejected before opening")
+
+    monkeypatch.setattr(assets.urllib.request, "build_opener", lambda *_handlers: FakeOpener())
+    with pytest.raises(assets.WhistleAssetError, match="HTTPS"):
+        assets.download_verified_file(
+            "file:///etc/passwd",
+            tmp_path / "asset.bin",
+            expected_bytes=1,
+            expected_sha256=hashlib.sha256(b"x").hexdigest(),
+        )
+
+
+def test_downloader_rejects_https_to_http_redirects() -> None:
+    request = assets.urllib.request.Request("https://huggingface.co/asset")
+    with pytest.raises(assets.WhistleAssetError, match="HTTPS"):
+        assets._HttpsOnlyRedirectHandler().redirect_request(
+            request, None, 302, "Found", {}, "http://huggingface.co/asset"
+        )
 
 
 def test_provisioner_refuses_an_unexpected_asset_root_file(tmp_path: Path) -> None:

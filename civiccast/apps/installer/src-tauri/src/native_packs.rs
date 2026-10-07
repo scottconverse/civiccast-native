@@ -2071,13 +2071,13 @@ mod tests {
         let manifest = valid_whistle_manifest();
         validate_whistle_pack_contract(&manifest).expect("pinned Whistle contract");
 
-        let mut substituted_engine = manifest.clone();
+        let mut substituted_engine = valid_whistle_manifest();
         substituted_engine.files[0].sha256 = "00".repeat(32);
         assert!(validate_whistle_pack_contract(&substituted_engine)
             .expect_err("substituted engine DLL must fail")
             .contains("substituted bytes"));
 
-        let mut substituted_wheel = manifest;
+        let mut substituted_wheel = valid_whistle_manifest();
         substituted_wheel.metadata.insert(
             "engine_wheel_sha256".to_string(),
             Value::String("00".repeat(32)),

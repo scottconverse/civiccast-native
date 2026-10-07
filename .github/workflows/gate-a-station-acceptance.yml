@@ -107,6 +107,7 @@ jobs:
   candidate-eligibility:
     name: Check whether this run is preparation-only
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       eligible: ${{ steps.check.outputs.eligible }}
     steps:
