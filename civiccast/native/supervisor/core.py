@@ -438,6 +438,11 @@ class Supervisor:
         # ``_job.close()`` -- NEVER across a readiness poll, so a stop can never
         # queue behind a 60s budget.
         self._lifecycle_lock = threading.RLock()
+        # Control-pipe commands run on their own worker thread while run()/tick()
+        # reconcile children on the service thread. Serialize complete child
+        # start/readiness sequences so a tick cannot replace another thread's
+        # still-starting child.
+        self._reconciliation_lock = threading.RLock()
         self._rng = rng
         # CC-WS5-003: the durable-postmaster pid resolver. Defaults to reading
         # ``<postgres_data_dir>/postmaster.pid`` -- the SAME data_dir the postgres
@@ -634,8 +639,13 @@ class Supervisor:
         """(Re)start one direct child: sweep-before-first-spawn (D3), D6
         dependency-eligibility, the D9 pre-start guard gate for the
         writer-capable child, spawn + Job Object assignment (D3), then a bounded
-        readiness poll (D6). Pure over the injected seams."""
+        readiness poll (D6). Pure over the injected seams. Start/readiness work
+        shares a reentrant lock with service reconciliation and admin restarts."""
 
+        with self._reconciliation_lock:
+            return self._start_child(name, maintenance=maintenance)
+
+    def _start_child(self, name: str, *, maintenance: bool = False) -> ChildStartOutcome:
         if not self._swept:
             self._sweep_once()
 
@@ -981,8 +991,15 @@ class Supervisor:
         readiness budget (60s + 30s + 60s when F1 was written, chained into a
         single uninterruptible ~150s stretch -- U31 has since raised the control
         plane's own budget to 180s, making that same chain 300s -- which blew
-        the 150s stop watchdog mid-chain and hard-killed the postgres cluster)."""
+        the 150s stop watchdog mid-chain and hard-killed the postgres cluster).
 
+        Startup and reconciliation share a reentrant lock so control-pipe
+        commands cannot start a child concurrently with this bring-up."""
+
+        with self._reconciliation_lock:
+            self._start()
+
+    def _start(self) -> None:
         self._sweep_once()
         # Task #57 D2: the OPTIONAL ollama child first -- it has no D6 edge to
         # any other child, must come up (or skip cleanly) even in
@@ -1063,9 +1080,12 @@ class Supervisor:
         """Drive ``interlock_held`` -> ``maintenance`` and launch the control
         plane in maintenance mode. Returns the maintenance-readiness result: the
         gate is satisfied ONLY when ``check_control_plane_maintenance_ready``
-        passes; otherwise the supervisor stays in ``maintenance`` (fail-closed).
-        """
+        passes; otherwise the supervisor stays in ``maintenance`` (fail-closed)."""
 
+        with self._reconciliation_lock:
+            return self._enter_maintenance()
+
+    def _enter_maintenance(self) -> ReadinessResult:
         self._dispatch("interlock_held")
         if not self._swept:
             self._sweep_once()
@@ -1246,8 +1266,13 @@ class Supervisor:
         either spawns something that must then be stopped or spends a readiness
         budget on the stop's critical path). A stop that arrives DURING a tick
         is honoured between children and inside the readiness poll, so the
-        in-flight iteration is bounded by ONE probe attempt."""
+        in-flight iteration is bounded by ONE probe attempt. The complete pass
+        is serialized with external start/restart commands."""
 
+        with self._reconciliation_lock:
+            self._tick(now=now)
+
+    def _tick(self, *, now: float) -> None:
         if self._abort_requested():
             return
         event = self.poll_interlock()
@@ -1733,14 +1758,15 @@ class Supervisor:
         the control plane. Mirrors the CP-restart step of ``_resume_to_serving``;
         used by the service layer's admin router, never by the tick loop."""
 
-        cp = self._handles.get("control_plane")
-        if cp is not None:
-            self._runner.terminate(cp)
-            self._handles.pop("control_plane", None)
-        # ``starting`` (not ``stopped``) so a guard-withheld start leaves the CP
-        # restartable by a later reconciliation tick (the CC-WS5-012 rule).
-        self._child_states["control_plane"] = "starting"
-        return self.start_child("control_plane")
+        with self._reconciliation_lock:
+            cp = self._handles.get("control_plane")
+            if cp is not None:
+                self._runner.terminate(cp)
+                self._handles.pop("control_plane", None)
+            # ``starting`` (not ``stopped``) so a guard-withheld start leaves the CP
+            # restartable by a later reconciliation tick (the CC-WS5-012 rule).
+            self._child_states["control_plane"] = "starting"
+            return self.start_child("control_plane")
 
     # -- read tier (pipe_server status/version) ---------------------------
 

@@ -749,24 +749,21 @@ def test_poll_until_ready_fails_fast_when_the_child_is_gone() -> None:
     )
 
 
-def test_liveness_is_never_consulted_for_a_child_that_reports_ready() -> None:
-    """Order matters: ``ready`` is returned before anything looks at the
-    process handle, so a runner that cannot answer ``is_alive`` cannot turn a
-    good start into a failure."""
-
-    def _explode() -> bool:
-        raise AssertionError("liveness must not be consulted once the check reports ready")
-
+def test_poll_until_ready_checks_liveness_even_when_the_endpoint_reports_ready() -> None:
+    """A different listener must not make an already-exited child look ready."""
     clock = _FakeClock()
     result = poll_until_ready(
         lambda: check_control_plane_ready(lambda: ControlPlaneHealthProbe(status_code=200)),
         budget_seconds=180.0,
         clock=clock,
         sleep=_FakeSleep(clock),
-        liveness=_explode,
+        liveness=lambda: False,
     )
 
-    assert result.outcome == "ready"
+    assert result.outcome == "not_ready"
+    assert result.detail == (
+        "child process exited while waiting for readiness; last result: GET /health returned 200"
+    )
 
 
 def test_poll_until_ready_without_the_stall_window_keeps_the_budget_behaviour() -> None:

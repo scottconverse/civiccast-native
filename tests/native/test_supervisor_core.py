@@ -22,6 +22,7 @@ import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from threading import Event, Thread
 
 import pytest
 
@@ -2068,6 +2069,72 @@ def test_restart_control_plane_only_touches_the_control_plane() -> None:
 
     assert sup.handles()["postgres"].pid == pg_before
     assert pg_before not in runner.terminated_pids
+
+
+def test_tick_does_not_replace_a_control_plane_during_admin_restart_readiness() -> None:
+    """The pipe worker's admin restart and the service tick must not start the
+    same child concurrently while the new control plane is still checking ready."""
+
+    runner = FakeRunner()
+    restart_probe_entered = Event()
+    release_restart_probe = Event()
+    block_next_probe = {"value": False}
+
+    def health() -> ControlPlaneHealthProbe:
+        if block_next_probe["value"]:
+            block_next_probe["value"] = False
+            restart_probe_entered.set()
+            if not release_restart_probe.wait(timeout=5):
+                raise TimeoutError("test did not release the admin restart probe")
+        return normal_health()
+
+    sup = make_supervisor(
+        guard=FakeGuard(guard_decision("start", None)), runner=runner, health=health
+    )
+    sup.start()
+    initial_control_plane_spawns = runner.spawned_names.count("control_plane")
+    block_next_probe["value"] = True
+    restart_errors: list[Exception] = []
+    tick_errors: list[Exception] = []
+    tick_started = Event()
+    tick_finished = Event()
+
+    def restart() -> None:
+        try:
+            sup.restart_control_plane()
+        except Exception as exc:  # surfaced on the test thread below
+            restart_errors.append(exc)
+
+    def tick() -> None:
+        tick_started.set()
+        try:
+            sup.tick(now=1.0)
+        except Exception as exc:  # surfaced on the test thread below
+            tick_errors.append(exc)
+        finally:
+            tick_finished.set()
+
+    restart_thread = Thread(target=restart)
+    restart_thread.start()
+    tick_thread: Thread | None = None
+    try:
+        assert restart_probe_entered.wait(timeout=2)
+        tick_thread = Thread(target=tick)
+        tick_thread.start()
+        assert tick_started.wait(timeout=2)
+        assert not tick_finished.wait(timeout=0.05)
+    finally:
+        release_restart_probe.set()
+        restart_thread.join(timeout=2)
+        if tick_thread is not None:
+            tick_thread.join(timeout=2)
+
+    assert not restart_thread.is_alive()
+    assert tick_thread is not None and not tick_thread.is_alive()
+    assert restart_errors == []
+    assert tick_errors == []
+    assert runner.spawned_names.count("control_plane") == initial_control_plane_spawns + 1
+    assert sup.child_state("control_plane") == "ready"
 
 
 # ---------------------------------------------------------------------------
