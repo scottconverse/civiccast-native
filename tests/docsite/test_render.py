@@ -4,26 +4,42 @@
 
 from __future__ import annotations
 
+import base64
+import io
+import json
+import re
 from pathlib import Path
+
+from PIL import Image
 
 from civiccast.docsite.render import embed_local_images, extract_toc, sanitize_html
 
 
+def _png_bytes(size: tuple[int, int] = (8, 5)) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", size, (23, 77, 141)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 class TestEmbedLocalImages:
-    def test_embeds_a_relative_image_as_a_data_uri(self, tmp_path: Path) -> None:
+    def test_embeds_a_relative_image_as_webp_with_its_original_dimensions(
+        self, tmp_path: Path
+    ) -> None:
         (tmp_path / "assets").mkdir()
         image_path = tmp_path / "assets" / "diagram.png"
-        # Smallest possible valid PNG byte sequence is unnecessary here --
-        # embed_local_images only needs *a file it can read*, not a real
-        # decodable image.
-        image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake-png-bytes")
+        image_path.write_bytes(_png_bytes((19, 11)))
 
         html = '<img src="assets/diagram.png" alt="Diagram" />'
         out = embed_local_images(html, base_dir=tmp_path)
 
         assert 'src="assets/diagram.png"' not in out
-        assert "data:image/png;base64," in out
+        match = re.search(r'data:image/webp;base64,([^" ]+)', out)
+        assert match is not None
         assert 'alt="Diagram"' in out
+        with Image.open(io.BytesIO(base64.b64decode(match.group(1)))) as optimized:
+            assert optimized.format == "WEBP"
+            optimized.load()
+            assert optimized.size == (19, 11)
 
     def test_leaves_an_already_absolute_or_data_src_untouched(self, tmp_path: Path) -> None:
         for src in (
@@ -55,15 +71,26 @@ class TestEmbedLocalImages:
         assert embed_local_images(html, base_dir=tmp_path) == html
 
     def test_embeds_multiple_images_independently(self, tmp_path: Path) -> None:
-        (tmp_path / "one.png").write_bytes(b"one-bytes")
-        (tmp_path / "two.png").write_bytes(b"two-bytes")
+        (tmp_path / "one.png").write_bytes(_png_bytes())
+        (tmp_path / "two.png").write_bytes(_png_bytes((13, 9)))
         html = '<img src="one.png" alt="One" /><p>text</p><img src="two.png" alt="Two" />'
 
         out = embed_local_images(html, base_dir=tmp_path)
 
-        assert out.count("data:image/png;base64,") == 2
+        assert out.count("data:image/webp;base64,") == 2
         assert 'alt="One"' in out
         assert 'alt="Two"' in out
+
+
+def test_builtin_manual_keeps_its_full_contents_under_the_payload_limit() -> None:
+    manual_path = Path(__file__).resolve().parents[2] / "civiccast" / "docsite" / "manual.json"
+    payload = manual_path.read_bytes()
+    manual = json.loads(payload)
+
+    assert len(payload) <= 5 * 1024 * 1024
+    assert len(manual["toc"]) == 635
+    assert len(extract_toc(manual["html"])) == 635
+    assert manual["html"].count("data:image/webp;base64,") == 29
 
 
 class TestSanitizeHtml:

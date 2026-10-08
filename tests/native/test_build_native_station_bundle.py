@@ -75,6 +75,28 @@ def _write_tree(root: Path, files: dict[str, bytes]) -> Path:
     return root
 
 
+def _bind_tiny_whistle_contract(monkeypatch: pytest.MonkeyPatch) -> dict[str, tuple[int, str]]:
+    """Keep the real builder/verifier seam testable without a 17 MiB model."""
+
+    files = {
+        "libneedle.dll": (1, hashlib.sha256(b"d").hexdigest()),
+        "whistle.cact": (1, hashlib.sha256(b"w").hexdigest()),
+    }
+    contract = dict(builder.WHISTLE_PACK_CONTRACT)
+    contract.update(
+        {
+            "model_bytes": 1,
+            "model_sha256": files["whistle.cact"][1],
+            "engine_library_bytes": 1,
+            "engine_library_sha256": files["libneedle.dll"][1],
+        }
+    )
+    monkeypatch.setattr(builder, "WHISTLE_PACK_CONTRACT", contract)
+    monkeypatch.setattr(native_packs, "WHISTLE_PACK_FILES", files)
+    monkeypatch.setattr(native_packs, "WHISTLE_PACK_CONTRACT", contract)
+    return files
+
+
 # ---------------------------------------------------------------------------
 # The station-index filename this publisher emits must match the literal
 # nsis-hooks-bootstrap.nsh's K1 wiring invokes --civiccast-import-station
@@ -90,6 +112,10 @@ def test_station_index_filename_matches_the_nsis_wiring() -> None:
         f"$EXEDIR\\station\\{builder.STATION_INDEX_FILENAME} -- the exact filename "
         "this publisher writes"
     )
+
+
+def test_whistle_is_a_required_station_pack_staged_at_runtime_path() -> None:
+    assert "captions-whistle" in builder.REQUIRED_COMPONENTS
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +150,7 @@ def test_build_station_bundle_fails_loud_and_writes_nothing_when_a_required_root
         builder.build_station_bundle(
             output_dir=output_dir,
             captions_floor_root=tmp_path / "does-not-exist",
+            captions_whistle_root=tmp_path / "whistle-does-not-exist",
             gemma4_12b_root=_write_tree(tmp_path / "gemma-12b", {"blobs/sha256-x": b"x"}),
             gemma4_e4b_root=_write_tree(tmp_path / "gemma-e4b", {"blobs/sha256-y": b"y"}),
             translategemma_4b_root=_write_tree(tmp_path / "translate", {"blobs/sha256-z": b"z"}),
@@ -149,6 +176,7 @@ def test_build_station_bundle_refuses_a_non_empty_output_directory(tmp_path: Pat
             captions_floor_root=_write_tree(
                 tmp_path / "captions-floor", {"models/faster-whisper-medium/model.bin": b"m"}
             ),
+            captions_whistle_root=tmp_path / "whistle-does-not-exist",
             gemma4_12b_root=_write_tree(tmp_path / "gemma-12b", {"blobs/sha256-x": b"x"}),
             gemma4_e4b_root=_write_tree(tmp_path / "gemma-e4b", {"blobs/sha256-y": b"y"}),
             translategemma_4b_root=_write_tree(tmp_path / "translate", {"blobs/sha256-z": b"z"}),
@@ -500,6 +528,7 @@ def test_build_station_bundle_succeeds_with_matching_provenance_for_every_ollama
     31979342933 failed here."""
 
     models = _write_test_ollama_lock(tmp_path)
+    whistle_files = _bind_tiny_whistle_contract(monkeypatch)
     monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
 
     gemma_12b_root = _write_ollama_model_root(
@@ -521,11 +550,16 @@ def test_build_station_bundle_succeeds_with_matching_provenance_for_every_ollama
             "self-test/jfk.wav": b"floor-self-test-audio",
         },
     )
+    whistle_root = _write_tree(
+        tmp_path / "captions-whistle",
+        {name: (b"d" if name == "libneedle.dll" else b"w") for name in whistle_files},
+    )
 
     output_dir = tmp_path / "station"
     result = builder.build_station_bundle(
         output_dir=output_dir,
         captions_floor_root=floor_root,
+        captions_whistle_root=whistle_root,
         gemma4_12b_root=gemma_12b_root,
         gemma4_e4b_root=gemma_e4b_root,
         translategemma_4b_root=translate_root,
@@ -544,6 +578,7 @@ def test_build_station_bundle_succeeds_with_matching_provenance_for_every_ollama
         "summary-gemma4-12b",
         "summary-gemma4-e4b",
         "translation-translategemma-4b",
+        "captions-whistle",
     }
     assert (output_dir / builder.STATION_INDEX_FILENAME).is_file()
     for component in (
@@ -552,6 +587,7 @@ def test_build_station_bundle_succeeds_with_matching_provenance_for_every_ollama
         "summary-gemma4-12b",
         "summary-gemma4-e4b",
         "translation-translategemma-4b",
+        "captions-whistle",
     ):
         assert (output_dir / f"{component}.ccpack").is_file()
 
@@ -733,6 +769,7 @@ def _bundle_from_root(
     but absolute paths."""
 
     parent.mkdir(parents=True, exist_ok=True)
+    whistle_files = native_packs.WHISTLE_PACK_FILES
     floor_root = _write_tree(
         parent / "captions-floor",
         {
@@ -743,9 +780,14 @@ def _bundle_from_root(
             "self-test/jfk.wav": b"floor-self-test-audio",
         },
     )
+    whistle_root = _write_tree(
+        parent / "captions-whistle",
+        {name: (b"d" if name == "libneedle.dll" else b"w") for name in whistle_files},
+    )
     return builder.build_station_bundle(
         output_dir=parent / output_name,
         captions_floor_root=floor_root,
+        captions_whistle_root=whistle_root,
         gemma4_12b_root=_write_ollama_model_root(
             parent, model_name="gemma4-12b", model=models["gemma4-12b"]
         ),
@@ -777,6 +819,7 @@ def test_model_packs_are_byte_identical_when_built_from_different_roots(
 
     models = _write_test_ollama_lock(tmp_path)
     monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
+    _bind_tiny_whistle_contract(monkeypatch)
 
     first = _bundle_from_root(tmp_path / "build-a", output_name="station", models=models)
     # A deliberately different depth AND leaf name, not just a sibling --
@@ -836,6 +879,7 @@ def test_model_packs_are_identical_across_candidates_while_core_changes(
     """
     models = _write_test_ollama_lock(tmp_path)
     monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
+    _bind_tiny_whistle_contract(monkeypatch)
 
     candidate_n = _bundle_from_root(
         tmp_path / "candidate-n",
@@ -889,6 +933,7 @@ def test_no_signed_pack_metadata_carries_a_build_input_path(
 
     models = _write_test_ollama_lock(tmp_path)
     monkeypatch.setattr(native_packs, "OLLAMA_MODEL_LOCK_PATH", models["_lock_path"])
+    _bind_tiny_whistle_contract(monkeypatch)
     parent = tmp_path / "build-root-with-a-distinctive-name"
     result = _bundle_from_root(parent, output_name="station", models=models)
 

@@ -506,8 +506,8 @@ Code 123 hides a second number from the activation step: 66 (pack or index missi
 
 | Where | Message | Cause and fix |
 | --- | --- | --- |
-| API, HTTP 401 | Missing Authorization header. Use Bearer <staff-token>. | No token sent. In the console: sign in again on First Setup. |
-| API, HTTP 401 | Invalid Authorization header. Use Bearer <staff-token>. | The header is not in the form `Bearer <token>`. |
+| API, HTTP 401 | Missing Authorization header. Use Bearer &lt;staff-token&gt;. | No token sent. In the console: sign in again on First Setup. |
+| API, HTTP 401 | Invalid Authorization header. Use Bearer &lt;staff-token&gt;. | The header is not in the form `Bearer <token>`. |
 | API, HTTP 401 | Invalid staff bearer token. | The token is wrong or from another station. |
 | API, HTTP 401 | Staff bearer token has been revoked. | Issue a new one. |
 | API, HTTP 401 | Staff identity is required for this action. | The route needs an identity and none was attached. |

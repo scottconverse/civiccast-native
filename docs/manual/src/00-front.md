@@ -1,13 +1,13 @@
 # About this manual {#about}
 
-This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.10**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11 candidate**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
-CivicCast beta.10 was published on 2 October 2026 as a **GitHub pre-release, a "beta candidate"**. It is not a production release. This manual says plainly what was tested and what was not, so you can decide how much to rely on it.
+Beta.11 is being prepared for release. Its Whistle live-caption changes completed an owner-accepted 24-hour three-station lab soak. The packaged beta.11 installer has not yet completed installation verification. The previous beta.10 was published on 2 October 2026 as a GitHub pre-release; its installation evidence below is historical and does not verify beta.11. Neither version is a production release. This manual says plainly what was tested and what was not, so you can decide how much to rely on it.
 
-- **Tested and passed:** a clean install in a Windows test sandbox ran the installer, started the station, showed the staff console and the resident portal, ran a clerk workflow, produced captions, played a channel and ran a short five-minute soak. All 10 checks in the clean-install lane passed.
-- **Tested earlier, on an earlier build of the same engine:** an eight-hour lab run with three channels on one machine, and about 59 hours of two channels staying on the air on one lab station. Details and limits are in [Appendix H](#app-evidence).
+- **Beta.10 installer tested and passed:** a clean install in a Windows test sandbox ran the installer, started the station, showed the staff console and the resident portal, ran a clerk workflow, produced captions, played a channel and ran a short five-minute soak. All 10 checks in the clean-install lane passed.
+- **Earlier beta.10 operation evidence:** an eight-hour lab run with three channels on one machine, and about 59 hours of two channels staying on the air on one lab station. Details and limits are in [Appendix H](#app-evidence).
 - **Not tested:** upgrading from an earlier release, a first install with neither the full kit nor an earlier install, and use at a real station. No human field tester has signed off. Real cable-company acceptance and physical broadcast video cards are unproven.
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.

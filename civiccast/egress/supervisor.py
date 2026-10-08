@@ -76,9 +76,23 @@ class PlayoutSupervisor(EgressDaemon):
         by the engine's source-change path when it actually swaps.
         """
         if command.action == "takeover":
+            config = self._store.get_config(command.channel_id)
+            if config is not None and not config.enabled:
+                _LOG.info(
+                    "channel %s: ignoring queued takeover because the channel is disabled",
+                    command.channel_id,
+                )
+                return
             self._consume_takeover(command.channel_id)
             return
         if command.action == "handback":
+            config = self._store.get_config(command.channel_id)
+            if config is not None and not config.enabled:
+                _LOG.info(
+                    "channel %s: ignoring queued handback because the channel is disabled",
+                    command.channel_id,
+                )
+                return
             self.request_live_handback(channel_id=command.channel_id)
             return
         super()._process_command(command)

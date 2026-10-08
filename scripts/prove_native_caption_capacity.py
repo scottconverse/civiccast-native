@@ -616,8 +616,6 @@ def _overload_negative_control(
     tap_root = work_root / "tap"
     channel_dir = tap_root / "government"
     channel_dir.mkdir(parents=True, exist_ok=True)
-    for index in range(4):
-        shutil.copy2(audio, channel_dir / f"chunk-{index:06d}.wav")
     caption_work = work_root / "egress"
     active = caption_work / "government" / "captions" / "active.vtt"
     active.parent.mkdir(parents=True, exist_ok=True)
@@ -645,7 +643,16 @@ def _overload_negative_control(
         # when this argument was still hardcoded to the pre-item-79 value of
         # 3.
         max_backlog_segments=2,
+        # This is a deterministic negative control, not a measurement of the
+        # station's overload thresholds: make one over-limit scan exercise the
+        # fail-closed pause path regardless of the production catch-up ladder.
+        overload_persistence_scans=1,
+        catch_up_shed_limit=0,
     )
+    # The worker constructor clears segments left before this session starts.
+    # Model new broadcast chunks by writing them only after the worker is live.
+    for index in range(4):
+        shutil.copy2(audio, channel_dir / f"chunk-{index:06d}.wav")
     result = worker.run_once()
     status_path = caption_work / "government" / "captions" / "runtime-status.json"
     status = json.loads(status_path.read_text(encoding="utf-8"))
@@ -654,6 +661,11 @@ def _overload_negative_control(
         "dropped_overload_segments": result.dropped_overload_segments,
         "overload_files": sorted(path.name for path in (channel_dir / "overload").glob("*.wav")),
         "runtime_state": status.get("state"),
+        "control_settings": {
+            "max_backlog_segments": 2,
+            "overload_persistence_scans": 1,
+            "catch_up_shed_limit": 0,
+        },
     }
 
 

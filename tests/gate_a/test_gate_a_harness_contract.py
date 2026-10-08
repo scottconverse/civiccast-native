@@ -47,6 +47,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 
 def _find_repo_root(start: Path) -> Path:
@@ -1317,7 +1318,7 @@ def test_workflow_carries_a_required_download_only_job() -> None:
     workflow = _read(_WORKFLOW)
     download_only_job = _split_download_only_job(workflow)
     assert "name: Download-only upgrade lane" in download_only_job
-    assert "needs: station-acceptance-dirty" in download_only_job
+    assert "needs: [candidate-eligibility, station-acceptance-dirty]" in download_only_job
     assert "runs-on: [self-hosted, windows, sandbox-lab]" in download_only_job
 
 
@@ -1816,3 +1817,27 @@ def test_psql_proof_tries_each_alembic_namespace_as_its_own_statement() -> None:
     assert "'SELECT version_num FROM public.alembic_version LIMIT 1'" in block
     assert "foreach ($sql in $sqlCandidates)" in block
     assert "does not exist" in block
+
+
+def test_gate_a_skips_prepare_only_workflow_runs_before_sandbox() -> None:
+    workflow = yaml.load(_read(_WORKFLOW), Loader=yaml.BaseLoader)
+    jobs = workflow["jobs"]
+
+    preflight = jobs["candidate-eligibility"]
+    assert preflight["runs-on"] == "ubuntu-latest"
+    assert preflight["outputs"]["eligible"] == "${{ steps.check.outputs.eligible }}"
+    check = next(step for step in preflight["steps"] if step["id"] == "check")
+    assert "actions/runs/$RUN_ID/artifacts" in check["run"]
+    assert "native-station-prepare-$candidate_sha" in check["run"]
+    assert "prepare_only_count" in check["run"]
+    assert "expired == false" in check["run"]
+    assert workflow["permissions"]["actions"] == "read"
+
+    for job_name in (
+        "station-acceptance",
+        "station-acceptance-dirty",
+        "station-acceptance-download-only",
+    ):
+        job = jobs[job_name]
+        assert "candidate-eligibility" in job["needs"]
+        assert "needs.candidate-eligibility.outputs.eligible == 'true'" in job["if"]

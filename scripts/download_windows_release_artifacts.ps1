@@ -17,9 +17,9 @@ Two asset-set families are supported:
     constants by tests/policy/test_windows_release_downloader.py so the two
     cannot drift.
 
-The default tag and expected version match this source tree's owner-held
-v1.0.0-beta.10 candidate and become downloadable after it is published. Until then,
-fetch the current published beta.7 release explicitly with both
+The default tag and expected version are pinned to the current published
+release in `docs/releases/release-truth.yaml`, not the next owner-held source
+candidate. For a historical beta.7 download, specify both
 `-Tag v1.0.0-beta.7 -Version 1.0.0-beta.7`.
 
   ProofKit / TesterPackage / All (the retired WSL2 rc line's shape): fetch the

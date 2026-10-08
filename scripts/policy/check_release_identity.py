@@ -104,12 +104,12 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
     tauri_version = tauri_config.get("version")
     native_tauri_config = json.loads(_read(native_tauri_config_path))
     native_version = native_tauri_config.get("version")
-    held_candidate_marker = "owner-held unpublished candidate"
-    held_candidate = (
+    unpublished_candidate_marker = "unpublished candidate"
+    unpublished_candidate = (
         f"v{version}" in readme
-        and held_candidate_marker in readme.lower()
+        and unpublished_candidate_marker in readme.lower()
         and f"v{version}" in docs_index
-        and held_candidate_marker in docs_index.lower()
+        and unpublished_candidate_marker in docs_index.lower()
     )
 
     # The single-source-of-truth invariant this whole check exists to
@@ -136,14 +136,14 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
     )
     _require(
         f"releases/tag/v{version}" in readme
-        or (f"v{version}" in readme and held_candidate_marker in readme.lower()),
+        or (f"v{version}" in readme and unpublished_candidate_marker in readme.lower()),
         (
             f"{_repo_path(readme_path, root)} neither links the current v{version} release "
-            "nor identifies it as an owner-held unpublished candidate."
+            "nor identifies it as an unpublished candidate."
         ),
         violations,
     )
-    if held_candidate:
+    if unpublished_candidate:
         _require(
             "## [Unreleased]" in changelog and f"v{version}" in changelog,
             (
@@ -165,10 +165,10 @@ def evaluate_release_identity(root: Path = REPO_ROOT) -> list[str]:
         )
     _require(
         (f">v{version}<" in docs_index and f"releases/tag/v{version}" in docs_index)
-        or (f"v{version}" in docs_index and held_candidate_marker in docs_index.lower()),
+        or (f"v{version}" in docs_index and unpublished_candidate_marker in docs_index.lower()),
         (
             f"{_repo_path(docs_index_path, root)} neither shows/links latest tag v{version} "
-            "nor identifies it as an owner-held unpublished candidate."
+            "nor identifies it as an unpublished candidate."
         ),
         violations,
     )

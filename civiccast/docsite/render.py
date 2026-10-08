@@ -1,17 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Pure functions shared by the docsite build script and its tests.
+"""Small HTML helpers shared by the docsite build script and its tests.
 
-Kept dependency-free (stdlib ``html.parser`` only, no markdown/HTML library)
-so the native runtime never needs a new pinned dependency: by the time
-anything here runs at request time, the manual has already been converted to
-HTML by pandoc at build time (see ``scripts/render_docsite_manual.py``).
-``sanitize_html`` and ``extract_toc`` operate on that already-rendered HTML.
+HTML parsing uses the standard library. Pillow is imported only when the
+build-time image embedder runs; the request-time service can import
+``sanitize_html`` and ``extract_toc`` without a documentation dependency.
 """
 
 from __future__ import annotations
 
 import base64
+import io
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -30,12 +29,11 @@ _IMG_SRC_RE = re.compile(r'(<img\b[^>]*\bsrc=")([^"]+)(")')
 
 
 def embed_local_images(html: str, base_dir: Path) -> str:
-    """Inline every relative ``<img src="...">`` in ``html`` as a base64
-    ``data:`` URI, resolved against ``base_dir`` (``docs/`` for the manual).
+    """Inline local images as base64 data URIs, compressing raster images to WebP.
 
     Pandoc leaves an image reference exactly as written in the Markdown
-    source (``docs/USER-MANUAL.md``'s two architecture diagrams use
-    ``assets/architecture/....png``, relative to ``docs/``) -- there is no
+    source (``docs/USER-MANUAL.md``'s images use paths relative to ``docs/``)
+    -- there is no
     server-relative path that would resolve once this HTML is embedded in
     ``civiccast/docsite/manual.json`` and served from ``/api/public/manual``
     with no filesystem underneath it, and ``render.py``'s own sanitizer
@@ -44,12 +42,43 @@ def embed_local_images(html: str, base_dir: Path) -> str:
     unresolved relative path would silently render as a broken image (PR
     #74 review). Embedding once here, at commit-render time, keeps the
     manual fully self-contained and working with no internet connection,
-    matching the rest of this pipeline's offline-first posture.
+    matching the rest of this pipeline's offline-first posture. WebP quality
+    85 keeps the complete built-in manual below the 5 MiB source-blob limit;
+    pixel dimensions are checked after conversion. SVG and animated GIF
+    sources keep their original image format.
 
     An image this can't resolve (missing file, remote URL, already a data
     URI) is left exactly as-is -- sanitize_html's existing allowlist is the
     backstop that decides whether an untouched src ultimately survives.
     """
+
+    def _data_uri(candidate: Path, mime: str) -> str:
+        raw = candidate.read_bytes()
+        if candidate.suffix.lower() == ".svg":
+            return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+
+        # Build-only dependency: the docsite service reads pre-rendered HTML
+        # and never calls this image conversion path.
+        from PIL import Image
+
+        try:
+            with Image.open(candidate) as source:
+                if getattr(source, "is_animated", False) and getattr(source, "n_frames", 1) > 1:
+                    return f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}"
+                original_size = source.size
+                has_alpha = "A" in source.getbands() or "transparency" in source.info
+                raster = source.convert("RGBA" if has_alpha else "RGB")
+                optimized = io.BytesIO()
+                raster.save(optimized, format="WEBP", quality=85, method=6)
+            optimized_bytes = optimized.getvalue()
+            with Image.open(io.BytesIO(optimized_bytes)) as decoded:
+                if decoded.size != original_size:
+                    raise ValueError(
+                        f"WebP dimensions {decoded.size} differ from source {original_size}"
+                    )
+        except Exception as exc:
+            raise RuntimeError(f"could not optimize manual image {candidate}: {exc}") from exc
+        return f"data:image/webp;base64,{base64.b64encode(optimized_bytes).decode('ascii')}"
 
     def _replace(match: re.Match[str]) -> str:
         prefix, src, suffix = match.group(1), match.group(2), match.group(3)
@@ -63,8 +92,7 @@ def embed_local_images(html: str, base_dir: Path) -> str:
         mime = _MIME_BY_SUFFIX.get(candidate.suffix.lower())
         if mime is None or not candidate.is_file():
             return match.group(0)
-        encoded = base64.b64encode(candidate.read_bytes()).decode("ascii")
-        return f"{prefix}data:{mime};base64,{encoded}{suffix}"
+        return f"{prefix}{_data_uri(candidate, mime)}{suffix}"
 
     return _IMG_SRC_RE.sub(_replace, html)
 

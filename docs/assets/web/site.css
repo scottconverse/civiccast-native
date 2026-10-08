@@ -2,6 +2,8 @@
    Tokens come from docs/brand/tokens/civiccast-colors.css (Chamber Ink, Agenda Paper, Signal/Record Steel,
    Night Session, On-Air Light, Slate, Mist). Type is Barlow (text) and Barlow Condensed (headings), self-hosted. */
 
+@import url("../../brand/tokens/civiccast-colors.css");
+
 @font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url("fonts/Barlow-Regular.woff2") format("woff2"); }
 @font-face { font-family: "Barlow"; font-weight: 500; font-display: swap; src: url("fonts/Barlow-Medium.woff2") format("woff2"); }
 @font-face { font-family: "Barlow"; font-weight: 600; font-display: swap; src: url("fonts/Barlow-SemiBold.woff2") format("woff2"); }
@@ -10,16 +12,16 @@
 @font-face { font-family: "Barlow Condensed"; font-weight: 700; font-display: swap; src: url("fonts/BarlowCondensed-Bold.woff2") format("woff2"); }
 
 :root {
-  --ink: #1d1f20;
-  --paper: #f2f2f3;
+  --ink: var(--cc-chamber-ink);
+  --paper: var(--cc-agenda-paper);
   --white: #ffffff;
-  --signal: #5980a6;
-  --record: #416180;
-  --night: #1d2d3d;
+  --signal: var(--cc-signal-steel);
+  --record: var(--cc-record-steel);
+  --night: var(--cc-night-session);
   --night-2: #263a4e;
-  --onair: #94bce3;
-  --slate: #424244;
-  --mist: #d6ebff;
+  --onair: var(--cc-on-air-light);
+  --slate: var(--cc-slate);
+  --mist: var(--cc-mist);
   --line: #d5d9de;
   --line-dark: #38506a;
   --warn-bg: #fff6df;

@@ -1,22 +1,22 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.10 (native Windows line)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.11 (native Windows line)
 author: The CivicCast Authors
-date: 2026-10-03
+date: 2026-10-07
 urlcolor: blue
 toccolor: black
 ---
 
 # About this manual {#about}
 
-This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.10**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11 candidate**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
-CivicCast beta.10 was published on 2 October 2026 as a **GitHub pre-release, a "beta candidate"**. It is not a production release. This manual says plainly what was tested and what was not, so you can decide how much to rely on it.
+Beta.11 is being prepared for release. Its Whistle live-caption changes completed an owner-accepted 24-hour three-station lab soak. The packaged beta.11 installer has not yet completed installation verification. The previous beta.10 was published on 2 October 2026 as a GitHub pre-release; its installation evidence below is historical and does not verify beta.11. Neither version is a production release. This manual says plainly what was tested and what was not, so you can decide how much to rely on it.
 
-- **Tested and passed:** a clean install in a Windows test sandbox ran the installer, started the station, showed the staff console and the resident portal, ran a clerk workflow, produced captions, played a channel and ran a short five-minute soak. All 10 checks in the clean-install lane passed.
-- **Tested earlier, on an earlier build of the same engine:** an eight-hour lab run with three channels on one machine, and about 59 hours of two channels staying on the air on one lab station. Details and limits are in [Appendix H](#app-evidence).
+- **Beta.10 installer tested and passed:** a clean install in a Windows test sandbox ran the installer, started the station, showed the staff console and the resident portal, ran a clerk workflow, produced captions, played a channel and ran a short five-minute soak. All 10 checks in the clean-install lane passed.
+- **Earlier beta.10 operation evidence:** an eight-hour lab run with three channels on one machine, and about 59 hours of two channels staying on the air on one lab station. Details and limits are in [Appendix H](#app-evidence).
 - **Not tested:** upgrading from an earlier release, a first install with neither the full kit nor an earlier install, and use at a real station. No human field tester has signed off. Real cable-company acceptance and physical broadcast video cards are unproven.
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
@@ -279,7 +279,7 @@ You should be taken to the **Readiness** screen. If a screen sent you here becau
 
 > **Note:** Signing in on one browser does not sign out any other browser or device that is already signed in.
 
-> **Note:** A normal sign-in takes you straight to Readiness, so you will not see this on that path. After you create the first admin on a new station (see [Set up a brand-new station](#signing-in-first-run)), the **Setup complete** card says "CivicCast saved a fresh console token in this browser for <your admin display name>." A *console token* is the private pass your browser keeps so the station knows it is you. The sentence means you are signed in.
+> **Note:** A normal sign-in takes you straight to Readiness, so you will not see this on that path. After you create the first admin on a new station (see [Set up a brand-new station](#signing-in-first-run)), the **Setup complete** card says "CivicCast saved a fresh console token in this browser for &lt;your admin display name&gt;." A *console token* is the private pass your browser keeps so the station knows it is you. The sentence means you are signed in.
 
 > **Warning:** Closing the browser does not sign you out. CivicCast keeps your sign-in in the browser until you click **Sign out**, so anyone who opens the browser on that computer afterwards can use the console as you. On a shared or borrowed computer, always click **Sign out** before you leave.
 
@@ -315,9 +315,9 @@ The **Sign out** button appears only after the console has confirmed who you are
 
 #### The top bar
 
-The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the version number, such as `v1.0.0-beta.10`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local <time> / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
+The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the version number, such as `v1.0.0-beta.10`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
 
-Hover over the round badge to see your name and your roles, in the form "<your display name> / <your role names>". The console shows your roles nowhere else.
+Hover over the round badge to see your name and your roles, in the form "&lt;your display name&gt; / &lt;your role names&gt;". The console shows your roles nowhere else.
 
 > **Known issue (beta.10):** The **No live meeting broadcast** pill and the words "Next No events scheduled" never change. They stay the same during a live meeting and with a full schedule. Do not use them to decide whether the station is on air or what comes next. Use **Readiness** and **Channels** instead.
 
@@ -473,7 +473,7 @@ You should see a page headed **Operator manual** with a contents list on the lef
 - Every control you can reach with Tab shows a visible outline.
 - After you change screens by clicking or pressing a key, focus moves to the main area of the new screen. It does not move on the first page load.
 - On a narrow window, the **Open navigation** drawer keeps Tab inside it, and Escape closes it.
-- The sidebar is labelled **Primary navigation**, and the screen you are on is marked as the current page. Each section header is labelled **Show <name> navigation** or **Hide <name> navigation**.
+- The sidebar is labelled **Primary navigation**, and the screen you are on is marked as the current page. Each section header is labelled **Show &lt;name&gt; navigation** or **Hide &lt;name&gt; navigation**.
 - Error boxes, toasts and the on-air banner on Readiness are announced to screen readers.
 - The theme button switches between light and dark.
 
@@ -928,7 +928,7 @@ You should see the new schedule appear in the **Schedules** table above the form
 
 > **Warning:** The time you type is **UTC**, not local time. Under **Start (UTC)** and **Time (HH:MM UTC)** the screen shows "In your local time: …" so you can check it. The weekday boxes are also UTC days, and they get no such line. A Monday 7 PM meeting in US Mountain Time (UTC−6 in summer, UTC−7 in winter) is already Tuesday in UTC: in summer it is Tuesday 01:00 UTC, in winter Tuesday 02:00 UTC. Tick **Tue**, not **Mon**. Use the **Next 3 fires** lines to confirm the local day and time before you save. After the clocks change, edit the schedule: the UTC time does not move, so your local time does.
 
-> **Known issue (beta.10):** After **Create schedule** works, the form is not cleared and no "saved" message appears. Look for the new row in the **Schedules** table. If you click **Create schedule** a second time, the station answers "Recording schedule '<id>' already exists. Use PATCH to update." That means the first click worked.
+> **Known issue (beta.10):** After **Create schedule** works, the form is not cleared and no "saved" message appears. Look for the new row in the **Schedules** table. If you click **Create schedule** a second time, the station answers "Recording schedule '&lt;id&gt;' already exists. Use PATCH to update." That means the first click worked.
 
 > **Known issue (beta.10):** "Quality preset" is a free text box and the screen does not know which names are valid. Its note says "Contact your station admin for the full list of available presets." We could not confirm what the station does with a name it does not know.
 
@@ -1002,7 +1002,7 @@ An agenda belongs to one recording. Each recording can have only one agenda. Age
 4. If the agenda also exists as a document, type its web address in **Source doc URL (optional)**. Residents can read it next to the video.
 5. Click **Create agenda**.
 
-You should see the new agenda selected. Its card shows the ID, a **draft** label, and "meeting asset: <id>". If you have more than one agenda, the **Pick an agenda** drop-down at the top switches between them.
+You should see the new agenda selected. Its card shows the ID, a **draft** label, and "meeting asset: &lt;id&gt;". If you have more than one agenda, the **Pick an agenda** drop-down at the top switches between them.
 
 > **Known issue (beta.10):** The IDs are made-up codes, and a wrong character (for example a capital letter) shows raw technical text instead of a plain message. There is no list of recordings to choose from. We could not confirm whether the station checks that the recording exists.
 
@@ -1364,7 +1364,7 @@ The nine rows in the checklist are: **Network reachable**, **Recording storage**
 ![The confirmation box "End the live stream?" over the Live screen.](manual/images/operator-live-endconfirm.png){width=70%}
 
 *Figure: the End Live Stream confirmation. Its wording about residents does not match what the code does; see the warning below.*
-3. Watch the **Recording finalization** panel that appears. It shows **Waiting**, then "Attempt N of M. The recording is being checked and packaged.", then "Recording saved as asset <id>. Find it in the Assets library."
+3. Watch the **Recording finalization** panel that appears. It shows **Waiting**, then "Attempt N of M. The recording is being checked and packaged.", then "Recording saved as asset &lt;id&gt;. Find it in the Assets library."
 
 If it fails, the panel shows the reason (or "Finalization failed."). Fix the cause, then click **Retry finalization**. See [After the meeting](#ch-after-meeting) for what to do with the saved recording.
 
@@ -1380,7 +1380,7 @@ The **Channels** screen controls each channel's actual video feed.
 2. In the row of channel cards under the heading, click the card for the channel you want. Each card shows the channel's name and its id (for example `government`). The first channel is selected for you.
 3. Find the box **Outgoing channel feed**. It shows a state tag. The words you can see there are **On air**, **Showing slate**, **Starting**, **Stopping**, **Finishing current item**, **Changing source**, **Stopped** and **Needs attention**.
 4. Click **Start**.
-5. A box titled "Start the outgoing feed for <channel>?" says "<channel> goes live to its configured outputs and becomes visible to residents." Click **Start feed**.
+5. A box titled "Start the outgoing feed for &lt;channel&gt;?" says "&lt;channel&gt; goes live to its configured outputs and becomes visible to residents." Click **Start feed**.
 6. The button reads "Queuing..." for a moment. The screen then checks the feed every 2 seconds for 20 seconds.
 
 You should see the state tag change to **Starting** and then **On air**, or **Showing slate** if nothing is scheduled right now. "Starting" means CivicCast is preparing the first program, which can take a while on a cold start.
@@ -1395,10 +1395,10 @@ Clicking **Start** only *queues* a command. The feed program picks it up afterwa
 
 If **Start** is grey, a line under the button says why:
 
-* "No outgoing-feed configuration for <id>. Apply a headend preset or the local rehearsal preset first." The channel has never been set up. Ask a Setup admin.
-* "Outgoing feed for <id> is disabled in its egress configuration. Enable it in Outgoing feed configuration, then start."
+* "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." The channel has never been set up. Ask a Setup admin.
+* "Outgoing feed for &lt;id&gt; is disabled in its egress configuration. Enable it in Outgoing feed configuration, then start."
 * "Checking for an outgoing-feed configuration..." Wait a moment.
-* "Could not check the outgoing-feed configuration for <id>. Retry the check, then start." Click **Retry check**.
+* "Could not check the outgoing-feed configuration for &lt;id&gt;. Retry the check, then start." Click **Retry check**.
 
 If you see "Outgoing feed controls require the meeting operator role.", your sign-in cannot use these buttons.
 
@@ -1408,9 +1408,9 @@ Use the same **Outgoing channel feed** box.
 
 | Button | Box that appears | Confirm button |
 | --- | --- | --- |
-| **Stop** | "Stop the outgoing feed for <channel>?" - "This takes <channel> off the air. Residents watching lose the stream until the feed is started again." | **Stop feed** |
-| **Restart feed** | "Restart the outgoing feed for <channel>?" - "The stream drops briefly for residents while <channel> restarts." | **Restart feed** |
-| **Finish current item, then stop** | "Finish the current item, then stop <channel>?" - "<channel> plays out its current item and then goes off the air until the feed is started again." | **Finish, then stop** |
+| **Stop** | "Stop the outgoing feed for &lt;channel&gt;?" - "This takes &lt;channel&gt; off the air. Residents watching lose the stream until the feed is started again." | **Stop feed** |
+| **Restart feed** | "Restart the outgoing feed for &lt;channel&gt;?" - "The stream drops briefly for residents while &lt;channel&gt; restarts." | **Restart feed** |
+| **Finish current item, then stop** | "Finish the current item, then stop &lt;channel&gt;?" - "&lt;channel&gt; plays out its current item and then goes off the air until the feed is started again." | **Finish, then stop** |
 
 ![The confirmation box "Stop the outgoing feed for" the selected channel, with Stop feed and Cancel buttons.](manual/images/operator-channels-stop-confirm.png){width=70%}
 
@@ -1456,7 +1456,7 @@ You should see a red badge reading "Live takeover" with the name of the person a
 
 *Figure: the Live takeover box during a takeover.*
 
-> **Warning:** **Confirm take live** overrides the schedule and changes what is on the air. There is no pop-up. The second click is the confirmation. If the source's last good check is older than the window (30 seconds by default) when you confirm, the code we read refuses the takeover before it re-checks anything. The error can then read something like "Live ingest path '<channel>:local' is disabled.", which names CivicCast's built-in placeholder path and not your camera. Click **Check source** again and retry. If the channel is already under takeover, the error says "Channel '<id>' is already under live takeover."
+> **Warning:** **Confirm take live** overrides the schedule and changes what is on the air. There is no pop-up. The second click is the confirmation. If the source's last good check is older than the window (30 seconds by default) when you confirm, the code we read refuses the takeover before it re-checks anything. The error can then read something like "Live ingest path '&lt;channel&gt;:local' is disabled.", which names CivicCast's built-in placeholder path and not your camera. Click **Check source** again and retry. If the channel is already under takeover, the error says "Channel '&lt;id&gt;' is already under live takeover."
 
 To hand the channel back:
 
@@ -1496,7 +1496,7 @@ To undo an approval:
 
 > **Warning:** **Confirm take-off** cancels the program's schedule item. It will not play, not merely pause. The engine is told to read the schedule again, and the approval is marked **Rolled back** with your reason.
 
-> **Known issue (beta.10):** four things in this box are loose with words. The tag **Queued to air** means the command was queued, nothing more. The tag "On air (confirmed)" is never shown, because no code sets that state. A row for a future program says "aired <time>" even though it has not played. And if the list of past approvals cannot be loaded (for example, for a role that is not allowed to see it), the box still says "Nothing has been committed to air on this channel yet." instead of showing an error.
+> **Known issue (beta.10):** four things in this box are loose with words. The tag **Queued to air** means the command was queued, nothing more. The tag "On air (confirmed)" is never shown, because no code sets that state. A row for a future program says "aired &lt;time&gt;" even though it has not played. And if the list of past approvals cannot be loaded (for example, for a role that is not allowed to see it), the box still says "Nothing has been committed to air on this channel yet." instead of showing an error.
 
 Without the Publish operator or Setup admin role, **Review & prepare** is grey and the box says "You can review the schedule here. Putting a program on air or taking it off requires the publish operator or setup admin role."
 ### Put a lower-third banner on a channel
@@ -1570,11 +1570,11 @@ You should see the banner "Test action recorded." Test Mode never touches your e
 5. Tick the box "I understand On-Air cue actions may be sent to production devices".
 6. A list called "On-Air prerequisites" shows "Ready:" or "Needs attention:" for **Control-room readiness**, **Safe-state cue selected** and **On-Air responsibility acknowledged**. When all three are ready, click **Open On-Air Session**.
 
-You should see an amber banner: "ON-AIR MODE - cue actions can be sent to production devices. Safe-state cue: <cue id>." The banner shows the cue's internal id, not its name. The **Safe State** panel under it shows the name.
+You should see an amber banner: "ON-AIR MODE - cue actions can be sent to production devices. Safe-state cue: &lt;cue id&gt;." The banner shows the cue's internal id, not its name. The **Safe State** panel under it shows the name.
 
 > **Warning:** in an On-Air session a cue really is sent to your equipment, and that can change the picture going to the channel. Always click the cue first (the dry run) and read the plan card.
 
-If someone else already has the surface open, you see: "A session is already open on this surface, locked by <name> since <time>. A setup admin or support admin can force-close it to release the lock."
+If someone else already has the surface open, you see: "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;. A setup admin or support admin can force-close it to release the lock."
 
 > **Known issue (beta.10):** an On-Air session expires **30 minutes** after you open it, and the screen never shows how much time is left. After that, the next attempt to fire a cue is refused ("On-Air Mode expired before this cue could fire. Open a new On-Air session to continue.") and the session is closed. Council meetings often run longer than 30 minutes. Write down the time you opened the session, and open a new On-Air session before 30 minutes pass. Any cue the session had already sent is not undone.
 
@@ -1688,7 +1688,7 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 2. Click the room in the **Rooms** list.
 3. Click **Open room**. A box titled "Director view (embed in your switcher)" shows a link. This is the page you keep open to see and arrange the guests. Click **Copy**. The link is shown only right after you click **Open room**. If you reload the page it is gone, so click **Open room** again.
 4. Under "Invite a guest", type the **Guest name**, choose a **Contribution role** (**Council member**, **Presenter** or **Public comment**), and click **Generate invite link**.
-5. Copy the box labelled "Guest link for <name> — send this", and send it to that guest. Like the director link, this box is shown only right after you generate the link. If you reload the page or select another room it is gone, and the invite list shows only the guest's name, role and **Used** or **Pending**. Generate a new link if you did not copy it.
+5. Copy the box labelled "Guest link for &lt;name&gt; — send this", and send it to that guest. Like the director link, this box is shown only right after you generate the link. If you reload the page or select another room it is gone, and the invite list shows only the guest's name, role and **Used** or **Pending**. Generate a new link if you did not copy it.
 
 > **Note:** each guest link works for one guest, once, and expires after 4 hours. The screen says "single-use" but does not mention the 4 hours. Guests who join as **Public comment** must first accept terms before they can join. "Sent invites" lists each link as **Used** or **Pending**. A room holds up to 6 guests by default.
 
@@ -1704,7 +1704,7 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 *Figure: the Guests list for an open room.*
 
-> **Warning:** the guest's **On air** button does **more than show that guest**. It also switches the *whole channel* to its live source, exactly like **Take live** on Channels, for up to an hour. There is no confirmation box. CivicCast records the change under the name "remote-contribution", not your name. If the channel cannot be taken live (for example, no source passes its check), you get "Channel takeover failed; guest <id> not placed on-air." and the guest goes back to the waiting room. If the channel is already under takeover, nothing more happens and the guest joins the live picture.
+> **Warning:** the guest's **On air** button does **more than show that guest**. It also switches the *whole channel* to its live source, exactly like **Take live** on Channels, for up to an hour. There is no confirmation box. CivicCast records the change under the name "remote-contribution", not your name. If the channel cannot be taken live (for example, no source passes its check), you get "Channel takeover failed; guest &lt;id&gt; not placed on-air." and the guest goes back to the waiting room. If the channel is already under takeover, nothing more happens and the guest joins the live picture.
 
 #### Mute, take off the air, or drop a guest
 
@@ -1712,7 +1712,7 @@ While a guest is **On air**, two more buttons appear next to them.
 
 * **Mute** changes the guest's tag to **Muted**. A muted guest has only **On air** (which un-mutes) and **Drop**.
 * **Off air** returns the guest's tag to **In waiting room**. The guest stays admitted, so **On air** is still available.
-* **Drop** opens a box "Drop <name>?" (for an on-air guest: "<name> is on air right now — dropping ends their connection immediately and their video/audio cuts from the broadcast mid-session. They would need a new invite to rejoin."). Click **Drop guest**, or **Cancel**.
+* **Drop** opens a box "Drop &lt;name&gt;?" (for an on-air guest: "&lt;name&gt; is on air right now — dropping ends their connection immediately and their video/audio cuts from the broadcast mid-session. They would need a new invite to rejoin."). Click **Drop guest**, or **Cancel**.
 
 > **Warning:** **Mute** and **Off air** have no confirmation box. **Drop** and **Close room** ask first, and a dropped guest needs a new invite.
 
@@ -1763,29 +1763,29 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 17. Drop any remaining guests and click **Close room**.
 18. End any Control Room session: click **End session**.
 19. If you want the channel off the air, click **Finish current item, then stop** (or **Stop**) and confirm. If **Keep this channel on air** is ticked, ask your Setup admin to untick it first.
-20. On **Live**, click **End Live Stream**, confirm, and watch **Recording finalization** until it says "Recording saved as asset <id>." Then follow [After the meeting](#ch-after-meeting).
+20. On **Live**, click **End Live Stream**, confirm, and watch **Recording finalization** until it says "Recording saved as asset &lt;id&gt;." Then follow [After the meeting](#ch-after-meeting).
 
 ### If it did not work
 
 | What you see | What it means and what to do |
 | --- | --- |
 | "Live-room controls require the meeting operator role. Source status and readiness checks remain visible." | Your sign-in lacks the Meeting operator role. Ask your Setup admin. |
-| "Source preview unavailable - CivicCast has not verified incoming video or audio from <source>." | The Live screen never shows video in beta.10. It is not a fault. |
+| "Source preview unavailable - CivicCast has not verified incoming video or audio from &lt;source&gt;." | The Live screen never shows video in beta.10. It is not a fault. |
 | A red box "Live action failed." ending "refresh this screen" | Read the first line for the real reason. Do **not** refresh during a meeting. |
 | "Go on air blocked: a fresh source-bound server-side pre-flight did not pass." | A required checklist row failed when you clicked. Fix it, run **Run pre-flight**, try again. |
 | "LiveSession already exists: council-live-room" | A live session has already been created on this station. See the Known issue in "Run a live session". Ask IT. |
 | "Start was queued but the feed did not start." | The feed program did not respond in 20 seconds. Check Readiness, then click **Start** again. |
 | "No live source is ready yet." (Take live is grey) | No source passed **Check source** in the last 30 seconds (by default). Run **Check source** on Live. |
-| "Channel '<id>' is already under live takeover." | The channel is already live. Use **Return to schedule** first if you want to change it. |
+| "Channel '&lt;id&gt;' is already under live takeover." | The channel is already live. Use **Return to schedule** first if you want to change it. |
 | "Outgoing feed controls require the meeting operator role." | Your sign-in cannot start or stop channels. |
 | A program says **Not safe to air yet** | Read the reason: missing media, or a clash with another program. Fix it on **Schedule** and review again. |
 | **Couldn't reach the engine** on a committed program | The approval was saved, but the command to the feed did not go through. Check that the feed is running, and ask IT. |
 | "Production control unavailable — the TSR control service is not running or not configured." | The Control Room helper is down. Tell IT. |
 | "On-Air Mode expired before this cue could fire. Open a new On-Air session to continue." | The 30-minute limit passed. Open a new On-Air session. |
 | "The cue preview is stale ... Dry Run the cue again before Live Fire." | The cue or device changed after your dry run. Click the cue again. |
-| "A session is already open on this surface, locked by <name> since <time>." | Someone, maybe you before a refresh, has the surface open. Ask IT. |
+| "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;." | Someone, maybe you before a refresh, has the surface open. Ask IT. |
 | "Remote contribution isn't configured yet." | Guest video software has not been set up. Tell IT. |
-| "Channel takeover failed; guest <id> not placed on-air." | The channel had no ready live source. Run **Check source** on Live and click **On air** again. |
+| "Channel takeover failed; guest &lt;id&gt; not placed on-air." | The channel had no ready live source. Run **Check source** on Live and click **On air** again. |
 | "Durable storage is not ready. Open Setup and choose Prepare storage ..." | The station's database is not ready. Tell IT. |
 | "This action requires one of these CivicCast roles: ..." | Your sign-in lacks a role for that button. The names listed are the role names in short form. |
 
@@ -3239,6 +3239,12 @@ One more rule of thumb: dedicate the computer. The station runs a database, a we
 
 #### Graphics card: what it changes
 
+**Beta.11 live-caption candidate.** Whistle is the default live speech engine on native Windows stations. It runs on the processor, so a dedicated GPU is not needed for the primary engine. Live captions publish the first recognition; they do not wait for a second transcription to agree. Whistle processes one recognition request at a time across the three stations. The owner accepted a 24-hour three-station caption soak on one lab machine; this does not establish performance on every CPU.
+
+Whisper is the backup when Whistle fails or exceeds its request deadline. The affected station stays on Whisper until the runtime restarts. Whisper also remains the engine for recorded-media captions and can be selected as the primary live engine on a machine with a supported NVIDIA GPU and CUDA libraries. AMD or Intel graphics do not provide CUDA acceleration. CPU-only Whisper fallback at the Medium tier has not demonstrated real-time operation in this trial.
+
+For a technician configuring the Windows service environment: `CIVICCAST_LIVE_CAPTION_ENGINE=whistle` selects Whistle primary and Whisper backup; `CIVICCAST_LIVE_CAPTION_ENGINE=whisper` selects Whisper primary. `CIVICCAST_WHISPER_DEVICE=auto` detects available CUDA hardware; `cuda` or `cpu` explicitly selects the device. Restart the service after changing these settings. Needle usage telemetry is disabled; speech processing and model assets remain local. The following installer sizing information describes beta.10 Whisper setup, not Whistle hardware requirements.
+
 A graphics card matters for **captions** and **summaries**. It does not lighten video encoding in beta.10 (see the encoding paragraph after the tables).
 
 The caption engine ("Whisper" speech recognition) comes in two sizes. **Medium** always installs. **Large** is an optional add-on.
@@ -3344,7 +3350,7 @@ CivicCast keeps the program under the install folder (default `C:\Program Files\
 
 Putting it together for a first install from the kit, our derived estimate is: the two copies of the model packs (about 21 GB each) plus the runtime packs and their extracted trees (about 4.6 GB each) plus 2 GB of working room, so **plan for roughly 55 GB free on the install drive before you start**. Setup itself only refuses at its activation step: it needs the sum of the model-pack sizes plus 2 GB free and prints "Not enough free disk space to activate this station..." if it is short. Add the conform cache budget (60 GB by default) and your recordings on top.
 
-> **Tip:** Do not rely on the default 60 GB cache fitting on a small system drive. Either give the station a large drive, or lower `CIVICCAST_CONFORM_CACHE_GB` before the first busy week. A single prepared program larger than the whole budget cannot be kept. The station then refuses it with the error "Conform-cache budget too small to retain '<file name>'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
+> **Tip:** Do not rely on the default 60 GB cache fitting on a small system drive. Either give the station a large drive, or lower `CIVICCAST_CONFORM_CACHE_GB` before the first busy week. A single prepared program larger than the whole budget cannot be kept. The station then refuses it with the error "Conform-cache budget too small to retain '&lt;file name&gt;'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
 
 > **Known issue (beta.10):** The Setup screen's **Backup destination** control only proves that the folder accepts a test file (it writes, reads and deletes one). Its success message is "Backup destination accepted a write/read/delete proof." It does not copy station data there. See [Chapter 12](#ch-operations) for how backups are actually made. Because the station runs as LocalSystem, pick a local drive or a network path the computer account can reach; a drive letter mapped by a person is not visible to a Windows service.
 
@@ -3566,7 +3572,7 @@ Activation then:
 
 1. Checks the index signature and every pack's signature, size and SHA-256 (failure: child exit 66).
 2. Does nothing if this exact station is already activated.
-3. Checks free space: the sum of the pack sizes plus 2 GB of working room. If short: "Not enough free disk space to activate this station. The station's components need about N GB, plus 2 GB of working room, on the drive holding <folder> -- but only M GB is free. Nothing has been changed or deleted. Free up space (or install to a drive that has it) and run setup again."
+3. Checks free space: the sum of the pack sizes plus 2 GB of working room. If short: "Not enough free disk space to activate this station. The station's components need about N GB, plus 2 GB of working room, on the drive holding &lt;folder&gt; -- but only M GB is free. Nothing has been changed or deleted. Free up space (or install to a drive that has it) and run setup again."
 4. Deletes any old extracted component folders, then extracts the Medium caption model to `packs\captions-floor`, the three AI model packs to `components\<id>`, and the optional Large caption model to `components\captions-large-v3`. The three AI model packs are merged into one store at `models\ollama`. It then checks that 16 required files are present.
 5. Runs the self-test below. If every check passes it writes `activation-self-test.json` and then `station-set.json` in the install folder. Without them the station stays in a not-activated state.
 
@@ -3596,7 +3602,7 @@ Setup registers the service **CivicCast Native Supervisor** (`CivicCastSuperviso
 
 After setup, the window titled **CivicCast (Native) Setup** appears (we could not confirm the wording of the final setup page that launches it). If it does not appear, start **CivicCast (Native)** (the program is `CivicCast Native.exe` in the install folder). A silent install never opens it. The window runs as the signed-in user and has up to four screens. It shows them once per Windows account.
 
-**Checking This Computer.** "CivicCast is looking at this computer's hardware so it can recommend the right setup." It then lists Processor, Memory, Graphics and "Free disk space on <install target>", gives a one-sentence caption-engine recommendation ([Chapter 9](#ch-planning)), and shows **Continue**. If free space is short it shows "Not enough free disk space" and hides **Continue**: "Free up space on this drive, then reopen CivicCast Installer." (The window is titled "CivicCast (Native) Setup"; reopen **CivicCast (Native)**.)
+**Checking This Computer.** "CivicCast is looking at this computer's hardware so it can recommend the right setup." It then lists Processor, Memory, Graphics and "Free disk space on &lt;install target&gt;", gives a one-sentence caption-engine recommendation ([Chapter 9](#ch-planning)), and shows **Continue**. If free space is short it shows "Not enough free disk space" and hides **Continue**: "Free up space on this drive, then reopen CivicCast Installer." (The window is titled "CivicCast (Native) Setup"; reopen **CivicCast (Native)**.)
 
 **What CivicCast Needs.** "These are the large pieces CivicCast runs on. Anything already on this computer or on your USB kit is used as-is and is not downloaded again; only what is missing comes from the internet." It lists seven rows with sizes: CivicCast application runtime (482 MB), Database & messaging services (94 MB), Video and audio tools (137 MB, "Not included": it was installed by setup), Caption engine — Medium (1.5 GB), Caption engine — Large (optional, 3.1 GB), GPU caption acceleration (optional, 1.3 GB) and Local AI model (summaries & translation) (7.6 GB). The footer shows the total (9.7 GB by default, about 14.1 GB with both optional rows) and **Continue**. These sizes are placeholders; the real total is corrected once.
 
@@ -4006,7 +4012,7 @@ A channel has an **egress configuration**, stored in the database. "Egress" mean
 - **loudness target and tolerance** and the **canonical profile** (picture size, frame rate, codec, bitrates): see [Loudness](#configuration-loudness).
 - the **lower-third banner** switch and text (up to 240 characters).
 
-A new channel has no configuration until you create one. The Start button is disabled with "No outgoing-feed configuration for <id>. Apply a headend preset or the local rehearsal preset first." The normal way to create one is to apply a preset (next section). Creating it by preset gives the channel `enabled: true` and the slate message "CivicCast is preparing the channel."
+A new channel has no configuration until you create one. The Start button is disabled with "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." The normal way to create one is to apply a preset (next section). Creating it by preset gives the channel `enabled: true` and the slate message "CivicCast is preparing the channel."
 
 The Channels screen (**Run Meeting** group) edits some of this: **Run this channel 24/7** (auto start, software fallback, fill policy, slate message, NDI name, SDI device) and **Cable headend delivery** (the presets). It does not edit individual sinks, loudness numbers or the picture profile. Those can be set only through the staff API (`PUT /api/staff/egress/channels/{id}/config` with a full configuration, `setup_admin` only; see [Appendix: API](#app-api)).
 
@@ -4125,7 +4131,7 @@ CivicCast captions in two different ways and they are configured separately.
 | --- | --- | --- |
 | What it is | A real-time speech-to-text tap on each on-air channel's audio, with the text embedded in the video as CEA-708 captions | A job that captions a published recording after the meeting |
 | Switch | **Show live captions on air** (Station Profile), default **off** in beta.10 | Cannot be switched off (see below) |
-| Where results go | To the caption review queue and into the picture | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
+| Where results go | Into the picture; the local beta.11 dev7 candidate keeps a rolling live window and creates no permanent per-cue review records | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
 | Needs | The caption model, CPU or GPU, and CPU to spare while playing out | The same model, and a working translation model |
 
 #### The caption tiers
@@ -4143,9 +4149,11 @@ The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service**
 
 #### Live captions: what the settings change
 
+**Beta.11 caption candidate:** Whistle is the primary live engine, with Whisper as backup. Whistle inference uses the restored shared lock; low-confidence recognition still airs immediately, and overlapping audio is deduplicated without requiring two readings to agree. The beta.10 CPU/CUDA settings below describe its Whisper runtime and remain relevant when selecting Whisper; they do not describe Whistle concurrency.
+
 Live captions are produced by the caption tap. The native station turns it on (`CIVICCAST_CAPTION_TAP=inline`) unless the service environment says `CIVICCAST_CAPTION_TAP=off`, in which case the tap does not run at all. The console switch is the safe-direction override: `off` in the environment forces live captions off whatever the profile says, but no environment value can turn them on against a profile that is off.
 
-The tap works in 5-second audio segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scans every 2.0 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and tolerates a backlog of 2 segments per channel (`CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`) before it sheds the oldest audio and keeps captioning from the newest. On the CPU one live caption worker serves the whole station; with a CUDA runtime up to three channels run at once. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` forces another number. On the CPU the live tap uses between 1 and 2 CPU threads (one per 8 processors, capped at 2); `CIVICCAST_CAPTION_TAP_CPU_THREADS` and `CIVICCAST_WHISPER_CPU_THREADS` override that, but the live tap refuses `0` ("every core") and caps values above 2. The playout workers run at a higher priority than the control plane so captions never outrank the picture.
+For the Whisper runtime, the tap works in 5-second audio segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scans every 2.0 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and tolerates a backlog of 2 segments per channel (`CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`) before it sheds the oldest audio and keeps captioning from the newest. On the CPU one live caption worker serves the whole station; with a CUDA runtime up to three channels run at once. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` forces another number. On the CPU the live tap uses between 1 and 2 CPU threads (one per 8 processors, capped at 2); `CIVICCAST_CAPTION_TAP_CPU_THREADS` and `CIVICCAST_WHISPER_CPU_THREADS` override that, but the live tap refuses `0` ("every core") and caps values above 2. The playout workers run at a higher priority than the control plane so captions never outrank the picture.
 
 A separate proof loop decodes the emitted stream, compares the captions it finds with the expected ones, and only then marks a channel's captions "on" (a fresh pass is required; otherwise the Channels screen shows "Not verified"). It runs every 30 seconds with a 15-second limit.
 
@@ -4159,13 +4167,13 @@ When a recording is published, a job transcribes it in 30-second chunks (`CIVICC
 
 #### Caption evidence and retention
 
-The live tap keeps its work in `C:\ProgramData\CivicCast\data\caption-tap`. It keeps raw audio chunks and short evidence clips so a reviewer can listen to a low-confidence cue. Retention is by age and cannot be changed with a setting:
+**Beta.11 caption candidate:** Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. It does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. Each channel keeps at most 12 queued completed segments, plus inputs currently being processed and the segment being written. At the default five-second cadence, the queued limit is 60 seconds.
 
-- A raw audio chunk becomes eligible for deletion **24 hours** after it was made, once the evidence covering it is verified (or when no evidence window can ever cover it).
-- An evidence clip whose cue has been **approved or rejected** is deleted **90 days** after it was resolved.
-- A clip for a low-confidence cue that is still **pending** review is never deleted.
+The live caption window is limited to the most recent 300 seconds and at most 512 cues. Delivery tracking follows that window instead of accumulating for the whole on-air session. Archive-wide caption review/evidence discovery is not a live-caption or broadcast-readiness prerequisite. These limits are candidate implementation defaults, not controls on the configuration screen.
 
-Every deletion is written to `caption-retention-audit.jsonl` beside the data. A sweep runs every 60 seconds. There is no cap on disk use for this data; a full drive is not a refusal condition. The one refusal that remains is "caption-storage-volumes-diverge": if the caption tap folder and the evidence folder are on different drives, the channel is not ready and uses its slate. In the native layout both are under `ProgramData`, so you should not meet it.
+Original recordings, archived caption tracks and the recorded-caption review workflow are unchanged. Review recorded captions against the recording workflow; ordinary live captioning does not create an unattended review queue.
+
+**Historical beta.10 behavior:** The older live path retained raw chunks for an age-based sweep, resolved evidence for 90 days, and pending review evidence indefinitely. It wrote `caption-retention-audit.jsonl` and could block readiness when caption storage volumes diverged. Those archive dependencies are removed from ordinary live operation in the local candidate; this is not a claim that the published beta.10 installer has changed.
 
 ### Configure AI models {#configuration-ai}
 
@@ -4216,7 +4224,7 @@ The same flow runs from the command line: `civiccast cable doctor`, `civiccast c
 
 > **Warning:** **Do not run the output proof while the channel is on air.** The proof pushes a test pattern to the channel's UDP destination for the whole duration. The dialog warns that it replaces the channel's real output; in the code it starts a second stream to the same address. We found no check that stops it on a channel that is airing.
 
-> **Known issue (beta.10):** Screen 9 only saves your choices to the station record for the report. It does not configure the channel. Apply the headend preset on the Channels screen first. If the channel has no UDP output the proof fails with "channel '<id>' has no udp-ts sink to verify — apply a headend delivery profile first." The destination box is not tested for reachability. The cards are numbered Screen 8 to 11 although there are no Screens 1 to 7 on this page.
+> **Known issue (beta.10):** Screen 9 only saves your choices to the station record for the report. It does not configure the channel. Apply the headend preset on the Channels screen first. If the channel has no UDP output the proof fails with "channel '&lt;id&gt;' has no udp-ts sink to verify — apply a headend delivery profile first." The destination box is not tested for reachability. The cards are numbered Screen 8 to 11 although there are no Screens 1 to 7 on this page.
 
 > **Known issue (beta.10):** The text under Screen 8 says warnings can be passed with "Continue-anyway". There is no such button; the step opens by itself when no check fails. The check and verdict words are shown raw (PASS, FAIL, WARNING, SKIPPED, partial), and the proof ends with an internal note about "rung 3" and "MASTER §13.2". It means the test checks the network signal only and is not a proof of SDI hardware.
 
@@ -4461,11 +4469,11 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 | "Too many sign-in attempts from this station. Wait N seconds, then try again with the correct password, or use a printed recovery code." | The sign-in limit was reached | Wait the number of seconds shown |
 | "Durable storage is not ready." or HTTP 503 on a screen | The database was not prepared or the service is still starting | Click **Prepare storage** on First Setup; check the service and `postgres.log` |
 | The service stops soon after you edit the environment | An invalid value, or a forbidden switch such as `CIVICCAST_OFFLINE_CAPTION_JOB=off` | Read `control_plane.log` and `control_plane-app.log` in `C:\ProgramData\CivicCast\logs`; remove the variable and restart |
-| "No outgoing-feed configuration for <id>. Apply a headend preset or the local rehearsal preset first." | The channel has no configuration | Apply a preset on the Channels screen |
+| "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." | The channel has no configuration | Apply a preset on the Channels screen |
 | "Sink kind(s) [...] are not supported by the active GStreamer egress engine." | An `rtmp` sink was saved | Use `srt`, `udp-ts`, `local-ts`, `file`, `sdi` or `hls` |
 | "No hardware video encoder was found on this machine. To broadcast on the CPU instead (slower)..." | The profile names a hardware encoder this computer does not have | Tick **Allow software (CPU) encoding fallback**, or change the profile |
 | "Start was queued but the feed did not start. The outgoing-feed worker did not report Starting or On air within 20s..." | The feed worker did not respond | Check the service in System Health, then try Start again |
-| "channel '<id>' has no udp-ts sink to verify — apply a headend delivery profile first." | Commissioning proof on a channel with no UDP output | Apply the headend preset first |
+| "channel '&lt;id&gt;' has no udp-ts sink to verify — apply a headend delivery profile first." | Commissioning proof on a channel with no UDP output | Apply the headend preset first |
 | "Device host must be localhost, .local, or a private/link-local IP unless a setup admin records a public-host override reason..." | Control Room device on a public address | Use a private address; the screen has no way to record an override, so ask support |
 | "The credential store is not available to persist the device secret." / "The OS credential store is unavailable; provider keys cannot be saved here." | The Windows credential store is not available to the service account | Ask support; use `civiccast model set-provider-key` from an account that has it |
 | Control Room readiness is blocked at "TSR control service" | The sidecar is not installed or running, or the variable is not set | See [Set up the Control Room](#configuration-controlroom) |
@@ -4592,7 +4600,7 @@ Other logs you may need:
 
 - `C:\ProgramData\CivicCast\install-progress.log`: the installer's record of a first install.
 - `C:\ProgramData\CivicCast\upgrade\upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md`: the upgrade engine, described below.
-- `C:\ProgramData\CivicCast\data\caption-tap\caption-retention-audit.jsonl`: one line per caption file the retention sweeper deleted (no rotation).
+- `C:\ProgramData\CivicCast\data\caption-tap\caption-retention-audit.jsonl`: the historical beta.10 live retention audit (no rotation). Ordinary live captioning in the local beta.11 dev7 candidate does not run that archive sweep or append per-cue evidence records.
 
 > **Known issue (beta.10):** `control_plane.log` (every web request) and `postgres.log` are never rotated. On a busy station they grow forever. Check their size weekly and, when the service is stopped, move or truncate them. We could not confirm that Windows or the installer trims them.
 
@@ -4680,7 +4688,7 @@ This routine uses only checks that exist in beta.10.
 
 1. Read the result of the Sunday weekly self-test.
 2. Check the size of `control_plane.log`, `postgres.log` and `ollama.log` (they are not rotated).
-3. Check the size of `C:\ProgramData\CivicCast\data\caption-tap` and `C:\ProgramData\CivicCast\data\egress` (see the next section).
+3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The local beta.11 dev7 live-caption work area is bounded automatically and does not require weekly audio cleanup.
 4. Run `civiccast egress trim-health --older-than-days 30 --dry-run` and decide whether to trim (see the next section).
 5. Run the disaster-recovery drill (see below) at least when you have changed anything, and keep the report.
 6. Copy the things the drill does not back up (see below) to storage that is not on this computer.
@@ -4694,7 +4702,7 @@ This routine uses only checks that exist in beta.10.
 | `C:\ProgramData\CivicCast\data\pgdata` | The Postgres database | With use | No |
 | `C:\ProgramData\CivicCast\data\uploads` | Uploaded media | With use | No |
 | `C:\ProgramData\CivicCast\data\egress` | Playout working files, including `conform-cache` | Yes | Yes, see below |
-| `C:\ProgramData\CivicCast\data\caption-tap` | Raw caption audio chunks, evidence audio, `active.vtt` | Yes | Partly, see below |
+| `C:\ProgramData\CivicCast\data\caption-tap` | Temporary live-caption audio; `active.vtt` is in the channel's egress caption folder | Bounded in local beta.11 dev7 | Consumed chunks deleted; queued audio limited, see below |
 | `C:\ProgramData\CivicCast\logs` | Logs | Yes | Only the rotated logs |
 | `C:\ProgramData\CivicCast\upgrade` | Upgrade engine log, journal and pre-upgrade backups | Per upgrade | No |
 
@@ -4722,13 +4730,13 @@ The playout engine stores health telemetry in the database. Nothing trims it aut
 
 #### Caption data
 
-The caption retention sweeper runs every 60 seconds and works by age only:
+**Beta.11 caption candidate:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
 
-- Raw caption audio chunks become eligible for deletion 24 hours after they were created, but only when their transcript evidence is verified or no window can cover them.
-- Evidence audio for a resolved review item is deleted 90 days after resolution. Pending review items never expire.
-- Analytics events are kept up to 366 days (`CIVICCAST_ANALYTICS_RETENTION_DAYS`, allowed range 1 to 366).
+The live caption file and delivery bookkeeping retain a rolling 300-second window with at most 512 cues. The live worker does not scan the caption-review archive, and archive evidence does not gate broadcast readiness. These bounds replace manual weekly live-caption cleanup. If working files exceed these bounds, report a fault rather than treating routine deletion by an operator as normal operation.
 
-> **Known issue (beta.10):** The audit of beta.10 found that caption data can still grow without a limit: review rows and evidence are not pruned, raw chunks that no window covers are kept (roughly 160 KB per 5 seconds of audio per channel, which is about 3 GB per channel per day if most chunks are uncovered), `active.vtt` grows, and the quarantine and collision folders are never pruned. If you turn live captions on, add `C:\ProgramData\CivicCast\data\caption-tap` to your weekly size check.
+Original recordings, archived caption tracks and recorded-caption review remain available and are unaffected by these temporary live-caption limits. Analytics retention is separate: events are kept up to 366 days (`CIVICCAST_ANALYTICS_RETENTION_DAYS`, allowed range 1 to 366).
+
+> **Historical finding (published beta.10):** The audit found unlimited live caption review/evidence accumulation, uncovered raw chunks, growing `active.vtt`, and unpruned quarantine/collision folders. The local beta.11 dev7 candidate changes the live path described above; the published beta.10 installer and its historical test results are unchanged. Long unattended operation of the new candidate still requires verification.
 
 ### Back up and restore
 
@@ -5102,17 +5110,17 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 | Data | Kept | Source |
 | --- | --- | --- |
-| Raw caption audio chunks | Eligible for deletion 24 hours after creation, once verified or when no window can cover them. A sweep runs every 60 seconds. | `captions/retention.py` |
-| Evidence audio for resolved caption reviews | Deleted 90 days after the review is resolved | same |
-| Pending caption reviews | Never expire | same |
-| Caption retention audit log | Not deleted, no rotation (`caption-retention-audit.jsonl`) | same |
+| Live-caption working audio (local beta.11 dev7) | Consumed chunks deleted; at most 12 queued completed segments per channel, plus in-flight inputs and the segment being written | `captions/tap_worker.py` |
+| Live-caption text and delivery tracking (local beta.11 dev7) | Rolling 300 seconds and at most 512 cues; no permanent per-cue review rows or evidence WAVs | `captions/stabilize.py`, `egress/caption_feed.py` |
+| Recorded-caption review and original recordings | Existing recording/review workflow remains unchanged; live working limits do not delete archived tracks or recordings | `captions/vod.py`, recording workflow |
+| Historical beta.10 caption retention audit | Existing `caption-retention-audit.jsonl` was not rotated; ordinary live captioning in the local candidate no longer runs that archive sweep | `captions/retention.py`, `captions/tap_worker.py` |
 | Analytics events | Up to 366 days (default; range 1 to 366) | analytics store |
 | Playout health telemetry | Not trimmed automatically; trim with `civiccast egress trim-health --older-than-days N` | CLI |
 | Staff token audit events, alert history, as-run records | No deletion setting found | not found |
 
-Caption pruning is by age only; volume caps were removed by an owner decision on 2026-09-20. Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off.
+Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off. The local beta.11 dev7 candidate separates transient live caption work from recorded-caption review. It does not make the live worker or broadcast readiness depend on archive-wide review/evidence retention discovery. No new evidence-retention or compliance requirement is introduced by this change.
 
-> **Known issue (beta.10):** Caption data can grow without a limit despite these rules (audit findings B-003, B-004, B-005 and B-009): review rows and evidence are not pruned, raw chunks with no covering window are kept, and the quarantine and collision folders are never pruned. If your retention policy needs a firm limit on caption audio, either leave live captions off or check the `caption-tap` folder yourself every week and delete what your policy requires. See [Chapter 12](#ch-operations).
+> **Historical finding (published beta.10):** Audit findings B-003, B-004, B-005 and B-009 recorded unlimited live caption data growth. The local beta.11 dev7 candidate removes automatic live review/evidence accumulation and bounds working audio and caption history. Weekly manual caption cleanup is not its operating design. The published beta.10 installer has not changed; see [Chapter 12](#ch-operations) for the candidate behavior and its verification limits.
 
 Where residents' own data may be requested for deletion, we found no console screen or command that deletes a subscriber or a viewer's records. Ask the coder to confirm before you promise a deletion process.
 
@@ -5156,7 +5164,7 @@ These come from the beta.10 whole-repository audit (`audit-lite-whole-repo-beta1
 | B-010 | The failed-login limiter has no memory bound. | Keep `/api/staff/*` on loopback. |
 | B-012 | `/api/hardware` shows the host name to anyone. | Treat the host name as public. |
 | B-019 | `civiccast model set-provider-key --key <value>` puts the key on the command line, visible to other programs in the process list. | Supply the key in the `CIVICCAST_PROVIDER_API_KEY` environment variable instead. |
-| B-003, B-004, B-005, B-009 | Caption data growth (see retention). | Check the folder weekly. |
+| B-003, B-004, B-005, B-009 | Historical beta.10 caption data growth (see retention). | Beta.11 removes automatic live review/evidence accumulation and bounds live working state; verify the candidate before deployment. |
 | A-001, A-008 | A gap in the program-change watchdog, and no free-space guard on the 60 GB cache. | See [Chapter 12](#ch-operations). |
 | C-001 | Automated tests were red in about 110 places at the time of the audit. | Do not read the beta label as a passing test suite. |
 
@@ -6139,7 +6147,7 @@ CivicCast keeps its data in a database, in folders of files, in a few small file
 | Database | PostgreSQL, database `civiccast`, schema `civiccast`, role `civiccast_svc`, files in `C:\ProgramData\CivicCast\data\pgdata` | everything that is a record rather than a file: assets, schedule items and program slots, recording schedules and jobs, live sessions, channel configuration, state, commands and the proof chain, caption review items, summaries and approvals, publish runs, signed-record exports, subscriptions, alerts, reports, staff token records |
 | Uploads and recordings | `C:\ProgramData\CivicCast\data\uploads` | uploaded and captured media, finished recordings (in a `recordings` folder), and the packaged VOD copies (HLS playlists and segments, in a hidden `.civiccast-packages` folder, one per asset) |
 | Channel work folder | `C:\ProgramData\CivicCast\data\egress` | the conform cache; for each channel the prepared plan folders, its worker logs and relay logs, the reload status file, generated slates and bulletin slides, and (for a channel that serves live HLS) its rolling segments; and the HLS relay's log files (5 MiB each, two kept) |
-| Caption tap | `C:\ProgramData\CivicCast\data\caption-tap` | rolling five-second audio chunks of each channel, waiting to be captioned; each is moved to a `processed` folder after use, or to `quarantine` if unreadable |
+| Caption tap | `C:\ProgramData\CivicCast\data\caption-tap` | Local beta.11 dev7: temporary five-second audio chunks, deleted after processing; at most 12 queued completed segments per channel plus in-flight inputs and the segment being written |
 | Logs | `C:\ProgramData\CivicCast\logs` | `supervisor.log` (rotates at 10 MiB; ten older files are kept besides the current one), `control_plane.log`, the application's own log, `postgres.log` and `postgres-launcher.log` |
 | Installer records | `C:\ProgramData\CivicCast` | `install-progress.log`, the upgrade engine's journal, backups and recovery document under `upgrade`, and the database provisioning journal and recovery documents under `provision` |
 | Downloaded components | `C:\ProgramData\CivicCast\packs` and `components` | caption and AI model files that the first-run wizard downloaded, because the installer window cannot write to the Program Files folder |
@@ -6164,7 +6172,7 @@ CivicCast keeps its data in a database, in folders of files, in a few small file
 **What it does not do.**
 
 - **CivicCast does not back up your station by itself.** The only backups it takes are the one the upgrade engine takes before an upgrade (a database dump, with an integrity manifest, in `C:\ProgramData\CivicCast\upgrade\backups\pre-<version>`; the upgrade engine does not copy recordings) and the ones created by the `civiccast dr run-drill` command. We found no scheduled backup job. Your own backup must cover the database (a `pg_dump`, or a copy of `pgdata` with the service stopped), `C:\ProgramData\CivicCast\data\uploads`, and the files listed in the note above.
-- **There is no automatic clean-up of the command table**, and the only stores with a size limit enforced for you are the conform cache (60 GB by default), the prepared plan folders (5 GB by default) and the relay logs. Watch the free space on the drive that holds `C:\ProgramData\CivicCast\data`.
+- **There is no automatic clean-up of the command table.** The conform cache (60 GB by default), prepared plan folders (5 GB by default) and relay logs have limits. The local beta.11 dev7 candidate also bounds live caption working audio, recent caption history and delivery tracking; those bounds do not limit original recordings or archived caption tracks. Watch the free space on the drive that holds `C:\ProgramData\CivicCast\data`.
 - **Uninstalling does not remove your data.** The uninstaller removes the program files, the service, the firewall rule and the registry values, but leaves `C:\ProgramData\CivicCast`. Because the uninstaller deletes the stored database password, a reinstall over a surviving data folder has to set a new password on the existing database. The installer does this using a short-lived loopback-only access rule.
 
 <!-- SOURCES: ops/docs-sprint/inventory/screens/installer-install-layout.md sections 1-3 and 8; civiccast/native/supervisor/install_layout.py:79-338; civiccast/native/supervisor/children.py:272-314; civiccast/native/supervisor/service_env.py:1-60; civiccast/native/provision/conf.py:55-135; civiccast/native/station_runtime.py:1337, 1421-1437; civiccast/installer/station_state.py:595-608; civiccast/reporting/asrun_outbox.py:100-147; docs/history/2026-09-codex-work/BLACKWELL-CAPTION-FIX-REPORT-v6.md:55-64; civiccast/schema_check.py:244-279; civiccast/app.py:2376-2447; civiccast/dr/backup.py; civiccast/native/upgrade/orchestrator.py:198-215; civiccast/native/upgrade/seams.py:100-215; civiccast/native/upgrade/__main__.py (no media_root); civiccast/app.py:1255-1292 (retention/media-integrity flag only); docs/adr/0008, 0011, 0023-asrun-durable-outbox; civiccast/apps/installer/src-tauri/src/native_uninstall.rs:2145-2215 (credential cleared); civiccast/native/provision/conf.py:102-135 (transient trust rule); app-auth-db fact sheet subagent sections 3-5 -->
@@ -6308,16 +6316,18 @@ The loudness target is a setting of the channel and not a fixed number, because 
 
 CivicCast captions in two different ways, for two different needs. The *live* path captions a channel while it airs, so captions can be embedded in the stream. The *offline* path captions a finished recording after it is published, with a human review step before anything is attached. Figure 16-10 shows both, and marks the points where audio can be thrown away.
 
-![The caption pipelines. Boxes with a heavy red outline are where live audio can be shed under load. The offline path sheds nothing.](manual/diagrams/fb8ec8df162d.png){width=100%}
+**Beta.11 caption candidate:** The live path below uses Whistle first, Whisper as backup, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. These changes describe the local candidate, not the published beta.10 installer. The owner accepted a 24-hour three-station lab caption soak; verification of the packaged beta.11 installer remains separate.
+
+![The caption pipelines. Boxes with a heavy red outline are where live audio can be shed under load. The offline path sheds nothing.](manual/diagrams/d47be929560a.png){width=100%}
 
 **The live path, step by step.**
 
 1. **The audio tap.** Inside each channel's worker, a copy of the program audio is split off before it is encoded, converted to mono 16 kHz, and placed in a queue that never blocks the program: if it is full, it drops the oldest audio. This exists only if live captions are switched on for the station and a caption folder is set.
-2. **Chunks on disk.** A writer collects the audio into five-second WAV files named `chunk-NNNNNN.wav` in `C:\ProgramData\CivicCast\data\caption-tap\<channel>`, writing each under a temporary name and renaming it so a half-written file is never read.
+2. **Chunks on disk.** A writer collects the audio into five-second WAV files named `chunk-NNNNNN.wav` in `C:\ProgramData\CivicCast\data\caption-tap\<channel>`, writing each under a temporary name and renaming it so a half-written file is never read. The local candidate keeps at most 12 completed segments waiting per channel, plus inputs currently being processed and the segment being written. Consumed chunks are deleted; the previous overlap needed for recognition remains in memory.
 3. **The tap worker** scans every 2 seconds, takes the finished chunks of each channel, adds a five-second overlap from the previous chunk, and sends them to the speech recognizer.
-4. **The recognizer** is faster-whisper (the CTranslate2 engine) running inside the control plane, not Ollama. The Medium model is always installed; the Large (large-v3) model is added if the wizard chose it. It runs on the NVIDIA graphics card when the card has at least 8 GB of video memory and the GPU libraries are present, and on the processor otherwise. On a processor, one channel's audio is recognized at a time for the whole station. On a CUDA card, up to three channels are recognized at once.
-5. **The stabilizer** commits a caption only if the same words appear in two overlapping windows. Words that are not confirmed are filed for review and are never aired.
-6. **Output.** The result is written to `active.vtt` in the channel's work folder, and every new cue is also filed in the review queue. A separate *caption feed* worker reads `active.vtt` every 2 seconds and sends each new cue to the running worker, which turns it into closed captions (CEA-608/708 data) and inserts them into the video, so the captions travel inside the emitted stream. Cues are split into pages of 32 columns by 2 rows without discarding words.
+4. **The recognizer** uses Whistle as the local candidate's primary live engine. Its child processes use the CPU; the restored shared inference lock allows one primary request at a time across stations. Whisper remains the backup and can use the staged NVIDIA CUDA runtime. Both engines run locally; neither is Ollama. Recording/offline model choices remain separate.
+5. **The stabilizer** publishes the first recognition, including low-confidence text, and removes overlap already aired. It does not require two readings to agree. Recent cues are limited to 300 seconds and at most 512 cues. A per-session identifier and monotonic sequence distinguish fresh captions after a worker replacement without accumulating a session-long identifier map.
+6. **Output.** The rolling result is written to `active.vtt` in the channel's work folder. Live cues are not filed in a permanent review queue and do not generate evidence WAVs. A separate *caption feed* worker reads `active.vtt` every 2 seconds and sends each new cue to the running worker, which turns it into closed captions (CEA-608/708 data) and inserts them into the video, so the captions travel inside the emitted stream. Cues are split into pages of 32 columns by 2 rows without discarding words. Delivery acknowledgements are retained only while their cues remain in the provider's rolling window.
 7. **The proof.** A decode-back check reads the actual emitted stream and compares the captions it finds with what should have been sent. The channel's caption status is `on` only while a recent check has passed; a missing, stale or failed check reads `not-verified`, so the console does not claim captions it cannot prove (ADR 0018).
 
 > **Note:** Live captions are switched off in a new station profile until an administrator turns them on. The caption tap runs in its mode `inline` on a native station, but the audio tap and the embed are built only when the station's live-captions setting is on. Live captions are English only: the live path has no translation step.
@@ -6331,9 +6341,9 @@ CivicCast captions in two different ways, for two different needs. The *live* pa
 | The tap worker's backlog gate: short overload | Nothing yet. If a channel has more than 2 finished chunks waiting for fewer than 15 scans in a row (about 30 seconds), only the oldest 2 are processed and the rest wait | Captions continue, a little late |
 | The backlog gate: catch-up shed | After 15 scans in a row over the limit, the oldest waiting chunks are deleted and only the newest 2 are kept | Captions keep running from the newest audio; the skipped speech is never captioned, and one warning is logged |
 | The backlog gate: pause | If the station sheds 3 times within 5 minutes, the channel's captions are blanked and paused for 120 seconds, then 240, 480 and so on up to 900 seconds, with every new chunk deleted unrecognized during the pause | Captions are off for that channel; the status shows `paused` and the time to resume; the channel steps back down one rung at a time after sustained clean scans |
-| Retention not verified | Settled audio is deleted | Captions blank until retention is verified |
+| Queued working-audio limit (local beta.11 dev7) | Oldest waiting completed segments beyond 12; in-flight inputs and the segment being written are protected | Captions resume from retained audio; discards are reported, without creating a permanent review archive |
 | An operator switches captions off | Every chunk is deleted, the caption file is blanked | Captions off until switched on |
-| A new session or an unreadable chunk | The audio of the previous session, or the bad file (moved to `quarantine`) | Captions restart cleanly |
+| A new session or an unreadable chunk | Previous-session audio or unusable working audio is removed in ordinary candidate live mode | Captions restart cleanly; the error is logged without accumulating an audio quarantine archive |
 
 > **Known issue (beta.10):** Live-caption audio can be dropped under heavy load. In the 8-hour lab run on three channels, the caption worker logged 13 catch-up discard events. Seven of them were small events that coincided with disk scans the lab coordinator was running; the quiet-machine total, which leaves those seven out, was about 160 seconds of audio on two channels. Captions stayed on the air, but some spoken audio got no caption. The cause is that the caption worker falls behind during long first-time media preparations. A fix is the next work item and is not in this build. Captions matter legally for Colorado public-access use, so a station that needs loss-free live captions should weigh this limit. Some comments in the code say shed audio is filed as review evidence; in the code we read, it is deleted.
 
@@ -6341,9 +6351,9 @@ CivicCast captions in two different ways, for two different needs. The *live* pa
 
 > **Known issue (beta.10):** There is no English-only way to finish an offline caption job. The Spanish step is always on: a missing translator fails the job with instructions, and if every cue in one language is rejected the job is held open. A recording gets its caption track only after both languages are reviewed.
 
-Caption evidence is cleaned up on a schedule: the raw audio chunks are removed after 24 hours once their evidence is verified (or can never be), and resolved review evidence after 90 days. The older size caps were removed on 2026-09-20.
+**Historical beta.10 evidence retention:** Its live path used age-based cleanup for raw chunks and resolved review evidence, with no expiry for pending reviews; older size caps were removed on 2026-09-20. Ordinary live operation in the local candidate no longer generates that evidence archive or scans it for retention/readiness. Original recordings, archived caption tracks and recorded-caption review are unchanged.
 
-**Why it is built this way.** The reasons are in the code's own notes. On a processor-only tester machine with three channels on air, the first design could not keep up with live speech; the control plane burned about 247 percent of a core on caption work while the playout workers were starved into their own stall watchdog and restarted. Playout therefore runs at a higher priority than caption recognition, concurrency is bounded, and overload is shed and paused rather than retried. On the offline path, a human review step stands between the recognizer and the public, because the rule in the code is that no machine-written text reaches a public recording unreviewed. Live captions cannot wait for review, so they are held back by the stabilizer instead.
+**Why the paths are separate.** Continuous live captions must operate with bounded working resources rather than create an ever-growing human-review obligation. The local candidate publishes recognition immediately, deduplicates overlap and releases consumed audio. Playout retains priority, inference concurrency remains bounded, and overload remains visible. The historical processor-only design's resource pressure motivated those playout protections; it does not justify the removed agreement gate or automatic live evidence archive. Recording review remains a separate workflow using the original recording and complete caption tracks.
 
 <!-- SOURCES: civiccast/live/finalization.py:313-381, 413-469; civiccast/live/finalization_worker.py:70-113, 305-323, 680-760, 841-913; civiccast/live/models.py:75-79, 132-158, 398-408; civiccast/live/router.py:736-779; civiccast/recording/models.py:80-88; civiccast/recording/runtime.py:555-600, 647-697; civiccast/schedule/models.py:60-70; civiccast/schedule/router.py:140-196, 372-504, 711-760; civiccast/schedule/store.py:124-137, 235-257, 562, 582; civiccast/stream/config.py:65-96, 199; civiccast/stream/media_router.py:176-189, 224; civiccast/publish/router.py:239-314, 416-535, 538-654; civiccast/publish/service.py:53-130, 205-298, 506-828, 923-954; civiccast/publish/models.py:12-72, 160, 177; civiccast/platform/providers.py:40, 99-121; civiccast/platform/broker.py:66-107; civiccast/podcast/service.py:11-27; civiccast/subscribe/router.py:188-208; civiccast/activitypub/config.py:22, 66-76; civiccast/summary/*.py (generate.py:97-168, validate.py:21-37, extract.py, ollama.py:127-150, router.py:128-229, store.py:172-221); civiccast/records/router.py, exporter.py:19-126, pdfa.py:86-213, timestamp.py:18-41, rfc3161.py; civiccast/ai_runtime/ollama_client.py:14-30, 123-174; civiccast/egress/gst/engine.py:144-221, 1961-1972; civiccast/egress/gst/audio_tap.py:59-198, 309-400; civiccast/egress/gst/strategy.py:873-886; civiccast/captions/tap.py; civiccast/captions/tap_worker.py:44-60, 128-235, 327-343, 966-1048, 1264-1372, 1948-1991, 2128-2223, 2290-2429; civiccast/captions/tap_backoff.py:68-80, 173-263; civiccast/captions/stabilize.py:42-65; civiccast/captions/live_sidecar.py; civiccast/captions/runtime.py; civiccast/captions/vod_job.py:69-88, 379-408, 540-602, 884-1036; civiccast/captions/vod.py; civiccast/captions/review.py; civiccast/captions/retention.py:52-53, 310-317; civiccast/egress/caption_feed.py:46-231; civiccast/egress/caption_proof.py; civiccast/installer/models.py:276; civiccast/installer/station_state.py:279-314; civiccast/native/station_runtime.py:667-724, 820, 1390-1437; docs/adr/0010, 0011, 0018; docs/releases/v1.0.0-beta.10-verification.md (known limits 1); inventory/screens/recording.md, guide.md (UTC); captions/publish/records fact-sheet subagent -->
 
@@ -6753,8 +6763,8 @@ Run the real 0.5.0 disaster-recovery drill: backup, restore, crash-recovery.
 | Option / argument | Type | Default | Env var | What it does |
 | --- | --- | --- | --- | --- |
 | `--out` (required) | path |  |  | Directory to write dr-drill-report.md/.json into. |
-| `--backup-dir` | path |  |  | Backup destination (default: <out>/backup). |
-| `--work-dir` | path |  |  | Scratch dir for restore/crash drills (default: <out>/work). |
+| `--backup-dir` | path |  |  | Backup destination (default: &lt;out&gt;/backup). |
+| `--work-dir` | path |  |  | Scratch dir for restore/crash drills (default: &lt;out&gt;/work). |
 | `--database-url` | str |  |  | DATABASE_URL to drill (default: $DATABASE_URL). sqlite:// or postgresql://. |
 | `--media-root` | path |  |  | Media library root to manifest (optional). |
 
@@ -8865,8 +8875,8 @@ Code 123 hides a second number from the activation step: 66 (pack or index missi
 
 | Where | Message | Cause and fix |
 | --- | --- | --- |
-| API, HTTP 401 | Missing Authorization header. Use Bearer <staff-token>. | No token sent. In the console: sign in again on First Setup. |
-| API, HTTP 401 | Invalid Authorization header. Use Bearer <staff-token>. | The header is not in the form `Bearer <token>`. |
+| API, HTTP 401 | Missing Authorization header. Use Bearer &lt;staff-token&gt;. | No token sent. In the console: sign in again on First Setup. |
+| API, HTTP 401 | Invalid Authorization header. Use Bearer &lt;staff-token&gt;. | The header is not in the form `Bearer <token>`. |
 | API, HTTP 401 | Invalid staff bearer token. | The token is wrong or from another station. |
 | API, HTTP 401 | Staff bearer token has been revoked. | Issue a new one. |
 | API, HTTP 401 | Staff identity is required for this action. | The route needs an identity and none was attached. |

@@ -340,7 +340,7 @@ def test_build_controls_tauri_features_and_trust_environment(
         installer / "src-tauri" / "resources" / "vc_redist.x64.exe",
     )
     monkeypatch.setattr(builder, "validate_vc_redist", lambda path: path.resolve())
-    # The two embedded station resources are staged into the source tree by
+    # The three embedded station resources are staged into the source tree by
     # CI before this script runs; _build only pins their mtimes for
     # reproducibility. Point them at real fixture files so that pin is
     # exercised rather than skipped.
@@ -348,10 +348,13 @@ def test_build_controls_tauri_features_and_trust_environment(
     station_resources.mkdir(parents=True)
     station_index = station_resources / "station-index.json"
     station_core = station_resources / "core.ccpack"
+    station_whistle = station_resources / "captions-whistle.ccpack"
     station_index.write_text("{}", encoding="utf-8")
     station_core.write_bytes(b"core")
+    station_whistle.write_bytes(b"whistle")
     monkeypatch.setattr(builder, "STATION_INDEX_RESOURCE", station_index)
     monkeypatch.setattr(builder, "STATION_CORE_PACK_RESOURCE", station_core)
+    monkeypatch.setattr(builder, "STATION_WHISTLE_PACK_RESOURCE", station_whistle)
     monkeypatch.setattr(
         builder,
         "_run",
@@ -388,7 +391,7 @@ def test_build_controls_tauri_features_and_trust_environment(
     assert not builder.VC_REDIST_RESOURCE.exists()
     # Reproducibility: the CI-staged station resources carry the runner's
     # clock into the NSIS archive unless pinned to SOURCE_DATE_EPOCH.
-    for staged in (station_index, station_core):
+    for staged in (station_index, station_core, station_whistle):
         assert staged.stat().st_mtime == builder.SOURCE_DATE_EPOCH
     # ...and unlike the VC++ redistributable, they are NOT deleted afterwards:
     # this script does not own them, the workflow step that staged them does.
@@ -668,8 +671,8 @@ def test_script_entrypoint_rejects_missing_required_arguments() -> None:
 # 2026-09-02 (owner decision): setup.exe embeds the signed station index and
 # the tiny `core` pack so a download-only install/upgrade can activate. The
 # payload-separation rule this module exists to enforce is unchanged -- these
-# two files are kilobytes, and the gate below proves nothing bigger sneaks in
-# behind them.
+# index/core remain small, while the mandatory Whistle pack has a separate
+# strict 25 MB ceiling; the gate below prevents embedding the full model set.
 # ---------------------------------------------------------------------------
 
 
@@ -679,12 +682,15 @@ def _station_fixture(
     product_version: str = "9.9.9-test",
     core_payload: bytes = b"core-placeholder",
     core_filename: str = "core.ccpack",
+    whistle_payload: bytes = b"reviewed-whistle-pack",
     mutate: Any = None,
 ) -> tuple[Path, Path]:
     station = tmp_path / "station"
     station.mkdir(parents=True)
     core = station / core_filename
     core.write_bytes(core_payload)
+    whistle = station / "captions-whistle.ccpack"
+    whistle.write_bytes(whistle_payload)
     manifest: dict[str, Any] = {
         "schema_version": 1,
         "product": "civiccast-native",
@@ -711,6 +717,14 @@ def _station_fixture(
                 "required": True,
                 "urls": [],
             },
+            {
+                "component": "captions-whistle",
+                "filename": whistle.name,
+                "bytes": len(whistle_payload),
+                "sha256": hashlib.sha256(whistle_payload).hexdigest(),
+                "required": True,
+                "urls": [],
+            },
         ],
     }
     if mutate is not None:
@@ -723,11 +737,12 @@ def _station_fixture(
     return index, core
 
 
-def test_bootstrap_resources_carry_only_the_two_tiny_station_files() -> None:
+def test_bootstrap_resources_include_the_bounded_whistle_pack() -> None:
     assert builder.BOOTSTRAP_RESOURCES == {
         "resources/vc_redist.x64.exe": "vc_redist.x64.exe",
         "resources/station/station-index.json": "station/station-index.json",
         "resources/station/core.ccpack": "station/core.ccpack",
+        "resources/station/captions-whistle.ccpack": "station/captions-whistle.ccpack",
     }
     # The map is the gate: validate_native_bootstrap_config compares the live
     # config against it exactly, so widening one without the other is
@@ -743,7 +758,7 @@ def test_bootstrap_resources_carry_only_the_two_tiny_station_files() -> None:
         ).read_text(encoding="utf-8")
     )
     assert config["bundle"]["resources"] == builder.BOOTSTRAP_RESOURCES
-    assert builder.STATION_EMBEDDED_RESOURCE_LIMIT_EXCLUSIVE == 1_000_000
+    assert builder.STATION_EMBEDDED_RESOURCE_LIMIT_EXCLUSIVE == 25_000_000
 
 
 def test_embedded_station_resources_validate_and_report_their_identity(tmp_path: Path) -> None:
@@ -759,12 +774,25 @@ def test_embedded_station_resources_validate_and_report_their_identity(tmp_path:
     assert identity["compatible_core"] == "9.9.9-test"
     assert identity["core_pack_bytes"] == core.stat().st_size
     assert identity["core_pack_sha256"] == hashlib.sha256(core.read_bytes()).hexdigest()
-    assert identity["component_count"] == 2
+    whistle = index.parent / "captions-whistle.ccpack"
+    assert identity["whistle_pack_bytes"] == whistle.stat().st_size
+    assert identity["whistle_pack_sha256"] == hashlib.sha256(whistle.read_bytes()).hexdigest()
+    assert identity["component_count"] == 3
 
 
 def test_embedded_station_resources_fail_closed_when_absent(tmp_path: Path) -> None:
     index, core = _station_fixture(tmp_path)
     core.unlink()
+
+    with pytest.raises(ValueError, match="embedded station resource is missing"):
+        builder.validate_embedded_station_resources(
+            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+        )
+
+
+def test_embedded_station_resources_require_the_whistle_pack(tmp_path: Path) -> None:
+    index, core = _station_fixture(tmp_path)
+    (index.parent / "captions-whistle.ccpack").unlink()
 
     with pytest.raises(ValueError, match="embedded station resource is missing"):
         builder.validate_embedded_station_resources(
@@ -810,15 +838,46 @@ def test_embedded_station_resources_reject_a_core_pack_the_index_does_not_descri
         )
 
 
-def test_embedded_station_resources_reject_a_smuggled_multi_megabyte_payload(
+def test_embedded_station_resources_reject_a_whistle_pack_the_index_does_not_describe(
     tmp_path: Path,
 ) -> None:
-    """The rule the whole module exists for: no embedded payload, ever. A
-    `core.ccpack` carrying real bytes rather than the placeholder NOTICE is
-    exactly how that rule would erode."""
-    index, core = _station_fixture(tmp_path, core_payload=b"x" * 2_000_000)
+    index, core = _station_fixture(tmp_path)
+    whistle = index.parent / "captions-whistle.ccpack"
+    whistle.write_bytes(b"tampered-whistle-pack")
+
+    with pytest.raises(ValueError, match="Whistle pack SHA-256"):
+        builder.validate_embedded_station_resources(
+            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+        )
+
+
+def test_embedded_whistle_pack_must_use_the_local_sidecar_without_urls(
+    tmp_path: Path,
+) -> None:
+    def _add_whistle_url(manifest: dict[str, Any]) -> None:
+        whistle = next(
+            item for item in manifest["packs"] if item["component"] == "captions-whistle"
+        )
+        whistle["urls"] = ["https://downloads.example.invalid/captions-whistle.ccpack"]
+
+    index, core = _station_fixture(tmp_path, mutate=_add_whistle_url)
+
+    with pytest.raises(ValueError, match="local sidecar and must not carry URLs"):
+        builder.validate_embedded_station_resources(
+            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+        )
+
+
+def test_embedded_station_resources_reject_an_oversized_whistle_pack(
+    tmp_path: Path,
+) -> None:
+    """The mandatory embedded Whistle pack has a bounded 25 MB ceiling."""
+    index, core = _station_fixture(tmp_path, whistle_payload=b"x" * 10_001)
 
     with pytest.raises(ValueError, match="too large"):
         builder.validate_embedded_station_resources(
-            index_path=index, core_pack_path=core, product_version="9.9.9-test"
+            index_path=index,
+            core_pack_path=core,
+            product_version="9.9.9-test",
+            size_limit_exclusive=10_000,
         )

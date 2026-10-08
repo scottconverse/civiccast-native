@@ -25,26 +25,24 @@ VC_REDIST_RESOURCE = SRC_TAURI / "resources" / "vc_redist.x64.exe"
 VC_REDIST_EXPECTED_BYTES = 25_635_768
 VC_REDIST_EXPECTED_SHA256 = "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b"
 # The station resources the installer embeds so a DOWNLOAD-ONLY install or
-# upgrade of setup.exe alone still carries the signed station index the
-# mandatory K1 activation step (nsis-hooks-bootstrap.nsh, d4-activate-station)
-# must import. They are produced by the `build-native-station-bundle` CI job
-# (scripts/build_native_station_bundle.py) and staged here by
-# `.github/workflows/native-beta-candidate-artifacts.yml` before this script
-# runs -- this script never fabricates them, it only proves what is there.
+# upgrade of setup.exe alone carries the signed station index, placeholder
+# core pack, and mandatory local Whistle model/engine needed by activation.
+# They are produced by `build-native-station-bundle` and staged by the
+# workflow; this script never fabricates them, it proves their identity.
 STATION_RESOURCE_DIR = SRC_TAURI / "resources" / "station"
 STATION_INDEX_RESOURCE = STATION_RESOURCE_DIR / "station-index.json"
 STATION_CORE_PACK_RESOURCE = STATION_RESOURCE_DIR / "core.ccpack"
-# Deliberately small, and enforced. The whole point of the bootstrap is that
-# it carries no station payload; `core`'s payload is a placeholder NOTICE
-# (build_native_station_bundle.py::_core_placeholder_sources) and the index is
-# a signed JSON envelope. Anything approaching a megabyte here means somebody
-# started smuggling real bytes into setup.exe, which is the rule this gate
-# exists to keep.
-STATION_EMBEDDED_RESOURCE_LIMIT_EXCLUSIVE = 1_000_000
+STATION_WHISTLE_PACK_RESOURCE = STATION_RESOURCE_DIR / "captions-whistle.ccpack"
+# Bound the locally required Whistle pack while keeping the larger caption and
+# Ollama model packs out of setup.exe. The pinned model and DLL total 18.4 MB;
+# 25 MB leaves room for their signed ZIP metadata without admitting a full
+# model-bundle artifact.
+STATION_EMBEDDED_RESOURCE_LIMIT_EXCLUSIVE = 25_000_000
 BOOTSTRAP_RESOURCES = {
     "resources/vc_redist.x64.exe": "vc_redist.x64.exe",
     "resources/station/station-index.json": "station/station-index.json",
     "resources/station/core.ccpack": "station/core.ccpack",
+    "resources/station/captions-whistle.ccpack": "station/captions-whistle.ccpack",
 }
 # Tauri names the generated NSIS installer "<productName>_<version>_x64-setup.exe"
 # from the EFFECTIVE merged native config. productName ("CivicCast (Native)") is
@@ -109,8 +107,8 @@ def validate_native_bootstrap_config(path: Path = NATIVE_CONFIG) -> None:
     bundle = payload.get("bundle")
     if not isinstance(bundle, dict) or bundle.get("resources") != BOOTSTRAP_RESOURCES:
         raise ValueError(
-            "native bootstrap resources must contain only the pinned VC++ "
-            "runtime prerequisite; station bytes belong in signed packs"
+            "native bootstrap resources must contain the pinned VC++ runtime "
+            "prerequisite and the reviewed station index/core/Whistle resources"
         )
     windows = bundle.get("windows")
     nsis = windows.get("nsis") if isinstance(windows, dict) else None
@@ -131,10 +129,11 @@ def validate_embedded_station_resources(
     *,
     index_path: Path = STATION_INDEX_RESOURCE,
     core_pack_path: Path = STATION_CORE_PACK_RESOURCE,
+    whistle_pack_path: Path | None = None,
     product_version: str = __version__,
     size_limit_exclusive: int = STATION_EMBEDDED_RESOURCE_LIMIT_EXCLUSIVE,
 ) -> dict[str, object]:
-    """Fail closed unless the two embedded station resources are really there.
+    """Fail closed unless the index, core, and required Whistle pack match.
 
     The activation CLI verifies the signed index's ``product_version`` and
     ``compatible_core`` against ``main.rs``'s ``CIVICCAST_VERSION`` (see
@@ -148,11 +147,13 @@ def validate_embedded_station_resources(
     Returns the verified manifest identity for the build report.
     """
 
-    for required in (index_path, core_pack_path):
+    if whistle_pack_path is None:
+        whistle_pack_path = index_path.parent / "captions-whistle.ccpack"
+    for required in (index_path, core_pack_path, whistle_pack_path):
         if not required.is_file():
             raise ValueError(
                 "embedded station resource is missing: "
-                f"{required}. The station index and core pack are produced by "
+                f"{required}. The station index, core pack, and Whistle pack are produced by "
                 "the build-native-station-bundle job and must be staged under "
                 f"{STATION_RESOURCE_DIR} before the Tauri build runs."
             )
@@ -210,6 +211,38 @@ def validate_embedded_station_resources(
             f"index entry {core.get('sha256')!r}"
         )
 
+    whistle_entries = [
+        entry
+        for entry in packs
+        if isinstance(entry, dict) and entry.get("component") == "captions-whistle"
+    ]
+    if len(whistle_entries) != 1:
+        raise ValueError(
+            "embedded station index must name exactly one required captions-whistle pack"
+        )
+    whistle = whistle_entries[0]
+    if (
+        whistle.get("filename") != whistle_pack_path.name
+        or whistle.get("required") is not True
+        or whistle.get("urls") != []
+    ):
+        raise ValueError(
+            "embedded station index must require the embedded captions-whistle.ccpack "
+            "local sidecar and must not carry URLs"
+        )
+    observed_whistle_bytes = whistle_pack_path.stat().st_size
+    if whistle.get("bytes") != observed_whistle_bytes:
+        raise ValueError(
+            f"embedded Whistle pack is {observed_whistle_bytes} bytes, but the signed index "
+            f"declares {whistle.get('bytes')!r}"
+        )
+    observed_whistle_sha256 = _sha256(whistle_pack_path)
+    if whistle.get("sha256") != observed_whistle_sha256:
+        raise ValueError(
+            f"embedded Whistle pack SHA-256 {observed_whistle_sha256} does not match the "
+            f"signed index entry {whistle.get('sha256')!r}"
+        )
+
     return {
         "product_version": manifest["product_version"],
         "compatible_core": manifest["compatible_core"],
@@ -219,6 +252,8 @@ def validate_embedded_station_resources(
         "index_bytes": index_path.stat().st_size,
         "core_pack_sha256": observed_core_sha256,
         "core_pack_bytes": observed_core_bytes,
+        "whistle_pack_sha256": observed_whistle_sha256,
+        "whistle_pack_bytes": observed_whistle_bytes,
         "component_count": len(packs),
     }
 
@@ -379,9 +414,13 @@ def _build(public_key: str, key_id: str, vc_redist: Path) -> None:
         shutil.copyfile(reviewed_redist, VC_REDIST_RESOURCE)
         os.utime(VC_REDIST_RESOURCE, (SOURCE_DATE_EPOCH, SOURCE_DATE_EPOCH))
         # Same reproducibility normalization the redistributable already gets:
-        # these two files are staged by CI (not by this script), so their
+        # these three resources are staged by CI (not by this script), so their
         # mtimes carry the runner's clock into the NSIS archive unless pinned.
-        for station_resource in (STATION_INDEX_RESOURCE, STATION_CORE_PACK_RESOURCE):
+        for station_resource in (
+            STATION_INDEX_RESOURCE,
+            STATION_CORE_PACK_RESOURCE,
+            STATION_WHISTLE_PACK_RESOURCE,
+        ):
             os.utime(station_resource, (SOURCE_DATE_EPOCH, SOURCE_DATE_EPOCH))
         _run([npm, "ci"])
         if not tauri.is_file():

@@ -7,12 +7,16 @@ caption controls that later live capture consumes.
 
 Current surface:
 
+- Native live default: Whistle CPU with bounded, isolated Whisper fallback.
+  Whistle inference is serialized across channels. Whisper can be selected for
+  CUDA-equipped machines; see `docs/ops/beta11-whistle-test-candidate.md`.
+
 - `CaptionRuntime` protocol for runtime adapters.
 - `FasterWhisperRuntime` lazy adapter for the optional `faster-whisper`
   package. Default installs stay lightweight; hosts that execute local caption
   models install `civiccast[captions-runtime]`.
-- `CaptionStabilizer`, which commits text only after repeated stable hypotheses
-  and never rewrites already-committed live cues.
+- `CaptionStabilizer`: live mode publishes first recognition without repeated
+  agreement; already-committed cues are not rewritten. Batch policy is unchanged.
 - WebVTT rendering helpers for committed cues.
 - Custom vocabulary / initial prompt model passed through the runtime boundary.
 - `CaptionPipeline`, which runs a runtime through the stabilization layer,

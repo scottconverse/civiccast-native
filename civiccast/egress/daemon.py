@@ -1463,6 +1463,23 @@ class EgressDaemon:
                     channel_id,
                     poll.__name__,
                 )
+        commands_processed = self._process_queued_commands(channel_id)
+        # Consume Stop/new intent before committing any completed preparation.
+        try:
+            self._poll_preparation(channel_id)
+        except Exception:
+            _LOG.exception("channel %s: prepared operation failed", channel_id)
+        return commands_processed
+
+    def process_commands_only(self, channel_id: str) -> int:
+        """Drain one queued command batch without polling or recovering workers.
+
+        Channel automation uses this for explicit terminal intent on disabled
+        channels, which are deliberately excluded from its normal poll pass.
+        """
+        return self._process_queued_commands(channel_id)
+
+    def _process_queued_commands(self, channel_id: str) -> int:
         commands = self._store.pop_pending_commands(channel_id)
         for command in commands:
             try:
@@ -1485,11 +1502,6 @@ class EgressDaemon:
                             "command_failure_hook itself raised for channel %s; continuing.",
                             channel_id,
                         )
-        # Consume Stop/new intent before committing any completed preparation.
-        try:
-            self._poll_preparation(channel_id)
-        except Exception:
-            _LOG.exception("channel %s: prepared operation failed", channel_id)
         return len(commands)
 
     def has_live_process(self, channel_id: str) -> bool:
@@ -1899,6 +1911,13 @@ class EgressDaemon:
                 )
                 return
         if command.action == "start":
+            config = self._store.get_config(command.channel_id)
+            if config is not None and not config.enabled:
+                _LOG.info(
+                    "channel %s: ignoring queued start because the channel is disabled",
+                    command.channel_id,
+                )
+                return
             # NOTE on ordering: the caption session-start hook is NOT called here.
             # It is invoked by ``_start_steps`` only on the branch where a NEW
             # session actually begins.  Calling it here ran the hook for a
@@ -1943,6 +1962,18 @@ class EgressDaemon:
             self._drain(command.channel_id)
             return
         if command.action == "reload":
+            config = self._store.get_config(command.channel_id)
+            if config is not None and not config.enabled:
+                recorded_rollover = self._rollover_plan_end_at.get(command.channel_id)
+                if recorded_rollover is not None and recorded_rollover[0] == command.command_id:
+                    # Preserve _request_reload's matching-command cleanup even
+                    # though a disabled channel must not enter its restart path.
+                    self._rollover_plan_end_at.pop(command.channel_id, None)
+                _LOG.info(
+                    "channel %s: ignoring queued reload because the channel is disabled",
+                    command.channel_id,
+                )
+                return
             self._request_reload(command.channel_id, command_id=command.command_id)
             return
         raise ConfigInvalidError(f"unsupported egress command action: {command.action}")

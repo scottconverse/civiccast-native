@@ -6,6 +6,7 @@ The repo root is put on sys.path explicitly because the station runtime ignores 
 """
 
 import sys
+from html import escape
 from pathlib import Path
 
 sys.path.insert(0, sys.argv[2])
@@ -61,7 +62,11 @@ for path, cmd in rows:
             env = getattr(p, "envvar", None) or ""
             if isinstance(env, (list, tuple)):
                 env = ", ".join(env)
-            h = (getattr(p, "help", "") or "").replace("|", PIPE).replace("\n", " ")
+            h = (
+                escape(getattr(p, "help", "") or "", quote=False)
+                .replace("|", PIPE)
+                .replace("\n", " ")
+            )
             req = " (required)" if getattr(p, "required", False) else ""
             out.append(
                 "| `"
@@ -79,6 +84,6 @@ for path, cmd in rows:
                 + " |"
             )
         out.append("")
-with open(sys.argv[1], "w", encoding="utf-8", newline="\n") as fh:
+with Path(sys.argv[1]).open("w", encoding="utf-8", newline="\n") as fh:
     fh.write("\n".join(out) + "\n")
 print(len(rows), "commands written")

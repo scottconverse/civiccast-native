@@ -305,3 +305,40 @@ def test_feed_resumes_from_scratch_when_live_captions_are_switched_on() -> None:
 
     assert worker.run_once().cues_sent == 1
     assert len(sender.calls) == 2
+
+
+def test_feed_bounds_delivery_tracking_to_the_rolling_provider() -> None:
+    sender = _Sender()
+    cues = [_cue(1, "old"), _cue(2, "retained")]
+    worker = _worker(sender, on_air=["gov"], cues=cues)
+    assert worker.run_once().cues_sent == 2
+    cues[:] = [_cue(2, "retained"), _cue(3, "new")]
+    assert worker.run_once().cues_sent == 1
+    assert [call["text"] for call in sender.calls] == ["old", "retained", "new"]
+    assert worker._sent["gov"] == {"c2", "c3"}
+    assert worker._acknowledged_pages["gov"] == {("c2", 0), ("c3", 0)}
+    cues.clear()
+    worker.run_once()
+    assert worker._sent["gov"] == set()
+    assert worker._acknowledged_pages["gov"] == set()
+
+
+def test_feed_rotation_keeps_partial_page_acknowledgements() -> None:
+    sender = _Sender()
+    calls = []
+
+    def partial_sender(*args, **kwargs):
+        calls.append(kwargs)
+        sender(*args, **kwargs)
+        return len(calls) != 3  # old cue, first page, then unacknowledged second page
+
+    cues = [_cue(1, "old"), _cue(2, "A" * 70)]
+    worker = _worker(partial_sender, on_air=["gov"], cues=cues)
+    assert worker.run_once().cues_dropped == 1
+    cues.pop(0)
+    assert worker.run_once().cues_sent == 1
+    assert len(calls) == 4
+    assert calls[2] == calls[3]
+    assert worker._acknowledged_pages["gov"] == {("c2", 0), ("c2", 1)}
+    assert worker.run_once().cues_sent == 0
+    assert len(calls) == 4

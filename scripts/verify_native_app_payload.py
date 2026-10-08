@@ -72,6 +72,7 @@ from civiccast.native.app_payload import (  # noqa: E402
     MSVC_RUNTIME_DISTRIBUTION,
     MSVC_RUNTIME_FILES,
     WHISPER_MODEL_PAYLOAD_DIR,
+    WHISTLE_ENGINE_CONTRACT,
     canonical_distribution_name,
     component_version_for_payload_path,
     is_prohibited_license,
@@ -188,6 +189,7 @@ def _verify_manifest_header(
         "total_bytes": sum(_record_bytes(record) for record in records),
         "interpreter": expected_interpreter,
         "caption_pack": CAPTION_PACK_CONTRACT,
+        "whistle_engine": WHISTLE_ENGINE_CONTRACT,
     }
     for field, value in expected.items():
         if manifest.get(field) != value:
@@ -765,6 +767,23 @@ def _verify_independent_provenance(
     pywin32_versions = {
         version for distribution, version in ownership.values() if distribution == "pywin32"
     }
+    whistle_path = str(WHISTLE_ENGINE_CONTRACT["package_file"])
+    whistle_owner = (
+        str(WHISTLE_ENGINE_CONTRACT["distribution"]),
+        str(WHISTLE_ENGINE_CONTRACT["version"]),
+    )
+    prior_whistle_owner = ownership.get(whistle_path)
+    if prior_whistle_owner is not None and prior_whistle_owner != whistle_owner:
+        problems.append(
+            f"PROVENANCE: {whistle_path} is owned by {prior_whistle_owner[0]} "
+            f"{prior_whistle_owner[1]}, expected {whistle_owner[0]} {whistle_owner[1]}"
+        )
+    else:
+        # The separately reviewed Windows engine wheel is not part of the
+        # PyPI dependency wheelhouse. Its one DLL is staged into the installed
+        # package's canonical path and attributed to the already-authorized
+        # cactus-needle distribution under WHISTLE_ENGINE_CONTRACT.
+        ownership[whistle_path] = whistle_owner
     allowed_pywin32_root = {"pythoncom312.dll", "pywintypes312.dll"}
 
     for record in records:
@@ -895,6 +914,52 @@ def _verify_required_caption_pack_contract(
     return problems
 
 
+def _verify_required_whistle_engine_contract(
+    tree: Path,
+    manifest: dict[str, object],
+    records: list[dict[str, object]],
+) -> list[str]:
+    problems: list[str] = []
+    if manifest.get("whistle_engine") != WHISTLE_ENGINE_CONTRACT:
+        problems.append(
+            "WHISTLE ENGINE: app payload does not bind the reviewed Needle DLL contract"
+        )
+    path = str(WHISTLE_ENGINE_CONTRACT["package_file"])
+    record = next((item for item in records if item.get("path") == path), None)
+    expected_identity = (
+        str(WHISTLE_ENGINE_CONTRACT["distribution"]),
+        str(WHISTLE_ENGINE_CONTRACT["version"]),
+        str(WHISTLE_ENGINE_CONTRACT["license"]),
+        int(WHISTLE_ENGINE_CONTRACT["file_bytes"]),
+        str(WHISTLE_ENGINE_CONTRACT["file_sha256"]),
+    )
+    if record is None:
+        problems.append(
+            f"WHISTLE ENGINE: canonical package DLL is missing from the manifest: {path}"
+        )
+        return problems
+    actual_identity = (
+        canonical_distribution_name(str(record.get("distribution"))),
+        str(record.get("version")),
+        str(record.get("license")),
+        record.get("bytes"),
+        str(record.get("sha256")),
+    )
+    expected_canonical = (expected_identity[0], *expected_identity[1:])
+    if actual_identity != expected_canonical:
+        problems.append(f"WHISTLE ENGINE: {path} has unreviewed manifest provenance")
+    disk_path = tree / PurePosixPath(path)
+    if not disk_path.is_file() or disk_path.stat().st_size != expected_identity[3]:
+        problems.append(
+            f"WHISTLE ENGINE: canonical package DLL is missing or has the wrong size: {path}"
+        )
+    elif _sha256_file(disk_path) != expected_identity[4]:
+        problems.append(
+            f"WHISTLE ENGINE: canonical package DLL does not match its reviewed SHA-256: {path}"
+        )
+    return problems
+
+
 def check_app_payload_verification(
     tree: Path,
     *,
@@ -1006,6 +1071,7 @@ def check_app_payload_verification(
     )
     if require_caption_pack:
         sections.extend(_verify_required_caption_pack_contract(manifest, records))
+        sections.extend(_verify_required_whistle_engine_contract(tree, manifest, records))
     if missing:
         sections.append("MISSING (in manifest, absent on disk):\n  " + "\n  ".join(missing))
     if orphans:

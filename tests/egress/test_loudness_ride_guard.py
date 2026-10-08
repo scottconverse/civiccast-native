@@ -1,34 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""U25 answer 12: the emitted-artifact guard, keep-best, with a measured bound.
+"""The current emitted-artifact guard: decoded-sample bound, pad, variants, keep-best.
 
-Answer 7's guard re-ran the *whole* leveling path at a lowered ceiling, and U25
-round 7 measured what that cost: on BIG it spent all three allowed rounds and
-539.13 s of a 908.41 s total, and its step law (ceiling down by the overshoot,
-emitted true peak follows 1:1) did not hold -- a -1.30 dB ceiling step bought
-0.00 dB of true peak, because the emitted true peak is the AAC codec's own
-overshoot rather than a property of the limiter.  Answer 11 replaced it with one
-re-encode-only round plus a *last resort* -- and U25's own panel then showed that
-clause harming exactly the case it fired on: on BIG the last-resort artifact was
-worse than the attempt the selector already held on **every** gated axis
-(loudness 1.588 vs 0.285 LU of window error, whole-program -1.1 vs 0.0 LU,
-decoded peak +0.4018 vs +0.0036 dBFS), because it gave up a loudness gate it had
-passed in order to keep failing the one it was chasing.  Answer 12 deletes it:
-
-* the selector is keep-best, always: the attempts that pass the loudness gates
-  first, then the lowest decoded sample peak, then the lowest emitted true peak;
-* the hard true-peak gate is a bound the product can honestly guarantee -- no
-  decoded sample above :data:`TP_GUARD_MAX_PEAK_DBFS`.  BIG's nominal emit, the
-  hottest artifact the panel produced, sits at +0.0036 dBFS from one sample in
-  9000 s: a codec overshoot under the audibility floor;
-* an artifact over that bound on *every* attempt still ships, with an error line
-  rather than a stop -- the selector has nothing better to keep, and a channel
-  that airs a slightly hot artifact beats one that airs nothing;
-* the one re-encode round stays, and so does the :data:`TP_GUARD_TARGET_DBTP` of
-  -1.0 dBTP as best effort, with one warning when the selector's keep misses it.
-
-These tests are the guard's whole contract: they hold the module to the answer
-the coordinator gave, not to the shape it had before.
+The guard measures the emitted artifact, spends a pad round when its decoded
+sample peak exceeds ``TP_GUARD_MAX_PEAK_DBFS``, then tries AAC encoder variants
+while the best measured attempt remains over the bound. Selection keeps the
+best attempt by loudness gates, decoded peak, then emitted true peak. If no
+attempt clears the bound, the best one still ships with a warning.
 """
 
 from __future__ import annotations
@@ -101,8 +79,9 @@ def _select(attempts: list[lr.LeveledAttempt]) -> lr.LeveledSelection:
 def test_the_gate_constants_are_the_answered_ones() -> None:
     assert lr.TP_GUARD_TARGET_DBTP == -1.0
     assert lr.TP_GUARD_MAX_PEAK_DBFS == 0.1
-    assert lr.TP_GUARD_MAX_ROUNDS == 1
-    # Answer 12 deleted the last-resort branch, constant and all.
+    assert lr.TP_GUARD_PAD_MARGIN_DB == 0.5
+    assert lr.TP_GUARD_MAX_PAD_DB == 6.0
+    # These superseded branches remain absent from the current guard API.
     assert not hasattr(lr, "TP_GUARD_LAST_RESORT_DBTP")
     assert not hasattr(lr, "TP_GUARD_HARD_DBTP")
     assert not hasattr(lr, "needs_last_resort")
@@ -136,35 +115,24 @@ def test_loudness_gates_are_unchanged_by_the_answer_11_reshuffle() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The one re-encode-only round
+# The pad round and its decoded-peak arithmetic
 # ---------------------------------------------------------------------------
 
 
-def test_the_step_is_the_overshoot_plus_the_margin() -> None:
-    # Already lawful: no round is owed.
-    assert lr.guard_ceiling_dbtp(-1.5, -1.4) is None
-    assert lr.guard_ceiling_dbtp(-1.5, -1.0) is None
-    # Emitted at exactly 0.0 dBTP from a -1.5 dBTP ceiling: 1.0 + 0.3 below it.
-    assert lr.guard_ceiling_dbtp(-1.5, 0.0) == -2.8
-    # Emitted -0.4 from -1.8: 0.6 + 0.3 below the ceiling it came from.
-    assert lr.guard_ceiling_dbtp(-1.8, -0.4) == -2.7
+def test_the_pad_is_sample_peak_overshoot_plus_margin() -> None:
+    # The current pad responds to the measured decoded sample peak, not the
+    # codec-inflated emitted true peak.
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=0.1)) is None
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=0.4)) == pytest.approx(0.8)
 
 
-def test_a_hot_emit_buys_exactly_one_re_encode_round() -> None:
-    assert lr.guard_next_ceiling([]) is None
-    # -0.2 dBTP emitted from a -1.5 dBTP ceiling: 0.8 overshoot + 0.3 margin.
-    hot = _attempt(limit_dbtp=-1.5, emitted_dbtp=-0.2)
-    assert lr.guard_next_ceiling([hot]) == -2.6
-    # The bound is spent after that one round, however hot the re-encode reads.
-    assert (
-        lr.guard_next_ceiling([hot, _attempt(round_index=1, limit_dbtp=-2.0, emitted_dbtp=-0.1)])
-        is None
-    )
+def test_the_pad_is_capped_at_the_configured_maximum() -> None:
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=10.0)) == lr.TP_GUARD_MAX_PAD_DB
 
 
-def test_the_round_is_not_owed_when_the_emit_is_lawful_or_unmeasurable() -> None:
-    assert lr.guard_next_ceiling([_attempt(emitted_dbtp=-1.4)]) is None
-    assert lr.guard_next_ceiling([_attempt(emitted_dbtp=None)]) is None
+def test_the_pad_is_not_owed_without_a_measured_sample_peak_overshoot() -> None:
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=-0.5, emitted_dbtp=0.0)) is None
+    assert lr.guard_pad_db(_attempt(decoded_peak_dbfs=None, emitted_dbtp=0.0)) is None
 
 
 # ---------------------------------------------------------------------------

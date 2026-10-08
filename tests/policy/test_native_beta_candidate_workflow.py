@@ -141,6 +141,7 @@ def _assert_dual_lane_scheduling(job: dict[str, object], workflow: dict[str, obj
     )
     assert "github.event_name == 'workflow_dispatch'" in group
     assert "inputs.build_target == 'self-hosted'" in group
+    assert "!inputs.prepare_only" in group
     assert "'sandbox-lab'" in group, "self-hosted lane must share Gate A's own concurrency group"
     assert "'native-beta-candidate-artifacts'" in group, (
         "hosted lane's original per-workflow concurrency group must be unchanged"
@@ -153,6 +154,7 @@ def _assert_dual_lane_scheduling(job: dict[str, object], workflow: dict[str, obj
     )
     assert "github.event_name == 'workflow_dispatch'" in runs_on
     assert "inputs.build_target == 'self-hosted'" in runs_on
+    assert "!inputs.prepare_only" in runs_on
     assert '["self-hosted","windows","sandbox-lab"]' in runs_on, (
         "self-hosted lane must target the same box Gate A runs on"
     )
@@ -468,7 +470,7 @@ def test_native_beta_candidate_workflow_contract_rejects_unconditional_self_host
     text = WORKFLOW.read_text(encoding="utf-8")
     runs_on_expression = (
         "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == "
-        '\'self-hosted\') && fromJSON(\'["self-hosted","windows","sandbox-lab"]\') '
+        '\'self-hosted\' && !inputs.prepare_only) && fromJSON(\'["self-hosted","windows","sandbox-lab"]\') '
         "|| 'windows-latest' }}"
     )
     assert runs_on_expression in text, "test's expected literal has drifted from the workflow"
@@ -910,6 +912,123 @@ def test_native_beta_candidate_workflow_contract_rejects_elevated_station_bundle
         )
 
 
+def test_prepare_only_preserves_signed_candidate_and_small_station_evidence() -> None:
+    _, workflow = _workflow()
+    dispatch_inputs = workflow["on"]["workflow_dispatch"]["inputs"]
+    prepare_only = dispatch_inputs["prepare_only"]
+    assert prepare_only["type"] == "boolean"
+    assert prepare_only["default"] == "false"
+
+    station_job = workflow["jobs"]["build-native-station-bundle"]
+    station_steps = {step["name"]: step for step in station_job["steps"]}
+    assert station_steps["Verify the signed station bundle and write checksums"]
+    assert "Verify the Beta 11 preparation evidence is complete" in station_steps
+    preparation_verify = station_steps["Verify the Beta 11 preparation evidence is complete"]
+    assert preparation_verify["if"] == "env.PREPARE_ONLY == 'true'"
+    assert "Test-Path -LiteralPath $path -PathType Leaf" in preparation_verify["run"]
+    assert "captions-whistle.ccpack" in preparation_verify["run"]
+    assert "station-index.json" in preparation_verify["run"]
+    assert "SHA256SUMS.txt" in preparation_verify["run"]
+    assert "native-station-bundle-build-report.json" in preparation_verify["run"]
+    prep_upload_index = next(
+        index
+        for index, step in enumerate(station_job["steps"])
+        if step["name"] == "Upload the Beta 11 preparation evidence"
+    )
+    assert station_job["steps"].index(preparation_verify) < prep_upload_index
+    assert station_steps["Upload the installer-embedded station resources"]
+    prep_evidence = station_steps["Upload the Beta 11 preparation evidence"]
+    assert prep_evidence["if"] == "env.PREPARE_ONLY == 'true'"
+    assert prep_evidence["with"]["name"] == "native-station-prepare-${{ github.sha }}"
+    assert prep_evidence["with"]["retention-days"] == "1"
+    assert set(prep_evidence["with"]["path"].splitlines()) == {
+        "artifacts/native-station-bundle/station/captions-whistle.ccpack",
+        "artifacts/native-station-bundle/station/station-index.json",
+        "artifacts/native-station-bundle/station/SHA256SUMS.txt",
+        "artifacts/native-station-bundle/native-station-bundle-build-report.json",
+    }
+    assert (
+        "env.PREPARE_ONLY != 'true'"
+        in station_steps["Upload the native station bundle artifact"]["if"]
+    )
+    candidate_steps = {
+        step["name"]: step for step in workflow["jobs"]["build-native-beta"]["steps"]
+    }
+    assert candidate_steps["Upload native-beta candidate binaries"]["with"]["name"] == (
+        "native-beta-candidate-binaries-${{ github.sha }}"
+    )
+
+    assemble_job = workflow["jobs"]["assemble-native-beta-kit"]
+    assert assemble_job["if"] == (
+        "${{ !(github.event_name == 'workflow_dispatch' && inputs.prepare_only) }}"
+    )
+    assert "native-beta-kit-${{ github.sha }}" in str(assemble_job["steps"])
+
+    # Even an invalid prepare_only + self-hosted dispatch is rejected on a
+    # hosted runner; the active desktop must never be eligible for that job.
+    for job_name in ("build-native-beta", "build-native-station-bundle"):
+        assert "inputs.prepare_only" in workflow["jobs"][job_name]["runs-on"]
+        assert "!inputs.prepare_only" in workflow["jobs"][job_name]["runs-on"]
+
+    concurrency_group = workflow["concurrency"]["group"]
+    assert "!inputs.prepare_only" in concurrency_group
+
+
+def test_prepare_only_artifact_is_the_gate_a_skip_marker() -> None:
+    _, workflow = _workflow()
+    station_job = workflow["jobs"]["build-native-station-bundle"]
+    steps = {step["name"]: step for step in station_job["steps"]}
+    prep_artifact = steps["Upload the Beta 11 preparation evidence"]
+    assert prep_artifact["with"]["name"] == "native-station-prepare-${{ github.sha }}"
+    assert prep_artifact["if"] == "env.PREPARE_ONLY == 'true'"
+    assert prep_artifact["with"]["retention-days"] == "1"
+
+
+def test_native_beta_candidate_workflow_has_a_manual_render_job_for_exact_source() -> None:
+    _, workflow = _workflow()
+    manual = workflow["jobs"]["render-native-manual"]
+    assert manual["runs-on"] == "ubuntu-latest"
+    assert manual["timeout-minutes"] == "40"
+    steps = {step["name"]: step for step in manual["steps"]}
+    assert steps["Checkout exact candidate"]["with"]["ref"] == "${{ github.sha }}"
+    assert "texlive-xetex" in steps["Install pandoc and TeX (per ADR 0005)"]["run"]
+    assert (
+        "OUT_DIR=$PWD/artifacts/release-preparation/manual"
+        in steps["Render USER-MANUAL and check currentness"]["run"]
+    )
+    assert steps["Create exact-candidate manual receipt"]["run"].count("github.sha") == 1
+    assert "github.run_id" in steps["Create exact-candidate manual receipt"]["run"]
+
+    upload = steps["Upload exact-candidate manual artifact"]
+    assert upload["with"]["name"] == "native-beta-manual-${{ github.sha }}"
+    assert upload["with"]["retention-days"] == "1"
+    assert set(upload["with"]["path"].splitlines()) == {
+        "artifacts/release-preparation/manual/USER-MANUAL.pdf",
+        "artifacts/release-preparation/manual/USER-MANUAL.docx",
+        "artifacts/release-preparation/manual/USER-MANUAL.render.json",
+        "artifacts/release-preparation/manual/candidate-manual-receipt.json",
+    }
+
+    assemble = workflow["jobs"]["assemble-native-beta-kit"]
+    assert "render-native-manual" in assemble["needs"]
+    assemble_steps = {step["name"]: step for step in assemble["steps"]}
+    download = assemble_steps["Download exact-candidate manual artifact"]
+    assert download["with"]["name"] == "native-beta-manual-${{ github.sha }}"
+    assert download["with"]["path"] == "manual-artifact"
+    colocate = assemble_steps["Co-locate the installer and station bundle into one kit"]["run"]
+    for contract in (
+        '$receipt.source_sha -ne "${{ github.sha }}"',
+        '$receipt.workflow_run_id -ne "${{ github.run_id }}"',
+        "$receipt.render_manifest_sha256 -ne $manifestHash",
+        "Copy-Item -Path (Join-Path $manualSource '*') -Destination $kitManual",
+        'Join-Path $kit "manual"',
+    ):
+        assert contract in colocate
+    assert (
+        assemble_steps["Upload the installable native-beta kit"]["with"]["path"].strip() == "kit/**"
+    )
+
+
 def _assert_kit_carries_the_quickstart_card(job: dict[str, object]) -> None:
     """The field-tested first-run gap: a station volunteer who unboxes the USB
     kit has no plain-language walkthrough, only the installer screens and
@@ -977,13 +1096,11 @@ def test_native_beta_candidate_workflow_contract_rejects_a_kit_missing_the_quick
 
 
 # ---------------------------------------------------------------------------
-# 2026-09-02 (owner decision): setup.exe embeds the signed station index and
-# the tiny `core` pack (tauri.native.conf.json bundle.resources) so a
-# download-only install/upgrade can activate. Those two files come from
-# build-native-station-bundle, so the producer/consumer edge is now a real
-# `needs:` and a real fetch -- and it must stay CHEAP: the full bundle
-# artifact is ~18.6 GB and actions/download-artifact has no file-level
-# filter, so the two files ship as their own small artifact.
+# Setup.exe embeds the signed station index, tiny `core` pack, and mandatory
+# Whistle pack (tauri.native.conf.json bundle.resources). The Whistle pack is
+# the only new station payload needed to upgrade from a Beta10 cache; all large
+# model packs remain outside setup.exe. These resources have their own bounded
+# artifact so the installer job never downloads the full station bundle.
 # ---------------------------------------------------------------------------
 
 
@@ -1001,7 +1118,7 @@ def _assert_embedded_station_handoff(workflow: dict[str, object]) -> None:
 
     producer_steps = {step["name"]: step for step in producer["steps"]}
     stage = producer_steps["Stage the installer-embedded station resources"]["run"]
-    assert '@("station-index.json", "core.ccpack")' in stage
+    assert '@("station-index.json", "core.ccpack", "captions-whistle.ccpack")' in stage
     assert "the installer cannot embed it" in stage, (
         "the producer must fail closed with a message naming the consumer's need"
     )
@@ -1023,7 +1140,7 @@ def _assert_embedded_station_handoff(workflow: dict[str, object]) -> None:
     assert "if" in full_upload, "the ~18.6 GB bundle upload must stay lane-gated"
 
     consumer_steps = {step["name"]: step for step in consumer["steps"]}
-    download = consumer_steps["Download the embedded station index and core pack (hosted)"]
+    download = consumer_steps["Download the embedded station index and station packs (hosted)"]
     assert download["uses"] == "actions/download-artifact@v4"
     assert download["with"]["name"] == "native-station-embed-${{ github.sha }}"
     assert download["if"] == "env.BUILD_TARGET != 'self-hosted'", (
@@ -1032,14 +1149,14 @@ def _assert_embedded_station_handoff(workflow: dict[str, object]) -> None:
         "build_target input exists to avoid"
     )
     assert download["with"]["name"] != "native-station-bundle-${{ github.sha }}", (
-        "must not pull the ~18.6 GB full-bundle artifact to obtain two tiny files"
+        "must not pull the full station-bundle artifact to obtain embedded resources"
     )
 
-    staging_name = "Stage the embedded station index and core pack for the Tauri build"
+    staging_name = "Stage embedded station resources for the Tauri build"
     staging = consumer_steps[staging_name]["run"]
     # Same mirror, located the same defensive way, as assemble-native-beta-kit.
     assert 'Join-Path $env:CANDIDATE_ROOT "station-bundle"' in staging
-    assert '@("station-index.json", "core.ccpack")' in staging
+    assert '@("station-index.json", "core.ccpack", "captions-whistle.ccpack")' in staging
     assert '$destination = "civiccast/apps/installer/src-tauri/resources/station"' in staging, (
         "must stage at the exact bundle.resources source path tauri.native.conf.json declares"
     )
@@ -1059,7 +1176,7 @@ def _assert_embedded_station_handoff(workflow: dict[str, object]) -> None:
     )
 
 
-def test_native_beta_candidate_workflow_embeds_the_station_index_from_its_producer() -> None:
+def test_native_beta_candidate_workflow_embeds_required_whistle_from_its_producer() -> None:
     _, workflow = _workflow()
     _assert_embedded_station_handoff(workflow)
 
@@ -1095,21 +1212,25 @@ def test_native_beta_candidate_workflow_contract_rejects_a_full_bundle_download_
         _assert_embedded_station_handoff(mutated_workflow)
 
 
-def test_native_beta_candidate_workflow_kit_assembly_is_unchanged_by_the_embed() -> None:
+def test_native_beta_candidate_workflow_kit_assembly_keeps_station_and_manual_inputs() -> None:
     r"""The USB kit is the air-gapped station's whole world: the embed must be
-    additive. assemble-native-beta-kit must still depend on BOTH jobs and
-    still co-locate the FULL station bundle (index + every component pack) at
-    .\station\ next to setup.exe."""
+    additive. assemble-native-beta-kit must still depend on the installer and
+    station jobs, add the exact-run manual artifact, and co-locate the FULL
+    station bundle (index + every component pack) at .\station\ next to setup.exe."""
     _, workflow = _workflow()
     kit = workflow["jobs"]["assemble-native-beta-kit"]
 
-    assert sorted(kit["needs"]) == ["build-native-beta", "build-native-station-bundle"]
+    assert sorted(kit["needs"]) == [
+        "build-native-beta",
+        "build-native-station-bundle",
+        "render-native-manual",
+    ]
     colocate = {step["name"]: step for step in kit["steps"]}[
         "Co-locate the installer and station bundle into one kit"
     ]["run"]
     assert "Copy-Item -Path (Join-Path $bundleDir '*') -Destination $kitStation -Recurse" in (
         colocate
-    ), "the kit must still carry the WHOLE signed bundle, not just the embedded two files"
+    ), "the kit must still carry the WHOLE signed bundle, not just embedded setup resources"
     assert "Kit assembly: the co-located station bundle carries no component packs" in colocate
 
 

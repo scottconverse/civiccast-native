@@ -127,10 +127,10 @@ def test_manifest_size_change_with_same_last_segment_is_not_progress(tmp_path: P
     """NEGATIVE (audit finding 1): metadata churn with the SAME last ``.ts`` must
     NOT reset freshness. Only the segment name counts."""
     hls_dir = tmp_path / "gov-live"
-    playlist = _write_playlist(hls_dir, last_segment="seg000000010.ts", media_sequence=0)
     clock = _FakeClock(1000.0)
     sup, _calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    playlist = _write_playlist(hls_dir, last_segment="seg000000010.ts", media_sequence=0)
 
     sup.note_progress("gov", now=1000.0)
     # Same final segment, but the manifest body/size changed (tag churn).
@@ -150,10 +150,10 @@ def test_manifest_size_change_with_same_last_segment_is_not_progress(tmp_path: P
 def test_last_segment_change_is_progress(tmp_path: Path) -> None:
     """POSITIVE counterpart: a genuinely new final segment is progress."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(1000.0)
     sup, _calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
 
     sup.note_progress("gov", now=1000.0)
     _write_playlist(hls_dir, last_segment="seg000000011.ts")
@@ -171,9 +171,6 @@ def test_one_stalled_sink_among_two_is_reported(tmp_path: Path) -> None:
     advancing sibling. Two HLS sinks -> two relays."""
     stalled_dir = tmp_path / "gov-stalled"
     live_dir = tmp_path / "gov-live"
-    _write_playlist(stalled_dir, last_segment="seg000000010.ts")
-    _write_playlist(live_dir, last_segment="seg000000020.ts")
-
     clock = _FakeClock(1000.0)
     sup, _calls, procs = _supervisor(clock=clock)
     sup.apply(
@@ -183,6 +180,8 @@ def test_one_stalled_sink_among_two_is_reported(tmp_path: Path) -> None:
         )
     )
     assert len(procs) == 2  # one child per sink, keyed channel|label
+    _write_playlist(stalled_dir, last_segment="seg000000010.ts")
+    _write_playlist(live_dir, last_segment="seg000000020.ts")
 
     sup.note_progress("gov", now=1000.0)
     # Only the LIVE sink advances; the stalled one keeps its segment.
@@ -197,12 +196,11 @@ def test_both_sinks_advancing_is_not_stale(tmp_path: Path) -> None:
     """Positive counterpart for the any-sink semantics."""
     a_dir = tmp_path / "gov-a"
     b_dir = tmp_path / "gov-b"
-    _write_playlist(a_dir, last_segment="seg000000010.ts")
-    _write_playlist(b_dir, last_segment="seg000000020.ts")
-
     clock = _FakeClock(1000.0)
     sup, _calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(a_dir), label="A"), _hls_sink(str(b_dir), label="B")))
+    _write_playlist(a_dir, last_segment="seg000000010.ts")
+    _write_playlist(b_dir, last_segment="seg000000020.ts")
     sup.note_progress("gov", now=1000.0)
     _write_playlist(a_dir, last_segment="seg000000011.ts")
     _write_playlist(b_dir, last_segment="seg000000021.ts")
@@ -251,11 +249,10 @@ def test_heal_latch_survives_the_frozen_on_disk_playlist(tmp_path: Path) -> None
     disk. Its unchanged segment must NOT clear the latch, or the heal would
     re-arm every bound and become a restart storm."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")  # frozen window
-
     clock = _FakeClock(1000.0)
     sup, calls, procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")  # frozen window
     sup.note_progress("gov", now=1000.0)
 
     clock.value = 1000.0 + 600.0
@@ -284,10 +281,10 @@ def test_heal_latch_clears_once_the_window_really_advances(tmp_path: Path) -> No
     """Positive counterpart: a genuinely NEW segment past the pre-heal baseline
     ends the episode, so a later, separate stall may heal again."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     sup.note_progress("gov", now=1000.0)
 
     clock.value = 1000.0 + 600.0
@@ -315,10 +312,10 @@ def test_heal_latch_clears_once_the_window_really_advances(tmp_path: Path) -> No
 def test_self_heal_does_not_fire_without_actual_output(tmp_path: Path) -> None:
     """Not 'producing' (STARTING / no source yet) must never self-heal."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     sup.note_progress("gov", now=1000.0)
 
     clock.value = 1000.0 + 600.0
@@ -331,10 +328,10 @@ def test_self_heal_does_not_fire_without_actual_output(tmp_path: Path) -> None:
 
 def test_self_heal_does_not_fire_inside_the_startup_grace(tmp_path: Path) -> None:
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     sup.note_progress("gov", now=1000.0)
 
     clock.value = 1000.0 + 5.0
@@ -384,7 +381,6 @@ def _daemon_source_plan(tmp_path: Path) -> EgressSourcePlan:
 def _stalled_daemon(tmp_path: Path, *, sink_label: str = "Web"):
     """A daemon whose alive hls relay serves a frozen (or absent) window."""
     hls_dir = tmp_path / f"gov-live-{sink_label}"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
 
     relay_procs: list[_FakeProcess] = []
 
@@ -429,7 +425,6 @@ def _escalating_daemon(
     are distinct pid per spawn either way -- that is what the counters read.
     """
     hls_dir = tmp_path / "gov-live-Web"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
 
     worker_procs: list[_FakeProcess] = []
     relay_procs: list[_FakeProcess] = []
@@ -507,6 +502,7 @@ def test_daemon_reports_stalled_but_alive_relay_unhealthy_behavioral(tmp_path: P
     daemon, store, _relay, _hls_dir, procs, clock, label = _stalled_daemon(tmp_path)
 
     assert daemon.process_once("gov") == 1
+    _write_playlist(_hls_dir, last_segment="seg000000010.ts")
     daemon._on_air_confirmed_at["gov"] = clock()
     daemon.process_once("gov")  # anchors the segment baseline
     clock.value += 1.0
@@ -521,6 +517,7 @@ def test_daemon_does_not_self_heal_before_the_channel_is_producing(tmp_path: Pat
     daemon, _store, _relay, _hls_dir, procs, clock, _label = _stalled_daemon(tmp_path)
 
     assert daemon.process_once("gov") == 1
+    _write_playlist(_hls_dir, last_segment="seg000000010.ts")
     for _ in range(2):
         clock.value += 1.0
         daemon.process_once("gov")  # no on-air latch -> not producing
@@ -548,6 +545,7 @@ def test_daemon_tick_sequence_no_restart_storm_with_frozen_playlist(
     monkeypatch.setattr(daemon, "_poll_freeze_escalation", lambda _channel_id: None)
 
     assert daemon.process_once("gov") == 1
+    _write_playlist(_hls_dir, last_segment="seg000000010.ts")
     # Relay is already well past its startup grace.
     next(iter(relay._relays.values())).started_at -= 10_000.0
     daemon._on_air_confirmed_at["gov"] = clock() - 10_000.0
@@ -591,6 +589,7 @@ def test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm(
     daemon, relay, relay_procs, worker_procs, clock = _escalating_daemon(tmp_path)
 
     assert daemon.process_once("gov") == 1
+    _write_playlist(tmp_path / "gov-live-Web", last_segment="seg000000010.ts")
     # Relay is already well past its startup grace.
     next(iter(relay._relays.values())).started_at -= 10_000.0
     daemon._on_air_confirmed_at["gov"] = clock() - 10_000.0
@@ -774,7 +773,6 @@ def test_daemon_never_emitted_path_actually_self_heals(tmp_path: Path) -> None:
 def test_old_api_alive_relay_with_frozen_window_reads_unhealthy(tmp_path: Path) -> None:
     """BEHAVIORAL RED (audit finding 5), old-API-only construction."""
     hls_dir = tmp_path / "gov-live"
-    _write_playlist(hls_dir, last_segment="seg000000010.ts")
 
     relay = HlsRelaySupervisor(starter=lambda _args, *, stderr_path=None: _FakeProcess(pid=900))
     # Keep construction old-API-only (so OLD code raises nothing here), but
@@ -797,6 +795,7 @@ def test_old_api_alive_relay_with_frozen_window_reads_unhealthy(tmp_path: Path) 
     )
 
     assert daemon.process_once("gov") == 1
+    _write_playlist(hls_dir, last_segment="seg000000010.ts")
     daemon._on_air_confirmed_at["gov"] = daemon._monotonic()
     daemon.process_once("gov")  # anchor the segment baseline
     # Backdate the observed progress so the unchanged window is unambiguously

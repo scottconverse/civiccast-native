@@ -845,8 +845,9 @@ def poll_until_ready(
       distinguishes "stalled" from "still working".
     * ``liveness``: ``False`` ends the poll at once with ``not_ready`` -- the
       child is gone, there is nothing left to wait for, and the restart path
-      owns it. It is consulted only AFTER a failed check, so a ``ready`` verdict
-      is never second-guessed, and after the abort seam, so a stop still wins.
+      owns it. It is checked after each probe, including a ready response, so a
+      different listener cannot make an already-exited child look ready. The
+      abort seam is checked first, so a stop still wins.
     """
 
     deadline = clock() + budget_seconds
@@ -859,8 +860,6 @@ def poll_until_ready(
                 detail="readiness poll aborted by stop request (no probe attempted)",
             )
         result = check()
-        if result.outcome == "ready":
-            return result
         if should_abort is not None and should_abort():
             return ReadinessResult(
                 outcome="aborted",
@@ -874,6 +873,8 @@ def poll_until_ready(
                     f"last result: {result.detail}"
                 ),
             )
+        if result.outcome == "ready":
+            return result
         now = clock()
         if progress is not None and stall_seconds is not None:
             current = progress()

@@ -35,7 +35,7 @@ You should be taken to the **Readiness** screen. If a screen sent you here becau
 
 > **Note:** Signing in on one browser does not sign out any other browser or device that is already signed in.
 
-> **Note:** A normal sign-in takes you straight to Readiness, so you will not see this on that path. After you create the first admin on a new station (see [Set up a brand-new station](#signing-in-first-run)), the **Setup complete** card says "CivicCast saved a fresh console token in this browser for <your admin display name>." A *console token* is the private pass your browser keeps so the station knows it is you. The sentence means you are signed in.
+> **Note:** A normal sign-in takes you straight to Readiness, so you will not see this on that path. After you create the first admin on a new station (see [Set up a brand-new station](#signing-in-first-run)), the **Setup complete** card says "CivicCast saved a fresh console token in this browser for &lt;your admin display name&gt;." A *console token* is the private pass your browser keeps so the station knows it is you. The sentence means you are signed in.
 
 > **Warning:** Closing the browser does not sign you out. CivicCast keeps your sign-in in the browser until you click **Sign out**, so anyone who opens the browser on that computer afterwards can use the console as you. On a shared or borrowed computer, always click **Sign out** before you leave.
 
@@ -71,9 +71,9 @@ The **Sign out** button appears only after the console has confirmed who you are
 
 ### The top bar
 
-The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the version number, such as `v1.0.0-beta.10`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local <time> / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
+The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the version number, such as `v1.0.0-beta.10`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
 
-Hover over the round badge to see your name and your roles, in the form "<your display name> / <your role names>". The console shows your roles nowhere else.
+Hover over the round badge to see your name and your roles, in the form "&lt;your display name&gt; / &lt;your role names&gt;". The console shows your roles nowhere else.
 
 > **Known issue (beta.10):** The **No live meeting broadcast** pill and the words "Next No events scheduled" never change. They stay the same during a live meeting and with a full schedule. Do not use them to decide whether the station is on air or what comes next. Use **Readiness** and **Channels** instead.
 
@@ -229,7 +229,7 @@ You should see a page headed **Operator manual** with a contents list on the lef
 - Every control you can reach with Tab shows a visible outline.
 - After you change screens by clicking or pressing a key, focus moves to the main area of the new screen. It does not move on the first page load.
 - On a narrow window, the **Open navigation** drawer keeps Tab inside it, and Escape closes it.
-- The sidebar is labelled **Primary navigation**, and the screen you are on is marked as the current page. Each section header is labelled **Show <name> navigation** or **Hide <name> navigation**.
+- The sidebar is labelled **Primary navigation**, and the screen you are on is marked as the current page. Each section header is labelled **Show &lt;name&gt; navigation** or **Hide &lt;name&gt; navigation**.
 - Error boxes, toasts and the on-air banner on Readiness are announced to screen readers.
 - The theme button switches between light and dark.
 

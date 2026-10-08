@@ -357,9 +357,6 @@ def test_alive_relay_serving_audio_only_segments_is_restarted(tmp_path: Path) ->
     served segment carries no video is the live symptom -- it must be
     restarted, not merely reported."""
     hls_dir = tmp_path / "gov"
-    playlist = _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
-
     probed: list[Path] = []
 
     def probe(path: Path) -> frozenset[str] | None:
@@ -369,6 +366,8 @@ def test_alive_relay_serving_audio_only_segments_is_restarted(tmp_path: Path) ->
     clock = _FakeClock(1000.0)
     sup, calls, procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    playlist = _write_playlist(hls_dir, last_segment="seg000000002.ts")
+    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
     _expire_startup_grace(sup)  # well past its startup grace
 
     assert (
@@ -388,8 +387,6 @@ def test_alive_relay_serving_video_only_segments_is_restarted(
     relay's 18:47:44-18:47:56 shape, PID 256 and no PID 257 -- must be
     restarted too, and the operator must be told which stream is missing."""
     hls_dir = tmp_path / "gov"
-    _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
 
     def probe(_path: Path) -> frozenset[str] | None:
         return frozenset({"video"})  # video only -- U13's measurement
@@ -397,6 +394,8 @@ def test_alive_relay_serving_video_only_segments_is_restarted(
     clock = _FakeClock(1000.0)
     sup, calls, procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000002.ts")
+    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
     _expire_startup_grace(sup)
 
     with caplog.at_level("WARNING", logger="civiccast.egress.hls_relay"):
@@ -424,8 +423,6 @@ def test_a_video_audio_segment_is_verified_once_and_not_reprobed(tmp_path: Path)
     fault episode -- no restart, no further probes for that child (one ffprobe
     per child, not one per tick)."""
     hls_dir = tmp_path / "gov"
-    _write_playlist(hls_dir, last_segment="seg000000002.ts")
-    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
 
     probed: list[Path] = []
 
@@ -436,6 +433,8 @@ def test_a_video_audio_segment_is_verified_once_and_not_reprobed(tmp_path: Path)
     clock = _FakeClock(1000.0)
     sup, calls, _procs = _supervisor(clock=clock, probe=probe)
     sup.apply(_config(_hls_sink(str(hls_dir))))
+    _write_playlist(hls_dir, last_segment="seg000000002.ts")
+    (hls_dir / "seg000000002.ts").write_bytes(b"not-really-a-segment")
     _expire_startup_grace(sup)
 
     for step in range(4):

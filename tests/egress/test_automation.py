@@ -17,14 +17,17 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 import civiccast.egress.automation as automation_module
 import civiccast.egress.preparer as preparer_module
 from civiccast.egress.automation import ChannelAutomationService, ChannelAutomationSettings
+from civiccast.egress.daemon import EgressDaemon
 from civiccast.egress.models import (
     CanonicalProfile,
+    EgressCommand,
     EgressConfig,
     EgressSinkSpec,
     EgressSourcePlan,
@@ -196,18 +199,18 @@ def test_single_item_rollover_prepares_next_boundary_with_bounded_lead() -> None
     120s: it now covers BOTH bounded preparation passes of a normalized
     segment plus the reload settle budget and margin -- 2*300 + 30 + 60 = 690s
     at the shipped 300s timeout, against a 3600s plan that is longer than the
-    lead. So the trigger is ``end - 690``: nothing one second before it, the
-    reload at it. (U02's numbers here were 391/390 for its single-timeout
-    390s lead.)"""
+    lead. The provider probes at ``end - 691`` without dispatching, then resolves
+    again and enqueues the reload at ``end - 690``. (U02's numbers here were
+    391/390 for its single-timeout 390s lead.)"""
 
     service, store, sampled = _single_item_rollover_service(3600.0)
     end = _NOW + timedelta(seconds=3600)
     service.run_once(now=_NOW)
     service.run_once(now=end - timedelta(seconds=691))
     assert _pending_actions(store, "public") == []
-    assert sampled == []
-    service.run_once(now=end - timedelta(seconds=690))
     assert sampled == [end]
+    service.run_once(now=end - timedelta(seconds=690))
+    assert sampled == [end, end]
     assert _pending_actions(store, "public") == ["reload"]
 
 
@@ -389,11 +392,11 @@ class TestGstRolloverLeadCoversPreparationTimeout:
 
         service.run_once(now=_NOW)
         service.run_once(now=end - timedelta(seconds=691))
-        assert boundaries == []
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=end - timedelta(seconds=690))
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
     def test_the_env_override_restores_a_shorter_lead(
@@ -408,11 +411,11 @@ class TestGstRolloverLeadCoversPreparationTimeout:
 
         service.run_once(now=_NOW)
         service.run_once(now=end - timedelta(seconds=91))
-        assert boundaries == []
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=end - timedelta(seconds=90))
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
     @pytest.mark.parametrize("bad", ["abc", "-5", "0"])
@@ -427,12 +430,12 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         with caplog.at_level(logging.WARNING, logger="civiccast.egress.automation"):
             service.run_once(now=_NOW)
             service.run_once(now=end - timedelta(seconds=691))
-            assert boundaries == []
+            assert boundaries == [end]
             assert _pending_actions(store, "public") == []
 
             service.run_once(now=end - timedelta(seconds=690))
 
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
         assert any(self._LEAD_ENV in record.getMessage() for record in caplog.records)
 
@@ -457,15 +460,15 @@ class TestGstRolloverLeadCoversPreparationTimeout:
         service.run_once(now=_NOW)  # establish: last segment begins at +1700
         # Past the lead (_NOW+1110) but before the last segment begins.
         service.run_once(now=end - timedelta(seconds=690))
-        assert boundaries == []
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
         # Past the OLD flat lead too (_NOW+1680); still before +1700.
         service.run_once(now=end - timedelta(seconds=120))
-        assert boundaries == []
+        assert boundaries == [end]
         assert _pending_actions(store, "public") == []
 
         service.run_once(now=last_segment_start)
-        assert boundaries == [end]
+        assert boundaries == [end, end]
         assert _pending_actions(store, "public") == ["reload"]
 
 
@@ -742,6 +745,128 @@ class TestAutoStart:
         assert _pending_actions(store, "manual") == []
         assert _pending_actions(store, "dark") == []
         assert daemon.processed == ["manual"]
+
+    @pytest.mark.parametrize("terminal_action", ["stop", "drain"])
+    def test_disabled_channel_drains_terminal_command_without_executing_start(
+        self, tmp_path: Path, terminal_action: Literal["stop", "drain"]
+    ) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("disabled", enabled=False, auto_start=True))
+        store.write_state(EgressStateRow(channel_id="disabled", state="ON_AIR", updated_at=_NOW))
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="disabled",
+                action="start",
+                issued_at=_NOW,
+                issued_by="operator",
+                command_id="start-before-disable",
+            )
+        )
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="disabled",
+                action=terminal_action,
+                issued_at=_NOW + timedelta(seconds=1),
+                issued_by="operator",
+                command_id=f"{terminal_action}-after-disable",
+            )
+        )
+        start_attempts: list[str] = []
+
+        def source_plan(channel_id: str) -> EgressSourcePlan:
+            start_attempts.append(channel_id)
+            raise AssertionError("disabled start reached source preparation")
+
+        daemon = EgressDaemon(
+            store,
+            work_dir=tmp_path,
+            source_plan_provider=source_plan,
+        )
+        service = ChannelAutomationService(
+            store, daemon, lambda _cid: None, settings=ChannelAutomationSettings()
+        )
+
+        seen = service.run_once(now=_NOW)
+
+        assert seen == []
+        state = store.read_state("disabled")
+        assert state is not None and state.state == "STOPPED"
+        assert _pending_actions(store, "disabled") == []
+        assert start_attempts == []
+
+    def test_disabled_drain_wins_over_queued_reload_and_stays_supervised(
+        self, tmp_path: Path
+    ) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("disabled", enabled=False))
+        store.write_state(EgressStateRow(channel_id="disabled", state="ON_AIR", updated_at=_NOW))
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="disabled",
+                action="drain",
+                issued_at=_NOW,
+                issued_by="operator",
+                command_id="drain-before-reload",
+            )
+        )
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="disabled",
+                action="reload",
+                issued_at=_NOW + timedelta(seconds=1),
+                issued_by="operator",
+                command_id="reload-after-drain",
+            )
+        )
+        prepared: list[str] = []
+
+        def source_plan(channel_id: str) -> EgressSourcePlan:
+            prepared.append(channel_id)
+            raise AssertionError("disabled reload reached source preparation")
+
+        daemon = EgressDaemon(
+            store,
+            work_dir=tmp_path,
+            source_plan_provider=source_plan,
+        )
+
+        class _LiveProcess:
+            pid = 4242
+
+            def __init__(self) -> None:
+                self.returncode: int | None = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def terminate(self) -> None:
+                self.returncode = 0
+
+        process = _LiveProcess()
+        daemon._processes["disabled"] = process
+        service = ChannelAutomationService(
+            store, daemon, lambda _cid: None, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)
+        state = store.read_state("disabled")
+        assert state is not None and state.state == "DRAINING"
+        assert _pending_actions(store, "disabled") == []
+        assert prepared == []
+        assert process.returncode is None
+
+        # Disabled channels must continue supervising an already accepted
+        # drain, without starting schedules or processing a rejected reload.
+        service.run_once(now=_NOW + timedelta(seconds=2))
+        state = store.read_state("disabled")
+        assert state is not None and state.state == "DRAINING"
+        assert process.returncode is None
+
+        process.returncode = 0
+        service.run_once(now=_NOW + timedelta(seconds=3))
+        state = store.read_state("disabled")
+        assert state is not None and state.state == "STOPPED"
+        assert prepared == []
 
 
 class TestSlateReplan:
@@ -2573,6 +2698,7 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 self.recorded.append((plan_end_at, command_id))
 
@@ -2638,6 +2764,7 @@ class TestStaleRolloverHorizonDispatchesImmediateRecovery:
                 *,
                 command_id: str | None,
                 force_fallback: bool = False,
+                min_plan_seconds: float | None = None,
             ) -> None:
                 self.recorded.append((plan_end_at, command_id))
 

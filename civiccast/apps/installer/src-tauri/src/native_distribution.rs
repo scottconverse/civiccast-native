@@ -31,12 +31,13 @@ const DISTRIBUTION_PRODUCT: &str = "civiccast-native";
 // (`acquisition_catalog.rs`'s `captions-floor` staging directory,
 // `station_runtime.py`'s `FLOOR_TIER_ID` model-root prefix) -- never a
 // second, invented convention for the same tier.
-const REQUIRED_COMPONENTS: [&str; 5] = [
+const REQUIRED_COMPONENTS: [&str; 6] = [
     "core",
     "captions-floor",
     "summary-gemma4-12b",
     "summary-gemma4-e4b",
     "translation-translategemma-4b",
+    "captions-whistle",
 ];
 // `captions-large-v3` is intentionally NOT in `REQUIRED_COMPONENTS`: it is
 // an optional quality add-on (owner decision 2026-08-07), verified when a
@@ -1227,6 +1228,14 @@ mod tests {
                     "required": true,
                     "urls": urls("translation.ccpack"),
                 },
+                {
+                    "component": "captions-whistle",
+                    "filename": "captions-whistle.ccpack",
+                    "bytes": 6,
+                    "sha256": "55".repeat(32),
+                    "required": true,
+                    "urls": urls("captions-whistle.ccpack"),
+                },
             ],
         });
         let manifest_bytes = canonical(&manifest);
@@ -1254,7 +1263,7 @@ mod tests {
         )
         .expect("valid signed channel index");
 
-        assert_eq!(verified.packs.len(), 5);
+        assert_eq!(verified.packs.len(), 6);
         assert_eq!(verified.packs[1].component, "captions-floor");
         assert!(verified.packs.iter().all(|pack| pack.required));
     }
@@ -1307,7 +1316,7 @@ mod tests {
         )
         .expect("optional large-v3 pack must verify");
 
-        assert_eq!(verified.packs.len(), 6);
+        assert_eq!(verified.packs.len(), 7);
         let large_v3 = verified
             .packs
             .iter()
@@ -1657,6 +1666,7 @@ mod tests {
             pack_entry("summary-gemma4-12b", 33, &"22".repeat(32)),
             pack_entry("summary-gemma4-e4b", 44, &"33".repeat(32)),
             pack_entry("translation-translategemma-4b", 55, &"44".repeat(32)),
+            pack_entry("captions-whistle", 66, &"55".repeat(32)),
         ];
         let (_manifest, envelope_bytes) = publisher_shaped_envelope(&key, pack_entries);
 
@@ -1670,36 +1680,19 @@ mod tests {
         )
         .expect("a publisher-shaped station index must verify");
 
-        assert_eq!(verified.packs.len(), 5);
+        assert_eq!(verified.packs.len(), 6);
         assert_eq!(verified.packs[1].component, "captions-floor");
         assert!(verified.packs.iter().all(|pack| pack.required));
         assert!(verified.packs.iter().all(|pack| pack.urls.is_empty()));
     }
 
     #[test]
-    fn acquire_station_distribution_accepts_the_unlocked_components_and_fails_closed_at_the_reviewed_model_lock_gate(
-    ) {
-        // The FULL acquisition path (index verification PLUS opening and
-        // verifying every referenced .ccpack, native_packs::verify_pack)
-        // cannot be fixture-tested end to end for a complete 5-component
-        // station bundle: native_packs.rs::validate_ollama_model_contract
-        // unconditionally checks summary-gemma4-12b / summary-gemma4-e4b /
-        // translation-translategemma-4b against the EMBEDDED reviewed
-        // model lock (native-windows-ollama-models.lock.json, compiled in
-        // via include_str!) -- real, pinned SHA-256 digests of real,
-        // multi-GB Ollama model blobs that no fixture can forge (this is
-        // the exact supply-chain gate it exists to be). A synthetic pack
-        // claiming one of those three component identities is REJECTED by
-        // design, not a gap in `scripts/build_native_station_bundle.py`.
-        //
-        // What this test proves instead: `core` and `captions-floor` (the
-        // two required components with NO reviewed-model-lock coupling)
-        // DO fully round-trip through real `native_packs::verify_pack`
-        // (real signed `.ccpack` files, not placeholders -- see
-        // `build_signed_pack`), and the overall acquisition still fails
-        // CLOSED, specifically at the reviewed-model-lock gate, rather than
-        // silently accepting the unlocked components and skipping the
-        // locked ones.
+    fn acquire_station_distribution_rejects_an_index_missing_required_whistle_pack() {
+        // This fixture contains five signed component packs, while the
+        // current station contract requires six including captions-whistle.
+        // The acquisition path must reject the incomplete index before it
+        // downloads or caches any pack. A complete fixture cannot safely
+        // forge the pinned Ollama model bytes or Whistle payload hashes.
         let key = SigningKey::from_bytes(&[7_u8; 32]);
         let trust = PackTrust {
             key_id: "development-test-key".to_string(),
@@ -1716,15 +1709,20 @@ mod tests {
         let media_root = root.join("station");
         std::fs::create_dir_all(&media_root).expect("create station media root");
 
-        // Canonical component order (native_distribution.rs::REQUIRED_COMPONENTS)
-        // -- the publisher emits packs in exactly this order, and
-        // verify_distribution_bytes fails closed on any other order.
+        // Canonical order with the final mandatory Whistle component omitted.
         let components: [(&str, &str, &[(&str, &[u8])]); 5] = [
-            ("core", "core.ccpack", &[("NOTICE.txt", b"placeholder-only")]),
+            (
+                "core",
+                "core.ccpack",
+                &[("NOTICE.txt", b"placeholder-only")],
+            ),
             (
                 "captions-floor",
                 "captions-floor.ccpack",
-                &[("models/faster-whisper-medium/model.bin", b"floor-model-bytes")],
+                &[(
+                    "models/faster-whisper-medium/model.bin",
+                    b"floor-model-bytes",
+                )],
             ),
             (
                 "summary-gemma4-12b",
@@ -1743,14 +1741,8 @@ mod tests {
             ),
         ];
 
-        // The identity split the publisher actually emits: `core` carries the
-        // product version, every MODEL pack carries the stable
-        // `station-models-1` identity (see
-        // `super::pack_identity_expectations`). Building the fixture this way
-        // means the acquisition below only reaches the reviewed-model-lock
-        // gate if `acquire_verified_distribution` really applies the
-        // station-index exemption -- a hard-coded index version pair would
-        // stop it earlier, at captions-floor, with a version mismatch.
+        // Keep the real station pack identities so the expected refusal is
+        // specifically the missing required component, not a version mismatch.
         let mut pack_entries = Vec::new();
         for (component, filename, payload) in components {
             let pack_path = media_root.join(filename);
@@ -1782,30 +1774,15 @@ mod tests {
             "1.0.0-rc15",
             "1.0.0-rc15",
         )
-        .expect_err(
-            "a fixture station bundle cannot satisfy the reviewed Ollama model lock -- \
-             that requires real, pinned model bytes, by design",
-        );
+        .expect_err("an index missing the mandatory Whistle pack must fail closed");
 
         assert!(
-            error.contains("reviewed model lock") || error.contains("model_name metadata"),
-            "expected the acquisition to fail specifically at the reviewed-model-lock \
-             gate, got: {error}"
+            error.contains("captions-whistle"),
+            "the refusal must identify the missing Whistle component, got: {error}"
         );
         assert!(
-            !error.contains("version mismatch") && !error.contains("compatible core mismatch"),
-            "a station index must not pin its MODEL packs to the product version, got: {error}"
-        );
-        // core and captions-floor -- which carry no reviewed-model-lock
-        // coupling -- must have been cached before the gate was ever
-        // reached, proving THEY round-tripped through real
-        // native_packs::verify_pack successfully.
-        assert!(
-            std::fs::read_dir(cache_root.join("packs"))
-                .map(|entries| entries.count() > 0)
-                .unwrap_or(false),
-            "core/captions-floor must have been verified and cached before the \
-             reviewed-model-lock gate stopped the run"
+            !cache_root.exists(),
+            "an incomplete index must be rejected before any pack is cached"
         );
 
         std::fs::remove_dir_all(&root).expect("clean roundtrip root");
@@ -2041,6 +2018,7 @@ mod tests {
                 "summary-gemma4-12b",
                 "summary-gemma4-e4b",
                 "translation-translategemma-4b",
+                "captions-whistle",
             ],
             "REQUIRED_COMPONENTS changed -- update the model allowlist expectations below \
              deliberately, and check native_activation's copy and the station bundle publisher"
@@ -2050,6 +2028,7 @@ mod tests {
             "summary-gemma4-12b",
             "summary-gemma4-e4b",
             "translation-translategemma-4b",
+            "captions-whistle",
         ] {
             assert!(
                 super::is_station_model_component(component),

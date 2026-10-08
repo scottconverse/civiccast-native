@@ -115,10 +115,63 @@ def build_caption_runtime(service: AiModelService, *, live: bool = False) -> Cap
     """
     from civiccast.captions.runtime import FasterWhisperRuntime
 
-    return FasterWhisperRuntime(
+    fallback = FasterWhisperRuntime(
         model_size_or_path=resolve_runtime_tag(service, "captions"),
         live=live,
     )
+    if live:
+        import os
+        from pathlib import Path
+
+        backend = os.environ.get("CIVICCAST_LIVE_CAPTION_ENGINE", "").strip().lower()
+        if not backend:
+            backend = "whistle" if os.environ.get("CIVICCAST_NATIVE_STATION") == "1" else "whisper"
+        if backend == "whistle":
+            from civiccast.captions.whistle import MixedCaptionRuntime, WhistleRuntime
+
+            root = os.environ.get("CIVICCAST_WHISTLE_ROOT", "").strip()
+            if root:
+                assets = Path(root)
+            else:
+                model = Path(fallback.model_size_or_path)
+                assets = (
+                    model.parents[2] / "captions-whistle"
+                    if len(model.parents) >= 3
+                    else Path("packs/captions-whistle")
+                )
+            config = {
+                name: getattr(fallback, name)
+                for name in (
+                    "model_size_or_path",
+                    "device",
+                    "compute_type",
+                    "cpu_threads",
+                    "num_workers",
+                    "beam_size",
+                    "language",
+                    "task",
+                    "vad_filter",
+                )
+            }
+            config["live"] = True
+            config["beam_size"] = 1  # The measured real-time fallback profile, on CPU and CUDA.
+            config["num_workers"] = 1  # Isolated fallback requests are serialized.
+            primary = WhistleRuntime(
+                weights=assets / "whistle.cact",
+                library=assets / "libneedle.dll",
+                fallback_config=config,
+            )
+            channels = os.environ.get("CIVICCAST_WHISTLE_CHANNELS", "").strip()
+            if channels:
+                return MixedCaptionRuntime(
+                    primary,
+                    fallback,
+                    {channel.strip() for channel in channels.split(",") if channel.strip()},
+                )
+            return primary
+        if backend != "whisper":
+            raise ValueError("CIVICCAST_LIVE_CAPTION_ENGINE must be whistle or whisper")
+    return fallback
 
 
 __all__ = [

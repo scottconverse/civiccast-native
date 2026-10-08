@@ -6,10 +6,10 @@ Lists every CIVICCAST_* / CIVICAST_* name found in product code, where it appear
 The one-C spelling (CIVICAST_) is a known bug class in this repo; both spellings are listed so the mismatch is visible.
 """
 
-import contextlib
 import re
 import sys
 from collections import defaultdict
+from contextlib import suppress
 from pathlib import Path
 
 root = Path(sys.argv[2])
@@ -41,10 +41,8 @@ doc_text = ""
 for p in list((root / "docs").rglob("*.md")) + list(root.glob("*.md")):
     if "history" in p.parts or "evidence" in p.parts:
         continue
-    try:
+    with suppress(OSError):
         doc_text += p.read_text(encoding="utf-8", errors="replace") + "\n"
-    except OSError:
-        pass
 
 names = sorted(seen)
 one_c = [n for n in names if n.startswith("CIVICAST_")]

@@ -8,6 +8,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -80,6 +81,7 @@ def _write_station(
         "egress_engine": "gstreamer",
         "egress_embed_captions": True,
         "offline_only": True,
+        "whistle_assets_root": "packs/captions-whistle",
     }
     runtime.update(runtime_updates or {})
     packs: list[dict[str, object]] = [
@@ -91,6 +93,11 @@ def _write_station(
             "component": "captions-floor",
             "root": "packs/captions-floor",
             "outer_sha256": "55" * 32,
+        },
+        {
+            "component": "captions-whistle",
+            "root": "packs/captions-whistle",
+            "outer_sha256": "66" * 32,
         },
         {
             "component": "summary-gemma4-12b",
@@ -1444,6 +1451,39 @@ def test_flat_layout_activation_files_validate_directly_at_install_root(
     assert env["CIVICCAST_WHISPER_MODEL_PATH"] == str(
         install_root / "packs" / "captions-floor" / "models" / "faster-whisper-medium"
     )
+
+
+def test_rust_station_set_runtime_contract_matches_python_validator() -> None:
+    """Keep the Rust station-set producer aligned with the Python validator."""
+    from civiccast.native import station_runtime
+
+    repo_root = Path(__file__).resolve().parents[2]
+    rust_source = (
+        repo_root
+        / "civiccast"
+        / "apps"
+        / "installer"
+        / "src-tauri"
+        / "src"
+        / "native_activation.rs"
+    ).read_text(encoding="utf-8")
+    producer = re.search(
+        r"fn station_manifest_value\([^)]*\)\s*->\s*Value\s*\{.*?"
+        r'"runtime"\s*:\s*\{(?P<runtime>[^{}]*)\}',
+        rust_source,
+        flags=re.DOTALL,
+    )
+    assert producer is not None, "Rust station-set runtime object was not found"
+    rust_contract = {
+        match.group("key"): json.loads(match.group("value"))
+        for match in re.finditer(
+            r'"(?P<key>[a-z_]+)"\s*:\s*'
+            r'(?P<value>"(?:\\.|[^"\\])*"|true|false)\s*,',
+            producer.group("runtime"),
+        )
+    }
+
+    assert rust_contract == station_runtime.EXPECTED_RUNTIME_CONTRACT
 
 
 def test_both_tiers_staged_still_passes_with_large_v3_verified(

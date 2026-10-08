@@ -208,17 +208,17 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 | Data | Kept | Source |
 | --- | --- | --- |
-| Raw caption audio chunks | Eligible for deletion 24 hours after creation, once verified or when no window can cover them. A sweep runs every 60 seconds. | `captions/retention.py` |
-| Evidence audio for resolved caption reviews | Deleted 90 days after the review is resolved | same |
-| Pending caption reviews | Never expire | same |
-| Caption retention audit log | Not deleted, no rotation (`caption-retention-audit.jsonl`) | same |
+| Live-caption working audio (local beta.11 dev7) | Consumed chunks deleted; at most 12 queued completed segments per channel, plus in-flight inputs and the segment being written | `captions/tap_worker.py` |
+| Live-caption text and delivery tracking (local beta.11 dev7) | Rolling 300 seconds and at most 512 cues; no permanent per-cue review rows or evidence WAVs | `captions/stabilize.py`, `egress/caption_feed.py` |
+| Recorded-caption review and original recordings | Existing recording/review workflow remains unchanged; live working limits do not delete archived tracks or recordings | `captions/vod.py`, recording workflow |
+| Historical beta.10 caption retention audit | Existing `caption-retention-audit.jsonl` was not rotated; ordinary live captioning in the local candidate no longer runs that archive sweep | `captions/retention.py`, `captions/tap_worker.py` |
 | Analytics events | Up to 366 days (default; range 1 to 366) | analytics store |
 | Playout health telemetry | Not trimmed automatically; trim with `civiccast egress trim-health --older-than-days N` | CLI |
 | Staff token audit events, alert history, as-run records | No deletion setting found | not found |
 
-Caption pruning is by age only; volume caps were removed by an owner decision on 2026-09-20. Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off.
+Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off. The local beta.11 dev7 candidate separates transient live caption work from recorded-caption review. It does not make the live worker or broadcast readiness depend on archive-wide review/evidence retention discovery. No new evidence-retention or compliance requirement is introduced by this change.
 
-> **Known issue (beta.10):** Caption data can grow without a limit despite these rules (audit findings B-003, B-004, B-005 and B-009): review rows and evidence are not pruned, raw chunks with no covering window are kept, and the quarantine and collision folders are never pruned. If your retention policy needs a firm limit on caption audio, either leave live captions off or check the `caption-tap` folder yourself every week and delete what your policy requires. See [Chapter 12](#ch-operations).
+> **Historical finding (published beta.10):** Audit findings B-003, B-004, B-005 and B-009 recorded unlimited live caption data growth. The local beta.11 dev7 candidate removes automatic live review/evidence accumulation and bounds working audio and caption history. Weekly manual caption cleanup is not its operating design. The published beta.10 installer has not changed; see [Chapter 12](#ch-operations) for the candidate behavior and its verification limits.
 
 Where residents' own data may be requested for deletion, we found no console screen or command that deletes a subscriber or a viewer's records. Ask the coder to confirm before you promise a deletion process.
 
@@ -262,7 +262,7 @@ These come from the beta.10 whole-repository audit (`audit-lite-whole-repo-beta1
 | B-010 | The failed-login limiter has no memory bound. | Keep `/api/staff/*` on loopback. |
 | B-012 | `/api/hardware` shows the host name to anyone. | Treat the host name as public. |
 | B-019 | `civiccast model set-provider-key --key <value>` puts the key on the command line, visible to other programs in the process list. | Supply the key in the `CIVICCAST_PROVIDER_API_KEY` environment variable instead. |
-| B-003, B-004, B-005, B-009 | Caption data growth (see retention). | Check the folder weekly. |
+| B-003, B-004, B-005, B-009 | Historical beta.10 caption data growth (see retention). | Beta.11 removes automatic live review/evidence accumulation and bounds live working state; verify the candidate before deployment. |
 | A-001, A-008 | A gap in the program-change watchdog, and no free-space guard on the 60 GB cache. | See [Chapter 12](#ch-operations). |
 | C-001 | Automated tests were red in about 110 places at the time of the audit. | Do not read the beta label as a passing test suite. |
 

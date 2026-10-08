@@ -1,4 +1,4 @@
-# CivicCast beta.10 - Field-Test Quick Start
+# CivicCast beta.11 - Field-Test Quick Start
 
 This is a field-test guide for the native Windows beta. It is not a production
 cutover instruction. Use the exact beta release named in your tester handoff;
@@ -7,32 +7,32 @@ currently available.
 
 ## Before you begin
 
-1. Read the exact tester handoff and the Windows release-trust instructions.
-2. Use the complete signed beta.10 USB/LAN kit for a first install. The kit
+1. Read the exact beta.11 tester handoff and the Windows release-trust
+   instructions.
+2. Use the complete signed beta.11 USB/LAN kit for a first install unless the
+   handoff names a different, verified test path. The kit
    includes the installer, runtime packs, and the signed `station\` model
    bundle (about 21 GB), the offline way to bring the large AI components. The
    installer itself is small: its window also explains each large component,
    uses a copy already on the computer (**Found locally - verified**) and
    downloads the rest with a progress display and a **Stop downloading**
-   button. A first install that has no kit and no earlier install and relies
-   only on downloads is not yet proven for beta.10, so use the kit your
-   handoff names.
-3. If this is an upgrade from an already-installed beta.3-or-later station,
-   use only the exact release assets the handoff names. Existing recordings,
-   database data, settings, and cached AI models are retained by the supported
-   in-place upgrade path.
+   button. The setup-only path with no complete kit has not been proven for a
+   first install of this beta.11 candidate.
+3. For an upgrade, use only the exact installer and procedure named in the
+   handoff. Do not assume that another release's upgrade evidence covers this
+   candidate.
 4. Have your technical lead verify the exact installer filename and SHA-256
-   against the trusted handoff and `SHA256SUMS.txt`, plus a `Valid`
-   Authenticode signature whose publisher is **Scott Converse**. For a GitHub
-   download, also verify the release's `setup.exe.sidecar.json`. The complete
-   USB/LAN kit uses its own delivery manifest; do not assume it contains that
-   GitHub sidecar. A matching hash alone is not proof of publisher identity.
-   If any value differs, stop and report the mismatch.
+   against the trusted handoff, plus a `Valid` Authenticode signature whose
+   publisher is **Scott Converse**. For a GitHub download, also verify the
+   release's `setup.exe.sidecar.json`. In the USB/LAN kit,
+   `station\SHA256SUMS.txt` covers the station bundle; use the trusted handoff
+   for the installer hash. A matching hash alone is not proof of publisher
+   identity. If any value differs, stop and report the mismatch.
 
 ## Install
 
 1. On the station computer, open the signed USB/LAN kit and run its branded
-   `CivicCast (Native)_1.0.0-beta.10_x64-setup.exe` installer. A GitHub download
+   `CivicCast (Native)_1.0.0-beta.11_x64-setup.exe` installer. A GitHub download
    uses the name `setup.exe`; its hash must identify the same approved release.
    Do not substitute a source ZIP, an older release, or a generic "latest"
    download.
@@ -69,9 +69,9 @@ currently available.
 Keep the station private while testing. Run the assigned rehearsal and tester
 checks, record the exact candidate SHA and installed version, and wait for the
 station owner's cutover decision. Routine steps within the assigned field
-test do not need a new approval at every screen. Do not treat reaching the operator console,
-an installer exit code of zero, or a version number as proof that the station
-is ready for public cutover.
+test do not need a new approval at every screen. Do not treat reaching the
+operator console, an installer exit code of zero, or a version number as
+proof that the station is ready for public cutover.
 
 ## If the installer or setup window appears stuck
 
@@ -95,60 +95,35 @@ is ready for public cutover.
   setup. Preserve the logs and consult your technical lead before retrying or
   rebooting to clear an unexplained failure.
 
-## Known limitations of this build (v1.0.0-beta.10) - read before operating a station
+## Known limits of this beta.11 candidate - read before operating a station
 
-`v1.0.0-beta.10` is a beta candidate. It was held on air for eight hours on a
-three-channel lab station with no restart, no black or silent gaps at program
-changes, and loudness in range. The formal station acceptance (Gate A) has not
-been run for it, and no human field tester has signed off on it. These are the
-known, measured limits:
+The owner accepted a 24-hour three-station caption soak on the local beta.11
+development overlay. It recorded 198 successful sampled channel checks across
+66 eligible checkpoints; four checkpoints during an excluded gaming interval
+were omitted. The overlay ran on a beta.9 station and is not proof that this
+packaged beta.11 installer works.
 
-**Some spoken words can go without captions when the machine is busy.**
-- Captions stay on the air on all three channels. When a channel's caption
-  worker falls behind (most often while the station is preparing a long program
-  for the first time), it skips its oldest audio to catch up instead of pausing
-  for minutes. Those skipped seconds have no caption.
-- In the eight-hour run this happened 13 times. On a quiet machine the total was
-  about 160 seconds of speech across two channels.
-- A fix is the next work item and is not in beta.10. **If your station must have
-  every spoken word captioned, tell your technical lead before relying on this
-  build, and check the captions during live meetings.**
+The caption checks sampled decoding, freshness and continuity. They do not
+prove accurate recognition of every word or captions for every second. Native
+recognition timings exclude time waiting for the shared inference lock and
+complete caption latency. Short monitor captures do not establish broadcast
+loudness. Program-transition retries, lost acknowledgements and bounded relay
+log trims were observed during the longer run; the sampled caption checks
+passed. Check the station's actual output during the assigned field test and
+report caption, audio, video and service problems separately.
 
-**A program change can retry once.**
-- Twice in eight hours a program change on the government channel did not take
-  on its first try and corrected itself in about three seconds. Viewers saw
-  nothing.
+Live captions use Whistle on the CPU, with Whisper as a backup; supported
+NVIDIA CUDA systems can select Whisper as the primary engine. CPU-only Medium
+Whisper fallback has not demonstrated real-time capacity. AMD or Intel
+graphics do not imply Whisper GPU acceleration.
 
-**One single-frame video drop.**
-- One known one-frame (about 0.03 second) picture drop can happen where two
-  parts of the same program join. It was seen once in eight hours.
-
-**Quiet recordings are not boosted without limit.**
-- Speech is leveled toward -16 LUFS (a standard loudness measure) when a program is prepared for air. A
-  stretch of a recording that is too quiet for the leveling to reach the target
-  is reported in the log, not boosted further, so it can sound quieter than
-  the rest.
-
-**Carried over from beta.9 and not re-tested in the beta.10 run.**
-- When a channel's scheduled programming runs out and the schedule does not
-  repeat, the channel can stop and need a manual start. The error then tells you
-  to check the program's media even though the schedule is the problem.
-- `/api/health` can report healthy while a channel is unable to air.
-- The built-in decode-back check (it decodes the broadcast to confirm the
-  captions) failed on certain cue timings in beta.9 and was not re-tested.
-
-**Not proven.**
-- Runs longer than eight hours, a real station, SDI hardware and a cable
-  headend have not been tested for this build.
-
-**Disk space.**
-- CivicCast now keeps up to 60 GB of prepared copies of long programs (the
-  default; it was 20 GB). Leave room on the data drive, or set
-  `CIVICCAST_CONFORM_CACHE_GB` to a smaller number.
+The packaged installer, clean install, upgrade and download-only installation
+paths still need their own candidate-specific verification. SDI hardware, a
+cable headend and production cutover are outside this field-test evidence.
 
 ## After a successful field test
 
-Keep the signed kit, hash manifest, installer log, recovery-kit confirmation,
+Keep the signed kit, trusted handoff, installer log, recovery-kit confirmation,
 and candidate-bound tester evidence together. A successful local installation
 or soak is evidence for the named candidate only; it does not by itself make
-beta.10 the public current release.
+beta.11 the public current release.

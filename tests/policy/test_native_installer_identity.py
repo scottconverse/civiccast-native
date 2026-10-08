@@ -401,15 +401,19 @@ def _slice_macro(hooks_text: str, macro_name: str) -> str:
     return hooks_text.split(f"!macro {macro_name}", 1)[1].split("!macroend", 1)[0]
 
 
-def test_bootstrap_postinstall_chain_is_ordered_stage_packs_before_verify_before_provision_before_service_registration() -> (
-    None
-):
+def _slice(text: str, start: str, end: str) -> str:
+    """Return the text between two ordered markers, excluding the markers."""
+    start_at = text.index(start) + len(start)
+    end_at = text.index(end, start_at)
+    return text[start_at:end_at]
+
+
+def test_bootstrap_postinstall_chain_orders_pack_verification_activation_d3_and_d4() -> None:
     """Pins the migrated bootstrap-native ordering: packs deliver the runtime
-    bytes, so staging must run before D2 re-verification, which must run
-    before D4 provisioning, which must run before D4 service/firewall
-    registration -- locking the migration described in
-    wp2-hook-migration-2026-07-30.md so a future edit cannot silently
-    reorder (or drop) a step."""
+    bytes, so D2 re-verification precedes signed station activation, which
+    establishes the strict contract before D3 health checks the candidate
+    runtime; D3 still precedes D4 provisioning and service/firewall
+    registration."""
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
 
     stage_packs = "--civiccast-stage-packs"
@@ -422,23 +426,24 @@ def test_bootstrap_postinstall_chain_is_ordered_stage_packs_before_verify_before
     for token in (
         stage_packs,
         verify_pack_tree,
-        provision,
         activate_station,
+        provision,
         register_service,
         register_firewall,
     ):
         assert token in postinstall, f"expected {token!r} in nsis-hooks-bootstrap.nsh POSTINSTALL"
 
     assert postinstall.index(stage_packs) < postinstall.index(verify_pack_tree)
-    assert postinstall.index(verify_pack_tree) < postinstall.index(provision)
-    # K1 fix: station activation (station-set.json + activation-self-test.json,
-    # native_activation.rs::activate_flat_station_with) must run AFTER
-    # provisioning and BEFORE service registration -- the service is started
-    # by the registration step, and native/station_runtime.py::
-    # load_native_station_environment requires both files to already exist at
-    # $INSTDIR the moment that service starts.
-    assert postinstall.index(provision) < postinstall.index(activate_station)
-    assert postinstall.index(activate_station) < postinstall.index(register_service)
+    verify_last = postinstall.rindex(verify_pack_tree)
+    activation_step = '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"'
+    d3_step = '!insertmacro CIVICCAST_STEP "step d3-engine: begin'
+    assert verify_last < postinstall.index(activation_step)
+    assert postinstall.index(activation_step) < postinstall.index(d3_step)
+    assert postinstall.index(d3_step) < postinstall.index(provision)
+    # K1 activation writes station-set.json and activation-self-test.json at
+    # $INSTDIR before D3's maintenance health check loads the candidate runtime.
+    assert postinstall.index(activate_station) < postinstall.index(d3_step)
+    assert postinstall.index(provision) < postinstall.index(register_service)
     assert postinstall.index(register_service) < postinstall.index(register_firewall)
 
 
@@ -465,9 +470,11 @@ def test_bootstrap_postinstall_activates_the_flat_station_and_fails_loud_on_erro
         in executable.split("--civiccast-activate-station", 1)[1].split("\n", 1)[0]
     ), "the activation invocation must target $INSTDIR (flat layout), matching its neighbors"
 
-    activation_block = postinstall.split("--civiccast-activate-station", 1)[1].split(
-        '!insertmacro CIVICCAST_STEP "step d4-service-registration', 1
-    )[0]
+    activation_block = _slice(
+        postinstall,
+        '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"',
+        "  ; UPGRADE-VS-FRESH ROUTING",
+    )
     assert "${CIVICCAST_EXIT_D4_ACTIVATION}" in activation_block
     assert "!insertmacro CIVICCAST_FAIL" in activation_block, (
         "a failed station activation must abort the install through CIVICCAST_FAIL, "
@@ -530,9 +537,11 @@ def test_bootstrap_postinstall_resolves_the_station_index_kit_first_then_embedde
     assert '!insertmacro CIVICCAST_STEP "step d4-activate-station: source EXEDIR' in executable
     assert '!insertmacro CIVICCAST_STEP "step d4-activate-station: source INSTDIR' in executable
 
-    activation_block = postinstall.split("--civiccast-activate-station", 1)[1].split(
-        '!insertmacro CIVICCAST_STEP "step d4-service-registration', 1
-    )[0]
+    activation_block = _slice(
+        postinstall,
+        '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"',
+        "  ; UPGRADE-VS-FRESH ROUTING",
+    )
     # <installer-path-audit MA-08> The count moved from 2 to 6, deliberately.
     # `run_native_flat_activation_cli` emits FIVE distinct exit codes -- 64
     # (arguments), 65 (render), 66 (acquisition), 67 (activation/self-test),
@@ -557,28 +566,34 @@ def test_bootstrap_postinstall_resolves_the_station_index_kit_first_then_embedde
     assert "!insertmacro CIVICCAST_ALERT" not in activation_block
 
 
-def test_native_bootstrap_embeds_only_the_two_tiny_station_resources() -> None:
-    """The embedded-index fix must not become a hole in the "no embedded
-    multi-gigabyte payload, ever" rule that
-    scripts/build_native_bootstrap.py::validate_native_bootstrap_config
-    enforces. Exactly three resources, and the two station entries must land
-    under a `station/` subdirectory so the hook's $INSTDIR\\station\\... probe
-    finds them (Tauri maps resource VALUES relative to the install root)."""
+def test_native_bootstrap_embeds_only_the_bounded_whistle_station_pack() -> None:
+    """The embedded Whistle pack must not become a hole in the no-large-model
+    payload rule. Exactly four resources are allowed; the three station
+    entries must land under `station/` so the hook's $INSTDIR\\station\\...
+    probe finds them (Tauri maps resource VALUES relative to the install root).
+    The builder separately verifies the Whistle pack's signed-index identity
+    and strict 25 MB size ceiling."""
     resources = _deep_merge(_load(BASE_CONFIG), _load(NATIVE_CONFIG))["bundle"]["resources"]
 
     assert resources == {
         "resources/vc_redist.x64.exe": "vc_redist.x64.exe",
         "resources/station/station-index.json": "station/station-index.json",
         "resources/station/core.ccpack": "station/core.ccpack",
-    }, "bundle.resources must carry the VC++ prerequisite plus exactly the two tiny station files"
+        "resources/station/captions-whistle.ccpack": "station/captions-whistle.ccpack",
+    }, "bundle.resources must carry the VC++ prerequisite plus the exact station embed allowlist"
 
-    # No pack other than `core` may be embedded. `core`'s payload is a
-    # placeholder NOTICE (build_native_station_bundle.py::
-    # _core_placeholder_sources); every real component pack is multi-gigabyte
-    # model bytes and belongs in the kit or the per-SHA cache.
+    # Only the tiny placeholder `core` pack and bounded local Whistle pack may
+    # be embedded. Other component packs remain in the kit or per-SHA cache.
     embedded_packs = [value for value in resources.values() if value.endswith(".ccpack")]
-    assert embedded_packs == ["station/core.ccpack"], (
-        f"only the placeholder `core` pack may be embedded, found {embedded_packs}"
+    assert (
+        set(embedded_packs)
+        == {
+            "station/core.ccpack",
+            "station/captions-whistle.ccpack",
+        }
+        and len(embedded_packs) == 2
+    ), (
+        f"only the placeholder `core` and bounded Whistle packs may be embedded, found {embedded_packs}"
     )
 
 
@@ -588,7 +603,8 @@ def test_bootstrap_postinstall_verifies_the_extracted_pack_tree_not_the_retired_
     """ADAPTATION pin: the retired file's D2 checks re-verified the WP-6
     embedded $INSTDIR\\runtime / $INSTDIR\\native-runtime trees against an
     in-tree manifest file. Neither path is ever laid down by the bootstrap
-    build (bundle.resources carries only vc_redist.x64.exe), so that exact
+    build (bundle.resources carries only station activation resources and the
+    VC++ prerequisite), so that exact
     check must NOT reappear here -- it would unconditionally fail-abort every
     install. The adapted check re-verifies the pack-derived tree instead."""
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
@@ -989,8 +1005,8 @@ def test_ffmpeg_pack_payload_root_composes_onto_the_activation_pinned_path() -> 
 # §1/§2), because $INSTDIR\runtime\python.exe did not exist in any bootstrap
 # build target yet. bce9a3cf closed that gap (the native-app-payload pack now
 # bridges to $INSTDIR\runtime). The coordinator decided D3 re-homes into
-# POSTINSTALL directly after D2 pack-tree verification and BEFORE D4
-# provisioning/service registration -- tree management (junction flip,
+# POSTINSTALL after D2 pack-tree verification and signed station activation,
+# and BEFORE D4 provisioning/service registration -- tree management (junction flip,
 # migration, health gate, rollback) must commit on the tree before
 # provisioning/service-build acts on it. These tests pin that exact position
 # and the preserved exit-code contract.
@@ -1002,9 +1018,9 @@ def test_bootstrap_postinstall_chain_places_d3_upgrade_engine_between_verify_and
 ):
     """Pins the D3 rehoming position: the journaled install/upgrade engine
     invocation must run after BOTH D2 pack-tree verification calls (so
-    $INSTDIR\\runtime\\python.exe is verified-present) and before D4
-    provisioning -- never before verification, never after provisioning or
-    service registration."""
+    $INSTDIR\\runtime\\python.exe is verified-present) and signed station
+    activation, but before D4 provisioning -- never before verification,
+    never after provisioning or service registration."""
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
 
     verify_pack_tree = "--civiccast-verify-pack-tree"
@@ -1019,13 +1035,16 @@ def test_bootstrap_postinstall_chain_places_d3_upgrade_engine_between_verify_and
 
     # Both D2 pack-tree verification calls (native-server-binaries and the
     # bridged native-app-payload) must precede D3.
-    first_verify = postinstall.index(verify_pack_tree)
     last_verify = postinstall.rindex(verify_pack_tree)
-    assert last_verify < postinstall.index(d3_invocation), (
-        "D3 must run after BOTH D2 pack-tree verification calls, not between them"
+    activation_step = '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"'
+    activation_index = postinstall.index(activation_step)
+    d3_index = postinstall.index(d3_invocation)
+    assert last_verify < activation_index < d3_index, (
+        "signed station activation must follow BOTH D2 verification calls and establish "
+        "the strict runtime contract before D3 starts the candidate runtime for its "
+        "maintenance health gate"
     )
-    assert first_verify < postinstall.index(d3_invocation)
-    assert postinstall.index(d3_invocation) < postinstall.index(provision), (
+    assert d3_index < postinstall.index(provision), (
         "D3 must run before D4 provisioning (tree management commits before "
         "provisioning/service-build acts on that tree)"
     )
@@ -1438,25 +1457,26 @@ def test_d3_engine_invocation_is_never_gated_on_preserved_registry_remnants() ->
 
     The routing decision now lives in tested Python
     (``civiccast/native/upgrade/routing.py``) and keys on whether a product
-    actually EXISTS. This pins that NSIS never re-grows a competing
-    remnant-keyed gate around the invocation: no ``${If}``/``${AndIf}`` in the
-    D3 region may branch on $R0/$R2 before the engine runs.
+    actually EXISTS. The prior-version sentinel is normalized before station
+    activation; the routing block then reaches D3 without an NSIS gate on
+    preserved $R0/$R2 data. Station activation has its own exit-code branches
+    before this region and must not be mistaken for an upgrade-routing gate.
     """
     hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
     postinstall = _postinstall_block(hooks_text)
 
     invocation = "-m civiccast.native.upgrade"
     marker_read = 'ReadRegStr $R0 HKLM "Software\\CivicCast\\Native" "InstalledVersion"'
-    preamble = postinstall[postinstall.index(marker_read) : postinstall.index(invocation)]
+    marker_at = postinstall.index(marker_read)
+    sentinel_end = postinstall.index("${EndIf}", marker_at) + len("${EndIf}")
+    marker_normalization = postinstall[marker_at:sentinel_end]
 
-    # The ONE conditional allowed between the marker read and the invocation is
-    # the sentinel default that turns an absent marker into the literal
-    # "none" the CLI's --old-version documents. It selects no route and skips
-    # nothing; it only normalizes a VALUE that is then passed through.
+    # The one marker-read conditional only normalizes an absent version to the
+    # literal "none" consumed by the engine's --old-version argument.
     sentinel_default = '${If} $R0 == ""'
     conditionals = [
         line.strip()
-        for line in preamble.splitlines()
+        for line in marker_normalization.splitlines()
         if not line.strip().startswith(";")
         and ("${If}" in line or "${AndIf}" in line or "${ElseIf}" in line)
     ]
@@ -1465,13 +1485,31 @@ def test_d3_engine_invocation_is_never_gated_on_preserved_registry_remnants() ->
         "belongs to civiccast.native.upgrade.routing, which keys on whether a "
         f"product EXISTS rather than on preserved data. Found: {conditionals}"
     )
-    assert "$R2" not in preamble.split(sentinel_default, 1)[1].split("${EndIf}", 1)[0], (
+    assert "$R2" not in marker_normalization, (
         "the sentinel default must not read the preserved DatabaseUrl value -- that "
         "pairing IS the gate R7 tripped"
     )
 
+    # Station activation runs before D3 and has its own checked failure arms.
+    # Inspect only the post-activation routing section to ensure none of those
+    # independent $0 branches are confused with a D3 remnant-keyed gate.
+    route_marker = "UPGRADE-VS-FRESH ROUTING"
+    route_at = postinstall.index(route_marker)
+    invocation_at = postinstall.index(invocation, route_at)
+    routing_preamble = postinstall[route_at:invocation_at]
+    route_conditionals = [
+        line.strip()
+        for line in routing_preamble.splitlines()
+        if not line.strip().startswith(";")
+        and ("${If}" in line or "${AndIf}" in line or "${ElseIf}" in line)
+    ]
+    assert route_conditionals == [], (
+        "the post-activation D3 routing section must invoke the engine without "
+        f"an NSIS gate; found: {route_conditionals}"
+    )
+
     # And the engine must be reached, not jumped over.
-    assert "Goto civiccast_bootstrap_d3_done" not in preamble, (
+    assert "Goto civiccast_bootstrap_d3_done" not in routing_preamble, (
         "nothing between reading the version marker and invoking the engine may "
         "skip the engine -- that skip WAS the gate"
     )

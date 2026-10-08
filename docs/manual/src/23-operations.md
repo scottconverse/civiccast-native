@@ -118,7 +118,7 @@ Other logs you may need:
 
 - `C:\ProgramData\CivicCast\install-progress.log`: the installer's record of a first install.
 - `C:\ProgramData\CivicCast\upgrade\upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md`: the upgrade engine, described below.
-- `C:\ProgramData\CivicCast\data\caption-tap\caption-retention-audit.jsonl`: one line per caption file the retention sweeper deleted (no rotation).
+- `C:\ProgramData\CivicCast\data\caption-tap\caption-retention-audit.jsonl`: the historical beta.10 live retention audit (no rotation). Ordinary live captioning in the local beta.11 dev7 candidate does not run that archive sweep or append per-cue evidence records.
 
 > **Known issue (beta.10):** `control_plane.log` (every web request) and `postgres.log` are never rotated. On a busy station they grow forever. Check their size weekly and, when the service is stopped, move or truncate them. We could not confirm that Windows or the installer trims them.
 
@@ -206,7 +206,7 @@ This routine uses only checks that exist in beta.10.
 
 1. Read the result of the Sunday weekly self-test.
 2. Check the size of `control_plane.log`, `postgres.log` and `ollama.log` (they are not rotated).
-3. Check the size of `C:\ProgramData\CivicCast\data\caption-tap` and `C:\ProgramData\CivicCast\data\egress` (see the next section).
+3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The local beta.11 dev7 live-caption work area is bounded automatically and does not require weekly audio cleanup.
 4. Run `civiccast egress trim-health --older-than-days 30 --dry-run` and decide whether to trim (see the next section).
 5. Run the disaster-recovery drill (see below) at least when you have changed anything, and keep the report.
 6. Copy the things the drill does not back up (see below) to storage that is not on this computer.
@@ -220,7 +220,7 @@ This routine uses only checks that exist in beta.10.
 | `C:\ProgramData\CivicCast\data\pgdata` | The Postgres database | With use | No |
 | `C:\ProgramData\CivicCast\data\uploads` | Uploaded media | With use | No |
 | `C:\ProgramData\CivicCast\data\egress` | Playout working files, including `conform-cache` | Yes | Yes, see below |
-| `C:\ProgramData\CivicCast\data\caption-tap` | Raw caption audio chunks, evidence audio, `active.vtt` | Yes | Partly, see below |
+| `C:\ProgramData\CivicCast\data\caption-tap` | Temporary live-caption audio; `active.vtt` is in the channel's egress caption folder | Bounded in local beta.11 dev7 | Consumed chunks deleted; queued audio limited, see below |
 | `C:\ProgramData\CivicCast\logs` | Logs | Yes | Only the rotated logs |
 | `C:\ProgramData\CivicCast\upgrade` | Upgrade engine log, journal and pre-upgrade backups | Per upgrade | No |
 
@@ -248,13 +248,13 @@ The playout engine stores health telemetry in the database. Nothing trims it aut
 
 ### Caption data
 
-The caption retention sweeper runs every 60 seconds and works by age only:
+**Beta.11 caption candidate:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
 
-- Raw caption audio chunks become eligible for deletion 24 hours after they were created, but only when their transcript evidence is verified or no window can cover them.
-- Evidence audio for a resolved review item is deleted 90 days after resolution. Pending review items never expire.
-- Analytics events are kept up to 366 days (`CIVICCAST_ANALYTICS_RETENTION_DAYS`, allowed range 1 to 366).
+The live caption file and delivery bookkeeping retain a rolling 300-second window with at most 512 cues. The live worker does not scan the caption-review archive, and archive evidence does not gate broadcast readiness. These bounds replace manual weekly live-caption cleanup. If working files exceed these bounds, report a fault rather than treating routine deletion by an operator as normal operation.
 
-> **Known issue (beta.10):** The audit of beta.10 found that caption data can still grow without a limit: review rows and evidence are not pruned, raw chunks that no window covers are kept (roughly 160 KB per 5 seconds of audio per channel, which is about 3 GB per channel per day if most chunks are uncovered), `active.vtt` grows, and the quarantine and collision folders are never pruned. If you turn live captions on, add `C:\ProgramData\CivicCast\data\caption-tap` to your weekly size check.
+Original recordings, archived caption tracks and recorded-caption review remain available and are unaffected by these temporary live-caption limits. Analytics retention is separate: events are kept up to 366 days (`CIVICCAST_ANALYTICS_RETENTION_DAYS`, allowed range 1 to 366).
+
+> **Historical finding (published beta.10):** The audit found unlimited live caption review/evidence accumulation, uncovered raw chunks, growing `active.vtt`, and unpruned quarantine/collision folders. The local beta.11 dev7 candidate changes the live path described above; the published beta.10 installer and its historical test results are unchanged. Long unattended operation of the new candidate still requires verification.
 
 ## Back up and restore
 

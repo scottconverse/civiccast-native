@@ -2394,7 +2394,7 @@ def test_evict_cache_over_budget_reaps_orphaned_tmp_and_meta(tmp_path: Path) -> 
     paired_ts = cache_dir / "orphan4.ts"
     paired_ts.write_text("real cache entry", encoding="utf-8")
 
-    old_tmp_time = time.time() - preparer_module._ORPHAN_CACHE_TMP_MAX_AGE_S - 60
+    old_tmp_time = time.time() - preparer_module._ORPHAN_CACHE_SCRATCH_MAX_AGE_S - 60
     os.utime(old_tmp, (old_tmp_time, old_tmp_time))
     old_meta_time = time.time() - preparer_module._ORPHAN_CACHE_META_MAX_AGE_S - 60
     os.utime(orphan_meta, (old_meta_time, old_meta_time))
@@ -2423,7 +2423,7 @@ def test_evict_cache_over_budget_counts_live_tmp_bytes_toward_budget(
     )
     cache_dir = tmp_path / "work" / "conform-cache"
     cache_dir.mkdir(parents=True)
-    ts_entry = cache_dir / "aaaa.ts"
+    ts_entry = cache_dir / f"{'a' * 32}.ts"
     ts_entry.write_text("x" * 60, encoding="utf-8")
     live_tmp = cache_dir / "bbbb.ts.tmp"
     live_tmp.write_text("y" * 60, encoding="utf-8")  # young -- not orphaned
@@ -3690,6 +3690,8 @@ def test_prepare_accepts_a_decodable_prepared_segment(tmp_path: Path) -> None:
 
     assert report.source_plan.channel_id == "gov"
     assert report.records[0].prepared_path.endswith("segment-0001.ts")
+
+
 # U29 — the warm's timeout, priority and retry budget
 #
 # Observed on the live station (2026-09-25, reports/U29.md): the LPM rotation's

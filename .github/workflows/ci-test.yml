@@ -466,11 +466,13 @@ jobs:
         # enforces this floor stays within that margin of a FRESH collection
         # on every run (not a second hardcoded number), so this pin cannot
         # go stale again the way 1429 did without failing that test first.
+        # 2026-10-08 CI collection audit: 1938 pure tests; keep the same
+        # 50-test margin, yielding a floor of 1888.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1774 \
+            --floor 1888 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -550,6 +552,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install ffmpeg for native media tests
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          choco install ffmpeg --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ffmpeg -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ffprobe -version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Install project (dev)
         run: uv sync --group dev
 
@@ -601,12 +614,14 @@ jobs:
         # and fails if this floor drifts more than the margin below it, so
         # this pin cannot go stale again the way 1565 did without failing
         # that test first.
+        # 2026-10-08 CI collection audit: 2144 Windows non-integration tests;
+        # the existing floor of 2096 is 48 tests below that collection.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 1978 \
+            --floor 2096 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit

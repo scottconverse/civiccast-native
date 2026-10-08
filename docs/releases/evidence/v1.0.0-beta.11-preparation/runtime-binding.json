@@ -1,0 +1,16 @@
+{
+  "soak_start_mdt": "2026-10-06 09:53:23",
+  "supervisor_pid": 28760,
+  "source_commit": "01406ad794ae09138135354e0440d73a2b1ac2ad",
+  "source_path": "civiccast/captions/tap_worker.py",
+  "source_git_blob": "7072caf54e8e64dabaabd762b456d12b4f1649da",
+  "source_blob_bytes_sha256": "22bd808313a332b9824372bac1152d2e2389f8b1cecb3d73bc32b50d1bf95c49",
+  "checkout_raw_sha256": "22bd808313a332b9824372bac1152d2e2389f8b1cecb3d73bc32b50d1bf95c49",
+  "installed_raw_sha256": "876e33c4a9ec972f28b5563e5914e673eb69cd4830e362c46ae9316d5b24a2a8",
+  "installed_bytes": 143440,
+  "staged_candidate_match": true,
+  "staged_manifest": "work/beta11-stage-bounded-live/files.json",
+  "independent_installed_manifest": "work/dev7-installed-hashes.json",
+  "qualification": "Installed tap adds station-only U69 diagnostics, not caption decision changes. Source package omits station-only import and module. This is core behavior evidence with instrumentation differences, not a byte-identical packaged installer soak.",
+  "difference_review": "Independent read-only reviewer found timing/probe metadata only; no caption output, persistence, lock, queue bound or shedding decision change."
+}

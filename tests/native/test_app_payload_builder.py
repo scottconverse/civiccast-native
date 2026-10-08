@@ -16,6 +16,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -335,6 +336,13 @@ def test_caption_model_staging_rejects_hash_drift(
 
     with pytest.raises(SystemExit, match=r"model\.bin"):
         builder.place_whisper_model(tmp_path / "payload", cache=cache)
+
+
+def test_whistle_engine_staging_requires_the_pinned_python_distribution(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(SystemExit, match=re.escape("cactus-needle 3.1.0 is not installed")):
+        builder.place_whistle_engine(tmp_path / "site-packages", cache=tmp_path / "cache")
 
 
 def test_civiccast_wheel_excludes_local_coverage_artifacts() -> None:
@@ -1268,6 +1276,7 @@ def test_manifest_is_sorted_and_carries_the_interpreter_pin() -> None:
     }
     assert "build_sha" not in manifest["civiccast"]
     assert manifest["caption_pack"] == builder.CAPTION_PACK_CONTRACT
+    assert manifest["whistle_engine"] == builder.WHISTLE_ENGINE_CONTRACT
     assert manifest["build_toolchain_lock_sha256"] == builder.APP_BUILD_TOOLCHAIN_LOCK_SHA256
     # deterministic: files sorted by path
     assert [f["path"] for f in manifest["files"]] == sorted(f["path"] for f in manifest["files"])
@@ -1501,6 +1510,60 @@ def test_release_verifier_requires_the_external_caption_pack_contract(
     assert result.status == "FAIL"
     assert "CAPTION PACK" in result.detail
     assert "captions-large-v3" in result.detail
+
+
+def test_release_verifier_requires_the_canonical_whistle_engine_dll(
+    tmp_path: Path,
+) -> None:
+    tree = tmp_path / "payload"
+    _write_minimal_payload(tree)
+
+    result = verifier.check_app_payload_verification(tree, require_caption_pack=True)
+
+    assert result.status == "FAIL"
+    assert "WHISTLE ENGINE" in result.detail
+    assert "needle/libneedle3.dll" in result.detail
+
+
+def test_whistle_engine_verifier_checks_the_pinned_dll_sha256(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = b"reviewed-needle-dll"
+    digest = hashlib.sha256(body).hexdigest()
+    package_file = "Lib/site-packages/needle/libneedle3.dll"
+    contract = {
+        "distribution": "cactus-needle",
+        "version": "3.1.0",
+        "license": "Apache-2.0",
+        "wheel_source_url": "https://example.invalid/pinned-wheel.whl",
+        "wheel_sha256": "a" * 64,
+        "package_file": package_file,
+        "file_bytes": len(body),
+        "file_sha256": digest,
+    }
+    monkeypatch.setattr(verifier, "WHISTLE_ENGINE_CONTRACT", contract)
+    tree = tmp_path / "payload"
+    dll = tree / package_file
+    dll.parent.mkdir(parents=True)
+    dll.write_bytes(body)
+    manifest = {"whistle_engine": contract}
+    records = [
+        {
+            "path": package_file,
+            "distribution": "cactus-needle",
+            "version": "3.1.0",
+            "license": "Apache-2.0",
+            "bytes": len(body),
+            "sha256": digest,
+        }
+    ]
+
+    assert verifier._verify_required_whistle_engine_contract(tree, manifest, records) == []
+
+    dll.write_bytes(b"tampered-needle-dll")
+    problems = verifier._verify_required_whistle_engine_contract(tree, manifest, records)
+    assert any("reviewed SHA-256" in problem for problem in problems)
 
 
 def test_verifier_rejects_unreviewed_caption_model_file(tmp_path: Path) -> None:

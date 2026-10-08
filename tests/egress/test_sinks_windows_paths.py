@@ -37,4 +37,5 @@ def test_file_sink_resolves_windows_file_uri() -> None:
 
 def test_hls_sink_resolves_windows_file_uri() -> None:
     sink = HlsSink(EgressSinkSpec(kind="hls", label="h", uri="file:///C:/CivicCast/live"))
-    assert sink.connect_target().replace("\\", "/") == "C:/CivicCast/live/playlist.m3u8"
+    assert sink.connect_target().replace("\\", "/") == "C:/CivicCast/live/playlist.mux.m3u8"
+    assert sink.manifest_target().replace("\\", "/") == "C:/CivicCast/live/playlist.m3u8"

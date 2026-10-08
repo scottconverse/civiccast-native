@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext, suppress
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -24,6 +24,7 @@ from civiccast.stream.packager import SlateOnlyResult, VodPackageResult
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from civiccast.captions.phase_timing import NullPhaseTimingCollector, PhaseTimingCollector
     from civiccast.translate import TranslationProvider, TranslationTarget
 
 
@@ -46,22 +47,28 @@ class CaptionHlsPipelineResult:
 
 
 class CaptionPipeline:
-    """Run a caption runtime through stabilization and review preparation."""
+    """Run recognition and stabilization, optionally preparing review records.
+
+    Continuous live workers disable review construction. Recording/editing
+    workflows preserve their review preparation by default.
+    """
 
     def __init__(
         self,
         runtime: CaptionRuntime,
         *,
         stabilizer: CaptionStabilizer | None = None,
-        phase_timing: object | None = None,
+        phase_timing: PhaseTimingCollector | NullPhaseTimingCollector | None = None,
         phase_timing_channel: str | None = None,
+        prepare_review_items: bool = True,
     ) -> None:
         self._runtime = runtime
         self._stabilizer = stabilizer or CaptionStabilizer()
         self._phase_timing = phase_timing
         self._phase_timing_channel = phase_timing_channel
+        self._prepare_review_items = prepare_review_items
 
-    def _phase(self, name: str):
+    def _phase(self, name: str) -> AbstractContextManager[None]:
         """Return an opt-in timing context without affecting pipeline work."""
 
         timing = self._phase_timing
@@ -82,8 +89,8 @@ class CaptionPipeline:
         """Transcribe chunks and prepare stable cue review rows.
 
         The pipeline keeps the stabilizer instance alive across calls, so a
-        live worker can pass one small batch at a time while the two-window
-        stability contract still holds.
+        live worker publishes each recognition and deduplicates overlapping audio.
+        Offline pipelines retain their configured confirmation policy.
         """
         with self._phase("runtime_transcribe"):
             hypotheses = list(self._runtime.transcribe(chunks, vocabulary=vocabulary))
@@ -105,6 +112,7 @@ class CaptionPipeline:
                 reviewer_note=reviewer_note,
             )
             for cue in (*committed_cues, *expired_unconfirmed_cues)
+            if self._prepare_review_items
         ]
         return CaptionPipelineResult(
             hypotheses=hypotheses,
@@ -205,6 +213,7 @@ class CaptionPipeline:
                 reviewer_note=reviewer_note,
             )
             for cue in (*committed_cues, *expired_unconfirmed_cues)
+            if self._prepare_review_items
         ]
         return CaptionPipelineResult(
             hypotheses=[],
@@ -263,7 +272,7 @@ class CaptionPipeline:
         return CaptionHlsPipelineResult(caption_result=caption_result, hls_outputs=hls_outputs)
 
     def committed(self) -> list[CaptionCue]:
-        """Return all stable cues committed by this pipeline instance."""
+        """Return stable cues retained by this pipeline's history policy."""
         return self._stabilizer.committed()
 
     def expired_unconfirmed(self) -> list[CaptionCue]:

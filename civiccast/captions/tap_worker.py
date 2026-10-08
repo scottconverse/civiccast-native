@@ -228,6 +228,9 @@ def default_max_channel_workers(runtime: CaptionRuntime | None = None) -> int:
     station the operator has personally sized.
     """
 
+    isolated_workers = getattr(runtime, "channel_workers", None)
+    if isinstance(isolated_workers, int) and 1 <= isolated_workers <= 3:
+        return isolated_workers
     on_cuda = getattr(runtime, "on_cuda", None)
     if runtime is None or not callable(on_cuda) or not on_cuda():
         return 1
@@ -569,6 +572,7 @@ class CaptionTapScanResult:
 
 @dataclass(frozen=True)
 class _ChannelScanResult:
+    published_cues: int = 0
     consumed_segments: int = 0
     quarantined_segments: int = 0
     committed_review_items: int = 0
@@ -576,7 +580,11 @@ class _ChannelScanResult:
 
 
 class CaptionTapWorker:
-    """Consume forked audio segments into the durable caption review queue."""
+    """Deliver live captions using transient audio and bounded live history.
+
+    Review retention is an explicit compatibility/testing option, never the
+    ordinary production live path. Recorded review uses its separate pipeline.
+    """
 
     def __init__(
         self,
@@ -595,6 +603,7 @@ class CaptionTapWorker:
         catch_up_shed_window_seconds: float = DEFAULT_CATCH_UP_SHED_WINDOW_SECONDS,
         reviewer_note: str = "Auto-generated from the live broadcast audio tap.",
         translation_provider: TranslationProvider | None = None,
+        retain_review_evidence: bool = False,
         retention_policy: CaptionEvidenceRetentionPolicy | None = None,
         backoff_policy: CaptionBackoffPolicy | None = None,
         is_enabled: Callable[[], bool] | None = None,
@@ -604,6 +613,7 @@ class CaptionTapWorker:
         self._tap_root = tap_root
         self._caption_work_dir = caption_work_dir.expanduser().resolve()
         self._runtime = runtime
+        self._retain_review_evidence = retain_review_evidence
         self._review_store = review_store
         self._segment_seconds = segment_seconds
         self._atomic_segments = atomic_segments
@@ -660,7 +670,7 @@ class CaptionTapWorker:
         #: also checks in-flight state atomically at the write boundary.
         self._retention_verified = False
         self._retention_in_flight = False
-        self._retention_ready = False
+        self._retention_ready = not retain_review_evidence
         self._retention_refusal: str | None = "retention-verification-pending"
         # Consulted on EVERY scan, not once at construction: the operator's
         # switch (``StationProfile.live_captions_enabled``) has to take effect
@@ -803,6 +813,9 @@ class CaptionTapWorker:
                     self._retention_shutdown_timeout,
                 )
             self._shutdown_channel_executor()
+            close_runtime = getattr(self._runtime, "close", None)
+            if callable(close_runtime):
+                close_runtime()
 
     def _ensure_channel_executor(self) -> concurrent.futures.ThreadPoolExecutor:
         """Return the bounded channel executor, creating it after sizing resolves."""
@@ -1246,7 +1259,8 @@ class CaptionTapWorker:
         # is asking for. (``enforce_discovered`` tolerates a tap root that does
         # not exist yet, so this needs no directory guard.)
         with self._phase_timing.phase("retention_dispatch"):
-            self._sweep_retention()
+            if self._retain_review_evidence:
+                self._sweep_retention()
         # The enabled check runs BEFORE the tap-directory check (round-2 review
         # MAJOR 3). With live captions off on a station whose tap root was
         # never created -- or was swept by an operator cleaning up -- the old
@@ -1556,17 +1570,15 @@ class CaptionTapWorker:
                 # whether a segment was consumed: a consumed segment whose
                 # ASR returned nothing (or only expired hypotheses) must not
                 # be reported as a commit.
-                committed_items = result.committed_review_items
+                committed_items = result.committed_review_items + result.published_cues
                 self._finish_batch(
                     batch_id,
                     outcome="committed" if committed_items else "no-commit",
                     reason=(
-                        "asr-committed"
-                        if committed_items
-                        else "asr-completed-no-committed-items"
+                        "asr-committed" if committed_items else "asr-completed-no-committed-items"
                     ),
                     consumed_segments=result.consumed_segments,
-                    committed_review_items=committed_items,
+                    committed_review_items=result.committed_review_items,
                     expired_unconfirmed_cues=result.expired_unconfirmed_cues,
                     elapsed_seconds=time.monotonic() - started,
                 )
@@ -1609,6 +1621,7 @@ class CaptionTapWorker:
         quarantined = 0
         committed = 0
         expired = 0
+        published = 0
         with self._timed_session_lock(channel_id):
             if generation is None:
                 generation = self._session_generation.get(channel_id, 0)
@@ -1620,9 +1633,13 @@ class CaptionTapWorker:
                 ):
                     break
                 processed = channel_dir / "processed" / segment.name
-                if processed.exists():
+                if self._retain_review_evidence and processed.exists():
                     with self._timed_retention_lock():
-                        if self._retention_ready and not self._retention_in_flight:
+                        if (
+                            self._retain_review_evidence
+                            and self._retention_ready
+                            and not self._retention_in_flight
+                        ):
                             collision_path = self._move_collision(
                                 segment, channel_dir / "collision"
                             )
@@ -1643,7 +1660,11 @@ class CaptionTapWorker:
                 if raw_chunk is None:
                     self._previous_segments.pop(channel_id, None)
                     with self._retention_lock:
-                        if self._retention_ready and not self._retention_in_flight:
+                        if (
+                            self._retain_review_evidence
+                            and self._retention_ready
+                            and not self._retention_in_flight
+                        ):
                             self._move(segment, channel_dir / "quarantine")
                         else:
                             segment.unlink(missing_ok=True)
@@ -1659,7 +1680,11 @@ class CaptionTapWorker:
             ):
                 result = worker.process_batch(
                     [chunk],
-                    audio_evidence_factory=self._audio_evidence_factory(channel_id, chunk),
+                    audio_evidence_factory=(
+                        self._audio_evidence_factory(channel_id, chunk)
+                        if self._retain_review_evidence
+                        else None
+                    ),
                 )
             committed += len(result.committed_review_items)
             expired += len(result.expired_unconfirmed_cues)
@@ -1682,8 +1707,10 @@ class CaptionTapWorker:
                             refusal_reason=self._retention_refusal,
                         )
                         break
-                    self._publish_cues(channel_id, generation, worker.committed_cues())
-                    if self._retention_in_flight:
+                    if self._publish_cues(channel_id, generation, worker.committed_cues()):
+                        published += len(result.committed_cues)
+                    if not self._retain_review_evidence or self._retention_in_flight:
+                        # Consumed live audio is transient.
                         # Captions/review text continue while periodic audio
                         # retention verification is pending. Never keep raw WAVs
                         # under yesterday's verdict or defer them into a backlog.
@@ -1735,6 +1762,7 @@ class CaptionTapWorker:
                         backlog_segments=len(segments),
                     )
         return _ChannelScanResult(
+            published_cues=published,
             consumed_segments=consumed,
             quarantined_segments=quarantined,
             committed_review_items=committed,
@@ -2299,7 +2327,36 @@ class CaptionTapWorker:
         # GStreamer publishes through ``.wav.partial -> .wav`` atomically, so
         # every visible WAV is complete. Legacy FFmpeg segment output writes the
         # highest WAV in place; preserve its one-file settling guard.
-        return numbered if self._atomic_segments else numbered[:-1]
+        settled = numbered if self._atomic_segments else numbered[:-1]
+        if not self._retain_review_evidence:
+            # A hung inference child must not turn its continuing audio fork
+            # into an unlimited recording. Never delete an in-flight owner's
+            # inputs; keep at most twelve waiting segments (60s at 5s cadence).
+            owned = self._inflight_names(channel_dir.name)
+            waiting = [item for item in settled if item[1].name not in owned]
+            if len(waiting) > 12:
+                discarded = waiting[:-12]
+                discarded_names = {path.name for _, path in discarded}
+                discarded_seconds = sum(self._chunk_span_seconds(path) for _, path in discarded)
+                self._record_discarded_batch(
+                    channel_dir.name,
+                    discarded,
+                    outcome="overloaded",
+                    reason="working-audio-limit",
+                    queue_depth=len(waiting),
+                )
+                for _, path in discarded:
+                    path.unlink(missing_ok=True)
+                settled = [item for item in settled if item[1].name not in discarded_names]
+                _LOG.warning(
+                    "Caption tap catch-up for channel %s: working-audio limit "
+                    "discarded %d queued segments (%.1fs of audio); "
+                    "kept the newest 12 and all in-flight inputs.",
+                    channel_dir.name,
+                    len(discarded),
+                    discarded_seconds,
+                )
+        return settled
 
     def _read_chunk(self, channel_id: str, index: int, path: Path) -> AudioChunk | None:
         try:
@@ -2332,6 +2389,7 @@ class CaptionTapWorker:
                 self._runtime,
                 self._review_store,
                 asset_id=channel_id,
+                persist_review=self._retain_review_evidence,
                 reviewer_note=self._reviewer_note,
                 translation_provider=self._translation_provider,
                 # LIVE stabilizer: this tap feeds OVERLAPPING audio windows (5 s
@@ -2345,11 +2403,16 @@ class CaptionTapWorker:
                 # keeps exact-text re-confirmation unchanged.
                 pipeline=CaptionPipeline(
                     self._runtime,
-                    stabilizer=CaptionStabilizer(live=True),
+                    stabilizer=CaptionStabilizer(
+                        live=True, history_seconds=300.0, max_history_cues=512
+                    ),
+                    prepare_review_items=self._retain_review_evidence,
                     phase_timing=self._phase_timing,
                     phase_timing_channel=channel_id,
                 ),
-                persistence_guard=self._review_persistence_guard,
+                persistence_guard=(
+                    self._review_persistence_guard if self._retain_review_evidence else None
+                ),
                 phase_timing=self._phase_timing,
                 phase_timing_channel=channel_id,
             )
@@ -2457,7 +2520,7 @@ class CaptionTapWorker:
             self._publisher_for(channel_id).publish(cues)
             return True
 
-    def _publish_cues(self, channel_id: str, generation: int, cues: list[CaptionCue]) -> None:
+    def _publish_cues(self, channel_id: str, generation: int, cues: list[CaptionCue]) -> bool:
         """Publish committed cues unless their session has already ended.
 
         ``generation`` is captured when the worker that produced these cues was
@@ -2466,13 +2529,15 @@ class CaptionTapWorker:
         dropped rather than written over the new session's sidecar.
         """
 
-        self.publish_for_current_session(channel_id, generation, cues)
+        return self.publish_for_current_session(channel_id, generation, cues)
 
     def _publisher_for(self, channel_id: str) -> LiveWebVttPublisher:
         publisher = self._channel_publishers.get(channel_id)
         if publisher is None:
             publisher = LiveWebVttPublisher(
-                active_caption_sidecar(self._caption_work_dir, channel_id)
+                active_caption_sidecar(self._caption_work_dir, channel_id),
+                window_seconds=300.0,
+                max_cues=512,
             )
             publisher.reset()
             self._channel_publishers[channel_id] = publisher

@@ -33,17 +33,21 @@ class TestManualEndpoint:
     def test_toc_includes_the_provider_and_glossary_sections(self, client: TestClient) -> None:
         toc_ids = {entry["id"] for entry in client.get("/api/public/manual").json()["toc"]}
         for anchor in (
-            "glossary",
-            "provider-cloudflare-r2",
-            "provider-internet-archive",
-            "provider-youtube",
-            "provider-federation",
-            "where-recordings-live",
-            "publish-surfaces",
-            "cdn-cost-estimate",
-            "report-without-github",
+            "app-glossary",
+            "cdn-and-provider-options",
+            "publishing-providers",
+            "federation-activitypub",
+            "configuration-storage",
+            "the-publishing-steps-surfaces",
+            "report-a-beta-issue",
         ):
             assert anchor in toc_ids, f"expected manual anchor {anchor!r} in the table of contents"
+
+    def test_manual_explains_live_engine_and_backup(self, client: TestClient) -> None:
+        html = client.get("/api/public/manual").json()["html"]
+        assert "Whistle is the default live speech engine" in html
+        assert "Whisper is the backup" in html
+        assert "CIVICCAST_LIVE_CAPTION_ENGINE=whisper" in html
 
     def test_html_never_carries_a_script_tag(self, client: TestClient) -> None:
         assert "<script" not in client.get("/api/public/manual").json()["html"]
@@ -58,7 +62,7 @@ class TestManualEndpoint:
         # JSON endpoint with no filesystem underneath it.
         html = client.get("/api/public/manual").json()["html"]
         assert "<figure>" in html
-        assert "data:image/png;base64," in html
+        assert "data:image/webp;base64," in html
         assert 'src="assets/' not in html
 
     def test_no_staff_token_required(self, client: TestClient) -> None:

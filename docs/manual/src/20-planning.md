@@ -75,6 +75,13 @@ One more rule of thumb: dedicate the computer. The station runs a database, a we
 
 ### Graphics card: what it changes
 
+**Beta.11 live-caption candidate.** Whistle is the default live speech engine on native Windows stations. It runs on the processor, so a dedicated GPU is not needed for the primary engine. Live captions publish the first recognition; they do not wait for a second transcription to agree. Whistle processes one recognition request at a time across the three stations. The owner accepted a 24-hour three-station caption soak on one lab machine; this does not establish performance on every CPU.
+
+Whisper is the backup when Whistle fails or exceeds its request deadline. The affected station stays on Whisper until the runtime restarts. Whisper also remains the engine for recorded-media captions and can be selected as the primary live engine on a machine with a supported NVIDIA GPU and CUDA libraries. AMD or Intel graphics do not provide CUDA acceleration. CPU-only Whisper fallback at the Medium tier has not demonstrated real-time operation in this trial.
+
+For a technician configuring the Windows service environment: `CIVICCAST_LIVE_CAPTION_ENGINE=whistle` selects Whistle primary and Whisper backup; `CIVICCAST_LIVE_CAPTION_ENGINE=whisper` selects Whisper primary. `CIVICCAST_WHISPER_DEVICE=auto` detects available CUDA hardware; `cuda` or `cpu` explicitly selects the device. Restart the service after changing these settings. Needle usage telemetry is disabled; speech processing and model assets remain local. The following installer sizing information describes beta.10 Whisper setup, not Whistle hardware requirements.
+
+
 A graphics card matters for **captions** and **summaries**. It does not lighten video encoding in beta.10 (see the encoding paragraph after the tables).
 
 The caption engine ("Whisper" speech recognition) comes in two sizes. **Medium** always installs. **Large** is an optional add-on.
@@ -180,7 +187,7 @@ CivicCast keeps the program under the install folder (default `C:\Program Files\
 
 Putting it together for a first install from the kit, our derived estimate is: the two copies of the model packs (about 21 GB each) plus the runtime packs and their extracted trees (about 4.6 GB each) plus 2 GB of working room, so **plan for roughly 55 GB free on the install drive before you start**. Setup itself only refuses at its activation step: it needs the sum of the model-pack sizes plus 2 GB free and prints "Not enough free disk space to activate this station..." if it is short. Add the conform cache budget (60 GB by default) and your recordings on top.
 
-> **Tip:** Do not rely on the default 60 GB cache fitting on a small system drive. Either give the station a large drive, or lower `CIVICCAST_CONFORM_CACHE_GB` before the first busy week. A single prepared program larger than the whole budget cannot be kept. The station then refuses it with the error "Conform-cache budget too small to retain '<file name>'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
+> **Tip:** Do not rely on the default 60 GB cache fitting on a small system drive. Either give the station a large drive, or lower `CIVICCAST_CONFORM_CACHE_GB` before the first busy week. A single prepared program larger than the whole budget cannot be kept. The station then refuses it with the error "Conform-cache budget too small to retain '&lt;file name&gt;'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
 
 > **Known issue (beta.10):** The Setup screen's **Backup destination** control only proves that the folder accepts a test file (it writes, reads and deletes one). Its success message is "Backup destination accepted a write/read/delete proof." It does not copy station data there. See [Chapter 12](#ch-operations) for how backups are actually made. Because the station runs as LocalSystem, pick a local drive or a network path the computer account can reach; a drive letter mapped by a person is not visible to a Windows service.
 

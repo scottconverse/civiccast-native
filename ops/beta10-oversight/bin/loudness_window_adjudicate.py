@@ -80,11 +80,11 @@ import json
 import math
 import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -114,7 +114,9 @@ CREATE_NO_WINDOW = 0x08000000
 #: ebur128's own summary lines, exactly as `loudness_ride` reads them.  Copied
 #: rather than imported (module-private); the module's path, size and sha256 are
 #: recorded in the output so drift is visible.
-RE_SERIES = re.compile(r"\]\s*t:\s*([\d.]+)\s+.*?M:\s*(-?[\d.]+|nan|-inf)\s+S:\s*(-?[\d.]+|nan|-inf)")
+RE_SERIES = re.compile(
+    r"\]\s*t:\s*([\d.]+)\s+.*?M:\s*(-?[\d.]+|nan|-inf)\s+S:\s*(-?[\d.]+|nan|-inf)"
+)
 RE_I = re.compile(r"^\s*I:\s*(-?[\d.]+)\s*LUFS", re.M)
 RE_TP = re.compile(r"^\s*(?:True )?[Pp]eak:\s*(-?[\d.]+)\s*dBFS", re.M)
 
@@ -142,6 +144,7 @@ RE_PATHISH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|/)")
 
 def _pathish(name: str) -> Path | None:
     return Path(name) if RE_PATHISH.match(name) else None
+
 
 #: Video containers a station upload can be.
 MEDIA_SUFFIXES = (".mp4", ".mkv", ".mov", ".m4v", ".ts", ".mts", ".avi", ".webm")
@@ -197,9 +200,7 @@ MULTI_PART_T2_S = 1800.0
 #: The word a human reads when T1 could not place the window and T2 may not be
 #: believed.  Deliberately not FAIL (no loudness verdict exists) and deliberately
 #: not EXCLUDED_QUIET_SOURCE (nothing was measured at a position anyone trusts).
-POSITION_UNRESOLVED_MULTI_PART = (
-    "position unresolved: multi-part asset, log position unreliable"
-)
+POSITION_UNRESOLVED_MULTI_PART = "position unresolved: multi-part asset, log position unreliable"
 
 TARGET_FALLBACK = -16.0
 TOLERANCE_FALLBACK = 1.0
@@ -239,7 +240,7 @@ def load_ride(site_packages: Path) -> dict[str, Any]:
     text = str(site_packages)
     if text not in sys.path:
         sys.path.insert(0, text)
-    from civiccast.egress.loudness_ride import (  # noqa: PLC0415
+    from civiccast.egress.loudness_ride import (
         RideParams,
         gated_loudness,
         sliding_levels,
@@ -346,7 +347,11 @@ def multi_part_airing(
     Deliberately conservative.  This is read by the caller ONLY when the
     correlation could not place the window, and its answer never excuses anything.
     """
-    runs = [ts for ts, ch, src in transitions if ch == channel and src == display_name and ts <= when_local]
+    runs = [
+        ts
+        for ts, ch, src in transitions
+        if ch == channel and src == display_name and ts <= when_local
+    ]
     leg_seconds = float(t2)
     if len(runs) > 1:
         why = (
@@ -482,11 +487,7 @@ class DigestCache:
     def get(self, path: Path) -> str | None:
         st = path.stat()
         entry = self.data.get(str(path))
-        if (
-            entry
-            and entry.get("size") == st.st_size
-            and entry.get("mtime_ns") == st.st_mtime_ns
-        ):
+        if entry and entry.get("size") == st.st_size and entry.get("mtime_ns") == st.st_mtime_ns:
             self._used.add(str(path))
             return str(entry.get("sha256"))
         return None
@@ -509,7 +510,7 @@ class DigestCache:
             text = json.dumps(self.data, indent=0, sort_keys=True)
             tmp = self.path.with_name(self.path.name + f".tmp{os.getpid()}")
             tmp.write_text(text, encoding="utf-8")
-            os.replace(tmp, self.path)
+            tmp.replace(self.path)
         except OSError:
             pass
 
@@ -561,7 +562,8 @@ def ebur128_series(
     args += ["-vn", "-af", "ebur128=peak=true", "-f", "null", "-"]
 
     t0 = time.monotonic()
-    proc = subprocess.run(
+    # ffmpeg is the configured media tool; file paths stay separate argv values.
+    proc = subprocess.run(  # noqa: S603
         args,
         capture_output=True,
         text=True,
@@ -569,6 +571,7 @@ def ebur128_series(
         errors="replace",
         timeout=timeout_s,
         creationflags=priority | CREATE_NO_WINDOW,
+        shell=False,
     )
     stderr = proc.stderr or ""
     blocks: list[tuple[float, float]] = []
@@ -629,10 +632,8 @@ def cached_series(
     if got.get("blocks") and got.get("returncode") == 0:
         cache_dir.mkdir(parents=True, exist_ok=True)
         payload = {k: v for k, v in got.items() if k not in ("args", "cache", "cache_file")}
-        try:
+        with suppress(OSError):
             cache_file.write_text(json.dumps(payload), encoding="utf-8")
-        except OSError:
-            pass
     return got
 
 
@@ -706,9 +707,7 @@ def span_stats(
         # Every second of the span whose own centred ride window scored a level:
         # the reachable ones and the unreachable ones.  (Named `scorable`, not
         # "reachable": the count above says which of these are unreachable.)
-        "scorable_seconds": (
-            None if unreachable_below_lufs is None else round(n_scored * step, 3)
-        ),
+        "scorable_seconds": (None if unreachable_below_lufs is None else round(n_scored * step, 3)),
         "unscorable_seconds": (
             None if unreachable_below_lufs is None else round(n_unscorable * step, 3)
         ),
@@ -823,7 +822,7 @@ def highpass(values: list[float], win_s: float) -> list[float]:
     n = len(values)
     if n == 0:
         return []
-    half = max(1, int(round(win_s / 2.0)))
+    half = max(1, round(win_s / 2.0))
     out: list[float] = []
     for i in range(n):
         lo, hi = max(0, i - half), min(n, i + half + 1)
@@ -840,7 +839,7 @@ def pearson(a: list[float], b: list[float]) -> float | None:
     vb = sum((x - mb) ** 2 for x in b)
     if va <= 0.0 or vb <= 0.0:
         return None
-    cov = sum((x - ma) * (y - mb) for x, y in zip(a, b))
+    cov = sum((x - ma) * (y - mb) for x, y in zip(a, b, strict=True))
     return cov / math.sqrt(va * vb)
 
 
@@ -869,7 +868,11 @@ def best_lag(
     # >= 90% of the best r is the honest scale of this method's precision, and is
     # used as its uncertainty -- a guessed +/-N s constant would either excuse
     # windows a broad hump cannot support or refuse ones a sharp peak settles.
-    band = [abs(d - best_d) for d, r in scored if abs(d - best_d) <= ROBUST_SWEEP_S and r >= 0.9 * best_r]
+    band = [
+        abs(d - best_d)
+        for d, r in scored
+        if abs(d - best_d) <= ROBUST_SWEEP_S and r >= 0.9 * best_r
+    ]
     return {
         "ok": True,
         "lag_s": best_d,
@@ -893,11 +896,13 @@ def correlate(
     ref_start_s: float,
 ) -> dict[str, Any]:
     """T1: where in the source does this aired audio sit?"""
-    a_t, a_v = to_grid_1s(air_blocks)
-    r_t, r_v = to_grid_1s(ref_blocks)
+    _, a_v = to_grid_1s(air_blocks)
+    _, r_v = to_grid_1s(ref_blocks)
     if len(a_v) < 20 or len(r_v) < 60:
         return {"ok": False, "why": f"series too short: air={len(a_v)}s ref={len(r_v)}s"}
-    lag = best_lag(highpass(a_v, AIR_HP_WIN_S), highpass(r_v, AIR_HP_WIN_S), nms_s=AIR_NMS_S, min_overlap=20)
+    lag = best_lag(
+        highpass(a_v, AIR_HP_WIN_S), highpass(r_v, AIR_HP_WIN_S), nms_s=AIR_NMS_S, min_overlap=20
+    )
     if not lag.get("ok"):
         return lag
     lag["position_s"] = round(ref_start_s + lag["lag_s"], 1)
@@ -975,7 +980,7 @@ def loud_part_correlate(
     the log's t2.  Each half's own lag is reported too, as `region_lag_s`.
     """
     a_t, a_v = to_grid_1s(air_blocks)
-    r_t, r_v = to_grid_1s(ref_blocks)
+    _, r_v = to_grid_1s(ref_blocks)
     if len(a_v) < 20 or len(r_v) < 60:
         return {"ok": False, "why": f"series too short: air={len(a_v)}s ref={len(r_v)}s"}
     start, span, note = _loud_region(a_v)
@@ -996,9 +1001,7 @@ def loud_part_correlate(
         # inside the region, so subtracting the offset turns both into the same
         # unknown -- where the region begins -- and that is what must agree.
         offset = i * mid
-        lag = best_lag(
-            highpass(half, AIR_HP_WIN_S), r_hp, nms_s=AIR_NMS_S, min_overlap=20
-        )
+        lag = best_lag(highpass(half, AIR_HP_WIN_S), r_hp, nms_s=AIR_NMS_S, min_overlap=20)
         if not lag.get("ok"):
             return {
                 "ok": False,
@@ -1006,16 +1009,17 @@ def loud_part_correlate(
                 "loud_part": {"note": note, "seconds": span, "start_in_window_s": start},
             }
         trusted = bool(
-            lag["r"] >= AIR_MIN_R
-            and (lag["margin"] is None or lag["margin"] >= AIR_MIN_MARGIN)
+            lag["r"] >= AIR_MIN_R and (lag["margin"] is None or lag["margin"] >= AIR_MIN_MARGIN)
         )
-        halves_out.append({
-            "offset_in_region_s": offset,
-            "lag_s": lag["lag_s"],
-            "region_lag_s": lag["lag_s"] - offset,
-            "r": lag["r"],
-            "margin": lag["margin"],
-        })
+        halves_out.append(
+            {
+                "offset_in_region_s": offset,
+                "lag_s": lag["lag_s"],
+                "region_lag_s": lag["lag_s"] - offset,
+                "r": lag["r"],
+                "margin": lag["margin"],
+            }
+        )
         if not trusted:
             return {
                 "ok": False,
@@ -1182,12 +1186,14 @@ def air_lock(
             priority=IDLE_PRIORITY_CLASS,
         )
         if not whole.get("blocks"):
-            attempts.append({
-                "attempt": "whole asset",
-                "anchored_on_log": False,
-                "ok": False,
-                "why": f"whole-asset profile failed (rc={whole.get('returncode')})",
-            })
+            attempts.append(
+                {
+                    "attempt": "whole asset",
+                    "anchored_on_log": False,
+                    "ok": False,
+                    "why": f"whole-asset profile failed (rc={whole.get('returncode')})",
+                }
+            )
         else:
             run("whole asset, whole slice", whole, 0.0, True, False)
             if not locked():
@@ -1206,6 +1212,8 @@ def air_lock(
     t1["air_audio_points_0p1s"] = len(air["blocks"])
     t1["attempts"] = attempts
     return t1
+
+
 # --------------------------------------------------------------------------
 # One channel's adjudication.
 # --------------------------------------------------------------------------
@@ -1334,7 +1342,8 @@ def adjudicate_channel(
         "source": source,
         "uncertainty_s": unc,
         "uncertainty_basis": (
-            "caller's assertion" if source == "supplied"
+            "caller's assertion"
+            if source == "supplied"
             else "half-width of the lag band scoring >= 90% of the peak r"
             if source == "correlation"
             else "calibrated from the one measured T1-T2 pair plus the ON_AIR announce cadence"
@@ -1408,22 +1417,26 @@ def adjudicate_channel(
         s = span_stats(blocks, position + shift, dur, ride, unreachable_below)
         s["ride_window_s"] = float(ride["window_s"])
         c = classify(s, target, tol, float(ride["g_max_db"]))
-        gate.append({
-            "shift_s": shift,
-            "lift_limited_lufs": s["lift_limited_lufs"],
-            "unreachable_seconds": s["unreachable_seconds"],
-            "classification": c["classification"],
-        })
+        gate.append(
+            {
+                "shift_s": shift,
+                "lift_limited_lufs": s["lift_limited_lufs"],
+                "unreachable_seconds": s["unreachable_seconds"],
+                "classification": c["classification"],
+            }
+        )
     for shift in wide_shifts:
         s = span_stats(blocks, position + shift, dur, ride, unreachable_below)
         s["ride_window_s"] = float(ride["window_s"])
         c = classify(s, target, tol, float(ride["g_max_db"]))
-        wide.append({
-            "shift_s": shift,
-            "lift_limited_lufs": s["lift_limited_lufs"],
-            "unreachable_seconds": s["unreachable_seconds"],
-            "classification": c["classification"],
-        })
+        wide.append(
+            {
+                "shift_s": shift,
+                "lift_limited_lufs": s["lift_limited_lufs"],
+                "unreachable_seconds": s["unreachable_seconds"],
+                "classification": c["classification"],
+            }
+        )
     out["sweep"] = {
         "gating": gate if unc > 0.0 else [],
         "gating_uncertainty_s": unc,
@@ -1440,9 +1453,7 @@ def adjudicate_channel(
     out["classification"] = verdict["classification"]
     out["detail"] = verdict["detail"]
     need = verdict["min_unreachable_seconds"]
-    counts = [
-        row["unreachable_seconds"] for row in wide if row["unreachable_seconds"] is not None
-    ]
+    counts = [row["unreachable_seconds"] for row in wide if row["unreachable_seconds"] is not None]
     #: The reported range is the WIDER +/-30 s sweep, which always brackets the
     #: measured position (`wide` has shift 0 in it), so the line can always show a
     #: range even when the position comes from the caller with zero uncertainty.
@@ -1455,20 +1466,22 @@ def adjudicate_channel(
         "reported only: the verdict is the unreachable count at the measured position "
         "(U45 answer 3), so a sweep over position cannot make this window UNRESOLVED"
     )
-    out.update({
-        k: verdict[k]
-        for k in (
-            "criterion",
-            "criterion_floor_lufs",
-            "window_seconds",
-            "unreachable_seconds",
-            "min_unreachable_seconds",
-            "unreachable_below_lufs",
-            "max_reachable_lufs",
-            "retired_reading_note",
-            "literal_formula",
-        )
-    })
+    out.update(
+        {
+            k: verdict[k]
+            for k in (
+                "criterion",
+                "criterion_floor_lufs",
+                "window_seconds",
+                "unreachable_seconds",
+                "min_unreachable_seconds",
+                "unreachable_below_lufs",
+                "max_reachable_lufs",
+                "retired_reading_note",
+                "literal_formula",
+            )
+        }
+    )
     out["summary_line"] = summary_line(out)
     return out
 
@@ -1521,7 +1534,7 @@ def summary_line(chan: dict[str, Any]) -> str:
             unreach_s += " BORDERLINE"
     return (
         f"{chan['channel_id']}={chan['classification']} "
-        f"asset=\"{asset}\" pos={pos_s}({chan.get('position', {}).get('source', '?')}) "
+        f'asset="{asset}" pos={pos_s}({chan.get("position", {}).get("source", "?")}) '
         f"src45min={src_s}LUFS srcspan={span_s}LUFS maxreach={reach_s}LUFS air={air_s}LUFS "
         f"{unreach_s}"
     )
@@ -1580,7 +1593,7 @@ def main(argv: list[str] | None = None) -> int:
 
     report: dict[str, Any] = {
         "tool": "loudness_window_adjudicate",
-        "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
         # Which interpreter judged: the rung may spawn this under a different
         # venv than the one it was written against, and the report is the only
         # place a later reader can see that.  This tool itself is stdlib-only.
@@ -1613,14 +1626,23 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         ride = load_ride(args.site_packages)
-    except Exception as exc:  # noqa: BLE001 -- the criterion cannot be guessed
+    except Exception as exc:
         report["error"] = f"installed loudness_ride could not be read: {exc!r}"
         _emit(report, args)
         return 2
     report["ride"] = {
         k: v
         for k, v in ride.items()
-        if k in ("module_path", "module_sha256", "module_mtime", "window_s", "step_s", "g_max_db", "g_min_db")
+        if k
+        in (
+            "module_path",
+            "module_sha256",
+            "module_mtime",
+            "window_s",
+            "step_s",
+            "g_max_db",
+            "g_min_db",
+        )
     }
     report["method"] = {
         "measurement": "ebur128=peak=true, input-side -ss, ride's own regexes (build_source_series_args)",
@@ -1673,7 +1695,7 @@ def main(argv: list[str] | None = None) -> int:
             report["channels"][channel] = adjudicate_channel(
                 channel, chan, args, ride, transitions, media_idx, report, digests
             )
-        except Exception as exc:  # noqa: BLE001 -- one channel must not sink the rung
+        except Exception as exc:
             report["channels"][channel] = {
                 "channel_id": channel,
                 "classification": "UNRESOLVED",
@@ -1705,7 +1727,7 @@ def _emit(report: dict[str, Any], args: argparse.Namespace) -> None:
         tmp = out.with_name(f"{out.name}.tmp{os.getpid()}")
         try:
             tmp.write_text(json.dumps(report, indent=1), encoding="utf-8")
-            os.replace(tmp, out)
+            tmp.replace(out)
         except OSError:
             tmp.unlink(missing_ok=True)
             del report["_written"]

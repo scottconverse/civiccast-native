@@ -132,7 +132,7 @@ A channel has an **egress configuration**, stored in the database. "Egress" mean
 - **loudness target and tolerance** and the **canonical profile** (picture size, frame rate, codec, bitrates): see [Loudness](#configuration-loudness).
 - the **lower-third banner** switch and text (up to 240 characters).
 
-A new channel has no configuration until you create one. The Start button is disabled with "No outgoing-feed configuration for <id>. Apply a headend preset or the local rehearsal preset first." The normal way to create one is to apply a preset (next section). Creating it by preset gives the channel `enabled: true` and the slate message "CivicCast is preparing the channel."
+A new channel has no configuration until you create one. The Start button is disabled with "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." The normal way to create one is to apply a preset (next section). Creating it by preset gives the channel `enabled: true` and the slate message "CivicCast is preparing the channel."
 
 The Channels screen (**Run Meeting** group) edits some of this: **Run this channel 24/7** (auto start, software fallback, fill policy, slate message, NDI name, SDI device) and **Cable headend delivery** (the presets). It does not edit individual sinks, loudness numbers or the picture profile. Those can be set only through the staff API (`PUT /api/staff/egress/channels/{id}/config` with a full configuration, `setup_admin` only; see [Appendix: API](#app-api)).
 
@@ -251,7 +251,7 @@ CivicCast captions in two different ways and they are configured separately.
 | --- | --- | --- |
 | What it is | A real-time speech-to-text tap on each on-air channel's audio, with the text embedded in the video as CEA-708 captions | A job that captions a published recording after the meeting |
 | Switch | **Show live captions on air** (Station Profile), default **off** in beta.10 | Cannot be switched off (see below) |
-| Where results go | To the caption review queue and into the picture | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
+| Where results go | Into the picture; the local beta.11 dev7 candidate keeps a rolling live window and creates no permanent per-cue review records | To the review queue; the recording is public at once and the captions attach after review, both English and Spanish together |
 | Needs | The caption model, CPU or GPU, and CPU to spare while playing out | The same model, and a working translation model |
 
 ### The caption tiers
@@ -269,9 +269,11 @@ The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service**
 
 ### Live captions: what the settings change
 
+**Beta.11 caption candidate:** Whistle is the primary live engine, with Whisper as backup. Whistle inference uses the restored shared lock; low-confidence recognition still airs immediately, and overlapping audio is deduplicated without requiring two readings to agree. The beta.10 CPU/CUDA settings below describe its Whisper runtime and remain relevant when selecting Whisper; they do not describe Whistle concurrency.
+
 Live captions are produced by the caption tap. The native station turns it on (`CIVICCAST_CAPTION_TAP=inline`) unless the service environment says `CIVICCAST_CAPTION_TAP=off`, in which case the tap does not run at all. The console switch is the safe-direction override: `off` in the environment forces live captions off whatever the profile says, but no environment value can turn them on against a profile that is off.
 
-The tap works in 5-second audio segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scans every 2.0 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and tolerates a backlog of 2 segments per channel (`CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`) before it sheds the oldest audio and keeps captioning from the newest. On the CPU one live caption worker serves the whole station; with a CUDA runtime up to three channels run at once. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` forces another number. On the CPU the live tap uses between 1 and 2 CPU threads (one per 8 processors, capped at 2); `CIVICCAST_CAPTION_TAP_CPU_THREADS` and `CIVICCAST_WHISPER_CPU_THREADS` override that, but the live tap refuses `0` ("every core") and caps values above 2. The playout workers run at a higher priority than the control plane so captions never outrank the picture.
+For the Whisper runtime, the tap works in 5-second audio segments (`CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`, default 5.0), scans every 2.0 seconds (`CIVICCAST_CAPTION_TAP_POLL_SECONDS`) and tolerates a backlog of 2 segments per channel (`CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`) before it sheds the oldest audio and keeps captioning from the newest. On the CPU one live caption worker serves the whole station; with a CUDA runtime up to three channels run at once. `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` forces another number. On the CPU the live tap uses between 1 and 2 CPU threads (one per 8 processors, capped at 2); `CIVICCAST_CAPTION_TAP_CPU_THREADS` and `CIVICCAST_WHISPER_CPU_THREADS` override that, but the live tap refuses `0` ("every core") and caps values above 2. The playout workers run at a higher priority than the control plane so captions never outrank the picture.
 
 A separate proof loop decodes the emitted stream, compares the captions it finds with the expected ones, and only then marks a channel's captions "on" (a fresh pass is required; otherwise the Channels screen shows "Not verified"). It runs every 30 seconds with a 15-second limit.
 
@@ -285,13 +287,13 @@ When a recording is published, a job transcribes it in 30-second chunks (`CIVICC
 
 ### Caption evidence and retention
 
-The live tap keeps its work in `C:\ProgramData\CivicCast\data\caption-tap`. It keeps raw audio chunks and short evidence clips so a reviewer can listen to a low-confidence cue. Retention is by age and cannot be changed with a setting:
+**Beta.11 caption candidate:** Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. It does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. Each channel keeps at most 12 queued completed segments, plus inputs currently being processed and the segment being written. At the default five-second cadence, the queued limit is 60 seconds.
 
-- A raw audio chunk becomes eligible for deletion **24 hours** after it was made, once the evidence covering it is verified (or when no evidence window can ever cover it).
-- An evidence clip whose cue has been **approved or rejected** is deleted **90 days** after it was resolved.
-- A clip for a low-confidence cue that is still **pending** review is never deleted.
+The live caption window is limited to the most recent 300 seconds and at most 512 cues. Delivery tracking follows that window instead of accumulating for the whole on-air session. Archive-wide caption review/evidence discovery is not a live-caption or broadcast-readiness prerequisite. These limits are candidate implementation defaults, not controls on the configuration screen.
 
-Every deletion is written to `caption-retention-audit.jsonl` beside the data. A sweep runs every 60 seconds. There is no cap on disk use for this data; a full drive is not a refusal condition. The one refusal that remains is "caption-storage-volumes-diverge": if the caption tap folder and the evidence folder are on different drives, the channel is not ready and uses its slate. In the native layout both are under `ProgramData`, so you should not meet it.
+Original recordings, archived caption tracks and the recorded-caption review workflow are unchanged. Review recorded captions against the recording workflow; ordinary live captioning does not create an unattended review queue.
+
+**Historical beta.10 behavior:** The older live path retained raw chunks for an age-based sweep, resolved evidence for 90 days, and pending review evidence indefinitely. It wrote `caption-retention-audit.jsonl` and could block readiness when caption storage volumes diverged. Those archive dependencies are removed from ordinary live operation in the local candidate; this is not a claim that the published beta.10 installer has changed.
 
 ## Configure AI models {#configuration-ai}
 
@@ -342,7 +344,7 @@ The same flow runs from the command line: `civiccast cable doctor`, `civiccast c
 
 > **Warning:** **Do not run the output proof while the channel is on air.** The proof pushes a test pattern to the channel's UDP destination for the whole duration. The dialog warns that it replaces the channel's real output; in the code it starts a second stream to the same address. We found no check that stops it on a channel that is airing.
 
-> **Known issue (beta.10):** Screen 9 only saves your choices to the station record for the report. It does not configure the channel. Apply the headend preset on the Channels screen first. If the channel has no UDP output the proof fails with "channel '<id>' has no udp-ts sink to verify — apply a headend delivery profile first." The destination box is not tested for reachability. The cards are numbered Screen 8 to 11 although there are no Screens 1 to 7 on this page.
+> **Known issue (beta.10):** Screen 9 only saves your choices to the station record for the report. It does not configure the channel. Apply the headend preset on the Channels screen first. If the channel has no UDP output the proof fails with "channel '&lt;id&gt;' has no udp-ts sink to verify — apply a headend delivery profile first." The destination box is not tested for reachability. The cards are numbered Screen 8 to 11 although there are no Screens 1 to 7 on this page.
 
 > **Known issue (beta.10):** The text under Screen 8 says warnings can be passed with "Continue-anyway". There is no such button; the step opens by itself when no check fails. The check and verdict words are shown raw (PASS, FAIL, WARNING, SKIPPED, partial), and the proof ends with an internal note about "rung 3" and "MASTER §13.2". It means the test checks the network signal only and is not a proof of SDI hardware.
 
@@ -587,11 +589,11 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 | "Too many sign-in attempts from this station. Wait N seconds, then try again with the correct password, or use a printed recovery code." | The sign-in limit was reached | Wait the number of seconds shown |
 | "Durable storage is not ready." or HTTP 503 on a screen | The database was not prepared or the service is still starting | Click **Prepare storage** on First Setup; check the service and `postgres.log` |
 | The service stops soon after you edit the environment | An invalid value, or a forbidden switch such as `CIVICCAST_OFFLINE_CAPTION_JOB=off` | Read `control_plane.log` and `control_plane-app.log` in `C:\ProgramData\CivicCast\logs`; remove the variable and restart |
-| "No outgoing-feed configuration for <id>. Apply a headend preset or the local rehearsal preset first." | The channel has no configuration | Apply a preset on the Channels screen |
+| "No outgoing-feed configuration for &lt;id&gt;. Apply a headend preset or the local rehearsal preset first." | The channel has no configuration | Apply a preset on the Channels screen |
 | "Sink kind(s) [...] are not supported by the active GStreamer egress engine." | An `rtmp` sink was saved | Use `srt`, `udp-ts`, `local-ts`, `file`, `sdi` or `hls` |
 | "No hardware video encoder was found on this machine. To broadcast on the CPU instead (slower)..." | The profile names a hardware encoder this computer does not have | Tick **Allow software (CPU) encoding fallback**, or change the profile |
 | "Start was queued but the feed did not start. The outgoing-feed worker did not report Starting or On air within 20s..." | The feed worker did not respond | Check the service in System Health, then try Start again |
-| "channel '<id>' has no udp-ts sink to verify — apply a headend delivery profile first." | Commissioning proof on a channel with no UDP output | Apply the headend preset first |
+| "channel '&lt;id&gt;' has no udp-ts sink to verify — apply a headend delivery profile first." | Commissioning proof on a channel with no UDP output | Apply the headend preset first |
 | "Device host must be localhost, .local, or a private/link-local IP unless a setup admin records a public-host override reason..." | Control Room device on a public address | Use a private address; the screen has no way to record an override, so ask support |
 | "The credential store is not available to persist the device secret." / "The OS credential store is unavailable; provider keys cannot be saved here." | The Windows credential store is not available to the service account | Ask support; use `civiccast model set-provider-key` from an account that has it |
 | Control Room readiness is blocked at "TSR control service" | The sidecar is not installed or running, or the variable is not set | See [Set up the Control Room](#configuration-controlroom) |

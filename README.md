@@ -1,5 +1,7 @@
 # CivicCast
 
+**Beta.11 development candidate:** native live captions default to Whistle on the CPU, with Whisper fallback. Whisper remains available for NVIDIA CUDA acceleration and recorded-media captions. Live captions publish the first recognition without requiring repeated agreement. The exact signed Beta 11 installer has been built and installed over an existing Beta 9 host; the service returned healthy, but the captured post-install channel output was incomplete. **Unpublished candidate: `v1.0.0-beta.11`.** Beta10 remains the latest published installer. See [candidate operation and evidence](docs/ops/beta11-whistle-test-candidate.md) and the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md).
+
 `v1.0.0-beta.10` was published as a GitHub pre-release on 2026-10-02. Its
 Gate A clean-install lane passed (10 of 10 criteria, run locally in Windows
 Sandbox on 2026-10-02 against exactly this build); the upgrade and download-only

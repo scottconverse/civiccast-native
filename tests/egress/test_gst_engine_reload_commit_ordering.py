@@ -112,6 +112,14 @@ class _FakePipeline:
     def iterate_elements(self) -> _FakeElementIterator:
         return _FakeElementIterator()
 
+    def get_clock(self) -> None:
+        # The current engine's running-time reader asks the pipeline for its
+        # clock even in tests that deliberately model an unreadable clock.
+        return None
+
+    def get_base_time(self) -> int:
+        return 0
+
 
 class _FakeHoldPad:
     """A new leg's tail pad, held by a blocking probe -- ``remove_probe`` is
@@ -1024,7 +1032,7 @@ def test_confirmed_retirement_releases_a_peerless_selector_request_pad(engine_mo
     assert not any(call.startswith("peer.unlink:") for call in recorder.calls)
 
 
-def test_finite_commit_closes_old_selector_pads_before_rebase_snapshot(engine_module) -> None:
+def test_finite_commit_arms_selector_cutoffs_before_rebase_snapshot(engine_module) -> None:
     """A late old buffer cannot outrun the fresh replacement's sampled offset."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
@@ -1034,9 +1042,9 @@ def test_finite_commit_closes_old_selector_pads_before_rebase_snapshot(engine_mo
     new_audio_src = _FakeHoldPad("new-audio-src", recorder)
 
     class _ObservedEnds(dict[Any, dict[str, Any]]):
-        def values(self):  # type: ignore[override]
+        def get(self, key: Any, default: Any = None) -> Any:  # type: ignore[override]
             recorder.calls.append("outgoing-end-snapshot")
-            return super().values()
+            return super().get(key, default)
 
     pending: dict[str, Any] = {
         "txn_id": 28,
@@ -1067,11 +1075,11 @@ def test_finite_commit_closes_old_selector_pads_before_rebase_snapshot(engine_mo
     engine._begin_reload_commit(pending)
 
     calls = recorder.calls
-    video_cutoff = _index_of(calls, "add_probe:old-video:7:_drop_everything_probe")
-    audio_cutoff = _index_of(calls, "add_probe:old-audio:7:_drop_everything_probe")
+    video_cutoff = _index_of(calls, "add_probe:old-video:7:_drop_past_switch_point_probe")
+    audio_cutoff = _index_of(calls, "add_probe:old-audio:7:_drop_past_switch_point_probe")
     snapshot = _index_of(calls, "outgoing-end-snapshot")
-    video_offset = _index_of(calls, "set_offset:new-video-src:1100")
-    audio_offset = _index_of(calls, "set_offset:new-audio-src:1100")
+    video_offset = _index_of(calls, "set_offset:new-video-src:1000")
+    audio_offset = _index_of(calls, "set_offset:new-audio-src:1000")
     switch_video = _index_of(calls, "video_sel.set_property:active-pad")
     switch_audio = _index_of(calls, "audio_sel.set_property:active-pad")
     release_video = _index_of(calls, "remove_probe:new-video-src:video-hold")
@@ -2725,8 +2733,8 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
     engine._begin_reload_commit(pending)
 
     calls = recorder.calls
-    video_offset = _index_of(calls, "set_offset:new-video-src:1100000000")
-    audio_offset = _index_of(calls, "set_offset:new-audio-src:1100000000")
+    video_offset = _index_of(calls, "set_offset:new-video-src:1000000000")
+    audio_offset = _index_of(calls, "set_offset:new-audio-src:1000000000")
     arm_video = _index_of(calls, "add_probe:new-video-src:1:_report_new_leg_first_buffer")
     arm_audio = _index_of(calls, "add_probe:new-audio-src:1:_report_new_leg_first_buffer")
     release_video = _index_of(calls, "remove_probe:new-video-src:video-hold")
@@ -2738,7 +2746,7 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
     assert (
         "CTRL reload diagnostic: rebase-reference reload_id=28 mode=immediate "
         "streams=2 fallback=no ends=[video=1.000,audio=1.100] "
-        "pipeline_running_time=none switch_running_time=1.100"
+        "pipeline_running_time=none switch_running_time=1.000"
     ) in err
 
     # Fire each recorded new-leg probe the way the leg's own streaming thread
@@ -2754,7 +2762,7 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
         )
         assert (
             f"CTRL reload diagnostic: new-leg-first-buffer stream={label} reload_id=28 "
-            f"applied_offset=1.100 pts=5.000 {running} segment_base=1.100"
+            f"applied_offset=1.000 pts=5.000 {running} segment_base=1.100"
         ) in capsys.readouterr().err
 
 
@@ -2866,8 +2874,8 @@ def test_u16_commit_arms_the_selector_side_observation_in_the_same_window(
         _index_of(calls, "remove_probe:new-audio-src:audio-hold"),
     ]
     offsets = [
-        _index_of(calls, "set_offset:new-video-src:1100000000"),
-        _index_of(calls, "set_offset:new-audio-src:1100000000"),
+        _index_of(calls, "set_offset:new-video-src:1000000000"),
+        _index_of(calls, "set_offset:new-audio-src:1000000000"),
     ]
     assert max(offsets) < min(arms), calls
     assert max(arms) < min(releases), calls
@@ -2883,7 +2891,7 @@ def test_u16_commit_arms_the_selector_side_observation_in_the_same_window(
         )
         assert (
             f"CTRL reload diagnostic: new-leg-selector-first-buffer stream={label} "
-            f"pad=new-{label}-selector reload_id=28 applied_offset=1.100 pts=5.000 "
+            f"pad=new-{label}-selector reload_id=28 applied_offset=1.000 pts=5.000 "
             "running_time=6.100 segment_base=1.100"
         ) in capsys.readouterr().err
 
@@ -3498,7 +3506,9 @@ def test_u30_a_dropped_outgoing_eos_is_named_before_it_is_dropped(
 
     assert result == engine_module.Gst.PadProbeReturn.DROP
     err = capsys.readouterr().err
-    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 pending_txn=9" in err
+    assert (
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 stream=video pending_txn=9"
+    ) in err
     # The settle line that already existed still follows it (the fixture's fake
     # ``GLib.idle_add`` runs the queued callback inline).
     assert "CTRL reload: outgoing EOS observed stream=video (1/1 stream(s))" in err
@@ -3525,7 +3535,9 @@ def test_u30_a_dropped_eos_from_a_superseded_transaction_says_so(
 
     assert result == engine_module.Gst.PadProbeReturn.DROP
     err = capsys.readouterr().err
-    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 pending_txn=9" in err
+    assert (
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_65 stream=video pending_txn=9"
+    ) in err
     assert "outgoing EOS observed" not in err
     assert not engine._pending_reload.get("old_leg_eos")
 
@@ -3549,8 +3561,8 @@ def test_u30_a_dropped_eos_with_no_pending_transaction_is_still_named(
 
     assert result == engine_module.Gst.PadProbeReturn.DROP
     assert (
-        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_66 pending_txn=none"
-        in capsys.readouterr().err
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_66 "
+        "stream=<not-a-leg-pad> pending_txn=none" in capsys.readouterr().err
     )
 
 
@@ -4546,7 +4558,9 @@ def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(
     assert observed["probe_return"] == engine_module.Gst.PadProbeReturn.DROP, observed
     assert observed["old_leg_eos_during_build"] is True, observed
     err = capsys.readouterr().err
-    assert "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 pending_txn=1" in err
+    assert (
+        "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 stream=video pending_txn=1"
+    ) in err
     assert "CTRL reload: outgoing EOS observed stream=video (1/2 stream(s))" in err
 
     # A build that RAISES must leave nothing behind. A DROP probe left installed
@@ -4776,7 +4790,9 @@ def test_u37_deferred_rebase_switch_waits_for_the_mux_pad_to_drain(
         (_U37_OBSERVER_MASK, "_observe_rebase_arrivals")
     ]
     assert [(mask, callback.__name__) for _id, mask, callback in audio_pad.probes] == [
-        (_U37_OBSERVER_MASK, "_observe_rebase_arrivals")
+        (engine_module.Gst.PadProbeType.BUFFER, "_mux_tail_cutoff_probe"),
+        (engine_module.Gst.PadProbeType.EVENT_DOWNSTREAM, "_mux_tail_segment_probe"),
+        (_U37_OBSERVER_MASK, "_observe_rebase_arrivals"),
     ]
 
     err = capsys.readouterr().err

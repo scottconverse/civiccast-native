@@ -37,14 +37,17 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 import threading
 from collections import deque
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from civiccast.egress.gst.strategy import (
     WORKER_PIPE_FRAME_CAP,
+    WindowsWorkerPipeServer,
     WorkerPipeSession,
     _WindowsPipeChannel,
     decode_envelope_ack,
@@ -629,3 +632,139 @@ def test_channel_new_command_registers_before_dispatch_writes() -> None:
     returned_id = session.dispatch(command)
     assert returned_id == command.id
     assert json.loads(transport.sent[-1]) == {"v": 1, "id": command.id, "cmd": "swap 1"}
+
+
+def test_worker_pipe_close_unblocks_synchronous_accept_before_closing_handle(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A synchronous ConnectNamedPipe must leave before its handle is closed.
+
+    The native supervisor pipe server uses this self-connect shutdown pattern
+    because CloseHandle can wedge on a handle with an accept blocked in the OS.
+    """
+
+    connect_entered = threading.Event()
+    client_connected = threading.Event()
+    calls: list[tuple[str, object]] = []
+
+    class FakePywinError(Exception):
+        winerror = 0
+
+    class FakeWin32Pipe:
+        @staticmethod
+        def ConnectNamedPipe(_handle: object, _overlapped: object) -> None:
+            connect_entered.set()
+            client_connected.wait(timeout=2.0)
+            calls.append(("accept-returned", "server"))
+
+        @staticmethod
+        def DisconnectNamedPipe(handle: object) -> None:
+            calls.append(("disconnect", handle))
+
+    class FakeWin32File:
+        GENERIC_READ = 1
+        GENERIC_WRITE = 2
+        OPEN_EXISTING = 3
+
+        @staticmethod
+        def CreateFile(*_args: object) -> str:
+            calls.append(("self-connect", "client"))
+            client_connected.set()
+            return "client"
+
+        @staticmethod
+        def CloseHandle(handle: object) -> None:
+            calls.append(("close", handle))
+
+    monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=FakePywinError))
+    monkeypatch.setitem(sys.modules, "win32pipe", FakeWin32Pipe)
+    monkeypatch.setitem(sys.modules, "win32file", FakeWin32File)
+
+    server = WindowsWorkerPipeServer("test-close")
+    server._handle = "server"
+    accept_thread = threading.Thread(target=server.accept, daemon=True)
+    accept_thread.start()
+    try:
+        assert connect_entered.wait(timeout=1.0)
+
+        server.close()
+        accept_thread.join(timeout=1.0)
+
+        assert not accept_thread.is_alive()
+        assert calls.index(("accept-returned", "server")) < calls.index(("close", "server"))
+        assert ("disconnect", "server") in calls
+    finally:
+        # On a regression, release the fake accept so a failed assertion never
+        # leaves a background test thread behind.
+        client_connected.set()
+        accept_thread.join(timeout=1.0)
+
+
+def test_pipe_channel_close_waits_for_inflight_ack_reader() -> None:
+    """The connected-pipe reader must finish before close disconnects its handle."""
+
+    class BlockingAckServer:
+        def __init__(self) -> None:
+            self.read_started = threading.Event()
+            self.release_ack = threading.Event()
+            self.closed = threading.Event()
+            self.frame: str | None = None
+
+        def create(self) -> None:
+            return None
+
+        def accept(self) -> None:
+            return None
+
+        def write_line(self, text: str) -> bool:
+            self.frame = text
+            return True
+
+        def read_line(self) -> str | None:
+            self.read_started.set()
+            if not self.release_ack.wait(timeout=2.0) or self.frame is None:
+                return None
+            command_id = json.loads(self.frame)["id"]
+            return json.dumps({"v": 1, "id": command_id, "result": "applied"})
+
+        def close(self) -> None:
+            self.closed.set()
+
+    server = BlockingAckServer()
+    channel = _WindowsPipeChannel("c1", server=server, ack_timeout_s=2.0)
+    channel.start()
+    result: list[bool] = []
+    sender = threading.Thread(
+        target=lambda: result.append(channel.send_and_wait("caption", "caption 0 500 aGk=")),
+        daemon=True,
+    )
+    closer: threading.Thread | None = None
+    sender.start()
+    try:
+        assert server.read_started.wait(timeout=1.0)
+
+        close_finished = threading.Event()
+
+        def close_channel() -> None:
+            channel.close()
+            close_finished.set()
+
+        closer = threading.Thread(target=close_channel, daemon=True)
+        closer.start()
+
+        assert not close_finished.wait(timeout=0.05)
+        assert not server.closed.is_set()
+
+        server.release_ack.set()
+        sender.join(timeout=1.0)
+        closer.join(timeout=1.0)
+
+        assert not sender.is_alive()
+        assert not closer.is_alive()
+        assert result == [True]
+        assert server.closed.is_set()
+    finally:
+        server.release_ack.set()
+        sender.join(timeout=1.0)
+        if closer is not None:
+            closer.join(timeout=1.0)

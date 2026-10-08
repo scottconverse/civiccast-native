@@ -49,7 +49,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from civiccast.egress.daemon import AlertEvaluatorHook, EgressDaemon
 from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
@@ -1240,9 +1240,23 @@ class ChannelAutomationService:
         self._reconcile_dead_encoders_this_pass()
         seen: list[str] = []
         for config in self._store.list_configs():
-            if not config.enabled:
-                continue
             channel_id = config.channel_id
+            if not config.enabled:
+                # Disabled channels stay out of automation, but an explicit
+                # operator stop/drain must still reach the daemon. Do not run
+                # normal polls here: they can service crash-relaunch state.
+                pending_terminal_command = any(
+                    command.action in {"stop", "drain"}
+                    for command in self._store.peek_pending_commands(channel_id)
+                )
+                state = self._store.read_state(channel_id)
+                if pending_terminal_command:
+                    self._daemon.process_commands_only(channel_id)
+                elif state is not None and state.state == "DRAINING":
+                    # A graceful drain remains supervised until its worker exits,
+                    # but disabled channels never enter schedule/autostart logic.
+                    self._daemon.process_once(channel_id)
+                continue
             seen.append(channel_id)
             if self._alerts is not None:
                 self._alerts.begin_tick(channel_id)
@@ -1903,7 +1917,7 @@ class ChannelAutomationService:
             tail_seconds,
             replacement_seconds,
         )
-        return replacement
+        return cast(EgressSourcePlan, replacement)
 
     def _check_plan_rollover(self, channel_id: str, *, now: datetime) -> None:
         """Extend a finite program or filler plan before it EOSes.
@@ -2687,7 +2701,7 @@ class ChannelAutomationService:
         if provider is None:
             return None
         try:
-            return provider(channel_id, boundary)
+            return cast(EgressSourcePlan | None, provider(channel_id, boundary))
         except SourcePrepareError:
             return None
 
@@ -3148,9 +3162,6 @@ def build_channel_automation(
     health sample feeds the operational alert evaluator.
     """
 
-    from civiccast.captions.persistence import PostgresCaptionReviewStore
-    from civiccast.captions.retention import build_caption_readiness_provider
-    from civiccast.captions.tap_worker import CaptionTapWorkerSettings
     from civiccast.egress.audio_tracks import AudioTrackStore
     from civiccast.egress.bulletin_filler import build_filler_source_provider
     from civiccast.egress.caption_proof import build_caption_status_provider
@@ -3174,7 +3185,6 @@ def build_channel_automation(
 
     resolved_work_dir = (work_dir or default_egress_work_dir()).expanduser()
     resolved_work_dir.mkdir(parents=True, exist_ok=True)
-    caption_tap_settings = CaptionTapWorkerSettings.from_env()
     store = PostgresEgressStore(session_factory)
     # ENG-003 / S9-4: clear any relay co-process a previous server left holding its
     # NDI name, recording each reap as a durable proof event. Never blocks startup.
@@ -3315,14 +3325,9 @@ def build_channel_automation(
         # (fail-closed — not-verified until a fresh PASS is persisted by the
         # caption proof loop), instead of a hardcoded posture.
         caption_status_provider=build_caption_status_provider(store),
-        # Retention is classified from durable review/evidence rows and real disk
-        # capacity before the daemon selects a program source or starts an encoder.
-        caption_readiness_provider=build_caption_readiness_provider(
-            tap_root=caption_tap_settings.tap_root,
-            review_store=PostgresCaptionReviewStore(session_factory),
-            storage_root=resolved_work_dir,
-            segment_seconds=caption_tap_settings.segment_seconds,
-        ),
+        # Live captions do not retain review audio. An optional recording-review
+        # archive must never gate broadcast readiness or trigger discovery here.
+        caption_readiness_provider=None,
         # S23: at each ACTUAL source transition the engine appends an as-run
         # entry (proof-of-performance) to the durable franchise-compliance
         # ledger. Append-only side-write; never blocks playout (every call is

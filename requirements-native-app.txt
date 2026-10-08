@@ -24,7 +24,6 @@ anyio==4.14.2 \
 asn1crypto==1.5.1 \
     --hash=sha256:13ae38502be632115abf8a24cbe5f4da52e3b5231990aff31123c805306ccb9c \
     --hash=sha256:db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67
-    # via civiccast (pyproject.toml)
 # CivicCast policy override: only the reproducible LGPL-only native wheel built
 # by scripts/build_native_pyav_wheel.py is authorized; PyPI's Windows wheels are
 # intentionally not hash-authorized here.
@@ -42,6 +41,10 @@ botocore==1.43.56 \
     #   civiccast (pyproject.toml)
     #   boto3
     #   s3transfer
+cactus-needle==3.1.0 \
+    --hash=sha256:4101e693757d969782ce1d0d6aac9756bfca80a163a26f13c39e5c5aacecea68 \
+    --hash=sha256:af2061f95333dab210b8457309bfd8945b68e1ada4a69067d26d01b49e1da6b7
+    # via civiccast (pyproject.toml)
 certifi==2026.7.22 \
     --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775 \
     --hash=sha256:741e2c3b351ddf169a738da9f2c048608ff7f2c5cc02f1ebc6b118bb090d5d55
@@ -342,7 +345,9 @@ ctranslate2==4.8.1 \
     --hash=sha256:e3e3aef4670a6c8dcea367401675f82b49b02c18f5837221bcd7cca90b1707a8 \
     --hash=sha256:e42ce3affb03ffc661e8f35d6e7845f16e6463884b9ba7857396d649520da819 \
     --hash=sha256:f3172c29470c1280ebb9f4a53aa4a913650e091f95740c732cd13b4b910c734d
-    # via faster-whisper
+    # via
+    #   civiccast (pyproject.toml)
+    #   faster-whisper
 defusedxml==0.7.1 \
     --hash=sha256:1bb3032db185915b62d7c6209c5a8792be6a32ab2fedacc84e01b52c51aa3e69 \
     --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
@@ -541,6 +546,7 @@ huggingface-hub==1.24.0 \
     --hash=sha256:18431ff4daae0749aa9ba102fc952e314c98e1d30ebdec5319d85ca0a83e1ae5 \
     --hash=sha256:6ed4120a84a6beec900640aa7e346bd766a6b7341e41526fef5dc8bd81fb7d59
     # via
+    #   cactus-needle
     #   faster-whisper
     #   tokenizers
 idna==3.18 \
@@ -1260,9 +1266,9 @@ pygments==2.20.0 \
     --hash=sha256:6757cd03768053ff99f3039c1a36d6c0aa0b263438fcab17520b30a303a82b5f \
     --hash=sha256:81a9e26dd42fd28a23a2d169d86d7ac03b46e2f8b59ed4698fb4785f946d0176
     # via rich
-pypdf==6.14.2 \
-    --hash=sha256:3f07891af76dc002657e04993ab9b4de81de29f9013b9761d0b7968bff12e946 \
-    --hash=sha256:7873f502fe4385e79539b21d872392dc0c4e3714327c15881cbc7fbfd1f95b25
+pypdf==6.19.0 \
+    --hash=sha256:7e5d6e730e7dae87d560a2cee218b852f6498c8be61966f3cd02ead971e48d14 \
+    --hash=sha256:bbc43aca292369ccc6cbc8a921991ecf2538a3587ab5a116eff06c321d647155
     # via civiccast (pyproject.toml)
 python-dateutil==2.9.0.post0 \
     --hash=sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3 \
@@ -1526,10 +1532,12 @@ tzdata==2026.3 \
     --hash=sha256:4a1518b8993086a7982523e071643f3c0e5f213e75b21318e78bcabfff9d1415 \
     --hash=sha256:dc096730c87af6cab1b171c9d532be840741ff5d459015e7f6947bd7d7e54931
     # via psycopg
-urllib3==2.7.0 \
-    --hash=sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c \
-    --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
-    # via botocore
+urllib3==2.8.0 \
+    --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
+    --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
+    # via
+    #   civiccast (pyproject.toml)
+    #   botocore
 uvicorn==0.51.0 \
     --hash=sha256:5d38af6cd620f2ae3849fb44fd4879e0890aa1febe8d47eb355fb45d93fe6a5b \
     --hash=sha256:f6f4b69b657c312f516dd2d268ab9ae6f254b11e4bac504f37b2ab58b24dd0b0

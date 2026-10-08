@@ -1,5 +1,18 @@
 # Changelog
 
+## [Unreleased]
+
+**v1.0.0-beta.11.**
+
+- Live captions use Whistle as the CPU primary, with Whisper fallback and optional NVIDIA CUDA selection. The first recognition is published without waiting for repeat transcription agreement; inference remains serialized across stations, and Needle telemetry is disabled.
+- Failed Whisper fallback workers are closed before replacement. The service keeps one immediate replay and uses a serialized 30-second cooldown before creating another child, preventing repeated failures from causing an unbounded restart loop.
+- Supervisor startup/readiness is serialized with service ticks. A child is not accepted as ready based on another process's `/health` response. Disabled channels still drain explicit stop commands, while queued start/reload/takeover/handback commands cannot put a disabled channel back on air.
+- On Windows, replacing a playout worker now releases the old synchronous named-pipe accept before closing its handle, avoiding a per-channel restart hang.
+- The installer package includes the Whistle asset path and activates embedded station assets before service checks. Live cue history and delivery bookkeeping are bounded; live captions do not automatically create permanent review records or audio-evidence archives.
+- The owner accepted the 24-hour three-station caption soak on October 7, then the 36-hour milestone on October 8: 102 eligible checkpoints passed (306 sampled channel checks), with four gaming-period checkpoints excluded. These measurements came from the development station with its dev7 overlay; they are separate from installer qualification. See [soak results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md).
+- The exact signed Beta 11 installer from source `76f7153d` (build `37810243495`) ran in place over an existing Beta 9 host, exited successfully, and returned the service healthy on Beta 11 with the current database schema and schedule loop enabled. The captured post-install output check is incomplete and does not establish three-channel live-caption operation. See [package verification](docs/releases/v1.0.0-beta.11-verification.md).
+- Fixed sidecar cleanup that could close a file descriptor reused by another writer. Rebuilt in-product help also preserves later manual sections when command examples contain angle brackets.
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
@@ -10,10 +23,6 @@ from [`scottconverse/civiccast`](https://github.com/scottconverse/civiccast) at
 **fresh history**. Entries before that date live in that repository's own
 CHANGELOG; nothing was deleted there. See [`BRANCHES.md`](BRANCHES.md) for what
 came across and what deliberately did not.
-
-## [Unreleased]
-
-Nothing yet.
 
 ## [1.0.0-beta.10] - 2026-10-02
 

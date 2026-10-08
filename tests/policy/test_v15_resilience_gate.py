@@ -51,7 +51,7 @@ def test_v15_resilience_gate_scans_json_proof_secrets(tmp_path: Path) -> None:
     proof_dir = tmp_path / "docs" / "releases" / "evidence"
     proof_dir.mkdir(parents=True)
     (proof_dir / "support.json").write_text(
-        json.dumps({"environment": {"API_TOKEN": {"value": "ccst_leaked_secret"}}}),
+        "\ufeff" + json.dumps({"environment": {"API_TOKEN": {"value": "ccst_leaked_secret"}}}),
         encoding="utf-8",
     )
 

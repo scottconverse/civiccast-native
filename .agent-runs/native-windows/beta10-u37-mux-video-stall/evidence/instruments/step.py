@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent))
-import tsraw  # noqa: E402
+import tsraw
 
 _PID_NAMES = {0x41: "video", 0x42: "audio", 0x43: "captions"}
 

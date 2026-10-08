@@ -13,7 +13,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT_DIR="${OUT_DIR:-$REPO_ROOT/artifacts}"
+OUT_DIR="${OUT_DIR:-$REPO_ROOT/artifacts/release-preparation/manual}"
 
 # Use the same renderer as native Windows, including its source-derived
 # version header and artifact verification. Direct Pandoc invocation omitted

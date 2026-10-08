@@ -794,11 +794,11 @@ def test_delta_m02_a_genuine_taskkill_failure_still_reaches_the_details_pane() -
 # --------------------------------------------------------------------------
 
 ACTIVATE_STATION_BEGIN = '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"'
-SERVICE_REGISTRATION_BEGIN = '!insertmacro CIVICCAST_STEP "step d4-service-registration: begin"'
+ACTIVATE_STATION_END = "  ; UPGRADE-VS-FRESH ROUTING"
 
 
 def _activate_station_step(source: str) -> str:
-    return _slice(source, ACTIVATE_STATION_BEGIN, SERVICE_REGISTRATION_BEGIN)
+    return _slice(source, ACTIVATE_STATION_BEGIN, ACTIVATE_STATION_END)
 
 
 def _activate_station_fail_messages(step: str) -> tuple[str, ...]:
@@ -910,6 +910,23 @@ def test_bl02_a_failed_postinstall_disarms_the_service_before_aborting() -> None
 
     assert "--civiccast-stop-native-service" in fail_macro, (
         "CIVICCAST_FAIL must stop the service before aborting"
+    )
+    product_stop = fail_macro.index("--civiccast-stop-native-service")
+    fallback_gate = fail_macro.index('${If} $R8 != "0"', product_stop)
+    direct_stop = fail_macro.index('"$SYSDIR\\sc.exe" stop CivicCastSupervisor')
+    demand_start = fail_macro.index('"$SYSDIR\\sc.exe" config CivicCastSupervisor start= demand')
+    assert product_stop < fallback_gate < direct_stop < demand_start, (
+        "the direct SCM stop must be conditional on a failed product stop and retain "
+        "the manual-start containment step"
+    )
+    assert "StrCpy $R8 $R9" in fail_macro
+    assert '${If} $R9 == "1062"' in fail_macro
+    assert "AddSeconds(15)" in fail_macro
+    assert "Get-Service -Name CivicCastSupervisor" in fail_macro
+    assert "ServiceControllerStatus]::Stopped" in fail_macro, (
+        "when the product stop CLI fails, CIVICCAST_FAIL must issue a direct SCM stop, "
+        "accept ERROR_SERVICE_NOT_ACTIVE (1062), and otherwise poll a real STOPPED "
+        "state for a bounded interval"
     )
     assert "sc.exe" in fail_macro and "start= demand" in fail_macro, (
         "CIVICCAST_FAIL must set the service to manual start so it does not "
@@ -1065,11 +1082,7 @@ def test_bl13_an_unprovable_runtime_selector_aborts_the_install() -> None:
     plane the guard blocks, and reported success."""
     source = _hooks_source()
     assert "!define CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP   127" in source
-    step = _slice(
-        source,
-        '!insertmacro CIVICCAST_STEP "step d4-provision: begin"',
-        "K1 FIX: FLAT-LAYOUT STATION ACTIVATION",
-    )
+    step = _d4_provision_step(source)
     assert "${ElseIf} $0 == 85" in step
     assert "${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP}" in step
     arm = _slice(step, "${ElseIf} $0 == 85", "${Else}")
@@ -1081,10 +1094,11 @@ OWNERSHIP_RECOVERY_DOC = "$COMMONPROGRAMDATA\\CivicCast\\provision\\OWNERSHIP-RE
 
 
 def _d4_provision_step(source: str) -> str:
+    """Return only D4 provisioning; station activation now precedes D3/D4."""
     return _slice(
         source,
         '!insertmacro CIVICCAST_STEP "step d4-provision: begin"',
-        "K1 FIX: FLAT-LAYOUT STATION ACTIVATION",
+        '!insertmacro CIVICCAST_STEP "step d4-service-registration: begin"',
     )
 
 

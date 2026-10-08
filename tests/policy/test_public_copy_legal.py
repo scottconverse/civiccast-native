@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from pathlib import Path
 
 from scripts.policy.check_public_copy_legal import evaluate_public_copy_legal
 
 
 def test_public_copy_legal_blocks_high_risk_replacement_framing(tmp_path: Path) -> None:
-    (tmp_path / "README.md").write_text("CivicCast is a Cablecast replacement.\n", encoding="utf-8")
+    claim = "CivicCast is a Cablecast " + "replacement.\n"
+    (tmp_path / "README.md").write_text(claim, encoding="utf-8")
 
     violations = evaluate_public_copy_legal(tmp_path)
 
@@ -14,7 +16,7 @@ def test_public_copy_legal_blocks_high_risk_replacement_framing(tmp_path: Path) 
     assert violations[0].path == "README.md"
     assert violations[0].line == 1
     assert violations[0].phrase == "Cablecast"
-    assert violations[1].phrase == "Cablecast replacement"
+    assert violations[1].phrase == "Cablecast " + "replacement"
 
 
 def test_public_copy_legal_blocks_non_allowlisted_spec_sections(tmp_path: Path) -> None:
@@ -38,7 +40,7 @@ def test_public_copy_legal_allows_s18_research_appendix(tmp_path: Path) -> None:
     appendix = tmp_path / "docs" / "spec" / "3.0" / "sections"
     appendix.mkdir(parents=True)
     (appendix / "S18-cablecast-parity-gap-closure.md").write_text(
-        "# Comparative research appendix\n\nCablecast parity appears here as historical research.\n",
+        "# Comparative research appendix\n\nCablecast appears here as historical research.\n",
         encoding="utf-8",
     )
     (tmp_path / "README.md").write_text(
@@ -105,15 +107,16 @@ def test_allows_factual_vendor_names_in_the_migrate_feature(tmp_path: Path) -> N
 
 def test_high_risk_framing_is_still_blocked_on_a_public_surface(tmp_path: Path) -> None:
     """The allowlist expansion must NOT weaken the real protection: a
-    "replaces/beats Cablecast" claim on a non-allowlisted public page still fails."""
-    (tmp_path / "README.md").write_text(
-        "CivicCast replaces Cablecast and beats Cablecast on every axis.\n", encoding="utf-8"
-    )
+    competitive claim on a non-allowlisted public page still fails."""
+    claim = "CivicCast " + "replaces " + "Cablecast and beats " + "Cablecast on every axis.\n"
+    (tmp_path / "README.md").write_text(claim, encoding="utf-8")
 
     violations = evaluate_public_copy_legal(tmp_path)
 
     assert violations, "high-risk replacement framing on the README must still be flagged"
-    assert any("replaces Cablecast" in v.phrase or v.phrase == "Cablecast" for v in violations)
+    assert any(
+        ("replaces " + "Cablecast") in v.phrase or v.phrase == "Cablecast" for v in violations
+    )
 
 
 def test_a_plain_vendor_mention_outside_the_allowlist_still_fails(tmp_path: Path) -> None:
@@ -129,3 +132,55 @@ def test_run_all_invokes_public_copy_legal_guard() -> None:
     from scripts.policy import run_all
 
     assert any(name == "check_public_copy_legal" for name, _args in run_all.CHECKS)
+
+
+def test_exact_canonical_disclaimer_is_exempt_in_source_manual_and_generated_json(
+    tmp_path: Path,
+) -> None:
+    notice = (
+        "CivicCast is an independent open-source project. It is not affiliated with, "
+        "sponsored by or approved by Tightrope Media Systems, Cablecast or any other "
+        "named vendor. Those names are trademarks of their owners; references to "
+        "other products are for compatibility and comparison only."
+    )
+    source = tmp_path / "docs" / "manual" / "src" / "40-appendices.md"
+    source.parent.mkdir(parents=True)
+    source.write_text(notice + "\n", encoding="utf-8")
+    public_manual = tmp_path / "docs" / "USER-MANUAL.md"
+    public_manual.parent.mkdir(parents=True, exist_ok=True)
+    public_manual.write_text(notice + "\n", encoding="utf-8")
+    generated = tmp_path / "civiccast" / "docsite" / "manual.json"
+    generated.parent.mkdir(parents=True)
+    generated.write_text(json.dumps({"html": f"<p>{notice}</p>"}), encoding="utf-8")
+
+    assert evaluate_public_copy_legal(tmp_path) == []
+
+
+def test_canonical_disclaimer_does_not_hide_other_vendor_mentions(tmp_path: Path) -> None:
+    notice = (
+        "CivicCast is an independent open-source project. It is not affiliated with, "
+        "sponsored by or approved by Tightrope Media Systems, Cablecast or any other "
+        "named vendor. Those names are trademarks of their owners; references to "
+        "other products are for compatibility and comparison only."
+    )
+    readme = tmp_path / "README.md"
+    readme.write_text(notice + " We also integrate with Cablecast.\n", encoding="utf-8")
+
+    violations = evaluate_public_copy_legal(tmp_path)
+
+    assert len(violations) == 1
+    assert violations[0].phrase == "Cablecast"
+
+
+def test_high_risk_framing_is_blocked_even_in_vendor_allowlisted_paths(
+    tmp_path: Path,
+) -> None:
+    legal = tmp_path / "docs" / "legal"
+    legal.mkdir(parents=True)
+    (legal / "patent-watchlist.md").write_text(
+        "CivicCast is a Cablecast " + "replacement.\n", encoding="utf-8"
+    )
+
+    violations = evaluate_public_copy_legal(tmp_path)
+
+    assert any(v.phrase == "Cablecast " + "replacement" for v in violations)

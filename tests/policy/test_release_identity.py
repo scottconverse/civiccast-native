@@ -83,19 +83,19 @@ def test_release_identity_accepts_historical_release_dates(tmp_path: Path) -> No
     assert evaluate_release_identity(tmp_path) == []
 
 
-def test_release_identity_accepts_explicitly_held_unpublished_candidate(tmp_path: Path) -> None:
+def test_release_identity_accepts_unpublished_candidate(tmp_path: Path) -> None:
     _write_aligned_release_identity_fixture(tmp_path)
     _write(
         tmp_path / "README.md",
-        "v0.10.0 is the current owner-held unpublished candidate.\n",
+        "v0.10.0 is the current unpublished candidate.\n",
     )
     _write(
         tmp_path / "docs" / "index.html",
-        "<p>v0.10.0 is the current owner-held unpublished candidate.</p>",
+        "<p>v0.10.0 is the current unpublished candidate.</p>",
     )
     _write(
         tmp_path / "CHANGELOG.md",
-        "## [Unreleased]\n\nCurrent owner-held unpublished candidate: v0.10.0.\n",
+        "## [Unreleased]\n\nCurrent unpublished candidate: v0.10.0.\n",
     )
 
     assert evaluate_release_identity(tmp_path) == []

@@ -125,7 +125,7 @@ class CaptionFeedWorker:
         # enabled, so an injected worker in a test behaves as before.
         self._is_enabled = is_enabled or (lambda: True)
         self._disabled_announced = False
-        # Per-channel set of already-pushed cue ids (so a re-scan never double-sends).
+        # Already-pushed IDs within each channel's rolling provider window.
         self._sent: dict[str, set[str]] = {}
         # A multi-page cue can be only partly acknowledged. Retain each page's
         # acknowledgement independently so a retry never repeats pages already
@@ -171,10 +171,19 @@ class CaptionFeedWorker:
         dropped = 0
         touched: list[str] = []
         for channel_id in on_air:
+            cues = self._caption_cue_provider(channel_id)
+            current_ids = {cue.cue_id for cue in cues}
             seen = self._sent.setdefault(channel_id, set())
             acknowledged_pages = self._acknowledged_pages.setdefault(channel_id, set())
+            # Retain partial acknowledgements for every cue still offered by
+            # the provider, but retire tracking when a cue leaves its window.
+            # Read the provider first: a raised read error must not erase state.
+            seen.intersection_update(current_ids)
+            acknowledged_pages.intersection_update(
+                {key for key in acknowledged_pages if key[0] in current_ids}
+            )
             channel_sent = False
-            for cue in self._caption_cue_provider(channel_id):
+            for cue in cues:
                 if cue.cue_id in seen:
                     continue
                 pages = cea_caption_pages(cue.text)

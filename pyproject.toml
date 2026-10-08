@@ -57,9 +57,9 @@ dependencies = [
   # a compiled agenda that ships as PDF only (civiccast/agenda_import/
   # docparse.py). Also used by the operator-upload PDF import heuristic
   # (civiccast/agenda/pdf_import.py, product-hole fix). Pure-Python, ships
-  # inline types (py.typed), no mypy override needed. Pinned floor since
-  # only PdfReader.pages/extract_text() (stable since early 3.x) is used.
-  "pypdf>=5.0",
+  # inline types (py.typed), no mypy override needed. Raised 2026-10-07 to
+  # clear PDF parsing/text-extraction resource exhaustion in uploaded agendas.
+  "pypdf>=6.19.0",
   "keyring==25.7.0",
   # Floor raised 2026-08-06 for PYSEC-2026-3552 / CVE-2026-69247 (Bleichenbacher
   # oracle in PKCS#7 EnvelopedData decryption, fixed in 50.0.0). We don't use
@@ -90,15 +90,19 @@ dependencies = [
 cloudflare-r2 = [
   "boto3>=1.35",
   "botocore>=1.35",
+  "urllib3>=2.8.0",
 ]
 # S3-compatible CDN adapters — Fastly Object Storage and Akamai (Linode)
 # Object Storage per ADR 0020. Same boto3 dependency as cloudflare-r2.
 s3-cdn = [
   "boto3>=1.35",
   "botocore>=1.35",
+  "urllib3>=2.8.0",
 ]
 captions-runtime = [
   "faster-whisper>=1.2.1,<2",
+  "ctranslate2==4.8.1",
+  "cactus-needle==3.1.0",
 ]
 # Agenda Bridge Phase 4 (js_portal) — crawl4ai + Playwright Chromium for
 # JS-hydrated municipal agenda portals (CivicPlus, Granicus, Legistar-JS)
@@ -248,6 +252,9 @@ dev = [
   # Already present transitively via pre-commit; declared here so the verifier
   # and its tests have it as a first-class dev dependency.
   "pyyaml>=6.0",
+  # Version-pinned image encoder for the build-time in-product manual; the
+  # renderer imports Pillow lazily, so it is not a station runtime dependency.
+  "Pillow==12.3.0",
   "types-defusedxml>=0.7.0.20260504",
   # Audit item #27 — CI security scanning (dependency + static analysis).
   "pip-audit>=2.7.0",

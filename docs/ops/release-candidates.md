@@ -1,4 +1,4 @@
-# Release Candidates: Build -> Gate A -> Publish
+# Release Candidates: Build -> Consumer Evidence -> Publish
 
 Runbook for cutting and publishing a native-Windows beta-candidate release.
 Owner decision 2026-09-02: the coordinating agent cuts these releases going
@@ -25,11 +25,74 @@ on the release branch. It produces, per candidate commit (`<sha>`):
   release.** It is either already on the target machine (an upgrade,
   reusing cached model packs per PR #127/#126) or delivered via the USB
   bundle (a first-time install).
+- `manual\` in the assembled kit -- `USER-MANUAL.pdf`, `USER-MANUAL.docx`,
+  the render manifest, and an exact-source/run receipt. Beta 11 publication
+  includes these four small files as release assets and in `SHA256SUMS.txt`.
 
 Confirm the build run's conclusion is `success` and note its run id
 (`--build-run-id` below).
 
-## 2. Gate A: three required lanes
+### Beta 11 hosted preparation run (not an installable kit)
+
+While the accepted 24-hour station soak and monitor are still running, use
+the manual workflow with `build_target: hosted` and `prepare_only: true`.
+This keeps packaging and signing work off the station desktop. The workflow
+still builds, signs, and verifies the complete candidate and station bundle
+on `windows-latest`, then retains only these short-lived artifacts:
+
+- `native-beta-candidate-<sha>`: candidate reports, signing receipt, and
+  installer-pack checksums.
+- `native-beta-candidate-binaries-<sha>`: signed installer and runtime packs
+  (about 3.4 GB before the Whistle runtime addition). The setup embeds the
+  signed station index, `core.ccpack`, and `captions-whistle.ccpack` under
+  `station\` for setup-only upgrade activation.
+- `native-station-embed-<sha>`: the same signed station index and the embedded
+  `core.ccpack` plus `captions-whistle.ccpack` used to build those installer
+  resources.
+- `native-station-prepare-<sha>`: signed `captions-whistle.ccpack`, the exact
+  station index, the station bundle `SHA256SUMS.txt`, and its build report.
+- `native-beta-manual-<sha>`: the exact-SHA PDF, DOCX, render manifest, and
+  receipt bound to the candidate version and workflow run. It is rendered
+  with the same Pandoc/TeX and currentness checks as `ci-docs.yml`, has
+  one-day retention, and is copied into a full kit by the normal assembly job.
+  `prepare_only` produces this small manual artifact too, but still skips kit
+  assembly; it does not make a preparation run Gate A eligible.
+
+The Whistle pack payload is 18,422,127 bytes (about 17.6 MiB). It is included
+in the installer and repeated in both small station artifacts, so budget for
+about 3.5 GB total, plus small indexes and reports; the run will confirm actual
+upload sizes. Each artifact has one-day retention, keeping this below the
+shared 10 GB Actions artifact budget. The run does not upload the full model
+bundle or assemble `native-beta-kit-<sha>`. These artifacts are not a complete
+first-install kit and cannot be used for Gate A or sent to a station. An
+existing setup-only upgrade can use the embedded Whistle pack and retain its
+local cached large models; the signed station index has no download URLs.
+The automatic `workflow_run` preflight sees the marker immediately; do not
+manually dispatch Gate A against this run after the marker expires, because a
+missing expired artifact cannot distinguish preparation-only from a full
+self-hosted build. If the candidate binaries expire before later kit assembly,
+rerun the candidate workflow at the same source SHA and use the fresh run id.
+
+The station build report and checksum list record the full signed bundle's
+identity, but the large model packs are not retained by this run. A later
+full-kit build must reconstruct those packs from the pinned, verified local
+model cache for the same source SHA, compare the rebuilt station index and
+pack hashes with the preparation artifacts, assemble the kit, and run Gate A.
+If those identities differ, the preparation run does not establish the full
+kit's identity.
+
+Gate A automatically receives a `workflow_run` event when this preparation
+workflow completes. After the preflight change is on the default branch, its
+hosted preflight sees `native-station-prepare-<sha>` on that exact run and
+skips all Windows Sandbox lanes. A pre-merge run still uses the default-
+branch Gate A definition, so that guard is not active yet; keep the local
+`blackwell-builder` runner offline and cancel any auto-queued Gate A run for
+the preparation candidate. Gate A has no separate registered Windows runner
+today. Do not bring the desktop runner online or start Windows Sandbox while
+the owner continues the station and monitor. Clean-machine Gate A remains
+outstanding until that work has ended and the owner schedules it.
+
+## 2. Gate A: three required lanes (workflow-backed route)
 
 `.github/workflows/gate-a-station-acceptance.yml` runs automatically after a
 successful build (`workflow_run`), or can be dispatched manually against a
@@ -42,10 +105,11 @@ specific build run id. It produces three jobs, each with its own
 | `station-acceptance-dirty` | `dirty` | `gate-a-dirty-verdict-<run_id>` |
 | `station-acceptance-download-only` | `download-only` | `gate-a-download-only-verdict-<run_id>` |
 
-All three are **required** for a publish (owner decision 2026-09-02 made the
-download-only lane required alongside clean and dirty). Each verdict JSON
-must report `"verdict": "PASS"` and the same `source_sha` as the candidate
-commit. Note the Gate A run id (`--gate-a-run-id` below) -- this is the
+All three are **required** when using the workflow-backed route (owner decision
+2026-09-02 made the download-only lane required alongside clean and dirty).
+Each verdict JSON must report `"verdict": "PASS"` and the same producer
+`source_sha` as the candidate artifacts. Note the Gate A run id
+(`--gate-a-run-id` below) -- this is the
 `gate-a-station-acceptance` workflow run id that produced all three jobs,
 not any one job's own id.
 
@@ -53,6 +117,85 @@ If any lane is missing, not `PASS`, or reports a different `source_sha`, do
 not publish. Re-run Gate A (or the specific failing lane via
 `workflow_dispatch` with `lane: cross-version-only` /
 `lane: download-only-only`) and fix the underlying defect first.
+
+### Direct Sandbox consumer evidence route
+
+The publisher also accepts direct consumer receipts instead of the Gate A
+workflow. Select exactly one route: pass `--gate-a-run-id` for the
+workflow-backed route, or `--consumer-evidence-receipt <file>` for direct
+evidence. Direct mode also requires an explicit `--artifact-source-sha`; it
+never downloads Gate A artifacts or manufactures lane verdicts.
+
+The default direct receipt is Sandbox evidence, with all install, repair,
+preservation and scoped runtime groups below. An explicit
+`consumer_mode: "physical-host"` is a separate, bounded in-place update route.
+It binds the exact signed setup to a healthy pre-install host, successful Beta
+11 install, verified installed app manifest and retained service-loop/schema
+state. Its runtime group contains at least two time-ordered snapshots covering
+public, government and education, spanning at least 30 seconds, with HLS no
+older than 30 seconds, advancing playlists/segments, H.264/AAC and changing
+nonempty caption output. It proves those sampled outputs on that
+host; it does not claim a clean Sandbox install, failed-install repair,
+cross-version Sandbox upgrade or simultaneous capacity.
+
+The Sandbox version-1 JSON receipt has `kind: "civiccast-native-beta-direct-consumer-evidence"`, an `artifact` object with
+the exact `source_sha`, `build_run_id`, and a hash-bound `assembly_receipt`,
+and an `evidence` object containing all of these named proof groups:
+
+- `fresh_install`: installer run, final install state, and activation
+  self-test.
+- `failed_install_repair`: the missing-Whistle-field/removed-version-marker
+  fixture, installer run/state/self-test, repair and verification command
+  logs, and post-repair result/preservation marker.
+- `beta10_baseline_install`: the Beta 10 installer run and healthy state.
+- `beta10_to_beta11_upgrade`: the Beta 11 installer run/state/self-test and
+  upgrade-engine log.
+- `verify_after_upgrade`: the actual sign-in, existing asset and saved
+  schedule verification result plus its preservation marker.
+- A runtime proof group selected by the explicit scope below: its five-minute
+  result, preservation marker, and all five minute snapshots.
+
+Legacy receipts omit `runtime_proof_scope` and use `three_channel_runtime`
+for public, government, and education. A functional installation smoke
+instead sets the top-level `runtime_proof_scope` to
+`"one-channel-install-smoke"` and uses `one_channel_install_smoke` for exactly
+`["public"]`. Unknown scopes, mixed runtime groups and missing or different
+channels are rejected; missing channels never silently reduce the scope.
+Account, asset and three saved schedule preservation checks remain required
+regardless of the runtime scope.
+
+For those runtime snapshots, the publisher requires a time-ordered sample
+span of at least three minutes, HLS playlist age no greater than 30 seconds,
+and advancing playlist timestamps and newest segment names for each channel.
+It also requires audio/video HLS, at least three distinct VTT snapshots, and
+at least two accumulated JFK reference words per channel across the run. The
+bounded VTT text sample remains in the hash-bound evidence for human review;
+the publisher does not compare it to a transcript.
+
+The one-channel scope proves installed caption functionality, not
+three-channel capacity. It is used while the owner's existing three-station
+host soak continues; adding three guest stations would test six simultaneous
+stations on the development machine. Release notes keep the accepted host
+soak, the failed three-channel guest run and its workload context separate.
+The new package's simultaneous three-channel capacity remains unproven;
+the single-channel result must never be described as a three-channel pass.
+
+Every referenced file is a `{ "path": ..., "sha256": ... }` object. The
+publisher verifies each file hash and the semantics above, then checks all 19
+kit files against the build's `kit-assembly-receipt.json` hashes and sizes.
+The receipt binds `artifact.source_sha` and the assembly workflow run to
+`--artifact-source-sha` and `--build-run-id`. The tested installer is named
+`CivicCast (Native)_1.0.0-beta.N_x64-setup.exe`; direct mode stages a
+byte-identical `setup.exe` release asset without changing the assembled kit.
+
+`--source-sha` always names the commit targeted by the release tag.
+`--artifact-source-sha` names the commit that produced the signed package and
+consumer evidence; the values may differ, for example when publishing the
+already-built package from a later documentation-only commit. Release notes
+show both identities. Direct evidence does not establish Gate A's
+download-only network route; the notes state that the route was not tested.
+File hashes bind the receipt to its evidence files but do not turn the local
+receipt into a signed attestation.
 
 ## 3. Publish: `publish_beta_candidate.py`
 
@@ -72,37 +215,63 @@ to `artifacts\release\<tag>\` (`RELEASE-NOTES.md`, the sidecar JSON,
 `SHA256SUMS.txt`) before dropping `--dry-run`. The dry run touches no GitHub
 or git-remote state at all.
 
+For a direct-evidence run, use the same command but replace
+`--gate-a-run-id` with the exact receipt and producer source SHA:
+
+```powershell
+uv run python scripts/release/publish_beta_candidate.py `
+  --kit-dir C:\CivicCastTester\kit-staging\<artifact-source-sha> `
+  --source-sha <tag-target-sha> `
+  --artifact-source-sha <artifact-source-sha> `
+  --build-run-id <native-beta-candidate-artifacts run id> `
+  --consumer-evidence-receipt C:\CivicCastTester\evidence\direct-consumer-evidence.json `
+  --tag v1.0.0-beta.N `
+  --truth-status staging `
+  --dry-run
+```
+
 What it checks, in order, refusing (exit nonzero, no further action) on the
 first failure:
 
-1. **Layout** -- `setup.exe`, `packs\*.ccpack` (>=1), `station\` all present
-   in `--kit-dir`.
-2. **Version identity** -- `setup.exe`'s `VersionInfo.ProductVersion`
+1. **Layout** -- workflow mode requires `setup.exe`, `packs\*.ccpack`
+   (>=1), and `station\`; direct mode resolves the signed installer path
+   from the hash-bound assembly receipt. Both modes require the Beta 11
+   `manual\` PDF, DOCX, render manifest, and candidate-manual receipt.
+2. **Version identity** -- the signed installer's `VersionInfo.ProductVersion`
    (via PowerShell), `civiccast._native_version.__version__` (source tree),
    and `--tag` with its leading `v` stripped must all agree.
-3. **Authenticode signature** -- `Get-AuthenticodeSignature` on `setup.exe`
+3. **Candidate manual** -- Beta 11 and later must carry the four files from
+   `native-beta-manual-<sha>`. The publisher checks the receipt's source SHA,
+   candidate version, and artifact producer build-run id, then verifies the
+   current Markdown source, render-manifest hash, and PDF/DOCX hashes and
+   sizes before checking the selected consumer-evidence route.
+4. **Authenticode signature** -- `Get-AuthenticodeSignature` on `setup.exe`
    must report `Status: Valid` (see `CODE_SIGNING_POLICY.md`).
-4. **Gate A verdicts** -- downloads all three lane verdict artifacts for
-   `--gate-a-run-id`, requires all three `PASS` and the same `source_sha`
-   equal to `--source-sha`.
-5. **Hashing + manifest** -- SHA-256 of `setup.exe` and every
-   `packs\*.ccpack`, written to `SHA256SUMS.txt` and a
+5. **Consumer evidence** -- workflow mode downloads all three Gate A lane
+   verdicts and requires them to PASS for `--artifact-source-sha` (which
+   defaults to `--source-sha`). Direct mode verifies every bound Sandbox
+   receipt and all 19 assembled-kit member hashes/sizes. Direct mode does not
+   claim Gate A lanes or the network download-only route.
+6. **Hashing + manifest** -- SHA-256 of `setup.exe`, every
+   `packs\*.ccpack`, and all four manual files, written to `SHA256SUMS.txt` and a
    `<setup.exe>.sidecar.json` shaped to match
    `scripts/policy/check_sidecar_attestation_integrity.py`'s contract
    (`sha256`, `attestation: null`, `install_manifest.signed`) and what
    `scripts/download_windows_release_artifacts.ps1` already reads.
-6. **Release notes** -- rendered via
-   `scripts/render_release_notes.render_native_beta_candidate_notes`
-   (source SHA, build-run and Gate-A-run links, the per-lane PASS table, the
-   `[Unreleased]` CHANGELOG section, an asset table with size + SHA-256,
-   plain-English install/upgrade instructions, the SmartScreen note, and the
-   beta-candidate boundary statement).
-7. **Pre-flight the asset set** -- every asset (setup.exe, each pack,
+7. **Release notes** -- rendered via
+   `scripts/render_release_notes.render_native_beta_candidate_notes`. They
+   identify the artifact producer and tag target, link the build run, and
+   show either the three Gate A PASS lanes or the direct Sandbox scenarios
+   actually checked, plus the `[Unreleased]` CHANGELOG section, an asset table
+   with size + SHA-256, plain-English install/upgrade instructions, the
+   SmartScreen note, and the beta-candidate boundary statement.
+8. **Pre-flight the asset set** -- every asset (setup.exe, each pack, each
+   manual file,
    SHA256SUMS.txt, the sidecar) must be under GitHub's documented 2 GiB
    per-file release-asset cap. The complete set is printed with sizes.
    Anything at or over the cap refuses BEFORE any remote mutation. (Also a
    pre-flight, first of all: `gh auth status` must succeed.)
-8. **Publish or dry-run** -- without `--dry-run`, in an order that can never
+9. **Publish or dry-run** -- without `--dry-run`, in an order that can never
    leave an orphan tag (no `git tag`/`git push` is ever run by hand):
    1. `gh release create <tag> --draft --target <source-sha> --prerelease
       --title ... --notes-file ... <every asset>` -- a **draft** creates no
@@ -150,12 +319,13 @@ decides otherwise) with:
   (each under 2 GB).
 - `SHA256SUMS.txt` and the installer's `*.sidecar.json`.
 - Release notes stating: this is a beta candidate, not a production release;
-  the exact source SHA; links to the build and Gate A runs with the
-  per-lane PASS verdicts; an asset table with size and SHA-256; plain
-  install/upgrade instructions ("download setup.exe; if you already have
-  CivicCast installed just run it -- your recordings, database and AI
-  models are kept; first-time installs need the USB model bundle"); and the
-  SmartScreen note.
+  the exact source SHA; a link to the build and the selected consumer-evidence
+  route (the Gate A run with per-lane PASS verdicts for workflow mode, or the
+  direct Sandbox scenarios with Gate A and download-only route gaps stated);
+  an asset table with size and SHA-256; plain install/upgrade instructions
+  ("download setup.exe; if you already have CivicCast installed just run it --
+  your recordings, database and AI models are kept; first-time installs need
+  the USB model bundle"); and the SmartScreen note.
 
 No release ever carries the ~21 GB `station\` bundle as an asset. A
 download-only fresh install (no prior CivicCast install, no USB bundle

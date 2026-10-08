@@ -97,6 +97,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 WORKER_PIPE_FRAME_CAP = 16 * 1024  # bytes; D7-class hardening extended to worker pipes
 _WORKER_PIPE_NAME_PREFIX = r"\\.\pipe\civiccast-worker-"
 _WORKER_PIPE_ACK_TIMEOUT_S = 5.0
+_WORKER_PIPE_CLOSE_TIMEOUT_S = 2.0
 
 
 def _reload_ack_timeout_s() -> float:
@@ -326,6 +327,9 @@ class WindowsWorkerPipeServer:
         self._security_descriptor_sddl = security_descriptor_sddl
         self._handle: Any = None
         self._write_lock = threading.Lock()
+        self._accepting = threading.Lock()
+        self._closing = threading.Event()
+        self._close_lock = threading.Lock()
 
     def create(self) -> None:
         """Create the pipe instance. Raises ``RuntimeError`` if
@@ -368,11 +372,45 @@ class WindowsWorkerPipeServer:
         import pywintypes
         import win32pipe
 
+        with self._accepting:
+            handle = self._handle
+            if handle is None or self._closing.is_set():
+                return
+            try:
+                win32pipe.ConnectNamedPipe(handle, None)
+            except pywintypes.error as exc:
+                if self._closing.is_set():
+                    return
+                if exc.winerror != 535:  # ERROR_PIPE_CONNECTED: client beat us here, fine
+                    raise
+            if self._closing.is_set():
+                with contextlib.suppress(pywintypes.error):
+                    win32pipe.DisconnectNamedPipe(handle)
+
+    def _unblock_accept(self) -> None:
+        """Self-connect to release an accept thread in synchronous ConnectNamedPipe."""
+        import pywintypes
+        import win32file
+
         try:
-            win32pipe.ConnectNamedPipe(self._handle, None)
+            probe = win32file.CreateFile(
+                self.pipe_name,
+                win32file.GENERIC_READ | win32file.GENERIC_WRITE,
+                0,
+                None,
+                win32file.OPEN_EXISTING,
+                0,
+                None,
+            )
         except pywintypes.error as exc:
-            if exc.winerror != 535:  # ERROR_PIPE_CONNECTED: client beat us here, fine
-                raise
+            # A busy pipe means a worker already connected, so no accept needs
+            # waking. Close still disconnects it after acquiring _accepting.
+            logger.debug(
+                "worker pipe %s shutdown self-connect did not open (%s)", self.pipe_name, exc
+            )
+            return
+        with contextlib.suppress(pywintypes.error):
+            win32file.CloseHandle(probe)
 
     def write_line(self, text: str) -> bool:
         import pywintypes
@@ -405,12 +443,43 @@ class WindowsWorkerPipeServer:
         return data.decode("utf-8", "replace").strip() or None
 
     def close(self) -> None:
+        """Release the pipe without closing a handle under a blocked accept."""
+        import pywintypes
         import win32file
+        import win32pipe
 
-        if self._handle is not None:
-            with contextlib.suppress(Exception):
-                win32file.CloseHandle(self._handle)
+        with self._close_lock:
+            self._closing.set()
+            handle = self._handle
+            if handle is None:
+                return
+
+            # ConnectNamedPipe is synchronous and cannot be cancelled by closing
+            # its handle. Waking it first keeps a worker restart from parking the
+            # automation thread in CloseHandle.
+            self._unblock_accept()
+            acquired = self._accepting.acquire(timeout=_WORKER_PIPE_CLOSE_TIMEOUT_S)
+            if not acquired:
+                with contextlib.suppress(pywintypes.error):
+                    win32pipe.DisconnectNamedPipe(handle)
+                acquired = self._accepting.acquire(timeout=_WORKER_PIPE_CLOSE_TIMEOUT_S)
+            if not acquired:
+                logger.error(
+                    "worker pipe %s accept did not stop within %.1fs; leaving its handle open "
+                    "rather than blocking in CloseHandle",
+                    self.pipe_name,
+                    2 * _WORKER_PIPE_CLOSE_TIMEOUT_S,
+                )
+                return
+
             self._handle = None
+            try:
+                with contextlib.suppress(pywintypes.error):
+                    win32pipe.DisconnectNamedPipe(handle)
+                with contextlib.suppress(Exception):
+                    win32file.CloseHandle(handle)
+            finally:
+                self._accepting.release()
 
 
 class _PendingAck:
@@ -453,6 +522,7 @@ class _WindowsPipeChannel:
         self._lock = threading.Lock()
         self._round_trip_lock = threading.Lock()
         self._connected_event = threading.Event()
+        self._closed = threading.Event()
         # Diagnosability fix (coordinator follow-up, 2026-09-06): the daemon's
         # ``_try_content_reload`` treated a False ``reload_content`` as silent --
         # nothing said WHY the seamless path was declined, so an operator/on-call
@@ -513,11 +583,17 @@ class _WindowsPipeChannel:
         ``"accepted"`` or ``"applied"`` (a redelivered id re-acks whatever the
         original ack said -- see ``worker.py``'s ``_windows_pipe_reader_loop``)."""
         ack_timeout_s = _reload_ack_timeout_s() if verb == "reload" else self._ack_timeout_s
+        if self._closed.is_set():
+            self.last_failure_reason = "worker pipe is closed"
+            return False
         # A synchronous Win32 pipe handle serializes ReadFile and WriteFile calls
         # issued concurrently against that handle.  Keep one request/ack exchange
         # on one caller thread instead of parking a background ReadFile that would
         # deadlock the next write.
         with self._round_trip_lock:
+            if self._closed.is_set():
+                self.last_failure_reason = "worker pipe is closed"
+                return False
             deadline = time.monotonic() + ack_timeout_s
             if not self._connected_event.wait(ack_timeout_s):
                 self.last_failure_reason = "worker never connected to its control pipe"
@@ -587,7 +663,12 @@ class _WindowsPipeChannel:
             return False
 
     def close(self) -> None:
-        self.server.close()
+        # No read or write may still be inside the connected handle when the
+        # server disconnects and closes it. Set this first so a concurrent new
+        # command cannot queue behind the active round trip and use the handle.
+        self._closed.set()
+        with self._round_trip_lock:
+            self.server.close()
 
 
 PipeChannelFactory = Callable[[str], _WindowsPipeChannel]

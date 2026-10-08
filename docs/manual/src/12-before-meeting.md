@@ -358,7 +358,7 @@ You should see the new schedule appear in the **Schedules** table above the form
 
 > **Warning:** The time you type is **UTC**, not local time. Under **Start (UTC)** and **Time (HH:MM UTC)** the screen shows "In your local time: …" so you can check it. The weekday boxes are also UTC days, and they get no such line. A Monday 7 PM meeting in US Mountain Time (UTC−6 in summer, UTC−7 in winter) is already Tuesday in UTC: in summer it is Tuesday 01:00 UTC, in winter Tuesday 02:00 UTC. Tick **Tue**, not **Mon**. Use the **Next 3 fires** lines to confirm the local day and time before you save. After the clocks change, edit the schedule: the UTC time does not move, so your local time does.
 
-> **Known issue (beta.10):** After **Create schedule** works, the form is not cleared and no "saved" message appears. Look for the new row in the **Schedules** table. If you click **Create schedule** a second time, the station answers "Recording schedule '<id>' already exists. Use PATCH to update." That means the first click worked.
+> **Known issue (beta.10):** After **Create schedule** works, the form is not cleared and no "saved" message appears. Look for the new row in the **Schedules** table. If you click **Create schedule** a second time, the station answers "Recording schedule '&lt;id&gt;' already exists. Use PATCH to update." That means the first click worked.
 
 > **Known issue (beta.10):** "Quality preset" is a free text box and the screen does not know which names are valid. Its note says "Contact your station admin for the full list of available presets." We could not confirm what the station does with a name it does not know.
 
@@ -432,7 +432,7 @@ An agenda belongs to one recording. Each recording can have only one agenda. Age
 4. If the agenda also exists as a document, type its web address in **Source doc URL (optional)**. Residents can read it next to the video.
 5. Click **Create agenda**.
 
-You should see the new agenda selected. Its card shows the ID, a **draft** label, and "meeting asset: <id>". If you have more than one agenda, the **Pick an agenda** drop-down at the top switches between them.
+You should see the new agenda selected. Its card shows the ID, a **draft** label, and "meeting asset: &lt;id&gt;". If you have more than one agenda, the **Pick an agenda** drop-down at the top switches between them.
 
 > **Known issue (beta.10):** The IDs are made-up codes, and a wrong character (for example a capital letter) shows raw technical text instead of a plain message. There is no list of recordings to choose from. We could not confirm whether the station checks that the recording exists.
 
