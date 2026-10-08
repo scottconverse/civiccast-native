@@ -17,14 +17,17 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
+from typing import Literal
 
 import pytest
 
 import civiccast.egress.automation as automation_module
 import civiccast.egress.preparer as preparer_module
 from civiccast.egress.automation import ChannelAutomationService, ChannelAutomationSettings
+from civiccast.egress.daemon import EgressDaemon
 from civiccast.egress.models import (
     CanonicalProfile,
+    EgressCommand,
     EgressConfig,
     EgressSinkSpec,
     EgressSourcePlan,
@@ -742,6 +745,128 @@ class TestAutoStart:
         assert _pending_actions(store, "manual") == []
         assert _pending_actions(store, "dark") == []
         assert daemon.processed == ["manual"]
+
+    @pytest.mark.parametrize("terminal_action", ["stop", "drain"])
+    def test_disabled_channel_drains_terminal_command_without_executing_start(
+        self, tmp_path: Path, terminal_action: Literal["stop", "drain"]
+    ) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("disabled", enabled=False, auto_start=True))
+        store.write_state(EgressStateRow(channel_id="disabled", state="ON_AIR", updated_at=_NOW))
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="disabled",
+                action="start",
+                issued_at=_NOW,
+                issued_by="operator",
+                command_id="start-before-disable",
+            )
+        )
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="disabled",
+                action=terminal_action,
+                issued_at=_NOW + timedelta(seconds=1),
+                issued_by="operator",
+                command_id=f"{terminal_action}-after-disable",
+            )
+        )
+        start_attempts: list[str] = []
+
+        def source_plan(channel_id: str) -> EgressSourcePlan:
+            start_attempts.append(channel_id)
+            raise AssertionError("disabled start reached source preparation")
+
+        daemon = EgressDaemon(
+            store,
+            work_dir=tmp_path,
+            source_plan_provider=source_plan,
+        )
+        service = ChannelAutomationService(
+            store, daemon, lambda _cid: None, settings=ChannelAutomationSettings()
+        )
+
+        seen = service.run_once(now=_NOW)
+
+        assert seen == []
+        state = store.read_state("disabled")
+        assert state is not None and state.state == "STOPPED"
+        assert _pending_actions(store, "disabled") == []
+        assert start_attempts == []
+
+    def test_disabled_drain_wins_over_queued_reload_and_stays_supervised(
+        self, tmp_path: Path
+    ) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("disabled", enabled=False))
+        store.write_state(EgressStateRow(channel_id="disabled", state="ON_AIR", updated_at=_NOW))
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="disabled",
+                action="drain",
+                issued_at=_NOW,
+                issued_by="operator",
+                command_id="drain-before-reload",
+            )
+        )
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="disabled",
+                action="reload",
+                issued_at=_NOW + timedelta(seconds=1),
+                issued_by="operator",
+                command_id="reload-after-drain",
+            )
+        )
+        prepared: list[str] = []
+
+        def source_plan(channel_id: str) -> EgressSourcePlan:
+            prepared.append(channel_id)
+            raise AssertionError("disabled reload reached source preparation")
+
+        daemon = EgressDaemon(
+            store,
+            work_dir=tmp_path,
+            source_plan_provider=source_plan,
+        )
+
+        class _LiveProcess:
+            pid = 4242
+
+            def __init__(self) -> None:
+                self.returncode: int | None = None
+
+            def poll(self) -> int | None:
+                return self.returncode
+
+            def terminate(self) -> None:
+                self.returncode = 0
+
+        process = _LiveProcess()
+        daemon._processes["disabled"] = process
+        service = ChannelAutomationService(
+            store, daemon, lambda _cid: None, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)
+        state = store.read_state("disabled")
+        assert state is not None and state.state == "DRAINING"
+        assert _pending_actions(store, "disabled") == []
+        assert prepared == []
+        assert process.returncode is None
+
+        # Disabled channels must continue supervising an already accepted
+        # drain, without starting schedules or processing a rejected reload.
+        service.run_once(now=_NOW + timedelta(seconds=2))
+        state = store.read_state("disabled")
+        assert state is not None and state.state == "DRAINING"
+        assert process.returncode is None
+
+        process.returncode = 0
+        service.run_once(now=_NOW + timedelta(seconds=3))
+        state = store.read_state("disabled")
+        assert state is not None and state.state == "STOPPED"
+        assert prepared == []
 
 
 class TestSlateReplan:

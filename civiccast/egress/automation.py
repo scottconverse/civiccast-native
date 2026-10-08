@@ -1240,9 +1240,23 @@ class ChannelAutomationService:
         self._reconcile_dead_encoders_this_pass()
         seen: list[str] = []
         for config in self._store.list_configs():
-            if not config.enabled:
-                continue
             channel_id = config.channel_id
+            if not config.enabled:
+                # Disabled channels stay out of automation, but an explicit
+                # operator stop/drain must still reach the daemon. Do not run
+                # normal polls here: they can service crash-relaunch state.
+                pending_terminal_command = any(
+                    command.action in {"stop", "drain"}
+                    for command in self._store.peek_pending_commands(channel_id)
+                )
+                state = self._store.read_state(channel_id)
+                if pending_terminal_command:
+                    self._daemon.process_commands_only(channel_id)
+                elif state is not None and state.state == "DRAINING":
+                    # A graceful drain remains supervised until its worker exits,
+                    # but disabled channels never enter schedule/autostart logic.
+                    self._daemon.process_once(channel_id)
+                continue
             seen.append(channel_id)
             if self._alerts is not None:
                 self._alerts.begin_tick(channel_id)

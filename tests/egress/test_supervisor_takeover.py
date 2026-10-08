@@ -15,10 +15,14 @@ from pathlib import Path
 
 import pytest
 
+from civiccast.egress.automation import ChannelAutomationService, ChannelAutomationSettings
 from civiccast.egress.models import (
     EgressCommand,
+    EgressConfig,
+    EgressSinkSpec,
     EgressSourcePlan,
     EgressSourceSegment,
+    EgressStateRow,
     TakeoverSession,
 )
 from civiccast.egress.store import InMemoryEgressStore
@@ -158,6 +162,63 @@ def test_non_takeover_commands_delegate_to_the_daemon(tmp_path: Path) -> None:
     state = sup._store.read_state("public")
     assert state is not None
     assert state.state == "STOPPED"
+
+
+@pytest.mark.parametrize("override_action", ["takeover", "handback"])
+def test_disabled_drain_rejects_takeover_commands_without_restarting(
+    tmp_path: Path, override_action: str
+) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        EgressConfig(
+            channel_id="public",
+            enabled=False,
+            sinks=[EgressSinkSpec(kind="file", label="Proof", uri="build/public.ts")],
+            slate_message="Stand by.",
+        )
+    )
+    store.write_state(EgressStateRow(channel_id="public", state="ON_AIR", updated_at=_NOW))
+    store.enqueue_command(_command("drain"))
+    store.enqueue_command(_command(override_action))
+    strategy = _SwapStrategy()
+    sup = PlayoutSupervisor(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+        encoder_strategy=strategy,
+        takeover_audit_store=_FakeReader(_session()),
+    )
+    if override_action == "handback":
+        sup._live_takeover_plans["public"] = _live_plan()
+
+    class _LiveProcess:
+        pid = 4242
+
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def terminate(self) -> None:
+            self.returncode = 0
+
+    process = _LiveProcess()
+    sup._processes["public"] = process
+    service = ChannelAutomationService(
+        store, sup, lambda _channel_id: None, settings=ChannelAutomationSettings()
+    )
+
+    service.run_once(now=_NOW)
+
+    state = store.read_state("public")
+    assert state is not None and state.state == "DRAINING"
+    assert process.returncode is None
+    assert strategy.swaps == []
+    if override_action == "takeover":
+        assert "public" not in sup._live_takeover_plans
+    else:
+        assert sup._live_takeover_plans["public"] == _live_plan()
 
 
 def test_base_daemon_rejects_takeover_action(tmp_path: Path) -> None:
