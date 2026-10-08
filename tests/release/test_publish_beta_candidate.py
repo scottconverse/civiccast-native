@@ -882,7 +882,29 @@ def test_direct_physical_host_install_uses_host_evidence_without_sandbox_claims(
     assert "Three-channel Whistle/HLS/caption observation" not in notes
 
 
-@pytest.mark.parametrize("tamper", ["wrong-source", "wrong-manifest-source", "stale-output"])
+def test_direct_physical_host_accepts_runtime_status_without_channel_state(tmp_path, monkeypatch):
+    repo_root = _base_repo_root(tmp_path)
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, consumer_mode="physical-host"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    for snapshot_ref in receipt["evidence"]["host_three_channel_runtime"]["snapshots"]:
+        snapshot_path = Path(snapshot_ref["path"])
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        for channel in snapshot["channels"]:
+            channel.pop("state")
+        snapshot_path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+        snapshot_ref["sha256"] = m.sha256_file(snapshot_path)
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    monkeypatch.setattr(m, "run_command", _fake_command_factory())
+
+    assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, repo_root=repo_root)) == 0
+
+
+@pytest.mark.parametrize(
+    "tamper", ["wrong-source", "wrong-manifest-source", "stale-output", "contradictory-state"]
+)
 def test_direct_physical_host_refuses_unbound_or_stale_evidence(tmp_path, monkeypatch, tamper):
     kit_dir = tmp_path / "direct-kit"
     receipt_path, _ = _write_direct_consumer_receipt(
@@ -907,7 +929,7 @@ def test_direct_physical_host_refuses_unbound_or_stale_evidence(tmp_path, monkey
         install["after"]["app_payload_manifest_sha256"] = manifest_ref["sha256"]
         install_path.write_text(json.dumps(install, indent=2) + "\n", encoding="utf-8")
         install_ref["sha256"] = m.sha256_file(install_path)
-    else:
+    elif tamper == "stale-output":
         snapshots = evidence["host_three_channel_runtime"]["snapshots"]
         first_ref, second_ref = snapshots
         first_path = Path(first_ref["path"])
@@ -917,6 +939,13 @@ def test_direct_physical_host_refuses_unbound_or_stale_evidence(tmp_path, monkey
         second["channels"][0]["vtt_sha256"] = first["channels"][0]["vtt_sha256"]
         second_path.write_text(json.dumps(second, indent=2) + "\n", encoding="utf-8")
         second_ref["sha256"] = m.sha256_file(second_path)
+    else:
+        snapshot_ref = evidence["host_three_channel_runtime"]["snapshots"][1]
+        snapshot_path = Path(snapshot_ref["path"])
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        snapshot["channels"][0]["state"] = {"state": "STOPPED"}
+        snapshot_path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+        snapshot_ref["sha256"] = m.sha256_file(snapshot_path)
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     fake = _fake_command_factory()
     monkeypatch.setattr(m, "run_command", fake)

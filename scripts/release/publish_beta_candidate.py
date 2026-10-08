@@ -448,7 +448,12 @@ def _verify_physical_host_consumer(
             )
         for channel in channels:
             channel_id = channel["id"]
-            state = _record(channel.get("state"), label=f"{channel_id} channel state")
+            state_value = channel.get("state")
+            state_is_on_air = (
+                state_value is None
+                or _record(state_value, label=f"{channel_id} channel state").get("state")
+                == "ON_AIR"
+            )
             streams = channel.get("ffprobe_streams")
             codecs = (
                 {
@@ -470,7 +475,7 @@ def _verify_physical_host_consumer(
                 channel.get("caption_runtime_status"), label=f"{channel_id} caption status"
             )
             if (
-                state.get("state") != "ON_AIR"
+                not state_is_on_air
                 or codecs != {("video", "h264"), ("audio", "aac")}
                 or caption_status.get("state") != "within-capacity"
                 or not isinstance(playlist_age, (int, float))
