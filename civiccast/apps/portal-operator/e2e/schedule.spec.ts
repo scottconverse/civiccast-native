@@ -190,8 +190,8 @@ test.describe('schedule screen', () => {
     await expect(dialog).toBeVisible()
 
     // Mode picker — both modes are radios with accessible names.
-    await expect(dialog.getByRole('radio', { name: /Premiere/ })).toBeVisible()
-    await expect(dialog.getByRole('radio', { name: /Embargo/ })).toBeVisible()
+    await expect(dialog.getByRole('radio', { name: /^Premiere\b/ })).toBeVisible()
+    await expect(dialog.getByRole('radio', { name: /^Embargo\b/ })).toBeVisible()
 
     // No validated assets in the preview env → submit must be disabled.
     await expect(
@@ -205,8 +205,8 @@ test.describe('schedule screen', () => {
     const dialog = page.getByRole('dialog', { name: 'New scheduled item' })
     await expect(dialog).toBeVisible()
 
-    await dialog.getByRole('radio', { name: /Premiere/ }).press('ArrowRight')
-    await expect(dialog.getByRole('radio', { name: /Embargo/ })).toHaveAttribute(
+    await dialog.getByRole('radio', { name: /^Premiere\b/ }).press('ArrowRight')
+    await expect(dialog.getByRole('radio', { name: /^Embargo\b/ })).toHaveAttribute(
       'aria-checked',
       'true',
     )

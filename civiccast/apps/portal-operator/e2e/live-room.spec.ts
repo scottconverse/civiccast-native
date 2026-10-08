@@ -503,7 +503,7 @@ test.describe('operator live room', () => {
     await expect(page.getByText('Pre-flight ready')).toBeVisible()
 
     await page.getByRole('button', { name: 'Start Live Stream' }).click()
-    await expect(page.getByText('On air')).toBeVisible()
+    await expect(page.getByText('On air', { exact: true })).toBeVisible()
 
     await page.getByRole('radio', { name: /Council Chamber Encoder/ }).press('ArrowRight')
     await expect(page.getByRole('radio', { name: /Floor Camera NDI/ })).toHaveAttribute(
