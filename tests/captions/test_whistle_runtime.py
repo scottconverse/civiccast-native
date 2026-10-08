@@ -227,6 +227,67 @@ def test_failed_fallback_replays_retained_window_to_one_replacement(tmp_path):
     assert all(w.closed for w in workers)
 
 
+def test_failed_fallback_replacement_recovers_after_cooldown(tmp_path, monkeypatch, caplog):
+    from types import SimpleNamespace
+
+    import pytest
+
+    import civiccast.captions.whistle as whistle_module
+
+    now = [100.0]
+    monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    calls, workers = [], []
+    whisper_failures = iter((True, True, False, False))
+
+    def factory(engine):
+        fail = engine == "whistle" or next(whisper_failures)
+        worker = Worker(engine, calls, fail)
+        workers.append(worker)
+        return worker
+
+    r = WhistleRuntime(
+        weights=tmp_path / "w", library=tmp_path / "l", fallback_config={}, worker_factory=factory
+    )
+
+    with pytest.raises(TimeoutError, match="blocked native call"):
+        list(r.transcribe([chunk(index=1)]))
+
+    assert [call[0] for call in calls] == ["whistle", "whisper", "whisper"]
+    assert workers[0].closed and workers[1].closed
+
+    with pytest.raises(RuntimeError, match="cooldown"):
+        list(r.transcribe([chunk(index=2)]))
+    assert workers[2].closed
+    assert len(workers) == 3
+
+    now[0] += 29.9
+    with pytest.raises(RuntimeError, match="cooldown"):
+        list(r.transcribe([chunk(index=3)]))
+    assert len(workers) == 3
+
+    now[0] += 0.1
+    result = list(r.transcribe([chunk(index=4)]))
+    assert result[0].text == "fallback words"
+    assert workers[-1].engine == "whisper" and not workers[-1].closed
+    assert calls[-1][1] == "public-tap-000004"
+    assert "channel=public" in caplog.text
+    assert "chunk=public-tap-000001" in caplog.text
+    assert "phase=immediate-replay" in caplog.text
+    assert "exception=TimeoutError" in caplog.text
+    assert "message=blocked native call" in caplog.text
+    assert "fallback words" not in caplog.text
+
+    workers[-1].fail = True
+    recovered_again = list(r.transcribe([chunk(index=5)]))
+    assert recovered_again[0].text == "fallback words"
+    assert calls[-2][0] == calls[-1][0] == "whisper"
+    assert calls[-2][1] == calls[-1][1] == "public-tap-000005"
+    assert workers[-2].closed and not workers[-1].closed
+
+    r.close()
+    assert all(worker.closed for worker in workers)
+
+
 def test_shutdown_during_primary_creation_reaps_late_child(tmp_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor

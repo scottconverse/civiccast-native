@@ -26,6 +26,7 @@ from civiccast.captions.runtime import CaptionRuntime
 _LOG = logging.getLogger(__name__)
 WEIGHTS_SHA256 = "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb"
 LIBRARY_SHA256 = "de2e2c39cd311fbd9971fad4736abc329ed970653674c203e149c4ef27fd1c62"
+_FALLBACK_RETRY_COOLDOWN_SECONDS = 30.0
 
 
 class _SpeechWorker(Protocol):
@@ -288,10 +289,10 @@ class _SpeechProcess:
 
 
 class WhistleRuntime:
-    """Per-channel primary isolation; replay a failed window once to Whisper.
+    """Per-channel primary isolation with a sticky switch to Whisper fallback.
 
-    Fallback is sticky until runtime restart. It never retries a failing native
-    engine or emits partially decoded primary results before deciding fallback.
+    It never retries a failing native engine or emits partial primary results.
+    Failed fallback workers get one immediate replay, then a cooldown before retry.
     """
 
     channel_workers = 3
@@ -320,7 +321,7 @@ class WhistleRuntime:
         self._primary_lock = threading.Lock()
         self._closed = False
         self._primary_error: str | None = None
-        self._fallback_restarts = 0
+        self._fallback_retry_after = 0.0
 
     def on_cuda(self) -> bool:
         return False  # Whistle itself is always CPU, regardless of fallback.
@@ -341,25 +342,103 @@ class WhistleRuntime:
                 self._fallback = self._factory("whisper")
             return self._fallback
 
-    def _fallback_request(self, chunk: AudioChunk, vocabulary: CustomVocabulary | None) -> object:
+    def _fallback_request(
+        self, channel: str, chunk: AudioChunk, vocabulary: CustomVocabulary | None
+    ) -> object:
         with self._fallback_lock:
+            with self._guard:
+                if self._closed:
+                    raise RuntimeError("caption runtime has been closed")
+                fallback_missing = self._fallback is None
+                retry_after = self._fallback_retry_after
+            if fallback_missing and time.monotonic() < retry_after:
+                raise RuntimeError("Whisper fallback retry cooldown is active")
+
             try:
-                return self._fallback_worker().request(chunk, vocabulary)
-            except Exception:
-                with self._guard:
-                    if self._closed or self._fallback_restarts >= 1:
-                        _LOG.critical(
-                            "Whisper fallback unavailable; caption runtime restart required"
-                        )
-                        raise
-                    self._fallback_restarts += 1
-                    if self._fallback:
-                        self._fallback.close()
-                    self._fallback = None
-                _LOG.error(
-                    "Whisper fallback failed; replaying retained audio once to its bounded replacement"
+                worker = self._fallback_worker()
+            except Exception as startup_error:
+                return self._retry_fallback_once(
+                    channel, chunk, vocabulary, "startup", startup_error
                 )
-                return self._fallback_worker().request(chunk, vocabulary)
+
+            try:
+                result = worker.request(chunk, vocabulary)
+            except Exception as request_error:
+                return self._retry_fallback_once(
+                    channel, chunk, vocabulary, "request", request_error
+                )
+
+            with self._guard:
+                if self._closed:
+                    raise RuntimeError("caption runtime has been closed")
+                self._fallback_retry_after = 0.0
+            return result
+
+    def _retry_fallback_once(
+        self,
+        channel: str,
+        chunk: AudioChunk,
+        vocabulary: CustomVocabulary | None,
+        phase: str,
+        error: Exception,
+    ) -> object:
+        self._log_fallback_failure(channel, chunk, phase, error)
+        self._discard_fallback()
+        with self._guard:
+            if self._closed:
+                raise RuntimeError("caption runtime has been closed") from error
+
+        try:
+            replacement = self._fallback_worker()
+        except Exception as replacement_error:
+            self._cooldown_after_replacement_failure(
+                channel, chunk, "replacement-startup", replacement_error
+            )
+            raise
+
+        try:
+            result = replacement.request(chunk, vocabulary)
+        except Exception as replacement_error:
+            self._cooldown_after_replacement_failure(
+                channel, chunk, "immediate-replay", replacement_error
+            )
+            raise
+
+        with self._guard:
+            if self._closed:
+                raise RuntimeError("caption runtime has been closed")
+            self._fallback_retry_after = 0.0
+        return result
+
+    def _cooldown_after_replacement_failure(
+        self, channel: str, chunk: AudioChunk, phase: str, error: Exception
+    ) -> None:
+        self._log_fallback_failure(channel, chunk, phase, error)
+        self._discard_fallback()
+        with self._guard:
+            if self._closed:
+                raise RuntimeError("caption runtime has been closed") from error
+            self._fallback_retry_after = time.monotonic() + _FALLBACK_RETRY_COOLDOWN_SECONDS
+
+    def _discard_fallback(self) -> None:
+        with self._guard:
+            worker = self._fallback
+            self._fallback = None
+        if worker is not None:
+            worker.close()
+
+    @staticmethod
+    def _log_fallback_failure(
+        channel: str, chunk: AudioChunk, phase: str, error: Exception
+    ) -> None:
+        _LOG.error(
+            "Whisper fallback failed: channel=%s chunk=%s phase=%s exception=%s message=%s",
+            channel,
+            chunk.chunk_id,
+            phase,
+            type(error).__name__,
+            error,
+        )
 
     def _primary_request(
         self, channel: str, chunk: AudioChunk, vocabulary: CustomVocabulary | None
@@ -441,7 +520,7 @@ class WhistleRuntime:
                     with self._guard:
                         if self._closed:
                             raise RuntimeError("caption runtime has been closed") from exc
-                    payload = self._fallback_request(chunk, vocabulary)
+                    payload = self._fallback_request(channel, chunk, vocabulary)
                     fallback_hypotheses = cast(list[dict[str, object]], payload)
                     results = [
                         CaptionHypothesis.model_validate(result) for result in fallback_hypotheses
