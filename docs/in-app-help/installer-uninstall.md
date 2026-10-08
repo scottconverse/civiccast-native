@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Uninstall (Windows Settings, Apps; NSIS uninstaller dialogs and details list)
 
 Paths relative to `civiccast/apps/installer/src-tauri/`. Hooks = `nsis-hooks-bootstrap.nsh`; Lang = `nsis-lang-native-english.nsh`.

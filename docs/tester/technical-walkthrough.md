@@ -1,9 +1,15 @@
 # Technical Tester Walkthrough
 
+> **Historical Beta 10 walkthrough.** Beta 11 is the current release. Use the
+> [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
+> and [Beta 11 verification record](../releases/v1.0.0-beta.11-verification.md)
+> for current package and operating guidance; the release-specific checks below
+> describe Beta 10 only.
+
 ## Release State
 
-`v1.0.0-beta.10` is the current published release (published 2026-10-02),
-recorded as `current` in `release-truth.yaml`; use only the exact release named
+`v1.0.0-beta.10` was the current published release when this walkthrough was
+written (published 2026-10-02); use only the exact release named
 in the handoff. It is `setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`
 + `setup.exe.sidecar.json`, published as a GitHub pre-release (a "Beta
 Candidate", not a production release) at
@@ -17,7 +23,7 @@ upgrade-baseline kit.
 See [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for
 the authored release-state record.
 
-`v1.0.0-beta.10` is still a beta candidate. Gate A (automated station
+Beta 10 was a beta candidate. Gate A (automated station
 acceptance): the clean-install lane passed, 10 of 10 criteria, run locally in
 Windows Sandbox on 2026-10-02 against exactly this build; the cross-version
 (upgrade) lane and the download-only lane were not run (waived by the owner for
@@ -25,7 +31,7 @@ this publication). The human/station acceptance pass is not done. Its lab
 checks do not replace testing the exact installer you downloaded. See
 [`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)
 and
-[Known Limitations](known-limitations.md#live-captions-current-release-and-earlier-evidence)
+[Known Limitations](known-limitations.md#historical-beta-10-live-caption-evidence)
 for the current captions evidence boundary.
 
 Use this path if you are validating the installer package, runtime bootstrap,

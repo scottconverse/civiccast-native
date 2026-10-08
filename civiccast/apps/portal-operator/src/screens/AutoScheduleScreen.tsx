@@ -751,7 +751,7 @@ function RulesSection({ canWrite, canRead }: { canWrite: boolean; canRead: boole
         <div>
           <h2 className="m-0 text-base font-semibold">Auto-schedule rules</h2>
           <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            Each rule fills a daypart from a saved search. Simulate to preview; rules feed the commit gate before air.
+            Each rule fills a daypart from a saved search. Simulate to preview; compiling publishes the selected picks directly. In the standard configuration, enabled rules also compile hourly.
           </p>
         </div>
         {canWrite && (
@@ -822,7 +822,7 @@ function CompileBar({ canWrite }: { canWrite: boolean }) {
         <div>
           <h2 className="m-0 text-base font-semibold">Compile schedule</h2>
           <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            Run every enabled rule and add its picks to the schedule. The new items still need an operator commit before they air.
+            Run every enabled rule. Compilation publishes its selected picks directly, without another operator approval.
           </p>
         </div>
         <button type="button" disabled={compile.isPending} onClick={() => compile.mutate()} className="rounded-md px-3 py-2 text-sm font-semibold" style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}>
@@ -836,7 +836,7 @@ function CompileBar({ canWrite }: { canWrite: boolean }) {
       )}
       {report && (
         <div role="status" className="rounded-md p-2 text-xs" style={{ background: 'var(--cc-ok-soft)', color: 'var(--cc-ink)' }}>
-          Added {report.items_created ?? 0} scheduled items across {report.results?.length ?? 0} rules.
+          Published {report.items_created ?? 0} schedule items across {report.results?.length ?? 0} rules.
         </div>
       )}
     </section>

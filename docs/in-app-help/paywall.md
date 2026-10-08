@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Subscription paywall (nav id: paywall)
 
 Sidebar: Setup > **Paywall**; page H1 "Subscription paywall". Manual authority: `docs/manual/src/22-configuration.md` section "Configure the Paywall" (`#configuration-paywall`), `16-station-business.md` ("Turn on paid access") and `15-publishing.md` ("The paywall: optional paid access"). The manual tells readers to leave the paywall off in beta.10.

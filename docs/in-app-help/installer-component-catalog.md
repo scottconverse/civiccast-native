@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Component catalog: what each piece is called on screen and on disk (reference; no screen of its own)
 
 Paths relative to `civiccast/apps/installer/`. CC = `src/components-catalog.ts`; AC = `src-tauri/src/acquisition_catalog.rs`; PS = `src-tauri/src/native_pack_staging.rs`; NA = `src-tauri/src/native_activation.rs`; AF = `src/AcquisitionFlow.tsx`; AP = `src/acquisition-progress.ts`; Hooks = `src-tauri/nsis-hooks-bootstrap.nsh`.

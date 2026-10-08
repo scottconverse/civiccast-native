@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Submit a program (form at the bottom of Home, `#/`)
 
 Paths are under `civiccast/apps/portal-public/`. Line numbers are `src/screens/HomeScreen.tsx` unless noted. Staff review these on the Contributors screen (manual chapter 12).

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Review queue (nav id: review)
 
 Console group: Review Records. The page label on screen is "Caption review". Spec for the in-app help of the caption review queue. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`.

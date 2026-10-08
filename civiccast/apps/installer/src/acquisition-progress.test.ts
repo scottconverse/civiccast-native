@@ -472,7 +472,7 @@ describe("recommendationSentence honesty (G011.1)", () => {
     });
     const sentence = recommendationSentence(hw);
     expect(sentence).not.toMatch(/no dedicated graphics card/);
-    expect(sentence).toMatch(/graphics card is not one CivicCast can run/i);
+    expect(sentence).toMatch(/does not meet the hardware tier/i);
   });
 });
 

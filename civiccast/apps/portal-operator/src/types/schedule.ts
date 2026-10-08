@@ -35,12 +35,12 @@ export const MODE_META: Record<ScheduleMode, ModeMeta> = {
   premiere: {
     label: 'Premiere',
     description:
-      'Publish a recorded asset to the public portal at a scheduled time.',
+      'Schedule a recording, then publish it to residents separately before it appears on the portal.',
   },
   embargo: {
     label: 'Embargo',
     description:
-      'Approve now; release becomes public at the embargo time.',
+      'Embargo release is unavailable in this build. Use Premiere, then publish the scheduled item to residents.',
   },
 }
 

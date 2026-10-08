@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Control Room — setup (nav id: controlroomsetup)
 
 Sidebar: Setup > **Control Room Setup**; page H1 "Control Room — setup". Manual authority: `docs/manual/src/22-configuration.md` section "Set up the Control Room" (`#configuration-controlroom`).

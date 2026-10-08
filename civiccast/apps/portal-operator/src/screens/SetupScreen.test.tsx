@@ -128,10 +128,10 @@ describe('CostForecastPanel', () => {
     ).toBeTruthy()
   })
 
-  it('links to the manual\'s CDN cost estimate section', () => {
+  it('links to the manual\'s CDN options section', () => {
     renderCostForecastPanel()
-    const link = screen.getByRole('link', { name: /read more in the manual/i })
-    expect(link.getAttribute('href')).toBe('/help#cdn-cost-estimate')
+    const link = screen.getByRole('link', { name: /read about CDN options in the manual/i })
+    expect(link.getAttribute('href')).toBe('/help#cdn-and-provider-options')
   })
 
   it('still computes storage and bandwidth GB from the entered numbers', () => {

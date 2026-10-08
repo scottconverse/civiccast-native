@@ -444,9 +444,9 @@ export function ProgramGuideScreen() {
         </div>
         <h1 className="m-0 text-2xl font-semibold tracking-tight">Program guide</h1>
         <p className="mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          Place recordings on a channel&apos;s recurring guide. The automation
-          engine airs scheduled entries and falls back to filler between
-          programs. Times shown in your browser timezone.
+          Place recordings on a channel&apos;s recurring guide. Only Published entries
+          are scheduled to air; the engine uses filler between programs. Times are
+          shown in your browser timezone.
         </p>
       </header>
 
@@ -541,7 +541,7 @@ export function ProgramGuideScreen() {
                 const display = slot.title_override?.trim() || slot.asset_id
                 setPendingConfirm({
                   title: `Disable "${display}"?`,
-                  body: 'All future airings from this recurring slot are cancelled from the guide immediately. Past and in-progress airings are unaffected, but nothing new will schedule until the slot is re-enabled.',
+                  body: 'All future airings from this recurring slot are cancelled from the guide immediately. Past and in-progress airings are unaffected. To schedule this program again, add a new slot with Add to guide.',
                   confirmLabel: 'Disable slot',
                   run: () => disableMutation.mutate(slot),
                 })

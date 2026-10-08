@@ -153,7 +153,7 @@ export function DisabledPanel({ status }: { status: ActivityPubStatusResponse })
         follow this station and see when a new meeting is published, the same way someone
         might follow a page on a social network. <strong>Most stations do not need this</strong>{' '}
         and can leave it off.{' '}
-        <Link to={manualLink('provider-federation')} style={{ color: 'var(--cc-brand)' }}>
+        <Link to={manualLink('federation-activitypub')} style={{ color: 'var(--cc-brand)' }}>
           Read more in the manual
         </Link>
         .
@@ -647,7 +647,8 @@ export function ActivityPubScreen() {
           />
           {mutation.error && (
             <div role="alert" className="mx-6 mb-6 rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
-              Federation moderation failed. Check the API logs, then retry the follower action.
+              Federation moderation failed. Ask your station administrator to check your access and
+              the CivicCast service, then retry the follower action.
             </div>
           )}
         </>

@@ -6,11 +6,15 @@ import { manualLink } from './manual-link'
 
 describe('manualLink', () => {
   it('builds a /help#<id> href', () => {
-    expect(manualLink('provider-cloudflare-r2')).toBe('/help#provider-cloudflare-r2')
+    expect(manualLink('cdn-and-provider-options')).toBe('/help#cdn-and-provider-options')
   })
 
-  it('builds a distinct href per section id', () => {
-    expect(manualLink('glossary')).toBe('/help#glossary')
-    expect(manualLink('where-recordings-live')).toBe('/help#where-recordings-live')
+  it('normalizes legacy section ids to current manual anchors', () => {
+    expect(manualLink('glossary')).toBe('/help#app-glossary')
+    expect(manualLink('where-recordings-live')).toBe('/help#configuration-storage')
+    expect(manualLink('provider-youtube')).toBe('/help#publishing-providers')
+    expect(manualLink('provider-cloudflare-r2')).toBe('/help#cdn-and-provider-options')
+    expect(manualLink('provider-federation')).toBe('/help#federation-activitypub')
+    expect(manualLink('report-without-github')).toBe('/help#report-a-beta-issue')
   })
 })

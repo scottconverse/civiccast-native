@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Link, useLocation } from 'react-router'
+import { Link, useHref, useLocation } from 'react-router'
 import { ApiError, getManual } from '../api/client'
 import { manualLink } from './manual-link'
 import type { ManualTocEntry } from '../types/api.generated'
@@ -45,6 +45,7 @@ function TocList({ entries, activeId }: { entries: ManualTocEntry[]; activeId: s
 
 export function ManualScreen() {
   const location = useLocation()
+  const manualHref = useHref({ pathname: location.pathname, search: location.search })
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [filter, setFilter] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -62,6 +63,32 @@ export function ManualScreen() {
     if (!needle) return entries
     return entries.filter((entry) => entry.title.toLowerCase().includes(needle))
   }, [toc, filter])
+
+  // The manual body is rendered HTML, so its internal fragment anchors do not
+  // pass through React Router's Link component. Rewrite real section links in
+  // the HTML value itself before injection. A DOM effect mutating the rendered
+  // anchors is insufficient: setting the active section rerenders this screen
+  // and React restores the original raw hrefs, breaking copied/open-in-new-tab
+  // links under HashRouter.
+  const manualHtml = useMemo(() => {
+    const html = manualQuery.data?.html
+    if (!html) return ''
+    const parsed = new DOMParser().parseFromString(html, 'text/html')
+    const content = parsed.body
+    for (const anchor of content.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')) {
+      const href = anchor.getAttribute('href')
+      if (!href || href.length < 2) continue
+      let id = href.slice(1)
+      try {
+        id = decodeURIComponent(id)
+      } catch {
+        continue
+      }
+      const target = parsed.getElementById(id)
+      if (target && content.contains(target)) anchor.setAttribute('href', `${manualHref}${href}`)
+    }
+    return content.innerHTML
+  }, [manualHref, manualQuery.data?.html])
 
   // Deep-link support: /help#<section-id>, e.g. a "Read more in the manual"
   // link from a provider setup card, or a TocList click (which navigates
@@ -95,10 +122,8 @@ export function ManualScreen() {
         </div>
         <h1 className="m-0 text-2xl font-semibold tracking-tight">Operator manual</h1>
         <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-          This is the same manual that ships as docs/USER-MANUAL.md, rendered here so it works
-          with no internet connection. Signing in, getting a video in, packaging, publishing,
-          where recordings live, and a plain-language glossary of provider jargon are all in
-          here.
+          The full CivicCast manual is available here offline. Use the contents to find guidance
+          on signing in, meetings, publishing, and troubleshooting.
         </p>
       </header>
 
@@ -110,7 +135,7 @@ export function ManualScreen() {
 
       {manualQuery.error && (
         <div role="alert" className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
-          The manual could not load. {apiMessage(manualQuery.error, 'Try again.')}
+          The manual could not load. {apiMessage(manualQuery.error, 'The manual request failed.')} Reload this page to try again.
         </div>
       )}
 
@@ -122,13 +147,13 @@ export function ManualScreen() {
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
           >
             <label className="grid gap-1 text-xs" htmlFor="manual-filter">
-              <span className="sr-only">Filter manual sections</span>
+              <span className="sr-only">Filter sections by title</span>
               <input
                 id="manual-filter"
                 type="search"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}
-                placeholder="Search this manual"
+                placeholder="Filter by section title"
                 className="rounded-md px-3 py-2 text-sm"
                 style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
               />
@@ -151,7 +176,7 @@ export function ManualScreen() {
             // allowlist sanitizer (civiccast/docsite/render.py::sanitize_html)
             // before it was committed -- see docs/docsite-sync.md. It is not
             // user input and is not sanitized again client-side.
-            dangerouslySetInnerHTML={{ __html: manualQuery.data.html }}
+            dangerouslySetInnerHTML={{ __html: manualHtml }}
           />
         </div>
       )}

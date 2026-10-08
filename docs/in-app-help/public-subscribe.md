@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Follow new recordings: email and feeds (section at the bottom of Home, `#/`)
 
 Paths are under `civiccast/apps/portal-public/`. Line numbers are `src/screens/HomeScreen.tsx` unless noted. Server texts are in `civiccast/subscribe/service.py` and `civiccast/subscribe/router.py`.

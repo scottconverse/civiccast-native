@@ -33,14 +33,6 @@ You should see the **Portal** row change to "Succeeded". The card's state become
 
 At the top of the screen, tiles count your recordings: Total, Draft, Portal live, Archive verified, Degraded and Needs action. Each card shows three facts: **Canonical** (Portal public or Portal pending), **Archive** and **Published** (the date, or "Not public yet").
 
-![The Publish dashboard with a recording card. The Portal row is ticked, and the Approve and Publish selected button sits below the surface rows.](manual/images/operator-publish-dashboard.png){width=90%}
-
-*Figure: the Publish dashboard.*
-
-![The confirmation dialog asking whether to publish a recording to residents.](manual/images/operator-publish-confirm.png){width=70%}
-
-*Figure: the publish confirmation dialog.*
-
 ### What happens behind the button
 
 When you approve the Portal row, CivicCast does these things in this order:
@@ -56,7 +48,7 @@ When you approve the Portal row, CivicCast does these things in this order:
 
 Each card has nine rows. Each row shows a status dot, a name, badges (**Required**, an approval word, or **Coming in a future release**), a line such as "archive / Succeeded", a message and a **Next step**.
 
-| Row | What it does in beta.10 |
+| Row | What it does in beta.11 |
 | --- | --- |
 | Portal | Makes the recording public on the resident portal, and queues captions. |
 | Internet Archive | With the default setting nothing is sent; the row shows the note "Simulated — nothing was actually archived." A real upload happens only if IT has switched the real connection on. |
@@ -84,13 +76,13 @@ If a required archive copy cannot be made, a publish operator can skip it with a
 
 When a row shows **Failed**, read its message and **Next step**, fix the cause, then click **Retry this surface** on that row. A successful retry of the Portal row also queues captions.
 
-> **Known issue (beta.10):** If you approve a second time, CivicCast rebuilds the whole run. Any step you did not tick again goes back to "Not run yet", including the Portal row, and the card can read **Draft** and "Portal pending" even though the recording is still public. The screen's own text says archive and outside steps are opt-in "this time", which invites exactly this. Workaround: tick every step you want, all in one approval. To redo a single step, use **Retry this surface** on a Failed row instead of approving again: a retry changes only that row. If the Portal row has gone back to "Not run yet", its checkbox appears again; make sure it is ticked along with your other steps and approve again.
+> **Known issue (beta.11):** If you approve a second time, CivicCast rebuilds the whole run. Any step you did not tick again goes back to "Not run yet", including the Portal row, and the card can read **Draft** and "Portal pending" even though the recording is still public. The screen's own text says archive and outside steps are opt-in "this time", which invites exactly this. Workaround: tick every step you want, all in one approval. To redo a single step, use **Retry this surface** on a Failed row instead of approving again: a retry changes only that row. If the Portal row has gone back to "Not run yet", its checkbox appears again; make sure it is ticked along with your other steps and approve again.
 
-> **Known issue (beta.10):** The "Archive verified" state and the card text "IA and local NAS verified" (IA is the Internet Archive) can appear when the copies were simulated or overridden. Read the row-level note. A row that says "Simulated — nothing was actually archived. This is not the legal archive copy." has not archived anything. The same is true of YouTube: with the default setting the YouTube rows can say "YouTube Live RTMPS fanout proof succeeded." although nothing was sent to YouTube (RTMPS fanout is the live-stream hand-off), and the rows carry no "Simulated" note. The card's **Readiness check** list does warn that the YouTube preflight "is simulated (mock provider)".
+> **Known issue (beta.11):** The "Archive verified" state and the card text "IA and local NAS verified" (IA is the Internet Archive) can appear when the copies were simulated or overridden. Read the row-level note. A row that says "Simulated — nothing was actually archived. This is not the legal archive copy." has not archived anything. The same is true of YouTube: with the default setting the YouTube rows can say "YouTube Live RTMPS fanout proof succeeded." although nothing was sent to YouTube (RTMPS fanout is the live-stream hand-off), and the rows carry no "Simulated" note. The card's **Readiness check** list does warn that the YouTube preflight "is simulated (mock provider)".
 
-> **Known issue (beta.10):** If an approval stops with an error, the screen says "Nothing else was published". That is not always true. Steps that finished before the problem stay published. Check each row.
+> **Note:** If publishing stops, the message says some earlier steps may already be published. Check each surface status before retrying, and retry only the failed surfaces.
 
-> **Known issue (beta.10):** The Publish screen always records the person as "Operator dashboard", not your name, in its audit trail. Do not promise per-person publishing records.
+> **Known issue (beta.11):** The Publish screen always records the person as "Operator dashboard", not your name, in its audit trail. Do not promise per-person publishing records.
 
 > **Warning:** Uploads to the Internet Archive and YouTube, once real, cannot be taken back from CivicCast.
 
@@ -117,7 +109,7 @@ What you set:
 
 The **Decision audit** at the bottom lists the last 8 allow or block decisions with **Refresh**.
 
-> **Known issue (beta.10):** **Access tier** does not stop anyone from watching a video. The setting is read in only three places: the podcast feed, the app catalog, and a public "evaluate" service. The resident portal's video player and the video file server never read it. Choosing **Invite only** or **Authenticated** does not put a gate in front of the Watch page. Residents do not sign in on the portal for playback. Do not rely on this screen to restrict a recording. Use **Remove from portal** to withdraw a recording instead.
+> **Known issue (beta.11):** **Access tier** does not stop anyone from watching a video. The setting is read in only three places: the podcast feed, the app catalog, and a public "evaluate" service. The resident portal's video player and the video file server never read it. Choosing **Invite only** or **Authenticated** does not put a gate in front of the Watch page. Residents do not sign in on the portal for playback. Do not rely on this screen to restrict a recording. Use **Remove from portal** to withdraw a recording instead.
 
 Exactly what is enforced today:
 
@@ -130,17 +122,13 @@ Exactly what is enforced today:
 | Access tier in app listings | The tier is copied into the app catalog as information. We could not confirm that any app enforces it. |
 | Decision audit | Fills only when something asks the policy service for a decision, which today is the podcast feed. It usually stays empty ("No playback decisions yet."). |
 
-![The Playback policy screen with the policy target, access tier, preroll and decision audit panels.](manual/images/operator-playback-policy.png){width=90%}
-
-*Figure: the Playback policy screen.*
-
 ## The paywall: optional paid access
 
 Some stations may want some recordings behind a paid subscription. The **Paywall** screen is where a setup administrator configures it. It is off by default, and when off everything is public. It sits in the Setup part of the menu and is visible only to setup administrators. Everyone else sees "Forbidden — the subscription paywall is a setup-admin surface. Ask your station admin for access."
 
 The screen has three cards: **Config** (the **Enable paywall** box, a provider, a signing secret), **Tiers** (plans that map to prices you create yourself in Stripe, a payment company) and **Comp access grants** (free passes you give to an email address).
 
-> **Known issue (beta.10):** Treat the Paywall as not ready for live use. In the code we read:
+> **Known issue (beta.11):** Treat the Paywall as not ready for live use. In the code we read:
 >
 > - Turning it on does not select particular recordings. The Watch page asks every resident for a pass on every recording.
 > - The video file itself is not protected. The gate is a screen shown in front of the player.
@@ -163,7 +151,7 @@ The portal needs no sign-in. It is English only and always shows a dark theme. A
 
 *Figure: Home on a phone.*
 
-> **Known issue (beta.10):** **Report a beta issue** opens the staff console's help page in a new tab, not a page written for residents. The text under it, "Do not include passwords, recovery codes, staff tokens, or private meeting material in reports.", is written for staff. The portal has no help page, no privacy statement, and no contact details for the station.
+> **Known issue (beta.11):** **Report a beta issue** opens the staff console's help page in a new tab, not a page written for residents. The text under it, "Do not include passwords, recovery codes, staff tokens, or private meeting material in reports.", is written for staff. The portal has no help page, no privacy statement, and no contact details for the station.
 
 ### Home and Live now
 
@@ -185,7 +173,7 @@ Home has these parts, top to bottom:
 
 If nothing at all is posted the page says "Nothing is posted yet. Check back after the station schedules a premiere or publishes a recording." If a part cannot load, an amber list "Some portal sections need attention" says which. If all three fail the page says "The public portal could not load right now. Refresh the page, then contact the station if the problem continues."
 
-> **Known issue (beta.10):** The emergency notice on Home appears only when the page address has `?emergency=1` added. A resident browsing normally never sees it. Do not rely on the portal Home page to show emergency alerts.
+> **Known issue (beta.11):** The emergency notice on Home appears only when the page address has `?emergency=1` added. A resident browsing normally never sees it. Do not rely on the portal Home page to show emergency alerts.
 
 ### Recordings: search and filters
 
@@ -225,10 +213,6 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 
 **Agenda chapters.** If staff published an agenda for the meeting, an **Agenda** card sits beside the video (below it on a phone). It lists the items by number, title and time. Click an item with a time and the video jumps there and plays. An item with no time shows a dash and cannot be clicked. If the agenda has a document, an **Agenda document** link opens it in a new tab, and a PDF may show in the card. If there is no agenda, nothing is shown. The agenda is the only chapter feature: the player has no chapter marks on its timeline.
 
-![A recording's Watch page with captions and the agenda beside the video.](manual/images/portal-watch-captions-agenda.png){width=90%}
-
-*Figure: Watch page with captions and an agenda.*
-
 **Errors.** A recording that is not public shows "Recording not found" and "This recording does not exist or is no longer published. Browse the archive for the current recordings." Other failures show "This recording could not be loaded right now. Try again, then contact the station if the problem continues." with **Retry**. If the video cannot play, the player says one of: "Network error while loading the video. Check your connection and try again.", "The video could not be played. The stream may be unavailable." or, for an old browser, "Your browser does not support HLS playback. Please try a recent version of Chrome, Firefox, Safari, or Edge." (HLS is the streaming format the portal uses.) The player has no retry button; reload the page.
 
 > **Note:** The share link uses the address the resident used to reach the portal. If your station is reached by an inside address, a copied link will not work for people outside.
@@ -237,11 +221,7 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 
 Only if a setup administrator has turned the paywall on. The video is replaced by a gate. While it checks, a small label says "Checking access…". The gate shows "Subscription required", a reason line, a **Sign in by email** form with **Email me a sign-in link**, a "New here?" block with a plan list and **Subscribe**, and "Already signed in as {email}? Switch email".
 
-In beta.10 the likely sequence is: the resident enters an email and clicks the link button and sees "Check your inbox for a link." No email arrives. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall Known issue above.
-
-![The subscription gate shown in place of the video on a Watch page.](manual/images/portal-paywall-gate.png){width=80%}
-
-*Figure: the subscription gate.*
+In beta.11 the likely sequence is: the resident enters an email and clicks the link button and sees "Check your inbox for a link." No email arrives. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall Known issue above.
 
 ### Subscribing to new recordings
 
@@ -249,7 +229,7 @@ At the bottom of Home is **Follow new recordings**. It offers an **Email address
 
 If a resident types an address and clicks **Subscribe**, a result box says "Subscription is waiting for confirmation." and "Open the confirmation link sent to this address." The small print says email uses a confirm step and a one-click unsubscribe link and carries no tracking pixels.
 
-> **Known issue (beta.10):** Subscribing does not work end to end.
+> **Known issue (beta.11):** Subscribing does not work end to end.
 >
 > - The signup is always for a channel named `government`, and both feed links point at that name. A station with no channel by that name gets feeds for nothing.
 > - Unless IT has switched on a real mail connection, the confirmation email goes to a placeholder mailbox that never leaves the station computer.
@@ -257,7 +237,7 @@ If a resident types an address and clicks **Subscribe**, a result box says "Subs
 > - Even when a subscriber confirms, nothing sends them a notice when a recording is published. The Publish screen's **Subscriber notifications** row is marked "Coming in a future release".
 > - The **Channel RSS feed** is a valid but empty feed. The **Podcast RSS feed** lists episodes only if some were created, and the Podcast step on Publish is not available yet.
 >
-> Do not promise residents email alerts or working feeds in beta.10. The result box may also show a link labeled "Test one-click unsubscribe", which is a testing control.
+> Do not promise residents email alerts or working feeds in beta.11. The result box may also show a link labeled "Test one-click unsubscribe", which is a testing control.
 
 > **For IT staff:** Mail delivery is chosen with the provider setting `CIVICCAST_PROVIDER_MAIL` (default is the local placeholder). See Part II (integrations chapter).
 

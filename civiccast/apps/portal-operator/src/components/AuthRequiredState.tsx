@@ -5,9 +5,8 @@ export function AuthRequiredState({ error, context = 'staff identity' }: { error
       className="rounded-md p-3 text-sm"
       style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)' }}
     >
-      Could not verify your {context} ({apiMessage(error, 'request failed')}). Sign in again from
-      the CivicCast installer handoff or ask a setup admin for a fresh operator-console link, then
-      retry once the local API is running.
+      Could not verify your {context} ({apiMessage(error, 'request failed')}). Go to First Setup and
+      use Admin sign-in with your admin username and password, then retry.
     </div>
   )
 }

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Facility (nav id: facility)
 
 Console group: Run Meeting. The page heading reads "Facility router". Spec written against beta.10. Paths are under `civiccast/apps/portal-operator/src/` unless they start with `civiccast/`. Authority: `docs/manual/src/13-running-meeting.md` ("Preview a router take (Facility)") and `ops/docs-sprint/inventory/screens/facility.md`. Line numbers re-checked in the .tsx.

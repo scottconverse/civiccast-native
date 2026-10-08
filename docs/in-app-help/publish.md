@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Publish (nav id: publish)
 
 Console group: Publish. The page heading on screen is "Publish dashboard". Spec for the in-app help of the Publish screen. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`; line numbers are in `screens/PublishDashboardScreen.tsx` unless stated.

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # CG Designer (nav id: cgdesigner)
 
 Console group: Run Meeting. The page heading reads "CG Board Designer"; the menu label is "CG Designer". Spec written against beta.10. Paths are under `civiccast/apps/portal-operator/src/screens/` unless they start with `civiccast/`. Authority: `docs/manual/src/13-running-meeting.md` ("Design the community board (CG Designer)") and `ops/docs-sprint/inventory/screens/cgdesigner.md`. Line numbers re-checked in `CgBoardDesignerScreen.tsx`.

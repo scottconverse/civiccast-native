@@ -1,19 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 // Copyright (c) The CivicCast Authors
 
-// F-06 (rewalk-dd7f835f): two adjacent first-run screens made opposite claims
-// about the same engine. Screen 1: "This station's graphics card can run the
-// highest-quality caption engine in real time. We've selected it for you."
-// Screen 2, one click later, on the row for that same engine: "too slow for
-// live captioning on this hardware."
-//
-// The reason they could disagree is that they did not share a fact. The
-// sentence was computed from the probed caption tiers; the row's explanation
-// was a hardcoded string in components-catalog.ts that knows nothing about
-// the machine, so no amount of care on either side could keep them in
-// agreement. These tests pin the single decision both surfaces read, and pin
-// the property that actually matters to an operator: the two never contradict
-// each other, on any hardware, whether or not the large engine is obtainable.
+// Keep first-run installer guidance aligned with the shipped native live
+// caption path: Whistle is the CPU primary and Whisper is the fallback.
 //
 // No JSX (plain `.ts`, not `.tsx`) -- vitest.config.ts globs only
 // `src/**/*.test.ts`; see AcquisitionFlow.test.ts's header.
@@ -59,17 +48,7 @@ function tiers(capable: RecommendedCaptionTier, installed: RecommendedCaptionTie
   return { hardware_capable_caption_tier: capable, recommended_caption_tier: installed };
 }
 
-/** "This machine can run the quality engine while the meeting is happening." */
-function claimsItRunsLiveHere(text: string): boolean {
-  return /(can|could) run (it|the (higher|highest)-quality caption engine)[^.]*\b(live|in real time)\b/i.test(text);
-}
-
-/** "This machine cannot keep up with it during a meeting." */
-function claimsItIsTooSlowForLive(text: string): boolean {
-  return /too slow for live/i.test(text);
-}
-
-describe("F-06 as the operator saw it: two adjacent screens, rendered", () => {
+describe("installer caption guidance as the operator sees it", () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -93,9 +72,7 @@ describe("F-06 as the operator saw it: two adjacent screens, rendered", () => {
     return container.textContent ?? "";
   }
 
-  it("does not say the card runs the quality engine in real time and then that it is too slow for live", () => {
-    // The literal walkthrough sequence: a large-v3-capable station, Continue,
-    // and the row for the very engine just promised.
+  it("identifies Whistle as the live primary and Large Whisper as optional fallback", () => {
     const hardware = station(tiers("large-v3", "large-v3"));
 
     const banner = render(
@@ -120,56 +97,32 @@ describe("F-06 as the operator saw it: two adjacent screens, rendered", () => {
       )?.textContent ?? "";
 
     expect(largeRow).not.toBe("");
-    expect(claimsItRunsLiveHere(bannerText) && claimsItIsTooSlowForLive(largeRow)).toBe(false);
-  });
-});
-
-describe("F-06: the machine-check sentence and the large-engine row cannot contradict each other", () => {
-  it("does not both promise real-time quality captions and call the same engine too slow for live", () => {
-    // The exact walkthrough shape: a large-v3-capable station, with the
-    // engine obtainable so the congratulating sentence is the one shown.
-    const hardware = station(tiers("large-v3", "large-v3"));
-    const banner = recommendationSentence(hardware, CATALOG_WITH_LARGE);
-    const row = largeCaptionEngineExplanation(captionEngineDecision(hardware, CATALOG_WITH_LARGE));
-
-    expect(claimsItRunsLiveHere(banner)).toBe(true);
-    expect(claimsItIsTooSlowForLive(row)).toBe(false);
-    expect(claimsItIsTooSlowForLive(`${banner} ${row}`)).toBe(false);
+    expect(bannerText).toMatch(/Whistle remains the CPU primary for live captions/i);
+    expect(bannerText).toMatch(/Whisper fallback/i);
+    expect(largeRow).toMatch(/Whistle remains the CPU primary for live captions/i);
+    expect(largeRow).toMatch(/Whisper fallback/i);
+    expect(`${bannerText} ${largeRow}`).not.toMatch(/Large Whisper[^.]*primary for live captions/i);
   });
 
-  it("says the engine is too slow here only when this station really cannot run it live", () => {
-    const slowStation = station(tiers("floor", "floor"));
-    const row = largeCaptionEngineExplanation(captionEngineDecision(slowStation, CATALOG_WITH_LARGE));
-    expect(claimsItIsTooSlowForLive(row)).toBe(true);
-    expect(claimsItRunsLiveHere(recommendationSentence(slowStation, CATALOG_WITH_LARGE))).toBe(false);
-  });
-
-  it("derives the row's explanation from the hardware fact, not from a fixed string", () => {
-    // The structural half of the fix. If the row copy is static, these two
-    // are byte-identical -- which is precisely how a screen that knew the
-    // station could run the engine live sat next to a row asserting it could
-    // not. Asserted against the REAL catalog, so it holds in the shipped
-    // release as well as in the obtainable-large future.
+  it("describes whether this station meets the larger Whisper hardware tier", () => {
     const capable = largeCaptionEngineExplanation(captionEngineDecision(station(tiers("large-v3", "floor"))));
     const notCapable = largeCaptionEngineExplanation(captionEngineDecision(station(tiers("floor", "floor"))));
     expect(capable).not.toBe(notCapable);
+    expect(capable).toMatch(/meets the hardware tier for the larger Whisper model/i);
+    expect(notCapable).toMatch(/does not meet the hardware tier/i);
+    expect(notCapable).toMatch(/Medium Whisper model remains available/i);
   });
 
-  it("claims nothing about live captioning on this station when the graphics probe could not run", () => {
-    // G011.1's rule, applied to the second surface too: an unread probe must
-    // not become a claim about the machine. `hardware_capable_caption_tier`
-    // falls back to "floor" when DXGI could not be reached, which would
-    // otherwise print "too slow for live captioning on this station" about a
-    // card nobody looked at.
+  it("leaves Large-model hardware eligibility unknown when the graphics probe could not run", () => {
     const unknown = station({ gpus: null, ...tiers("floor", "floor") });
     const decision = captionEngineDecision(unknown, CATALOG_WITH_LARGE);
-    expect(decision.largeRunsLiveHere).toBeNull();
+    expect(decision.largeMeetsHardwareTier).toBeNull();
     const row = largeCaptionEngineExplanation(decision);
-    expect(claimsItIsTooSlowForLive(row)).toBe(false);
-    expect(claimsItRunsLiveHere(row)).toBe(false);
+    expect(row).toMatch(/could not check/i);
+    expect(row).toMatch(/larger Whisper model/i);
   });
 
-  it("never says the quality engine was selected unless it actually was", () => {
+  it("never says Large was selected unless it is in the default component set", () => {
     for (const catalog of [COMPONENT_CATALOG, CATALOG_WITH_LARGE]) {
       for (const capable of ["floor", "large-v3"] as const) {
         for (const installed of ["floor", "large-v3"] as const) {

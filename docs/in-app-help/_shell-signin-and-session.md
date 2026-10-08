@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Sign-in, sign-out and session messages (nav id: _shell-signin-and-session)
 
 A shared surface, not a screen. There is no separate sign-in page: sign-in lives on First Setup (`#/setup`; `/login` and `/sign-in` redirect there). The cards themselves are specified in `setup.md`; this file covers sign-out, the token rules, and the error texts any screen can show. Manual authority: `docs/manual/src/11-signing-in.md`.

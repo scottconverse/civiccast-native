@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # EPG Export (nav id: epg)
 
 Console group: Publish. Spec for the in-app help of the program-guide file export. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`; line numbers are in `screens/EpgExportScreen.tsx` unless stated.

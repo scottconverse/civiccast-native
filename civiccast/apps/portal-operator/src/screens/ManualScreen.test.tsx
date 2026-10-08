@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router'
+import { HashRouter, MemoryRouter } from 'react-router'
 
 afterEach(() => {
   cleanup()
@@ -34,13 +34,14 @@ function manual(overrides: Partial<ManualDocument> = {}): ManualDocument {
     generated_at: '2026-08-29T00:00:00Z',
     toc: [
       { id: 'section-a-end-user-guide', level: 2, title: 'Section A — End-User Guide' },
-      { id: 'glossary', level: 3, title: 'Glossary' },
-      { id: 'provider-cloudflare-r2', level: 4, title: 'Cloudflare R2 (recommended, usually free)' },
+      { id: 'app-glossary', level: 3, title: 'Glossary' },
+      { id: 'cdn-and-provider-options', level: 4, title: 'CDN and provider options' },
     ],
     html:
       '<h2 id="section-a-end-user-guide">Section A — End-User Guide</h2>' +
-      '<h3 id="glossary">Glossary</h3><p>Plain-language definitions.</p>' +
-      '<h4 id="provider-cloudflare-r2">Cloudflare R2 (recommended, usually free)</h4><p>Use the concierge box.</p>',
+      '<h3 id="app-glossary">Glossary</h3><p>Plain-language definitions.</p>' +
+      '<p><a href="#app-glossary">Jump to glossary</a></p>' +
+      '<h4 id="cdn-and-provider-options">CDN and provider options</h4><p>Use the concierge box.</p>',
     ...overrides,
   }
 }
@@ -52,6 +53,17 @@ function renderScreen(initialEntries: string[] = ['/help']) {
       <MemoryRouter initialEntries={initialEntries}>
         <ManualScreen />
       </MemoryRouter>
+    </QueryClientProvider>,
+  )
+}
+
+function renderHashScreen() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <HashRouter>
+        <ManualScreen />
+      </HashRouter>
     </QueryClientProvider>,
   )
 }
@@ -69,7 +81,7 @@ describe('ManualScreen', () => {
 
     const nav = await screen.findByRole('navigation', { name: /manual contents/i })
     expect(within(nav).getByText('Glossary')).toBeTruthy()
-    expect(within(nav).getByText(/Cloudflare R2/)).toBeTruthy()
+    expect(within(nav).getByText(/CDN and provider options/)).toBeTruthy()
 
     expect(await screen.findByText('Plain-language definitions.')).toBeTruthy()
     expect(screen.getByText('Use the concierge box.')).toBeTruthy()
@@ -88,12 +100,12 @@ describe('ManualScreen', () => {
 
     const nav = await screen.findByRole('navigation', { name: /manual contents/i })
     expect(within(nav).getByText('Glossary')).toBeTruthy()
-    fireEvent.change(screen.getByPlaceholderText(/search this manual/i), {
-      target: { value: 'cloudflare' },
+    fireEvent.change(screen.getByPlaceholderText(/filter by section title/i), {
+      target: { value: 'CDN' },
     })
 
     expect(within(nav).queryByText('Glossary')).toBeNull()
-    expect(within(nav).getByText(/Cloudflare R2/)).toBeTruthy()
+    expect(within(nav).getByText(/CDN and provider options/)).toBeTruthy()
   })
 
   it('deep-links from a URL hash to the matching manual section', async () => {
@@ -103,7 +115,7 @@ describe('ManualScreen', () => {
     const scrollIntoView = vi.fn()
     Element.prototype.scrollIntoView = scrollIntoView
     vi.mocked(getManual).mockResolvedValue(manual())
-    renderScreen(['/help#glossary'])
+    renderScreen(['/help#app-glossary'])
 
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalled()
@@ -124,7 +136,7 @@ describe('ManualScreen', () => {
     // the previous version used a raw <a> whose href resolved from the
     // component's own manualLink() helper but was intercepted with
     // preventDefault(), so those native affordances silently broke.
-    expect(glossaryLink?.getAttribute('href')).toBe('/help#glossary')
+    expect(glossaryLink?.getAttribute('href')).toBe('/help#app-glossary')
   })
 
   it('clicking a TOC entry navigates and scrolls to the matching section', async () => {
@@ -139,5 +151,28 @@ describe('ManualScreen', () => {
     await waitFor(() => expect(scrollIntoView).toHaveBeenCalled())
     const activeLink = within(nav).getByText('Glossary').closest('a')
     expect(activeLink?.getAttribute('aria-current')).toBe('location')
+  })
+
+  it('keeps an injected manual fragment link inside HashRouter and scrolls to its section', async () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    vi.mocked(getManual).mockResolvedValue(manual())
+    window.history.replaceState({}, '', '#/help')
+    renderHashScreen()
+
+    const link = await screen.findByRole('link', { name: 'Jump to glossary' })
+    await waitFor(() => expect(link.getAttribute('href')).toBe('#/help#app-glossary'))
+    fireEvent.click(link)
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe('#/help#app-glossary')
+      expect(scrollIntoView).toHaveBeenCalled()
+    })
+    // React re-renders the manual body when the deep-link target becomes
+    // active. The href must stay router-aware afterward so copying it or
+    // opening it in a new tab does not turn it into a broken root fragment.
+    expect(screen.getByRole('link', { name: 'Jump to glossary' }).getAttribute('href')).toBe(
+      '#/help#app-glossary',
+    )
   })
 })

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Federation (nav id: activitypub)
 
 Sidebar: System Health > **Federation**; page H1 "ActivityPub federation"; small label "Federation". Manual authority: `docs/manual/src/17-something-wrong.md` section "Understand federation (Federation)" (`#understand-federation-federation`), `26-integrations.md` (`#federation-activitypub`) and the Warning in `15-publishing.md` about public notices.

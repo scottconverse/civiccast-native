@@ -13,7 +13,7 @@ Words used in this chapter:
 - A *cue* is one caption line: a short piece of text with a start time and an end time.
 - *Retention* is how long the station must keep a record before it may be deleted.
 
-CivicCast gives each person one or more roles. The role decides which buttons work. In beta.10 most buttons look clickable to everyone, and a wrong-role click gives an error message such as "This action requires one of these CivicCast roles: ..." instead of being greyed out. The table lists who can do what in this chapter.
+CivicCast gives each person one or more roles. The role decides which buttons work. In beta.11 most buttons look clickable to everyone, and a wrong-role click gives an error message such as "This action requires one of these CivicCast roles: ..." instead of being greyed out. The table lists who can do what in this chapter.
 
 | Task | Role that can do it |
 | --- | --- |
@@ -57,13 +57,9 @@ The **State** and **Status** columns describe the same video in two ways.
 | Missing file | CivicCast cannot find the video file on disk. |
 | Validating, Ingesting, Transcoding, Queued for transcode | CivicCast is working on the file. |
 
-> **Known issue (beta.10):** The Assets list shows only the first 50 assets, ordered with published videos first (most recently published first), then everything else by asset ID. A new upload is not published yet, so it sorts after the published videos. The search box and the tabs search only those 50. A station with more than 50 videos can upload a file and not see it in the list. The screen does not say this and has no "next page" button. Workaround: ask IT staff to list assets through the API with a larger page size.
+> **Known issue (beta.11):** The Assets list shows only the first 50 assets, ordered with published videos first (most recently published first), then everything else by asset ID. A new upload is not published yet, so it sorts after the published videos. The search box and the tabs search only those 50. A station with more than 50 videos can upload a file and not see it in the list. The screen does not say this and has no "next page" button. Workaround: ask IT staff to list assets through the API with a larger page size.
 
 > **For IT staff:** The list calls `GET /api/staff/assets`, which takes `limit` (default 50, maximum 500) and `offset`, and returns the real total in the `X-Total-Count` header. See the API appendix.
-
-![The Assets list. Each row shows a title, state, status, duration, size, codec and published date, with Upload video, a search box and tabs above it.](manual/images/operator-assets-list.png){width=90%}
-
-*Figure: the Assets list.*
 
 ## Upload a video
 
@@ -80,10 +76,6 @@ When it finishes you should see "Uploaded: {title}". The text below says the vid
 
 > **Tip:** After uploading, set the title, description and **Meeting body** on the video's detail page right away (see the next section). Residents search and filter by these.
 
-![The Upload video panel open above the Assets table, with the Title box and the Video file chooser.](manual/images/operator-assets-upload.png){width=90%}
-
-*Figure: the upload panel.*
-
 ## Edit a video's public details
 
 The title, description and meeting body are shown to residents on the portal. Edit them on the detail page.
@@ -96,7 +88,7 @@ The title, description and meeting body are shown to residents on the portal. Ed
 
 The same card holds the retention controls. The four cards are **Default**, **Permanent**, **Meeting (long)** and **Short**, plus an optional **Retention deadline**. The screen reminds you: "Records officer review required. State presets provide a starting point, but local schedules, litigation holds, and official-minutes rules can require longer retention." It also says deletion is never automatic: expired items are flagged for the records clerk to review. A button, **Convert to a length + unit or forever term...**, switches the card to a length-and-unit form (days, weeks, months, years or forever).
 
-> **Known issue (beta.10):** The console has no screen that lists the videos flagged for records review. The list exists only in the API (`GET /api/staff/records/disposition-queue`), and it is a list only: the code says an action screen is a later follow-up. Ask IT staff to read it for the records clerk.
+> **Known issue (beta.11):** The console has no screen that lists the videos flagged for records review. The list exists only in the API (`GET /api/staff/records/disposition-queue`), and it is a list only: the code says an action screen is a later follow-up. Ask IT staff to read it for the records clerk.
 
 > **Note:** Below the retention controls there is a custom-fields editor for any extra fields your station has defined. It is not described here because the fields differ from station to station.
 
@@ -110,9 +102,9 @@ Trimming sets where the video starts and ends. It does not change the original f
 4. To mark a chapter, move to that moment and click **+ Mark**, then type a name for it. Remove a chapter with its remove button.
 5. Click **Save trim & chapters**. A toast says "Saved." and the editor closes. To leave without saving, click **Discard**.
 
-> **Known issue (beta.10):** The editor does not play the video. The preview area shows only the current time and the text "Packaged manifest lands at Sprint 0.4". You choose points by time, not by watching the picture. Play the video elsewhere to find the times, then type or step to them.
+> **Known issue (beta.11):** The editor does not play the video. The preview area shows only the current time and the text "Packaged manifest lands at Sprint 0.4". You choose points by time, not by watching the picture. Play the video elsewhere to find the times, then type or step to them.
 
-> **Known issue (beta.10):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). Do not promise residents chapter marks from this editor.
+> **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). Do not promise residents chapter marks from this editor.
 
 > **Warning:** For an uploaded video, the trim you save is used when the video is packaged. Set the trim before you click **Package for playback**. Once a video is packaged, the console does not offer **Package for playback** again for that row, so a later trim change does not reach the packaged copy. For a live recording, the detail page says "Saving a trim re-renders the published recording automatically."
 
@@ -129,7 +121,7 @@ You should see the Status change to **Packaged**. This needs the publish_operato
 
 CivicCast packages one video at a time. If another is already running you see "Another recording is already being packaged…". Wait and try again. If packaging fails, the message is the server's text or "Packaging failed. The original file was kept; try again."
 
-> **Known issue (beta.10):** The list shows **Package for playback** only on Validated rows that have a stored file and no streamable copy yet. **Edit trim** shows on every Validated row, packaged or not. Live recordings are finished and packaged by CivicCast itself.
+> **Known issue (beta.11):** The list shows **Package for playback** only on Validated rows that have a stored file and no streamable copy yet. **Edit trim** shows on every Validated row, packaged or not. Live recordings are finished and packaged by CivicCast itself.
 
 Packaged is not the same as published. Next, go to the Publish screen ([Publishing, and what residents see](#ch-publishing)).
 
@@ -153,7 +145,7 @@ To place a **legal hold**, optionally type a reason, click **Place legal hold (b
 
 To replace the video file, choose a **Replacement video file** and confirm "Replace this asset's source file?". CivicCast renames the old file aside and never deletes it, and the video goes back to State **Validated**. This needs publish_operator or setup_admin.
 
-> **Warning:** The replace-source dialog says viewers see the new file "immediately once processing finishes". In beta.10 that is not what the code does. The replacement resets the video to Validated and clears its transcode jobs, but it leaves the old streamable copy and the publish date in place. Residents keep seeing the old video. The Assets list also hides **Package for playback** because a streamable copy still exists. Do not rely on replacing a published video's file to change what residents see.
+> **Warning:** The replace-source dialog says viewers see the new file "immediately once processing finishes". In beta.11 that is not what the code does. The replacement resets the video to Validated and clears its transcode jobs, but it leaves the old streamable copy and the publish date in place. Residents keep seeing the old video. The Assets list also hides **Package for playback** because a streamable copy still exists. Do not rely on replacing a published video's file to change what residents see.
 
 > **For IT staff:** To rebuild the copy, an administrator can call `POST /api/staff/assets/{id}/package` for that asset. See the API appendix.
 
@@ -191,6 +183,8 @@ The job can also be held. These are the reasons CivicCast puts on the row:
 
 The **Review queue** (page heading "Caption review") is where a person checks the machine's caption lines before the public sees them.
 
+This queue is for recorded-caption jobs. Ordinary live captions go to the broadcast but are not saved here or turned into per-cue audio evidence. A live session therefore does not populate this queue; its empty state points operators to captioned recordings instead.
+
 1. In the left menu, click **Review queue**. It opens on the **Pending** tab. The other tabs are **All**, **Edited**, **Approved** and **Rejected**, and a **Search** box above them filters by asset ID or caption text.
 2. To work on one language, click **English** or **Spanish** in the **Language** row. **All languages** shows both.
 3. Each card is one cue. It shows the recording's asset ID, the cue's time range, a language badge (EN or ES) and a status. The left box **Machine cue** is the computer's text and cannot be changed. The right box **Reviewed text** is yours to edit.
@@ -210,7 +204,7 @@ What each button really does:
 
 Approved and Edited cues both become captions, using the reviewed text. Rejected cues are left out. Pending cues hold everything back.
 
-> **Known issue (beta.10):** **Approve** ignores text you typed in **Reviewed text** and did not save. If you correct a word and click **Approve** without clicking **Save edit** first, CivicCast approves the old text. The screen does not warn you. Always click **Save edit** after correcting a line. After **Save edit** the cue is already counted as decided, so you do not need to click **Approve** as well. Approve it afterward only if you need the status to read Approved (see the summary section, which uses Approved cues only).
+> **Note:** The Review queue warns, "Save edit before approving if you want to keep these text changes." **Approve** uses the stored text; it does not save an unsaved draft. After **Save edit**, the cue is already counted as decided. Click **Approve** afterward only if you need the status to read Approved (see the summary section, which uses Approved cues only).
 
 > **Warning:** **Reject** asks no question and discards the reviewed text. A rejected cue can be approved again later, which then approves the machine's original text, not your earlier correction.
 
@@ -229,10 +223,6 @@ If the audio is not available, the card says "Audio evidence is unavailable. App
 
 Everyone can read the queue and play audio. Only a records clerk can approve, edit or reject. For anyone else a yellow note says "Caption review actions require the records clerk role. The queue stays visible for read-only review." and the boxes and buttons are disabled.
 
-![The Review queue on the Pending tab. Each card shows the Machine cue, an editable Reviewed text box, and Approve, Save edit and Reject buttons.](manual/images/operator-review-queue.png){width=90%}
-
-*Figure: the Review queue.*
-
 ### If it did not work
 
 | What you see | Cause and fix |
@@ -241,12 +231,12 @@ Everyone can read the queue and play audio. Only a records clerk can approve, ed
 | "No captions match the current search and filter." | Cues exist, but not under the tab or search you chose. After you decide the last cue on the **Pending** tab you will see this line. Click **All**, **Edited**, **Approved** or **Rejected** to see the decided cues. |
 | "Spanish cues appear here after English captions are approved and translated." | Shown beside the **Language** row when the **Spanish** choice has no cues. The Spanish cues are made only after the English pass is fully decided. The Spanish text is a machine translation and needs review too. |
 | "Caption review backend unavailable." | The station's database is not connected. Tell your IT person. |
-| "Could not load caption review." after you clicked a button | The change was not saved. The box has the same title for load and save errors. Read the line under it and try again. |
+| "Could not complete caption review action." after you clicked a button | The action failed and was not saved. Dismiss the message and try once more; if it keeps failing, ask your station administrator to check the CivicCast service and database. |
 | "This is a low-confidence caption cue. Compare it with the retained audio, then explicitly acknowledge that review before approval." | Load and play the audio, tick the box, then Approve. |
 
 ## Review an AI summary
 
-CivicCast can write a draft summary of a meeting from its approved caption lines. The summary is saved for a records clerk to check. In beta.10, treat this feature as unfinished.
+CivicCast can write a draft summary of a meeting from its approved caption lines. The summary is saved for a records clerk to check. Treat approval and signed-record export as unfinished in beta.11.
 
 ### Make a summary
 
@@ -267,11 +257,11 @@ The statuses are **Pending review**, **Approved**, **Rejected** and **Needs evid
 
 If nothing is waiting, the page says "No summaries need review." and tells you to use **Generate summary** on a recording's detail page.
 
-> **Known issue (beta.10):** The **Inline transcript player** does not show the caption text and does not play audio. It shows only cue IDs and times. You cannot check a claim against the words from this page. Open the **Review queue** or the recording to read the cues.
+> **Known issue (beta.11):** The **Inline transcript player** does not show the caption text and does not play audio. It shows only cue IDs and times. You cannot check a claim against the words from this page. Open the **Review queue** or the recording to read the cues.
 
 ### What Approve summary can and cannot do
 
-> **Known issue (beta.10):** **Approve summary** most likely does not work. The button is enabled only for a Pending review summary that has at least one sourced claim, and only for a records clerk. When clicked, it sends the server three fields: an operator ID, an operator name and a note. The server accepts only the note and rejects any extra field. In our reading of the code the server should refuse the request (HTTP error 422), and the page would show a red box titled "Could not load summary review." with a technical message. We found this by reading the code, not by clicking the button on a running station. Treat the summary workflow as not usable in beta.10.
+> **Known issue (beta.11):** **Approve summary** is wired to fail. The button is enabled only for a Pending review summary that has at least one sourced claim, and only for a records clerk. When clicked, it sends the server three fields: an operator ID, an operator name and a note. The server accepts only the note and rejects the other fields, so the request fails with HTTP 422 and the page shows a red error box. Do not rely on this approval path.
 
 A second problem sits behind the first. If **Approve summary** did succeed, the summary would become **Approved** and disappear from this page, because the page lists only Pending review and Needs evidence. **Export signed record** is enabled only for Approved summaries, so it could no longer be reached. Nothing in the console lists, downloads or checks signed records.
 
@@ -281,13 +271,9 @@ What is possible today:
 - You cannot reject a summary, regenerate one from this page, download a signed record, or check one. There are no buttons for them.
 - Yellow-bar and refusal messages tell you to "regenerate". The AI summary card does not offer a second **Generate summary** once a job exists.
 
-> **Warning:** Do not tell your records officer that summaries are approved or signed records exported from this screen in beta.10.
+> **Warning:** Do not tell your records officer that summaries are approved or signed records can be exported from this screen in beta.11.
 
 > **For IT staff:** The approve route is `POST /api/staff/summaries/{id}/approve`, which accepts `{"approval_note": ...}` only. The signed-record export is `POST /api/staff/records`, with download and verify routes under `/api/staff/records/{id}`. The signing timestamp is a deterministic test timestamp unless a real timestamp authority is configured. See the API appendix.
-
-![The Summary review page with one Pending review card showing sourced claims and the Inline transcript player box.](manual/images/operator-summary-review.png){width=90%}
-
-*Figure: Summary review.*
 
 ## Check for videos that are missing before a meeting
 
@@ -301,7 +287,7 @@ The reasons are: "Referenced asset no longer exists.", "Asset is in state '{stat
 
 The page loads once when you open it. Leave it and come back to refresh. To fix a card you usually need to upload a replacement file or ask a publish operator to replace the file.
 
-> **Known issue (beta.10):** "Every asset scheduled in the coming week is validated or recorded and ready for air" is too strong. The page checks only schedule items that are still drafts. Items already committed to air are not checked. A file deleted in the last hour may not be flagged yet, because the file check runs once an hour by default.
+> **Known issue (beta.11):** "Every asset scheduled in the coming week is validated or recorded and ready for air" is too strong. The page checks only schedule items that are still drafts. Items already committed to air are not checked. A file deleted in the last hour may not be flagged yet, because the file check runs once an hour by default.
 
 If you open the page with a role that is not allowed, you see "This action requires one of these CivicCast roles: meeting_operator, publish_operator, support_admin."
 
@@ -315,15 +301,11 @@ This page holds three station-wide settings. In the left menu it is **Media Life
 
 Each folder row shows **Not scanned yet**, **OK** with "Last poll" and "Last ingest" times, or **Degraded** with the reason, for example a drive that was unplugged.
 
-> **Known issue (beta.10):** Retention rules do not run by themselves, even though the card says it will "Assign a retention policy automatically by meeting series". We found no code that applies them on a schedule. They take effect only when someone clicks **Apply rules now**. A rule whose **Meeting body** is blank matches nothing. Applying a rule sets the retention policy label on every video whose meeting body matches, replacing a policy someone chose by hand on that video. We found no code in that step that recalculates the retention deadline.
+> **Note:** Rules are applied only when someone clicks **Apply rules now**; expired assets are not deleted automatically and are flagged for records review. A rule whose **Meeting body** is blank matches nothing. Applying a rule sets the retention policy label on every video whose meeting body matches, replacing a policy someone chose by hand on that video. Applying a rule does not recalculate the retention deadline.
 
 > **Warning:** The **Browse…** and **Scan now** buttons need the setup_admin role, adding or removing a watch folder needs publish_operator or setup_admin, and retention buttons need records_clerk or setup_admin. The page shows every button to every role, and a wrong-role click returns an error message.
 
 > **For IT staff:** Watch folders, upload storage and the storage budget are set up in Part II (configuration and operations chapters). If the budget card says no budget is configured, the setting is an environment variable that only IT can change.
-
-![Media Lifecycle Settings with the Watch folders, Retention automation and Storage budget cards.](manual/images/operator-media-lifecycle-settings.png){width=90%}
-
-*Figure: Media Lifecycle Settings.*
 
 ## If it did not work
 

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Video player and captions (shown on Home, on Watch pages and in `?manifest=` previews)
 
 Paths are under `civiccast/apps/portal-public/`. Line numbers are `src/HlsPlayer.tsx` unless noted.

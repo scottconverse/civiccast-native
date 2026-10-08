@@ -278,9 +278,8 @@ function EmptyState({ onNew }: { onNew: () => void }) {
     >
       <div className="text-sm font-semibold">Nothing scheduled this week.</div>
       <div className="max-w-md text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-        Schedule a premiere to publish a recorded asset at a specific time, or
-        an embargo to release an approved asset later. Conflicts are caught at
-        the database layer before the form submits.
+        Schedule a recording with Premiere, then publish it to residents separately.
+        Embargo release is unavailable in this build. Conflicts are checked when you submit.
       </div>
       <button
         type="button"

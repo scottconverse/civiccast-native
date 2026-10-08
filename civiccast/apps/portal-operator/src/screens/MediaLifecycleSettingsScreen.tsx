@@ -409,7 +409,7 @@ function RetentionPolicySection() {
   return (
     <SectionCard
       title="Retention automation"
-      subtitle="Assign a retention policy automatically by meeting series, e.g. 'City Council' → meeting retention. Never auto-deletes -- expired assets are flagged for records-clerk review."
+      subtitle="Create rules by meeting series, then press Apply rules now to assign retention policies. Expired assets are never auto-deleted; they are flagged for records-clerk review."
     >
       <form
         className="flex flex-wrap items-end gap-2"

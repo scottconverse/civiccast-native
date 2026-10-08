@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Shared components: confirmation boxes, status words, toasts, banners (nav id: _shell-shared-components)
 
 A shared surface used by every screen. Manual authority: `docs/manual/src/11-signing-in.md` ("Read the colors and status words", "Messages and confirmation boxes", "Use the keyboard or a screen reader"), Appendix E (`app-status`).

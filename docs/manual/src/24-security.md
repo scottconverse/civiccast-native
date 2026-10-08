@@ -1,8 +1,8 @@
 # Security and privacy {#ch-security}
 
-This chapter is for the IT person responsible for who can use CivicCast, what the station exposes to the network, what it records about residents, and how far the software can be trusted in its beta.10 form. It covers sign-in and roles, staff access tokens, the first-admin and recovery model, network exposure, reverse proxies and TLS, the public and staff parts of the web API, subscriber and viewer privacy, data retention, signing and checksums, and a plain list of the known security limitations of this beta with what to do about each one.
+This chapter is for the IT person responsible for who can use CivicCast, what the station exposes to the network, what it records about residents, and how to operate its current beta.11 security controls. It covers sign-in and roles, staff access tokens, the first-admin and recovery model, network exposure, reverse proxies and TLS, the public and staff parts of the web API, subscriber and viewer privacy, data retention, signing and checksums, and security limitations with practical precautions.
 
-Beta.10 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its pre-release audit (3 Critical, 36 Major, 35 Minor and 8 Nit findings, no release blockers) concluded that it can ship as a labelled beta candidate. That is not a statement that the station is hardened for the open internet. It is not.
+Beta.11 was published on 2026-10-08 as a GitHub pre-release for testing, not as a production release. The [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists package checks and their limits. This manual does not claim the station is hardened for the open internet.
 
 ## Before you start
 
@@ -81,13 +81,13 @@ You should see the operator's name and roles.
 
 The database records audit events for `issued`, `used`, `revoked` and `rotated`.
 
-> **Known issue (beta.10):** A database token issued before the fingerprint was introduced cannot be matched. If `token list` shows a token that no longer authenticates after an upgrade, rotate it.
+> **Known issue (beta.11):** A database token issued before the fingerprint was introduced cannot be matched. If `token list` shows a token that no longer authenticates after an upgrade, rotate it.
 
 ### Environment tokens
 
 Generate one with `& $cc token generate-env`. To use it, add it to `CIVICCAST_STAFF_TOKENS` in the service environment (see [Chapter 12](#ch-operations)) in the form `token:operator_id:Display Name:role[,role]`, with several entries separated by semicolons (`;`), and restart the service. Roles are required: an entry with no role stops the station from starting.
 
-> **Known issue (beta.10):** On a station that has its database (every native station), the code checks database and console tokens first and accepts an environment token only when `CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB=1` is also set in the service environment. The code treats that as a recovery setting. Without it, an environment token is rejected with `Invalid staff bearer token.` Prefer database tokens (`token issue`).
+> **Known issue (beta.11):** On a station that has its database (every native station), the code checks database and console tokens first and accepts an environment token only when `CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB=1` is also set in the service environment. The code treats that as a recovery setting. Without it, an environment token is rejected with `Invalid staff bearer token.` Prefer database tokens (`token issue`).
 
 > **Warning:** The server cannot revoke an environment token. The console's **Sign out** only makes that browser forget it. To retire one, remove it from the variable and restart the service, which takes the channels off the air.
 
@@ -95,7 +95,7 @@ Generate one with `& $cc token generate-env`. To use it, add it to `CIVICCAST_ST
 
 A wrong token counts against the client's address: 10 failures in 60 seconds by default (`CIVICCAST_AUTH_RATE_LIMIT` and `CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS`). After that the server answers HTTP 429 with a `Retry-After` header, and the console shows `Too many failed attempts to authenticate with the staff API. Wait N seconds, then try again.` A request with no token at all does not count. A valid token still works while the limit is active. The counts live inside the running process and reset when it restarts. CivicCast's own code ignores forwarded-address headers, so it counts failures against the address the web server reports. The web server (uvicorn) is started with its default settings, which replace that address with the `X-Forwarded-For` value when the connection comes from `127.0.0.1`. In a test with uvicorn 0.47 (not the shipped 0.51.0) we saw exactly that. So behind a reverse proxy on the same computer, failures are counted against the proxy's address if the proxy sends no such header, and against the visitor's address if it does.
 
-> **Known issue (beta.10):** The memory the limiter uses to remember addresses has no upper bound (audit finding B-010). It only matters if someone sends very many bad requests from very many addresses, which cannot happen if the staff API stays on loopback as this chapter advises.
+> **Known issue (beta.11):** The memory the limiter uses to remember addresses has no upper bound (audit finding B-010). It only matters if someone sends very many bad requests from very many addresses, which cannot happen if the staff API stays on loopback as this chapter advises.
 
 ## Understand sign-in, setup and recovery
 
@@ -119,7 +119,7 @@ Routine sign-in uses the admin username and password on the `/setup` page (**Adm
 - The two API calls `POST /api/staff/installer/sessions/revoke-others` and `POST /api/staff/installer/recovery-kit/regenerate` (Setup admin) end the other console sessions and make a new kit (new codes; the old codes stop working at once). The console has buttons for both: **Sign out other sessions** and **Regenerate recovery kit** in the Security card of the Station Profile screen, visible to the Setup admin role.
 - To reset the first admin on purpose, the code requires `CIVICCAST_ALLOW_FIRST_ADMIN_RESET=1` in the service environment. Remove it afterward.
 
-> **Known issue (beta.10):** The loopback test looks only at the address the connection came from. If you put a reverse proxy **on the same computer**, every request it forwards arrives from `127.0.0.1` and passes the test, including requests from the internet, unless the proxy sends an `X-Forwarded-For` header (the web server then substitutes that address; see "Failed attempts are limited"). Do not rely on that: many proxies send no such header unless told to. The code's own comment warns about this. If you use a proxy, it must refuse every path that begins with `/api/setup/`. Also, the loopback routes do not check the `Host` or `Origin` of a request (audit finding E-006), so a web page opened in a browser on the station computer could in principle talk to them through a DNS-rebinding trick during first setup. Do not browse the web from the station computer, and complete first setup before the computer is used for anything else.
+> **Known issue (beta.11):** The loopback test looks only at the address the connection came from. If you put a reverse proxy **on the same computer**, every request it forwards arrives from `127.0.0.1` and passes the test, including requests from the internet, unless the proxy sends an `X-Forwarded-For` header (the web server then substitutes that address; see "Failed attempts are limited"). Do not rely on that: many proxies send no such header unless told to. The code's own comment warns about this. If you use a proxy, it must refuse every path that begins with `/api/setup/`. Also, the loopback routes do not check the `Host` or `Origin` of a request (audit finding E-006), so a web page opened in a browser on the station computer could in principle talk to them through a DNS-rebinding trick during first setup. Do not browse the web from the station computer, and complete first setup before the computer is used for anything else.
 
 ## Know what the station exposes to the network
 
@@ -137,7 +137,7 @@ We searched the program for a wildcard bind (`0.0.0.0`) and found none. Both the
 
 The installer adds a Windows Firewall rule named **CivicCast (Native) Portal/API (TCP 8000)**. It is an inbound allow rule for TCP port 8000, limited to the program `<INSTDIR>\runtime\python.exe`, enabled on **all** firewall profiles (domain, private and public) and with no restriction on the remote address.
 
-> **Known issue (beta.10):** Today this rule exposes nothing, because nothing listens on 8000 except on `127.0.0.1`. But it is broader than the station needs (audit finding E-009). If a setting or a later version ever changed the bind address, port 8000 would be open to every network the computer joins. If you want the rule to say what you mean, disable it in **Windows Defender Firewall with Advanced Security** and check that the station still works from the station computer. We have not tested a station with the rule removed.
+> **Known issue (beta.11):** Today this rule exposes nothing, because nothing listens on 8000 except on `127.0.0.1`. But it is broader than the station needs (audit finding E-009). If a setting or a later version ever changed the bind address, port 8000 would be open to every network the computer joins. If you want the rule to say what you mean, disable it in **Windows Defender Firewall with Advanced Security** and check that the station still works from the station computer. We have not tested a station with the rule removed.
 
 Outbound traffic is not restricted by CivicCast.
 
@@ -164,9 +164,9 @@ The web API has distinct groups of paths. Which group a path is in decides who m
 
 The staff middleware gates every path that begins with `/api/staff/`. The public asset lists show only assets that are published.
 
-> **Known issue (beta.10):** There is no setting that turns off the public contributor routes (`/api/public/contribute`); the router is always included. Anyone who can reach the port can use them. See the limitations section.
+> **Known issue (beta.11):** There is no setting that turns off the public contributor routes (`/api/public/contribute`); the router is always included. Anyone who can reach the port can use them. See the limitations section.
 
-> **Known issue (beta.10):** `GET /api/hardware` needs no sign-in and returns the computer's host name (audit finding B-012). Treat the host name as public.
+> **Known issue (beta.11):** `GET /api/hardware` needs no sign-in and returns the computer's host name (audit finding B-012). Treat the host name as public.
 
 ## Put a reverse proxy and TLS in front
 
@@ -200,25 +200,25 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 > **Warning:** Back up that key. A database restored without it keeps encrypted addresses that nobody can read ([Chapter 12](#ch-operations)).
 
-> **Known issue (beta.10):** The confirmation token for a webhook subscription **is** returned in the API reply (a known gap).
+> **Known issue (beta.11):** The confirmation token for a webhook subscription **is** returned in the API reply (a known gap).
 
-> **Known issue (beta.10):** By default the e-mail, webhook, YouTube, Internet Archive and NAS providers are mock or local providers. Real ones are chosen with `CIVICCAST_PROVIDER_<KIND>=real`, where the kind is `MAIL`, `WEBHOOK`, `YOUTUBE`, `INTERNET_ARCHIVE` or `LOCAL_NAS` (see [Appendix C](#app-settings)); choosing a real provider without its credentials makes the station fail fast at start-up. Until you switch the mail provider, no subscriber e-mail is actually sent.
+> **Known issue (beta.11):** By default the e-mail, webhook, YouTube, Internet Archive and NAS providers are mock or local providers. Real ones are chosen with `CIVICCAST_PROVIDER_<KIND>=real`, where the kind is `MAIL`, `WEBHOOK`, `YOUTUBE`, `INTERNET_ARCHIVE` or `LOCAL_NAS` (see [Appendix C](#app-settings)); choosing a real provider without its credentials makes the station fail fast at start-up. Until you switch the mail provider, no subscriber e-mail is actually sent.
 
 ## Retain and delete data
 
 | Data | Kept | Source |
 | --- | --- | --- |
-| Live-caption working audio (local beta.11 dev7) | Consumed chunks deleted; at most 12 queued completed segments per channel, plus in-flight inputs and the segment being written | `captions/tap_worker.py` |
-| Live-caption text and delivery tracking (local beta.11 dev7) | Rolling 300 seconds and at most 512 cues; no permanent per-cue review rows or evidence WAVs | `captions/stabilize.py`, `egress/caption_feed.py` |
+| Live-caption working audio (native beta.11 runtime) | Processed chunks are deleted; at most 12 queued completed segments per channel, plus in-flight inputs and the segment being written. Native live operation does not run the optional age-based retention sweep. | `captions/tap_worker.py`, runtime wiring |
+| Live-caption text and delivery tracking (native beta.11 runtime) | Rolling 300 seconds and at most 512 cues; no permanent per-cue review rows or evidence WAVs | `captions/stabilize.py`, `egress/caption_feed.py` |
 | Recorded-caption review and original recordings | Existing recording/review workflow remains unchanged; live working limits do not delete archived tracks or recordings | `captions/vod.py`, recording workflow |
-| Historical beta.10 caption retention audit | Existing `caption-retention-audit.jsonl` was not rotated; ordinary live captioning in the local candidate no longer runs that archive sweep | `captions/retention.py`, `captions/tap_worker.py` |
+| Historical beta.10 caption-retention audit | The beta.10 audit found that `caption-retention-audit.jsonl` was not rotated. Native beta.11 live captioning does not enable the optional age-based retention sweep. | `captions/retention.py`, `captions/tap_worker.py` |
 | Analytics events | Up to 366 days (default; range 1 to 366) | analytics store |
 | Playout health telemetry | Not trimmed automatically; trim with `civiccast egress trim-health --older-than-days N` | CLI |
 | Staff token audit events, alert history, as-run records | No deletion setting found | not found |
 
-Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off. The local beta.11 dev7 candidate separates transient live caption work from recorded-caption review. It does not make the live worker or broadcast readiness depend on archive-wide review/evidence retention discovery. No new evidence-retention or compliance requirement is introduced by this change.
+Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off. The native beta.11 runtime separates transient live caption work from recorded-caption review. It does not make the live worker or broadcast readiness depend on archive-wide review/evidence retention discovery. No live review/evidence archive is created by ordinary live captioning; this does not change recorded captions or original recordings.
 
-> **Historical finding (published beta.10):** Audit findings B-003, B-004, B-005 and B-009 recorded unlimited live caption data growth. The local beta.11 dev7 candidate removes automatic live review/evidence accumulation and bounds working audio and caption history. Weekly manual caption cleanup is not its operating design. The published beta.10 installer has not changed; see [Chapter 12](#ch-operations) for the candidate behavior and its verification limits.
+> **Historical finding (published beta.10):** Audit findings B-003, B-004, B-005 and B-009 recorded unbounded live-caption evidence growth. Beta.11 changes the native live path: it does not run that archive sweep, writes no per-cue evidence, deletes processed chunks and bounds the queued audio and rolling caption history. Those are current source behaviors, not a long-duration package observation. The beta.11 package's test scope is in the current verification record.
 
 Where residents' own data may be requested for deletion, we found no console screen or command that deletes a subscriber or a viewer's records. Ask the coder to confirm before you promise a deletion process.
 
@@ -231,20 +231,20 @@ Get-AuthenticodeSignature .\CivicCast-Setup.exe | Format-List Status, SignerCert
 Get-FileHash .\CivicCast-Setup.exe -Algorithm SHA256
 ```
 
-The status should read `Valid`. Compare the hash with the line for that file in `SHA256SUMS.txt` on the release page. The beta.10 verification record states the installer carries a valid signature and that the asset hashes match `SHA256SUMS.txt`. Replace the file name with the real one.
+The status should read `Valid`. Compare the hash with the line for that file in `SHA256SUMS.txt` on the beta.11 release page. The current verification record states the published installer carries a valid signature and the asset hashes match `SHA256SUMS.txt`. Replace the file name with the real one.
 
 - **Sidecar.** The release also has a `setup.exe.sidecar.json` file with checksum metadata. It is plain metadata and is not separately signed (`attestation` is `null`). `civiccast installer verify-package --artifact <file> --sidecar <file> [--json]` checks a file against it.
 - **Packs.** The large components (`.ccpack` files) carry ed25519 signatures that the installer verifies. The installer also checks a SHA-256 for each file, rejects names containing `..` and rejects reparse points (Windows links). The pack index is pinned to the product version, so an older pack cannot be offered to a newer product.
 - **Build downloads** are pinned by hash, and the application's Python packages are installed with `--require-hashes`.
 - **No sigstore/cosign.** The owner decided against it (decision record ADR 0022).
 
-> **Known issue (beta.10):** All packs are signed by one key that has no expiry and no rotation procedure (audit finding E-012). If a pack were ever to be signed by a stolen key, the installer would accept it. Download beta releases only from the project's GitHub release page.
+> **Known issue (beta.11):** All packs are signed by one key that has no expiry and no rotation procedure (audit finding E-012). If a pack were ever to be signed by a stolen key, the installer would accept it. Download beta releases only from the project's GitHub release page.
 
-> **Known issue (beta.10):** The audit also found that the signing secrets in the build pipeline are not restricted to a protected environment, that the action versions used are mutable tags, and that the `main` branch is not protected (audit finding E-002). These are repository settings the owner controls. For you, the practical advice is the same: trust only the signed installer from the official release page and always check its hash.
+> **Historical beta.10 audit finding (repository settings):** The 2026-10-02 audit reported that signing secrets were not restricted to a protected environment, action versions used mutable tags and `main` was not protected. Those observations describe repository settings at the audit date, not their current state. For every release, trust only the official release page, verify the installer's signature and compare its hash with the release checksum file.
 
-## Known limitations of this beta
+## Historical beta.10 security audit findings
 
-These come from the beta.10 whole-repository audit (`audit-lite-whole-repo-beta10-2026-10-02`). None was ranked a release blocker. Each entry says what to do. Finding numbers are the audit's.
+The entries below summarize the whole-repository audit dated 2026-10-02 (`audit-lite-whole-repo-beta10-2026-10-02`). They preserve that audit's findings and severities; later beta.11 code and installer changes mean they are not a current release review. Current configuration and safety instructions appear in the operating chapters above. Finding numbers are the audit's.
 
 | Finding | What is wrong | What you do |
 | --- | --- | --- |
@@ -263,10 +263,10 @@ These come from the beta.10 whole-repository audit (`audit-lite-whole-repo-beta1
 | B-012 | `/api/hardware` shows the host name to anyone. | Treat the host name as public. |
 | B-019 | `civiccast model set-provider-key --key <value>` puts the key on the command line, visible to other programs in the process list. | Supply the key in the `CIVICCAST_PROVIDER_API_KEY` environment variable instead. |
 | B-003, B-004, B-005, B-009 | Historical beta.10 caption data growth (see retention). | Beta.11 removes automatic live review/evidence accumulation and bounds live working state; verify the candidate before deployment. |
-| A-001, A-008 | A gap in the program-change watchdog, and no free-space guard on the 60 GB cache. | See [Chapter 12](#ch-operations). |
-| C-001 | Automated tests were red in about 110 places at the time of the audit. | Do not read the beta label as a passing test suite. |
+| A-001, A-008 | The audit reported a program-change watchdog gap and no free-space guard on the 60 GB cache. Beta.11 includes a rollover watchdog and cache free-space guard; their code behavior is described in [Chapter 12](#ch-operations). | The audit findings are historical; current runtime reliability still depends on exact-package evidence. |
+| C-001 | Automated tests were red in about 110 places at the time of the audit. | Historical audit result only; it does not describe the beta.11 test state. |
 
-> **Known issue (beta.10):** Several of the items above (alerts with no destination, the disaster-recovery drill that cannot find `pg_dump`, unrotated logs) are operational rather than security findings. They are in [Chapter 12](#ch-operations).
+> **Note:** The beta.10 audit also discussed operational items such as alerts with no destination, the disaster-recovery drill's `pg_dump` dependency and log rotation. See their current operating guidance in [Chapter 12](#ch-operations).
 
 > **Warning:** The three rules to keep: (1) the staff API stays on loopback, (2) the public contributor portal stays off the internet, (3) only the signed installer from the official release page is ever run.
 

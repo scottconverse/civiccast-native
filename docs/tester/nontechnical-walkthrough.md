@@ -1,5 +1,11 @@
 # Non-Technical Tester Walkthrough
 
+> **Historical Beta 10 walkthrough.** Beta 11 is the current release. Use the
+> [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
+> and [Beta 11 verification record](../releases/v1.0.0-beta.11-verification.md)
+> for current package and operating guidance; the release-specific checks below
+> describe Beta 10 only.
+
 Use this path if your job is to see whether CivicCast makes sense for a clerk,
 meeting operator, AV helper, or public-access volunteer.
 
@@ -9,12 +15,12 @@ with the release owner after the release gates and soak evidence are complete.
 
 ## Install
 
-> **The current published release is `v1.0.0-beta.10`** (published
-> 2026-10-02, a GitHub pre-release), recorded as `current` in the
+> **This walkthrough's release was `v1.0.0-beta.10`** (published
+> 2026-10-02, a GitHub pre-release), which was then recorded as `current` in the
 > release-truth record. Confirm the exact filename, size, hash, and
 > Authenticode publisher against the active handoff before running it.
 
-`v1.0.0-beta.10` is still a beta candidate: its automated clean-install check
+Beta 10 was a beta candidate: its automated clean-install check
 passed, upgrade paths were not run for it, and the human/station acceptance
 pass is not done. `v1.0.0-beta.7` is superseded. Do not substitute source code
 or an older installer for an assigned candidate test.

@@ -671,7 +671,7 @@ function App() {
           <p className="lead">
             {installer.ready
               ? "CivicCast is installed and ready. Open the operator console to continue."
-              : "Download, install, create the first admin, then open the dashboard without terminal commands."}
+              : "Download and install, then open the operator console to create the first admin — without terminal commands."}
           </p>
           <a
             href="https://github.com/scottconverse/civiccast-native/issues/new?template=bug-report.yml&title=%5Bbeta%5D%20"

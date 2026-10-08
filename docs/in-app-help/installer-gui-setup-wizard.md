@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # CivicCast Installer status window (Tauri window "CivicCast (Native) Setup", after the download screens)
 
 Paths relative to `civiccast/apps/installer/`. App = `src/App.tsx`; API = `src/api.ts`; main = `src-tauri/src/main.rs`.

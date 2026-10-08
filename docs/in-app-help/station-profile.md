@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Station Profile (nav id: station-profile)
 
 Sidebar: Setup > **Station Profile**. Manual authority: `docs/manual/src/22-configuration.md` section "Set the Station Profile" (`#configuration-profile`).

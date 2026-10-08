@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Live (nav id: live)
 
 Console group: Run Meeting. Spec for the in-app help of the Live screen, written against beta.10. Paths are under `civiccast/apps/portal-operator/src/` unless they start with `civiccast/`. Authority: `docs/manual/src/13-running-meeting.md` and `ops/docs-sprint/inventory/screens/live.md`; every line number below was re-checked in the .tsx.

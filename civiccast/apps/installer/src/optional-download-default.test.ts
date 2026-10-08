@@ -94,7 +94,7 @@ describe("optional-download defaults: F-22's survivors + the 2026-08-15 owner ru
     expect(selected).toContain("captions_large");
     const decision = captionEngineDecision(station("large-v3", "large-v3"), COMPONENT_CATALOG);
     expect(decision.largeSelectedByDefault).toBe(true);
-    expect(decision.largeRunsLiveHere).toBe(true);
+    expect(decision.largeMeetsHardwareTier).toBe(true);
   });
 
   it("pre-selects the GPU acceleration pack on large-v3-capable hardware (2026-08-16 owner ruling)", () => {

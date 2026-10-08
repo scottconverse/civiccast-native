@@ -131,9 +131,7 @@ def render_mermaid(text: str, diagrams: bool) -> str:
             if r.returncode != 0 or not png.exists():
                 print(f"MERMAID FAILED for {h}:\n{r.stderr[-600:]}\n{code[:300]}", file=sys.stderr)
                 return f"```\n{code}```\n"
-        cap = (m.group(2) or "").strip()
-        cap = re.sub(r"^Figure[\s\d.:-]*", "", cap).strip().replace("]", "\\]")
-        cap = cap[:1].upper() + cap[1:]
+        cap = (m.group(2) or "").strip().replace("]", "\\]")
         alt = cap or f"Diagram {count['n']}"
         width = 100
         if png.exists():
@@ -181,7 +179,7 @@ def main():
         "title: CivicCast User Manual\n"
         f"subtitle: For station staff, volunteers and city IT staff - {VERSION} (native Windows line)\n"
         "author: The CivicCast Authors\n"
-        "date: 2026-10-07\n"
+        "date: 2026-10-08\n"
         "urlcolor: blue\n"
         "toccolor: black\n"
         "---\n\n"

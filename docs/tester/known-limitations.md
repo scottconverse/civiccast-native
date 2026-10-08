@@ -1,8 +1,14 @@
 # Known Limitations For Early-Adopter Builds
 
+> **Historical Beta 10 limitation record.** Beta 11 is the current release.
+> This page records evidence and limits for Beta 10; it is not current operating
+> guidance. Use the [current User Manual](../USER-MANUAL.md),
+> [Windows install guide](../../INSTALL-WINDOWS.md), and
+> [Beta 11 verification record](../releases/v1.0.0-beta.11-verification.md).
+
 ## Release State
 
-`v1.0.0-beta.10` is the current published release (published 2026-10-02):
+`v1.0.0-beta.10` was the published release on 2026-10-02:
 `setup.exe` + `.ccpack` runtime packs + `SHA256SUMS.txt`, published as a GitHub
 pre-release (a "Beta Candidate", not a production release) at
 <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>.
@@ -15,16 +21,16 @@ upgrade-baseline kit.
 See [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for
 the authored release-state record.
 
-These limits are intentional for the current early-adopter line.
+The limits below describe Beta 10 and its earlier evidence only.
 
-## Live Captions: Current Release And Earlier Evidence
+## Historical Beta 10 Live-Caption Evidence
 
 Beta.7's eight-hour physical-machine soak (beta.7 is now superseded) ran with
 live captions off. It is not captions-ON endurance proof. Live captions remain
 off by default on new installations; an explicitly saved setting survives
 upgrades.
 
-`v1.0.0-beta.10` is the current published release (`v1.0.0-beta.8` and
+At the time, `v1.0.0-beta.10` was the current published release (`v1.0.0-beta.8` and
 `v1.0.0-beta.9` were never published, and their work is included in it). It is
 a GitHub pre-release, not a production release. Its lab evidence is an
 eight-hour watched run on a three-channel lab station; see

@@ -12,7 +12,7 @@ CivicCast does these jobs:
 - **Schedules what airs on each channel.** A *channel* is one program stream the station sends out. A new station starts with three channels, named public, education and government.
 - **Runs the channel.** A staff member starts and stops the channel's *outgoing feed* (the running stream), checks that a live camera or encoder is delivering a picture, and can put a live source on the air.
 - **Records meetings** from a capture card or a network stream at times you set.
-- **Makes captions and checks them.** CivicCast turns speech into caption text. A person reviews the text before it goes with the video.
+- **Makes captions.** Recorded-caption jobs turn speech into text that a person reviews before it is published with the recording. Live broadcasts can publish first-pass captions without a human review step (see [Running the meeting](#ch-running-meeting)).
 - **Writes an AI summary on request.** The summary is built from the approved captions, and each quantitative claim (a count, an amount, a vote tally) must point to timestamp ranges in the transcript. A person approves it.
 - **Publishes recordings to a resident website** and can copy them to archive and outside services you set up.
 - **Watches its own health** and tells staff when something needs attention.
@@ -28,7 +28,7 @@ The installer puts a shortcut named **CivicCast Operator Console** on the Deskto
 
 > **For IT staff:** The console and portal addresses, the Windows service that runs them, and how to make the portal reachable from residents' own devices are covered in [Installing, first run, upgrading, uninstalling](#ch-installing) and [Planning your station](#ch-planning).
 
-> **Note:** This manual describes what the beta.10 software actually does, screen by screen. Where a screen's own wording is wrong or misleading, the manual says so in a **Known issue (beta.10)** box and gives you the workaround when the code shows one.
+> **Note:** This manual describes beta.11 screen behavior. A **Known issue (beta.11)** note records a current mismatch with the screen; an **Historical beta.10 observation** is evidence or behavior from the superseded release.
 
 ## The people and their roles
 
@@ -50,9 +50,9 @@ Some screens ask for no role at all. The sidebar shows them to every signed-in p
 
 > **Warning:** A screen that appears in your sidebar can still refuse you. The sidebar hides some screens by role, but each screen and each button is checked again when you use it. For example, anyone can open Schedule, but a person without the Publish operator, Setup admin or Support admin role gets a red "Could not load schedule." box. If a screen refuses you, you do not have the role it needs. Chapter 2 lists the wording you will see.
 
-### How people get roles at beta.10
+### How people get roles at beta.11
 
-The first account, created on First Setup, holds all five roles. So does anyone who signs in with that account's password or one of its recovery codes. The beta.10 console has no screen for adding people or giving them roles. In a normal station, everyone who signs in does so as that one account, so everyone holds all five hats.
+The first account, created on First Setup, holds all five roles. So does anyone who signs in with that account's password or one of its recovery codes. The beta.11 console has no screen for adding people or giving them roles. In a normal station, everyone who signs in does so as that one account, so everyone holds all five hats.
 
 CivicCast's command-line tool can make access keys that carry a narrower set of roles. That is IT work. In testing we could not confirm how such a key is loaded into a browser, because the console has no field to paste one into.
 
@@ -91,9 +91,7 @@ flowchart LR
 
 After the meeting, the portal shows residents the recording on **Recordings** and on its own watch page, with captions when they are attached. The portal's **Schedule** page shows what airs on each channel over the next 72 hours.
 
-> **Known issue (beta.10):** On the **New scheduled item** form, the Premiere card says it will "Publish a recorded asset to the public portal at a scheduled time." That is not what saving does. Saving creates an item in the state **Scheduled**. Nothing airs and residents see nothing until you open the **list** tab and press **Publish to residents** on that item. Chapter 3 shows the steps.
-
-> **Known issue (beta.10):** A meeting you capture on the **Recording** screen arrives in Assets in the state **Recorded**. The **Package for playback** button on the Assets list appears only on rows whose State is **Validated**, so it is not offered on a Recorded row. A recording that the Live screen finalizes is checked and packaged by that step. Chapter 5 explains what to do for each kind of recording.
+> **Known issue (beta.11):** A meeting you capture on the **Recording** screen arrives in Assets in the state **Recorded**. The **Package for playback** button on the Assets list appears only on rows whose State is **Validated**, so it is not offered on a Recorded row. A recording that the Live screen finalizes is checked and packaged by that step. Chapter 5 explains what to do for each kind of recording.
 
 ## What residents see
 
@@ -136,27 +134,17 @@ These are the words used most in Part I. Each is explained again where it first 
 | **Test mode** | The mode a new station starts in. The First-run defaults card on First Setup shows a **Mode** heading with "Test mode" under it. |
 | **Headend** | The cable company's equipment that receives a channel's signal. |
 
-## What is and is not proven in beta.10
+## What is and is not proven in beta.11
 
-CivicCast beta.10 was published on 2026-10-02 as a **GitHub pre-release**, labelled a *beta candidate*. It is not a production release. You can read the release page at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>.
+CivicCast beta.11 was published on 2026-10-08 as a **GitHub pre-release**. It is not a production release. An earlier beta.11 package was refreshed on an existing station and showed output on all three channels in two observations 41 seconds apart; that result applies only to that package. Use the [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for package-specific checks and [the release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11).
 
-**What was shown to work**
+**What the original-package check showed:** that package could refresh the existing host and the three channels produced changing caption output while HLS advanced at two sampled times.
 
-- **Gate A, clean-install lane: passed, 10 of 10 criteria.** Gate A is the station acceptance check. The lane that passed was run in Windows Sandbox against the exact published installer and packs. It covered install, activation, health, the console and portal rendering, a clerk workflow, captions, the playout engine (the part that sends each channel's picture out), a 5-minute soak, install progress and completion. It took several tries: the first run failed because a self-test waited 60 seconds for the AI component, which needed 61 (fixed in the published build), and three later runs failed the playout-engine check because the test began capturing before the engine's first video arrived, which on a fresh install takes more than 60 seconds. The passing run used a test setup that waits longer and repeats the capture.
-- **An eight-hour lab run** held three channels (education, government, public) on air at the same time on one lab machine, with captions embedded in the output. It ran as one process with no restart and no crash, scored 50 program changes with no holes or errors, and measured loudness in range in 16 of 16 windows on every channel. One of 41 verify checks printed a raw FAIL, which was judged a sampling blip and is recorded in the verification note.
+The original-package check did not establish clean installation, repair after a failed installation, upgrade from beta.10, long-duration operation or capacity, real-station operation, physical DeckLink SDI operation, or cable-headend acceptance. A separate 36-hour dev7 development-station soak is useful runtime history, but it used an overlay and is not evidence for either package. Candidate-specific limits and checks are in the current verification record.
 
-**What is not proven**
+**Live-caption limit:** beta.11 uses Whistle as the native live primary on CPU, publishes first-pass recognition, and falls back to Whisper for a channel after a primary failure or timeout. This removes the old agreement gate; it does not promise that every spoken word will be captured. The audio tap is best-effort and can shed working audio under overload so playout retains priority. The beta.10 eight-hour run's 13 discard events and roughly 160 seconds of quiet-machine loss are historical beta.10 measurements, not beta.11 package measurements.
 
-- **The upgrade lane and the download-only lane of Gate A were not run.** The owner waived both. Upgrading beta.10 over an earlier release is not proven.
-- **A first install with neither the full kit nor an earlier install is not proven.** The installer needs the `packs` and `station` folders beside it. With only `setup.exe` the installer stops at its pack-staging step.
-- **The eight-hour run was not repeated on the published installer.** It ran on an earlier internal build of the same engine.
-- **No human field tester has signed off.** beta.10 has not been operated at a real station.
-- **It is not a 24-hour or 72-hour test**, and it ran on one machine.
-- **Physical DeckLink SDI capture and output, cable-operator headend acceptance, and sustained production use at a real public-access station** remain unproven.
-
-**A measured limit you should know about.** Live-caption audio can be dropped under heavy load. In the eight-hour run the caption worker logged 13 catch-up discard events; seven of them coincided with disk scans the lab was running and are left out of the next figure. On a quiet machine the total was about 160 seconds of audio on two channels. Captions stay on the air, but some spoken audio gets no caption. A fix is the next work item and is not in this build. Stations that need loss-free live captions should weigh this limit.
-
-The exact wording and the full list of limits are in the release's verification record. The evidence appendix ([Evidence and proof status](#app-evidence)) lists where each result is kept.
+The [evidence appendix](#app-evidence) separates current package evidence from historical beta.10 measurements and development-station results.
 
 ## If it did not work
 

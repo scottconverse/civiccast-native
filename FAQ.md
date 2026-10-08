@@ -1,13 +1,13 @@
 # CivicCast FAQ
 
-> **Release state:** `v1.0.0-beta.10` is the current release, published
-> 2026-10-02 as a GitHub pre-release (a beta candidate, not a production
-> release). `v1.0.0-beta.7` (a download-only upgrade for stations on
-> `v1.0.0-beta.5`) is superseded, as are `v1.0.0-beta.5`, `v1.0.0-beta.4` and
-> `v1.0.0-beta.3`, the first downloadable release. `v1.0.0-beta.1`
-> (USB-delivered) is also superseded. `v1.0.0-beta.2` was never published -- it exists only as an
-> internal Gate A upgrade-baseline kit. `v1.0.0-beta.8` and
-> `v1.0.0-beta.9` were never published; their work is inside beta.10. See
+> **Release state:** `v1.0.0-beta.11` is the current release, published
+> 2026-10-08 as a GitHub pre-release (a beta candidate, not a production
+> release). See the [Beta 11 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11),
+> [verification record](docs/releases/v1.0.0-beta.11-verification.md), and
+> [current User Manual](docs/USER-MANUAL.md). Published Beta 10 and earlier
+> releases are superseded. Beta 8 and beta 9 were never published; their work is
+> inside Beta 10. Beta 2 was never published and exists only as an internal
+> upgrade-baseline kit. See
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
 > the authored release-state record.
 
@@ -32,24 +32,24 @@ notify residents when the replay is ready.
 
 School boards, HOA boards, city councils, county boards, commissions,
 nonprofits, public-access stations, and community groups that need durable
-public video without per-minute vendor fees or appliance lock-in.
+public video without per-minute CivicCast software fees or appliance lock-in.
+Optional cloud AI providers may charge for usage.
 
 ## How do I install it?
 
-`v1.0.0-beta.10` is the current release, published 2026-10-02 as a GitHub
-pre-release with a signed `setup.exe`, five runtime packs, `SHA256SUMS.txt` and
-a sidecar. Its Gate A clean-install lane passed (10 of 10 criteria, in Windows
-Sandbox); the upgrade and download-only lanes were not run for beta.10 (waived
-by the owner), so upgrading an existing install to beta.10 is not proven. The
-earlier `v1.0.0-beta.7`, a download-only upgrade for stations already on
-`v1.0.0-beta.5`, is superseded, as are `v1.0.0-beta.4` and `v1.0.0-beta.3`, the
-first downloadable release. `v1.0.0-beta.1` (USB-delivered) is also superseded.
-`v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
-upgrade-baseline kit. Use
-`INSTALL-WINDOWS.md` and the active tester
-handoff to verify the exact release, filename, SHA-256, and signature status.
-Do not use a generic "latest" link for a controlled beta unless the handoff
-explicitly says to do so.
+`v1.0.0-beta.11` is the current release, published 2026-10-08 with a signed
+`setup.exe`, five runtime packs, `SHA256SUMS.txt`, and a sidecar. The October 8
+package (producer source `b7cc3e7c`, build `37827938199`) refreshed an existing
+Beta 11 host; a brief output
+check showed advancing HLS and changing captions on three channels. A clean
+install, failed-install repair, Beta 10 upgrade, and longer capacity run were
+not performed for this exact package. See
+[`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md)
+and [Install CivicCast On Windows](INSTALL-WINDOWS.md) for the tested scope and
+installation steps. Beta 10's 10-of-10 clean-install result is historical and
+does not apply to Beta 11. Verify the exact filename, SHA-256, and signature
+status from the release-specific files; do not use a generic "latest" link for
+a controlled beta unless the handoff explicitly says to do so.
 
 CivicCast's Windows product (this repository, [ADR 0021](docs/adr/0021-native-windows-runtime.md))
 runs its services as a native Windows service -- no WSL, no Ubuntu, no
@@ -69,11 +69,12 @@ copy already on the computer (**Found locally - verified**, for example from a
 USB/LAN kit's `station\` folder or an earlier install), and downloads the rest
 with a progress display and a **Stop downloading** button. The complete signed
 USB/LAN kit (about 21 GB with its `station\` model bundle) is the offline
-alternative. A first install with no kit and no earlier install is not yet
-proven for beta.10: the setup step that activates the station fails closed
-when it cannot find the model packs, so use the kit your handoff names. You do
-not install Ollama yourself, and there is no further background download after
-setup; a technical admin can fetch or import models later with
+alternative. An online first install with no kit and no earlier install has
+not been proven for the October 8 Beta 11 package. Setup can download missing
+components, but downloading files and activating the station are separate
+steps; use the complete verified kit for a first install. You do not install
+Ollama yourself, and there is no further background download after setup; a
+technical admin can fetch or import models later with
 `civiccast model download` or `civiccast model import-offline`.
 
 ## How do I verify the installer download?
@@ -142,10 +143,12 @@ package it, and publish the replay even if the live stream was interrupted.
 
 ## How do captions, summaries, and translation work?
 
-Captions can be generated locally and reviewed before publication. Summaries
-are sourced: quantitative claims must be backed by transcript timestamps before
-approval. Spanish translation can publish an additional WebVTT track while
-keeping the original English captions available.
+Live Whistle captions run locally and may appear on the channel without
+operator review. Captions generated for recordings are reviewed before they
+attach to a published file. Summaries are sourced: quantitative claims must
+be backed by transcript timestamps before approval. Spanish translation can
+publish an additional WebVTT track while keeping the original English captions
+available.
 
 Test builds may use simplified stand-in captions and summaries that are not
 meant for real meetings. A real beta station should use the local model

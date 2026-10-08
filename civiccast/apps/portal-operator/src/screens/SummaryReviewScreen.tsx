@@ -51,20 +51,24 @@ function LoadingState() {
   )
 }
 
-function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
+function ErrorState({ error, onRetry, actionFailed = false }: { error: Error; onRetry: () => void; actionFailed?: boolean }) {
   return (
     <div
       role="alert"
       className="mx-6 my-6 rounded-md p-4"
       style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-ink)' }}
     >
-      <div className="text-sm font-semibold">Could not load summary review.</div>
+      <div className="text-sm font-semibold">
+        {actionFailed ? 'Could not complete summary review action.' : 'Could not load summary review.'}
+      </div>
       <div className="mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
         {apiMessage(error, 'The summary review request failed.')}
       </div>
       <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-        <strong>Next step.</strong> Retry this request. If it fails again, check
-        summary review logs and confirm the CivicCast database is connected.
+        <strong>Next step.</strong>{' '}
+        {actionFailed
+          ? 'Dismiss this message and try the action again. If it continues, ask your station administrator to check CivicCast server and database health.'
+          : 'Retry the request. If it continues to fail, ask your station administrator to check CivicCast server and database health.'}
       </div>
       <button
         type="button"
@@ -72,7 +76,7 @@ function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
         className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium"
         style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
       >
-        Retry
+        {actionFailed ? 'Dismiss' : 'Retry'}
       </button>
     </div>
   )
@@ -273,6 +277,7 @@ export function SummaryReviewScreen() {
       {mutationError && (
         <ErrorState
           error={mutationError}
+          actionFailed
           onRetry={() => {
             approveMutation.reset()
             exportMutation.reset()

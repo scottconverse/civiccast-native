@@ -108,8 +108,9 @@ function ErrorPanel({ title, message }: { title: string; message: string }) {
         {message}
       </div>
       <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-        <strong>Next step.</strong> Confirm the CivicCast server is running and
-        connected to its database, then refresh this screen.
+        <strong>Next step.</strong> Ask your station administrator to check the
+        CivicCast service and database. Keep this screen open during an active
+        session; refreshing can lose the in-page session.
       </div>
     </div>
   )
@@ -315,11 +316,13 @@ export function SourceSwitcher({
   return (
     <section className="flex flex-col gap-3">
       <div>
-        <h2 className="m-0 text-sm font-semibold">Source switcher</h2>
+        <h2 className="m-0 text-sm font-semibold">Source to check</h2>
         <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-          Arrow keys move between configured meeting sources. A source is only
-          shown as delivering if CivicCast has actually seen media from it in
-          the last {selected?.readiness_ttl_seconds ?? 30} seconds.
+          Select the source to check and, when you start the stream, put on air.
+          Selecting it alone does not switch the current broadcast. Arrow keys
+          move between configured meeting sources. A source is shown as delivering
+          only if CivicCast has seen media from it in the last
+          {selected?.readiness_ttl_seconds ?? 30} seconds.
         </p>
       </div>
       <RadioCardGroup

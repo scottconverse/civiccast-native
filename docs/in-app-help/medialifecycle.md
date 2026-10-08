@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Media Lifecycle Settings (nav id: medialifecycle)
 
 Console group: Review Records. Spec for the in-app help of watch folders, retention rules and the storage budget. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`.

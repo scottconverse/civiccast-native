@@ -18,7 +18,7 @@ This chapter shows you how to open the operator console, sign in, recover a lost
 
 You should see a page headed **First setup**. Opening the console always starts here.
 
-> **Known issue (beta.10):** The console has no separate sign-in page. Sign-in lives on the page headed **First setup**, and that heading still reads "Create the station identity, first local admin, and recovery kit before a public meeting." on a station that was set up long ago. If the station is already set up, ignore that sentence. Scroll to the cards named **Admin sign-in** and **Use recovery code**. The addresses `/login` and `/sign-in` also lead to this page.
+> **Known issue (beta.11):** The console has no separate sign-in page. Sign-in lives on the page headed **First setup**, and that heading still reads "Create the station identity, first local admin, and recovery kit before a public meeting." on a station that was set up long ago. If the station is already set up, ignore that sentence. Scroll to the cards named **Admin sign-in** and **Use recovery code**. The addresses `/login` and `/sign-in` also lead to this page.
 
 ## Sign in
 
@@ -28,10 +28,6 @@ You should see a page headed **First setup**. Opening the console always starts 
 4. Click **Sign in**. The button does nothing until both boxes are filled.
 
 You should be taken to the **Readiness** screen. If a screen sent you here because you were signed out, you go back to that screen instead.
-
-![The First setup page on a configured station when you are signed out. The Setup complete card is at the top, with the Admin sign-in and Use recovery code cards below it.](manual/images/operator-signin-cards.png){width=90%}
-
-*Figure 2.1. The sign-in page of a station that is already set up.*
 
 > **Note:** Signing in on one browser does not sign out any other browser or device that is already signed in.
 
@@ -71,17 +67,17 @@ The **Sign out** button appears only after the console has confirmed who you are
 
 ### The top bar
 
-The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the version number, such as `v1.0.0-beta.10`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
+The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the version number, such as `v1.0.0-beta.11`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
 
 Hover over the round badge to see your name and your roles, in the form "&lt;your display name&gt; / &lt;your role names&gt;". The console shows your roles nowhere else.
 
-> **Known issue (beta.10):** The **No live meeting broadcast** pill and the words "Next No events scheduled" never change. They stay the same during a live meeting and with a full schedule. Do not use them to decide whether the station is on air or what comes next. Use **Readiness** and **Channels** instead.
+> **Known issue (beta.11):** The **No live meeting broadcast** pill and the words "Next No events scheduled" never change. They stay the same during a live meeting and with a full schedule. Do not use them to decide whether the station is on air or what comes next. Use **Readiness** and **Channels** instead.
 
 ### The sidebar
 
 The sidebar on the left is the menu. At its top a card reads **Public meetings** over **CivicCast station**. Below it are six sections. Click a section's name to open or close it. At the bottom is a link **Report a beta issue** and a tag **Operator-first beta**.
 
-> **Known issue (beta.10):** The card at the top of the sidebar always reads "CivicCast station" and "Public meetings". It does not show your station's name. The name you chose appears on the sign-in page, in the **Setup complete** card.
+> **Known issue (beta.11):** The card at the top of the sidebar always reads "CivicCast station" and "Public meetings". It does not show your station's name. The name you chose appears on the sign-in page, in the **Setup complete** card.
 
 The six sections start like this. The Help, Setup and System Health sections start closed, and the section that holds the screen you are on always opens.
 
@@ -95,10 +91,6 @@ The six sections start like this. The Help, Setup and System Health sections sta
 | **System Health** | Readiness, Alerts, Emergency Alerts, Federation | Check that the station is healthy. |
 
 Altogether the console has 37 sidebar entries. On a phone or a narrow window, under 768 pixels wide, the sidebar becomes a drawer. Click the button **Open navigation** to open it. Pick a screen, or click outside it, to close it.
-
-![The operator console with a signed-in user. The top bar is across the top, and the sidebar on the left shows its six sections.](manual/images/operator-shell-desktop.png){width=90%}
-
-*Figure 2.2. The console's top bar, sidebar and main area.*
 
 ### Which screens you can see
 
@@ -152,7 +144,7 @@ These screens open for every role but refuse some things:
 | See audience numbers | Analytics |
 | Read the manual | Manual |
 
-> **Known issue (beta.10):** Some screens carry a different name at the top of the page than in the sidebar. If you cannot find a heading, look at this list.
+> **Known issue (beta.11):** Some screens carry a different name at the top of the page than in the sidebar. If you cannot find a heading, look at this list.
 >
 > | Sidebar name | Page heading |
 > | --- | --- |
@@ -183,9 +175,9 @@ A channel's outgoing feed has its own words. **On air** is green. **Needs attent
 
 Other words you will meet: **Not run yet** (a check has not been run), **Undeliverable** (a message could not be delivered), **Live on the portal**, **Archive pending**, **Archive verified**, **Waiting for media**, **Needs changes**, **Under review**, **Draft**, **Publishing**, **Complete** and **Needs action**. Each screen's chapter explains the words on that screen. The statuses appendix ([Statuses and what they mean](#app-status)) lists them all.
 
-> **Known issue (beta.10):** The word **Ready** does not mean the same thing everywhere. On Readiness it means the whole station is ready. In the media readiness panel it means one video's playable copy is ready. On Assets, **Packaged** and **Published** are different words again. Read the screen's own text each time.
+> **Known issue (beta.11):** The word **Ready** does not mean the same thing everywhere. On Readiness it means the whole station is ready. In the media readiness panel it means one video's playable copy is ready. On Assets, **Packaged** and **Published** are different words again. Read the screen's own text each time.
 
-> **Known issue (beta.10):** Not every status uses the five phrases. You will see plain lowercase words such as `approval-only` on Federation, `critical`, `warning` and `info` on Alerts, `forced_slate` on Emergency Alerts, and job states such as `arming` and `finalizing` on Recording. Readiness also uses an extra phrase, **Ready with optional items**.
+> **Known issue (beta.11):** Not every status uses the five phrases. You will see plain lowercase words such as `approval-only` on Federation, `critical`, `warning` and `info` on Alerts, `forced_slate` on Emergency Alerts, and job states such as `arming` and `finalizing` on Recording. Readiness also uses an extra phrase, **Ready with optional items**.
 
 ### Messages and confirmation boxes
 
@@ -194,7 +186,7 @@ Other words you will meet: **Not run yet** (a check has not been run), **Undeliv
 - A **sample setup banner**, a red box reading "CivicCast could not finish first-run sample setup", can appear at the top of any screen except First Setup. It means the sample video or starter schedule item failed, and nothing else. The buttons are **Retry sample setup** (for a Setup admin or Publish operator) and **Dismiss**.
 - **Loading this CivicCast screen...** shows while a screen loads. **Page not found** with the text "This operator route does not exist in this build." appears for an address that does not exist. Its buttons are **Manual**, **First Setup**, **Recording**, **Reports** and **Readiness**.
 
-> **Known issue (beta.10):** Pop-up messages appear on only a few screens (Schedule, the trim editor, Program Guide, CG Board and Media Lifecycle). On other screens a successful save or command is silent. If nothing seems to happen, check the screen for a changed value before you press again.
+> **Known issue (beta.11):** Pop-up messages appear on only a few screens (Schedule, the trim editor, Program Guide, CG Board and Media Lifecycle). On other screens a successful save or command is silent. If nothing seems to happen, check the screen for a changed value before you press again.
 
 > **Warning:** Not every risky button asks first. For example, **Start Live Stream** on Live, **Approve & put on air** on Channels, **Reject** on a caption line, and **Save automation settings** on Channels act at once. Alerts uses an inline **Delete** then **Confirm delete?**, and Emergency Alerts uses a tick-box for a forced slate. Treat every button as real.
 
@@ -207,21 +199,11 @@ Other words you will meet: **Not run yet** (a check has not been run), **Undeliv
 
 You should see a page headed **Operator manual** with a contents list on the left. The Manual works without signing in, works without an internet connection, and is the only screen you can open while a new station's recovery kit is waiting to be confirmed.
 
-- To find a section, type in **Search this manual**. It narrows the contents list to sections whose *title* contains your words. It does not search the text inside sections. If nothing matches you see `No section title matches "<text>".`
+- To find a section, type in **Filter by section title**. It narrows the contents list to sections whose *title* contains your words. It does not search the text inside sections. If nothing matches you see `No section title matches "<text>".`
 - Click a contents entry to jump to that section.
-- **Report a beta issue** at the bottom of the sidebar opens the Manual at the section "Don't Have A GitHub Account?".
+- **Report a beta issue** at the bottom of the sidebar opens this manual at [Report a beta issue](#report-a-beta-issue).
 
-![The Manual screen showing the Manual contents list with a search box on the left and the start of the manual text on the right.](manual/images/operator-manual-contents.png){width=90%}
-
-*Figure 2.3. The Manual screen.*
-
-> **Known issue (beta.10):** The Manual built into the console is a copy made when the release was built, and it can be out of date. In the release source, it still says beta.10 "has not been published", which is no longer true. This manual was checked against the beta.10 software.
-
-> **Known issue (beta.10):** The **Search this manual** box looks only at section titles, even though its wording suggests a full search.
-
-> **Known issue (beta.10):** In testing we could not confirm whether the links inside the Manual's text that jump to another section work. The console reads a bare link of that kind as a page address, and it may show "Page not found". If one does, use the contents list on the left. Links to outside websites open in the same browser tab and replace the console; use your browser's **Back** button to return.
-
-> **Known issue (beta.10):** The section "Don't Have A GitHub Account?" tells you to press **Create support bundle** on "System Health". Only the Support admin role can use those buttons, and the screen is named **Readiness** in the sidebar. See [When something looks wrong](#ch-something-wrong) for who to contact.
+> **Note:** The Manual screen displays an offline copy assembled with the release. Check the version on this manual's cover if you are unsure which operating guide you have.
 
 ## Use the keyboard or a screen reader
 
@@ -233,13 +215,11 @@ You should see a page headed **Operator manual** with a contents list on the lef
 - Error boxes, toasts and the on-air banner on Readiness are announced to screen readers.
 - The theme button switches between light and dark.
 
-> **Known issue (beta.10):** The theme resets to light every time you reload the page and does not follow your computer's own dark-mode setting. The browser tab always reads "CivicCast Operator" on every screen, so look at the heading on the page to see where you are.
+> **Known issue (beta.11):** The theme resets to light every time you reload the page and does not follow your computer's own dark-mode setting. The browser tab always reads "CivicCast Operator" on every screen, so look at the heading on the page to see where you are.
 
 ### The resident portal
 
 The public portal has a hidden link **Skip to main content** that appears on the first Tab press. Its header has links **Home**, **Recordings** and **Schedule**, with the current one marked. After you change pages, focus moves to the new page's heading. Tap targets are at least 44 pixels tall. The portal is English only and always uses a dark look.
-
-> **Known issue (beta.10):** The **Report a beta issue** link on the portal opens the staff console's Manual in a new tab. A resident lands in a staff product with no explanation. Below it, the small print "Do not include passwords, recovery codes, staff tokens, or private meeting material in reports." is written for staff.
 
 ## Set up a brand-new station {#signing-in-first-run}
 
@@ -265,10 +245,6 @@ Do this once, on the station computer, when CivicCast is installed and nobody ha
 
 You should see a green **Setup complete** card, a **First-run defaults** card, and a block of setup tools.
 
-![The Recovery kit ready panel on First setup, showing the admin username, the admin password, the recovery codes, and the Print kit and Save kit buttons.](manual/images/operator-setup-kit.png){width=90%}
-
-*Figure 2.4. The recovery kit panel.*
-
 > **Warning:** The saved kit file contains the admin password in plain text, together with all eight codes. Keep it, or the printout, where only authorized people can find it. Do not email it, and do not leave it in a folder that syncs to the internet.
 
 > **Warning:** Until you confirm the kit, the console holds you on First Setup. Every sidebar entry except **Manual** is grey, **Sign out** is disabled, any other address returns to First Setup, and your browser warns before you close the page. The kit lives in that browser tab. The station can never show the codes again. If you do reach the sign-in page without having confirmed, a warning named **Recovery kit never confirmed** appears there with a button **I found the kit — it is stored safely**. That button only records your word; it does not check anything.
@@ -277,7 +253,7 @@ You should see a green **Setup complete** card, a **First-run defaults** card, a
 
 You did not choose these. A new station starts with three channels (public, education and government), the default channel government, the time zone "local", **Test mode**, a sample video, and a starter schedule item. The sample content is made in the background after you create the admin. The **First-run defaults** card shows the channels, the time zone, the mode, the storage folders, and whether sample content and the initial schedule are enabled.
 
-> **Known issue (beta.10):** The setup form does not tell you about those starting choices, and nothing on screen explains how to leave **Test mode**. In testing we could not confirm where in the console Test mode is switched off. Ask your IT person; see [Configuring the station](#ch-configuration).
+> **Known issue (beta.11):** The **First-run defaults** card shows the starting channels, time zone, mode, sample content and initial schedule, but this page has no control to change **Test mode** or disable those defaults. Before a public meeting, remove the sample video and starter schedule item if you do not want them to appear. See [Chapter 10](#ch-installing) and [Before the meeting](#ch-before-meeting).
 
 ### The setup tools
 
@@ -302,7 +278,7 @@ Below **Setup complete** are four tools for a Setup admin: **Camera or test medi
 | "Sign in with the local station admin account, then try again." | The request carried no sign-in. | Sign in on First Setup. |
 | "This action requires one of these CivicCast roles: ..." | Your account does not hold a role the action needs. | Ask your admin. See below. |
 | "Staff identity is required for this action." | You are signed out. | Sign in. |
-| "Could not verify your staff identity (...)" | The screen could not check who you are. | Sign in again on First Setup. |
+| "Could not verify your staff identity (...)" | The screen could not check who you are. | Go to **First Setup**, use **Admin sign-in** with your admin username and password, then retry. |
 | "Durable storage is not ready." | The station's database has not been prepared. | Click **Go to Setup**, then **Prepare storage**. |
 | **Page not found** | The address does not exist in this build. | Use a button on the page, or the sidebar. |
 
@@ -316,9 +292,7 @@ The role message lists raw role names. They map to the names in the console like
 | `publish_operator` | Publish operator |
 | `support_admin` | Support admin |
 
-> **Known issue (beta.10):** The message "Could not verify your staff identity" ends with "Sign in again from the CivicCast installer handoff or ask a setup admin for a fresh operator-console link". Neither of those is how you sign in with this build: the installer handoff code was retired, and the console has no screen that issues links. The real step is **Admin sign-in** on First Setup.
-
-> **Known issue (beta.10):** The card "First setup can only be done from the station computer itself" also appears when you try to sign in or recover from another computer, even though you are not doing setup. Sign-in and recovery have the same station-computer rule.
+> **Known issue (beta.11):** The card "First setup can only be done from the station computer itself" also appears when you try to sign in or recover from another computer, even though you are not doing setup. Sign-in and recovery have the same station-computer rule.
 
 > **Note:** The console has no screen for adding people or giving them roles. If you need a different set of roles, ask your IT person; see [Security and privacy](#ch-security).
 

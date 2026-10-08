@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Cable Commissioning (nav id: commissioning)
 
 Sidebar: Setup > **Cable Commissioning**. Manual authority: `docs/manual/src/22-configuration.md` section "Run Cable Commissioning" (`#configuration-commissioning`). Needed only by a station that sends a channel to a cable company's headend.

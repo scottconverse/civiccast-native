@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Checking This Computer (Tauri window "CivicCast (Native) Setup", first-run screen 1)
 
 Paths relative to `civiccast/apps/installer/`. AF = `src/AcquisitionFlow.tsx`; AP = `src/acquisition-progress.ts`; API = `src/api.ts`; HW = `src-tauri/src/hardware_inventory.rs`.

@@ -10,14 +10,12 @@
 > native-line beta-handoff guide.
 
 This whole document describes the retired WSL2 line as of 2026-07-23, when
-`v1.0.0-rc18` was its current published release. For the native line this
-repository ships, use
-[Windows Release Trust And Verification](../install/windows-release-trust.md)
-and [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml)
-instead -- they carry the current `v1.0.0-beta.1` (USB-delivered) /
-`v1.0.0-beta.3` (next, downloadable) release-state story. `v1.0.0-beta.2`
-was never published -- it exists only as an internal Gate A
-upgrade-baseline kit.
+`v1.0.0-rc18` was its current published release. It is not current native
+Windows release guidance. CivicCast `v1.0.0-beta.11` is the current native
+release; use the [current User Manual](../USER-MANUAL.md),
+[Windows install guide](../../INSTALL-WINDOWS.md), and
+[Beta 11 verification record](../releases/v1.0.0-beta.11-verification.md).
+The remainder of this file is preserved only for WSL2 historical reference.
 
 This guide was the beta tester path for the CivicCast operator-first
 tester line on the retired WSL2 product. Windows testers used the Windows

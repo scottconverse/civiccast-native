@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Recording (nav id: recording)
 
 Console group: Run Meeting. The page heading reads "Scheduled recording". Spec written against beta.10. Paths are under `civiccast/apps/portal-operator/src/screens/` unless they start with `civiccast/`. Authority: `docs/manual/src/12-before-meeting.md` ("Record a meeting automatically (Recording)") and `ops/docs-sprint/inventory/screens/recording.md`. Line numbers re-checked in `RecordingScreen.tsx` (1936 lines).

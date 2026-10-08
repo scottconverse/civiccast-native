@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Channel schedule (route: `#/schedule?channel=<id>`)
 
 Paths are under `civiccast/apps/portal-public/`. Line numbers are `src/screens/ChannelGuideScreen.tsx` unless noted.

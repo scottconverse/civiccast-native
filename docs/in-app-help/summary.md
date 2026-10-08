@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Summary review (nav id: summary)
 
 Console group: Review Records. The page label on screen is "Summary + signed records". Spec for the in-app help of AI summary review. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`. The part that makes a summary is the "AI summary" card on an asset page; see assets.md.

@@ -1302,8 +1302,8 @@ export function CostForecastPanel() {
         video out to viewers (&quot;egress&quot;). Cloudflare R2, CivicCast&apos;s recommended
         default, charges $0 for egress &mdash; a real, current, published price, not a
         CivicCast estimate.{' '}
-        <Link to={manualLink('cdn-cost-estimate')} className="font-semibold" style={{ color: 'var(--cc-brand)' }}>
-          Read more in the manual
+        <Link to={manualLink('cdn-and-provider-options')} className="font-semibold" style={{ color: 'var(--cc-brand)' }}>
+          Read about CDN options in the manual
         </Link>
         .
       </p>
@@ -1330,7 +1330,7 @@ function SupportLink() {
   return (
     <>
       See <span className="cc-mono">SUPPORT.md</span> or{' '}
-      <Link to={manualLink('report-without-github')} className="underline underline-offset-2">
+      <Link to={manualLink('report-a-beta-issue')} className="underline underline-offset-2">
         report it
       </Link>{' '}
       &mdash; no GitHub account needed.

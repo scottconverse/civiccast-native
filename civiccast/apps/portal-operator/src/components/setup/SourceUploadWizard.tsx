@@ -209,7 +209,7 @@ export function SourceUploadWizard() {
           <h2 className="m-0 text-base font-semibold">Camera or test media</h2>
           <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
             Choose the equipment in the room, or upload a short clip for a no-camera rehearsal.{' '}
-            <Link to={manualLink('your-first-beta-workflow')} style={{ color: 'var(--cc-brand)' }}>
+            <Link to={manualLink('ch-before-meeting')} style={{ color: 'var(--cc-brand)' }}>
               Read the full walkthrough in the manual
             </Link>
             .

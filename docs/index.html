@@ -65,8 +65,8 @@
       <ul>
         <li><strong>Open source</strong>Code under Apache-2.0, documentation under CC BY 4.0.</li>
         <li><strong>One Windows PC</strong>Installs as a Windows service on hardware you own.</li>
-        <li><strong>3 channels, 8 hours</strong>Held on air in a lab run, with 50 program changes watched and no gaps.</li>
-        <li><strong>10 of 10</strong>Clean-install checks passed on the published installer.</li>
+        <li><strong>Whistle CPU captions</strong>When live captions are enabled, Whistle is the CPU primary; Whisper backs up the affected channel, with optional NVIDIA acceleration for Whisper.</li>
+        <li><strong>36-hour development soak</strong>Three channels on one development station: 102 eligible checkpoints (306 channel checks) on an earlier dev7 overlay; separate from installer qualification.</li>
         <li><strong>Pre-release</strong>Not yet run at a real station. The evidence section lists what is unproven.</li>
       </ul>
     </div>
@@ -84,7 +84,7 @@
         <li>Camera recorder</li><li>Playout box</li><li>Caption service</li><li>Website upload</li><li>Schedule spreadsheet</li>
       </ul>
       <p class="one-tool">One schedule. One library. One resident portal.</p>
-      <p>CivicCast covers the path a public meeting takes: it is scheduled, aired on a channel, recorded, captioned, checked by a person and published for residents. Staff work in one web console. Residents use a separate public portal. The speech recognition and AI models that make captions and summaries run on the station, not in someone else's cloud.</p>
+      <p>CivicCast covers the path a public meeting takes: it is scheduled, aired on a channel, recorded, captioned, checked by a person and published for residents. Staff work in one web console. Residents use a separate public portal. Live Whistle captions run on the station, with Whisper fallback scoped to the affected channel. Summary and translation use local models by default; a setup administrator can opt into Ollama Cloud or OpenRouter for those features.</p>
     </div>
   </div>
 </section>
@@ -132,7 +132,7 @@
         <div><h3>Caption and review</h3><span class="tag partial">Known limit</span></div>
         <div>
           <ul>
-            <li>Speech recognition on the station makes live captions in the channel output and offline captions for recordings.</li>
+            <li>Local speech recognition makes live captions (Whistle primary, with per-channel Whisper fallback) and offline captions for recordings.</li>
             <li>A person reviews and approves caption text before it attaches to a saved recording.</li>
             <li>AI summaries cite the transcript times behind each claim. This is a preview: the approval step has a known defect in beta.10.</li>
           </ul>
@@ -234,7 +234,7 @@
         <li><b>Control plane</b><span>A Python web application on 127.0.0.1:8000 serving the staff console, the resident portal and a documented HTTP API of 488 operations.</span></li>
         <li><b>Database</b><span>PostgreSQL, created and configured by the installer.</span></li>
         <li><b>Playout</b><span>One GStreamer worker per channel, with seamless program changes and a watchdog that ends a stuck change. Outputs are HLS and UDP transport stream.</span></li>
-        <li><b>Captions and AI</b><span>faster-whisper for speech recognition and a local Ollama runtime for summaries, both on the station.</span></li>
+        <li><b>Captions and AI</b><span>Whistle is the CPU primary for live captions; Whisper is the per-channel fallback and handles recorded-media captions, with optional NVIDIA CUDA. A local Ollama runtime provides summaries.</span></li>
         <li><b>Trust at install</b><span>The installer is Authenticode-signed. Setup verifies each component pack's signature and every file's hash before it installs anything.</span></li>
       </ul>
     </div>
@@ -245,7 +245,7 @@
   <div class="wrap">
     <p class="eyebrow">Evidence and limits</p>
     <h2>What has been measured, and what has not.</h2>
-    <p class="lede">The table below shows historical Beta.10 measurements. The current Beta.11 package's tested scope is in its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a>.</p>
+    <p class="lede">The table separates historical Beta 10 measurements from a later dev7 development soak. Neither is a qualification result for the October 8 Beta 11 installer; see its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a> for the exact package scope.</p>
     <div class="ev-grid">
       <div>
         <table class="ev-table">
@@ -253,12 +253,13 @@
           <tbody>
             <tr><td>Clean install, all checks</td><td>10 of 10</td><td>Published beta.10</td></tr>
             <tr><td>Station boot after install</td><td>26 seconds</td><td>Published beta.10</td></tr>
-            <tr><td>Program changes watched, 3 channels</td><td>50, no holes</td><td>Earlier build, 8 hours</td></tr>
-            <tr><td>Loudness windows in range</td><td>16 of 16</td><td>Earlier build, 8 hours</td></tr>
+            <tr><td>Program changes watched, 3 channels</td><td>50, no holes</td><td>Earlier Beta 10-era build, 8 hours</td></tr>
+            <tr><td>Loudness windows in range</td><td>16 of 16</td><td>Earlier Beta 10-era build, 8 hours</td></tr>
             <tr><td>Longest run, 2 channels</td><td>About 59 hours, no restart</td><td>Earlier build</td></tr>
+            <tr><td>Caption soak, 36 hours, three channels</td><td>102 eligible checkpoints; 306 sampled channel checks</td><td>Earlier dev7 overlay on one development station, not the installer</td></tr>
           </tbody>
         </table>
-        <p class="fine" style="margin-top:1rem">Every figure comes from the project's own lab runs. No outside group has audited it. The full record is in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">beta.10 verification file</a>.</p>
+        <p class="fine" style="margin-top:1rem">The Beta 10 figures come from the project's own lab runs. Their full record is in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">Beta 10 verification file</a>. The separate <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md">36-hour dev7 soak report</a> records its exclusions and limits; it was development-station evidence, not a test of the October 8 installer.</p>
       </div>
       <aside class="limits" aria-labelledby="limits-h">
         <h3 id="limits-h">Known limits of beta.10</h3>
@@ -286,7 +287,7 @@
       <li><b>Create the first admin</b>Choose the station name and an admin password, and save the recovery kit. The console stays locked until you confirm it.</li>
       <li><b>Check Readiness</b>The Readiness screen reports whether the station is safe to broadcast.</li>
     </ol>
-    <div class="callout"><p><strong>Beta.11 test scope:</strong> the exact signed package passed a brief in-place host refresh and three-channel output check. A clean install, failed-install repair, Beta.10 upgrade, and longer capacity run were not performed for this package. See its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a>.</p></div>
+    <div class="callout"><p><strong>Beta.11 test scope:</strong> the October 8 package (producer source <code>b7cc3e7c</code>, build <code>37827938199</code>) passed a brief in-place host refresh and three-channel output check. A clean install, failed-install repair, Beta.10 upgrade, and longer capacity run were not performed for this package. See its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a>.</p></div>
     <div class="btn-row">
       <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11">Open the release page</a>
       <a class="button ghost" href="install-windows.html">Windows install notes</a>
@@ -299,7 +300,7 @@
     <p class="eyebrow">Documentation</p>
     <h2>A manual for each kind of reader.</h2>
     <p class="lede">The User Manual has a plain-language part for volunteers, camera operators, editors, records clerks and station staff, and a technical part for a city's IT staff, with architecture diagrams and a full appendix.</p>
-    <p class="fine">The PDF and Word manuals attached to this release preserve the release-status text captured during the build. For the final install and output result, use the current <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a>.</p>
+    <p class="fine">The PDF, Word, and in-app help editions share the current manual. For the October 8 package's installation and output results, see the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a>.</p>
     <ul class="docs">
       <li><a href="USER-MANUAL.pdf"><b>User Manual (PDF)</b><span>The complete manual, formatted for reading and printing.</span></a></li>
       <li><a href="USER-MANUAL.docx"><b>User Manual (Word)</b><span>The same manual as an editable document.</span></a></li>

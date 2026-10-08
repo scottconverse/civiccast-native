@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Meeting agenda card (shown beside the video on a Watch page, `#/watch/<asset_id>`)
 
 Paths are under `civiccast/apps/portal-public/`. Line numbers are `src/MeetingAgendaSidebar.tsx` unless noted. Staff write and publish the agenda on the Agendas screen (manual chapter 12).

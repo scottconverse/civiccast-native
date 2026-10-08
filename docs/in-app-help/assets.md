@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Assets (nav id: assets)
 
 Console group: Review Records. Spec for the in-app help of the Assets list, the asset detail page and its panels. Written against beta.10. All paths below are under `civiccast/apps/portal-operator/src/`.

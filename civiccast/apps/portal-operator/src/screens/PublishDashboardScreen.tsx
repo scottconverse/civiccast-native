@@ -732,8 +732,9 @@ function AssetPanel({
           {error && (
             <span role="alert" className="text-xs" style={{ color: 'var(--cc-err)' }}>
               <strong>Publish stopped.</strong>{' '}
-              {errorDetail || 'The server did not provide a safe reason.'} Nothing else was
-              published; correct the named issue and retry.
+              {errorDetail || 'The server did not provide a safe reason.'} Some earlier steps may
+              already be published. Check each surface status before retrying; retry only failed
+              surfaces.
             </span>
           )}
         </div>

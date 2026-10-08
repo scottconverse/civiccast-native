@@ -1,6 +1,6 @@
 # Appendix A: Command-line reference {#app-cli}
 
-CivicCast has one command-line program, `civiccast`. It is for the IT person, not for a clerk or operator: nothing in the operator console requires it. You use it to check the computer, to issue or revoke the access tokens that scripts and tools use, to run the disaster-recovery drill, and to run a few checks on the cable output. Every command below exists in beta.10 (42 commands in 13 groups).
+CivicCast has one command-line program, `civiccast`. It is for the IT person, not for a clerk or operator: nothing in the operator console requires it. You use it to check the computer, to issue or revoke the access tokens that scripts and tools use, to run the disaster-recovery drill, and to run a few checks on the cable output. The current beta.11 source exposes 42 commands in 13 groups.
 
 ## Where the program is
 
@@ -54,7 +54,7 @@ Nearly every command accepts `--json`. It prints one machine-readable record ins
 
 ## Full command tables
 
-The tables below are generated from the program itself, so they match beta.10 exactly.
+The tables below are generated from the program itself, so they match the current beta.11 source.
 
 <!-- INCLUDE: ops/docs-sprint/inventory/generated/cli.md -->
 
@@ -77,7 +77,7 @@ On the station itself the API answers at `http://127.0.0.1:8000`. The program bi
 | Setup | `/api/setup/` | 7 | 6 | The station computer itself. First setup, sign-in, recovery and storage preparation. |
 | Other | root and a few fixed paths | 13 | 4 | Protocol and utility routes (see below). |
 
-In total the beta.10 server exposes 488 operations on 405 paths in 81 groups.
+In total the beta.11 server exposes 488 operations on 405 paths in 81 groups.
 
 The 13 "other" operations are: ten at the root level (`/health`, the two federation discovery routes `/.well-known/nodeinfo` and `/.well-known/webfinger`, `/nodeinfo/2.0`, the four ActivityPub routes `/ap/actor`, `/ap/followers`, `/ap/inbox`, `/ap/outbox`, and the media file routes `/media/live/...` and `/media/vod/...`), plus `/api/hardware`, `/api/version` and the signed Stripe webhook `/api/webhooks/stripe`. None of these is covered by the staff-token check.
 
@@ -93,10 +93,10 @@ The 13 "other" operations are: ten at the root level (`/health`, the two federat
 3. **A token carries scopes, and scopes become roles.** `admin` and `operator` mean all five roles; `setup_admin`, `meeting_operator`, `records_clerk`, `publish_operator` and `support_admin` (also written `setup`, `meeting`, `records`, `publish`, `support`) mean one role each. A token with no scopes has no roles.
 4. **Each route names the roles that may use it.** A signed-in caller with the wrong role gets HTTP 403: "This action requires one of these CivicCast roles: ..." followed by the role names in alphabetical order.
 5. **Rate limit.** Ten failed token checks in 60 seconds from one client address earns HTTP 429 ("Too many failed staff authentication attempts. Wait and retry.") with a `Retry-After` header. The numbers are settings (`CIVICCAST_AUTH_RATE_LIMIT`, `CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS`). A caller that sends the exact right token is not blocked by other people's failures.
-6. **Read versus write.** In beta.10 almost every `/api/staff/` route that changes something requires a role. The staff routes with no role requirement are all reads (lists, status, thumbnails) plus `POST /api/staff/auth/sign-out`; for those any valid token is enough. In the console this shows up as screens a role can open but cannot use ([Appendix F](#app-roles)).
+6. **Read versus write.** In beta.11 almost every `/api/staff/` route that changes something requires a role. The staff routes with no role requirement are all reads (lists, status, thumbnails) plus `POST /api/staff/auth/sign-out`; for those any valid token is enough. In the console this shows up as screens a role can open but cannot use ([Appendix F](#app-roles)).
 7. **Maintenance mode.** While the service holds the station in maintenance mode (the installer does this during an upgrade, and during a hand-over between CivicCast editions), every request that changes data (POST, PUT, PATCH, DELETE) is refused with HTTP 503 and the body `{"error": "maintenance"}`. Reads still work.
 
-> **Known issue (beta.10):** Nothing in the console lets you create operators or assign roles. The first admin and anyone signing in with that admin's password or a recovery code gets scope `admin`, which is all five roles. Role-limited behavior appears only for tokens you issue yourself on the command line.
+> **Known issue (beta.11):** Nothing in the console lets you create operators or assign roles. The first admin and anyone signing in with that admin's password or a recovery code gets scope `admin`, which is all five roles. Role-limited behavior appears only for tokens you issue yourself on the command line.
 
 ## Getting the OpenAPI document
 
@@ -106,7 +106,7 @@ The OpenAPI document is the machine-readable list of every route, its inputs and
 Invoke-RestMethod -Uri http://127.0.0.1:8000/openapi.json -Headers @{ Authorization = "Bearer <token>" }
 ```
 
-The interactive pages `/docs` and `/redoc` are switched off on a native station, because they load their pictures and scripts from the public internet and a council chamber computer is often not allowed to reach it. The project's source repository carries a copy of the document at `docs/openapi.json` (405 paths for beta.10).
+The interactive pages `/docs` and `/redoc` are switched off on a native station, because they load their pictures and scripts from the public internet and a council chamber computer is often not allowed to reach it. The project's source repository carries a copy of the document at `docs/openapi.json` (405 paths for beta.11).
 
 ## Error answers
 
@@ -128,7 +128,7 @@ Every CivicCast setting starts with `CIVICCAST_` followed by capital letters and
 
 ## The one-C spelling trap
 
-The prefix is spelled **C-I-V-I-C-C-A-S-T** (two C's in the middle, nine letters). A setting typed **CIVICAST_** (one C, eight letters) looks almost identical and is silently ignored by anything that reads the correct name. This has already happened in the product's own code. The rule for beta.10:
+The prefix is spelled **C-I-V-I-C-C-A-S-T** (two C's in the middle, nine letters). A setting typed **CIVICAST_** (one C, eight letters) looks almost identical and is silently ignored by anything that reads the correct name. This has already happened in the product's own code. The rule for beta.11:
 
 1. **Use the two-C spelling for every setting**, with the exceptions in the next point.
 2. **Four product settings are read only under the one-C spelling.** For these, the correct two-C spelling does nothing:
@@ -317,7 +317,7 @@ The "Address" column is the network address the program listens on. `127.0.0.1` 
 
 There is **no** CivicCast listener on any non-loopback address in the supervisor's normal configuration.
 
-> **Known issue (beta.10):** Setup adds a Windows Firewall rule named "CivicCast (Native) Portal/API (TCP 8000)" that allows inbound TCP 8000 on all network profiles for `<I>\runtime\python.exe`. But the control plane listens only on `127.0.0.1`, and no setting changes that. As built, other computers on the network cannot open the console or the portal even though the firewall rule is open. If residents or staff need to reach the station from other computers, that has to be done with something you add in front of it (a reverse proxy on the same machine, for example). Test it before promising it to anyone.
+> **Known issue (beta.11):** Setup adds a Windows Firewall rule named "CivicCast (Native) Portal/API (TCP 8000)" that allows inbound TCP 8000 on all network profiles for `<I>\runtime\python.exe`. But the control plane listens only on `127.0.0.1`, and no setting changes that. As built, other computers on the network cannot open the console or the portal even though the firewall rule is open. If residents or staff need to reach the station from other computers, that has to be done with something you add in front of it (a reverse proxy on the same machine, for example). Test it before promising it to anyone.
 
 ### Connections the station makes outward
 
@@ -372,7 +372,7 @@ The list has two columns that describe the same file in two vocabularies.
 | --- | --- |
 | Draft | The portal step has not finished: it has not run yet, or it is still running. |
 | Preflight blocked | A required check stops publishing. |
-| Publishing | A fallback label, used when none of the other states fits. We could not confirm a normal path that shows it in beta.10. |
+| Publishing | The fallback label returned when no earlier dashboard-state rule applies. |
 | Archive pending | The portal copy is live; a required archive copy is still pending or running. |
 | Archive verified | Portal live and every required archive copy is verified. |
 | Reaching fewer places than planned | Portal live, but an optional reach surface failed. |
@@ -435,7 +435,7 @@ Raw API words: `STOPPED`, `STARTING`, `ON_AIR`, `TRANSITIONING`, `FALLBACK_SLATE
 | --- | --- |
 | Preparing | The commit was accepted and is being prepared. |
 | Queued to air | A start or reload was queued for the program's scheduled time. |
-| On air (confirmed) | Defined, but nothing in beta.10 sets it, so you should not see it. |
+| On air (confirmed) | A commit-to-air state is not shown with this exact label in the current console; use the channel's current feed state and caption/output proof instead. |
 | Couldn't reach the engine | Dispatch failed. |
 | Rolled back | An operator rolled the commit back. |
 | Not ready to air / Committed / Ready to review | Badges on upcoming programs in the commit list. |
@@ -500,7 +500,7 @@ When setup fails it ends with a number. Interactive setup shows a message box (n
 
 Code 123 hides a second number from the activation step: 66 (pack or index missing or not trusted), 67 (anything wrong after the packs were verified, including too little free disk space, an extraction failure, a missing file or a self-test that did not pass), 78 (the embedded signing key was refused: download setup again), 64 or 65 (a defective setup program). The self-test runs a short check of the program, PostgreSQL, ffmpeg, Ollama, a caption transcription and three AI requests; each AI request may take up to 300 seconds on a slow machine.
 
-> **Known issue (beta.10):** The activation message tells you to find the failed self-test in `install-progress.log`. The log records only "returned 67"; the cause is in the setup program's detail pane. Run setup interactively and read the detail list if you need the cause.
+> **Known issue (beta.11):** The activation message tells you to find the failed self-test in `install-progress.log`. The log records only "returned 67"; the cause is in the setup program's detail pane. Run setup interactively and read the detail list if you need the cause.
 
 ## Common error messages
 
@@ -600,7 +600,7 @@ CivicCast has five roles. A role is a set of things a person is allowed to do. T
 
 Two extra pages are not in the menu: an asset's detail page and its full-screen trim editor. Both follow the Assets rules.
 
-> **Known issue (beta.10):** The menu hides **Missing Media** and **Agendas** from a Setup admin on its own, although that role usually is the all-powerful one. This shows only for a token that carries nothing but `setup_admin`.
+> **Known issue (beta.11):** A token that carries only `setup_admin` cannot open **Missing Media** or **Agendas**. Those screens require `meeting_operator`, `publish_operator` or `support_admin` for Missing Media, and `records_clerk` or `meeting_operator` for Agendas. Use a token with one of those roles.
 
 ### Screens a role can open but cannot use
 
@@ -616,7 +616,7 @@ When the server refuses a role, the screen often prints the raw role ids ("This 
 
 ## Who can do the key tasks
 
-From the server's checks in beta.10. Read "any signed-in role" as: the server only needs a valid token, and no particular role.
+From the current beta.11 server's checks. Read "any signed-in role" as: the server only needs a valid token, and no particular role.
 
 | Task | Allowed roles |
 | --- | --- |
@@ -661,9 +661,9 @@ From the server's checks in beta.10. Read "any signed-in role" as: the server on
 
 ## Role by API area
 
-The server groups its staff routes into areas (the second part of the path after `/api/staff/`). For each area the table gives how many routes carry a role requirement, and for each role how many of those routes it may call. A dash means none. Routes with no role requirement (79 in beta.10) are all reads, plus `POST /api/staff/auth/sign-out`; any valid token may use them. Areas that have no role-gated route (`auth`, `first-run`, `release`, `doctor`) are not listed.
+The server groups its staff routes into areas (the second part of the path after `/api/staff/`). For each area the table gives how many routes carry a role requirement, and for each role how many of those routes it may call. A dash means none. Routes with no role requirement (79 in beta.11) are all reads, plus `POST /api/staff/auth/sign-out`; any valid token may use them. Areas that have no role-gated route (`auth`, `first-run`, `release`, `doctor`) are not listed.
 
-How this was made: the application was loaded and each route's role requirement was read from it (beta.10 code: 421 staff routes in all, which is six more than the 415 in [Appendix B](#app-api) because six installer routes are left out of the published API document; 342 are role-gated, in 48 areas, and 79 are not).
+How this was made: the application was loaded and each route's role requirement was read from it (beta.11 code: 421 staff routes in all, which is six more than the 415 in [Appendix B](#app-api) because six installer routes are left out of the published API document; 342 are role-gated, in 48 areas, and 79 are not).
 
 | Area | Gated routes | S | M | R | P | A |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -724,7 +724,7 @@ How this was made: the application was loaded and each route's role requirement 
 
 Copy these into your own notebook or ticket system. Each box is one action. Where a screen name is given, it is the menu name. Times typed on some screens are UTC, which is a common cause of a meeting airing a day early or late, so read the "Times" box in the go-live list first.
 
-> **Warning:** Beta.10 is a beta candidate. The clean-install lane of the release checks passed; upgrading over an earlier release and the download-only lane were not run, and no human field tester has signed off. Use these lists to find problems early, not to certify the station.
+> **Warning:** Beta.11 is a GitHub pre-release. Check the current verification record for the source, hash and tests tied to the package you are using. These lists help prepare and operate a station; they do not certify the package.
 
 ## G.1 Go-live checklist
 
@@ -733,7 +733,7 @@ Do this once before the first public meeting, and again after any reinstall.
 **The computer and the service**
 
 - [ ] The Windows service `CivicCastSupervisor` is Running and set to start automatically (`Get-Service CivicCastSupervisor`).
-- [ ] The top bar shows the version you meant to install (`v1.0.0-beta.10`).
+- [ ] The top bar shows the version you meant to install (`v1.0.0-beta.11`).
 - [ ] The console opens at `http://127.0.0.1:8000/operator/` on the station computer.
 - [ ] Decide how residents and other staff will reach the station. As built, the program listens only on the station computer itself; reaching it from anywhere else needs something you add ([Appendix D](#app-files)). Test it from a second computer.
 - [ ] Free disk space is comfortable on the drive holding `C:\ProgramData\CivicCast` (the conform cache alone may use up to 60 GB by default) and on the drive for `CIVICCAST_UPLOAD_DIR` (the Live screen needs 50 GiB free there).
@@ -747,7 +747,7 @@ Do this once before the first public meeting, and again after any reinstall.
 **Configuration**
 
 - [ ] Station Profile: station name, time zone, default channel, public web address and the three storage folders look right and have space.
-- [ ] Station Profile: decide the **Show live captions on air** switch (it starts off). With it off, no caption is written into the picture.
+- [ ] Station Profile: decide the **Show live captions on air** switch (off by default). Turning it off stops recognition on the next tap-worker scan and removes caption routing when each channel next starts. Turning it on resumes recognition on the next scan; stop and start each channel before expecting captions in its video. Whistle is the native CPU primary; NVIDIA/CUDA is optional Whisper acceleration.
 - [ ] AI Models: the caption, summary and translation models are the ones you intend. Remember that a local change takes effect the moment the choice changes.
 - [ ] First Setup: **Verify backup** succeeded for your backup folder. This only proves CivicCast can write a small test file there; it does not copy your data. Arrange your own backups ([G.7](#g-drill)).
 - [ ] Readiness: no required row is red; read every row in "Required before broadcast" (First admin, Recovery kit, Durable records storage, Backup, Camera or meeting source, Local recording, Resident portal, Station policy).
@@ -837,12 +837,12 @@ Do this once before the first public meeting, and again after any reinstall.
 
 ## G.6 Before-upgrade checklist
 
-> **Warning:** For beta.10, upgrading over an earlier release is **not proven**: that lane of the release checks was not run. Rehearse it on a spare machine, and have a backup you have restored at least once, before you do it on the station that is on the air.
+> **Warning:** Read the current beta.11 verification record for upgrade results tied to the exact package. Have a backup you have restored at least once before upgrading the station that is on the air.
 
 - [ ] Read the release notes and the verification record for the version you are installing. Note what was and was not proven.
 - [ ] Choose a time when no meeting is scheduled and no channel is needed.
 - [ ] Take your own backup of the media, of `station-state.json` and of anything else you rely on, and run the restore drill the same day ([G.7](#g-drill)).
-- [ ] Have the new `setup.exe` and its `packs` folder together on the station, with the downloads checked against the published checksums.
+- [ ] Have the full kit (`setup.exe`, `packs` and the signed `station` folder) together on the station, with the files checked against the published checksums.
 - [ ] Readiness, Update and rollback panel: save the path to the installer you would roll back to (the field is labelled **Rollback artifact path**; its own example is an older installer) with **Save rollback artifact**, then run **Run rollback rehearsal**, then **Run update preflight**.
 - [ ] On Readiness, **Open maintenance window** (60 minutes). It needs the update preflight and a passed rollback rehearsal first. During the upgrade itself the service holds the station in maintenance mode, and changes are refused with HTTP 503.
 - [ ] Note the free disk space.
@@ -852,7 +852,7 @@ Do this once before the first public meeting, and again after any reinstall.
 
 ## G.7 Disaster-recovery drill {#g-drill}
 
-What CivicCast does and does not do for you in beta.10:
+What CivicCast does and does not do for you in beta.11, based on current product behavior:
 
 - Its drill backs up the real database, restores it into a completely fresh database, and checks row counts, content checksums and that the program's own stores can read the restored data.
 - It does not replicate your media: the drill records a list of files and a hash of a bounded sample, and says you still need your own file-level backup of media.
@@ -933,7 +933,7 @@ Bearer token
 :   The secret a tool sends in the `Authorization: Bearer` header to prove who it is to the API.
 
 Beta candidate
-:   How beta.10 is labeled: published as a *GitHub pre-release* to be tested, not a finished or production release.
+:   A published release labeled by GitHub as a *pre-release* for testing, not a production release. Beta.11 is the current native-line pre-release.
 
 Board (community board)
 :   The between-programs picture a channel shows: zones for a ticker, schedule, logo, sponsor and approved *bulletins*.
@@ -1108,13 +1108,13 @@ Forced slate
 **G**
 
 Gate A
-:   The set of checks run in a clean Windows Sandbox before a release is published. It has a clean-install lane, an upgrade lane and a download-only lane. Only the clean-install lane ran for beta.10.
+:   The set of checks run in a clean Windows Sandbox before a release is published. It has a clean-install lane, an upgrade lane and a download-only lane. The beta.10 verification record reports only its clean-install lane; check each release's verification record for the lanes run on that candidate.
 
 Gemma
 :   The family of AI models used for summaries (12B and e4b) and, as TranslateGemma 4B, for Spanish translation. They run locally through *Ollama*.
 
 GitHub pre-release
-:   A release on GitHub marked as not final. Beta.10 is published this way.
+:   A release on GitHub marked as not final. Beta.11 is published this way.
 
 GStreamer
 :   The video framework CivicCast's playout engine is built on.
@@ -1176,7 +1176,7 @@ Loopback (127.0.0.1)
 :   An address that means "this computer only". A program listening there cannot be reached from the network.
 
 LUFS
-:   A unit of perceived loudness. Beta.10 levels spoken programs toward -16 LUFS when preparing them for air.
+:   A unit of perceived loudness. Spoken programs are leveled toward -16 LUFS when prepared for air.
 
 **M**
 
@@ -1212,7 +1212,7 @@ NWS
 **O**
 
 Ollama
-:   The local AI engine program (version 0.30.6 in beta.10), started by the service on `127.0.0.1:11434`.
+:   The local AI engine program (version 0.30.6 in the current runtime lock), started by the service on `127.0.0.1:11434`.
 
 On-Air Mode
 :   A Control Room session type that really fires cues. It expires after 30 minutes. The other type, Test Mode, fires nothing.
@@ -1417,7 +1417,7 @@ Underwriting
 :   Paid sponsor acknowledgment messages. The screen keeps a catalog of spots and flights and a billing report.
 
 Upgrade
-:   Running a newer setup over an existing install. Beta.10's upgrade lane was not tested.
+:   Running a newer setup over an existing install. Check the release verification record for the exact package to see whether its upgrade lane was tested.
 
 UTC
 :   Universal Coordinated Time, the clock that does not change with seasons or places. Several screens use it.
@@ -1445,7 +1445,7 @@ Whisper (faster-whisper)
 :   The speech-to-text model that makes captions. The Medium model is the standard; Large v3 is optional.
 
 WSL (Windows Subsystem for Linux)
-:   The Windows feature the older CivicCast edition ran on. Beta.10 is the native Windows edition.
+:   The Windows feature the older CivicCast edition ran on. The current CivicCast line is native Windows.
 
 **X**
 
@@ -1488,9 +1488,9 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 
 ## What is bundled
 
-| Component | Version in beta.10 | License (as the project records it) | What it does here |
+| Component | Version / source record | License (as the project records it) | What it does here |
 | --- | --- | --- | --- |
-| CivicCast program and web portals | 1.0.0-beta.10 | Apache-2.0 | The station itself. |
+| CivicCast program and web portals | 1.0.0-beta.11 | Apache-2.0 | The station itself. |
 | GStreamer libraries and plugins | 1.28 series | LGPL-2.1-or-later for the libraries and almost all plugins; the Rust-based plugins (`hlssink3`, closed captions) are MPL-2.0 | The playout engine. |
 | Cisco OpenH264 | in the closure | BSD-2-Clause | H.264 video encoding. Its patent position is a separate question that the license text does not answer. |
 | VisualOn AAC encoder | in the closure | Apache-2.0 for the encoder library; the GStreamer plugin that wraps it is LGPL-2.1-or-later | AAC audio encoding. |
@@ -1501,6 +1501,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 | OpenSSL | 3.x | Apache-2.0 | Secure connections. |
 | Node.js | 24.15.0 (listed in the runtime lock) | MIT | Listed in the runtime dependency lock. |
 | Whisper large-v3 speech model (via faster-whisper) | pinned revision | MIT | Captions (the optional Large model). The standard Medium model is a separate pack whose license this table does not restate. |
+| Whistle speech model and `cactus-needle` engine | Whistle engine 3.1.0; model and wheel hashes pinned in `civiccast/native/app_payload.py` | Apache-2.0 for both | CPU-first live captions. Whistle is included in the signed station pack set. |
 | Gemma 4 (12B, e4b) and TranslateGemma 4B models | as pinned in the model lock | The publisher's license, carried inside each model package | Summaries and Spanish translation. Read the license inside the package; this manual does not restate it. |
 | Smaller libraries | various | BSD-2-Clause, BSD-3-Clause, MIT, Zlib, Libpng, bzip2, FreeType License (FTL), HPND-sell-variant, MIT-Modern-Variant, Unicode-TOU, SQLite's public-domain dedication, ICU, LGPL-2.1-or-later (glib, pango, libsoup, gettext, and others) | Text, fonts, images, networking and compression support. |
 | Python packages | pinned by hash | Each under its own license, listed per package in the build's bill of materials | The CivicCast program's dependencies. |
@@ -1508,7 +1509,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 | Microsoft Visual C++ Redistributable | the installer's own copy | Proprietary (Microsoft's terms) | Required by the Windows programs. CivicCast has no right to reproduce the text; it ships a pointer to where the real terms are. |
 | NVIDIA CUDA and cuDNN libraries (optional GPU pack) | optional | NVIDIA's end-user license terms | Faster captions on an NVIDIA graphics card. The pack carries reference texts, not NVIDIA's copyrighted text. |
 
-> **Note:** Names and versions in the table are from the project's lock files and license tables. Some lock files pin newer or older point releases than this table shows (the GStreamer line, for example, moved between two 1.28 releases during beta.10 work), so use the build's bill of materials for exact versions.
+> **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of a particular package are in its `LICENSE-BOM.md` files and the current beta.11 verification record; use those for that package's component inventory.
 
 ## Where the license texts are
 
@@ -1536,14 +1537,15 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 Published releases of the native Windows line of CivicCast, newest first. The authored source for this list is the project's release-truth file, checked against GitHub's release page. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** **v1.0.0-beta.10** was published on 2026-10-02 as a GitHub pre-release and beta candidate. Gate A passed for the clean-install lane only. The upgrade lane and the download-only lane were not run. A first install with neither the full kit nor an earlier install is not proven; the installer needs the `packs` and `station` folders. No human field-tester has signed off. The exact wording is in the project's `docs/releases/v1.0.0-beta.10-verification.md`.
+> **Note:** **v1.0.0-beta.11** is the current GitHub pre-release. Its exact source, package hash, observations and limitations are in the [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.10** | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Current. GitHub pre-release / beta candidate | The current release. Program changes no longer leave a black or silent gap, and a watchdog ends a stuck program change; spoken programs are leveled toward -16 LUFS; schedules set to loop now loop; the conform cache default grew from 20 GB to 60 GB; faults in reload and restart are handled (orphaned relays reaped, a frozen web stream restarts its worker, an audio/video mismatch restarts the channel, live captions catch up). Proven by an eight-hour three-channel lab run on an earlier internal build of the same engine and by a clean-install check on the published installer. |
+| **v1.0.0-beta.11** | 2026-10-08 | Current. GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the current verification record for this package's source and exact evidence. |
+| v1.0.0-beta.10 | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Superseded by beta.11 | Added program-change, loudness, looping and relay/reload work. Its eight-hour lab run used an earlier internal build; its clean-install result belongs to the beta.10 package. See Appendix H for historical evidence and limits. |
 | v1.0.0-beta.9 | 2026-09-18 (changelog date) | Never published | A version bump and an installer rebuild; its work is in beta.10. |
 | v1.0.0-beta.8 | none | Never published | Its work is in beta.10. |
-| v1.0.0-beta.7 | 2026-09-15 (19:47 UTC) | Superseded by beta.10 | Published as a GitHub pre-release with a signed `setup.exe`. All three Gate A install journeys and an eight-hour physical-machine soak with captions off passed. Live captions stay off by default. |
+| v1.0.0-beta.7 | 2026-09-15 (19:47 UTC) | Superseded by beta.10 | Published as a GitHub pre-release with a signed `setup.exe`. All three Gate A install journeys and an eight-hour physical-machine soak with captions off passed. Live captions stay off by default in that release. |
 | v1.0.0-beta.6 | none | Not listed as a release; the changelog calls it rejected | A candidate that was not accepted. |
 | v1.0.0-beta.5 | 2026-09-09 22:14 Mountain (2026-09-10 04:14 UTC) | Superseded | Published as a pre-release after several rejected candidates; all three Gate A lanes passed at publish time. The changelog later records it, with beta.6, as rejected. |
 | v1.0.0-beta.4 | 2026-09-04 (20:41 UTC) | Superseded | A download-only upgrade for stations already on beta.3: `setup.exe` and the runtime packs, no re-download of the AI model bundle. |
@@ -1555,7 +1557,7 @@ The same release-truth file also lists tags from a **different, retired product*
 
 Pre-releases published after this manual was written are listed on the project's GitHub releases page: <https://github.com/scottconverse/civiccast-native/releases>.
 
-<!-- SOURCES: docs/releases/release-truth.yaml (entries for beta.1-5, 7, 10; rc entries; current: v1.0.0-beta.10); CHANGELOG.md:14-60 (beta.10 summary), :453-458 (beta.9), :462-475 (beta.7), :524 (beta.5 and beta.6 rejected), :1504-1520 (beta.5), :4250-4262 (beta.4), :4747-4760 (beta.3), :5953-5958 (beta.1); docs/releases/v1.0.0-beta.10-verification.md (status wording; beta.8 and beta.9 never published); MANUAL-STYLE.md section 2 rule 4 (beta.10 wording) -->
+<!-- SOURCES: docs/releases/release-truth.yaml (current: v1.0.0-beta.11); docs/releases/v1.0.0-beta.11-verification.md (package source, observations and limits); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
 
 # Appendix L: Index of screens {#app-screens}
 
@@ -1609,7 +1611,7 @@ Every screen of the operator console, then the resident portal pages and the set
 
 That is 37 menu entries in six sections. Two more pages are reached from the Assets list and are not in the menu: **asset detail** (`#/assets/<asset id>`) and the full-screen **trim editor** (`#/assets/<asset id>/trim`); both are in [Chapter 5](#ch-after-meeting). An address the console does not know shows "Page not found" with buttons for Manual, First Setup, Recording, Reports and Readiness. A few old or short addresses forward to the right screen (for example `/docs` and `/manual` to Manual, `/login` to First Setup, `/readiness` to Readiness, `/today` to Schedule, `/archive` to Assets).
 
-> **Known issue (beta.10):** The top bar clock always says "Next No events scheduled" and the pill "No live meeting broadcast", whatever the schedule holds. They are placeholders. Use Schedule and Channels for the real answers.
+> **Known issue (beta.11):** The top bar clock always says "Next No events scheduled" and the pill "No live meeting broadcast", whatever the schedule holds. They are placeholders. Use Schedule and Channels for the real answers.
 
 ## Resident portal pages
 

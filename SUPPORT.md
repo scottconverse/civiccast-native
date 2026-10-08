@@ -1,11 +1,11 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.10` is the current
-> release, published 2026-10-02 as a GitHub pre-release (a beta candidate) --
+> **Current native release posture:** `v1.0.0-beta.11` is the current
+> release, published 2026-10-08 as a GitHub pre-release (a beta candidate) --
 > `setup.exe` and the runtime
 > `.ccpack` packs are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10).
-> `v1.0.0-beta.7`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11).
+> `v1.0.0-beta.10`, `v1.0.0-beta.7`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable
 > release) are now superseded.
 > `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also
 > superseded. `v1.0.0-beta.2` was never published -- it exists only as an
@@ -33,7 +33,7 @@ there is no commercial support contract or SLA.
    [docs/adoption/early-adopter-quickstart.md](docs/adoption/early-adopter-quickstart.md),
    [docs/adoption/support-intake.md](docs/adoption/support-intake.md),
    [FAQ.md](FAQ.md), [docs/USER-MANUAL.md](docs/USER-MANUAL.md), and
-   [docs/installer/beta-tester-handoff.md](docs/installer/beta-tester-handoff.md).
+   [docs/tester/START-HERE.md](docs/tester/START-HERE.md).
 2. **Search existing issues.** [GitHub Issues](https://github.com/scottconverse/civiccast-native/issues)
    may already cover your question.
 3. **Open a question or bug issue.** Use **Report a beta issue** in the
@@ -77,12 +77,12 @@ development.
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
 is a **public beta**, not a finished production release. Its current
-release, `v1.0.0-beta.10`, is downloadable (setup.exe and the runtime packs
-on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10)),
-published 2026-10-02 as a GitHub pre-release (a beta candidate), not a
+release, `v1.0.0-beta.11`, is downloadable (setup.exe and the runtime packs
+on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11)),
+published 2026-10-08 as a GitHub pre-release (a beta candidate), not a
 production release. There is still no dedicated, SLA'd support intake for it --
-the same community-driven, no-SLA posture above applies. Its known limits are
-in [docs/tester/known-limitations.md](docs/tester/known-limitations.md). The
+the same community-driven, no-SLA posture above applies. Its tested scope and
+known limits are in the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md).
 earlier `v1.0.0-beta.7` is superseded.
 
 If you are working on, evaluating, or running the native line:
@@ -95,9 +95,9 @@ If you are working on, evaluating, or running the native line:
   have a native-specific path, so context has to be spelled out by hand.
 - Do not treat anything reported against the native line as a supported,
   SLA'd, or fully field-proven path. The same "community-driven, no SLA"
-  posture above applies. The beta.10 verification record
-  ([`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md))
-  states what was and was not proven (the superseded beta.7's record is
+  posture above applies. The Beta 11 verification record
+  ([`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md))
+  states what was and was not proven (the superseded Beta 10 and beta.7 records are
   [`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md));
   they are engineering records, not a support commitment.
 
