@@ -120,14 +120,25 @@ not publish. Re-run Gate A (or the specific failing lane via
 
 ### Direct Sandbox consumer evidence route
 
-The publisher also accepts the actual local Sandbox consumer receipts when
-those scenarios were run directly instead of by the Gate A workflow. Select
-exactly one route: pass `--gate-a-run-id` for the workflow-backed route, or
-`--consumer-evidence-receipt <file>` for direct evidence. Direct mode also
-requires an explicit `--artifact-source-sha`; it never downloads Gate A
-artifacts or manufactures lane verdicts.
+The publisher also accepts direct consumer receipts instead of the Gate A
+workflow. Select exactly one route: pass `--gate-a-run-id` for the
+workflow-backed route, or `--consumer-evidence-receipt <file>` for direct
+evidence. Direct mode also requires an explicit `--artifact-source-sha`; it
+never downloads Gate A artifacts or manufactures lane verdicts.
 
-The version-1 JSON receipt has `kind: "civiccast-native-beta-direct-consumer-evidence"`, an `artifact` object with
+The default direct receipt is Sandbox evidence, with all install, repair,
+preservation and scoped runtime groups below. An explicit
+`consumer_mode: "physical-host"` is a separate, bounded in-place update route.
+It binds the exact signed setup to a healthy pre-install host, successful Beta
+11 install, verified installed app manifest and retained service-loop/schema
+state. Its runtime group contains at least two time-ordered snapshots covering
+public, government and education, spanning at least 30 seconds, with HLS no
+older than 30 seconds, advancing playlists/segments, H.264/AAC and changing
+nonempty caption output. It proves those sampled outputs on that
+host; it does not claim a clean Sandbox install, failed-install repair,
+cross-version Sandbox upgrade or simultaneous capacity.
+
+The Sandbox version-1 JSON receipt has `kind: "civiccast-native-beta-direct-consumer-evidence"`, an `artifact` object with
 the exact `source_sha`, `build_run_id`, and a hash-bound `assembly_receipt`,
 and an `evidence` object containing all of these named proof groups:
 

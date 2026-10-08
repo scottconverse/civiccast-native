@@ -296,7 +296,13 @@ def _write_bound_text(path: Path, value: str) -> dict[str, str]:
     return {"path": str(path), "sha256": m.sha256_file(path)}
 
 
-def _write_direct_kit(kit_dir: Path, *, source_sha: str, build_run_id: str) -> tuple[Path, Path]:
+def _write_direct_kit(
+    kit_dir: Path,
+    *,
+    source_sha: str,
+    build_run_id: str,
+    consumer_mode: str = "sandbox",
+) -> tuple[Path, Path]:
     kit_dir.mkdir(parents=True)
     setup = kit_dir / "CivicCast (Native)_1.0.0-beta.11_x64-setup.exe"
     setup.write_bytes(b"fake signed Beta 11 installer")
@@ -384,16 +390,20 @@ def _write_direct_kit(kit_dir: Path, *, source_sha: str, build_run_id: str) -> t
         "station_index": {
             "signature_verification": {
                 "consumer_activation_verification": {
-                    "status": "passed",
-                    "actual_sandbox_result": {
-                        "baseline_install": {"status": "passed", "exit_code": 0},
-                        "upgrade_install": {
-                            "status": "passed",
-                            "exit_code": 0,
-                            "payload": "setup.exe plus exactly five runtime packs; no station folder",
-                        },
-                        "verify_after_upgrade": {"status": "passed", "exit_code": 0},
-                    },
+                    "status": "pending" if consumer_mode == "physical-host" else "passed",
+                    "actual_sandbox_result": (
+                        {}
+                        if consumer_mode == "physical-host"
+                        else {
+                            "baseline_install": {"status": "passed", "exit_code": 0},
+                            "upgrade_install": {
+                                "status": "passed",
+                                "exit_code": 0,
+                                "payload": "setup.exe plus exactly five runtime packs; no station folder",
+                            },
+                            "verify_after_upgrade": {"status": "passed", "exit_code": 0},
+                        }
+                    ),
                 }
             }
         },
@@ -410,12 +420,150 @@ def _write_direct_consumer_receipt(
     source_sha: str = DIRECT_SOURCE_SHA,
     build_run_id: str = "333",
     runtime_proof_scope: str | None = None,
+    consumer_mode: str = "sandbox",
+    previous_version: str = "1.0.0-beta.9",
 ) -> tuple[Path, Path]:
     setup, assembly_ref = _write_direct_kit(
-        kit_dir, source_sha=source_sha, build_run_id=build_run_id
+        kit_dir,
+        source_sha=source_sha,
+        build_run_id=build_run_id,
+        consumer_mode=consumer_mode,
     )
     evidence_dir = tmp_path / "consumer-evidence"
     installer_run = {"sha256": m.sha256_file(setup), "exit_code": 0}
+    if consumer_mode == "physical-host":
+        evidence_dir = tmp_path / "consumer-evidence"
+        manifest = {
+            "civiccast": {
+                "version": "1.0.0b11",
+                "source_state": {"head": source_sha, "dirty": False},
+            },
+            "files": [],
+        }
+        manifest_ref = _write_bound_json(
+            evidence_dir / "installed-app-payload-manifest.json", manifest
+        )
+        host_install = {
+            "kind": "beta11-exact-host-install",
+            "stage": "completed",
+            "status": "passed",
+            "source_sha": source_sha,
+            "build_run_id": build_run_id,
+            "setup_path": str(setup.resolve()),
+            "setup_sha256": m.sha256_file(setup),
+            "setup_authenticode": {
+                "status": "Valid",
+                "signer_subject": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US",
+                "file_version": VERSION,
+            },
+            "installer_exit_code": 0,
+            "before": {
+                "display_version": previous_version,
+                "service_state": "Running",
+                "schedule_loop_enabled": True,
+                "install_location": "C:/Program Files/CivicCast (Native)",
+                "health": {
+                    "status": "healthy",
+                    "version": previous_version,
+                    "schema": "current",
+                    "schema_db_revision": "0087_retention_terms",
+                },
+            },
+            "after": {
+                "display_version": VERSION,
+                "service_state": "Running",
+                "schedule_loop_enabled": True,
+                "install_location": "C:/Program Files/CivicCast (Native)",
+                "health": {
+                    "status": "healthy",
+                    "version": VERSION,
+                    "schema": "current",
+                    "schema_db_revision": "0087_retention_terms",
+                },
+                "app_payload_manifest_path": "C:/Program Files/CivicCast (Native)/runtime/app-payload-manifest.json",
+                "app_payload_manifest_sha256": manifest_ref["sha256"],
+                "app_payload_manifest_verified": True,
+            },
+        }
+        host_install_ref = _write_bound_json(
+            evidence_dir / "actual-host-install.json", host_install
+        )
+        sample_start = datetime(2026, 10, 8, 4, 0, tzinfo=UTC)
+        snapshots = []
+        for sample_index in range(2):
+            sample_at = sample_start + timedelta(seconds=45 * sample_index)
+            channels = []
+            for channel in ("public", "government", "education"):
+                channels.append(
+                    {
+                        "id": channel,
+                        "state": {"state": "ON_AIR"},
+                        "ffprobe_streams": [
+                            {"codec_type": "video", "codec_name": "h264"},
+                            {"codec_type": "audio", "codec_name": "aac"},
+                        ],
+                        "caption_runtime_status": {"state": "within-capacity"},
+                        "vtt_cue_count": 1 + sample_index,
+                        "vtt_sha256": hashlib.sha256(
+                            f"{channel}-{sample_index}".encode()
+                        ).hexdigest(),
+                        "playlist_age_seconds": 1.0,
+                        "playlist_mtime_utc": (sample_at - timedelta(seconds=1))
+                        .isoformat()
+                        .replace("+00:00", "Z"),
+                        "newest_segment": f"{channel}-{sample_index}.ts",
+                    }
+                )
+            snapshots.append(
+                _write_bound_json(
+                    evidence_dir / f"host-runtime-{sample_index + 1}.json",
+                    {
+                        "utc": sample_at.isoformat().replace("+00:00", "Z"),
+                        "health": {"status": "healthy", "version": VERSION},
+                        "pinned_whistle_error_seen": False,
+                        "whistle_active_seen": dict.fromkeys(
+                            ("public", "government", "education"), True
+                        ),
+                        "whistle_fallback_seen": dict.fromkeys(
+                            ("public", "government", "education"), False
+                        ),
+                        "channels": channels,
+                    },
+                )
+            )
+        host_runtime_result = _write_bound_json(
+            evidence_dir / "host-runtime-result.json",
+            {"result": "PASS", "channels": ["public", "government", "education"], "samples": 2},
+        )
+        receipt_path = tmp_path / "direct-consumer-evidence.json"
+        receipt_path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "kind": "civiccast-native-beta-direct-consumer-evidence",
+                    "consumer_mode": "physical-host",
+                    "artifact": {
+                        "source_sha": source_sha,
+                        "build_run_id": build_run_id,
+                        "assembly_receipt": assembly_ref,
+                    },
+                    "evidence": {
+                        "host_install": {
+                            "receipt": host_install_ref,
+                            "installed_manifest": manifest_ref,
+                        },
+                        "host_three_channel_runtime": {
+                            "result": host_runtime_result,
+                            "snapshots": snapshots,
+                        },
+                    },
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return receipt_path, setup
+
     beta11_state = {
         "installed_version": VERSION,
         "service_state": "Running",
@@ -707,8 +855,74 @@ def test_direct_one_channel_install_smoke_is_explicit_and_does_not_claim_capacit
     )
     assert "one-channel install-smoke" in notes.lower()
     assert "three-channel capacity unproven" in notes.lower()
-    assert "host soak is separate evidence" in notes.lower()
+
+
+@pytest.mark.parametrize("previous_version", ("1.0.0-beta.9", VERSION))
+def test_direct_physical_host_install_uses_host_evidence_without_sandbox_claims(
+    tmp_path, monkeypatch, previous_version
+):
+    repo_root = _base_repo_root(tmp_path)
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, consumer_mode="physical-host", previous_version=previous_version
+    )
+    monkeypatch.setattr(m, "run_command", _fake_command_factory())
+
+    assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, repo_root=repo_root)) == 0
+
+    notes = (repo_root / "artifacts" / "release" / TAG / "RELEASE-NOTES.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Physical-host consumer verification" in notes
+    assert "in-place update on an existing host" in notes.lower()
+    assert "three-channel host output" in notes.lower()
+    assert "not a three-channel capacity claim" in notes.lower()
+    assert "direct sandbox consumer checks passed" not in notes.lower()
+    assert "accepted development-station soak is reported separately" in notes.lower()
     assert "Three-channel Whistle/HLS/caption observation" not in notes
+
+
+@pytest.mark.parametrize("tamper", ["wrong-source", "wrong-manifest-source", "stale-output"])
+def test_direct_physical_host_refuses_unbound_or_stale_evidence(tmp_path, monkeypatch, tamper):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, consumer_mode="physical-host"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    evidence = receipt["evidence"]
+    install_ref = evidence["host_install"]["receipt"]
+    install_path = Path(install_ref["path"])
+    install = json.loads(install_path.read_text(encoding="utf-8"))
+    manifest_ref = evidence["host_install"]["installed_manifest"]
+    manifest_path = Path(manifest_ref["path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if tamper == "wrong-source":
+        install["source_sha"] = "f" * 40
+        install_path.write_text(json.dumps(install, indent=2) + "\n", encoding="utf-8")
+        install_ref["sha256"] = m.sha256_file(install_path)
+    elif tamper == "wrong-manifest-source":
+        manifest["civiccast"]["source_state"]["head"] = "f" * 40
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        manifest_ref["sha256"] = m.sha256_file(manifest_path)
+        install["after"]["app_payload_manifest_sha256"] = manifest_ref["sha256"]
+        install_path.write_text(json.dumps(install, indent=2) + "\n", encoding="utf-8")
+        install_ref["sha256"] = m.sha256_file(install_path)
+    else:
+        snapshots = evidence["host_three_channel_runtime"]["snapshots"]
+        first_ref, second_ref = snapshots
+        first_path = Path(first_ref["path"])
+        second_path = Path(second_ref["path"])
+        first = json.loads(first_path.read_text(encoding="utf-8"))
+        second = json.loads(second_path.read_text(encoding="utf-8"))
+        second["channels"][0]["vtt_sha256"] = first["channels"][0]["vtt_sha256"]
+        second_path.write_text(json.dumps(second, indent=2) + "\n", encoding="utf-8")
+        second_ref["sha256"] = m.sha256_file(second_path)
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    fake = _fake_command_factory()
+    monkeypatch.setattr(m, "run_command", fake)
+
+    assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, dry_run=False)) == 1
+    _assert_no_tag_or_public_release(fake.calls)
 
 
 @pytest.mark.parametrize(

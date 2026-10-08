@@ -161,50 +161,82 @@ def render_native_beta_candidate_notes(
         raise ValueError("no release assets given; cannot render an asset table.")
 
     if direct_verification is not None:
-        expected_proofs = {
-            "fresh_install",
-            "failed_install_repair",
-            "repair_preservation",
-            "beta10_to_beta11_upgrade",
-            "preservation",
-            "runtime",
-        }
-        if set(direct_verification) != expected_proofs:
-            raise ValueError(
-                "direct_verification must contain the validated direct-consumer proof summary"
-            )
         if not artifact_source_sha:
             raise ValueError("artifact_source_sha is required for direct-consumer notes.")
-        runtime_label = (
-            "One-channel install-smoke observation"
-            if "one-channel install-smoke" in direct_verification["runtime"].casefold()
-            else "Three-channel Whistle/HLS/caption observation"
-        )
-        lines = [
-            f"# CivicCast {tag.lstrip('v')} (Beta Candidate)",
-            "",
-            "> **This is a beta candidate, not a production release.** Direct Sandbox consumer checks "
-            "passed as listed below. Gate A was not run for this route, and no human acceptance "
-            "pass has been recorded.",
-            "",
-            "## Source identity",
-            "",
-            f"- Artifact producer commit: {artifact_source_sha}",
-            f"- Tag target commit: {source_sha}",
-            f"- Tag: {tag}",
-            f"- Build run: {build_run_url}",
-            "",
-            "## Direct Sandbox consumer verification",
-            "",
-            f"- Fresh Beta 11 install: {direct_verification['fresh_install']}",
-            f"- Failed fresh-install repair: {direct_verification['failed_install_repair']}",
-            f"- Existing account data after repair: {direct_verification['repair_preservation']}",
-            f"- Beta 10 to Beta 11 setup-only upgrade: {direct_verification['beta10_to_beta11_upgrade']}",
-            f"- Existing account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
-            f"- {runtime_label}: {direct_verification['runtime']}",
-            "- Gate A workflow lanes: not run.",
-            "- Download-only network route: not tested.",
-        ]
+        consumer_mode = direct_verification.get("consumer_mode", "sandbox")
+        if consumer_mode == "sandbox":
+            sandbox_proofs = {
+                "fresh_install",
+                "failed_install_repair",
+                "repair_preservation",
+                "beta10_to_beta11_upgrade",
+                "preservation",
+                "runtime",
+            }
+            expected_proofs = sandbox_proofs | {"consumer_mode"}
+            if set(direct_verification) not in (sandbox_proofs, expected_proofs):
+                raise ValueError(
+                    "direct_verification must contain the validated direct Sandbox proof summary"
+                )
+            runtime_label = (
+                "One-channel install-smoke observation"
+                if "one-channel install-smoke" in direct_verification["runtime"].casefold()
+                else "Three-channel Whistle/HLS/caption observation"
+            )
+            lines = [
+                f"# CivicCast {tag.lstrip('v')} (Beta Candidate)",
+                "",
+                "> **This is a beta candidate, not a production release.** Direct Sandbox consumer checks "
+                "passed as listed below. Gate A was not run for this route, and no human acceptance "
+                "pass has been recorded.",
+                "",
+                "## Source identity",
+                "",
+                f"- Artifact producer commit: {artifact_source_sha}",
+                f"- Tag target commit: {source_sha}",
+                f"- Tag: {tag}",
+                f"- Build run: {build_run_url}",
+                "",
+                "## Direct Sandbox consumer verification",
+                "",
+                f"- Fresh Beta 11 install: {direct_verification['fresh_install']}",
+                f"- Failed fresh-install repair: {direct_verification['failed_install_repair']}",
+                f"- Existing account data after repair: {direct_verification['repair_preservation']}",
+                f"- Beta 10 to Beta 11 setup-only upgrade: {direct_verification['beta10_to_beta11_upgrade']}",
+                f"- Existing account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
+                f"- {runtime_label}: {direct_verification['runtime']}",
+                "- Gate A workflow lanes: not run.",
+                "- Download-only network route: not tested.",
+            ]
+        elif consumer_mode == "physical-host":
+            expected_proofs = {"consumer_mode", "host_install", "host_preservation", "host_runtime"}
+            if set(direct_verification) != expected_proofs:
+                raise ValueError(
+                    "direct_verification must contain the validated physical-host proof summary"
+                )
+            lines = [
+                f"# CivicCast {tag.lstrip('v')} (Beta Candidate)",
+                "",
+                "> **This is a beta candidate.** The exact signed installer was checked on an existing "
+                "physical host as listed below.",
+                "",
+                "## Source identity",
+                "",
+                f"- Artifact producer commit: {artifact_source_sha}",
+                f"- Tag target commit: {source_sha}",
+                f"- Tag: {tag}",
+                f"- Build run: {build_run_url}",
+                "",
+                "## Physical-host consumer verification",
+                "",
+                f"- Exact Beta 11 installer and installed payload: {direct_verification['host_install']}",
+                f"- Existing host configuration and schema preservation: {direct_verification['host_preservation']}",
+                f"- Three-channel host output: {direct_verification['host_runtime']}",
+                "- This was an in-place update on an existing host; clean Sandbox install and repair checks are separate.",
+                "- The accepted development-station soak is reported separately from this install check.",
+            ]
+        else:
+            raise ValueError(f"unsupported direct-consumer notes mode: {consumer_mode!r}")
     else:
         if gate_a_run_url is None or lane_verdicts is None:
             raise ValueError(

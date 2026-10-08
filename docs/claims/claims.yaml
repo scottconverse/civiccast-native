@@ -149,7 +149,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
+        blob: ed5cd2f49ad8890e113f7bdc4901dd8b094e907e
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -227,7 +227,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
+        blob: ed5cd2f49ad8890e113f7bdc4901dd8b094e907e
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -282,7 +282,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
+        blob: ed5cd2f49ad8890e113f7bdc4901dd8b094e907e
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -345,7 +345,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
+        blob: ed5cd2f49ad8890e113f7bdc4901dd8b094e907e
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -1092,7 +1092,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
+        blob: ed5cd2f49ad8890e113f7bdc4901dd8b094e907e
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -2005,7 +2005,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
+        blob: ed5cd2f49ad8890e113f7bdc4901dd8b094e907e
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1

@@ -39,3 +39,28 @@ def test_rendered_body_stays_under_github_limit() -> None:
         smartscreen_note="note",
     )
     assert len(body) < 125_000
+
+
+def test_legacy_direct_sandbox_summary_remains_supported() -> None:
+    body = render_native_beta_candidate_notes(
+        tag="v1.0.0-beta.11",
+        source_sha="source-sha",
+        artifact_source_sha="artifact-sha",
+        build_run_url="https://example.invalid/build",
+        gate_a_run_url=None,
+        lane_verdicts=None,
+        changelog_unreleased="- feature",
+        assets=[{"filename": "setup.exe", "bytes": 1, "sha256": "0" * 64}],
+        smartscreen_note="note",
+        direct_verification={
+            "fresh_install": "PASS",
+            "failed_install_repair": "PASS",
+            "repair_preservation": "PASS",
+            "beta10_to_beta11_upgrade": "PASS",
+            "preservation": "PASS",
+            "runtime": "PASS",
+        },
+    )
+
+    assert "Direct Sandbox consumer verification" in body
+    assert "Fresh Beta 11 install: PASS" in body

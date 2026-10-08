@@ -187,6 +187,7 @@ DIRECT_JFK_WORDS = ("fellow", "americans", "country")
 DIRECT_PLAYLIST_MAX_AGE_SECONDS = 30.0
 DIRECT_RUNTIME_MIN_SPAN_SECONDS = 180.0
 DIRECT_VTT_SAMPLE_MAX_BYTES = 32 * 1024
+DIRECT_HOST_RUNTIME_MIN_SPAN_SECONDS = 30.0
 DIRECT_PROOF_FIELDS = {
     "fresh_install": {"installer_run", "install_state", "activation_self_test"},
     "failed_install_repair": {
@@ -301,6 +302,230 @@ def _verify_install_state(state: dict[str, Any], *, version: str, label: str) ->
         )
 
 
+def _verify_physical_host_consumer(
+    *,
+    receipt_dir: Path,
+    evidence: dict[str, Any],
+    artifact_source_sha: str,
+    build_run_id: str,
+    setup: Path,
+    installer_sha256: str,
+) -> dict[str, str]:
+    """Verify this exact installer on the already-running physical host.
+
+    This route records a bounded in-place installation and live-output check.
+    It intentionally does not stand in for the Sandbox fresh-install, repair,
+    or Beta 10 upgrade scenarios.
+    """
+
+    _record_keys(
+        evidence, {"host_install", "host_three_channel_runtime"}, label="physical-host proof set"
+    )
+    install_proof = _record(evidence.get("host_install"), label="host_install")
+    _record_keys(install_proof, {"receipt", "installed_manifest"}, label="host_install")
+    _, install = _bound_json(
+        receipt_dir, install_proof.get("receipt"), label="physical-host install receipt"
+    )
+    manifest_path, manifest = _bound_json(
+        receipt_dir, install_proof.get("installed_manifest"), label="installed app payload manifest"
+    )
+    if (
+        install.get("kind") != "beta11-exact-host-install"
+        or install.get("stage") != "completed"
+        or install.get("status") != "passed"
+        or str(install.get("source_sha", "")).casefold() != artifact_source_sha.casefold()
+        or str(install.get("build_run_id")) != str(build_run_id)
+        or str(install.get("setup_sha256", "")).casefold() != installer_sha256.casefold()
+        or install.get("installer_exit_code") != 0
+    ):
+        raise PublishError(
+            "physical-host receipt does not bind a successful run of this exact installer"
+        )
+    setup_path = install.get("setup_path")
+    if not isinstance(setup_path, str) or Path(setup_path).resolve() != setup.resolve():
+        raise PublishError(
+            "physical-host receipt setup path does not name this exact kit installer"
+        )
+    setup_signature = _record(install.get("setup_authenticode"), label="host setup Authenticode")
+    if (
+        setup_signature.get("status") != "Valid"
+        or setup_signature.get("file_version") != "1.0.0-beta.11"
+        or "CN=Scott Converse" not in str(setup_signature.get("signer_subject", ""))
+    ):
+        raise PublishError(
+            "physical-host receipt does not record the expected signed Beta 11 setup"
+        )
+
+    before = _record(install.get("before"), label="host pre-install state")
+    after = _record(install.get("after"), label="host post-install state")
+    before_health = _record(before.get("health"), label="host pre-install health")
+    after_health = _record(after.get("health"), label="host post-install health")
+    if (
+        before.get("service_state") != "Running"
+        or before_health.get("status") != "healthy"
+        or not isinstance(before.get("display_version"), str)
+        or not before.get("display_version")
+        or before_health.get("version") != before.get("display_version")
+        or after.get("service_state") != "Running"
+        or after.get("display_version") != "1.0.0-beta.11"
+        or after_health.get("status") != "healthy"
+        or after_health.get("version") != "1.0.0-beta.11"
+        or after_health.get("schema") != "current"
+        or before.get("install_location") != after.get("install_location")
+        or before.get("schedule_loop_enabled") is not True
+        or after.get("schedule_loop_enabled") is not True
+    ):
+        raise PublishError(
+            "physical-host receipt does not prove a healthy in-place Beta 11 install"
+        )
+
+    reported_manifest_path = after.get("app_payload_manifest_path")
+    expected_manifest_path = (
+        Path(str(after.get("install_location", ""))) / "runtime" / ("app-payload-manifest.json")
+    )
+    if (
+        not isinstance(reported_manifest_path, str)
+        or Path(reported_manifest_path).resolve() != expected_manifest_path.resolve()
+        or str(after.get("app_payload_manifest_sha256", "")).casefold()
+        != sha256_file(manifest_path).casefold()
+        or after.get("app_payload_manifest_verified") is not True
+    ):
+        raise PublishError(
+            "physical-host receipt does not bind its verified installed app manifest"
+        )
+    civiccast = _record(manifest.get("civiccast"), label="installed manifest CivicCast identity")
+    source_state = _record(
+        civiccast.get("source_state"), label="installed manifest source identity"
+    )
+    if (
+        civiccast.get("version") != "1.0.0b11"
+        or str(source_state.get("head", "")).casefold() != artifact_source_sha.casefold()
+        or source_state.get("dirty") is not False
+    ):
+        raise PublishError(
+            "installed app payload manifest does not identify the exact clean Beta 11 source"
+        )
+
+    runtime_proof = _record(
+        evidence.get("host_three_channel_runtime"), label="host_three_channel_runtime"
+    )
+    _record_keys(runtime_proof, {"result", "snapshots"}, label="host_three_channel_runtime")
+    _, runtime_result = _bound_json(
+        receipt_dir, runtime_proof.get("result"), label="physical-host runtime result"
+    )
+    snapshots = runtime_proof.get("snapshots")
+    if (
+        runtime_result.get("result") != "PASS"
+        or runtime_result.get("channels") != list(DIRECT_CHANNELS)
+        or not isinstance(snapshots, list)
+        or len(snapshots) < 2
+    ):
+        raise PublishError("physical-host runtime result does not cover all three live channels")
+    previous_snapshot_at: datetime | None = None
+    first_snapshot_at: datetime | None = None
+    previous_media: dict[str, tuple[datetime, str, str]] = {}
+    for index, snapshot_ref in enumerate(snapshots, start=1):
+        _, snapshot = _bound_json(
+            receipt_dir, snapshot_ref, label=f"physical-host runtime observation {index}"
+        )
+        snapshot_at = _utc_timestamp(snapshot.get("utc"), label=f"host runtime observation {index}")
+        if previous_snapshot_at is not None and snapshot_at <= previous_snapshot_at:
+            raise PublishError("physical-host runtime observation times must increase")
+        if first_snapshot_at is None:
+            first_snapshot_at = snapshot_at
+        previous_snapshot_at = snapshot_at
+        health = _record(snapshot.get("health"), label=f"host runtime observation {index} health")
+        if health.get("status") != "healthy" or health.get("version") != "1.0.0-beta.11":
+            raise PublishError(f"physical-host runtime observation {index} is not healthy Beta 11")
+        channels = snapshot.get("channels")
+        if (
+            not isinstance(channels, list)
+            or not all(isinstance(channel, dict) for channel in channels)
+            or [channel.get("id") for channel in channels] != list(DIRECT_CHANNELS)
+        ):
+            raise PublishError(
+                f"physical-host runtime observation {index} is missing a live channel"
+            )
+        for channel in channels:
+            channel_id = channel["id"]
+            state = _record(channel.get("state"), label=f"{channel_id} channel state")
+            streams = channel.get("ffprobe_streams")
+            codecs = (
+                {
+                    (stream.get("codec_type"), stream.get("codec_name"))
+                    for stream in streams
+                    if isinstance(stream, dict)
+                }
+                if isinstance(streams, list)
+                else set()
+            )
+            playlist_age = channel.get("playlist_age_seconds")
+            playlist_mtime = _utc_timestamp(
+                channel.get("playlist_mtime_utc"), label=f"{channel_id} HLS playlist mtime"
+            )
+            newest_segment = channel.get("newest_segment")
+            vtt_hash = channel.get("vtt_sha256")
+            cue_count = channel.get("vtt_cue_count")
+            caption_status = _record(
+                channel.get("caption_runtime_status"), label=f"{channel_id} caption status"
+            )
+            if (
+                state.get("state") != "ON_AIR"
+                or codecs != {("video", "h264"), ("audio", "aac")}
+                or caption_status.get("state") != "within-capacity"
+                or not isinstance(playlist_age, (int, float))
+                or isinstance(playlist_age, bool)
+                or not math.isfinite(playlist_age)
+                or playlist_age < 0
+                or playlist_age > DIRECT_PLAYLIST_MAX_AGE_SECONDS
+                or abs((snapshot_at - playlist_mtime).total_seconds())
+                > DIRECT_PLAYLIST_MAX_AGE_SECONDS
+                or not isinstance(newest_segment, str)
+                or not newest_segment
+                or not isinstance(vtt_hash, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
+                or not isinstance(cue_count, int)
+                or isinstance(cue_count, bool)
+                or cue_count <= 0
+            ):
+                raise PublishError(
+                    f"physical-host runtime observation {index} channel {channel_id!r} has no current audio/video/caption output"
+                )
+            previous = previous_media.get(channel_id)
+            if previous is not None and (
+                playlist_mtime <= previous[0]
+                or newest_segment == previous[1]
+                or vtt_hash == previous[2]
+            ):
+                raise PublishError(
+                    f"physical-host runtime channel {channel_id!r} output did not advance"
+                )
+            previous_media[channel_id] = (playlist_mtime, newest_segment, vtt_hash)
+
+    if (
+        first_snapshot_at is None
+        or previous_snapshot_at is None
+        or (previous_snapshot_at - first_snapshot_at).total_seconds()
+        < DIRECT_HOST_RUNTIME_MIN_SPAN_SECONDS
+    ):
+        raise PublishError(
+            "physical-host runtime observations do not show sustained output progress"
+        )
+
+    return {
+        "consumer_mode": "physical-host",
+        "host_install": (
+            "PASS (exact signed Beta 11 installer; existing "
+            f"{before['display_version']} host updated in place)"
+        ),
+        "host_preservation": "PASS (install location and service-loop setting retained; schema current)",
+        "host_runtime": (
+            f"PASS ({len(snapshots)} observations of live HLS, H.264/AAC and changing captions; "
+            "not a three-channel capacity claim)"
+        ),
+    }
+
+
 def _utc_timestamp(value: object, *, label: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise PublishError(f"direct consumer evidence {label} UTC timestamp is missing")
@@ -334,15 +559,25 @@ def verify_consumer_evidence_receipt(
     receipt_fields = {"schema_version", "kind", "artifact", "evidence"}
     if "runtime_proof_scope" in doc:
         receipt_fields.add("runtime_proof_scope")
+    if "consumer_mode" in doc:
+        receipt_fields.add("consumer_mode")
     _record_keys(doc, receipt_fields, label="receipt")
     if doc.get("schema_version") != 1 or doc.get("kind") != DIRECT_CONSUMER_RECEIPT_KIND:
         raise PublishError("direct consumer evidence receipt schema or kind is unsupported")
+    consumer_mode = doc.get("consumer_mode", "sandbox")
+    if consumer_mode not in {"sandbox", "physical-host"}:
+        raise PublishError(f"unsupported direct consumer evidence mode: {consumer_mode!r}")
     runtime_proof_scope = doc.get("runtime_proof_scope", "three-channel-capacity")
-    if not isinstance(runtime_proof_scope, str) or runtime_proof_scope not in (
-        DIRECT_RUNTIME_PROOF_SCOPES
-    ):
-        raise PublishError(f"unsupported direct runtime proof scope: {runtime_proof_scope!r}")
-    runtime_proof_group, runtime_channels = DIRECT_RUNTIME_PROOF_SCOPES[runtime_proof_scope]
+    if consumer_mode == "sandbox":
+        if not isinstance(runtime_proof_scope, str) or runtime_proof_scope not in (
+            DIRECT_RUNTIME_PROOF_SCOPES
+        ):
+            raise PublishError(f"unsupported direct runtime proof scope: {runtime_proof_scope!r}")
+        runtime_proof_group, runtime_channels = DIRECT_RUNTIME_PROOF_SCOPES[runtime_proof_scope]
+    else:
+        if "runtime_proof_scope" in doc:
+            raise PublishError("physical-host evidence uses its own three-channel output scope")
+        runtime_proof_group, runtime_channels = "host_three_channel_runtime", DIRECT_CHANNELS
 
     artifact = _record(doc.get("artifact"), label="artifact")
     _record_keys(artifact, {"source_sha", "build_run_id", "assembly_receipt"}, label="artifact")
@@ -373,31 +608,37 @@ def verify_consumer_evidence_receipt(
         activation = _record(
             signature_record["consumer_activation_verification"], label="consumer activation record"
         )
-        sandbox = _record(activation["actual_sandbox_result"], label="actual Sandbox result")
-        baseline_activation = _record(sandbox["baseline_install"], label="Beta 10 baseline result")
-        upgrade_activation = _record(sandbox["upgrade_install"], label="Beta 10 upgrade result")
-        upgrade_verification = _record(
-            sandbox["verify_after_upgrade"], label="upgrade verification result"
-        )
-        setup_only_payload = str(upgrade_activation["payload"]).casefold()
     except (KeyError, TypeError) as exc:
-        raise PublishError(
-            "kit assembly receipt is missing its recorded Sandbox upgrade activation result"
-        ) from exc
-    if (
-        activation.get("status") != "passed"
-        or baseline_activation.get("status") != "passed"
-        or baseline_activation.get("exit_code") != 0
-        or upgrade_activation.get("status") != "passed"
-        or upgrade_activation.get("exit_code") != 0
-        or "exactly five runtime packs" not in setup_only_payload
-        or "no station folder" not in setup_only_payload
-        or upgrade_verification.get("status") != "passed"
-        or upgrade_verification.get("exit_code") != 0
-    ):
-        raise PublishError(
-            "kit assembly receipt does not bind the passed setup-only Beta 10 upgrade"
-        )
+        raise PublishError("kit assembly receipt is missing its station activation record") from exc
+    if consumer_mode == "sandbox":
+        try:
+            sandbox = _record(activation["actual_sandbox_result"], label="actual Sandbox result")
+            baseline_activation = _record(
+                sandbox["baseline_install"], label="Beta 10 baseline result"
+            )
+            upgrade_activation = _record(sandbox["upgrade_install"], label="Beta 10 upgrade result")
+            upgrade_verification = _record(
+                sandbox["verify_after_upgrade"], label="upgrade verification result"
+            )
+            setup_only_payload = str(upgrade_activation["payload"]).casefold()
+        except (KeyError, TypeError) as exc:
+            raise PublishError(
+                "kit assembly receipt is missing its recorded Sandbox upgrade activation result"
+            ) from exc
+        if (
+            activation.get("status") != "passed"
+            or baseline_activation.get("status") != "passed"
+            or baseline_activation.get("exit_code") != 0
+            or upgrade_activation.get("status") != "passed"
+            or upgrade_activation.get("exit_code") != 0
+            or "exactly five runtime packs" not in setup_only_payload
+            or "no station folder" not in setup_only_payload
+            or upgrade_verification.get("status") != "passed"
+            or upgrade_verification.get("exit_code") != 0
+        ):
+            raise PublishError(
+                "kit assembly receipt does not bind the passed setup-only Beta 10 upgrade"
+            )
 
     membership = _record(assembly.get("membership"), label="kit membership")
     if (
@@ -466,6 +707,17 @@ def verify_consumer_evidence_receipt(
     setup, packs = verify_layout(kit_dir, setup_filename=setup_relative)
 
     evidence = _record(doc.get("evidence"), label="proof set")
+    if consumer_mode == "physical-host":
+        verification = _verify_physical_host_consumer(
+            receipt_dir=receipt_dir,
+            evidence=evidence,
+            artifact_source_sha=artifact_source_sha,
+            build_run_id=build_run_id,
+            setup=setup,
+            installer_sha256=installer_sha256,
+        )
+        return setup, packs, verification
+
     expected_proofs = (DIRECT_CONSUMER_PROOFS - {"three_channel_runtime"}) | {runtime_proof_group}
     _record_keys(evidence, expected_proofs, label="proof set")
     for proof_name, fields in DIRECT_PROOF_FIELDS.items():
@@ -783,6 +1035,7 @@ def verify_consumer_evidence_receipt(
         setup,
         packs,
         {
+            "consumer_mode": "sandbox",
             "fresh_install": "PASS",
             "failed_install_repair": "PASS",
             "repair_preservation": "PASS",
@@ -1395,9 +1648,16 @@ def _run(args: argparse.Namespace) -> None:
         verify_gate_a_verdicts(verdicts, source_sha=artifact_source_sha)
         print("publish_beta_candidate: Gate A PASS on all three lanes, artifact source SHA agrees")
     else:
-        print(
-            "publish_beta_candidate: direct Sandbox consumer proof passed; Gate A workflow was not run"
-        )
+        assert direct_verification is not None
+        if direct_verification.get("consumer_mode") == "physical-host":
+            print(
+                "publish_beta_candidate: exact physical-host install/output proof passed; "
+                "Sandbox lanes and Gate A were not run"
+            )
+        else:
+            print(
+                "publish_beta_candidate: direct Sandbox consumer proof passed; Gate A workflow was not run"
+            )
 
     print("publish_beta_candidate: hashing assets and building manifest")
     out_dir = repo_root / "artifacts" / "release" / tag
@@ -1507,14 +1767,18 @@ def _run(args: argparse.Namespace) -> None:
     undraft_release(repository=repository, tag=tag)
 
     truth_path = repo_root / "docs" / "releases" / "release-truth.yaml"
+    direct_truth = ""
+    if direct_verification is not None:
+        direct_truth = (
+            f"direct physical-host consumer receipt {direct_receipt}; "
+            "Sandbox clean-install, repair, and Beta 10 upgrade lanes not run; Gate A not run."
+            if direct_verification.get("consumer_mode") == "physical-host"
+            else f"direct Sandbox consumer receipt {direct_receipt}; Gate A not run."
+        )
     truth_notes = (
         f"Published by publish_beta_candidate.py, artifact source {artifact_source_sha}, "
         f"tag target {source_sha}, build run {args.build_run_id}, "
-        + (
-            f"direct Sandbox consumer receipt {direct_receipt}; Gate A not run."
-            if direct_mode
-            else f"Gate A run {args.gate_a_run_id} (all three lanes PASS)."
-        )
+        + (direct_truth or f"Gate A run {args.gate_a_run_id} (all three lanes PASS).")
     )
     summary = update_release_truth(
         truth_path=truth_path, tag=tag, status=args.truth_status, notes=truth_notes
