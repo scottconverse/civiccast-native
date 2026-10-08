@@ -662,7 +662,7 @@ test.describe('operator live room', () => {
   test('configuration error state is actionable', async ({ page }) => {
     await openLive(page, { failConfiguration: true })
     await expect(page.getByText('Could not load live room.')).toBeVisible()
-    await expect(page.getByText(/connected to its database/)).toBeVisible()
+    await expect(page.getByText(/CivicCast service and database/)).toBeVisible()
   })
 
   test('blocked pre-flight keeps Start Live Stream disabled with next steps', async ({
