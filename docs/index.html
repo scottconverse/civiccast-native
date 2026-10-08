@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CivicCast - public meetings, on the air</title>
-  <meta name="description" content="CivicCast is open-source software for public-access stations and small cities. It schedules channels, records and captions meetings, and publishes them to a resident portal. Runs on one Windows PC. Beta.10 pre-release.">
+  <meta name="description" content="CivicCast is open-source software for public-access stations and small cities. It schedules channels, records and captions meetings, and publishes them to a resident portal. Runs on one Windows PC. Beta.11 pre-release.">
   <link rel="canonical" href="https://scottconverse.github.io/civiccast-native/">
   <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="brand/favicon.ico" sizes="48x48">
   <link rel="apple-touch-icon" href="brand/png/civiccast-app-icon-180.png">
   <meta property="og:type" content="website">
   <meta property="og:title" content="CivicCast - public meetings, on the air">
-  <meta property="og:description" content="Open-source broadcast and publishing software for public-access stations and small cities. Windows. Beta.10 pre-release.">
+  <meta property="og:description" content="Open-source broadcast and publishing software for public-access stations and small cities. Windows. Beta.11 pre-release.">
   <meta property="og:image" content="https://scottconverse.github.io/civiccast-native/brand/png/civiccast-social-preview.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="preload" href="assets/web/fonts/Barlow-Regular.woff2" as="font" type="font/woff2" crossorigin>
@@ -31,7 +31,7 @@
       <a href="#screens">Screens</a>
       <a href="#evidence">Evidence</a>
       <a href="#docs">Docs</a>
-      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">Beta.10 release</a>
+      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11">Beta.11 release</a>
     </nav>
   </div>
 </header>
@@ -42,12 +42,12 @@
   <div class="wrap">
     <div class="hero-grid">
       <div>
-        <p class="release-tag">Release 1.0.0-beta.10 &middot; pre-release for testing</p>
-        <p class="fine">A signed Beta.11 candidate has been installed over an existing Beta.9 host and returned healthy. Its post-install channel-output check is incomplete. Unpublished candidate: v1.0.0-beta.11. Beta.10 remains the latest published installer.</p>
+        <p class="release-tag"><a href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11">v1.0.0-beta.11</a> &middot; pre-release for testing</p>
+        <p class="fine">Beta.11 is the current signed pre-release. Its installer refreshed an existing Beta.11 host; a brief three-channel output check showed advancing HLS and changing captions. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a> for exact scope and limits.</p>
         <h1>Public meetings, <em>on the air.</em></h1>
         <p class="lede">CivicCast is open-source software for public-access stations and small cities. It schedules your channels and keeps them on the air, records and captions your meetings, and publishes them to a portal where residents can watch. It runs on one Windows PC that you control.</p>
         <div class="btn-row">
-          <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">View the beta.10 release</a>
+          <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11">View the beta.11 release</a>
           <a class="button ghost" href="USER-MANUAL.pdf">Read the manual</a>
         </div>
       </div>
@@ -245,7 +245,7 @@
   <div class="wrap">
     <p class="eyebrow">Evidence and limits</p>
     <h2>What has been measured, and what has not.</h2>
-    <p class="lede">Beta.10 is a pre-release. Here is the record behind the claims on this page.</p>
+    <p class="lede">The table below shows historical Beta.10 measurements. The current Beta.11 package's tested scope is in its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a>.</p>
     <div class="ev-grid">
       <div>
         <table class="ev-table">
@@ -286,9 +286,9 @@
       <li><b>Create the first admin</b>Choose the station name and an admin password, and save the recovery kit. The console stays locked until you confirm it.</li>
       <li><b>Check Readiness</b>The Readiness screen reports whether the station is safe to broadcast.</li>
     </ol>
-    <div class="callout"><p><strong>Status:</strong> only the clean-install path was tested on the published build. Upgrading from an earlier release, and a first install without the kit, were not.</p></div>
+    <div class="callout"><p><strong>Beta.11 test scope:</strong> the exact signed package passed a brief in-place host refresh and three-channel output check. A clean install, failed-install repair, Beta.10 upgrade, and longer capacity run were not performed for this package. See its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a>.</p></div>
     <div class="btn-row">
-      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">Open the release page</a>
+      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11">Open the release page</a>
       <a class="button ghost" href="install-windows.html">Windows install notes</a>
     </div>
   </div>
@@ -299,6 +299,7 @@
     <p class="eyebrow">Documentation</p>
     <h2>A manual for each kind of reader.</h2>
     <p class="lede">The User Manual has a plain-language part for volunteers, camera operators, editors, records clerks and station staff, and a technical part for a city's IT staff, with architecture diagrams and a full appendix.</p>
+    <p class="fine">The PDF and Word manuals attached to this release preserve the release-status text captured during the build. For the final install and output result, use the current <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a>.</p>
     <ul class="docs">
       <li><a href="USER-MANUAL.pdf"><b>User Manual (PDF)</b><span>The complete manual, formatted for reading and printing.</span></a></li>
       <li><a href="USER-MANUAL.docx"><b>User Manual (Word)</b><span>The same manual as an editable document.</span></a></li>
@@ -314,10 +315,10 @@
 
 <section class="on-dark final">
   <div class="wrap">
-    <h2>Try beta.10 and tell us what breaks.</h2>
+    <h2>Try beta.11 and tell us what breaks.</h2>
     <p class="lede">It is a pre-release built for testing. Run it alongside your current process, read the known issues for the screens you use, and report what you find.</p>
     <div class="btn-row">
-      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10">View the beta.10 release</a>
+      <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11">View the beta.11 release</a>
       <a class="button ghost" href="https://github.com/scottconverse/civiccast-native">View the repository</a>
     </div>
   </div>
@@ -330,7 +331,7 @@
     <div>
       <img src="brand/svg/civiccast-lockup-reversed.svg" alt="CivicCast" width="162" height="34">
       <p>Public meetings, on the air. Open-source code under the Apache License 2.0; documentation under CC BY 4.0. Copyright The CivicCast Authors.</p>
-      <p>CivicCast 1.0.0-beta.10 is pre-release software. See the evidence section for what has been tested.</p>
+      <p>CivicCast 1.0.0-beta.11 is pre-release software. See the verification record for the exact tested scope.</p>
     </div>
     <ul aria-label="Footer links">
       <li><a href="https://github.com/scottconverse/civiccast-native">Repository</a></li>

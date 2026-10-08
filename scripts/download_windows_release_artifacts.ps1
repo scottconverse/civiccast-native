@@ -31,8 +31,8 @@ candidate. For a historical beta.7 download, specify both
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.10",
-  [string]$Version = "1.0.0-beta.10",
+  [string]$Tag = "v1.0.0-beta.11",
+  [string]$Version = "1.0.0-beta.11",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,

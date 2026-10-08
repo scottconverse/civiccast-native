@@ -9,30 +9,29 @@
 
 ## Current Release
 
-`v1.0.0-beta.10` is the current release (published 2026-10-02), a GitHub
-pre-release ("Beta Candidate"), not a production release:
-`setup.exe`, per-pack runtime `.ccpack` assets, and a `SHA256SUMS.txt`
-checksum file (each asset under GitHub's 2 GB/file cap) are published as a
-prerelease at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>.
-Its verification record (what was and was not proven) is
-[`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
-Watch that page, not `scottconverse/civiccast` (the retired, separate
-WSL2-line repository) and not any `v1.0.0-rcNN` tag, which belongs to that
-other repository. See
-[`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
-the authored release-state record -- it is the single source of truth for
-which tag is current.
+`v1.0.0-beta.11` is the current release (published 2026-10-08), a GitHub
+pre-release, not a production release. The release includes the signed
+`setup.exe`, five runtime `.ccpack` assets, `SHA256SUMS.txt`, installer
+sidecar metadata, and manuals:
+<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>.
+The exact package was installed as an in-place refresh over an existing Beta
+11 host; it returned healthy on the current schema, and a brief three-channel
+observation showed advancing HLS and changing captions. A clean-machine
+install, failed-install repair, Beta 10 upgrade, and longer capacity run were
+not performed for this exact package. See
+[`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md)
+for its tested scope and limits.
 
-What Gate A (automated station acceptance) proved for beta.10: the
-clean-install lane passed 10 of 10 criteria, run locally in Windows Sandbox on
-2026-10-02 against exactly this build. The cross-version (upgrade) lane and
-the download-only lane were **not run**; the owner waived them for this
-publication. An upgrade of a station from beta.7 to beta.10 and a
-download-only install are therefore not proven for beta.10. The human/station
-acceptance pass has not been done, so it remains a beta candidate.
-`v1.0.0-beta.8` and `v1.0.0-beta.9` were never published; their work is in
-beta.10. See
-[`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
+`v1.0.0-beta.10` (published 2026-10-02) is superseded. Its historical Gate A
+clean-install lane passed 10 of 10 criteria; the upgrade and download-only
+lanes were not run. `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published;
+their work was included in beta.10. See
+[`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md)
+for that release's record. Watch the Beta 11 release page, not
+`scottconverse/civiccast` (the retired, separate WSL2-line repository) and not
+any `v1.0.0-rcNN` tag, which belongs to that other repository. See
+[`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
+the authored release-state record.
 
 `v1.0.0-beta.7` (published 2026-09-15; its record is
 [`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md)),
@@ -61,8 +60,8 @@ never a release a station receives.
   downloads the rest with a progress display and a **Stop downloading**
   button. The complete signed USB/LAN kit (installer, runtime packs, and the
   `station\` model bundle, about 21 GB) is the offline alternative for a
-  station without a reliable internet connection. **Not yet proven for
-  beta.10:** a first install on a clean machine that has neither a kit nor an
+  station without a reliable internet connection. **Not proven for this Beta
+  11 package:** a first install on a clean machine that has neither a kit nor an
   earlier install. The setup step that activates the station fails closed when
   it cannot find the model packs in the kit or in an earlier install's cache
   (see "Download-only lane" in [`docs/ops/gate-a.md`](docs/ops/gate-a.md)), so

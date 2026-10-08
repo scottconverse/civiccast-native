@@ -7,20 +7,23 @@
 
 ## Current Release State
 
-`v1.0.0-beta.10` is the current release, published 2026-10-02: `setup.exe`
-(signed), per-pack runtime `.ccpack` assets, a `SHA256SUMS.txt` checksum file
-and a `setup.exe.sidecar.json`, published as a
+`v1.0.0-beta.11` is the current release, published 2026-10-08: `setup.exe`
+(signed), per-pack runtime `.ccpack` assets, a `SHA256SUMS.txt` checksum file,
+a `setup.exe.sidecar.json`, and manuals, published as a
 **prerelease** at
-<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>
+<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>
 (all releases: <https://github.com/scottconverse/civiccast-native/releases>) -- watch that
 page, not `scottconverse/civiccast` (the retired, separate WSL2-line
 repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
 repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
-authored release-state record. `v1.0.0-beta.8` and `v1.0.0-beta.9` were never
-published; their work is inside beta.10. Its verification record, including
-the Gate A status (clean-install lane passed 10 of 10 in Windows Sandbox; the
-upgrade and download-only lanes were not run and were waived by the owner), is
+authored release-state record. `v1.0.0-beta.10` is superseded; its historical
+clean-install lane passed 10 of 10 in Windows Sandbox, while the upgrade and
+download-only lanes were not run. `v1.0.0-beta.8` and `v1.0.0-beta.9` were
+never published; their work was included in beta.10. See the current package's
+verified scope in
+[`docs/releases/v1.0.0-beta.11-verification.md`](../releases/v1.0.0-beta.11-verification.md)
+and Beta 10 history in
 [`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md).
 Verify the downloaded installer yourself using the steps below; lab evidence is
 not a substitute for verifying the exact bytes you downloaded.

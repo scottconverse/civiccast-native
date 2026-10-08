@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.10
+current: v1.0.0-beta.11
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,13 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.10
+  - tag: v1.0.0-beta.11
     status: current
+    notes: >-
+      Published by publish_beta_candidate.py, artifact source b7cc3e7cc174d6fe2e22cfea73126f9b2847d197, tag target 79e6431dfea248b11b079cff69408192ef22816a, build run 37827938199, direct physical-host consumer receipt C:\Dev\Claude\civiccast-beta11-whistle\outputs\beta11-candidate-b7cc3e7c\consumer-evidence-receipt.json; Sandbox clean-install, repair, and Beta 10 upgrade lanes not run; Gate A not run.
+  - tag: v1.0.0-beta.10
+    status: superseded
+    superseded_by: v1.0.0-beta.11
     notes: >-
       Published by publish_beta_candidate.py (owner-waived Gate A wrapper) 2026-10-02 20:31 Mountain (2026-10-03 02:31Z), source b652084707367d45913807ed2a525f15a9a1e4a4, build run 37039304786. Gate A: clean-install lane PASS (10 of 10 criteria, local Windows Sandbox run, 2026-10-02); the dirty-upgrade and download-only lanes were not run and were waived by the owner. The owner declared this the beta release.
   - tag: v1.0.0-beta.7

@@ -2,26 +2,26 @@
 title: CivicCast User Manual
 subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.11 (native Windows line)
 author: The CivicCast Authors
-date: 2026-10-07
+date: 2026-10-08
 urlcolor: blue
 toccolor: black
 ---
 
 # About this manual {#about}
 
-This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11 candidate**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
-Beta.11 is being prepared for release. Its Whistle live-caption changes completed an owner-accepted 24-hour three-station lab soak. The packaged beta.11 installer has not yet completed installation verification. The previous beta.10 was published on 2 October 2026 as a GitHub pre-release; its installation evidence below is historical and does not verify beta.11. Neither version is a production release. This manual says plainly what was tested and what was not, so you can decide how much to rely on it.
+Beta.11 was published as a GitHub pre-release on 8 October 2026; it is not a production release. The exact signed installer refreshed an existing Beta 11 host and returned healthy on the current schema. Two observations 41 seconds apart showed advancing HLS and changing captions on all three channels. This was a brief output check, not a clean install, repair, cross-version upgrade, or capacity run. See the current [Beta 11 verification record](releases/v1.0.0-beta.11-verification.md) for details. The PDF and DOCX attached to the release retain the build-time status snapshot and predate this final installation check; their status paragraph is not the final verification record.
 
-- **Beta.10 installer tested and passed:** a clean install in a Windows test sandbox ran the installer, started the station, showed the staff console and the resident portal, ran a clerk workflow, produced captions, played a channel and ran a short five-minute soak. All 10 checks in the clean-install lane passed.
-- **Earlier beta.10 operation evidence:** an eight-hour lab run with three channels on one machine, and about 59 hours of two channels staying on the air on one lab station. Details and limits are in [Appendix H](#app-evidence).
-- **Not tested:** upgrading from an earlier release, a first install with neither the full kit nor an earlier install, and use at a real station. No human field tester has signed off. Real cable-company acceptance and physical broadcast video cards are unproven.
+- **Beta.11 package check:** same-version in-place host refresh, healthy current-schema service, and the brief three-channel output observation described above. It does not establish three-channel capacity.
+- **Historical Beta 10 check:** its clean-install Gate A lane passed 10 of 10 criteria. The upgrade and download-only lanes were not run. The eight-hour lab run and about 59 hours of two-channel operation are historical evidence, not Beta.11 package proof; see [Appendix H](#app-evidence).
+- **Not tested for this exact Beta.11 package:** a clean-machine install, failed-install repair, Beta 10 upgrade, and long-duration capacity. Real cable-company acceptance and physical broadcast video cards remain unproven.
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
 
-Every place where the software does something different from what its own on-screen help says is marked in this manual with a **Known issue (beta.10)** note. Believe the manual over the screen where the two disagree.
+This manual retains interface notes and measurements from earlier versions. A **Known issue (beta.10)** note is scoped to that version and is not automatically a statement about Beta 11. Use the current verification record for Beta 11's tested package scope.
 
 ## Who Reads What
 
@@ -68,7 +68,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Where to get help and report problems
 
-Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. The latest release and its downloads are at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>.
+Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. The latest release and its downloads are at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->
 
@@ -9249,7 +9249,7 @@ This appendix lists what was measured, on which build, and what the measurements
 
 | Evidence | Build | What it covers |
 | --- | --- | --- |
-| Clean-install Gate A lane, 10 of 10 criteria | The **published** beta.10 installer and packs (commit `b6520847`) | Install, first start, console and portal render, clerk workflow, captions, playout, 5-minute soak, install progress, completion |
+| Clean-install Gate A lane, 10 of 10 criteria | The **superseded** beta.10 installer and packs (commit `b6520847`) | Install, first start, console and portal render, clerk workflow, captions, playout, 5-minute soak, install progress, completion |
 | Eight-hour watched run, 3 channels | Earlier internal build `C16`; the four key engine files are identical to the published source | Playout, program changes, loudness, preparation times, caption drops |
 | About 59 hours of uptime, 2 channels | Earlier internal build `C15`, **not** the published build | Long-run stability of the engine |
 
@@ -9971,10 +9971,11 @@ Published releases of the native Windows line of CivicCast, newest first. The au
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.10** | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Current. GitHub pre-release / beta candidate | The current release. Program changes no longer leave a black or silent gap, and a watchdog ends a stuck program change; spoken programs are leveled toward -16 LUFS; schedules set to loop now loop; the conform cache default grew from 20 GB to 60 GB; faults in reload and restart are handled (orphaned relays reaped, a frozen web stream restarts its worker, an audio/video mismatch restarts the channel, live captions catch up). Proven by an eight-hour three-channel lab run on an earlier internal build of the same engine and by a clean-install check on the published installer. |
+| **v1.0.0-beta.11** | 2026-10-08 | Current. GitHub pre-release | Whistle is the CPU primary for live captions, with Whisper fallback and optional CUDA. The exact signed package refreshed an existing Beta 11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. This is a brief output check, not a capacity result. See the current verification record. |
+| v1.0.0-beta.10 | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Superseded by beta.11 | Program changes no longer leave a black or silent gap; speech leveling, schedule looping and expanded conform cache landed. Historical proof includes an eight-hour three-channel lab run on an earlier build and a clean-install check on the published installer. |
 | v1.0.0-beta.9 | 2026-09-18 (changelog date) | Never published | A version bump and an installer rebuild; its work is in beta.10. |
 | v1.0.0-beta.8 | none | Never published | Its work is in beta.10. |
-| v1.0.0-beta.7 | 2026-09-15 (19:47 UTC) | Superseded by beta.10 | Published as a GitHub pre-release with a signed `setup.exe`. All three Gate A install journeys and an eight-hour physical-machine soak with captions off passed. Live captions stay off by default. |
+| v1.0.0-beta.7 | 2026-09-15 (19:47 UTC) | Superseded | Published as a GitHub pre-release with a signed `setup.exe`. All three Gate A install journeys and an eight-hour physical-machine soak with captions off passed. Live captions stay off by default. |
 | v1.0.0-beta.6 | none | Not listed as a release; the changelog calls it rejected | A candidate that was not accepted. |
 | v1.0.0-beta.5 | 2026-09-09 22:14 Mountain (2026-09-10 04:14 UTC) | Superseded | Published as a pre-release after several rejected candidates; all three Gate A lanes passed at publish time. The changelog later records it, with beta.6, as rejected. |
 | v1.0.0-beta.4 | 2026-09-04 (20:41 UTC) | Superseded | A download-only upgrade for stations already on beta.3: `setup.exe` and the runtime packs, no re-download of the AI model bundle. |
@@ -9986,7 +9987,7 @@ The same release-truth file also lists tags from a **different, retired product*
 
 Pre-releases published after this manual was written are listed on the project's GitHub releases page: <https://github.com/scottconverse/civiccast-native/releases>.
 
-<!-- SOURCES: docs/releases/release-truth.yaml (entries for beta.1-5, 7, 10; rc entries; current: v1.0.0-beta.10); CHANGELOG.md:14-60 (beta.10 summary), :453-458 (beta.9), :462-475 (beta.7), :524 (beta.5 and beta.6 rejected), :1504-1520 (beta.5), :4250-4262 (beta.4), :4747-4760 (beta.3), :5953-5958 (beta.1); docs/releases/v1.0.0-beta.10-verification.md (status wording; beta.8 and beta.9 never published); MANUAL-STYLE.md section 2 rule 4 (beta.10 wording) -->
+<!-- SOURCES: docs/releases/release-truth.yaml (current: v1.0.0-beta.11; historical entries and rc entries); CHANGELOG.md beta.10/11 summaries; docs/releases/v1.0.0-beta.10-verification.md (historical status; beta.8 and beta.9 never published); docs/releases/v1.0.0-beta.11-verification.md (current package scope); MANUAL-STYLE.md section 2 rule 4 -->
 
 ## Appendix L: Index of screens {#app-screens}
 
