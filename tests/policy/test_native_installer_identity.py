@@ -401,15 +401,12 @@ def _slice_macro(hooks_text: str, macro_name: str) -> str:
     return hooks_text.split(f"!macro {macro_name}", 1)[1].split("!macroend", 1)[0]
 
 
-def test_bootstrap_postinstall_chain_is_ordered_stage_packs_before_verify_before_provision_before_service_registration() -> (
-    None
-):
+def test_bootstrap_postinstall_chain_orders_pack_verification_activation_d3_and_d4() -> None:
     """Pins the migrated bootstrap-native ordering: packs deliver the runtime
-    bytes, so staging must run before D2 re-verification, which must run
-    before D4 provisioning, which must run before D4 service/firewall
-    registration -- locking the migration described in
-    wp2-hook-migration-2026-07-30.md so a future edit cannot silently
-    reorder (or drop) a step."""
+    bytes, so D2 re-verification precedes signed station activation, which
+    establishes the strict contract before D3 health checks the candidate
+    runtime; D3 still precedes D4 provisioning and service/firewall
+    registration."""
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
 
     stage_packs = "--civiccast-stage-packs"
@@ -422,23 +419,24 @@ def test_bootstrap_postinstall_chain_is_ordered_stage_packs_before_verify_before
     for token in (
         stage_packs,
         verify_pack_tree,
-        provision,
         activate_station,
+        provision,
         register_service,
         register_firewall,
     ):
         assert token in postinstall, f"expected {token!r} in nsis-hooks-bootstrap.nsh POSTINSTALL"
 
     assert postinstall.index(stage_packs) < postinstall.index(verify_pack_tree)
-    assert postinstall.index(verify_pack_tree) < postinstall.index(provision)
-    # K1 fix: station activation (station-set.json + activation-self-test.json,
-    # native_activation.rs::activate_flat_station_with) must run AFTER
-    # provisioning and BEFORE service registration -- the service is started
-    # by the registration step, and native/station_runtime.py::
-    # load_native_station_environment requires both files to already exist at
-    # $INSTDIR the moment that service starts.
-    assert postinstall.index(provision) < postinstall.index(activate_station)
-    assert postinstall.index(activate_station) < postinstall.index(register_service)
+    verify_last = postinstall.rindex(verify_pack_tree)
+    activation_step = '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"'
+    d3_step = '!insertmacro CIVICCAST_STEP "step d3-engine: begin'
+    assert verify_last < postinstall.index(activation_step)
+    assert postinstall.index(activation_step) < postinstall.index(d3_step)
+    assert postinstall.index(d3_step) < postinstall.index(provision)
+    # K1 activation writes station-set.json and activation-self-test.json at
+    # $INSTDIR before D3's maintenance health check loads the candidate runtime.
+    assert postinstall.index(activate_station) < postinstall.index(d3_step)
+    assert postinstall.index(provision) < postinstall.index(register_service)
     assert postinstall.index(register_service) < postinstall.index(register_firewall)
 
 
@@ -465,9 +463,11 @@ def test_bootstrap_postinstall_activates_the_flat_station_and_fails_loud_on_erro
         in executable.split("--civiccast-activate-station", 1)[1].split("\n", 1)[0]
     ), "the activation invocation must target $INSTDIR (flat layout), matching its neighbors"
 
-    activation_block = postinstall.split("--civiccast-activate-station", 1)[1].split(
-        '!insertmacro CIVICCAST_STEP "step d4-service-registration', 1
-    )[0]
+    activation_block = _slice(
+        postinstall,
+        '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"',
+        "  ; UPGRADE-VS-FRESH ROUTING",
+    )
     assert "${CIVICCAST_EXIT_D4_ACTIVATION}" in activation_block
     assert "!insertmacro CIVICCAST_FAIL" in activation_block, (
         "a failed station activation must abort the install through CIVICCAST_FAIL, "
@@ -530,9 +530,11 @@ def test_bootstrap_postinstall_resolves_the_station_index_kit_first_then_embedde
     assert '!insertmacro CIVICCAST_STEP "step d4-activate-station: source EXEDIR' in executable
     assert '!insertmacro CIVICCAST_STEP "step d4-activate-station: source INSTDIR' in executable
 
-    activation_block = postinstall.split("--civiccast-activate-station", 1)[1].split(
-        '!insertmacro CIVICCAST_STEP "step d4-service-registration', 1
-    )[0]
+    activation_block = _slice(
+        postinstall,
+        '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"',
+        "  ; UPGRADE-VS-FRESH ROUTING",
+    )
     # <installer-path-audit MA-08> The count moved from 2 to 6, deliberately.
     # `run_native_flat_activation_cli` emits FIVE distinct exit codes -- 64
     # (arguments), 65 (render), 66 (acquisition), 67 (activation/self-test),
@@ -992,8 +994,8 @@ def test_ffmpeg_pack_payload_root_composes_onto_the_activation_pinned_path() -> 
 # §1/§2), because $INSTDIR\runtime\python.exe did not exist in any bootstrap
 # build target yet. bce9a3cf closed that gap (the native-app-payload pack now
 # bridges to $INSTDIR\runtime). The coordinator decided D3 re-homes into
-# POSTINSTALL directly after D2 pack-tree verification and BEFORE D4
-# provisioning/service registration -- tree management (junction flip,
+# POSTINSTALL after D2 pack-tree verification and signed station activation,
+# and BEFORE D4 provisioning/service registration -- tree management (junction flip,
 # migration, health gate, rollback) must commit on the tree before
 # provisioning/service-build acts on it. These tests pin that exact position
 # and the preserved exit-code contract.
@@ -1005,9 +1007,9 @@ def test_bootstrap_postinstall_chain_places_d3_upgrade_engine_between_verify_and
 ):
     """Pins the D3 rehoming position: the journaled install/upgrade engine
     invocation must run after BOTH D2 pack-tree verification calls (so
-    $INSTDIR\\runtime\\python.exe is verified-present) and before D4
-    provisioning -- never before verification, never after provisioning or
-    service registration."""
+    $INSTDIR\\runtime\\python.exe is verified-present) and signed station
+    activation, but before D4 provisioning -- never before verification,
+    never after provisioning or service registration."""
     postinstall = _postinstall_block(NATIVE_HOOKS.read_text(encoding="utf-8"))
 
     verify_pack_tree = "--civiccast-verify-pack-tree"
@@ -1022,13 +1024,16 @@ def test_bootstrap_postinstall_chain_places_d3_upgrade_engine_between_verify_and
 
     # Both D2 pack-tree verification calls (native-server-binaries and the
     # bridged native-app-payload) must precede D3.
-    first_verify = postinstall.index(verify_pack_tree)
     last_verify = postinstall.rindex(verify_pack_tree)
-    assert last_verify < postinstall.index(d3_invocation), (
-        "D3 must run after BOTH D2 pack-tree verification calls, not between them"
+    activation_step = '!insertmacro CIVICCAST_STEP "step d4-activate-station: begin"'
+    activation_index = postinstall.index(activation_step)
+    d3_index = postinstall.index(d3_invocation)
+    assert last_verify < activation_index < d3_index, (
+        "signed station activation must follow BOTH D2 verification calls and establish "
+        "the strict runtime contract before D3 starts the candidate runtime for its "
+        "maintenance health gate"
     )
-    assert first_verify < postinstall.index(d3_invocation)
-    assert postinstall.index(d3_invocation) < postinstall.index(provision), (
+    assert d3_index < postinstall.index(provision), (
         "D3 must run before D4 provisioning (tree management commits before "
         "provisioning/service-build acts on that tree)"
     )

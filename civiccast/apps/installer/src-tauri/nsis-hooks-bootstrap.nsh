@@ -35,10 +35,12 @@
 ; .agent-runs/native-windows/ws5-installer/evidence/wp2-hook-migration-2026-07-30.md
 ;
 ; Ordering summary (bootstrap-native: packs deliver runtime bytes, so
-; verification, the D3 engine, and provisioning all run AFTER pack staging,
+; verification, signed station activation, the D3 engine, and provisioning
+; all run AFTER pack staging,
 ; not before, unlike the retired file's embedded-payload ordering):
 ;   stage required component packs -> D2 re-verify the extracted pack tree
-;   -> D3 journaled install/upgrade engine -> D4 PostgreSQL provisioning
+;   -> activate the signed station contract -> D3 journaled install/upgrade
+;   engine -> D4 PostgreSQL provisioning
 ;   -> D4 service registration + firewall rule. Every step fails loud on
 ;   failure via CIVICCAST_FAIL: a silent-safe operator report, a
 ;   step-identifying process exit code, and a real NSIS Abort so the wizard
@@ -71,8 +73,8 @@
 ; (commit / clean rollback / halted rollback needing operator recovery /
 ; refused non-restorable migration / unexpected fault), and passes
 ; `--payload-source "$INSTDIR\runtime"`. POSITION (coordinator decision): runs
-; directly after the D2 pack-tree verification above and BEFORE D4
-; provisioning/service registration below -- tree management (junction flip,
+; after D2 pack-tree verification and signed station activation above, and
+; BEFORE D4 provisioning/service registration below -- tree management (junction flip,
 ; migration, health gate, rollback) must commit on the tree before
 ; provisioning/service-build acts on it. See
 ; `wp2-d3-rehoming-2026-07-30.md` for the retired-block diff comparison, the
@@ -373,10 +375,12 @@ Var CIVICCAST_CONTAINED
   ; produced and PR #143 was written to prevent; the fix moved it from
   ; "immediately" to "next boot".
   ;
-  ; Both actions are best-effort by design: a containment step that could
+  ; Containment is best-effort by design: a containment step that could
   ; itself abort would replace an honest, specific failure message with a
-  ; different one. Each records its own breadcrumb so the installer log says
-  ; whether containment actually took. A successful re-run of setup
+  ; different one. If the product stop command fails, retry through SCM and
+  ; confirm the service reaches STOPPED within a bounded interval. Each
+  ; action records a breadcrumb so the log says whether containment took. A
+  ; successful re-run of setup
   ; re-registers `auto` on its own (register_native_service always sets
   ; SERVICE_STARTUP_MODE), so this is not a state an operator has to undo.
   StrCpy $CIVICCAST_CONTAINED "0"
@@ -386,6 +390,29 @@ Var CIVICCAST_CONTAINED
     Pop $R9
     !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT service stop returned $R9"
     StrCpy $R8 $R9
+    ${If} $R8 != "0"
+      ; The product command normally confirms STOPPED itself. If it cannot
+      ; (for example, the service keeps restarting against an old station
+      ; manifest),
+      ; stop through SCM directly. An accepted control is not itself proof of
+      ; STOPPED, so poll the service state for at most 15 seconds.
+      !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT direct SCM stop fallback begin (product stop returned $R8)"
+      nsExec::ExecToLog '"$SYSDIR\sc.exe" stop CivicCastSupervisor'
+      Pop $R9
+      !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT direct SCM stop returned $R9"
+      ${If} $R9 == "1062"
+        StrCpy $R8 "0"
+        !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT direct SCM stop confirms already stopped (1062)"
+      ${ElseIf} $R9 == "1060"
+        StrCpy $R8 "0"
+        !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT direct SCM stop confirms service absent (1060)"
+      ${ElseIf} $R9 == "0"
+      ${OrIf} $R9 == "1061"
+        nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -Command "try { $$deadline = [DateTime]::UtcNow.AddSeconds(15); do { $$service = Get-Service -Name CivicCastSupervisor -ErrorAction Stop; $$service.Refresh(); if ($$service.Status -eq [System.ServiceProcess.ServiceControllerStatus]::Stopped) { exit 0 }; Start-Sleep -Milliseconds 500 } while ([DateTime]::UtcNow -lt $$deadline); exit 1 } catch { exit 2 }"'
+        Pop $R8
+        !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT direct SCM STOPPED confirmation returned $R8"
+      ${EndIf}
+    ${EndIf}
     nsExec::ExecToLog '"$SYSDIR\sc.exe" config CivicCastSupervisor start= demand'
     Pop $R9
     !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT sc config start=demand returned $R9"
@@ -482,9 +509,10 @@ Var CIVICCAST_CONTAINED
 !define CIVICCAST_EXIT_D2_OLLAMA_RUNTIME     122
 
 ; K1 fix: flat-layout station activation (--civiccast-activate-station),
-; run between D4 provisioning and D4 service registration. Its own code for
-; the same reason every other D4 step has one: the exit code is the only
-; signal a support log carries about WHICH step failed.
+; run after D2 pack verification and before D3 starts the candidate runtime
+; for its maintenance health gate. It verifies the signed distribution and
+; runs app-database-independent self-tests; D3 database work and D4 setup
+; remain sequenced below. Its exit code is the support log's failure signal.
 !define CIVICCAST_EXIT_D4_ACTIVATION         123
 
 ; Gate A run 33681670855 fix (D3 pre-upgrade drill false-negative +
@@ -1048,7 +1076,8 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ; idempotently resumable from its own journal.
   ;
   ; POSITION (coordinator decision): runs HERE -- after D2 pack-tree
-  ; verification and BEFORE D4 provisioning/service registration below --
+  ; verification and signed station activation, and BEFORE D4 provisioning/
+  ; service registration below --
   ; because tree management (junction flip, migration, health gate, rollback)
   ; must commit on the tree BEFORE provisioning/service-build acts on it.
   ;
@@ -1093,6 +1122,124 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ${EndIf}
   StrCpy $R2 ""
   ReadRegStr $R2 HKLM "Software\CivicCast\Native" "DatabaseUrl"
+  ; The candidate runtime's maintenance health gate validates the complete
+  ; station-set contract. On upgrades from earlier releases, establish that
+  ; contract from the same signed station distribution before D3 starts the
+  ; candidate runtime. The activation command verifies the signed index and
+  ; packs, and its self-tests do not provision, migrate, or access the
+  ; application database. Failures below still go through CIVICCAST_FAIL,
+  ; which contains the replaced payload before aborting setup.
+  ;
+  ; ===================================================================
+  ; K1 FIX: FLAT-LAYOUT STATION ACTIVATION
+  ; ===================================================================
+  ; The ONLY writer of station-set.json / activation-self-test.json in this
+  ; codebase (native_activation.rs::activate_flat_station_with, reusing the
+  ; same composition/atomic-write machinery stage_distribution_with's
+  ; versioned counterpart already uses) had no production caller anywhere in
+  ; this hook chain (K1 audit, 2026-08-16) -- so a freshly registered,
+  ; started CivicCastSupervisor service could never find station-set.json at
+  ; $INSTDIR and stayed permanently in the (gracefully degraded, but never
+  ; activated) NativeStationNotActivatedError state. This step closes that
+  ; gap: it writes both files DIRECTLY at $INSTDIR (flat, no app/<version>
+  ; subdirectory) -- the shape native/station_runtime.py::
+  ; load_native_station_environment requires for the service registered
+  ; below against $INSTDIR\runtime\python.exe.
+  ;
+  ; Sources a signed station bundle, verified through
+  ; native_distribution::acquire_station_distribution -- reused verbatim via
+  ; --civiccast-import-station, never a second, forked acquisition path.
+  ;
+  ; TWO SOURCES, resolved in this order (2026-09-02 owner decision, "make
+  ; sure the installer always HAS that index, even when downloaded alone"):
+  ;
+  ;   (a) "$EXEDIR\station\station-index.json" -- the USB-kit side-load next
+  ;       to setup.exe. The SAME "packs next to the installer" convention
+  ;       --civiccast-stage-packs already uses above for component packs,
+  ;       extended to a full station bundle (a signed index plus its own
+  ;       packs). assemble-native-beta-kit publishes exactly this layout, so
+  ;       an air-gapped station installing from the stick keeps behaving
+  ;       EXACTLY as before this branch: the kit copy wins, its packs sit
+  ;       beside it in the same directory, and no cache round-trip happens.
+  ;
+  ;   (b) "$INSTDIR\station\station-index.json" -- the EMBEDDED copy. The
+  ;       signed index, placeholder `core` pack (~1.5 KB), and mandatory
+  ;       `captions-whistle.ccpack` (<25 MB; pinned local model+engine) ship
+  ;       inside setup.exe as Tauri bundle.resources and are laid down at
+  ;       $INSTDIR\station\ before this hook runs. This makes a DOWNLOAD-ONLY
+  ;       install/upgrade of setup.exe alone work with a Beta 10 cache: the
+  ;       required Whistle component comes from the embedded sidecar while
+  ;       the remaining ~21 GB of model packs must be satisfied from the
+  ;       per-SHA cache under --cache-root (native_distribution.rs::
+  ;       copy_station_pack_to_cache). The fixed resource map and signed-index
+  ;       hash/size checks prevent embedding a different or oversized pack;
+  ;       see scripts/build_native_bootstrap.py.
+  ;
+  ; Fails loud only when NEITHER exists. An unconditional silent skip here
+  ; is the exact shape that produced K1 in the first place (an install that
+  ; reports success while the station can never activate), so the fail-closed
+  ; branch stays -- it just can no longer fire merely because the operator
+  ; downloaded setup.exe on its own.
+  ;
+  ; Written as two literal nsExec invocations rather than one invocation
+  ; over a computed path register: $R0-$R3 carry installer state across the
+  ; following D3/D4 steps, and $0-$9 are unusable inside a CIVICCAST_STEP
+  ; breadcrumb argument. Two literals cost a duplicated line and cannot
+  ; clobber anything.
+  !insertmacro CIVICCAST_STEP "step d4-activate-station: begin"
+  DetailPrint "Activating the CivicCast (Native) station (K1)..."
+  IfFileExists "$EXEDIR\station\station-index.json" civiccast_activate_station_from_exedir civiccast_activate_station_try_instdir
+  civiccast_activate_station_from_exedir:
+  !insertmacro CIVICCAST_STEP "step d4-activate-station: source EXEDIR (kit side-load $EXEDIR\station\station-index.json)"
+  DetailPrint "CivicCast (Native): using the station bundle beside setup.exe ($EXEDIR\station)."
+  nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$EXEDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
+  Pop $0
+  Goto civiccast_activate_station_ran
+  civiccast_activate_station_try_instdir:
+  IfFileExists "$INSTDIR\station\station-index.json" civiccast_activate_station_from_instdir civiccast_activate_station_no_index
+  civiccast_activate_station_from_instdir:
+  !insertmacro CIVICCAST_STEP "step d4-activate-station: source INSTDIR (embedded $INSTDIR\station\station-index.json)"
+  DetailPrint "CivicCast (Native): using the station index embedded in setup.exe ($INSTDIR\station)."
+  nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$INSTDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
+  Pop $0
+  Goto civiccast_activate_station_ran
+  civiccast_activate_station_no_index:
+  !insertmacro CIVICCAST_STEP "step d4-activate-station: no station index at $EXEDIR\station or $INSTDIR\station"
+  DetailPrint "CivicCast (Native): station activation FAILED — no signed station index was found."
+  !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station: no signed station index (station-index.json) was found beside setup.exe at $EXEDIR\station, and this setup.exe does not carry the embedded copy it normally ships with. Download the CivicCast (Native) setup again from the official release page, or copy the full CivicCast kit folder (setup.exe together with its station folder) onto this machine and run setup from there. See the installer log above for details."
+  civiccast_activate_station_ran:
+  !insertmacro CIVICCAST_STEP "step d4-activate-station: returned $0"
+  ; Installer-path audit MA-08: run_native_flat_activation_cli emits FIVE
+  ; distinct exit codes -- 64 (arguments), 65 (render), 66 (acquisition), 67
+  ; (activation / self-test), 78 (embedded pack trust) -- and this branch used
+  ; to collapse all of them into one fixed sentence about the station folder
+  ; and the pack cache. That sentence is correct for 66-with-a-cache-miss and
+  ; WRONG for the other four: 67 means the packs were fine and the station's
+  ; own self-test failed; 78 means the shipped trust key is a development key
+  ; without the matching opt-in, i.e. a BUILD defect; 64/65 are
+  ; installer-authoring bugs. This file's own header (:374-377) states the
+  ; rationale that was being discarded: "the exit code is the only signal a
+  ; support log carries about WHICH step failed".
+  ${If} $0 == 0
+    DetailPrint "CivicCast (Native): station activation complete (or already activated; no-op)."
+  ${ElseIf} $0 == 67
+    DetailPrint "CivicCast (Native): station activation self-test FAILED (exit $0) — see the installer log above."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup laid down the station's components, but the station's own self-test did not pass, so setup stopped rather than leave you with a station that looks installed and does not work.$\r$\n$\r$\nThis is NOT a missing-files problem -- the component packs were obtained and verified. The self-test that failed is named in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast were not deleted."
+  ${ElseIf} $0 == 66
+    DetailPrint "CivicCast (Native): station activation could not obtain its component packs (exit $0) — see the installer log above."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not obtain the station's component packs from the signed station index it found.$\r$\n$\r$\nIf you installed from a CivicCast kit folder, make sure its station folder was copied across whole. If you ran setup.exe on its own, the packs it needs must already be in this machine's pack cache from a previous install.$\r$\n$\r$\nSee the installer log above for the exact underlying error -- it names either the missing pack or the signature/version check that refused one."
+  ${ElseIf} $0 == 78
+    DetailPrint "CivicCast (Native): station activation refused this setup.exe's embedded trust key (exit $0)."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "This copy of CivicCast (Native) setup is not a valid release build: its embedded signing key was refused.$\r$\n$\r$\nNothing is wrong with this machine. Download CivicCast (Native) setup again from the official release page and run that copy.$\r$\n$\r$\nNothing was deleted. The exact refusal is recorded in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+  ${ElseIf} $0 == 64
+  ${OrIf} $0 == 65
+    DetailPrint "CivicCast (Native): station activation was invoked incorrectly (exit $0)."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "This copy of CivicCast (Native) setup is defective: its own station-activation step was invoked with arguments it does not accept.$\r$\n$\r$\nNothing is wrong with this machine. Download CivicCast (Native) setup again from the official release page and run that copy.$\r$\n$\r$\nNothing was deleted. The exact refusal is recorded in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+  ${Else}
+    DetailPrint "CivicCast (Native): station activation FAILED (exit $0) — see the installer log above."
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station from the signed station index it found (exit code $0). See the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact underlying error.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast were not deleted."
+  ${EndIf}
+  ;
   ; UPGRADE-VS-FRESH ROUTING (chain K/K2, real-hardware R7, 2026-08-01).
   ;
   ; This block used to hold the routing gate itself:
@@ -1386,118 +1533,6 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ${Else}
     DetailPrint "CivicCast (Native): D4 database/messaging provisioning reported an unexpected fault (exit $0) — see the installer log above."
     !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_PROVISION_FAULT} "CivicCast (Native) setup hit an unexpected fault while provisioning the PostgreSQL server (exit code $0). See the installer log."
-  ${EndIf}
-  ;
-  ; ===================================================================
-  ; K1 FIX: FLAT-LAYOUT STATION ACTIVATION
-  ; ===================================================================
-  ; The ONLY writer of station-set.json / activation-self-test.json in this
-  ; codebase (native_activation.rs::activate_flat_station_with, reusing the
-  ; same composition/atomic-write machinery stage_distribution_with's
-  ; versioned counterpart already uses) had no production caller anywhere in
-  ; this hook chain (K1 audit, 2026-08-16) -- so a freshly registered,
-  ; started CivicCastSupervisor service could never find station-set.json at
-  ; $INSTDIR and stayed permanently in the (gracefully degraded, but never
-  ; activated) NativeStationNotActivatedError state. This step closes that
-  ; gap: it writes both files DIRECTLY at $INSTDIR (flat, no app/<version>
-  ; subdirectory) -- the shape native/station_runtime.py::
-  ; load_native_station_environment requires for a station whose service is
-  ; registered against $INSTDIR\runtime\python.exe (see that macro's own
-  ; header comment two steps below).
-  ;
-  ; Sources a signed station bundle, verified through
-  ; native_distribution::acquire_station_distribution -- reused verbatim via
-  ; --civiccast-import-station, never a second, forked acquisition path.
-  ;
-  ; TWO SOURCES, resolved in this order (2026-09-02 owner decision, "make
-  ; sure the installer always HAS that index, even when downloaded alone"):
-  ;
-  ;   (a) "$EXEDIR\station\station-index.json" -- the USB-kit side-load next
-  ;       to setup.exe. The SAME "packs next to the installer" convention
-  ;       --civiccast-stage-packs already uses above for component packs,
-  ;       extended to a full station bundle (a signed index plus its own
-  ;       packs). assemble-native-beta-kit publishes exactly this layout, so
-  ;       an air-gapped station installing from the stick keeps behaving
-  ;       EXACTLY as before this branch: the kit copy wins, its packs sit
-  ;       beside it in the same directory, and no cache round-trip happens.
-  ;
-  ;   (b) "$INSTDIR\station\station-index.json" -- the EMBEDDED copy. The
-  ;       signed index, placeholder `core` pack (~1.5 KB), and mandatory
-  ;       `captions-whistle.ccpack` (<25 MB; pinned local model+engine) ship
-  ;       inside setup.exe as Tauri bundle.resources and are laid down at
-  ;       $INSTDIR\station\ before this hook runs. This makes a DOWNLOAD-ONLY
-  ;       install/upgrade of setup.exe alone work with a Beta 10 cache: the
-  ;       required Whistle component comes from the embedded sidecar while
-  ;       the remaining ~21 GB of model packs must be satisfied from the
-  ;       per-SHA cache under --cache-root (native_distribution.rs::
-  ;       copy_station_pack_to_cache). The fixed resource map and signed-index
-  ;       hash/size checks prevent embedding a different or oversized pack;
-  ;       see scripts/build_native_bootstrap.py.
-  ;
-  ; Fails loud only when NEITHER exists. An unconditional silent skip here
-  ; is the exact shape that produced K1 in the first place (an install that
-  ; reports success while the station can never activate), so the fail-closed
-  ; branch stays -- it just can no longer fire merely because the operator
-  ; downloaded setup.exe on its own.
-  ;
-  ; Written as two literal nsExec invocations rather than one invocation
-  ; over a computed path register: every $R0-$R3 register live across this
-  ; point still holds D3/D4 chain state (see the D3 rehoming note above and
-  ; CIVICCAST_STEP's own register notes), and $0-$9 are unusable inside a
-  ; CIVICCAST_STEP breadcrumb argument. Two literals cost a duplicated line
-  ; and cannot clobber anything.
-  !insertmacro CIVICCAST_STEP "step d4-activate-station: begin"
-  DetailPrint "Activating the CivicCast (Native) station (K1)..."
-  IfFileExists "$EXEDIR\station\station-index.json" civiccast_activate_station_from_exedir civiccast_activate_station_try_instdir
-  civiccast_activate_station_from_exedir:
-  !insertmacro CIVICCAST_STEP "step d4-activate-station: source EXEDIR (kit side-load $EXEDIR\station\station-index.json)"
-  DetailPrint "CivicCast (Native): using the station bundle beside setup.exe ($EXEDIR\station)."
-  nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$EXEDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
-  Pop $0
-  Goto civiccast_activate_station_ran
-  civiccast_activate_station_try_instdir:
-  IfFileExists "$INSTDIR\station\station-index.json" civiccast_activate_station_from_instdir civiccast_activate_station_no_index
-  civiccast_activate_station_from_instdir:
-  !insertmacro CIVICCAST_STEP "step d4-activate-station: source INSTDIR (embedded $INSTDIR\station\station-index.json)"
-  DetailPrint "CivicCast (Native): using the station index embedded in setup.exe ($INSTDIR\station)."
-  nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$INSTDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
-  Pop $0
-  Goto civiccast_activate_station_ran
-  civiccast_activate_station_no_index:
-  !insertmacro CIVICCAST_STEP "step d4-activate-station: no station index at $EXEDIR\station or $INSTDIR\station"
-  DetailPrint "CivicCast (Native): station activation FAILED — no signed station index was found."
-  !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station: no signed station index (station-index.json) was found beside setup.exe at $EXEDIR\station, and this setup.exe does not carry the embedded copy it normally ships with. Download the CivicCast (Native) setup again from the official release page, or copy the full CivicCast kit folder (setup.exe together with its station folder) onto this machine and run setup from there. See the installer log above for details."
-  civiccast_activate_station_ran:
-  !insertmacro CIVICCAST_STEP "step d4-activate-station: returned $0"
-  ; Installer-path audit MA-08: run_native_flat_activation_cli emits FIVE
-  ; distinct exit codes -- 64 (arguments), 65 (render), 66 (acquisition), 67
-  ; (activation / self-test), 78 (embedded pack trust) -- and this branch used
-  ; to collapse all of them into one fixed sentence about the station folder
-  ; and the pack cache. That sentence is correct for 66-with-a-cache-miss and
-  ; WRONG for the other four: 67 means the packs were fine and the station's
-  ; own self-test failed; 78 means the shipped trust key is a development key
-  ; without the matching opt-in, i.e. a BUILD defect; 64/65 are
-  ; installer-authoring bugs. This file's own header (:374-377) states the
-  ; rationale that was being discarded: "the exit code is the only signal a
-  ; support log carries about WHICH step failed".
-  ${If} $0 == 0
-    DetailPrint "CivicCast (Native): station activation complete (or already activated; no-op)."
-  ${ElseIf} $0 == 67
-    DetailPrint "CivicCast (Native): station activation self-test FAILED (exit $0) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup laid down the station's components, but the station's own self-test did not pass, so setup stopped rather than leave you with a station that looks installed and does not work.$\r$\n$\r$\nThis is NOT a missing-files problem -- the component packs were obtained and verified. The self-test that failed is named in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast were not deleted."
-  ${ElseIf} $0 == 66
-    DetailPrint "CivicCast (Native): station activation could not obtain its component packs (exit $0) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not obtain the station's component packs from the signed station index it found.$\r$\n$\r$\nIf you installed from a CivicCast kit folder, make sure its station folder was copied across whole. If you ran setup.exe on its own, the packs it needs must already be in this machine's pack cache from a previous install.$\r$\n$\r$\nSee the installer log above for the exact underlying error -- it names either the missing pack or the signature/version check that refused one."
-  ${ElseIf} $0 == 78
-    DetailPrint "CivicCast (Native): station activation refused this setup.exe's embedded trust key (exit $0)."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "This copy of CivicCast (Native) setup is not a valid release build: its embedded signing key was refused.$\r$\n$\r$\nNothing is wrong with this machine. Download CivicCast (Native) setup again from the official release page and run that copy.$\r$\n$\r$\nNothing was deleted. The exact refusal is recorded in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log."
-  ${ElseIf} $0 == 64
-  ${OrIf} $0 == 65
-    DetailPrint "CivicCast (Native): station activation was invoked incorrectly (exit $0)."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "This copy of CivicCast (Native) setup is defective: its own station-activation step was invoked with arguments it does not accept.$\r$\n$\r$\nNothing is wrong with this machine. Download CivicCast (Native) setup again from the official release page and run that copy.$\r$\n$\r$\nNothing was deleted. The exact refusal is recorded in the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log."
-  ${Else}
-    DetailPrint "CivicCast (Native): station activation FAILED (exit $0) — see the installer log above."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station from the signed station index it found (exit code $0). See the installer log at $COMMONPROGRAMDATA\CivicCast\install-progress.log for the exact underlying error.$\r$\n$\r$\nYour recordings, database and settings in $COMMONPROGRAMDATA\CivicCast were not deleted."
   ${EndIf}
   ;
   ; ===================================================================
