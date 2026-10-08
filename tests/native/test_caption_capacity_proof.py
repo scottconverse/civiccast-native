@@ -659,6 +659,13 @@ def test_the_real_overload_control_producer_satisfies_the_evaluator(tmp_path: Pa
         overlap_seconds=0.5,
     )
 
+    # These overrides force this negative-control branch; they do not describe
+    # the overload thresholds measured by the live capacity run.
+    assert control["control_settings"] == {
+        "max_backlog_segments": 2,
+        "overload_persistence_scans": 1,
+        "catch_up_shed_limit": 0,
+    }
     assert control["dropped_overload_segments"] == 3
     assert control["active_vtt_cleared"] is True
     assert control["runtime_state"] in proof._FAIL_CLOSED_OVERLOAD_STATES

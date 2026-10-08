@@ -812,20 +812,21 @@ def test_run_forever_survives_a_watcher_thread_that_cannot_start(
 def test_repeat_beyond_the_event_wait_ceiling_warns_and_uses_the_default(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """U04 review (R1): 100000000 is finite, positive and unparsable to nothing
-    -- and ``Event.wait`` cannot wait it. Reproduced before the fix: the reader
-    accepted it in silence and the watcher died with ``OverflowError`` inside
+    """U04 review (R1): a finite interval above this platform's
+    ``Event.wait`` ceiling is rejected. Before the fix, the reader accepted
+    such a value in silence and the watcher died with ``OverflowError`` inside
     its own loop condition, which is the silent-disable failure this reader
     exists to prevent."""
 
-    monkeypatch.setenv(_REPEAT_ENV, "100000000")
+    too_large = math.nextafter(threading.TIMEOUT_MAX, math.inf)
+    monkeypatch.setenv(_REPEAT_ENV, str(too_large))
     with caplog.at_level(logging.WARNING, logger=_AUTOMATION_LOGGER):
         value = pass_watchdog_repeat_seconds_from_env()
 
     assert value == 60.0
     warnings = _records(caplog, _REPEAT_ENV)
     assert len(warnings) == 1, f"expected exactly one warning naming the variable: {warnings}"
-    assert "100000000" in warnings[0].getMessage()
+    assert str(too_large) in warnings[0].getMessage()
     assert "using 60.0s" in warnings[0].getMessage()
 
 
@@ -835,20 +836,21 @@ def test_a_directly_built_watcher_survives_an_interval_the_event_cannot_wait() -
     die either. Before R1's fix the thread was gone within one tick.
 
     U04 coordinator fix 2 moved the R1 failure mode further out of reach: the
-    wait interval is now ``min(threshold, repeat, 5.0)``, so an operator's
-    ``repeat`` of 1e8 -- the value R1 reproduced with -- never reaches
-    ``Event.wait`` at all and the watcher survives on its own tick. What keeps
-    the clamp covered is the direct assertion below, because after the cap the
-    watcher loop can no longer reach it: it is defence in depth for a
-    construction that no longer exists in this file's production path, and it
-    is labelled as such rather than left to look load-bearing.
+    wait interval is now ``min(threshold, repeat, 5.0)``, so a huge operator
+    ``repeat`` never reaches ``Event.wait`` at all and the watcher survives on
+    its own tick. What keeps the clamp covered is the direct assertion below,
+    because after the cap the watcher loop can no longer reach it: it is
+    defence in depth for a construction that no longer exists in this file's
+    production path, and it is labelled as such rather than left to look
+    load-bearing.
     """
 
     watchdog = _PassWatchdog(threshold_seconds=0.2, repeat_seconds=1e8)
     assert watchdog.tick_seconds == pytest.approx(0.2), (
         "a huge repeat must not become the wait interval"
     )
-    assert watchdog._wait_interval(1e8) == threading.TIMEOUT_MAX, (
+    too_large = math.nextafter(threading.TIMEOUT_MAX, math.inf)
+    assert watchdog._wait_interval(too_large) == threading.TIMEOUT_MAX, (
         "the clamp no longer bounds the watcher's own interval; it must still "
         "bound a value it is handed directly"
     )

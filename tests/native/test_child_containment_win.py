@@ -38,6 +38,7 @@ import ctypes
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -67,6 +68,7 @@ if os.name == "nt":
     _PROCESS_TERMINATE = 0x0001
     _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     _WAIT_TIMEOUT = 0x00000102
+    _WAIT_OBJECT_0 = 0x00000000
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _FFMPEG = shutil.which("ffmpeg")
@@ -108,11 +110,14 @@ def _wait_until(
 
 def _force_kill(pid: int) -> None:
     """Best-effort cleanup kill, for the ``finally`` blocks only."""
-    handle = _KERNEL32.OpenProcess(_PROCESS_TERMINATE, False, pid)
+    handle = _KERNEL32.OpenProcess(_PROCESS_TERMINATE | _SYNCHRONIZE, False, pid)
     if not handle:
         return
     try:
         _KERNEL32.TerminateProcess(handle, 1)
+        assert _KERNEL32.WaitForSingleObject(handle, 30_000) == _WAIT_OBJECT_0, (
+            f"child pid {pid} did not exit after cleanup TerminateProcess"
+        )
     finally:
         _KERNEL32.CloseHandle(handle)
 
@@ -138,6 +143,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--contain", choices=["yes", "no"], default="yes")
 parser.add_argument("--handshake", required=True)
 parser.add_argument("--scratch", required=True)
+parser.add_argument("--udp-port", type=int, required=True)
 args = parser.parse_args()
 
 scratch = Path(args.scratch)
@@ -175,7 +181,7 @@ from civiccast.stream._ffmpeg import start_ffmpeg
 handle = start_ffmpeg(
     [
         "-f", "mpegts",
-        "-i", "udp://127.0.0.1:59997?overrun_nonfatal=1&fifo_size=50000000",
+        "-i", f"udp://127.0.0.1:{args.udp_port}?overrun_nonfatal=1&fifo_size=50000000",
         "-f", "null",
         "-",
     ],
@@ -188,6 +194,7 @@ Path(args.handshake).write_text(
         {
             "parent_pid": os.getpid(),
             "child_pid": handle.process.pid,
+            "udp_port": args.udp_port,
             "contained": contained,
             "detail": detail,
         }
@@ -208,6 +215,9 @@ def _start_parent(
     helper = tmp_path / "cp_orphan_helper.py"
     helper.write_text(_HELPER_SRC, encoding="utf-8")
     handshake = tmp_path / "handshake.json"
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as port_probe:
+        port_probe.bind(("127.0.0.1", 0))
+        udp_port = int(port_probe.getsockname()[1])
     env = dict(os.environ)
     env["PROGRAMDATA"] = str(tmp_path / "programdata")
     env["CIVICAST_EGRESS_WORK_DIR"] = str(tmp_path / "egress")
@@ -233,6 +243,8 @@ def _start_parent(
                 str(handshake),
                 "--scratch",
                 str(tmp_path),
+                "--udp-port",
+                str(udp_port),
             ],
             cwd=str(_REPO_ROOT),
             env=env,
@@ -247,6 +259,7 @@ def _start_parent(
     if not handshake.exists():
         if parent.poll() is None:
             parent.kill()
+        parent.wait(timeout=30)
         pytest.fail(
             "helper never wrote its handshake "
             f"(rc={parent.returncode}); stdout="
@@ -283,6 +296,7 @@ def test_uncontained_parent_death_orphans_its_relay_child(tmp_path: Path) -> Non
         _force_kill(child_pid)
         if parent.poll() is None:
             parent.kill()
+        parent.wait(timeout=30)
 
 
 @pytest.mark.skipif(_FFMPEG is None, reason="ffmpeg is not on PATH")
@@ -294,7 +308,12 @@ def test_contained_parent_death_reaps_its_relay_child_within_two_seconds(
     parent, payload = _start_parent(tmp_path, contain="yes")
     child_pid = int(payload["child_pid"])
     try:
-        assert _pid_alive(child_pid), "helper's relay-shaped child should be running"
+        child_stderr = tmp_path / "relay-shaped.err.log"
+        assert _pid_alive(child_pid), (
+            "helper's relay-shaped child exited before parent termination; "
+            f"containment={payload['detail']!r}; ffmpeg stderr="
+            f"{child_stderr.read_text(encoding='utf-8', errors='replace')[-3000:]!r}"
+        )
         _terminate(parent.pid)
         assert parent.wait(timeout=30) is not None
         gone = _wait_until(lambda: not _pid_alive(child_pid), timeout_seconds=2.0)
@@ -311,3 +330,4 @@ def test_contained_parent_death_reaps_its_relay_child_within_two_seconds(
         _force_kill(child_pid)
         if parent.poll() is None:
             parent.kill()
+        parent.wait(timeout=30)

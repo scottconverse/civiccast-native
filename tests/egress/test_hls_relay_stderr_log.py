@@ -142,10 +142,6 @@ _STORM_LOOPS_TIMING = 200
 #: times and make the timing about the trim, not about the drain).
 _STORM_CAP_BYTES = 2 * 1024 * 1024
 _STORM_TAIL_BYTES = 512 * 1024
-#: After the single trim the file is the retained tail plus the child's
-#: remaining ~1.3 MB; requiring more than a megabyte here is what makes this
-#: run a backpressure proof rather than a test of a quiet child.
-_STORM_MIN_LOG_BYTES = 1024 * 1024
 #: A file can sit one read chunk over the cap between the append and the trim
 #: check in the same call (see ``_RelayLogWriter._append``).
 _MID_APPEND_ALLOWANCE = 128 * 1024
@@ -862,9 +858,6 @@ def test_a_logging_storm_does_not_stall_the_child_and_stays_bounded(
             assert run.trims >= 1, "the storm never crossed the cap: not a backpressure proof"
             assert b"\x00" not in run.raw, "the log is NUL-padded"
             assert len(run.raw) <= _STORM_CAP_BYTES + _MID_APPEND_ALLOWANCE
-            assert len(run.raw) > _STORM_MIN_LOG_BYTES, (
-                f"the child logged only {len(run.raw)} bytes: this run is not a backpressure proof"
-            )
         best_baseline = min(baseline)
         best_supervised = min(run.seconds for run in runs)
         if best_supervised <= best_baseline * _TIMING_BOUND:

@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[2]
 # The build/runtime version this codebase reports. DERIVED from the single
 # source of truth (civiccast/_version.py) so this policy check can never go
@@ -17,11 +19,13 @@ CURRENT_VERSION = (
     .split('__version__ = "', 1)[1]
     .split('"', 1)[0]
 )
-# The current release tag, derived the same way CURRENT_VERSION is. The name
-# predates v1.0.0-beta.3's publish (when it named an owner-held, unpublished
-# candidate); it still just means "the tag civiccast/_version.py names," now
-# a published release.
-HELD_CANDIDATE_TAG = f"v{CURRENT_VERSION}"
+# The source version can be the next owner-held candidate while the published
+# release remains current. Public download targets come from the authored
+# release-truth manifest, not civiccast/_version.py.
+PUBLISHED_RELEASE_TAG = yaml.safe_load(
+    (ROOT / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
+)["current"]
+PUBLISHED_RELEASE_VERSION = PUBLISHED_RELEASE_TAG.removeprefix("v")
 
 ACTIVE_RELEASE_SURFACES = [
     ROOT / "README.md",
@@ -112,9 +116,11 @@ def test_current_release_identity_is_consistent_across_runtime_and_installer() -
     assert f'"version": "{CURRENT_VERSION}"' in (
         ROOT / "civiccast" / "apps" / "installer" / "src-tauri" / "tauri.conf.json"
     ).read_text(encoding="utf-8")
-    assert HELD_CANDIDATE_TAG in (
-        ROOT / "scripts" / "download_windows_release_artifacts.ps1"
-    ).read_text(encoding="utf-8")
+    downloader = (ROOT / "scripts" / "download_windows_release_artifacts.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert f'$Tag = "{PUBLISHED_RELEASE_TAG}"' in downloader
+    assert f'$Version = "{PUBLISHED_RELEASE_VERSION}"' in downloader
 
 
 def test_retired_wsl_install_docs_are_explicitly_historical() -> None:
@@ -143,7 +149,7 @@ def test_readme_keeps_source_and_field_proof_distinct() -> None:
 
 
 def test_architecture_doc_names_current_release() -> None:
-    """ARCHITECTURE.md's release-posture line must name the current candidate.
+    """ARCHITECTURE.md's release-posture line must name the published release.
 
     Regression guard: this doc named a two-releases-old public-beta line as
     "current" for two full release cycles before an audit caught it. Nothing
@@ -152,7 +158,8 @@ def test_architecture_doc_names_current_release() -> None:
     release-posture claim that was simply never updated.
     """
     text = ARCHITECTURE_DOC.read_text(encoding="utf-8")
-    # Release posture names the owner-held candidate without implying publication.
-    assert HELD_CANDIDATE_TAG in text, (
-        f"ARCHITECTURE.md's release-posture paragraph does not name {HELD_CANDIDATE_TAG}"
+    # Public release posture follows the release-truth manifest even while
+    # the source tree advances to an unpublished candidate.
+    assert PUBLISHED_RELEASE_TAG in text, (
+        f"ARCHITECTURE.md's release-posture paragraph does not name {PUBLISHED_RELEASE_TAG}"
     )

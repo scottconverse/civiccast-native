@@ -291,12 +291,13 @@ decides otherwise) with:
   (each under 2 GB).
 - `SHA256SUMS.txt` and the installer's `*.sidecar.json`.
 - Release notes stating: this is a beta candidate, not a production release;
-  the exact source SHA; links to the build and Gate A runs with the
-  per-lane PASS verdicts; an asset table with size and SHA-256; plain
-  install/upgrade instructions ("download setup.exe; if you already have
-  CivicCast installed just run it -- your recordings, database and AI
-  models are kept; first-time installs need the USB model bundle"); and the
-  SmartScreen note.
+  the exact source SHA; a link to the build and the selected consumer-evidence
+  route (the Gate A run with per-lane PASS verdicts for workflow mode, or the
+  direct Sandbox scenarios with Gate A and download-only route gaps stated);
+  an asset table with size and SHA-256; plain install/upgrade instructions
+  ("download setup.exe; if you already have CivicCast installed just run it --
+  your recordings, database and AI models are kept; first-time installs need
+  the USB model bundle"); and the SmartScreen note.
 
 No release ever carries the ~21 GB `station\` bundle as an asset. A
 download-only fresh install (no prior CivicCast install, no USB bundle

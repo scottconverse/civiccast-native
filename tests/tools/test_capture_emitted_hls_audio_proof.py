@@ -1671,9 +1671,16 @@ if not _REAL_FFPROBE.is_file():  # pragma: no cover - host dependent
     _found_probe = shutil.which("ffprobe")
     if _found_probe:
         _REAL_FFPROBE = Path(_found_probe)
+if not _REAL_TSP.is_file():  # pragma: no cover - host dependent
+    _found_tsp = shutil.which("tsp")
+    if _found_tsp:
+        _REAL_TSP = Path(_found_tsp)
 
 
-@pytest.mark.skipif(not _REAL_FFMPEG.is_file(), reason="real ffmpeg not available on this host")
+@pytest.mark.skipif(
+    not _REAL_FFMPEG.is_file() or not _REAL_FFPROBE.is_file() or not _REAL_TSP.is_file(),
+    reason="real ffmpeg, ffprobe, and TSDuck tsp are required",
+)
 def test_real_ffmpeg_measures_normalized_synthetic_window(tmp_path: Path) -> None:
     """A really-normalized continuous window must measure in-band and PASS.
 
