@@ -25,9 +25,10 @@ Usage::
 
     python scripts/release/publish_beta_candidate.py \\
         --kit-dir C:\\CivicCastTester\\kit-staging\\<sha> \\
-        --source-sha <sha> \\
+        --source-sha <tag-target-sha> \\
+        [--artifact-source-sha <package-producer-sha>] \\
         --build-run-id <id> \\
-        --gate-a-run-id <id> \\
+        (--gate-a-run-id <id> | --consumer-evidence-receipt <file>) \\
         --tag v1.0.0-beta.N \\
         [--dry-run] \\
         --truth-status current|staging
@@ -42,6 +43,9 @@ name and size on the fetched draft (deleting the draft on any mismatch),
 then un-draft it -- the one step that creates the public tag, atomically
 with its release -- and finally update ``docs/releases/release-truth.yaml``.
 No ``git tag``/``git push`` is ever run by hand.
+``--source-sha`` is the release tag target. ``--artifact-source-sha`` binds
+the producer commit for the build, manual, and consumer evidence; it defaults
+to ``--source-sha`` in workflow mode and is required in direct-evidence mode.
 """
 
 from __future__ import annotations
@@ -49,11 +53,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -132,7 +139,9 @@ def run_gh(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
 # ---------------------------------------------------------------------------
 # (a) Layout + version verification
 # ---------------------------------------------------------------------------
-def verify_layout(kit_dir: Path) -> tuple[Path, list[Path]]:
+def verify_layout(
+    kit_dir: Path, *, setup_filename: str = SETUP_ASSET_NAME
+) -> tuple[Path, list[Path]]:
     """Require setup.exe, packs\\*.ccpack (>=1), and a station\\ dir.
 
     Matches what .github/workflows/native-beta-candidate-artifacts.yml says
@@ -142,9 +151,9 @@ def verify_layout(kit_dir: Path) -> tuple[Path, list[Path]]:
     if not kit_dir.is_dir():
         raise PublishError(f"kit-dir does not exist or is not a directory: {kit_dir}")
 
-    setup = kit_dir / SETUP_ASSET_NAME
+    setup = kit_dir / setup_filename
     if not setup.is_file():
-        raise PublishError(f"kit-dir is missing setup.exe: {setup}")
+        raise PublishError(f"kit-dir is missing {setup_filename}: {setup}")
 
     packs_dir = kit_dir / "packs"
     if not packs_dir.is_dir():
@@ -160,8 +169,611 @@ def verify_layout(kit_dir: Path) -> tuple[Path, list[Path]]:
     return setup, packs
 
 
+DIRECT_CONSUMER_RECEIPT_KIND = "civiccast-native-beta-direct-consumer-evidence"
+DIRECT_CONSUMER_PROOFS = {
+    "fresh_install",
+    "failed_install_repair",
+    "beta10_baseline_install",
+    "beta10_to_beta11_upgrade",
+    "verify_after_upgrade",
+    "three_channel_runtime",
+}
+DIRECT_CHANNELS = ("public", "government", "education")
+DIRECT_JFK_WORDS = ("fellow", "americans", "country")
+DIRECT_PLAYLIST_MAX_AGE_SECONDS = 30.0
+DIRECT_RUNTIME_MIN_SPAN_SECONDS = 180.0
+DIRECT_VTT_SAMPLE_MAX_BYTES = 32 * 1024
+DIRECT_PROOF_FIELDS = {
+    "fresh_install": {"installer_run", "install_state", "activation_self_test"},
+    "failed_install_repair": {
+        "installer_run",
+        "install_state",
+        "activation_self_test",
+        "fixture",
+        "repair_install_log",
+        "repair_verify_log",
+        "post_repair_result",
+        "post_repair_marker",
+    },
+    "beta10_baseline_install": {"installer_run", "install_state"},
+    "beta10_to_beta11_upgrade": {
+        "installer_run",
+        "install_state",
+        "activation_self_test",
+        "upgrade_engine_log",
+    },
+    "verify_after_upgrade": {"result", "preserve_marker"},
+    "three_channel_runtime": {"result", "preserve_marker", "snapshots"},
+}
+
+
+def _record(value: object, *, label: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise PublishError(f"direct consumer evidence {label} must be a JSON object")
+    return value
+
+
+def _record_keys(value: dict[str, Any], expected: set[str], *, label: str) -> None:
+    if set(value) != expected:
+        missing = sorted(expected - set(value))
+        extra = sorted(set(value) - expected)
+        raise PublishError(
+            f"direct consumer evidence {label} fields mismatch (missing={missing}, extra={extra})"
+        )
+
+
+def _bound_path(receipt_dir: Path, reference: object, *, label: str) -> Path:
+    ref = _record(reference, label=label)
+    _record_keys(ref, {"path", "sha256"}, label=label)
+    raw_path, expected_hash = ref.get("path"), ref.get("sha256")
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise PublishError(f"direct consumer evidence {label} path is missing")
+    if not isinstance(expected_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", expected_hash):
+        raise PublishError(f"direct consumer evidence {label} sha256 is invalid")
+    candidate = Path(raw_path)
+    if not candidate.is_absolute():
+        candidate = receipt_dir / candidate
+    if candidate.is_symlink() or not candidate.is_file():
+        raise PublishError(
+            f"direct consumer evidence {label} file is missing or a symlink: {candidate}"
+        )
+    actual_hash = sha256_file(candidate)
+    if actual_hash.casefold() != expected_hash.casefold():
+        raise PublishError(
+            f"direct consumer evidence {label} sha256 mismatch for {candidate}: "
+            f"expected {expected_hash}, got {actual_hash}"
+        )
+    return candidate.resolve()
+
+
+def _bound_json(receipt_dir: Path, reference: object, *, label: str) -> tuple[Path, dict[str, Any]]:
+    path = _bound_path(receipt_dir, reference, label=label)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PublishError(
+            f"direct consumer evidence {label} is not valid UTF-8 JSON: {exc}"
+        ) from exc
+    return path, _record(data, label=label)
+
+
+def _kit_member_path(kit_dir: Path, raw_path: object, *, label: str) -> tuple[str, Path]:
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise PublishError(f"direct consumer evidence {label} path is missing")
+    relative = Path(raw_path.replace("\\", "/"))
+    if relative.is_absolute() or ".." in relative.parts or relative.drive:
+        raise PublishError(f"direct consumer evidence {label} path escapes the kit: {raw_path!r}")
+    path = kit_dir / relative
+    if path.is_symlink() or not path.is_file():
+        raise PublishError(
+            f"direct consumer evidence {label} kit member is missing or a symlink: {raw_path}"
+        )
+    resolved_kit = kit_dir.resolve()
+    resolved_path = path.resolve()
+    if not resolved_path.is_relative_to(resolved_kit):
+        raise PublishError(f"direct consumer evidence {label} path escapes the kit: {raw_path!r}")
+    return relative.as_posix(), resolved_path
+
+
+def _read_bound_text(receipt_dir: Path, reference: object, *, label: str) -> str:
+    path = _bound_path(receipt_dir, reference, label=label)
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise PublishError(f"direct consumer evidence {label} is not UTF-8 text: {exc}") from exc
+
+
+def _verify_install_state(state: dict[str, Any], *, version: str, label: str) -> None:
+    health = state.get("health")
+    if (
+        state.get("installed_version") != version
+        or state.get("service_state") != "Running"
+        or not isinstance(health, dict)
+        or health.get("status") != "healthy"
+        or health.get("version") != version
+    ):
+        raise PublishError(
+            f"direct consumer evidence {label} is not a running healthy {version} install"
+        )
+
+
+def _utc_timestamp(value: object, *, label: str) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise PublishError(f"direct consumer evidence {label} UTC timestamp is missing")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PublishError(
+            f"direct consumer evidence {label} has an invalid UTC timestamp"
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+        raise PublishError(f"direct consumer evidence {label} timestamp must be UTC")
+    return parsed.astimezone(UTC)
+
+
+def verify_consumer_evidence_receipt(
+    *,
+    receipt_path: Path,
+    kit_dir: Path,
+    artifact_source_sha: str,
+    build_run_id: str,
+) -> tuple[Path, list[Path], dict[str, str]]:
+    """Verify a bounded receipt over the assembled kit and executed Sandbox evidence."""
+
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PublishError(
+            f"could not read direct consumer evidence receipt {receipt_path}: {exc}"
+        ) from exc
+    doc = _record(receipt, label="receipt")
+    _record_keys(doc, {"schema_version", "kind", "artifact", "evidence"}, label="receipt")
+    if doc.get("schema_version") != 1 or doc.get("kind") != DIRECT_CONSUMER_RECEIPT_KIND:
+        raise PublishError("direct consumer evidence receipt schema or kind is unsupported")
+
+    artifact = _record(doc.get("artifact"), label="artifact")
+    _record_keys(artifact, {"source_sha", "build_run_id", "assembly_receipt"}, label="artifact")
+    if str(artifact.get("source_sha", "")).casefold() != artifact_source_sha.casefold():
+        raise PublishError(
+            "direct consumer evidence artifact source SHA does not match --artifact-source-sha"
+        )
+    if str(artifact.get("build_run_id")) != str(build_run_id):
+        raise PublishError("direct consumer evidence build run id does not match --build-run-id")
+
+    receipt_dir = receipt_path.resolve().parent
+    _, assembly = _bound_json(
+        receipt_dir, artifact.get("assembly_receipt"), label="kit assembly receipt"
+    )
+    if (
+        assembly.get("schema_version") != 1
+        or str(assembly.get("source_sha", "")).casefold() != artifact_source_sha.casefold()
+    ):
+        raise PublishError("kit assembly receipt source SHA does not match --artifact-source-sha")
+    if str(assembly.get("workflow_run_id")) != str(build_run_id):
+        raise PublishError("kit assembly receipt run id does not match --build-run-id")
+
+    try:
+        station_index = _record(assembly["station_index"], label="station index record")
+        signature_record = _record(
+            station_index["signature_verification"], label="station-index signature record"
+        )
+        activation = _record(
+            signature_record["consumer_activation_verification"], label="consumer activation record"
+        )
+        sandbox = _record(activation["actual_sandbox_result"], label="actual Sandbox result")
+        baseline_activation = _record(sandbox["baseline_install"], label="Beta 10 baseline result")
+        upgrade_activation = _record(sandbox["upgrade_install"], label="Beta 10 upgrade result")
+        upgrade_verification = _record(
+            sandbox["verify_after_upgrade"], label="upgrade verification result"
+        )
+        setup_only_payload = str(upgrade_activation["payload"]).casefold()
+    except (KeyError, TypeError) as exc:
+        raise PublishError(
+            "kit assembly receipt is missing its recorded Sandbox upgrade activation result"
+        ) from exc
+    if (
+        activation.get("status") != "passed"
+        or baseline_activation.get("status") != "passed"
+        or baseline_activation.get("exit_code") != 0
+        or upgrade_activation.get("status") != "passed"
+        or upgrade_activation.get("exit_code") != 0
+        or "exactly five runtime packs" not in setup_only_payload
+        or "no station folder" not in setup_only_payload
+        or upgrade_verification.get("status") != "passed"
+        or upgrade_verification.get("exit_code") != 0
+    ):
+        raise PublishError(
+            "kit assembly receipt does not bind the passed setup-only Beta 10 upgrade"
+        )
+
+    membership = _record(assembly.get("membership"), label="kit membership")
+    if (
+        membership.get("files") != 19
+        or membership.get("installer_pack_count") != 5
+        or membership.get("station_pack_count") != 6
+        or membership.get("station_folder_present") is not True
+    ):
+        raise PublishError(
+            "kit assembly receipt does not describe the complete 19-file Beta 11 kit"
+        )
+
+    raw_members = assembly.get("kit_members")
+    if not isinstance(raw_members, list) or len(raw_members) != 19:
+        raise PublishError("kit assembly receipt must bind exactly 19 kit members")
+    members: dict[str, Path] = {}
+    for index, raw_member in enumerate(raw_members):
+        member = _record(raw_member, label=f"kit member {index + 1}")
+        _record_keys(member, {"path", "size_bytes", "sha256"}, label=f"kit member {index + 1}")
+        relative, path = _kit_member_path(
+            kit_dir, member.get("path"), label=f"kit member {index + 1}"
+        )
+        canonical = relative.casefold()
+        if canonical in members:
+            raise PublishError(f"kit assembly receipt has duplicate member path {relative!r}")
+        expected_size = member.get("size_bytes")
+        expected_hash = member.get("sha256")
+        if (
+            not isinstance(expected_size, int)
+            or isinstance(expected_size, bool)
+            or expected_size != path.stat().st_size
+        ):
+            raise PublishError(f"kit member size mismatch: {relative}")
+        if not isinstance(expected_hash, str) or not re.fullmatch(
+            r"[0-9a-fA-F]{64}", expected_hash
+        ):
+            raise PublishError(f"kit member SHA-256 is invalid: {relative}")
+        actual_hash = sha256_file(path)
+        if actual_hash.casefold() != expected_hash.casefold():
+            raise PublishError(f"kit member SHA-256 mismatch: {relative}")
+        members[canonical] = path
+
+    kit_root = kit_dir.resolve()
+    kit_files = list(kit_root.rglob("*"))
+    if any(path.is_symlink() for path in kit_files):
+        raise PublishError("kit contains a symlink; refusing direct evidence validation")
+    actual_members = {
+        path.relative_to(kit_root).as_posix().casefold() for path in kit_files if path.is_file()
+    }
+    if actual_members != set(members):
+        raise PublishError("kit file inventory differs from the exact 19-member assembly receipt")
+
+    installer = _record(assembly.get("installer"), label="kit installer")
+    installer_sha256 = installer.get("sha256")
+    if not isinstance(installer_sha256, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{64}", installer_sha256
+    ):
+        raise PublishError("kit assembly receipt installer SHA-256 is invalid")
+    setup_relative, setup = _kit_member_path(kit_dir, installer.get("path"), label="kit installer")
+    if Path(setup_relative).parent != Path():
+        raise PublishError("kit assembly receipt installer must be at the kit root")
+    if setup_relative.casefold() not in members or members[setup_relative.casefold()] != setup:
+        raise PublishError("kit installer is not a member of the exact assembly receipt")
+    if sha256_file(setup).casefold() != installer_sha256.casefold():
+        raise PublishError("kit installer bytes do not match the requested installer SHA-256")
+    setup, packs = verify_layout(kit_dir, setup_filename=setup_relative)
+
+    evidence = _record(doc.get("evidence"), label="proof set")
+    _record_keys(evidence, DIRECT_CONSUMER_PROOFS, label="proof set")
+    for proof_name, fields in DIRECT_PROOF_FIELDS.items():
+        _record_keys(_record(evidence.get(proof_name), label=proof_name), fields, label=proof_name)
+
+    def read_json(proof_name: str, file_name: str) -> dict[str, Any]:
+        proof = _record(evidence.get(proof_name), label=proof_name)
+        _, value = _bound_json(receipt_dir, proof.get(file_name), label=f"{proof_name}.{file_name}")
+        return value
+
+    def require_beta11_install(proof_name: str) -> None:
+        run = read_json(proof_name, "installer_run")
+        if (
+            run.get("exit_code") != 0
+            or str(run.get("sha256", "")).casefold() != installer_sha256.casefold()
+        ):
+            raise PublishError(
+                f"direct consumer evidence {proof_name} did not run this Beta 11 installer successfully"
+            )
+        _verify_install_state(
+            read_json(proof_name, "install_state"), version="1.0.0-beta.11", label=proof_name
+        )
+        activation = read_json(proof_name, "activation_self_test")
+        if (
+            activation.get("product_version") != "1.0.0-beta.11"
+            or activation.get("result") != "passed"
+        ):
+            raise PublishError(
+                f"direct consumer evidence {proof_name} activation self-test did not pass"
+            )
+
+    require_beta11_install("fresh_install")
+
+    require_beta11_install("failed_install_repair")
+    repair = _record(evidence.get("failed_install_repair"), label="failed_install_repair")
+    _, fixture = _bound_json(receipt_dir, repair.get("fixture"), label="failed-install fixture")
+    if (
+        fixture.get("previous_installed_version") != "1.0.0-beta.11"
+        or fixture.get("missing_runtime_key") != "whistle_assets_root"
+        or fixture.get("installed_version_marker_removed") is not True
+        or fixture.get("upgrade_journal_exists") is not False
+        or fixture.get("service_status") != "Stopped"
+    ):
+        raise PublishError(
+            "failed-install repair fixture does not record the known Beta 11 broken state"
+        )
+    repair_install_log = _read_bound_text(
+        receipt_dir, repair.get("repair_install_log"), label="repair install command log"
+    )
+    repair_verify_log = _read_bound_text(
+        receipt_dir, repair.get("repair_verify_log"), label="repair verification command log"
+    )
+    if "PASS" not in repair_install_log or "PASS" not in repair_verify_log:
+        raise PublishError(
+            "failed-install repair command and post-repair verification must both PASS"
+        )
+    repair_result = read_json("failed_install_repair", "post_repair_result")
+    repair_marker = read_json("failed_install_repair", "post_repair_marker")
+    repaired_schedules = repair_result.get("preserved_schedule_ids")
+    repair_health = repair_result.get("health")
+    repair_marker_runtime = repair_marker.get("runtime")
+    if (
+        repair_result.get("result") != "PASS"
+        or repair_result.get("login") != "PASS"
+        or repair_result.get("preserve_install_and_database") is not True
+        or repair_result.get("product_version") != "1.0.0-beta.11"
+        or not isinstance(repair_health, dict)
+        or repair_health.get("status") != "healthy"
+        or not isinstance(repaired_schedules, list)
+        or len(repaired_schedules) != 3
+        or not all(isinstance(item, str) for item in repaired_schedules)
+        or len(set(repaired_schedules)) != 3
+        or repair_marker.get("schedule_ids") != repaired_schedules
+        or repair_result.get("preserved_asset_id")
+        != repair_marker.get("preserved_baseline_asset_id")
+        or not isinstance(repair_marker_runtime, dict)
+        or repair_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
+    ):
+        raise PublishError(
+            "failed-install repair verification does not prove restored account data and Whistle activation"
+        )
+
+    baseline_run = read_json("beta10_baseline_install", "installer_run")
+    if (
+        baseline_run.get("exit_code") != 0
+        or "beta.10" not in str(baseline_run.get("installer", "")).casefold()
+    ):
+        raise PublishError("Beta 10 baseline installer did not complete successfully")
+    _verify_install_state(
+        read_json("beta10_baseline_install", "install_state"),
+        version="1.0.0-beta.10",
+        label="Beta 10 baseline",
+    )
+
+    require_beta11_install("beta10_to_beta11_upgrade")
+    upgrade = _record(evidence.get("beta10_to_beta11_upgrade"), label="beta10_to_beta11_upgrade")
+    upgrade_log = _read_bound_text(
+        receipt_dir, upgrade.get("upgrade_engine_log"), label="Beta 10 to Beta 11 upgrade log"
+    )
+    if (
+        "old=1.0.0-beta.10 new=1.0.0-beta.11" not in upgrade_log
+        or "route: upgrade" not in upgrade_log
+    ):
+        raise PublishError("upgrade log does not prove the Beta 10 to Beta 11 upgrade path")
+
+    verify_result = read_json("verify_after_upgrade", "result")
+    verify_marker = read_json("verify_after_upgrade", "preserve_marker")
+    schedule_ids = verify_result.get("preserved_schedule_ids")
+    marker_schedules = verify_marker.get("baseline_schedule_ids")
+    verify_health = verify_result.get("health")
+    verify_marker_runtime = verify_marker.get("runtime")
+    if (
+        verify_result.get("result") != "PASS"
+        or verify_result.get("login") != "PASS"
+        or verify_result.get("preserve_install_and_database") is not True
+        or verify_result.get("product_version") != "1.0.0-beta.11"
+        or not isinstance(verify_health, dict)
+        or verify_health.get("status") != "healthy"
+        or not isinstance(schedule_ids, list)
+        or len(schedule_ids) != 3
+        or not all(isinstance(item, str) for item in schedule_ids)
+        or len(set(schedule_ids)) != 3
+        or marker_schedules != schedule_ids
+        or verify_result.get("preserved_asset_id")
+        != verify_marker.get("preserved_baseline_asset_id")
+        or not isinstance(verify_marker_runtime, dict)
+        or verify_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
+    ):
+        raise PublishError(
+            "post-upgrade verification does not prove the original account data was preserved"
+        )
+
+    runtime_result = read_json("three_channel_runtime", "result")
+    runtime_marker = read_json("three_channel_runtime", "preserve_marker")
+    if (
+        runtime_result.get("result") != "PASS"
+        or runtime_result.get("observed_minutes") != 5
+        or runtime_result.get("channels") != list(DIRECT_CHANNELS)
+        or runtime_result.get("preserve_install_and_database") is not True
+        or runtime_marker.get("preserve_install_and_database") is not True
+        or runtime_marker.get("product_version") != "1.0.0-beta.11"
+    ):
+        raise PublishError(
+            "three-channel runtime receipt does not record the five-minute Beta 11 pass"
+        )
+
+    runtime_proof = _record(evidence.get("three_channel_runtime"), label="three_channel_runtime")
+    snapshots = runtime_proof.get("snapshots")
+    if not isinstance(snapshots, list) or len(snapshots) != 5:
+        raise PublishError("three-channel runtime proof must bind all five minute snapshots")
+    vtt_hashes: dict[str, set[str]] = {channel: set() for channel in DIRECT_CHANNELS}
+    jfk_words_seen: dict[str, set[str]] = {channel: set() for channel in DIRECT_CHANNELS}
+    previous_media: dict[str, tuple[datetime, str]] = {}
+    first_snapshot_at: datetime | None = None
+    previous_snapshot_at: datetime | None = None
+    for expected_minute, snapshot_ref in enumerate(snapshots, start=1):
+        _, snapshot = _bound_json(
+            receipt_dir, snapshot_ref, label=f"runtime minute {expected_minute}"
+        )
+        snapshot_at = _utc_timestamp(snapshot.get("utc"), label=f"runtime minute {expected_minute}")
+        if previous_snapshot_at is not None and snapshot_at <= previous_snapshot_at:
+            raise PublishError("runtime snapshot UTC times must increase")
+        if first_snapshot_at is None:
+            first_snapshot_at = snapshot_at
+        previous_snapshot_at = snapshot_at
+        snapshot_health = snapshot.get("health")
+        if (
+            snapshot.get("minute") != expected_minute
+            or not isinstance(snapshot_health, dict)
+            or snapshot_health.get("status") != "healthy"
+            or snapshot_health.get("version") != "1.0.0-beta.11"
+            or snapshot.get("pinned_whistle_error_seen") is not False
+            or snapshot.get("whistle_active_seen") != dict.fromkeys(DIRECT_CHANNELS, True)
+            or snapshot.get("whistle_fallback_seen") != dict.fromkeys(DIRECT_CHANNELS, False)
+        ):
+            raise PublishError(
+                f"runtime minute {expected_minute} does not show healthy Whistle primary operation"
+            )
+        channels = snapshot.get("channels")
+        if (
+            not isinstance(channels, list)
+            or not all(isinstance(channel, dict) for channel in channels)
+            or [channel.get("id") for channel in channels] != list(DIRECT_CHANNELS)
+        ):
+            raise PublishError(
+                f"runtime minute {expected_minute} is missing one or more expected channels"
+            )
+        for channel in channels:
+            channel_id = channel["id"]
+            streams = channel.get("ffprobe_streams")
+            codecs = (
+                {
+                    (stream.get("codec_type"), stream.get("codec_name"))
+                    for stream in streams
+                    if isinstance(stream, dict)
+                }
+                if isinstance(streams, list)
+                else set()
+            )
+            expected_codecs = {("video", "h264"), ("audio", "aac")}
+            words = channel.get("expected_jfk_words_seen")
+            vtt_hash = channel.get("vtt_sha256")
+            vtt_text = channel.get("vtt_text_snapshot")
+            vtt_text_bytes = channel.get("vtt_text_snapshot_utf8_bytes")
+            channel_state = channel.get("state")
+            caption_status = channel.get("caption_runtime_status")
+            playlist_age = channel.get("playlist_age_seconds")
+            if (
+                not isinstance(playlist_age, (int, float))
+                or isinstance(playlist_age, bool)
+                or playlist_age < 0
+                or playlist_age > DIRECT_PLAYLIST_MAX_AGE_SECONDS
+                or not math.isfinite(playlist_age)
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} channel {channel_id!r} HLS playlist is stale"
+                )
+            playlist_mtime = _utc_timestamp(
+                channel.get("playlist_mtime_utc"),
+                label=f"runtime minute {expected_minute} channel {channel_id} playlist mtime",
+            )
+            if (
+                abs((snapshot_at - playlist_mtime).total_seconds())
+                > DIRECT_PLAYLIST_MAX_AGE_SECONDS
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} channel {channel_id!r} playlist mtime is stale"
+                )
+            timestamp_age = max(0.0, (snapshot_at - playlist_mtime).total_seconds())
+            if abs(playlist_age - timestamp_age) > 10.0:
+                raise PublishError(
+                    f"runtime minute {expected_minute} channel {channel_id!r} playlist age and mtime disagree"
+                )
+            newest_segment = channel.get("newest_segment")
+            if not isinstance(newest_segment, str) or not newest_segment.strip():
+                raise PublishError(
+                    f"runtime minute {expected_minute} channel {channel_id!r} has no newest HLS segment"
+                )
+            segment_count = channel.get("segment_count")
+            if (
+                not isinstance(segment_count, int)
+                or isinstance(segment_count, bool)
+                or segment_count <= 0
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} channel {channel_id!r} has no HLS segments"
+                )
+            previous = previous_media.get(channel_id)
+            if previous is not None and (
+                playlist_mtime <= previous[0] or newest_segment == previous[1]
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} channel {channel_id!r} HLS media did not advance"
+                )
+            previous_media[channel_id] = (playlist_mtime, newest_segment)
+            if (
+                not isinstance(vtt_text, str)
+                or not vtt_text
+                or not isinstance(vtt_text_bytes, int)
+                or isinstance(vtt_text_bytes, bool)
+                or vtt_text_bytes != len(vtt_text.encode("utf-8"))
+                or vtt_text_bytes > DIRECT_VTT_SAMPLE_MAX_BYTES
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} channel {channel_id!r} has no bounded VTT review sample"
+                )
+            if isinstance(words, dict):
+                jfk_words_seen[channel_id].update(
+                    word for word in DIRECT_JFK_WORDS if words.get(word) is True
+                )
+            if (
+                not isinstance(channel_state, dict)
+                or channel_state.get("state") != "ON_AIR"
+                or not isinstance(caption_status, dict)
+                or caption_status.get("state") != "within-capacity"
+                or not isinstance(channel.get("vtt_cue_count"), int)
+                or channel["vtt_cue_count"] <= 0
+                or not isinstance(words, dict)
+                or codecs != expected_codecs
+                or not isinstance(vtt_hash, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} channel {channel_id!r} failed media/caption checks"
+                )
+            vtt_hashes[channel_id].add(vtt_hash)
+
+    if (
+        first_snapshot_at is None
+        or previous_snapshot_at is None
+        or (previous_snapshot_at - first_snapshot_at).total_seconds()
+        < DIRECT_RUNTIME_MIN_SPAN_SECONDS
+    ):
+        raise PublishError("five-minute runtime snapshots span less than three minutes")
+    for channel in DIRECT_CHANNELS:
+        if len(vtt_hashes[channel]) < 3:
+            raise PublishError(
+                f"runtime channel {channel!r} VTT did not progress in at least three samples"
+            )
+        if len(jfk_words_seen[channel]) < 2:
+            raise PublishError(
+                f"runtime channel {channel!r} recognized fewer than two JFK reference words"
+            )
+
+    return (
+        setup,
+        packs,
+        {
+            "fresh_install": "PASS",
+            "failed_install_repair": "PASS",
+            "repair_preservation": "PASS",
+            "beta10_to_beta11_upgrade": "PASS",
+            "preservation": "PASS",
+            "runtime": "PASS (five minutes, three channels)",
+        },
+    )
+
+
 def get_product_version(setup: Path) -> str:
-    proc = run_powershell(f"(Get-Item -LiteralPath '{setup}').VersionInfo.ProductVersion")
+    proc = run_powershell(
+        f"(Get-Item -LiteralPath {_powershell_literal(setup)}).VersionInfo.ProductVersion"
+    )
     if proc.returncode != 0:
         raise PublishError(
             f"could not read setup.exe ProductVersion via PowerShell: "
@@ -177,6 +789,12 @@ def get_native_source_version() -> str:
     from civiccast._native_version import __version__ as native_version
 
     return native_version
+
+
+def _powershell_literal(value: str | Path) -> str:
+    """Return a single-quoted PowerShell literal with embedded quotes doubled."""
+
+    return "'" + str(value).replace("'", "''") + "'"
 
 
 def verify_version_identity(setup: Path, tag: str) -> str:
@@ -209,7 +827,9 @@ def verify_version_identity(setup: Path, tag: str) -> str:
 # (b) Authenticode verification
 # ---------------------------------------------------------------------------
 def verify_signature(setup: Path) -> None:
-    proc = run_powershell(f"(Get-AuthenticodeSignature -LiteralPath '{setup}').Status")
+    proc = run_powershell(
+        f"(Get-AuthenticodeSignature -LiteralPath {_powershell_literal(setup)}).Status"
+    )
     if proc.returncode != 0:
         raise PublishError(
             f"could not run Get-AuthenticodeSignature on {setup}: "
@@ -380,21 +1000,27 @@ def render_notes(
     source_sha: str,
     repository: str,
     build_run_id: str,
-    gate_a_run_id: str,
-    verdicts: dict[str, dict[str, Any]],
+    gate_a_run_id: str | None,
+    verdicts: dict[str, dict[str, Any]] | None,
     changelog_text: str,
     assets: list[dict[str, Any]],
+    artifact_source_sha: str,
+    direct_verification: dict[str, str] | None = None,
 ) -> str:
-    lane_verdicts = {lane: verdicts[lane]["verdict"] for lane in GATE_A_LANES}
+    lane_verdicts = (
+        {lane: verdicts[lane]["verdict"] for lane in GATE_A_LANES} if verdicts is not None else None
+    )
     return render_native_beta_candidate_notes(
         tag=tag,
         source_sha=source_sha,
         build_run_url=build_run_url(repository, build_run_id),
-        gate_a_run_url=build_run_url(repository, gate_a_run_id),
+        gate_a_run_url=build_run_url(repository, gate_a_run_id) if gate_a_run_id else None,
         lane_verdicts=lane_verdicts,
         changelog_unreleased=extract_changelog_unreleased(changelog_text),
         assets=assets,
         smartscreen_note=SMARTSCREEN_NOTE,
+        artifact_source_sha=artifact_source_sha,
+        direct_verification=direct_verification,
     )
 
 
@@ -645,8 +1271,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--kit-dir", required=True, type=Path)
     parser.add_argument("--source-sha", required=True)
+    parser.add_argument("--artifact-source-sha")
     parser.add_argument("--build-run-id", required=True)
-    parser.add_argument("--gate-a-run-id", required=True)
+    parser.add_argument("--gate-a-run-id")
+    parser.add_argument("--consumer-evidence-receipt", type=Path)
     parser.add_argument("--tag", required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--truth-status", required=True, choices=("current", "staging"))
@@ -670,17 +1298,42 @@ def _run(args: argparse.Namespace) -> None:
     kit_dir: Path = args.kit_dir
     tag: str = args.tag
     source_sha: str = args.source_sha
+    direct_receipt: Path | None = args.consumer_evidence_receipt
     repository: str = args.repository
+    direct_mode = direct_receipt is not None
+
+    if direct_mode == (args.gate_a_run_id is not None):
+        raise PublishError("provide exactly one of --gate-a-run-id or --consumer-evidence-receipt")
+    if direct_mode and not args.artifact_source_sha:
+        raise PublishError("--artifact-source-sha is required with --consumer-evidence-receipt")
+    artifact_source_sha = args.artifact_source_sha or source_sha
+    if direct_mode and (
+        not re.fullmatch(r"[0-9a-fA-F]{40}", source_sha)
+        or not re.fullmatch(r"[0-9a-fA-F]{40}", artifact_source_sha)
+    ):
+        raise PublishError("direct consumer evidence requires full 40-character source commit SHAs")
 
     print("publish_beta_candidate: verifying gh authentication")
     verify_gh_auth()
 
     print(f"publish_beta_candidate: verifying kit layout at {kit_dir}")
-    setup, packs = verify_layout(kit_dir)
+    direct_verification: dict[str, str] | None = None
+    if direct_receipt is not None:
+        setup, packs, direct_verification = verify_consumer_evidence_receipt(
+            receipt_path=direct_receipt,
+            kit_dir=kit_dir,
+            artifact_source_sha=artifact_source_sha,
+            build_run_id=args.build_run_id,
+        )
+        print(
+            "publish_beta_candidate: direct consumer evidence, assembly receipt, and all kit member hashes verified"
+        )
+    else:
+        setup, packs = verify_layout(kit_dir)
 
     print("publish_beta_candidate: verifying version identity")
     version = verify_version_identity(setup, tag)
-    print(f"publish_beta_candidate: version {version} agrees (setup.exe, source tree, tag)")
+    print(f"publish_beta_candidate: version {version} agrees (signed installer, source tree, tag)")
 
     manual_dir = kit_dir / "manual"
     manual_files: list[Path] = []
@@ -688,7 +1341,7 @@ def _run(args: argparse.Namespace) -> None:
         try:
             manual_files = verify_candidate_manual(
                 manual_dir=manual_dir,
-                source_sha=source_sha,
+                source_sha=artifact_source_sha,
                 candidate_version=version,
                 workflow_run_id=args.build_run_id,
                 repo_root=REPO_ROOT,
@@ -701,34 +1354,52 @@ def _run(args: argparse.Namespace) -> None:
     verify_signature(setup)
     print("publish_beta_candidate: signature Valid")
 
-    print(f"publish_beta_candidate: downloading Gate A verdicts for run {args.gate_a_run_id}")
-    gate_a_dir = repo_root / "artifacts" / "release" / tag / "gate-a-verdicts"
-    verdicts = download_gate_a_verdicts(
-        repository=repository,
-        gate_a_run_id=args.gate_a_run_id,
-        build_run_id=args.build_run_id,
-        dest_dir=gate_a_dir,
-    )
-    verify_gate_a_verdicts(verdicts, source_sha=source_sha)
-    print("publish_beta_candidate: Gate A PASS on all three lanes, source_sha agrees")
+    verdicts: dict[str, dict[str, Any]] | None = None
+    if args.gate_a_run_id:
+        print(f"publish_beta_candidate: downloading Gate A verdicts for run {args.gate_a_run_id}")
+        gate_a_dir = repo_root / "artifacts" / "release" / tag / "gate-a-verdicts"
+        verdicts = download_gate_a_verdicts(
+            repository=repository,
+            gate_a_run_id=args.gate_a_run_id,
+            build_run_id=args.build_run_id,
+            dest_dir=gate_a_dir,
+        )
+        verify_gate_a_verdicts(verdicts, source_sha=artifact_source_sha)
+        print("publish_beta_candidate: Gate A PASS on all three lanes, artifact source SHA agrees")
+    else:
+        print(
+            "publish_beta_candidate: direct Sandbox consumer proof passed; Gate A workflow was not run"
+        )
 
     print("publish_beta_candidate: hashing assets and building manifest")
-    all_files = [setup, *packs, *manual_files]
+    out_dir = repo_root / "artifacts" / "release" / tag
+    setup_asset = setup
+    if direct_mode and setup.name != SETUP_ASSET_NAME:
+        setup_asset_dir = out_dir / "assets"
+        setup_asset_dir.mkdir(parents=True, exist_ok=True)
+        setup_asset = setup_asset_dir / SETUP_ASSET_NAME
+        temporary_setup = setup_asset.with_name(f"{SETUP_ASSET_NAME}.{uuid.uuid4().hex}.tmp")
+        shutil.copyfile(setup, temporary_setup)
+        if sha256_file(temporary_setup).casefold() != sha256_file(setup).casefold():
+            temporary_setup.unlink(missing_ok=True)
+            raise PublishError("staged setup.exe alias does not match the signed installer bytes")
+        temporary_setup.replace(setup_asset)
+
+    all_files = [setup_asset, *packs, *manual_files]
     sha256sums = build_sha256sums(all_files)
-    sidecar = build_sidecar(setup, signed=True)
-    sidecar_filename = f"{setup.name}{SIDECAR_SUFFIX}"
+    sidecar = build_sidecar(setup_asset, signed=True)
+    sidecar_filename = f"{setup_asset.name}{SIDECAR_SUFFIX}"
 
     # SHA256SUMS.txt and the sidecar are release assets too. Write them to the
     # local out_dir FIRST (local files only -- no remote state) so the asset
     # table below can carry their real bytes/hash, and so the pre-flight size
     # check covers the complete asset set. Same in dry-run and live mode.
-    out_dir = repo_root / "artifacts" / "release" / tag
     out_dir.mkdir(parents=True, exist_ok=True)
     sidecar_path = out_dir / sidecar_filename
     sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8", newline="\n")
     sha256sums_path = out_dir / SHA256SUMS_ASSET_NAME
     sha256sums_path.write_text(sha256sums, encoding="utf-8", newline="\n")
-    asset_paths = [setup, *packs, *manual_files, sha256sums_path, sidecar_path]
+    asset_paths = [setup_asset, *packs, *manual_files, sha256sums_path, sidecar_path]
 
     # Pre-flight: every asset under GitHub's 2 GiB cap, full set listed --
     # BEFORE any remote mutation, in dry-run and live mode alike.
@@ -749,6 +1420,8 @@ def _run(args: argparse.Namespace) -> None:
         verdicts=verdicts,
         changelog_text=changelog_text,
         assets=asset_table,
+        artifact_source_sha=artifact_source_sha,
+        direct_verification=direct_verification,
     )
 
     notes_file = out_dir / "RELEASE-NOTES.md"
@@ -807,9 +1480,13 @@ def _run(args: argparse.Namespace) -> None:
 
     truth_path = repo_root / "docs" / "releases" / "release-truth.yaml"
     truth_notes = (
-        f"Published by publish_beta_candidate.py, source {source_sha}, "
-        f"build run {args.build_run_id}, Gate A run {args.gate_a_run_id} "
-        "(all three lanes PASS)."
+        f"Published by publish_beta_candidate.py, artifact source {artifact_source_sha}, "
+        f"tag target {source_sha}, build run {args.build_run_id}, "
+        + (
+            f"direct Sandbox consumer receipt {direct_receipt}; Gate A not run."
+            if direct_mode
+            else f"Gate A run {args.gate_a_run_id} (all three lanes PASS)."
+        )
     )
     summary = update_release_truth(
         truth_path=truth_path, tag=tag, status=args.truth_status, notes=truth_notes

@@ -178,13 +178,13 @@ class CaptionStabilizer:
         else:
             tokens = hypothesis.text.split()
             if previous is not None and start < previous[1] and self._last_live_text:
-                old = self._last_live_text.split()
+                old_text_tokens = self._last_live_text.split()
 
-                def norm(xs):
+                def norm(xs: list[str]) -> list[str]:
                     return [x.casefold().strip(punctuation) for x in xs]
 
-                for count in range(min(len(tokens), len(old)), 0, -1):
-                    if norm(old[-count:]) == norm(tokens[:count]):
+                for count in range(min(len(tokens), len(old_text_tokens)), 0, -1):
+                    if norm(old_text_tokens[-count:]) == norm(tokens[:count]):
                         tokens = tokens[count:]
                         break
             if not tokens:

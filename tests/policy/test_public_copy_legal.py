@@ -108,22 +108,14 @@ def test_allows_factual_vendor_names_in_the_migrate_feature(tmp_path: Path) -> N
 def test_high_risk_framing_is_still_blocked_on_a_public_surface(tmp_path: Path) -> None:
     """The allowlist expansion must NOT weaken the real protection: a
     competitive claim on a non-allowlisted public page still fails."""
-    claim = (
-        "CivicCast "
-        + "replaces "
-        + "Cablecast and beats "
-        + "Cablecast on every axis.\n"
-    )
-    (tmp_path / "README.md").write_text(
-        claim, encoding="utf-8"
-    )
+    claim = "CivicCast " + "replaces " + "Cablecast and beats " + "Cablecast on every axis.\n"
+    (tmp_path / "README.md").write_text(claim, encoding="utf-8")
 
     violations = evaluate_public_copy_legal(tmp_path)
 
     assert violations, "high-risk replacement framing on the README must still be flagged"
     assert any(
-        ("replaces " + "Cablecast") in v.phrase or v.phrase == "Cablecast"
-        for v in violations
+        ("replaces " + "Cablecast") in v.phrase or v.phrase == "Cablecast" for v in violations
     )
 
 

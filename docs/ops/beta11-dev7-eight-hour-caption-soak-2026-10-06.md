@@ -4,6 +4,8 @@
 
 The local dev7 caption overlay ran from **09:53:23 to at least 18:01:41 MDT on October 6: eight hours eight minutes**. Supervisor PID remained **28760**. Whistle was the CPU primary on all three stations, with Whisper backup, the global inference lock and first-pass publication preserved. Runtime source candidate: `01406ad794ae09138135354e0440d73a2b1ac2ad`; the base station still identifies as beta.9 rather than a complete beta.11 installer.
 
+Later milestone: the owner accepted a successful **36-hour soak** on October 8. See the [continuing soak report](beta11-dev7-24-hour-caption-soak-2026-10-07.md) for its 102 eligible checkpoints and gaming exclusion. The next checkpoint is **48 hours, October 8 at 09:53:23 MDT**; keep the station running.
+
 ## Results
 
 - **22 completed scheduled checkpoints**, each with successful caption delivery checks on all three stations: **66 successful sampled channel checks**. A fresh stream check at 18:01 also found all three streams healthy. Earlier short verification is documented separately.

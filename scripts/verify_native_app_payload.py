@@ -921,7 +921,9 @@ def _verify_required_whistle_engine_contract(
 ) -> list[str]:
     problems: list[str] = []
     if manifest.get("whistle_engine") != WHISTLE_ENGINE_CONTRACT:
-        problems.append("WHISTLE ENGINE: app payload does not bind the reviewed Needle DLL contract")
+        problems.append(
+            "WHISTLE ENGINE: app payload does not bind the reviewed Needle DLL contract"
+        )
     path = str(WHISTLE_ENGINE_CONTRACT["package_file"])
     record = next((item for item in records if item.get("path") == path), None)
     expected_identity = (
@@ -932,7 +934,9 @@ def _verify_required_whistle_engine_contract(
         str(WHISTLE_ENGINE_CONTRACT["file_sha256"]),
     )
     if record is None:
-        problems.append(f"WHISTLE ENGINE: canonical package DLL is missing from the manifest: {path}")
+        problems.append(
+            f"WHISTLE ENGINE: canonical package DLL is missing from the manifest: {path}"
+        )
         return problems
     actual_identity = (
         canonical_distribution_name(str(record.get("distribution"))),
@@ -946,9 +950,13 @@ def _verify_required_whistle_engine_contract(
         problems.append(f"WHISTLE ENGINE: {path} has unreviewed manifest provenance")
     disk_path = tree / PurePosixPath(path)
     if not disk_path.is_file() or disk_path.stat().st_size != expected_identity[3]:
-        problems.append(f"WHISTLE ENGINE: canonical package DLL is missing or has the wrong size: {path}")
+        problems.append(
+            f"WHISTLE ENGINE: canonical package DLL is missing or has the wrong size: {path}"
+        )
     elif _sha256_file(disk_path) != expected_identity[4]:
-        problems.append(f"WHISTLE ENGINE: canonical package DLL does not match its reviewed SHA-256: {path}")
+        problems.append(
+            f"WHISTLE ENGINE: canonical package DLL does not match its reviewed SHA-256: {path}"
+        )
     return problems
 
 

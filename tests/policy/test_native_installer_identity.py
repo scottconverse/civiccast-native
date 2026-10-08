@@ -401,6 +401,13 @@ def _slice_macro(hooks_text: str, macro_name: str) -> str:
     return hooks_text.split(f"!macro {macro_name}", 1)[1].split("!macroend", 1)[0]
 
 
+def _slice(text: str, start: str, end: str) -> str:
+    """Return the text between two ordered markers, excluding the markers."""
+    start_at = text.index(start) + len(start)
+    end_at = text.index(end, start_at)
+    return text[start_at:end_at]
+
+
 def test_bootstrap_postinstall_chain_orders_pack_verification_activation_d3_and_d4() -> None:
     """Pins the migrated bootstrap-native ordering: packs deliver the runtime
     bytes, so D2 re-verification precedes signed station activation, which
@@ -578,10 +585,14 @@ def test_native_bootstrap_embeds_only_the_bounded_whistle_station_pack() -> None
     # Only the tiny placeholder `core` pack and bounded local Whistle pack may
     # be embedded. Other component packs remain in the kit or per-SHA cache.
     embedded_packs = [value for value in resources.values() if value.endswith(".ccpack")]
-    assert set(embedded_packs) == {
-        "station/core.ccpack",
-        "station/captions-whistle.ccpack",
-    } and len(embedded_packs) == 2, (
+    assert (
+        set(embedded_packs)
+        == {
+            "station/core.ccpack",
+            "station/captions-whistle.ccpack",
+        }
+        and len(embedded_packs) == 2
+    ), (
         f"only the placeholder `core` and bounded Whistle packs may be embedded, found {embedded_packs}"
     )
 
@@ -1446,25 +1457,26 @@ def test_d3_engine_invocation_is_never_gated_on_preserved_registry_remnants() ->
 
     The routing decision now lives in tested Python
     (``civiccast/native/upgrade/routing.py``) and keys on whether a product
-    actually EXISTS. This pins that NSIS never re-grows a competing
-    remnant-keyed gate around the invocation: no ``${If}``/``${AndIf}`` in the
-    D3 region may branch on $R0/$R2 before the engine runs.
+    actually EXISTS. The prior-version sentinel is normalized before station
+    activation; the routing block then reaches D3 without an NSIS gate on
+    preserved $R0/$R2 data. Station activation has its own exit-code branches
+    before this region and must not be mistaken for an upgrade-routing gate.
     """
     hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
     postinstall = _postinstall_block(hooks_text)
 
     invocation = "-m civiccast.native.upgrade"
     marker_read = 'ReadRegStr $R0 HKLM "Software\\CivicCast\\Native" "InstalledVersion"'
-    preamble = postinstall[postinstall.index(marker_read) : postinstall.index(invocation)]
+    marker_at = postinstall.index(marker_read)
+    sentinel_end = postinstall.index("${EndIf}", marker_at) + len("${EndIf}")
+    marker_normalization = postinstall[marker_at:sentinel_end]
 
-    # The ONE conditional allowed between the marker read and the invocation is
-    # the sentinel default that turns an absent marker into the literal
-    # "none" the CLI's --old-version documents. It selects no route and skips
-    # nothing; it only normalizes a VALUE that is then passed through.
+    # The one marker-read conditional only normalizes an absent version to the
+    # literal "none" consumed by the engine's --old-version argument.
     sentinel_default = '${If} $R0 == ""'
     conditionals = [
         line.strip()
-        for line in preamble.splitlines()
+        for line in marker_normalization.splitlines()
         if not line.strip().startswith(";")
         and ("${If}" in line or "${AndIf}" in line or "${ElseIf}" in line)
     ]
@@ -1473,13 +1485,31 @@ def test_d3_engine_invocation_is_never_gated_on_preserved_registry_remnants() ->
         "belongs to civiccast.native.upgrade.routing, which keys on whether a "
         f"product EXISTS rather than on preserved data. Found: {conditionals}"
     )
-    assert "$R2" not in preamble.split(sentinel_default, 1)[1].split("${EndIf}", 1)[0], (
+    assert "$R2" not in marker_normalization, (
         "the sentinel default must not read the preserved DatabaseUrl value -- that "
         "pairing IS the gate R7 tripped"
     )
 
+    # Station activation runs before D3 and has its own checked failure arms.
+    # Inspect only the post-activation routing section to ensure none of those
+    # independent $0 branches are confused with a D3 remnant-keyed gate.
+    route_marker = "UPGRADE-VS-FRESH ROUTING"
+    route_at = postinstall.index(route_marker)
+    invocation_at = postinstall.index(invocation, route_at)
+    routing_preamble = postinstall[route_at:invocation_at]
+    route_conditionals = [
+        line.strip()
+        for line in routing_preamble.splitlines()
+        if not line.strip().startswith(";")
+        and ("${If}" in line or "${AndIf}" in line or "${ElseIf}" in line)
+    ]
+    assert route_conditionals == [], (
+        "the post-activation D3 routing section must invoke the engine without "
+        f"an NSIS gate; found: {route_conditionals}"
+    )
+
     # And the engine must be reached, not jumped over.
-    assert "Goto civiccast_bootstrap_d3_done" not in preamble, (
+    assert "Goto civiccast_bootstrap_d3_done" not in routing_preamble, (
         "nothing between reading the version marker and invoking the engine may "
         "skip the engine -- that skip WAS the gate"
     )

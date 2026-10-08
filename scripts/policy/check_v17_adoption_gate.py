@@ -21,46 +21,36 @@ except ModuleNotFoundError:  # pragma: no cover - package import in tests
     from scripts.policy.policy_utils import find_repo_root
 
 REPO_ROOT = find_repo_root(__file__)
-CURRENT_RELEASE_TAG = (
-    "v"
-    + (
-        (REPO_ROOT / "civiccast" / "_version.py")
-        .read_text(encoding="utf-8")
-        .split('__version__ = "', 1)[1]
-        .split('"', 1)[0]
-    )
-)
-
-# Candidate source version and published install target are distinct.
-# Bind the latter to the authored release-state manifest, not a stale tag.
+# Public front doors describe the published installer, which can lag the
+# candidate version in source while a release is held for review.
 PUBLISHED_RELEASE_TAG = yaml.safe_load(
     (REPO_ROOT / "docs/releases/release-truth.yaml").read_text(encoding="utf-8")
 )["current"]
 PUBLISHED_RELEASE_LINK = f"releases/tag/{PUBLISHED_RELEASE_TAG}"
 REQUIRED_DOCS: dict[Path, tuple[str, ...]] = {
     Path("README.md"): (
-        CURRENT_RELEASE_TAG,
+        PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
     ),
     Path("INSTALL-WINDOWS.md"): (
-        CURRENT_RELEASE_TAG,
+        PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
     ),
     Path("ARCHITECTURE.md"): (
-        CURRENT_RELEASE_TAG,
+        PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
     ),
     Path("SUPPORT.md"): (
-        CURRENT_RELEASE_TAG,
+        PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
     ),
     Path("docs/index.html"): (
-        CURRENT_RELEASE_TAG,
+        PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
-        "Physical DeckLink SDI capture and acceptance",
+        "SDI capture cards have not been tested",
     ),
     Path("docs/install-windows.html"): (
-        CURRENT_RELEASE_TAG,
+        PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
         "SHA-256",
         "Authenticode",

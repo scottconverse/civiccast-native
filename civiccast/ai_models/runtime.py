@@ -164,7 +164,9 @@ def build_caption_runtime(service: AiModelService, *, live: bool = False) -> Cap
             channels = os.environ.get("CIVICCAST_WHISTLE_CHANNELS", "").strip()
             if channels:
                 return MixedCaptionRuntime(
-                    primary, fallback, {channel.strip() for channel in channels.split(",") if channel.strip()}
+                    primary,
+                    fallback,
+                    {channel.strip() for channel in channels.split(",") if channel.strip()},
                 )
             return primary
         if backend != "whisper":

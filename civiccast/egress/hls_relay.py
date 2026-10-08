@@ -1415,14 +1415,29 @@ class HlsRelaySupervisor:
         if log_root is not None:
             self._log_root = Path(log_root)
         rebind_keys: set[str] = set()
+        preserved_window_keys: set[str] = set()
         if new_session:
-            # A separate critical section on purpose: ``self._guard`` is a plain
-            # (non-reentrant) Lock, so the teardown must complete before
-            # ``_ensure_relay`` below takes the lock for its own spawn. The keys
-            # are captured first so the U24 header can say "rebind" for exactly
-            # the sinks whose child was actually torn down for this session, and
-            # "start" for a sink that had no child to replace.
-            rebind_keys = self._relay_keys(config.channel_id)
+            # Capture each sink's live state before teardown: a live child's
+            # window is still the current broadcast during a worker crash-
+            # relaunch, while a dead/fresh child's files are stale. The lock is
+            # released before teardown because it is non-reentrant and the
+            # spawn path below takes it again.
+            prefix = f"{config.channel_id}|"
+            hls_uris = {
+                f"{config.channel_id}|{sink.label}": sink.uri
+                for sink in config.sinks
+                if sink.kind == "hls"
+            }
+            with self._guard:
+                relays = {
+                    key: relay for key, relay in self._relays.items() if key.startswith(prefix)
+                }
+                rebind_keys = set(relays)
+                preserved_window_keys = {
+                    key
+                    for key, relay in relays.items()
+                    if hls_uris.get(key) == relay.source_uri and relay.process.poll() is None
+                }
             self._drop_channel_relays(config.channel_id)
         if not any(sink.kind == "hls" for sink in config.sinks):
             return config
@@ -1436,6 +1451,7 @@ class HlsRelaySupervisor:
                 config.channel_id,
                 sink,
                 reason="rebind" if f"{config.channel_id}|{sink.label}" in rebind_keys else "start",
+                preserve_window=f"{config.channel_id}|{sink.label}" in preserved_window_keys,
             )
             if relay_uri is None:
                 new_sinks.append(sink)
@@ -1446,7 +1462,14 @@ class HlsRelaySupervisor:
             return config
         return config.model_copy(update={"sinks": new_sinks})
 
-    def _ensure_relay(self, channel_id: str, sink: EgressSinkSpec, *, reason: str) -> str | None:
+    def _ensure_relay(
+        self,
+        channel_id: str,
+        sink: EgressSinkSpec,
+        *,
+        reason: str,
+        preserve_window: bool = False,
+    ) -> str | None:
         """Reuse this (channel, sink)'s live relay, or spawn its one replacement.
 
         ``reason`` names the caller's intent for the header line
@@ -1465,7 +1488,14 @@ class HlsRelaySupervisor:
                 self._terminate_relay(relay)
                 self._relays.pop(key, None)
                 reason = "uri-change" if relay.source_uri != sink.uri else "respawn-dead"
-            return self._start_relay_locked(key, channel_id, sink, relay_uri, reason=reason)
+            return self._start_relay_locked(
+                key,
+                channel_id,
+                sink,
+                relay_uri,
+                reason=reason,
+                preserve_window=preserve_window,
+            )
 
     def _start_relay_locked(
         self,
@@ -1475,6 +1505,7 @@ class HlsRelaySupervisor:
         relay_uri: str,
         *,
         reason: str,
+        preserve_window: bool = False,
     ) -> str | None:
         """Spawn one relay child and register it. Caller MUST hold ``self._guard``.
 
@@ -1505,13 +1536,12 @@ class HlsRelaySupervisor:
             ),
             *hls_sink.output_args(),
         ]
-        # U51 item 1: the previous session's window goes BEFORE the child that
-        # would otherwise continue it. ``output_args`` above has already created
-        # the directory (``HlsSink.container_args`` does the mkdir), and the
-        # predecessor's handles are provably closed by now -- every caller
-        # terminated it before reaching this helper. Never fatal: see
-        # :func:`_clear_hls_window`.
-        _clear_hls_window(hls_sink)
+        # U51 item 1: clear stale output before a fresh/dead relay starts. A
+        # live relay's window remains part of the same broadcast across an
+        # encoder crash-relaunch, so preserve it while rebinding the child.
+        # ``output_args`` above has already created the directory.
+        if not preserve_window:
+            _clear_hls_window(hls_sink)
         log_path = self._relay_log_path(channel_id, sink.label)
         pid_offset: int | None = None
         if log_path is not None:
@@ -2364,16 +2394,6 @@ class HlsRelaySupervisor:
                 new_relay.progress_at = now
                 healed = True
             return healed
-
-    def _relay_keys(self, channel_id: str) -> set[str]:
-        """The ``(channel, sink)`` keys this supervisor currently tracks.
-
-        Read under ``self._guard``, but only for its own statement: callers take
-        the lock again for their own critical section (``Lock`` is not
-        reentrant, so this must never be called while holding it).
-        """
-        with self._guard:
-            return {key for key in self._relays if key.split("|", 1)[0] == channel_id}
 
     def _drop_channel_relays(self, channel_id: str) -> int:
         """Terminate and forget every relay child tracked for ``channel_id``.

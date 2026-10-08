@@ -34,7 +34,7 @@ import subprocess
 import sys
 import threading
 import wave
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -44,8 +44,7 @@ import pytest
 #: tap-race test below is shown RED against the single-shot version it replaced.
 #: Left unset, the sibling tool is what runs.
 _TOOL = Path(
-    os.environ.get("RUNG_CHECK_UNDER_TEST")
-    or Path(__file__).resolve().with_name("rung_check.py")
+    os.environ.get("RUNG_CHECK_UNDER_TEST") or Path(__file__).resolve().with_name("rung_check.py")
 )
 _CHANNEL = "public"
 
@@ -76,7 +75,7 @@ def _clock(counter: float) -> str:
 
 
 def _iso(counter: float) -> str:
-    return datetime.fromtimestamp(_ANCHOR + counter, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(_ANCHOR + counter, tz=UTC).isoformat()
 
 
 def _write_chunk(tap_dir: Path, *, index: int = _INDEX, duration: float = _DURATION) -> Path:
@@ -182,19 +181,25 @@ def _receipt(**over: object) -> dict:
 def _run(verify_path: Path, tmp_path: Path, *, log_path: Path) -> str:
     env = dict(os.environ)
     env["CIVICAST_CAPTION_TAP_DIR"] = str(tmp_path / "data" / "caption-tap")
-    got = subprocess.run(
+    # The test invokes its repo-local script with fixture paths as separate argv values.
+    got = subprocess.run(  # noqa: S603
         [sys.executable, str(_TOOL), "verify", str(verify_path)],
         capture_output=True,
         text=True,
         env=env,
         timeout=120,
+        shell=False,
     )
     assert got.returncode == 0, got.stderr
     return got.stdout.strip()
 
 
 def _gap_window() -> dict:
-    return {"emitted_first_utc": _iso(_WIN_LO), "emitted_last_utc": _iso(_WIN_HI), "span_seconds": 60.0}
+    return {
+        "emitted_first_utc": _iso(_WIN_LO),
+        "emitted_last_utc": _iso(_WIN_HI),
+        "span_seconds": 60.0,
+    }
 
 
 def _fixture(tmp_path: Path, **over: object) -> tuple[Path, Path]:
@@ -255,7 +260,11 @@ def test_verify06_shape_is_unchanged(tmp_path: Path) -> None:
     (egress / _CHANNEL / "logs").mkdir(parents=True, exist_ok=True)
     log = egress / _CHANNEL / "logs" / "gst-worker.stdout.log"
     log.write_text("", encoding="utf-8")
-    span = {"emitted_first_utc": _iso(455446.1), "emitted_last_utc": _iso(455446.1), "span_seconds": 2.0}
+    span = {
+        "emitted_first_utc": _iso(455446.1),
+        "emitted_last_utc": _iso(455446.1),
+        "span_seconds": 2.0,
+    }
     receipt = _receipt(
         age_seconds=20.974,
         received=12,

@@ -12,28 +12,17 @@ ROOT = Path(__file__).resolve().parents[2]
 DOWNLOADER = ROOT / "scripts" / "download_windows_release_artifacts.ps1"
 INSTALL_DOC = ROOT / "INSTALL-WINDOWS.md"
 RELEASE_TRUTH = ROOT / "docs" / "releases" / "release-truth.yaml"
-# Derived from the single source of truth so these checks can't drift on a bump.
-CURRENT_VERSION = (
-    (ROOT / "civiccast" / "_version.py")
-    .read_text(encoding="utf-8")
-    .split('__version__ = "', 1)[1]
-    .split('"', 1)[0]
-)
-# The product-identity version (CURRENT_VERSION, above) and the actual
-# downloadable GitHub Release tag are NOT the same thing once a release-prep
-# bump lands ahead of a publish: see check_v17_adoption_gate.py's
-# REQUIRED_DOCS, which deliberately hardcodes the published tag separately
-# from its own CURRENT_RELEASE_TAG for exactly this reason. Derive the
-# published tag from docs/releases/release-truth.yaml's authored `current`
-# field -- the sole authored source for release state -- rather than
-# assuming it always equals civiccast/_version.py's value.
+# Download defaults and public installation guidance track the published
+# release, which can differ from the next source candidate in `_version.py`.
+# release-truth.yaml is the authored source for that public target.
 PUBLISHED_RELEASE_TAG = yaml.safe_load(RELEASE_TRUTH.read_text(encoding="utf-8"))["current"]
+PUBLISHED_RELEASE_VERSION = PUBLISHED_RELEASE_TAG.removeprefix("v")
 
 
 def test_windows_release_downloader_verifies_manifest_hashes() -> None:
     source = DOWNLOADER.read_text(encoding="utf-8")
 
-    assert f'$Version = "{CURRENT_VERSION}"' in source
+    assert f'$Version = "{PUBLISHED_RELEASE_VERSION}"' in source
     assert 'release-artifacts-manifest.json"' in source
     assert 'clean-windows-proof-kit.zip"' in source
     assert 'windows-tester-package.zip"' in source
@@ -45,7 +34,7 @@ def test_windows_release_downloader_verifies_manifest_hashes() -> None:
 
 def test_windows_install_doc_matches_current_release_posture() -> None:
     source = INSTALL_DOC.read_text(encoding="utf-8")
-    assert f"`v{CURRENT_VERSION}`" in source
+    assert f"`{PUBLISHED_RELEASE_TAG}`" in source
     assert f"civiccast-native/releases/tag/{PUBLISHED_RELEASE_TAG}" in source
 
 

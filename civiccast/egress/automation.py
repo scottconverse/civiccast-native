@@ -49,7 +49,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from civiccast.egress.daemon import AlertEvaluatorHook, EgressDaemon
 from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
@@ -1903,7 +1903,7 @@ class ChannelAutomationService:
             tail_seconds,
             replacement_seconds,
         )
-        return replacement
+        return cast(EgressSourcePlan, replacement)
 
     def _check_plan_rollover(self, channel_id: str, *, now: datetime) -> None:
         """Extend a finite program or filler plan before it EOSes.
@@ -2687,7 +2687,7 @@ class ChannelAutomationService:
         if provider is None:
             return None
         try:
-            return provider(channel_id, boundary)
+            return cast(EgressSourcePlan | None, provider(channel_id, boundary))
         except SourcePrepareError:
             return None
 

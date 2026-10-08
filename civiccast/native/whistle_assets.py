@@ -112,9 +112,7 @@ def download_verified_file(
 ) -> Path:
     """Stream one HTTPS asset to disk and promote it only after exact checks."""
 
-    if destination.exists() and _matches(
-        destination, size=expected_bytes, sha256=expected_sha256
-    ):
+    if destination.exists() and _matches(destination, size=expected_bytes, sha256=expected_sha256):
         return destination
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary: Path | None = None
@@ -126,15 +124,16 @@ def download_verified_file(
             url, headers={"User-Agent": "CivicCast-native-builder"}
         )
         opener = urllib.request.build_opener(_HttpsOnlyRedirectHandler())
-        with opener.open(
-            request, timeout=120
-        ) as response, tempfile.NamedTemporaryFile(
-            mode="wb",
-            prefix=f".{destination.name}.",
-            suffix=".partial",
-            dir=destination.parent,
-            delete=False,
-        ) as handle:
+        with (
+            opener.open(request, timeout=120) as response,
+            tempfile.NamedTemporaryFile(
+                mode="wb",
+                prefix=f".{destination.name}.",
+                suffix=".partial",
+                dir=destination.parent,
+                delete=False,
+            ) as handle,
+        ):
             temporary = Path(handle.name)
             while True:
                 read_limit = min(_DOWNLOAD_CHUNK_BYTES, expected_bytes - size + 1)
@@ -166,7 +165,9 @@ def download_verified_file(
     except Exception as exc:
         if temporary is not None:
             temporary.unlink(missing_ok=True)
-        raise WhistleAssetError(f"could not acquire pinned Whistle asset from {url}: {exc}") from exc
+        raise WhistleAssetError(
+            f"could not acquire pinned Whistle asset from {url}: {exc}"
+        ) from exc
 
 
 def download_engine_wheel(cache: Path) -> Path:
@@ -192,7 +193,9 @@ def extract_engine_library(wheel: Path) -> bytes:
         raise WhistleAssetError("pinned cactus-needle wheel does not match its reviewed identity")
     try:
         with zipfile.ZipFile(wheel) as archive:
-            members = [info for info in archive.infolist() if info.filename == WHISTLE_ENGINE_MEMBER]
+            members = [
+                info for info in archive.infolist() if info.filename == WHISTLE_ENGINE_MEMBER
+            ]
             if len(members) != 1:
                 raise WhistleAssetError(
                     f"pinned cactus-needle wheel must contain exactly one {WHISTLE_ENGINE_MEMBER}"
@@ -205,7 +208,10 @@ def extract_engine_library(wheel: Path) -> bytes:
         raise
     except (OSError, zipfile.BadZipFile, KeyError) as exc:
         raise WhistleAssetError(f"pinned cactus-needle wheel is unreadable: {exc}") from exc
-    if len(body) != WHISTLE_ENGINE_DLL_BYTES or hashlib.sha256(body).hexdigest() != WHISTLE_ENGINE_DLL_SHA256:
+    if (
+        len(body) != WHISTLE_ENGINE_DLL_BYTES
+        or hashlib.sha256(body).hexdigest() != WHISTLE_ENGINE_DLL_SHA256
+    ):
         raise WhistleAssetError("pinned Needle DLL member does not match its reviewed identity")
     return body
 
@@ -247,7 +253,9 @@ def provision_whistle_assets(output: Path, *, cache: Path) -> dict[str, Path]:
     if staged_model.exists() and not _matches(
         staged_model, size=WHISTLE_MODEL_BYTES, sha256=WHISTLE_MODEL_SHA256
     ):
-        raise WhistleAssetError(f"refusing to replace unreviewed Whistle model bytes: {staged_model}")
+        raise WhistleAssetError(
+            f"refusing to replace unreviewed Whistle model bytes: {staged_model}"
+        )
     if not staged_model.exists():
         _write_atomic(staged_model, model.read_bytes())
 

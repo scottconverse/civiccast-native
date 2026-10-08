@@ -855,7 +855,9 @@ def test_embedded_whistle_pack_must_use_the_local_sidecar_without_urls(
     tmp_path: Path,
 ) -> None:
     def _add_whistle_url(manifest: dict[str, Any]) -> None:
-        whistle = next(item for item in manifest["packs"] if item["component"] == "captions-whistle")
+        whistle = next(
+            item for item in manifest["packs"] if item["component"] == "captions-whistle"
+        )
         whistle["urls"] = ["https://downloads.example.invalid/captions-whistle.ccpack"]
 
     index, core = _station_fixture(tmp_path, mutate=_add_whistle_url)

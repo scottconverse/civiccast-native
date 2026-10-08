@@ -149,7 +149,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 86139bd78efbb7358560421a5987624cd82fcb58
+        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -227,7 +227,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 86139bd78efbb7358560421a5987624cd82fcb58
+        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -282,7 +282,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 86139bd78efbb7358560421a5987624cd82fcb58
+        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -345,7 +345,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 86139bd78efbb7358560421a5987624cd82fcb58
+        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -1065,15 +1065,15 @@ entries:
       # detection; it does not promote the historical decision-gate evidence.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 3e435a2ff0ff4e947ce37e109edd41ecdfaf2633
+          blob: f0ecae34d1bc1c1a6b9cb58610192c949e72fe15
         - path: civiccast/egress/gst/engine.py
-          blob: be31cf9b80b474682aafe2fe8d5ea244c5bb60a9
+          blob: 6f42c4cee1b4a5d32e4cc13c3f123076fbcf1517
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 690774fcbab10b4da9e753f1431e62ba0f50b31b
+          blob: 1041794e26f7d87156aadfa8f6c91df09c35aea7
         - path: civiccast/egress/gst/control.py
           # 2026-09-17: reviewed the fixed 8s live-caption lead bound and
           # restart timeline floor; source tests cover long-running drift.
@@ -1083,7 +1083,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 07bb5dfae1a281db3e17768e547d21031f9c1945
+        blob: c02f25c5e31c21cae9767bdd8a6120e15eb8df0b
         node_id: "tests/egress/test_gst_engine_wsl.py::test_swap_role_continuity"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -1092,7 +1092,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 86139bd78efbb7358560421a5987624cd82fcb58
+        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -1114,7 +1114,7 @@ entries:
       # exact-config artifact that was never committed for this spike.
       fixtures:
         - path: civiccast/egress/gst/graph.py
-          blob: 690774fcbab10b4da9e753f1431e62ba0f50b31b
+          blob: 1041794e26f7d87156aadfa8f6c91df09c35aea7
     controls:
       - id: native-decision-gate-authority-record
         command: >-
@@ -1978,15 +1978,15 @@ entries:
       # detection; it does not promote the historical pre-login observation.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: 3e435a2ff0ff4e947ce37e109edd41ecdfaf2633
+          blob: f0ecae34d1bc1c1a6b9cb58610192c949e72fe15
         - path: civiccast/egress/gst/engine.py
-          blob: be31cf9b80b474682aafe2fe8d5ea244c5bb60a9
+          blob: 6f42c4cee1b4a5d32e4cc13c3f123076fbcf1517
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
           blob: 076d4057051dffa2d7ba83bd0982ecebe4e9f33b
         - path: civiccast/egress/gst/graph.py
-          blob: 690774fcbab10b4da9e753f1431e62ba0f50b31b
+          blob: 1041794e26f7d87156aadfa8f6c91df09c35aea7
         - path: civiccast/egress/gst/control.py
           # 2026-09-17: reviewed the fixed 8s live-caption lead bound and
           # restart timeline floor; source tests cover long-running drift.
@@ -1996,7 +1996,7 @@ entries:
           blob: 18b73375eebd7ac6810f4557a6ecfd617c7743b9
       test:
         path: tests/egress/test_gst_engine_wsl.py
-        blob: 07bb5dfae1a281db3e17768e547d21031f9c1945
+        blob: c02f25c5e31c21cae9767bdd8a6120e15eb8df0b
         node_id: "tests/egress/test_gst_engine_wsl.py::test_build_play_teardown_clean"
       verifier:
         - path: scripts/policy/check_claims_evidence.py
@@ -2005,7 +2005,7 @@ entries:
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 86139bd78efbb7358560421a5987624cd82fcb58
+        blob: cc0fcac425dd25ec6e357b113a3b67de8455c52d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1

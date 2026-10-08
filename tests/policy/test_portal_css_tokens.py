@@ -55,8 +55,9 @@ def test_ui_surfaces_share_civiccast_design_tokens() -> None:
     for path, expected in expected_imports.items():
         if expected not in path.read_text(encoding="utf-8"):
             missing.append(str(path.relative_to(REPO_ROOT)))
-    docs_index = (REPO_ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+    docs_site_css = (REPO_ROOT / "docs" / "assets" / "web" / "site.css").read_text(encoding="utf-8")
 
     assert missing == []
-    assert "--cc-paper" in docs_index
-    assert "--cc-brand" in docs_index
+    assert '@import url("../../brand/tokens/civiccast-colors.css")' in docs_site_css
+    assert re.search(r"--paper:\s*var\(--cc-agenda-paper\)", docs_site_css)
+    assert re.search(r"--record:\s*var\(--cc-record-steel\)", docs_site_css)

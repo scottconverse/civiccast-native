@@ -98,16 +98,18 @@ def _segments(tmp_path: Path, bodies: list[bytes]) -> list[dict]:
     for i, body in enumerate(bodies):
         p = d / f"seg-{7609 + i}.ts"
         p.write_bytes(body)
-        out.append({
-            "sequence": 7609 + i,
-            "name": f"seg-{7609 + i}.ts",
-            "snapshot_path": str(p),
-            "bytes": len(body),
-            "sha256": sha256(body).hexdigest(),
-            "present": True,
-            "capture_status": "complete",
-            "extinf_seconds": 6.0,
-        })
+        out.append(
+            {
+                "sequence": 7609 + i,
+                "name": f"seg-{7609 + i}.ts",
+                "snapshot_path": str(p),
+                "bytes": len(body),
+                "sha256": sha256(body).hexdigest(),
+                "present": True,
+                "capture_status": "complete",
+                "extinf_seconds": 6.0,
+            }
+        )
     return out
 
 
@@ -134,17 +136,22 @@ def _evidence(tmp_path: Path, segments: list[dict], **chan_over: object) -> Path
     }
     chan.update(chan_over)
     p = tmp_path / "loudness-09.json"
-    p.write_text(json.dumps({
-        "tool": "rung_loudness_capture",
-        "target_lufs": -16.0,
-        "tolerance_lufs": 1.0,
-        "blocking_reasons": [],
-        "channels": {
-            _CHANNEL: chan,
-            "government": {"status": "PASS"},
-            "public": {"status": "PASS"},
-        },
-    }), encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "tool": "rung_loudness_capture",
+                "target_lufs": -16.0,
+                "tolerance_lufs": 1.0,
+                "blocking_reasons": [],
+                "channels": {
+                    _CHANNEL: chan,
+                    "government": {"status": "PASS"},
+                    "public": {"status": "PASS"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
     return p
 
 
@@ -153,12 +160,14 @@ def _run(tool: Path, evidence: Path, scratch: Path, tmp_path: Path) -> str:
     env["CIVICAST_AIR_AUDIO_DIR"] = str(scratch)
     env["TEMP"] = str(tmp_path)  # the adjudicator's own report lands under here
     env["TMP"] = str(tmp_path)
-    got = subprocess.run(
+    # The test invokes its repo-local script with fixture paths as separate argv values.
+    got = subprocess.run(  # noqa: S603
         [sys.executable, str(tool), "loudness", str(evidence)],
         capture_output=True,
         text=True,
         env=env,
         timeout=180,
+        shell=False,
     )
     assert got.returncode == 0, got.stderr
     return got.stdout.strip()
@@ -192,6 +201,44 @@ def test_captured_segments_are_concatenated_and_passed_as_air_audio(tmp_path: Pa
     # ... and the rung printed the answer the adjudicator gave it.
     assert f"education={_EXCUSED}" in printed, printed
     assert "pos=7121s" in printed
+
+
+def test_failed_adjudicator_cannot_reuse_stale_exclusion(tmp_path: Path) -> None:
+    tool = _tool_copy(tmp_path)
+    (tool.parent / "loudness_window_adjudicate.py").write_text(
+        "import sys\nsys.exit(1)\n", encoding="utf-8"
+    )
+    evidence = _evidence(tmp_path, _segments(tmp_path, [b"AAA" * 50]))
+    stale_dir = tmp_path / "cc-loud-adj"
+    stale_dir.mkdir()
+    stale_report = {
+        "channels": {
+            _CHANNEL: {
+                "classification": _EXCUSED,
+                "asset": {"display_name": "stale source"},
+                "position": {"position_s": 7121},
+                "source": {
+                    "lift_limited_lufs": -35.0,
+                    "span_lufs": -35.9,
+                    "scorable_seconds": 197.0,
+                },
+                "max_reachable_lufs": -35.0,
+                "air": {"integrated_lufs": -21.9},
+                "unreachable_seconds": 171.0,
+                "unreachable_range_s": [140.0, 197.0],
+                "min_unreachable_seconds": 60.0,
+                "window_seconds": _WINDOW,
+            }
+        }
+    }
+    (stale_dir / "loudness-09.adjudicated.json").write_text(
+        json.dumps(stale_report), encoding="utf-8"
+    )
+
+    printed = _run(tool, evidence, tmp_path / "air", tmp_path)
+
+    assert f"education={_EXCUSED}" not in printed, printed
+    assert "education=FAIL(adjudicator gave no answer)" in printed, printed
 
 
 def test_a_snapshot_that_is_already_swept_is_simply_left_out(tmp_path: Path) -> None:

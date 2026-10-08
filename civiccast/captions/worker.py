@@ -31,6 +31,7 @@ ReviewPersistenceMode = Literal["audio", "text-only", "refused"]
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from civiccast.captions.phase_timing import NullPhaseTimingCollector, PhaseTimingCollector
     from civiccast.translate import TranslationProvider, TranslationTarget
 
 
@@ -78,7 +79,7 @@ class LiveCaptionWorker:
         pipeline: CaptionPipeline | None = None,
         persistence_guard: Callable[[], AbstractContextManager[ReviewPersistenceMode]]
         | None = None,
-        phase_timing: object | None = None,
+        phase_timing: PhaseTimingCollector | NullPhaseTimingCollector | None = None,
         phase_timing_channel: str | None = None,
     ) -> None:
         self._phase_timing = phase_timing
@@ -229,7 +230,7 @@ class LiveCaptionWorker:
                     duplicates.append(item.review_item_id)
         return committed_items, duplicates
 
-    def _phase(self, name: str):
+    def _phase(self, name: str) -> AbstractContextManager[None]:
         """Return an opt-in timing context without changing worker behavior."""
 
         timing = self._phase_timing

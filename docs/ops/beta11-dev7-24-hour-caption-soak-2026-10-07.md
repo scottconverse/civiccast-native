@@ -2,6 +2,14 @@
 
 Owner accepted the completed 24-hour soak as sufficient soak evidence for Beta 11 release on October 7. The station and independent monitor remain running; acceptance does not issue a stop command.
 
+## Accepted 36-hour milestone; next checkpoint 48 hours
+
+On October 8, the owner accepted and requested recording a successful **36-hour three-station caption soak**. The run reached 36 hours on October 7 at **21:53:23 MDT**, from the October 6 **09:53:23 MDT** baseline. The same supervisor process remained running; all three streams were healthy at the subsequent October 7 22:50 check.
+
+Through the 36-hour milestone, **102 eligible completed checkpoints had caption verdict OK: 306 successful sampled channel checks**. The last included checkpoint was `20261007-214701`. Four gaming-period checkpoints remain excluded from evaluation; their degradations are not counted or reproduced. The earlier eight-hour and 24-hour results remain valid historical milestones.
+
+**Next checkpoint: 48 hours, October 8 at 09:53:23 MDT.** Keep the station and existing 20-minute observer running. The 48-hour checkpoint is a reporting milestone, not an instruction to stop the test. This remains evidence for the existing beta.9 station with the dev7 caption overlay, not a 36-hour soak of the corrected Beta 11 installer.
+
 ## Tested runtime and scope
 
 The dev7 local overlay ran from October 6 at 09:53:23 MDT through the 24-hour milestone on October 7 at 09:53:23 MDT. A fresh check at 10:30:42 confirmed the same supervisor process (28760), with all three streams healthy, extending runtime to 24 hours 37 minutes.

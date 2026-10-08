@@ -405,7 +405,9 @@ class _Recorder:
         self.emitted_path = target
         return lr.RideRender(frames=0, audio_seconds=0.0, wall_s=1.5, stderr="")
 
-    def reencode(self, *, pcm_path, output_path, trim_db, params, profile, timeout_s=None):
+    def reencode(
+        self, *, pcm_path, output_path, trim_db, params, profile, timeout_s=None, variant=None
+    ):
         self.round_calls.append(
             SimpleNamespace(
                 pcm_path=pcm_path,
@@ -413,6 +415,7 @@ class _Recorder:
                 trim_db=trim_db,
                 params=params,
                 timeout_s=timeout_s,
+                variant=variant,
             )
         )
         if self.round_error is not None:
@@ -479,9 +482,9 @@ def test_level_window_keeps_the_round_that_clears_the_gates_with_the_lower_peak(
     decides, and the round wins.  The artifact that airs must then *be* the
     round's: same bytes, in the caller's path.
 
-    The round's ceiling is the guard's own arithmetic on the nominal attempt: the
-    nominal ceiling (-1.5) down by the overshoot past the -1.0 dBTP target (0.40)
-    plus the margin (0.3), i.e. -2.2 dBTP.
+    The round's ceiling follows the decoded sample peak: the nominal ceiling
+    (-1.5) down by the overshoot past the +0.1 dBFS bound (0.3) plus the 0.5 dB
+    margin, i.e. -2.3 dBTP.
     """
     rec = _Recorder(
         nominal_stderr=_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0),
@@ -494,17 +497,17 @@ def test_level_window_keeps_the_round_that_clears_the_gates_with_the_lower_peak(
     selection = result.selection
     assert [a.round_index for a in selection.attempts] == [0, 1]
     assert selection.kept.round_index == 1
-    assert selection.kept.limit_dbtp == pytest.approx(-2.2)
+    assert selection.kept.limit_dbtp == pytest.approx(-2.3)
     assert selection.hard_tp_met is True
     assert selection.target_met is True
     assert selection.warning is None
     assert result.audio_path.read_bytes() == _ROUND
-    # The round re-encodes the PCM the nominal emit consumed -- the tee the run
-    # was handed -- at the ceiling the guard asked for, and it is spent once.
+    # The pad round's decoded peak clears the bound, so encoder variants are
+    # not spent. It re-encodes the nominal emit's tee at the measured ceiling.
     assert len(rec.round_calls) == 1
     assert rec.round_calls[0].pcm_path is not None
-    assert rec.round_calls[0].params.limit_dbtp == pytest.approx(-2.2)
-    assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db)
+    assert rec.round_calls[0].params.limit_dbtp == pytest.approx(-2.3)
+    assert rec.round_calls[0].trim_db == pytest.approx(result.curve.trim_db + 0.8)
 
 
 def test_level_window_spends_no_round_when_the_nominal_emitted_at_target(
@@ -549,7 +552,7 @@ def test_level_window_ships_the_artifact_when_its_peak_cannot_be_measured(
 def test_level_window_warns_when_the_kept_attempt_missed_the_tp_target(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """A hot artifact with no round left: it ships, with the guard's warning."""
+    """All guard attempts stay hot: the best one ships with the guard's warning."""
     rec = _Recorder(
         nominal_stderr=_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0),
         nominal_peak=0.40,
@@ -558,7 +561,9 @@ def test_level_window_warns_when_the_kept_attempt_missed_the_tp_target(
     )
     result = _run(tmp_path, monkeypatch, rec)
     selection = result.selection
-    assert len(rec.round_calls) == 1
+    assert len(rec.round_calls) == 1 + len(
+        lr.encoder_variants_for(CanonicalProfile(video_codec="h264_mf"))
+    )
     assert selection.kept.round_index == 1
     assert selection.target_met is False
     assert selection.hard_tp_met is False
@@ -692,11 +697,12 @@ def test_level_window_deletes_the_tee_it_owns(tmp_path: Path, monkeypatch) -> No
     assert result.audio_path.exists()
 
 
-def test_level_window_spends_no_round_when_the_round_fails(tmp_path: Path, monkeypatch) -> None:
-    """A failed round is not an error: the nominal is still the best attempt.
+def test_level_window_keeps_nominal_when_all_guard_rounds_fail(tmp_path: Path, monkeypatch) -> None:
+    """Failed pad and variant rounds are reported; the nominal still ships.
 
-    The round's failure leaves the nominal artifact in place -- the bytes that
-    air are the bytes the nominal emit wrote -- and the guard keeps round 0.
+    Each encoder attempt fails, leaving the nominal artifact in place -- the
+    bytes that air are still the bytes the nominal emit wrote -- and the guard
+    keeps round 0.
     """
     rec = _Recorder(
         nominal_stderr=_stderr(_FLAT, peak_dbtp=-0.60, integrated_lufs=-16.0),
@@ -704,17 +710,18 @@ def test_level_window_spends_no_round_when_the_round_fails(tmp_path: Path, monke
         round_error=lr.LoudnessRideError("the guard's re-encode exited 1"),
     )
     result = _run(tmp_path, monkeypatch, rec)
-    assert len(rec.round_calls) == 1
+    assert len(rec.round_calls) == 1 + len(
+        lr.encoder_variants_for(CanonicalProfile(video_codec="h264_mf"))
+    )
     assert result.selection.kept.round_index == 0
     assert result.audio_path.read_bytes() == _NOMINAL
-    # The failure is reported, not swallowed: the caller logs it beside the
-    # selection's own warning, and no partial round file survives the run.
+    # The first failure is reported, and no partial round file survives.
     assert result.round_error is not None
     assert "exited 1" in result.round_error
     assert rec.round_path is None
 
 
-def test_level_window_keeps_the_nominal_when_the_round_peaks_higher(
+def test_level_window_keeps_the_nominal_when_all_rounds_peak_higher(
     tmp_path: Path, monkeypatch
 ) -> None:
     """The peak axis outranks the true-peak axis, and a losing render is deleted.
@@ -732,7 +739,9 @@ def test_level_window_keeps_the_nominal_when_the_round_peaks_higher(
     )
     result = _run(tmp_path, monkeypatch, rec)
     selection = result.selection
-    assert len(rec.round_calls) == 1
+    assert len(rec.round_calls) == 1 + len(
+        lr.encoder_variants_for(CanonicalProfile(video_codec="h264_mf"))
+    )
     assert selection.kept.round_index == 0
     assert selection.kept.decoded_peak_dbfs == pytest.approx(0.40)
     assert selection.target_met is False

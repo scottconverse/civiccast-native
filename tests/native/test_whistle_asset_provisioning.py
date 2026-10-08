@@ -14,9 +14,7 @@ import pytest
 import civiccast.native.whistle_assets as assets
 
 
-def test_downloader_stops_after_one_byte_over_the_pinned_size(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_downloader_stops_after_one_byte_over_the_pinned_size(tmp_path: Path, monkeypatch) -> None:
     class TrackedResponse(io.BytesIO):
         bytes_returned = 0
 
@@ -96,9 +94,7 @@ def test_provisioner_downloads_only_the_pinned_model_and_wheel_member(
     assert (output / "libneedle.dll").read_bytes() == dll
 
 
-def test_downloader_rejects_non_https_urls_before_opening(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_downloader_rejects_non_https_urls_before_opening(tmp_path: Path, monkeypatch) -> None:
     class FakeOpener:
         def open(self, *_args, **_kwargs):
             raise AssertionError("non-HTTPS URLs must be rejected before opening")

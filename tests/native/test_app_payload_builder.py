@@ -341,9 +341,7 @@ def test_caption_model_staging_rejects_hash_drift(
 def test_whistle_engine_staging_requires_the_pinned_python_distribution(
     tmp_path: Path,
 ) -> None:
-    with pytest.raises(
-        SystemExit, match=re.escape("cactus-needle 3.1.0 is not installed")
-    ):
+    with pytest.raises(SystemExit, match=re.escape("cactus-needle 3.1.0 is not installed")):
         builder.place_whistle_engine(tmp_path / "site-packages", cache=tmp_path / "cache")
 
 

@@ -1468,7 +1468,7 @@ def test_rust_station_set_runtime_contract_matches_python_validator() -> None:
         / "native_activation.rs"
     ).read_text(encoding="utf-8")
     producer = re.search(
-        r'fn station_manifest_value\([^)]*\)\s*->\s*Value\s*\{.*?'
+        r"fn station_manifest_value\([^)]*\)\s*->\s*Value\s*\{.*?"
         r'"runtime"\s*:\s*\{(?P<runtime>[^{}]*)\}',
         rust_source,
         flags=re.DOTALL,

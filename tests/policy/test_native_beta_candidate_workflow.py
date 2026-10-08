@@ -470,7 +470,7 @@ def test_native_beta_candidate_workflow_contract_rejects_unconditional_self_host
     text = WORKFLOW.read_text(encoding="utf-8")
     runs_on_expression = (
         "${{ (github.event_name == 'workflow_dispatch' && inputs.build_target == "
-        "'self-hosted' && !inputs.prepare_only) && fromJSON('[\"self-hosted\",\"windows\",\"sandbox-lab\"]') "
+        '\'self-hosted\' && !inputs.prepare_only) && fromJSON(\'["self-hosted","windows","sandbox-lab"]\') '
         "|| 'windows-latest' }}"
     )
     assert runs_on_expression in text, "test's expected literal has drifted from the workflow"
@@ -923,9 +923,7 @@ def test_prepare_only_preserves_signed_candidate_and_small_station_evidence() ->
     station_steps = {step["name"]: step for step in station_job["steps"]}
     assert station_steps["Verify the signed station bundle and write checksums"]
     assert "Verify the Beta 11 preparation evidence is complete" in station_steps
-    preparation_verify = station_steps[
-        "Verify the Beta 11 preparation evidence is complete"
-    ]
+    preparation_verify = station_steps["Verify the Beta 11 preparation evidence is complete"]
     assert preparation_verify["if"] == "env.PREPARE_ONLY == 'true'"
     assert "Test-Path -LiteralPath $path -PathType Leaf" in preparation_verify["run"]
     assert "captions-whistle.ccpack" in preparation_verify["run"]
@@ -949,9 +947,10 @@ def test_prepare_only_preserves_signed_candidate_and_small_station_evidence() ->
         "artifacts/native-station-bundle/station/SHA256SUMS.txt",
         "artifacts/native-station-bundle/native-station-bundle-build-report.json",
     }
-    assert "env.PREPARE_ONLY != 'true'" in station_steps[
-        "Upload the native station bundle artifact"
-    ]["if"]
+    assert (
+        "env.PREPARE_ONLY != 'true'"
+        in station_steps["Upload the native station bundle artifact"]["if"]
+    )
     candidate_steps = {
         step["name"]: step for step in workflow["jobs"]["build-native-beta"]["steps"]
     }
@@ -1026,8 +1025,7 @@ def test_native_beta_candidate_workflow_has_a_manual_render_job_for_exact_source
     ):
         assert contract in colocate
     assert (
-        assemble_steps["Upload the installable native-beta kit"]["with"]["path"].strip()
-        == "kit/**"
+        assemble_steps["Upload the installable native-beta kit"]["with"]["path"].strip() == "kit/**"
     )
 
 

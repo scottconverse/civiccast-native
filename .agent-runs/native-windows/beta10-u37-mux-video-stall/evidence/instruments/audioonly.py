@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent))
-import tsraw  # noqa: E402
+import tsraw
 
 for path_s in sys.argv[1:]:
     path = Path(path_s)

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from contextlib import nullcontext, suppress
+from contextlib import AbstractContextManager, nullcontext, suppress
 from dataclasses import dataclass, field
 from hashlib import sha256
 from typing import TYPE_CHECKING
@@ -24,6 +24,7 @@ from civiccast.stream.packager import SlateOnlyResult, VodPackageResult
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from civiccast.captions.phase_timing import NullPhaseTimingCollector, PhaseTimingCollector
     from civiccast.translate import TranslationProvider, TranslationTarget
 
 
@@ -57,7 +58,7 @@ class CaptionPipeline:
         runtime: CaptionRuntime,
         *,
         stabilizer: CaptionStabilizer | None = None,
-        phase_timing: object | None = None,
+        phase_timing: PhaseTimingCollector | NullPhaseTimingCollector | None = None,
         phase_timing_channel: str | None = None,
         prepare_review_items: bool = True,
     ) -> None:
@@ -67,7 +68,7 @@ class CaptionPipeline:
         self._phase_timing_channel = phase_timing_channel
         self._prepare_review_items = prepare_review_items
 
-    def _phase(self, name: str):
+    def _phase(self, name: str) -> AbstractContextManager[None]:
         """Return an opt-in timing context without affecting pipeline work."""
 
         timing = self._phase_timing

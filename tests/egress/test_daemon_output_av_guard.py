@@ -547,6 +547,7 @@ def test_u16_guard_slate_restart_rebinds_the_hls_relay_to_the_new_worker_session
 
     assert fixture.daemon.process_once("gov") == 1
     assert len(relay_calls) == 1, "the first worker session did not start a relay"
+    _write_playlist(fixture.hls_dir, segments=("seg000000001.ts", "seg000000002.ts"))
     fixture.daemon._write_state("gov", "FALLBACK_SLATE")
 
     for _ in range(_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES):
@@ -765,15 +766,22 @@ def test_u16_guard_end_to_end_reads_the_complete_segment_with_real_ffprobe(
     not restart -- this distinguishes the two.
     """
     hls_dir = tmp_path / "gov-live"
-    hls_dir.mkdir()
-    _render_ts(hls_dir / "seg000000001.ts", audio_offset_s=2.0)  # complete: desynced
-    _render_ts(hls_dir / "seg000000002.ts", audio_offset_s=0.0)  # in flight: in sync
+    media_dir = tmp_path / "source-segments"
+    media_dir.mkdir()
+    _render_ts(media_dir / "seg000000001.ts", audio_offset_s=2.0)  # complete: desynced
+    _render_ts(media_dir / "seg000000002.ts", audio_offset_s=0.0)  # in flight: in sync
 
     fixture = _guard_fixture(
         tmp_path, hls_dir=hls_dir, segments=("seg000000001.ts", "seg000000002.ts")
     )
 
     assert fixture.daemon.process_once("gov") == 1
+    # Starting a fresh relay deliberately clears any old live window. Restore
+    # this test's already-rendered media after startup so the daemon probes the
+    # same post-start files an active relay would have written.
+    for name in ("seg000000001.ts", "seg000000002.ts"):
+        shutil.copyfile(media_dir / name, hls_dir / name)
+    _write_playlist(hls_dir, segments=("seg000000001.ts", "seg000000002.ts"))
     for _ in range(_OUTPUT_AV_GUARD_CONSECUTIVE_PROBES):
         fixture.clock.value += _OUTPUT_AV_GUARD_PROBE_INTERVAL_S
         fixture.daemon.process_once("gov")

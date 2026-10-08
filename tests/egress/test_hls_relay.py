@@ -12,6 +12,7 @@ that proven muxer up correctly, not that the muxer itself works.
 
 from __future__ import annotations
 
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from civiccast.egress.hls_relay import HlsRelaySupervisor, hls_relay_uri_for
@@ -228,6 +229,56 @@ def test_apply_without_new_session_keeps_the_relay_for_an_in_place_reload() -> N
 
     assert len(calls) == 1
     assert not procs[0].terminated
+
+
+def test_new_session_preserves_a_live_window_but_clears_fresh_or_dead_windows(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "live"
+    directory.mkdir()
+    config = _config(_hls_sink(uri=str(directory)))
+    playlist = directory / "playlist.m3u8"
+    segment = directory / "seg000000001.ts"
+    sup, _calls, procs = _supervisor()
+
+    # A fresh relay must remove a previous broadcast's window.
+    playlist.write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    segment.write_bytes(b"stale segment")
+    sup.apply(config)
+    assert not playlist.exists()
+    assert not segment.exists()
+
+    # A live relay's window belongs to the same broadcast during a worker
+    # crash-relaunch and stays visible while its relay child is rebound.
+    playlist.write_text("#EXTM3U\n#live\n", encoding="utf-8")
+    segment.write_bytes(b"live segment")
+    sup.apply(config, new_session=True)
+    assert procs[0].terminated
+    assert playlist.is_file()
+    assert segment.is_file()
+
+    # A same-label sink redirected to another directory is not the same
+    # output window. Stale files at the new destination must still be cleared.
+    directory = tmp_path / "redirected"
+    directory.mkdir()
+    config = _config(_hls_sink(uri=str(directory)))
+    playlist = directory / "playlist.m3u8"
+    segment = directory / "seg000000001.ts"
+    playlist.write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    segment.write_bytes(b"stale segment")
+    sup.apply(config, new_session=True)
+    assert procs[1].terminated
+    assert not playlist.exists()
+    assert not segment.exists()
+
+    # A dead relay cannot prove that the old window is still live. Clear it
+    # before starting the replacement so it cannot advertise stale media.
+    playlist.write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    segment.write_bytes(b"stale segment")
+    procs[2]._returncode = 1
+    sup.apply(config, new_session=True)
+    assert not playlist.exists()
+    assert not segment.exists()
 
 
 def test_apply_with_new_session_drops_a_previous_sessions_relay_with_no_hls_sink() -> None:

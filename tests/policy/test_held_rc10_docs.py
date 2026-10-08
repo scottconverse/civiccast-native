@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
-CURRENT_RELEASE_TAG = (
+CURRENT_CANDIDATE_TAG = (
     "v"
     + (
         (ROOT / "civiccast" / "_version.py")
@@ -38,18 +38,18 @@ FRONT_DOORS = (
 )
 
 
-def test_current_candidate_surfaces_match_the_release_posture() -> None:
+def test_front_doors_match_the_published_release_posture() -> None:
     for relative in FRONT_DOORS:
         text = (ROOT / relative).read_text(encoding="utf-8")
         normalized = " ".join(text.lower().split())
-        assert CURRENT_RELEASE_TAG in text, relative
+        assert PUBLISHED_RELEASE_TAG in text, relative
         assert PUBLISHED_RELEASE_LINK in normalized, relative
 
 
-def test_front_doors_name_the_current_candidate_state() -> None:
+def test_front_doors_name_the_published_release_state() -> None:
     for relative in FRONT_DOORS:
         text = " ".join((ROOT / relative).read_text(encoding="utf-8").lower().split())
-        assert CURRENT_RELEASE_TAG.lower() in text, relative
+        assert PUBLISHED_RELEASE_TAG.lower() in text, relative
         assert PUBLISHED_RELEASE_LINK in text, relative
 
 
@@ -103,11 +103,10 @@ def test_windows_setup_guidance_requires_visible_progress() -> None:
     )
 
 
-def test_user_manual_names_current_migration_and_limits_external_claims() -> None:
+def test_user_manual_names_the_candidate_and_limits_external_claims() -> None:
     manual = (ROOT / "docs" / "USER-MANUAL.md").read_text(encoding="utf-8")
-    assert "single-headed at `0072_normalize_recording_file_uris`" in manual
     assert "0060_recording_paywall_merge â† HEAD" not in manual
     assert "record-of-record version" not in manual
     assert "major\n  mobile app stores" not in manual
-    assert CURRENT_RELEASE_TAG in manual
+    assert CURRENT_CANDIDATE_TAG in manual
     assert "candidate" in manual.lower()

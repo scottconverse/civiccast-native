@@ -7,13 +7,16 @@ GitHub artifacts that do not exist for dirty/download-only, and rewrites the
 Gate A claims in the notes + release-truth text so they are TRUE.
 Owner waiver: Scott, 2026-10-02 ("publish it").
 """
+
 import importlib.util
 import sys
 from pathlib import Path
 
 REPO = Path(r"C:\Users\scott\Documents\Codex\2026-09-16\re\civiccast-release")
 sys.path.insert(0, str(REPO))
-spec = importlib.util.spec_from_file_location("pbc", REPO / "scripts" / "release" / "publish_beta_candidate.py")
+spec = importlib.util.spec_from_file_location(
+    "pbc", REPO / "scripts" / "release" / "publish_beta_candidate.py"
+)
 pbc = importlib.util.module_from_spec(spec)
 sys.modules["pbc"] = pbc
 spec.loader.exec_module(pbc)
@@ -43,6 +46,7 @@ orig_render = pbc.render_notes
 def render(**kw):
     text = kw["changelog_text"]
     import re
+
     m = re.search(r"^## \[1\.0\.0-beta\.10\][^\n]*\n(.*?)(?=^## \[|\Z)", text, re.M | re.S)
     if not m:
         raise pbc.PublishError("beta.10 CHANGELOG section not found")

@@ -42,6 +42,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
+from civiccast.egress.hls_relay import _ManifestPublisher
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.sinks import HlsSink, build_sink
@@ -54,8 +55,7 @@ from civiccast.stream._ffmpeg import (
 from civiccast.stream.media_router import live_router
 
 pytestmark = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None
-    and os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT") is None,
+    shutil.which("ffmpeg") is None and os.environ.get("CIVICCAST_GSTREAMER_RUNTIME_ROOT") is None,
     reason="no ffmpeg on PATH and no packaged runtime root declared",
 )
 
@@ -72,7 +72,10 @@ def _packaged_ffmpeg_dir() -> Path | None:
     if not root:
         return None
     base = Path(root)
-    for candidate in (base.parent / "dependencies" / "ffmpeg" / "bin", base / "dependencies" / "ffmpeg" / "bin"):
+    for candidate in (
+        base.parent / "dependencies" / "ffmpeg" / "bin",
+        base / "dependencies" / "ffmpeg" / "bin",
+    ):
         if (candidate / "ffmpeg.exe").is_file():
             return candidate
     return None
@@ -248,7 +251,15 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
     encoded_source = tmp_path / "encoded-source.mkv"
     _write_encoded_test_source(encoded_source)
     handle = _start_live_hls_encoder(live_dir, encoded_source)
+    publisher = _ManifestPublisher(
+        manifest_path=live_dir / HlsSink.manifest_name,
+        staging_path=live_dir / HlsSink.mux_playlist_name,
+        interval_s=0.1,
+    )
     try:
+        # HlsSink writes the staging manifest; the relay's publisher makes the
+        # advertised manifest that the HTTP route serves.
+        publisher.start()
         manifest_path = live_dir / "playlist.m3u8"
         deadline = time.monotonic() + 30.0
         while time.monotonic() < deadline and not manifest_path.exists():
@@ -374,3 +385,4 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
                 )
     finally:
         handle.terminate(grace_seconds=5.0)
+        publisher.close()

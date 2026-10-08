@@ -63,8 +63,8 @@ if not _runtime_python.is_dir():
         "engine.py's `import gi` and _reap would then hang on the unconnected pipe."
     )
 
+import test_gst_engine_wsl  # noqa: E402
 import tsraw  # noqa: E402
-import test_gst_engine_wsl as T  # noqa: E402
 
 _engine_src = TREE / "civiccast" / "egress" / "gst" / "engine.py"
 print(f"# tree={TREE}")
@@ -82,13 +82,14 @@ _PID_AUDIO = 0x42
 # shape is `filesrc ! decodebin ! videoconvert ! videoscale ! videorate !
 # capsfilter(1280x720@30)` per subchain, the production encoder chain, and the
 # caption-embed leg downstream of it.
-_E = T.graphmod.ElementSpec
-_CAPS = {"base": T._CAPS, "production": T._PRODUCTION_CAPS}
+_E = test_gst_engine_wsl.graphmod.ElementSpec
+_CAPS = {"base": test_gst_engine_wsl._CAPS, "production": test_gst_engine_wsl._PRODUCTION_CAPS}
 
 
-def _reload_graph(clip: Path, *, caps: str, captions: bool, repeats: int,
-                  **ignored):  # `debug` is a launch-time knob, not graph shape
-    program = T.graphmod.PlaylistLeg(
+def _reload_graph(
+    clip: Path, *, caps: str, captions: bool, repeats: int, **ignored
+):  # `debug` is a launch-time knob, not graph shape
+    program = test_gst_engine_wsl.graphmod.PlaylistLeg(
         label="program",
         subchains=tuple(
             (
@@ -104,29 +105,29 @@ def _reload_graph(clip: Path, *, caps: str, captions: bool, repeats: int,
         audio_tail=(
             _E("audioconvert"),
             _E("audioresample"),
-            _E("capsfilter", props={"caps": T._ACAPS}),
+            _E("capsfilter", props={"caps": test_gst_engine_wsl._ACAPS}),
         ),
     )
-    base = T._av_demo_graph(nsrc=2)
+    base = test_gst_engine_wsl._av_demo_graph(nsrc=2)
     enc = (
         base.encoder
         if caps == "base"
-        else T.graphmod.encode_chain_specs(
+        else test_gst_engine_wsl.graphmod.encode_chain_specs(
             width=1280,
             height=720,
             fps=30,
             bitrate_kbps=6000,
             gop=60,
-            encoder=T._H264_ENCODER,
+            encoder=test_gst_engine_wsl._H264_ENCODER,
         )
     )
-    return T.graphmod.PlayoutGraph(
+    return test_gst_engine_wsl.graphmod.PlayoutGraph(
         sources=(program, base.sources[1]),
         encoder=enc,
         audio_encoder=base.audio_encoder,
         mux=base.mux,
         sinks=base.sinks,
-        captions=T.graphmod.caption_embed_leg_live() if captions else None,
+        captions=test_gst_engine_wsl.graphmod.caption_embed_leg_live() if captions else None,
     )
 
 
@@ -173,20 +174,21 @@ def _gt(path: Path) -> dict[int, dict]:
     return out
 
 
-def run_once(idx: int, outgoing: Path, incoming: Path, run_dir: Path,
-             after: int, shape: dict) -> str:
+def run_once(
+    idx: int, outgoing: Path, incoming: Path, run_dir: Path, after: int, shape: dict
+) -> str:
     run_dir.mkdir(parents=True, exist_ok=True)
     out_ts = run_dir / "out.ts"
     if out_ts.exists():
         out_ts.unlink()
 
-    graph = T._paced_filesink_graph(_reload_graph(outgoing, **shape), out_ts)
-    reload_path = run_dir / f"rollover{T.reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
+    graph = test_gst_engine_wsl._paced_filesink_graph(_reload_graph(outgoing, **shape), out_ts)
+    reload_path = run_dir / f"rollover{test_gst_engine_wsl.reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
     reload_path.write_text(
-        T.graphmod.graph_to_json(_reload_graph(incoming, **shape)),
+        test_gst_engine_wsl.graphmod.graph_to_json(_reload_graph(incoming, **shape)),
         encoding="utf-8",
     )
-    assert T.reloadpolicy.reload_switch_is_deferred(str(reload_path))
+    assert test_gst_engine_wsl.reloadpolicy.reload_switch_is_deferred(str(reload_path))
 
     env_extra = {"CIVICAST_STALL_TIMEOUT_S": "600"}
     if shape["debug"]:
@@ -197,7 +199,7 @@ def run_once(idx: int, outgoing: Path, incoming: Path, run_dir: Path,
         env_extra["GST_DEBUG_FILE"] = str(run_dir / "gst-debug.log")
         env_extra["GST_DEBUG_NO_COLOR"] = "1"
 
-    proc, control, log = T._launch_worker(
+    proc, control, log = test_gst_engine_wsl._launch_worker(
         run_dir,
         graph,
         out_ts,
@@ -205,12 +207,12 @@ def run_once(idx: int, outgoing: Path, incoming: Path, run_dir: Path,
     )
     rc = None
     try:
-        T._wait_for_log(log, "CTRL first-output:", timeout=30.0)
-        T._send(control, f"reload {reload_path}")
+        test_gst_engine_wsl._wait_for_log(log, "CTRL first-output:", timeout=30.0)
+        test_gst_engine_wsl._send(control, f"reload {reload_path}")
         committed = True
         try:
-            T._wait_for_log(log, "CTRL reload committed", timeout=120.0)
-        except Exception as exc:  # noqa: BLE001
+            test_gst_engine_wsl._wait_for_log(log, "CTRL reload committed", timeout=120.0)
+        except Exception as exc:
             print(f"  # COMMIT NEVER HAPPENED: {exc}")
             committed = False
         text = log.read_text(encoding="utf-8", errors="replace")
@@ -226,9 +228,9 @@ def run_once(idx: int, outgoing: Path, incoming: Path, run_dir: Path,
             print(f"  # worker had already exited on its own (rc={rc}); no stop ack expected")
         else:
             try:
-                T._send(control, "stop")
+                test_gst_engine_wsl._send(control, "stop")
                 rc = proc.wait(timeout=30)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 print(f"  # stop not acked: {type(exc).__name__}: {exc}")
                 rc = proc.poll()
     except BaseException:
@@ -238,11 +240,13 @@ def run_once(idx: int, outgoing: Path, incoming: Path, run_dir: Path,
             proc.kill()
         raise
     finally:
-        T._reap(proc)
+        test_gst_engine_wsl._reap(proc)
 
     text = log.read_text(encoding="utf-8", errors="replace")
-    print(f"===== run {idx} rc={rc} committed={committed} out={out_ts.name}"
-          f" size={out_ts.stat().st_size if out_ts.exists() else 0}")
+    print(
+        f"===== run {idx} rc={rc} committed={committed} out={out_ts.name}"
+        f" size={out_ts.stat().st_size if out_ts.exists() else 0}"
+    )
     print("  " + _ends(text))
     for line in text.splitlines():
         if "diagnostic" in line or line.startswith("CTRL reload:") or "WARN" in line:

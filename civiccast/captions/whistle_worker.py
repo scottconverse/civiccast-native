@@ -8,12 +8,14 @@ import array
 import base64
 import contextlib
 import hashlib
+import importlib
 import json
 import os
 import sys
+from typing import Any, cast
 
 
-def main():
+def main() -> None:
     from pathlib import Path
 
     from civiccast.captions.models import AudioChunk, CustomVocabulary
@@ -34,10 +36,11 @@ def main():
                 if hashlib.sha256(Path(path).read_bytes()).hexdigest() != digest:
                     raise RuntimeError("Whistle asset hash mismatch")
             os.environ["NEEDLE3_LIB_PATH"] = library
-            import needle
-            from needle import _telemetry
+            # cactus-needle ships as a pinned binary package without inline stubs.
+            needle = cast(Any, importlib.import_module("needle"))
+            telemetry = cast(Any, importlib.import_module("needle._telemetry"))
 
-            if _telemetry._enabled():
+            if telemetry._enabled():
                 raise RuntimeError("Needle telemetry must be disabled")
 
             engine = needle.Whistle(weights=weights)

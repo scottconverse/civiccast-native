@@ -207,7 +207,7 @@ class PhaseTimingCollector:
             if self._summarised and not self._aggregates:
                 return {}
             self._last_summary_ns = now_ns
-            snapshot = {
+            snapshot: dict[str, object] = {
                 name: {
                     "count": agg.count,
                     "total_ms": round(agg.total_ns / 1_000_000, 3),

@@ -207,7 +207,8 @@ def test_hls_sink_builds_rolling_live_manifest_output_args(tmp_path: Path) -> No
     flags = args[args.index("-hls_flags") + 1]
     assert "delete_segments" in flags
     assert "append_list" in flags
-    assert args[-1] == str(out_dir / "playlist.m3u8")
+    assert args[-1] == str(out_dir / sink.mux_playlist_name)
+    assert sink.manifest_target() == str(out_dir / sink.manifest_name)
 
     # Caption-preservation contract (see test_hls_sink_captions.py): the sink
     # must stream-copy the encoded video. Re-encoding through the bundled H.264
@@ -230,7 +231,8 @@ def test_hls_sink_accepts_file_uri_directory(tmp_path: Path) -> None:
     out_dir = tmp_path / "live-hls"
     sink = build_sink(EgressSinkSpec(kind="hls", label="Web", uri=out_dir.as_uri()))
 
-    assert sink.connect_target() == str(out_dir / "playlist.m3u8")
+    assert sink.connect_target() == str(out_dir / sink.mux_playlist_name)
+    assert sink.manifest_target() == str(out_dir / sink.manifest_name)
 
 
 def test_hls_sink_requires_local_directory_uri() -> None:

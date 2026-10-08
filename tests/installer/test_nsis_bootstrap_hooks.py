@@ -919,7 +919,7 @@ def test_bl02_a_failed_postinstall_disarms_the_service_before_aborting() -> None
         "the direct SCM stop must be conditional on a failed product stop and retain "
         "the manual-start containment step"
     )
-    assert 'StrCpy $R8 $R9' in fail_macro
+    assert "StrCpy $R8 $R9" in fail_macro
     assert '${If} $R9 == "1062"' in fail_macro
     assert "AddSeconds(15)" in fail_macro
     assert "Get-Service -Name CivicCastSupervisor" in fail_macro
@@ -1082,11 +1082,7 @@ def test_bl13_an_unprovable_runtime_selector_aborts_the_install() -> None:
     plane the guard blocks, and reported success."""
     source = _hooks_source()
     assert "!define CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP   127" in source
-    step = _slice(
-        source,
-        '!insertmacro CIVICCAST_STEP "step d4-provision: begin"',
-        "K1 FIX: FLAT-LAYOUT STATION ACTIVATION",
-    )
+    step = _d4_provision_step(source)
     assert "${ElseIf} $0 == 85" in step
     assert "${CIVICCAST_EXIT_D4_RUNTIME_OWNERSHIP}" in step
     arm = _slice(step, "${ElseIf} $0 == 85", "${Else}")
@@ -1098,10 +1094,11 @@ OWNERSHIP_RECOVERY_DOC = "$COMMONPROGRAMDATA\\CivicCast\\provision\\OWNERSHIP-RE
 
 
 def _d4_provision_step(source: str) -> str:
+    """Return only D4 provisioning; station activation now precedes D3/D4."""
     return _slice(
         source,
         '!insertmacro CIVICCAST_STEP "step d4-provision: begin"',
-        "K1 FIX: FLAT-LAYOUT STATION ACTIVATION",
+        '!insertmacro CIVICCAST_STEP "step d4-service-registration: begin"',
     )
 
 

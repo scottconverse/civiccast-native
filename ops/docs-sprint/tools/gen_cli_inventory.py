@@ -62,7 +62,11 @@ for path, cmd in rows:
             env = getattr(p, "envvar", None) or ""
             if isinstance(env, (list, tuple)):
                 env = ", ".join(env)
-            h = escape(getattr(p, "help", "") or "", quote=False).replace("|", PIPE).replace("\n", " ")
+            h = (
+                escape(getattr(p, "help", "") or "", quote=False)
+                .replace("|", PIPE)
+                .replace("\n", " ")
+            )
             req = " (required)" if getattr(p, "required", False) else ""
             out.append(
                 "| `"

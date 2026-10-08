@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent))
-import tsraw  # noqa: E402
+import tsraw
 
 SEP = chr(92)
 
@@ -28,7 +28,9 @@ for path_s in ("x1" + SEP + "run1" + SEP + "out.ts", "x2" + SEP + "run2" + SEP +
                 n += 1
                 if len(seq) < 12:
                     seq.append((hex(pid), round(v / 90000.0 - 3600.0, 6)))
-    print(f"== {path}  pmt_pid={pmt_pid} streams={ {hex(k): v for k, v in streams.items()} }"
-          f"  pusi_pts={n}")
+    print(
+        f"== {path}  pmt_pid={pmt_pid} streams={ {hex(k): v for k, v in streams.items()} }"
+        f"  pusi_pts={n}"
+    )
     for pid, rt in seq:
         print(f"     {pid}  rt={rt}")
