@@ -166,10 +166,9 @@ class TestUserManualVersionHeaderConsistency:
         pdf_path = render_user_manual.ROOT / "docs" / "USER-MANUAL.pdf"
         docx_path = render_user_manual.ROOT / "docs" / "USER-MANUAL.docx"
 
-        assert (
-            render_user_manual._rendered_header_version_token(pdf_path)
-            == render_user_manual._source_version_token(_SOURCE.read_text(encoding="utf-8"))
-        )
+        assert render_user_manual._rendered_header_version_token(
+            pdf_path
+        ) == render_user_manual._source_version_token(_SOURCE.read_text(encoding="utf-8"))
         assert manifest["source"] == "docs/USER-MANUAL.md"
         assert manifest["source_sha256"] == render_user_manual._source_sha256(_SOURCE)
         entries = {entry["path"]: entry for entry in manifest["artifacts"]}
