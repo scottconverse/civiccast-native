@@ -389,12 +389,12 @@ def _write_direct_kit(
         },
         "station_index": {
             "signature_verification": {
-                "consumer_activation_verification": {
-                    "status": "pending" if consumer_mode == "physical-host" else "passed",
-                    "actual_sandbox_result": (
-                        {}
-                        if consumer_mode == "physical-host"
-                        else {
+                "consumer_activation_verification": (
+                    "pending exact signed host refresh and activation."
+                    if consumer_mode == "physical-host"
+                    else {
+                        "status": "passed",
+                        "actual_sandbox_result": {
                             "baseline_install": {"status": "passed", "exit_code": 0},
                             "upgrade_install": {
                                 "status": "passed",
@@ -402,9 +402,9 @@ def _write_direct_kit(
                                 "payload": "setup.exe plus exactly five runtime packs; no station folder",
                             },
                             "verify_after_upgrade": {"status": "passed", "exit_code": 0},
-                        }
-                    ),
-                }
+                        },
+                    }
+                )
             }
         },
         "kit_members": members,

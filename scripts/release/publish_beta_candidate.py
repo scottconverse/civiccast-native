@@ -610,13 +610,14 @@ def verify_consumer_evidence_receipt(
         signature_record = _record(
             station_index["signature_verification"], label="station-index signature record"
         )
-        activation = _record(
-            signature_record["consumer_activation_verification"], label="consumer activation record"
-        )
     except (KeyError, TypeError) as exc:
-        raise PublishError("kit assembly receipt is missing its station activation record") from exc
+        raise PublishError("kit assembly receipt is missing its station signature record") from exc
     if consumer_mode == "sandbox":
         try:
+            activation = _record(
+                signature_record["consumer_activation_verification"],
+                label="consumer activation record",
+            )
             sandbox = _record(activation["actual_sandbox_result"], label="actual Sandbox result")
             baseline_activation = _record(
                 sandbox["baseline_install"], label="Beta 10 baseline result"
