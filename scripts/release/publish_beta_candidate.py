@@ -179,6 +179,10 @@ DIRECT_CONSUMER_PROOFS = {
     "three_channel_runtime",
 }
 DIRECT_CHANNELS = ("public", "government", "education")
+DIRECT_RUNTIME_PROOF_SCOPES: dict[str, tuple[str, tuple[str, ...]]] = {
+    "three-channel-capacity": ("three_channel_runtime", DIRECT_CHANNELS),
+    "one-channel-install-smoke": ("one_channel_install_smoke", ("public",)),
+}
 DIRECT_JFK_WORDS = ("fellow", "americans", "country")
 DIRECT_PLAYLIST_MAX_AGE_SECONDS = 30.0
 DIRECT_RUNTIME_MIN_SPAN_SECONDS = 180.0
@@ -327,9 +331,18 @@ def verify_consumer_evidence_receipt(
             f"could not read direct consumer evidence receipt {receipt_path}: {exc}"
         ) from exc
     doc = _record(receipt, label="receipt")
-    _record_keys(doc, {"schema_version", "kind", "artifact", "evidence"}, label="receipt")
+    receipt_fields = {"schema_version", "kind", "artifact", "evidence"}
+    if "runtime_proof_scope" in doc:
+        receipt_fields.add("runtime_proof_scope")
+    _record_keys(doc, receipt_fields, label="receipt")
     if doc.get("schema_version") != 1 or doc.get("kind") != DIRECT_CONSUMER_RECEIPT_KIND:
         raise PublishError("direct consumer evidence receipt schema or kind is unsupported")
+    runtime_proof_scope = doc.get("runtime_proof_scope", "three-channel-capacity")
+    if not isinstance(runtime_proof_scope, str) or runtime_proof_scope not in (
+        DIRECT_RUNTIME_PROOF_SCOPES
+    ):
+        raise PublishError(f"unsupported direct runtime proof scope: {runtime_proof_scope!r}")
+    runtime_proof_group, runtime_channels = DIRECT_RUNTIME_PROOF_SCOPES[runtime_proof_scope]
 
     artifact = _record(doc.get("artifact"), label="artifact")
     _record_keys(artifact, {"source_sha", "build_run_id", "assembly_receipt"}, label="artifact")
@@ -453,9 +466,17 @@ def verify_consumer_evidence_receipt(
     setup, packs = verify_layout(kit_dir, setup_filename=setup_relative)
 
     evidence = _record(doc.get("evidence"), label="proof set")
-    _record_keys(evidence, DIRECT_CONSUMER_PROOFS, label="proof set")
+    expected_proofs = (DIRECT_CONSUMER_PROOFS - {"three_channel_runtime"}) | {runtime_proof_group}
+    _record_keys(evidence, expected_proofs, label="proof set")
     for proof_name, fields in DIRECT_PROOF_FIELDS.items():
+        if proof_name == "three_channel_runtime":
+            continue
         _record_keys(_record(evidence.get(proof_name), label=proof_name), fields, label=proof_name)
+    _record_keys(
+        _record(evidence.get(runtime_proof_group), label=runtime_proof_group),
+        {"result", "preserve_marker", "snapshots"},
+        label=runtime_proof_group,
+    )
 
     def read_json(proof_name: str, file_name: str) -> dict[str, Any]:
         proof = _record(evidence.get(proof_name), label=proof_name)
@@ -584,26 +605,28 @@ def verify_consumer_evidence_receipt(
             "post-upgrade verification does not prove the original account data was preserved"
         )
 
-    runtime_result = read_json("three_channel_runtime", "result")
-    runtime_marker = read_json("three_channel_runtime", "preserve_marker")
+    runtime_result = read_json(runtime_proof_group, "result")
+    runtime_marker = read_json(runtime_proof_group, "preserve_marker")
     if (
         runtime_result.get("result") != "PASS"
         or runtime_result.get("observed_minutes") != 5
-        or runtime_result.get("channels") != list(DIRECT_CHANNELS)
+        or runtime_result.get("channels") != list(runtime_channels)
         or runtime_result.get("preserve_install_and_database") is not True
         or runtime_marker.get("preserve_install_and_database") is not True
         or runtime_marker.get("product_version") != "1.0.0-beta.11"
     ):
         raise PublishError(
-            "three-channel runtime receipt does not record the five-minute Beta 11 pass"
+            f"{runtime_proof_scope} runtime receipt does not record the five-minute Beta 11 pass"
         )
 
-    runtime_proof = _record(evidence.get("three_channel_runtime"), label="three_channel_runtime")
+    runtime_proof = _record(evidence.get(runtime_proof_group), label=runtime_proof_group)
     snapshots = runtime_proof.get("snapshots")
     if not isinstance(snapshots, list) or len(snapshots) != 5:
-        raise PublishError("three-channel runtime proof must bind all five minute snapshots")
-    vtt_hashes: dict[str, set[str]] = {channel: set() for channel in DIRECT_CHANNELS}
-    jfk_words_seen: dict[str, set[str]] = {channel: set() for channel in DIRECT_CHANNELS}
+        raise PublishError(
+            f"{runtime_proof_scope} runtime proof must bind all five minute snapshots"
+        )
+    vtt_hashes: dict[str, set[str]] = {channel: set() for channel in runtime_channels}
+    jfk_words_seen: dict[str, set[str]] = {channel: set() for channel in runtime_channels}
     previous_media: dict[str, tuple[datetime, str]] = {}
     first_snapshot_at: datetime | None = None
     previous_snapshot_at: datetime | None = None
@@ -624,8 +647,8 @@ def verify_consumer_evidence_receipt(
             or snapshot_health.get("status") != "healthy"
             or snapshot_health.get("version") != "1.0.0-beta.11"
             or snapshot.get("pinned_whistle_error_seen") is not False
-            or snapshot.get("whistle_active_seen") != dict.fromkeys(DIRECT_CHANNELS, True)
-            or snapshot.get("whistle_fallback_seen") != dict.fromkeys(DIRECT_CHANNELS, False)
+            or snapshot.get("whistle_active_seen") != dict.fromkeys(runtime_channels, True)
+            or snapshot.get("whistle_fallback_seen") != dict.fromkeys(runtime_channels, False)
         ):
             raise PublishError(
                 f"runtime minute {expected_minute} does not show healthy Whistle primary operation"
@@ -634,7 +657,7 @@ def verify_consumer_evidence_receipt(
         if (
             not isinstance(channels, list)
             or not all(isinstance(channel, dict) for channel in channels)
-            or [channel.get("id") for channel in channels] != list(DIRECT_CHANNELS)
+            or [channel.get("id") for channel in channels] != list(runtime_channels)
         ):
             raise PublishError(
                 f"runtime minute {expected_minute} is missing one or more expected channels"
@@ -746,7 +769,7 @@ def verify_consumer_evidence_receipt(
         < DIRECT_RUNTIME_MIN_SPAN_SECONDS
     ):
         raise PublishError("five-minute runtime snapshots span less than three minutes")
-    for channel in DIRECT_CHANNELS:
+    for channel in runtime_channels:
         if len(vtt_hashes[channel]) < 3:
             raise PublishError(
                 f"runtime channel {channel!r} VTT did not progress in at least three samples"
@@ -765,7 +788,12 @@ def verify_consumer_evidence_receipt(
             "repair_preservation": "PASS",
             "beta10_to_beta11_upgrade": "PASS",
             "preservation": "PASS",
-            "runtime": "PASS (five minutes, three channels)",
+            "runtime": (
+                "PASS (five minutes, three channels)"
+                if runtime_proof_scope == "three-channel-capacity"
+                else "PASS (five-minute one-channel install-smoke; three-channel capacity "
+                "unproven; host soak is separate evidence)"
+            ),
         },
     )
 

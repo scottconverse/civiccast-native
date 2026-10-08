@@ -404,7 +404,12 @@ def _write_direct_kit(kit_dir: Path, *, source_sha: str, build_run_id: str) -> t
 
 
 def _write_direct_consumer_receipt(
-    tmp_path: Path, kit_dir: Path, *, source_sha: str = DIRECT_SOURCE_SHA, build_run_id: str = "333"
+    tmp_path: Path,
+    kit_dir: Path,
+    *,
+    source_sha: str = DIRECT_SOURCE_SHA,
+    build_run_id: str = "333",
+    runtime_proof_scope: str | None = None,
 ) -> tuple[Path, Path]:
     setup, assembly_ref = _write_direct_kit(
         kit_dir, source_sha=source_sha, build_run_id=build_run_id
@@ -536,13 +541,27 @@ def _write_direct_consumer_receipt(
             },
         ),
     }
-    runtime_root = evidence_dir / "AllThreeAfterReporterFix"
+    runtime_channels = (
+        ("public",)
+        if runtime_proof_scope == "one-channel-install-smoke"
+        else ("public", "government", "education")
+    )
+    runtime_group = (
+        "one_channel_install_smoke"
+        if runtime_proof_scope == "one-channel-install-smoke"
+        else "three_channel_runtime"
+    )
+    runtime_root = evidence_dir / (
+        "OnePublicInstallSmoke"
+        if runtime_proof_scope == "one-channel-install-smoke"
+        else "AllThreeAfterReporterFix"
+    )
     runtime = {
         "result": _write_bound_json(
             runtime_root / "result.json",
             {
                 "result": "PASS",
-                "channels": ["public", "government", "education"],
+                "channels": list(runtime_channels),
                 "observed_minutes": 5,
                 "preserve_install_and_database": True,
             },
@@ -559,7 +578,7 @@ def _write_direct_consumer_receipt(
         sampled_at_text = sampled_at.isoformat().replace("+00:00", "Z")
         playlist_mtime_text = (sampled_at - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
         channels = []
-        for channel_index, channel in enumerate(("public", "government", "education")):
+        for channel_index, channel in enumerate(runtime_channels):
             vtt_text = f"WEBVTT\n\n{channel} fellow Americans\n"
             channels.append(
                 {
@@ -589,12 +608,8 @@ def _write_direct_consumer_receipt(
                     "minute": minute,
                     "health": {"status": "healthy", "version": VERSION},
                     "pinned_whistle_error_seen": False,
-                    "whistle_active_seen": dict.fromkeys(
-                        ("public", "government", "education"), True
-                    ),
-                    "whistle_fallback_seen": dict.fromkeys(
-                        ("public", "government", "education"), False
-                    ),
+                    "whistle_active_seen": dict.fromkeys(runtime_channels, True),
+                    "whistle_fallback_seen": dict.fromkeys(runtime_channels, False),
                     "channels": channels,
                 },
             )
@@ -614,9 +629,11 @@ def _write_direct_consumer_receipt(
             "beta10_baseline_install": baseline,
             "beta10_to_beta11_upgrade": upgrade,
             "verify_after_upgrade": verified,
-            "three_channel_runtime": runtime,
+            runtime_group: runtime,
         },
     }
+    if runtime_proof_scope is not None:
+        receipt["runtime_proof_scope"] = runtime_proof_scope
     receipt_path = tmp_path / "direct-consumer-evidence.json"
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     return receipt_path, setup
@@ -671,6 +688,111 @@ def test_direct_consumer_evidence_dry_run_names_producer_and_tag_target(tmp_path
     assert not _gh_calls(fake.calls, "gh", "run", "download")
     assert not _gh_calls(fake.calls, "gh", "release")
     assert (repo_root / "artifacts" / "release" / TAG / "assets" / "setup.exe").is_file()
+
+
+def test_direct_one_channel_install_smoke_is_explicit_and_does_not_claim_capacity(
+    tmp_path, monkeypatch
+):
+    repo_root = _base_repo_root(tmp_path)
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, runtime_proof_scope="one-channel-install-smoke"
+    )
+    monkeypatch.setattr(m, "run_command", _fake_command_factory())
+
+    assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, repo_root=repo_root)) == 0
+
+    notes = (repo_root / "artifacts" / "release" / TAG / "RELEASE-NOTES.md").read_text(
+        encoding="utf-8"
+    )
+    assert "one-channel install-smoke" in notes.lower()
+    assert "three-channel capacity unproven" in notes.lower()
+    assert "host soak is separate evidence" in notes.lower()
+    assert "Three-channel Whistle/HLS/caption observation" not in notes
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "unknown-scope",
+        "wrong-runtime-group",
+        "missing-public-channel",
+        "wrong-channel",
+        "short-snapshot-list",
+        "failed-runtime",
+        "whistle-primary-lost",
+        "whistle-fallback-seen",
+        "degraded-caption-runtime",
+    ],
+)
+def test_direct_one_channel_install_smoke_refuses_incomplete_or_failed_evidence(
+    tmp_path, monkeypatch, tamper
+):
+    repo_root = _base_repo_root(tmp_path)
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, runtime_proof_scope="one-channel-install-smoke"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if tamper == "unknown-scope":
+        receipt["runtime_proof_scope"] = "arbitrary-subset"
+    elif tamper == "wrong-runtime-group":
+        receipt["evidence"]["three_channel_runtime"] = receipt["evidence"].pop(
+            "one_channel_install_smoke"
+        )
+    elif tamper == "short-snapshot-list":
+        receipt["evidence"]["one_channel_install_smoke"]["snapshots"].pop()
+    else:
+        runtime = receipt["evidence"]["one_channel_install_smoke"]
+        if tamper == "failed-runtime":
+            ref = runtime["result"]
+            result_path = Path(ref["path"])
+            result = json.loads(result_path.read_text(encoding="utf-8"))
+            result["result"] = "FAIL"
+            result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+            ref["sha256"] = m.sha256_file(result_path)
+        else:
+            ref = runtime["snapshots"][0]
+            snapshot_path = Path(ref["path"])
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            if tamper == "missing-public-channel":
+                runtime["result"] = _write_bound_json(
+                    snapshot_path.parent / "result.json",
+                    {
+                        "result": "PASS",
+                        "channels": [],
+                        "observed_minutes": 5,
+                        "preserve_install_and_database": True,
+                    },
+                )
+            elif tamper == "wrong-channel":
+                result_ref = runtime["result"]
+                result_path = Path(result_ref["path"])
+                result = json.loads(result_path.read_text(encoding="utf-8"))
+                result["channels"] = ["government"]
+                result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+                result_ref["sha256"] = m.sha256_file(result_path)
+            elif tamper == "whistle-primary-lost":
+                snapshot["whistle_active_seen"]["public"] = False
+                snapshot_path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+                ref["sha256"] = m.sha256_file(snapshot_path)
+            elif tamper == "whistle-fallback-seen":
+                snapshot["whistle_fallback_seen"]["public"] = True
+                snapshot_path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+                ref["sha256"] = m.sha256_file(snapshot_path)
+            elif tamper == "degraded-caption-runtime":
+                snapshot["channels"][0]["caption_runtime_status"]["state"] = "overloaded"
+                snapshot_path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
+                ref["sha256"] = m.sha256_file(snapshot_path)
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    fake = _fake_command_factory(mirror_uploaded_assets=True)
+    monkeypatch.setattr(m, "run_command", fake)
+
+    assert (
+        m.main(_direct_args(tmp_path, kit_dir, receipt_path, dry_run=False, repo_root=repo_root))
+        == 1
+    )
+    assert not _gh_calls(fake.calls, "gh", "release")
 
 
 @pytest.mark.parametrize("tamper", ["source", "hash", "proof"])

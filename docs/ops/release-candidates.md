@@ -141,8 +141,17 @@ and an `evidence` object containing all of these named proof groups:
   upgrade-engine log.
 - `verify_after_upgrade`: the actual sign-in, existing asset and saved
   schedule verification result plus its preservation marker.
-- `three_channel_runtime`: the five-minute result, preservation marker, and
-  all five minute snapshots for public, government, and education.
+- A runtime proof group selected by the explicit scope below: its five-minute
+  result, preservation marker, and all five minute snapshots.
+
+Legacy receipts omit `runtime_proof_scope` and use `three_channel_runtime`
+for public, government, and education. A functional installation smoke
+instead sets the top-level `runtime_proof_scope` to
+`"one-channel-install-smoke"` and uses `one_channel_install_smoke` for exactly
+`["public"]`. Unknown scopes, mixed runtime groups and missing or different
+channels are rejected; missing channels never silently reduce the scope.
+Account, asset and three saved schedule preservation checks remain required
+regardless of the runtime scope.
 
 For those runtime snapshots, the publisher requires a time-ordered sample
 span of at least three minutes, HLS playlist age no greater than 30 seconds,
@@ -151,6 +160,14 @@ It also requires audio/video HLS, at least three distinct VTT snapshots, and
 at least two accumulated JFK reference words per channel across the run. The
 bounded VTT text sample remains in the hash-bound evidence for human review;
 the publisher does not compare it to a transcript.
+
+The one-channel scope proves installed caption functionality, not
+three-channel capacity. It is used while the owner's existing three-station
+host soak continues; adding three guest stations would test six simultaneous
+stations on the development machine. Release notes keep the accepted host
+soak, the failed three-channel guest run and its workload context separate.
+The new package's simultaneous three-channel capacity remains unproven;
+the single-channel result must never be described as a three-channel pass.
 
 Every referenced file is a `{ "path": ..., "sha256": ... }` object. The
 publisher verifies each file hash and the semantics above, then checks all 19

@@ -175,6 +175,11 @@ def render_native_beta_candidate_notes(
             )
         if not artifact_source_sha:
             raise ValueError("artifact_source_sha is required for direct-consumer notes.")
+        runtime_label = (
+            "One-channel install-smoke observation"
+            if "one-channel install-smoke" in direct_verification["runtime"].casefold()
+            else "Three-channel Whistle/HLS/caption observation"
+        )
         lines = [
             f"# CivicCast {tag.lstrip('v')} (Beta Candidate)",
             "",
@@ -196,7 +201,7 @@ def render_native_beta_candidate_notes(
             f"- Existing account data after repair: {direct_verification['repair_preservation']}",
             f"- Beta 10 to Beta 11 setup-only upgrade: {direct_verification['beta10_to_beta11_upgrade']}",
             f"- Existing account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
-            f"- Three-channel Whistle/HLS/caption observation: {direct_verification['runtime']}",
+            f"- {runtime_label}: {direct_verification['runtime']}",
             "- Gate A workflow lanes: not run.",
             "- Download-only network route: not tested.",
         ]
