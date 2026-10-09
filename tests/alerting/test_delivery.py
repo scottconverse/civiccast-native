@@ -10,12 +10,17 @@ exercise the full dispatch + retry lifecycle.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from threading import Thread
 
 import httpx
 import pytest
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from civiccast.alerting.delivery import (
@@ -149,6 +154,172 @@ def _make_sf(session: Session):
         yield session
 
     return factory
+
+
+@pytest.fixture()
+def durable_webhook(tmp_path: Path):
+    """Real transport and independent transactions, all local and disposable."""
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'alerts.sqlite'}",
+        execution_options={"schema_translate_map": {"civiccast": None}},
+    )
+    from civiccast.alerting.models import AlertChannelDb, AlertEventDb, AlertRuleDb
+
+    for model in (AlertRuleDb, AlertChannelDb, AlertEventDb, AlertEventDeliveryDb):
+        model.__table__.create(engine)
+
+    posts = []
+    responses = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            posts.append(json.loads(body))
+            self.send_response(responses.pop(0) if responses else 200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    @contextmanager
+    def factory():
+        with Session(engine) as session:
+            yield session
+
+    credentials = {"url": f"http://127.0.0.1:{server.server_port}/alerts", "secret": "local"}
+    with factory() as session:
+        upsert_alert_channel(
+            session,
+            AlertChannel(
+                channel_id="local",
+                kind="webhook",
+                label="Local",
+                target_redacted="loopback",
+                credential_handle="local",
+                created_at=_NOW,
+            ),
+        )
+        upsert_alert_rule(
+            session,
+            AlertRule(
+                rule_id="default:off-air",
+                condition="off-air",
+                severity="critical",
+                channel_ids=["local"],
+                updated_at=_NOW,
+                updated_by="test",
+            ),
+        )
+        session.commit()
+    try:
+        yield factory, credentials, posts, responses
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        engine.dispose()
+
+
+def test_durable_webhook_fire_and_resolve(durable_webhook):
+    factory, credentials, posts, _ = durable_webhook
+    evaluator = AlertEvaluator(factory, AlertDeliveryDispatch(factory, lambda _: credentials))
+    evaluator.evaluate_channel("CH-LOCAL", "STOPPED", now=_NOW)
+    assert [post["state"] for post in posts] == ["firing"]
+    evaluator.evaluate_channel(
+        "CH-LOCAL",
+        "ON_AIR",
+        encoder_fps=29.97,
+        encoder_bitrate_kbps=8000,
+        now=_NOW + timedelta(minutes=5),
+    )
+    assert [post["state"] for post in posts] == ["firing", "resolved"]
+    with factory() as session:
+        event = get_alert_events(session)[0]
+        assert event.state == "resolved"
+        assert [d.status for d in get_event_deliveries(session, event.event_id)] == ["sent", "sent"]
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_durable_webhook_failure_and_retry(durable_webhook, raises):
+    factory, credentials, posts, responses = durable_webhook
+    broken = True
+
+    def get_credential(_):
+        if raises and broken:
+            raise RuntimeError("credential provider unavailable")
+        return credentials
+
+    if not raises:
+        responses.extend([503, 503])
+    dispatch = AlertDeliveryDispatch(factory, get_credential)
+    AlertEvaluator(factory, dispatch).evaluate_channel("CH-LOCAL", "STOPPED", now=_NOW)
+    with factory() as session:
+        event = get_alert_events(session)[0]
+        delivery = get_event_deliveries(session, event.event_id)[0]
+        assert delivery.status == "failed"
+        assert delivery.next_attempt_at is not None
+    worker = AlertRetryWorker(factory, get_credential)
+    retry_at = datetime.now(UTC) + timedelta(hours=1)
+    assert worker.tick(now=retry_at) == 1
+    with factory() as session:
+        failed = get_event_deliveries(session, event.event_id)[0]
+        assert failed.status == "failed"
+        assert failed.attempts > delivery.attempts
+        assert failed.next_attempt_at is not None
+    broken = False
+    assert worker.tick(now=retry_at + timedelta(hours=1)) == 1
+    with factory() as session:
+        recovered = get_event_deliveries(session, event.event_id)[0]
+        assert recovered.status == "sent"
+        assert recovered.next_attempt_at is None
+    assert posts[-1]["state"] == "firing"
+
+
+@pytest.mark.parametrize("missing", ["event", "channel"])
+def test_durable_dispatch_missing_resource_dead_letters(durable_webhook, missing):
+    from sqlalchemy import delete
+
+    from civiccast.alerting.models import AlertChannelDb, AlertEventDb
+
+    factory, credentials, posts, _ = durable_webhook
+    # Seed a committed delivery without sending, then remove its dependency
+    # in a different transaction before the actual dispatch reads it.
+    AlertEvaluator(factory).evaluate_channel("CH-LOCAL", "STOPPED", now=_NOW)
+    with factory() as session:
+        event = get_alert_events(session)[0]
+        delivery = get_event_deliveries(session, event.event_id)[0]
+        session.execute(delete(AlertEventDb if missing == "event" else AlertChannelDb))
+        session.commit()
+    AlertDeliveryDispatch(factory, lambda _: credentials)(
+        event.event_id, delivery.delivery_id, "local", "off-air", "Local"
+    )
+    with factory() as session:
+        row = session.get(AlertEventDeliveryDb, delivery.delivery_id)
+        assert row is not None
+        assert row.status == "dead_letter"
+        assert row.next_attempt_at is None
+    assert posts == []
+
+
+def test_durable_evaluator_does_not_send_before_successful_commit(durable_webhook, monkeypatch):
+    factory, credentials, posts, _ = durable_webhook
+
+    def fail_commit(self):
+        raise RuntimeError("commit unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Session, "commit", fail_commit)
+        with pytest.raises(RuntimeError, match="commit unavailable"):
+            AlertEvaluator(
+                factory, AlertDeliveryDispatch(factory, lambda _: credentials)
+            ).evaluate_channel("CH-LOCAL", "STOPPED", now=_NOW)
+    assert posts == []
+    with factory() as session:
+        assert get_alert_events(session) == []
 
 
 # ---------------------------------------------------------------------------

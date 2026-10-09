@@ -159,7 +159,7 @@ Under the list are two sections for administrators.
 
 > **Beta.12 routing update:** A rule card's **Destinations** list shows the saved assignments. If an assigned destination no longer exists, it stays checked as **Unavailable destination** with its id; leave it checked to preserve the saved id, or uncheck it to remove it. Saving another rule setting without changing the destination checkboxes keeps its assignments.
 
-The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours end (UTC, HH:MM)**. These are in UTC, not local time. A quiet-hours window holds back WARNING and INFO alerts. CRITICAL alerts ignore quiet hours and are always sent.
+The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours end (UTC, HH:MM)**. These are in UTC, not local time. A quiet-hours window holds back WARNING and INFO alerts. CRITICAL alerts ignore quiet hours. Sending still requires an enabled, assigned destination and a working delivery service.
 
 > **Warning:** Do not click **Delete** on a destination unless you mean it. The first click turns the button into **Confirm delete?**, and a second click deletes right away. There is no cancel and no timeout.
 

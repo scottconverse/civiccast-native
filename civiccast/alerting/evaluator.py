@@ -323,6 +323,7 @@ class AlertEvaluator:
         )
         active_conditions.extend(additional_conditions)
         active_kinds = {kind for kind, _ in active_conditions}
+        dispatches: list[tuple[str, str, str, str, str]] = []
 
         with self._session_factory() as session:
             # --- Fire active conditions ---
@@ -336,7 +337,7 @@ class AlertEvaluator:
                     observed_at=now,
                 )
                 if event.state == "firing":
-                    self._try_dispatch(session, event.event_id, now)
+                    self._try_dispatch(session, event.event_id, now, dispatches)
 
             # --- Resolve conditions that are no longer active ---
             firing_rows = (
@@ -362,9 +363,14 @@ class AlertEvaluator:
                         resolved=True,
                     )
                     if resolved.state == "resolved":
-                        self._try_dispatch_resolve(session, resolved.event_id, now)
+                        self._try_dispatch_resolve(session, resolved.event_id, now, dispatches)
 
             session.commit()
+
+        # The transport opens an independent session. Publish only after the
+        # event, its current state, and the delivery are committed and visible.
+        for args in dispatches:
+            self._dispatch(*args)
 
     def evaluate_server_crash(
         self,
@@ -374,6 +380,7 @@ class AlertEvaluator:
     ) -> None:
         """Fire a one-shot server-crash alert (called at daemon startup if marker absent)."""
         now = now or datetime.now(tz=UTC)
+        dispatches: list[tuple[str, str, str, str, str]] = []
         with self._session_factory() as session:
             event = record_alert_condition(
                 session,
@@ -384,14 +391,22 @@ class AlertEvaluator:
                 observed_at=now,
             )
             if event.state == "firing" and event.occurrence_count == 1:
-                self._try_dispatch(session, event.event_id, now)
+                self._try_dispatch(session, event.event_id, now, dispatches)
             session.commit()
+        for args in dispatches:
+            self._dispatch(*args)
 
     # ------------------------------------------------------------------
     # Delivery helpers
     # ------------------------------------------------------------------
 
-    def _try_dispatch(self, session: Session, event_id: str, now: datetime) -> None:
+    def _try_dispatch(
+        self,
+        session: Session,
+        event_id: str,
+        now: datetime,
+        dispatches: list[tuple[str, str, str, str, str]],
+    ) -> None:
         """Check all rules + channels for *event_id* and fire delivery if warranted."""
         event_db = session.get(AlertEventDb, event_id)
         if event_db is None:
@@ -462,11 +477,17 @@ class AlertEvaluator:
                 session, event_db.event_id, ch.channel_id, ch.kind, status, now, next_attempt_at
             )
             if status == "sent":
-                self._dispatch(
-                    event_db.event_id, delivery_id, ch.channel_id, event_db.condition, ch.label
+                dispatches.append(
+                    (event_db.event_id, delivery_id, ch.channel_id, event_db.condition, ch.label)
                 )
 
-    def _try_dispatch_resolve(self, session: Session, event_id: str, now: datetime) -> None:
+    def _try_dispatch_resolve(
+        self,
+        session: Session,
+        event_id: str,
+        now: datetime,
+        dispatches: list[tuple[str, str, str, str, str]],
+    ) -> None:
         """Dispatch resolve notification if the rule says notify_on_resolve."""
         event_db = session.get(AlertEventDb, event_id)
         if event_db is None:
@@ -519,8 +540,8 @@ class AlertEvaluator:
             delivery_id = self._write_delivery(
                 session, event_db.event_id, ch.channel_id, ch.kind, "sent", now, None
             )
-            self._dispatch(
-                event_db.event_id, delivery_id, ch.channel_id, event_db.condition, ch.label
+            dispatches.append(
+                (event_db.event_id, delivery_id, ch.channel_id, event_db.condition, ch.label)
             )
 
     def _gate_quiet_hours(
