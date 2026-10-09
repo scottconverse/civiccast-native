@@ -1,6 +1,6 @@
 # CivicCast Roadmap
 
-> **Current release:** `v1.0.0-beta.10`, published 2026-10-02 as a GitHub
+> **Current release:** `v1.0.0-beta.11`, published 2026-10-08 as a GitHub
 > pre-release (a beta candidate, not a production release).
 > `v1.0.0-beta.7`, a download-only upgrade for
 > stations already on `v1.0.0-beta.5`, is superseded, as are
@@ -16,9 +16,24 @@
 > its GitHub release page and verification record are not present here.)
 >
 > **About the numbering on this page:** the `0.1.0` / `0.2.x` / `0.3.x` labels below are
-> *capability rungs* on the road to a 1.0 general release — they are not the version you
-> download. The shipping artifact is versioned separately on the `v1.0.0-rcNN` release-candidate
-> line. A rung is "Now" when its capability is proven, regardless of the installer's rc number.
+> historical capability milestones, not versions to download. The native Windows
+> product uses `v1.0.0-beta.N` versions. The old `v1.0.0-rcNN` version line
+> belonged to the retired WSL2 product and is not an install target here.
+
+## Current native Windows work
+
+Beta 11 is published; its [verification record](releases/v1.0.0-beta.11-verification.md)
+distinguishes corrected-package checks from earlier development soaks.
+Beta 12 is in development for unattended reliability and existing operator
+workflows: upgrades and recovery, caption health, bounded logs, summary
+approval/export, administrator and Control Room recovery, remote media controls,
+alert routing and presentation, paywall settings, hardware operation, and
+documentation consistency. It is not yet released.
+
+The longer-term plan below is retained as historical context. Its capability
+claims and old-platform evidence do not establish current native Windows
+package acceptance. See [project status](../PROJECT-STATUS.md) and the release
+verification record for current evidence.
 
 A plain-English view of where CivicCast is today and where it's headed. "Now" is the
 capability rung the product has actually reached. "Next" and "Later" are ordered by
@@ -108,8 +123,8 @@ plus performance tuning and security hardening based on what that surfaces.
 Every capability above is either genuinely finished or honestly and clearly scoped as a
 known limitation — no capability is claimed as done without evidence behind it. CivicCast
 has been running in real, sustained production use at one or more stations, not just in a
-lab. At that point CivicCast graduates from controlled beta (already available today, at
-`v1.0.0-rcNN`) to a fully supported 1.0 general release.
+lab. At that point the native Windows product graduates from controlled beta
+(`v1.0.0-beta.N`) to a fully supported 1.0 general release.
 
 ## How this roadmap is used
 

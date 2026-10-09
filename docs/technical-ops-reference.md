@@ -24,10 +24,9 @@ toccolor: black
 > [User Manual](USER-MANUAL.md).
 >
 > **Release line.** This repository carries the native Windows product, whose
-> version is `1.0.0-beta.11` (`civiccast/_native_version.py`), the owner-held
-> unpublished candidate. The latest published release is beta.10 (a GitHub
-> pre-release, published 2026-10-02;
-> `v1.0.0-beta.7` is superseded). `docs/releases/release-truth.yaml` is the authored source for
+> latest published release is `v1.0.0-beta.11` (a GitHub pre-release,
+> published 2026-10-08); Beta 12 is in development. Beta 10 and earlier
+> published betas are superseded. `docs/releases/release-truth.yaml` is the authored source for
 > release state -- read it rather than any version number quoted in prose,
 > including this one.
 >

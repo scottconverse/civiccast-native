@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- No additional changes recorded.
+- Correct stale project status, roadmap, technical operations and field quick-start wording: Beta 11 is published, Beta 12 is in development, and the corrected Beta 11 package's fresh-install results do not establish upgrades, GPU operation or sustained three-channel capacity.
 
 ## [1.0.0-beta.11] - 2026-10-08
 

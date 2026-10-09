@@ -117,13 +117,17 @@ NVIDIA CUDA systems can select Whisper as the primary engine. CPU-only Medium
 Whisper fallback has not demonstrated real-time capacity. AMD or Intel
 graphics do not imply Whisper GPU acceleration.
 
-The packaged installer, clean install, upgrade and download-only installation
-paths still need their own candidate-specific verification. SDI hardware, a
-cable headend and production cutover are outside this field-test evidence.
+The corrected Beta 11 package from source `400cff08` passed a fresh offline
+CPU-only Windows Sandbox installation with the complete kit, installed Help
+verification, and a five-minute single-channel Whistle output check. See the
+[package verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md).
+Upgrade, repair, setup-only downloading, GPU operation and sustained
+three-channel capacity remain unverified for that revision. SDI hardware,
+a cable headend and production cutover are outside this field-test evidence.
 
 ## After a successful field test
 
 Keep the signed kit, trusted handoff, installer log, recovery-kit confirmation,
 and candidate-bound tester evidence together. A successful local installation
-or soak is evidence for the named candidate only; it does not by itself make
-beta.11 the public current release.
+or soak is evidence for the named candidate only. Beta 11 is already publicly
+published as a pre-release; field results inform suitability for your station.
