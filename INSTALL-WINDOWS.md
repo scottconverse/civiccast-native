@@ -14,12 +14,14 @@ pre-release, not a production release. The release includes the signed
 `setup.exe`, five runtime `.ccpack` assets, `SHA256SUMS.txt`, installer
 sidecar metadata, and manuals:
 <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>.
-The October 8 package (producer source `b7cc3e7c`, build `37827938199`) was
-installed as an in-place refresh over an existing Beta 11 host; it returned
-healthy on the current schema, and a brief three-channel observation showed
-advancing HLS and changing captions. A clean-machine
-install, failed-install repair, Beta 10 upgrade, and longer capacity run were
-not performed for this exact package. See
+The October 8 documentation/help revision (producer `400cff08`, signed build
+`37857705750`) passed a fresh Windows Sandbox installation using the complete
+local kit, with networking and virtual GPU disabled and 9 GiB guest RAM. Setup
+exited successfully after about 30 minutes, including offline model self-tests.
+A five-minute single-channel observation showed advancing HLS and Whistle
+captions, and installed Help matched the exact package. Failed-install repair,
+Beta 10 upgrade, GPU acceleration and longer capacity tests were not performed
+for this revision. See
 [`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md)
 for its tested scope and limits.
 

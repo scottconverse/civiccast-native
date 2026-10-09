@@ -40,7 +40,7 @@ entries:
   - tag: v1.0.0-beta.11
     status: current
     notes: >-
-      Published by publish_beta_candidate.py, artifact source b7cc3e7cc174d6fe2e22cfea73126f9b2847d197, tag target 79e6431dfea248b11b079cff69408192ef22816a, build run 37827938199, direct physical-host consumer receipt C:\Dev\Claude\civiccast-beta11-whistle\outputs\beta11-candidate-b7cc3e7c\consumer-evidence-receipt.json; Sandbox clean-install, repair, and Beta 10 upgrade lanes not run; Gate A not run.
+      Published October 8; documentation/help assets revised from producer 400cff08f72a4555f9de57e790a298ecefdb0cce, signed build 37857705750. Original tag target 79e6431dfea248b11b079cff69408192ef22816a is unchanged. Revised package passed a fresh offline CPU-only Windows Sandbox installation with the complete local kit, a five-minute single-channel Whistle output check, and installed Help verification; actual public installer/manual downloads and all 12 asset digests matched. Repair, Beta 10 upgrade, GPU and capacity lanes were not run for this revision. Original producer b7cc3e7cc174d6fe2e22cfea73126f9b2847d197, build 37827938199, passed its separate same-version physical-host refresh and brief three-channel output check; those results are preserved in the verification record rather than inherited by this revision.
   - tag: v1.0.0-beta.10
     status: superseded
     superseded_by: v1.0.0-beta.11

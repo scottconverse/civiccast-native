@@ -6,11 +6,12 @@
 > [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11).
 > This is a public beta, not a production release or an SLA-backed field
 > release. The [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md)
-> identifies the exact package and its evidence: a same-version refresh on one
-> existing development host, with two output observations 41 seconds apart.
-> That check did not establish a clean install, failed-install repair, Beta 10
-> upgrade, Gate A acceptance, long-duration operation, capacity, or field
-> acceptance. See [BRANCHES.md](BRANCHES.md) for release identity and status.
+> identifies the documentation/help revision (`400cff08`, signed build
+> `37857705750`): a fresh CPU-only Windows Sandbox installation, a five-minute
+> single-channel output check, and installed Help verification. It separately
+> preserves the original package's in-place host observations. The revision
+> does not inherit repair, Beta 10 upgrade, GPU, capacity, long-duration or field
+> acceptance results. See [BRANCHES.md](BRANCHES.md) for release identity and status.
 >
 > **Historical Beta 10 evidence:** the published Beta 10 package passed its
 > Gate A clean-install lane (10 of 10 criteria in Windows Sandbox on

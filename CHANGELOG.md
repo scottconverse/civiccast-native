@@ -2,19 +2,18 @@
 
 ## [Unreleased]
 
-- Align the current user manual, in-app help, and public setup guidance on
-  live-caption controls, screen navigation, and installer recovery. The
-  corrected documentation package is pending its own exact-source build.
+- No additional changes recorded.
 
 ## [1.0.0-beta.11] - 2026-10-08
 
+- Documentation/help download revision: reconcile the manual, contextual help, tooltips, field and error descriptions, help links, installer instructions, architecture/support, README and public website with actual Beta 11 behavior. Regenerate PDF, Word and in-app manual from the same source. Producer `400cff08`, signed build `37857705750`, passed a fresh CPU-only Windows Sandbox install using the complete local kit, a five-minute single-channel Whistle output check, and installed Help checks. Revised public installer/manual downloads and all 12 asset digests were verified. The published tag is unchanged; earlier package and development-soak results remain separate.
 - Live captions use Whistle as the CPU primary, with Whisper fallback scoped to the affected channel and optional NVIDIA CUDA selection. The first recognition is published without waiting for repeat transcription agreement; Whistle primary inference is serialized across channels within each station runtime, fallback Whisper requests use a separate serialization lock, and Needle telemetry is disabled.
 - Failed Whisper fallback workers are closed before replacement. The service keeps one immediate replay and uses a serialized 30-second cooldown before creating another child, preventing repeated failures from causing an unbounded restart loop.
 - Supervisor startup/readiness is serialized with service ticks. A child is not accepted as ready based on another process's `/health` response. Disabled channels still drain explicit stop commands, while queued start/reload/takeover/handback commands cannot put a disabled channel back on air.
 - On Windows, replacing a playout worker now releases the old synchronous named-pipe accept before closing its handle, avoiding a per-channel restart hang.
 - The installer package includes the Whistle asset path and activates embedded station assets before service checks. Live cue history and delivery bookkeeping are bounded; live captions do not automatically create permanent review records or audio-evidence archives.
 - The owner accepted the 24-hour three-station caption soak on October 7, then the 36-hour milestone on October 8: 102 eligible checkpoints passed (306 sampled channel checks), with four gaming-period checkpoints excluded. These measurements came from the development station with its dev7 overlay; they are separate from installer qualification. See [soak results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md).
-- The exact signed Beta 11 installer from source `b7cc3e7c` (build `37827938199`) refreshed an existing Beta 11 host in place, exited successfully, and returned the service healthy on Beta 11 with the current database schema and schedule loop enabled. Two observations 41 seconds apart showed advancing HLS video/audio and changing captions on all three channels. This is a brief output check, not a clean-install, repair, cross-version upgrade, or capacity result. See [package verification](docs/releases/v1.0.0-beta.11-verification.md).
+- The original signed Beta 11 installer from source `b7cc3e7c` (build `37827938199`) refreshed an existing Beta 11 host in place, exited successfully, and returned the service healthy on Beta 11 with the current database schema and schedule loop enabled. Two observations 41 seconds apart showed advancing HLS video/audio and changing captions on all three channels. This is historical evidence for that package, not a clean-install, repair, cross-version upgrade, or capacity result for the documentation/help revision. See [package verification](docs/releases/v1.0.0-beta.11-verification.md).
 - Fixed sidecar cleanup that could close a file descriptor reused by another writer. Rebuilt in-product help also preserves later manual sections when command examples contain angle brackets.
 
 All notable changes to this project will be documented in this file.
