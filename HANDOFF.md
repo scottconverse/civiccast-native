@@ -1,4 +1,16 @@
-# Current continuation state - 2026-10-08 documentation/help revision
+# Current continuation state - 2026-10-09 Beta 12
+
+This section supersedes every older status entry below.
+
+- Owner authorized the full twelve-item Beta 12 punch list and build. Branch: `codex/beta12-reliability`; source checkpoint `f44ca32808c51495eb88f50c471a7b895d12de5c`; draft [PR #236](https://github.com/scottconverse/civiccast-native/pull/236). Beta 12 is unpublished; Beta 11 remains the public download.
+- Affected-source verification passed 1,178 backend tests with six Windows skips for POSIX FIFO contracts, 155 operator screen tests, operator/public production builds, all 690 mypy source files, and 65 release-identity/documentation checks. API, in-app manual and PDF/Word were regenerated and currentness checked. These results are separate from whole-repository CI and package qualification.
+- Hosted CI at that checkpoint found three operator browser failures and two Windows recovery-permission assertions. Follow-up work fixes missing session-lookup mocks, distinguishes stale-summary conflicts from record-export errors, corrects Control Room helper contrast, and verifies effective Windows ACL principals including a guarded OWNER RIGHTS alias. Production permission hardening is unchanged. Record final follow-up checks and commit before calling these CI findings closed.
+- Provisional signed build `37996681227` was cancelled so the final producer can include the fixes. Only its exact-source manual artifact was downloaded; no Beta 12 kit is assembled or qualified. Dispatch a new exact-source build after the CI findings are resolved, then verify the complete offline kit and exercise fresh installation, repair and cross-version preservation on isolated Windows targets.
+- Actual Ryzen iGPU and Intel/NVIDIA installation/walkthrough/three-channel reports remain pending. Owner says installation is starting now. The corrected Beta 11 package and older development soak do not qualify Beta 12.
+- Keep the running host station, credentials, models and settings untouched. No host installation or restart is authorized. Preserve unrelated untracked `ops/beta10-oversight/evidence/`.
+- Detailed working evidence and continuation state: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\beta11-documentation-sync\CURRENT-HANDOFF.md`. Candidate scope and limits: [Beta 12 verification](docs/releases/v1.0.0-beta.12-verification.md).
+
+## Historical Beta 11 documentation/help checkpoint
 
 This section supersedes every older status entry below.
 

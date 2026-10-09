@@ -32,8 +32,13 @@ const approvedSummary = {
 
 async function openWithRecordBackend(
   page: import('@playwright/test').Page,
-  options: { failExport?: boolean } = {},
+  options: {
+    failApproval?: boolean
+    failExport?: boolean
+    summary?: typeof approvedSummary
+  } = {},
 ) {
+  const reviewSummary = options.summary ?? approvedSummary
   const roles = ['records_clerk']
   await page.route('**/api/staff/auth/me', async (route) => {
     await route.fulfill({
@@ -145,7 +150,29 @@ async function openWithRecordBackend(
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ items: [approvedSummary], next_cursor: null }),
+      body: JSON.stringify({ items: [reviewSummary], next_cursor: null }),
+    })
+  })
+  await page.route('**/api/staff/summaries/summary-approved/approve', async (route) => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().postDataJSON()).toEqual({
+      expected_audit_fingerprint: reviewSummary.audit_fingerprint,
+    })
+    if (options.failApproval) {
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          detail:
+            "Summary 'summary-approved' changed or is no longer pending review. Reload and review it before approving.",
+        }),
+      })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ...reviewSummary, status: 'approved' }),
     })
   })
   await page.route('**/api/staff/records', async (route) => {
@@ -154,7 +181,8 @@ async function openWithRecordBackend(
         status: 409,
         contentType: 'application/json',
         body: JSON.stringify({
-          detail: 'Approve the sourced summary before exporting a signed PDF/A record.',
+          detail:
+            'PDF/A export dependencies are not installed. Install the CivicCast release environment, then rerun signed-record export.',
         }),
       })
       return
@@ -213,8 +241,32 @@ test.describe('signed record export', () => {
     await openWithRecordBackend(page, { failExport: true })
     await page.getByRole('button', { name: 'Export signed record' }).click()
     await expect(page.getByText('Could not complete summary review action.')).toBeVisible()
-    await expect(page.getByText(/Approve the sourced summary before exporting/)).toBeVisible()
-    await expect(page.getByText(/Dismiss this message and try the action again/)).toBeVisible()
+    await expect(page.getByText(/PDF\/A export dependencies are not installed/)).toBeVisible()
+    await expect(page.getByText(/Resolve the signed-record export issue described above, then try the export again/)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible()
+    await page.getByRole('button', { name: 'Dismiss' }).click()
+    await expect(page.getByText('Could not complete summary review action.')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Export signed record' })).toBeEnabled()
+  })
+
+  test('stale approval conflict explains reload and re-review', async ({ page }) => {
+    await openWithRecordBackend(page, {
+      failApproval: true,
+      summary: { ...approvedSummary, status: 'pending_review' },
+    })
+    await expect(page.getByRole('button', { name: 'Approve summary' })).toBeEnabled()
+    await page.getByRole('button', { name: 'Approve summary' }).click()
+
+    await expect(page.getByText('Could not complete summary review action.')).toBeVisible()
+    await expect(
+      page.getByText(/changed or is no longer pending review\. Reload and review it before approving/),
+    ).toBeVisible()
+    await expect(
+      page.getByText(/Reload the summaries and review the updated draft before trying again/),
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Reload summaries' }).click()
+
+    await expect(page.getByText('Could not complete summary review action.')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Approve summary' })).toBeEnabled()
   })
 })

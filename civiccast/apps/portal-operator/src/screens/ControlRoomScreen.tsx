@@ -392,12 +392,12 @@ export function SafeStatePanel({
           {plannedSafe && <CuePlanPreview plan={plannedSafe} />}
           {planError && <Banner tone="err">{planError}</Banner>}
           {!plannedSafe && !isOnAir && (
-            <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            <div className="text-xs" style={{ color: 'var(--cc-ink)' }}>
               Dry Run checks the current device and cue state before this recovery cue can be sent.
             </div>
           )}
           {!plannedSafe && isOnAir && (
-            <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            <div className="text-xs" style={{ color: 'var(--cc-ink)' }}>
               Panic sends the configured safe-state cue immediately, including after the On-Air deadline.
             </div>
           )}

@@ -55,8 +55,21 @@ function LoadingState() {
   )
 }
 
-function ErrorState({ error, onRetry, actionFailed = false }: { error: Error; onRetry: () => void; actionFailed?: boolean }) {
-  const conflict = actionFailed && error instanceof ApiError && error.status === 409
+type ErrorRecoveryContext = 'generic' | 'summary-conflict' | 'record-export'
+
+function ErrorState({
+  error,
+  onRetry,
+  actionFailed = false,
+  recoveryContext = 'generic',
+}: {
+  error: Error
+  onRetry: () => void
+  actionFailed?: boolean
+  recoveryContext?: ErrorRecoveryContext
+}) {
+  const conflict =
+    actionFailed && recoveryContext === 'summary-conflict' && error instanceof ApiError && error.status === 409
   return (
     <div
       role="alert"
@@ -73,6 +86,8 @@ function ErrorState({ error, onRetry, actionFailed = false }: { error: Error; on
         <strong>Next step.</strong>{' '}
         {conflict
           ? 'Reload the summaries and review the updated draft before trying again.'
+          : actionFailed && recoveryContext === 'record-export'
+          ? 'Resolve the signed-record export issue described above, then try the export again. If it continues, ask your station administrator to check CivicCast server and database health.'
           : actionFailed
           ? 'Dismiss this message and try the action again. If it continues, ask your station administrator to check CivicCast server and database health.'
           : 'Retry the request. If it continues to fail, ask your station administrator to check CivicCast server and database health.'}
@@ -477,6 +492,15 @@ export function SummaryReviewScreen() {
     exportMutation.error ??
     verifyMutation.error ??
     downloadMutation.error
+  const summaryReviewConflict =
+    (approveMutation.error === mutationError || editMutation.error === mutationError) &&
+    mutationError instanceof ApiError &&
+    mutationError.status === 409
+  const recoveryContext: ErrorRecoveryContext = summaryReviewConflict
+    ? 'summary-conflict'
+    : mutationError && exportMutation.error === mutationError
+    ? 'record-export'
+    : 'generic'
 
   return (
     <div className="flex flex-col gap-4">
@@ -506,8 +530,9 @@ export function SummaryReviewScreen() {
         <ErrorState
           error={mutationError}
           actionFailed
+          recoveryContext={recoveryContext}
           onRetry={() => {
-            if (mutationError instanceof ApiError && mutationError.status === 409) {
+            if (summaryReviewConflict) {
               void queryClient.invalidateQueries({ queryKey: ['summary-review-items'] })
             }
             approveMutation.reset()
