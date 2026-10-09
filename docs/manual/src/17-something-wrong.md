@@ -10,7 +10,7 @@ The four screens live in the left sidebar under **System Health**: **Readiness**
 
 > **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
-> **Note:** Beta.11 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how.
+> **Note:** Beta.11 was published on 2026-10-08 as a GitHub pre-release. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package and its checks: its clean-install check passed, but upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
 
 ## Check whether the station is ready (Readiness)
 
@@ -326,7 +326,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 ## Report a beta issue
 
-CivicCast is a beta (beta.11 was published as a GitHub pre-release on 2026-10-02). Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
+CivicCast is a beta. Beta.11 was published on 2026-10-08 as a GitHub pre-release; its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists its package checks and limits. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status. Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
 
 1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.

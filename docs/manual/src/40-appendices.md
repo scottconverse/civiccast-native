@@ -932,7 +932,7 @@ Bearer token
 :   The secret a tool sends in the `Authorization: Bearer` header to prove who it is to the API.
 
 Beta candidate
-:   A published release labeled by GitHub as a *pre-release* for testing, not a production release. Beta.11 is the current native-line pre-release.
+:   A release labeled by GitHub as a *pre-release* for testing, not a production release. Check the project's releases page for the current native-line version and its publication status.
 
 Board (community board)
 :   The between-programs picture a channel shows: zones for a ticker, schedule, logo, sponsor and approved *bulletins*.
@@ -1536,11 +1536,11 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 Published releases of the native Windows line of CivicCast, newest first. The authored source for this list is the project's release-truth file, checked against GitHub's release page. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** **v1.0.0-beta.11** is the current GitHub pre-release. Its exact source, package hash, observations and limitations are in the [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
+> **Note:** **v1.0.0-beta.11** was published as a GitHub pre-release on 2026-10-08. Its exact source, package hash, observations and limitations are in the [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). Check the project's releases page for current publication status. An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.11** | 2026-10-08 | Current. GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the current verification record for this package's source and exact evidence. |
+| **v1.0.0-beta.11** | 2026-10-08 | Published GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the Beta.11 verification record for this package's source and exact evidence. |
 | v1.0.0-beta.10 | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Superseded by beta.11 | Added program-change, loudness, looping and relay/reload work. Its eight-hour lab run used an earlier internal build; its clean-install result belongs to the beta.10 package. See Appendix H for historical evidence and limits. |
 | v1.0.0-beta.9 | 2026-09-18 (changelog date) | Never published | A version bump and an installer rebuild; its work is in beta.10. |
 | v1.0.0-beta.8 | none | Never published | Its work is in beta.10. |

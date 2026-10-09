@@ -1147,6 +1147,24 @@ class TestRealPostgresFullMigrationChain:
         script = ScriptDirectory.from_config(cfg)
         expected_head = script.get_current_head()
         eng = create_engine(postgres_url, future=True)
+
+        def media_control_columns() -> set[str]:
+            with eng.connect() as conn:
+                return set(
+                    conn.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = 'civiccast' "
+                            "AND table_name = 'remote_guest_sessions' "
+                            "AND column_name IN ("
+                            "'media_control_state', 'media_control_action', "
+                            "'media_control_requested_at')"
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
         try:
             with eng.connect() as conn:
                 db_rev = conn.execute(
@@ -1163,6 +1181,25 @@ class TestRealPostgresFullMigrationChain:
             assert seeded > 0, (
                 "alert_rules default-rule seed did not land on real Postgres "
                 "(0039 seed regression)."
+            )
+            expected_media_control_columns = {
+                "media_control_state",
+                "media_control_action",
+                "media_control_requested_at",
+            }
+            assert media_control_columns() == expected_media_control_columns, (
+                "0089 media-control columns did not land in civiccast.remote_guest_sessions"
+            )
+
+            command.downgrade(cfg, "0088_live_caption_health_alert_rules")
+            assert media_control_columns() == set(), (
+                "0089 downgrade left media-control columns behind in "
+                "civiccast.remote_guest_sessions"
+            )
+            command.upgrade(cfg, "head")
+            assert media_control_columns() == expected_media_control_columns, (
+                "0089 re-upgrade did not restore media-control columns in "
+                "civiccast.remote_guest_sessions"
             )
         finally:
             eng.dispose()

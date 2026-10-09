@@ -420,6 +420,13 @@ def test_multi_zone_snapshot_alert_zone_reflects_a_real_active_eas_overlay(
     assert alert["content"]["active"] is True
     assert alert["content"]["message"] == "A boil water notice is in effect for this service area."
 
+    active = client.get("/api/public/cg/emergency-overlay", params={"channel_id": "public"})
+    inactive = client.get("/api/public/cg/emergency-overlay", params={"channel_id": "gov-ch12"})
+    assert active.status_code == 200
+    assert active.json()["overlay_id"] == "ov-1"
+    assert active.json()["message"] == "A boil water notice is in effect for this service area."
+    assert inactive.status_code == 404
+
 
 def test_feed_catalog_public_route_is_empty_by_default(monkeypatch: MonkeyPatch) -> None:
     # WP-06: production (and ephemeral/no-DB mode without the explicit demo
@@ -698,7 +705,7 @@ def _zones_from_payload(payload: object) -> list[dict[str, object]]:
 
 def _public_get_routes() -> list[tuple[str, str]]:
     """Enumerate every GET route the public CG router exposes, substituting a
-    concrete channel_id for the {channel_id} path param.
+    concrete channel_id for path or required query parameters.
 
     Programmatic, not a hand-maintained list: a future endpoint added to
     civiccast.cg.router.public_router is automatically picked up by the
@@ -709,6 +716,13 @@ def _public_get_routes() -> list[tuple[str, str]]:
         if not isinstance(route, APIRoute) or "GET" not in route.methods:
             continue
         path = route.path.format(channel_id="public")
+        query = [
+            f"{parameter.name}=public"
+            for parameter in route.dependant.query_params
+            if parameter.name == "channel_id"
+        ]
+        if query:
+            path = f"{path}?{'&'.join(query)}"
         routes.append((route.name, path))
     return routes
 
@@ -749,7 +763,10 @@ def test_production_app_factory_exposes_no_example_feed(monkeypatch: MonkeyPatch
         # route.path already carries the router's own "/api/public/cg" prefix
         # (confirmed against civiccast.cg.router.public_router's routes).
         response = client.get(path)
-        assert response.status_code == 200, f"{name} ({path}) returned {response.status_code}"
+        expected_status = 404 if name == "emergency_overlay" else 200
+        assert response.status_code == expected_status, (
+            f"{name} ({path}) returned {response.status_code}"
+        )
         for sample in _SAMPLE_STRINGS:
             assert sample not in response.text, f"{name} ({path}) leaked {sample!r}"
 
@@ -770,6 +787,10 @@ def test_production_app_factory_never_shows_invented_zone_content(monkeypatch: M
     zones_checked = 0
     for name, path in _public_get_routes():
         response = client.get(path)
+        if name == "emergency_overlay":
+            assert response.status_code == 404
+            assert response.json()["detail"] == "No emergency overlay is active for this channel."
+            continue
         assert response.status_code == 200
         try:
             payload = response.json()

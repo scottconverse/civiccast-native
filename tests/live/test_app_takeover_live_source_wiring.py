@@ -44,7 +44,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.router import get_takeover_service
+from civiccast.egress.store import PostgresEgressStore
 from civiccast.egress.takeover_service import TakeoverNotReadyError
 from civiccast.live.models import LiveSource
 from civiccast.live.router import get_live_source_readiness_service, get_live_source_store
@@ -72,6 +74,18 @@ def durable_app_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator
     monkeypatch.setenv("CIVICCAST_FINALIZATION_WORKER", "off")
     monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
     _migrate(db_path)
+    engine = _engine_over_db()
+    try:
+        PostgresEgressStore(lambda: Session(bind=engine)).upsert_config(
+            EgressConfig(
+                channel_id=_CHANNEL,
+                enabled=True,
+                sinks=[EgressSinkSpec(kind="file", label="test", uri="file:///tmp/output.ts")],
+                slate_message="Test slate",
+            )
+        )
+    finally:
+        engine.dispose()
     yield tmp_path
 
 

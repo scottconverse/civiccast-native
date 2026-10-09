@@ -15,6 +15,7 @@ Development candidate: `v1.0.0-beta.12` (unpublished).
 - Summary errors give recovery guidance for the action that failed: a stale edit or approval requires reloading the draft; a record-export failure retains the export-specific explanation and retry path.
 - Paywall settings preserve the saved signing secret during ordinary saves. Rotation and clearing are explicit, confirmed actions; invalid secret input is not echoed in validation errors.
 - Bound raw control-plane and PostgreSQL output logs with rotating supervisor-owned capture, including PostgreSQL output after its startup launcher exits. Existing oversized logs age out through rotation; upgrading does not immediately reclaim their space.
+- Qualify the Beta 12 remote-contribution media-control migration's `remote_guest_sessions` columns to the `civiccast` schema on PostgreSQL, matching the existing SQLite behavior. The full migration chain, downgrade and re-upgrade passed against an isolated PostgreSQL 17 cluster.
 - Correct stale project status, roadmap, technical operations and field quick-start wording: Beta 11 is published, Beta 12 is in development, and the corrected Beta 11 package's fresh-install results do not establish upgrades, GPU operation or sustained three-channel capacity.
 
 ## [1.0.0-beta.11] - 2026-10-08

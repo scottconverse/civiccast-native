@@ -19,7 +19,12 @@ branch_labels = None
 depends_on = None
 
 
+def _use_schema() -> bool:
+    return op.get_bind().dialect.name != "sqlite"
+
+
 def upgrade() -> None:
+    schema = "civiccast" if _use_schema() else None
     op.add_column(
         "remote_guest_sessions",
         sa.Column(
@@ -28,18 +33,22 @@ def upgrade() -> None:
             nullable=False,
             server_default="unknown",
         ),
+        schema=schema,
     )
     op.add_column(
         "remote_guest_sessions",
         sa.Column("media_control_action", sa.String(length=30), nullable=True),
+        schema=schema,
     )
     op.add_column(
         "remote_guest_sessions",
         sa.Column("media_control_requested_at", sa.DateTime(timezone=True), nullable=True),
+        schema=schema,
     )
 
 
 def downgrade() -> None:
-    op.drop_column("remote_guest_sessions", "media_control_requested_at")
-    op.drop_column("remote_guest_sessions", "media_control_action")
-    op.drop_column("remote_guest_sessions", "media_control_state")
+    schema = "civiccast" if _use_schema() else None
+    op.drop_column("remote_guest_sessions", "media_control_requested_at", schema=schema)
+    op.drop_column("remote_guest_sessions", "media_control_action", schema=schema)
+    op.drop_column("remote_guest_sessions", "media_control_state", schema=schema)

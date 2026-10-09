@@ -1,6 +1,6 @@
-# Current contextual help and instruction inventory — beta.11
+# Contextual help and instruction inventory — Beta 11 source snapshot
 
-Audited 2026-10-08 against the beta.11 manual source and application code. This is the current inventory; [README.md](README.md) and its linked per-screen sheets are explicitly labeled historical beta.10 audit records.
+Audited 2026-10-08 against the Beta.11 manual source and application code. This is a dated source audit, not a release-status statement; check the [project releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication and download status. [README.md](README.md) and its linked per-screen sheets are explicitly labeled historical beta.10 audit records.
 
 ## Source coverage
 
@@ -27,4 +27,4 @@ Across these areas, the audit covered visible labels and tooltips, placeholders 
 
 ## Verification boundary
 
-Manual heading IDs above were checked in the current `docs/USER-MANUAL.md` and against the beta.11 manual route's expected TOC IDs. The rendered manual and package/build checks are handled by the repository owner. No USER-MANUAL source, generated docsite JSON, live station, or installer runtime behavior was changed in this slice. No install, activation, or station-capacity claim is made here.
+Manual heading IDs above were checked in `docs/USER-MANUAL.md` and against the Beta.11 manual route's expected TOC IDs. The rendered manual and package/build checks are handled by the repository owner. No USER-MANUAL source, generated docsite JSON, live station, or installer runtime behavior was changed in this slice. No install, activation, or station-capacity claim is made here.

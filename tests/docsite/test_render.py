@@ -88,8 +88,8 @@ def test_builtin_manual_keeps_its_full_contents_under_the_payload_limit() -> Non
     manual = json.loads(payload)
 
     assert len(payload) <= 5 * 1024 * 1024
-    assert len(manual["toc"]) == 636
-    assert len(extract_toc(manual["html"])) == 636
+    assert len(manual["toc"]) == 638
+    assert len(extract_toc(manual["html"])) == 638
     assert manual["html"].count("data:image/webp;base64,") == 29
 
 

@@ -13,7 +13,7 @@ This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.12**, the 
 
 ## What state this software is in
 
-Beta.12 is an unpublished candidate in development for unattended reliability and completion of existing operator workflows. Its installation and sustained-operation checks are pending. Beta.11, published on 8 October 2026, remains the current public pre-release for testing. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies that package revision and its installation checks; those results do not qualify Beta.12. The separate 36-hour soak belongs to an earlier dev7 development overlay. Beta.10 measurements are historical evidence in [Appendix H](#app-evidence).
+The version this manual describes is printed on its cover. Publication and download status can change; check the project's releases page for the current release. Each verification record identifies a specific package and the checks performed on it, and results for one package do not qualify another. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) documents that package's checks and limits. The separate 36-hour soak belongs to an earlier dev7 development overlay. Beta.10 measurements are historical evidence in [Appendix H](#app-evidence).
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
 
@@ -64,7 +64,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Where to get help and report problems
 
-Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. The beta.11 release and its downloads are at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>. The [beta.11 package verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) describes the checked package and its limits.
+Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. The [Beta.11 package verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) remains available for that package's checks and limits.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.11-verification.md; docs/releases/v1.0.0-beta.10-verification.md (historical appendix only); docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->
 
@@ -2269,7 +2269,7 @@ CivicCast gives each person one or more *roles*. A role is a named set of permis
 
 > **Note:** In a normal station, everyone signs in with the first administrator account made during First Setup. That account carries all five roles, so you will see every screen and every button. The limits in the table matter only if your IT person made narrower sign-in passes for some staff.
 
-> **Note:** Beta.11 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. We read the code behind every screen in this chapter. We could not run every feature against a live station. Where that matters, the text says "In testing we could not confirm".
+> **Note:** Beta.11 was published on 2026-10-08 as a GitHub pre-release. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package and its checks: its clean-install check passed, but upgrade and download-only checks were not run, and no human field-tester has signed it off. We read the code behind every screen in this chapter, but could not run every feature against a live station. Where that matters, the text says "In testing we could not confirm". Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
 
 > **Warning:** Several screens in this chapter ask you to type dates. CivicCast treats those dates as **UTC**, the world reference clock. In the United States UTC is several hours ahead of local time. Mountain daylight time is 6 hours behind UTC. A meeting that starts at 7 p.m. Mountain daylight time is already 1 a.m. UTC *the next day*. When a report looks one day off, this is almost always why.
 
@@ -2609,7 +2609,7 @@ The four screens live in the left sidebar under **System Health**: **Readiness**
 
 > **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
-> **Note:** Beta.11 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how.
+> **Note:** Beta.11 was published on 2026-10-08 as a GitHub pre-release. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package and its checks: its clean-install check passed, but upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
 
 ### Check whether the station is ready (Readiness)
 
@@ -2925,7 +2925,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 ### Report a beta issue
 
-CivicCast is a beta (beta.11 was published as a GitHub pre-release on 2026-10-02). Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
+CivicCast is a beta. Beta.11 was published on 2026-10-08 as a GitHub pre-release; its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists its package checks and limits. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status. Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
 
 1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
@@ -9143,7 +9143,7 @@ Bearer token
 :   The secret a tool sends in the `Authorization: Bearer` header to prove who it is to the API.
 
 Beta candidate
-:   A published release labeled by GitHub as a *pre-release* for testing, not a production release. Beta.11 is the current native-line pre-release.
+:   A release labeled by GitHub as a *pre-release* for testing, not a production release. Check the project's releases page for the current native-line version and its publication status.
 
 Board (community board)
 :   The between-programs picture a channel shows: zones for a ticker, schedule, logo, sponsor and approved *bulletins*.
@@ -9747,11 +9747,11 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 Published releases of the native Windows line of CivicCast, newest first. The authored source for this list is the project's release-truth file, checked against GitHub's release page. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** **v1.0.0-beta.11** is the current GitHub pre-release. Its exact source, package hash, observations and limitations are in the [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
+> **Note:** **v1.0.0-beta.11** was published as a GitHub pre-release on 2026-10-08. Its exact source, package hash, observations and limitations are in the [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). Check the project's releases page for current publication status. An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.11** | 2026-10-08 | Current. GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the current verification record for this package's source and exact evidence. |
+| **v1.0.0-beta.11** | 2026-10-08 | Published GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the Beta.11 verification record for this package's source and exact evidence. |
 | v1.0.0-beta.10 | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Superseded by beta.11 | Added program-change, loudness, looping and relay/reload work. Its eight-hour lab run used an earlier internal build; its clean-install result belongs to the beta.10 package. See Appendix H for historical evidence and limits. |
 | v1.0.0-beta.9 | 2026-09-18 (changelog date) | Never published | A version bump and an installer rebuild; its work is in beta.10. |
 | v1.0.0-beta.8 | none | Never published | Its work is in beta.10. |

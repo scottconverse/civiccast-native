@@ -1,10 +1,10 @@
 # Historical in-app help audit: beta.10 snapshot
 
-This is the archived documentation-sprint index from 2026-10-03. It describes beta.10 screens and proposed copy from before the current beta.11 work. The 62 linked per-screen audit files are retained for traceability and each is marked as a historical snapshot. Do not apply their proposed strings as current guidance. The current beta.11 surface inventory and reconciled findings are in [help.md](help.md).
+This is the archived documentation-sprint index from 2026-10-03. It describes beta.10 screens and proposed copy from before the Beta.11 audit. The 62 linked per-screen audit files are retained for traceability and each is marked as a historical snapshot. Do not apply their proposed strings as current guidance. The separate Beta.11 source inventory and its reconciled findings are in [help.md](help.md).
 
 ## How to use these files
 
-The tables below are the historical beta.10 audit index, not a current implementation checklist. Their mismatch counts, source lines, and proposed copy record what that audit found at the time. Nothing in those archived tables establishes current beta.11 behavior; use [help.md](help.md) for the current code coverage and findings.
+The tables below are the historical beta.10 audit index, not a current implementation checklist. Their mismatch counts, source lines, and proposed copy record what that audit found at the time. Nothing in those archived tables establishes later behavior; use [help.md](help.md) for the dated source-audit scope and findings.
 
 ## Operator console: Run Meeting
 
@@ -102,7 +102,7 @@ These came from the manual writers, the fact-checkers and the help-file writers.
 
 | Area | Problem | Where documented |
 | --- | --- | --- |
-| Summary review | Corrected in beta.12 source: approval uses the reviewed draft fingerprint; approved summaries remain available for signed-record export and history. Package verification is pending | `summary.md`, manual ch. 5 |
+| Summary review | Corrected in beta.12 source: approval uses the reviewed draft fingerprint; approved summaries remain available for signed-record export and history. Package checks are recorded with the matching release | `summary.md`, manual ch. 5 |
 | Contributors | Send to schedule likely fails for any submission with a requested air date (no time zone on the producer's date); producers never see operator notes | `contribute.md`, manual ch. 3 |
 | Program Guide | Skipped airings are never retried by Refresh guide; the Channel schedule page lists unpublished airings | `guide.md`, manual ch. 3 |
 | Auto-schedule | The screen says items need an operator commit; they are created Published and compiled hourly | `autoschedule.md`, manual ch. 3 |
