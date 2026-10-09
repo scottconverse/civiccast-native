@@ -66,12 +66,14 @@ Preserve the installer log and support bundle for every failure.
 
 Supported early-adopter paths are documented self-hosted deployment profiles,
 with Windows running CivicCast as a native Windows service (no WSL, no
-Ubuntu). Operator or beta-test installs require durable storage. The
-installer and API prepare local durable
-storage and migrations by default, then the Setup screen creates the first local
-admin and browser token. Technical admins can configure Postgres with
-`DATABASE_URL` instead. In-memory stores are for tests and throwaway
-development.
+Ubuntu). Operator or beta-test installs require durable storage. The native
+installer provisions the bundled local PostgreSQL service and saves its
+connection URL for the supervisor; a `DATABASE_URL` service-environment value
+overrides that URL. The Setup screen prepares the database schema before the
+first admin and recovery kit are created. Standalone app use can prepare a
+local SQLite database when no database URL is configured; this is not the
+native Windows service default. In-memory stores are for tests and explicitly
+enabled throwaway development.
 
 ## Native Windows Beta
 
@@ -97,9 +99,12 @@ If you are working on, evaluating, or running the native line:
   SLA'd, or fully field-proven path. The same "community-driven, no SLA"
   posture above applies. The Beta 11 verification record
   ([`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md))
-  states what was and was not proven (the superseded Beta 10 and beta.7 records are
-  [`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md));
-  they are engineering records, not a support commitment.
+  states what was and was not proven. The superseded Beta 10 and Beta 7
+  verification records are
+  [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md)
+  and
+  [`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md);
+  these are engineering records, not a support commitment.
 
 This section will be replaced with a real support surface once the native
 line has its own proof boundary document beyond those verification records.
