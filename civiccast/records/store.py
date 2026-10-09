@@ -8,7 +8,7 @@ import json
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -31,6 +31,12 @@ class RecordStore(Protocol):
         artifact_bytes: bytes,
     ) -> RecordExportResponse: ...
     def get_record(self, record_id: str) -> RecordExportResponse | None: ...
+    def list_records(
+        self,
+        *,
+        summary_id: str | None = None,
+        limit: int = 50,
+    ) -> list[RecordExportResponse]: ...
     def get_artifact(self, record_id: str) -> bytes | None: ...
 
 
@@ -55,6 +61,17 @@ class InMemoryRecordStore:
 
     def get_record(self, record_id: str) -> RecordExportResponse | None:
         return self._records.get(record_id)
+
+    def list_records(
+        self,
+        *,
+        summary_id: str | None = None,
+        limit: int = 50,
+    ) -> list[RecordExportResponse]:
+        records = list(reversed(list(self._records.values())))
+        if summary_id is not None:
+            records = [record for record in records if record.summary_id == summary_id]
+        return records[:limit]
 
     def get_artifact(self, record_id: str) -> bytes | None:
         return self._artifacts.get(record_id)
@@ -117,17 +134,30 @@ class PostgresRecordStore:
             ).first()
             if row is None:
                 return None
-            return RecordExportResponse.model_validate(
-                {
-                    "record_id": row.record_id,
-                    "summary_id": row.summary_id,
-                    "status": row.status,
-                    "audit_fingerprint": row.audit_fingerprint,
-                    "pdfa": json.loads(row.pdfa_metadata_json),
-                    "timestamp_proof": json.loads(row.timestamp_proof_json),
-                    "artifact_digest": row.artifact_digest,
-                }
-            )
+            return _record_from_row(row)
+
+    def list_records(
+        self,
+        *,
+        summary_id: str | None = None,
+        limit: int = 50,
+    ) -> list[RecordExportResponse]:
+        with self._session_factory() as session:
+            table = self._table_prefix(session)
+            where = " WHERE summary_id = :summary_id" if summary_id is not None else ""
+            params: dict[str, object] = {"limit": limit}
+            if summary_id is not None:
+                params["summary_id"] = summary_id
+            rows = session.execute(
+                text(
+                    f"SELECT record_id, summary_id, status, audit_fingerprint, "  # nosec B608
+                    f"artifact_digest, pdfa_metadata_json, timestamp_proof_json "
+                    f"FROM {table}record_exports{where} "
+                    "ORDER BY created_at DESC, record_id DESC LIMIT :limit"
+                ),
+                params,
+            ).fetchall()
+            return [_record_from_row(row) for row in rows]
 
     def get_artifact(self, record_id: str) -> bytes | None:
         with self._session_factory() as session:
@@ -144,3 +174,18 @@ class PostgresRecordStore:
     def _table_prefix(session: Session) -> str:
         bind = session.get_bind()
         return "" if bind.dialect.name == "sqlite" else "civiccast."
+
+
+def _record_from_row(row: object) -> RecordExportResponse:
+    row_any = cast(Any, row)
+    return RecordExportResponse.model_validate(
+        {
+            "record_id": row_any.record_id,
+            "summary_id": row_any.summary_id,
+            "status": row_any.status,
+            "audit_fingerprint": row_any.audit_fingerprint,
+            "pdfa": json.loads(row_any.pdfa_metadata_json),
+            "timestamp_proof": json.loads(row_any.timestamp_proof_json),
+            "artifact_digest": row_any.artifact_digest,
+        }
+    )

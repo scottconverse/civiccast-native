@@ -66,6 +66,18 @@ GuestSessionState = Literal[
 # Advisory-only signal derived from VDO.Ninja stats — never gates anything.
 ConnectionQuality = Literal["unknown", "good", "degraded", "poor"]
 
+# The pinned VDO.Ninja director iframe does not acknowledge targeted media
+# commands. Keep that boundary explicit: this records that CivicCast asked the
+# browser to send a command, never that VDO or the compositor applied it.
+MediaControlState = Literal["unknown", "sent_unverified"]
+MediaControlAction = Literal[
+    "audio_mute",
+    "audio_unmute",
+    "video_mute",
+    "video_unmute",
+    "disconnect",
+]
+
 # The single-use invite token must be unguessable. Mirrors the contribute/
 # receipt-token discipline but with a higher floor (S17 §3: ≥32 chars).
 INVITE_TOKEN_MIN_LENGTH = 32
@@ -135,6 +147,9 @@ class RemoteGuestSession(BaseModel):
     joined_at: datetime | None = None
     on_air_at: datetime | None = None
     ended_at: datetime | None = None
+    media_control_state: MediaControlState = "unknown"
+    media_control_action: MediaControlAction | None = None
+    media_control_requested_at: datetime | None = None
     proof_boundary: Annotated[str, Field(min_length=1, max_length=300)]
 
 
@@ -204,6 +219,13 @@ class RemoteGuestSessionDb(Base):
     joined_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     on_air_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    media_control_state: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="unknown", server_default="unknown"
+    )
+    media_control_action: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    media_control_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     proof_boundary: Mapped[str] = mapped_column(Text, nullable=False)
 
 
@@ -217,6 +239,8 @@ __all__ = [
     "GuestInvite",
     "GuestInviteDb",
     "GuestSessionState",
+    "MediaControlAction",
+    "MediaControlState",
     "RemoteGuestSession",
     "RemoteGuestSessionDb",
     "RoomState",

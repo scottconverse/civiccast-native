@@ -1,5 +1,9 @@
 > Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
 
+## Beta12 correction
+
+The current screen offers only configured, enabled egress channels when creating a room; the server rejects unknown or disabled channel ids as well. It embeds the VDO.Ninja director and sends targeted audio, camera and hangup commands. The iframe does not confirm completion; CivicCast records commands as **sent, not verified** and preserves the guest's connection state until an operator checks the director and marks them left. **Take channel live** is a separate confirmed action for the channel's configured source. Guest media composition into the channel remains unimplemented. Room closure stops new invites and keeps unverified guest sessions visible.
+
 # Remote Contribution (nav id: remotecontribution)
 
 Console group: Run Meeting. Spec written against beta.10. Paths are under `civiccast/apps/portal-operator/src/` unless they start with `civiccast/`. Authority: `docs/manual/src/13-running-meeting.md` ("Bring in remote guests") and `ops/docs-sprint/inventory/screens/remotecontribution.md`. Line numbers re-checked in the .tsx.

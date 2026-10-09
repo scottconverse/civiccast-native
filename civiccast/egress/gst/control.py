@@ -28,6 +28,7 @@ ControlCommand = (
     | tuple[Literal["reload"], str]
     | tuple[Literal["stop"]]
     | tuple[Literal["caption"], int, int, str]
+    | tuple[Literal["emergency"], str]
 )
 
 LIVE_CAPTION_LEAD_MS = 250
@@ -158,6 +159,8 @@ def parse_control_line(line: str) -> ControlCommand | None:
         return ("swap", int(parts[1].strip()))
     if verb == "reload" and len(parts) == 2 and parts[1].strip():
         return ("reload", parts[1].strip())
+    if verb == "emergency" and len(parts) == 2 and parts[1].strip():
+        return ("emergency", parts[1].strip())
     if verb == "caption" and len(parts) == 2:
         fields = parts[1].split()
         if len(fields) == 3 and fields[0].isdigit() and fields[1].isdigit() and fields[2]:

@@ -148,6 +148,7 @@ import type {
   StationSetupState,
   SummaryApprovalRequest,
   SummaryDraft,
+  SummaryEditRequest,
   SummaryGenerateRequest,
   SummaryGenerationJobRecord,
   SummaryReviewQueueResponse,
@@ -1743,6 +1744,14 @@ export function openControlRoomSession(payload: SessionOpenInput): Promise<Contr
   return request<ControlRoomSession>(`${CR}/sessions`, { method: 'POST', body: payload })
 }
 
+/** GET the currently open session for a surface so the operator can resume
+ * after a refresh and authorized admins can identify a stuck lock to release. */
+export function getOpenControlRoomSession(surfaceId: string): Promise<ControlRoomSession | null> {
+  return request<ControlRoomSession | null>(
+    `${CR}/surfaces/${encodeURIComponent(surfaceId)}/session`,
+  )
+}
+
 export function getControlRoomSession(sessionId: string): Promise<ControlRoomSession> {
   return request<ControlRoomSession>(`${CR}/sessions/${encodeURIComponent(sessionId)}`)
 }
@@ -1952,6 +1961,25 @@ export const putContributionGuestOnAir = (id: string) => guestAction(id, 'on-air
 export const muteContributionGuest = (id: string) => guestAction(id, 'mute')
 export const takeContributionGuestOffAir = (id: string) => guestAction(id, 'off-air')
 export const dropContributionGuest = (id: string) => guestAction(id, 'drop')
+
+export type ContributionMediaControlAction =
+  | 'audio_mute'
+  | 'audio_unmute'
+  | 'video_mute'
+  | 'video_unmute'
+  | 'disconnect'
+
+/** Records a browser-sent VDO director command as unverified. The API does not
+ * control VDO media itself and this response is not a provider acknowledgement. */
+export function recordContributionMediaControlRequest(
+  sessionId: string,
+  action: ContributionMediaControlAction,
+): Promise<RemoteGuestSession> {
+  return request<RemoteGuestSession>(
+    `${RC}/sessions/${encodeURIComponent(sessionId)}/media-control-request`,
+    { method: 'POST', body: { action } },
+  )
+}
 
 export function contributionDiagnostics(): Promise<VdoDiagnostics> {
   return request<VdoDiagnostics>(`${RC}/diagnostics`)
@@ -2210,6 +2238,16 @@ export function approveSummary(
   )
 }
 
+export function editSummary(
+  summaryId: string,
+  payload: SummaryEditRequest,
+): Promise<SummaryDraft> {
+  return request<SummaryDraft>(
+    `/api/staff/summaries/${encodeURIComponent(summaryId)}`,
+    { method: 'PATCH', body: payload },
+  )
+}
+
 export function exportSignedRecord(
   payload: RecordExportApiRequest,
 ): Promise<RecordExportResponse> {
@@ -2217,6 +2255,21 @@ export function exportSignedRecord(
     method: 'POST',
     body: payload,
   })
+}
+
+export function listSignedRecords(summaryId: string, limit = 10): Promise<RecordExportResponse[]> {
+  const query = new URLSearchParams({ summary_id: summaryId, limit: String(limit) })
+  return request<RecordExportResponse[]>(`/api/staff/records?${query.toString()}`)
+}
+
+export function downloadSignedRecord(recordId: string): Promise<Blob> {
+  return downloadStaffBlob(`/api/staff/records/${encodeURIComponent(recordId)}/download`)
+}
+
+export function verifySignedRecord(recordId: string): Promise<RecordExportResponse> {
+  return request<RecordExportResponse>(
+    `/api/staff/records/${encodeURIComponent(recordId)}/verify`,
+  )
 }
 
 export function getActivityPubStatus(): Promise<ActivityPubStatusResponse> {
@@ -3571,7 +3624,7 @@ export interface PaywallConfig {
   enabled: boolean
   provider: PaywallProvider
   tiers: PaywallTier[]
-  signing_secret: string | null
+  signing_secret_present: boolean
   created_at: string
   updated_at: string
 }
@@ -3582,7 +3635,7 @@ export interface PaywallConfigInput {
   enabled: boolean
   provider: PaywallProvider
   tiers: PaywallTier[]
-  signing_secret: string | null
+  signing_secret?: string | null
 }
 
 export interface PaywallConfigUpdate {
@@ -3627,7 +3680,8 @@ export function getPaywallConfig(): Promise<PaywallConfig> {
 }
 
 /** PUT /api/staff/paywall/config — upsert. The screen sends the full config
- * (toggle + provider + tiers + signing_secret) on every save. */
+ * on every save; signing_secret is sent only to replace it or as an explicit
+ * empty string to clear it. An omitted or null secret preserves the saved one. */
 export function upsertPaywallConfig(payload: PaywallConfigInput): Promise<PaywallConfig> {
   return request<PaywallConfig>(`${PAYWALL}/config`, { method: 'PUT', body: payload })
 }

@@ -56,6 +56,50 @@ def client_and_store() -> Iterator[tuple[TestClient, InMemoryRecordStore]]:
 
 
 class TestRecordsRouter:
+    def test_list_returns_previously_exported_records(
+        self, client_and_store: tuple[TestClient, InMemoryRecordStore]
+    ) -> None:
+        client, store = client_and_store
+        record = _exported_record()
+        store.create_record(record, artifact_bytes=record.pdf_bytes)
+
+        response = client.get("/api/staff/records")
+
+        assert response.status_code == 200
+        assert [item["record_id"] for item in response.json()] == [record.record_id]
+
+    def test_list_is_filtered_by_summary_and_limited(
+        self, client_and_store: tuple[TestClient, InMemoryRecordStore]
+    ) -> None:
+        client, store = client_and_store
+        first = _exported_record("summary-1")
+        second = _exported_record("summary-2")
+        store.create_record(first, artifact_bytes=first.pdf_bytes)
+        store.create_record(second, artifact_bytes=second.pdf_bytes)
+
+        response = client.get("/api/staff/records", params={"summary_id": "summary-2", "limit": 1})
+
+        assert response.status_code == 200
+        assert [item["record_id"] for item in response.json()] == [second.record_id]
+        assert "pdf_bytes" not in response.json()[0]
+
+    def test_list_download_and_verify_require_records_clerk(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(
+            "CIVICCAST_STAFF_TOKENS",
+            "meeting-token:meeting-user:Meeting User:meeting_operator",
+        )
+        app = create_app()
+        with TestClient(app, headers={"Authorization": "Bearer meeting-token"}) as client:
+            paths = (
+                "/api/staff/records",
+                "/api/staff/records/record-1/download",
+                "/api/staff/records/record-1/verify",
+            )
+            for path in paths:
+                assert client.get(path).status_code == 403
+
     def test_export_rejects_unapproved_summary_actionably(self, client: TestClient) -> None:
         response = client.post(
             "/api/staff/records",

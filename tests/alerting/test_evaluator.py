@@ -199,6 +199,38 @@ class TestQuietHours:
 
 
 class TestEvaluatorDedupeAndDispatch:
+    def test_live_caption_failure_is_persisted_deduped_and_resolved(
+        self, db_session: Session, evaluator: AlertEvaluator
+    ) -> None:
+        _make_rule(db_session, "live-caption-failure", severity="warning")
+
+        evaluator.evaluate_channel(
+            "ch-1",
+            "ON_AIR",
+            additional_conditions=[("live-caption-failure", "ch-1 live-caption worker stalled")],
+            now=_NOW,
+        )
+        first = get_alert_events(db_session, state="firing")
+        assert [event.condition for event in first] == ["live-caption-failure"]
+        first_deliveries = get_event_deliveries(db_session, first[0].event_id)
+        assert len(first_deliveries) == 1
+        assert first_deliveries[0].status == "suppressed"
+
+        evaluator.evaluate_channel(
+            "ch-1",
+            "ON_AIR",
+            additional_conditions=[("live-caption-failure", "ch-1 live-caption worker stalled")],
+            now=_NOW + timedelta(seconds=10),
+        )
+        assert len(get_alert_events(db_session, state="firing")) == 1
+
+        evaluator.evaluate_channel("ch-1", "ON_AIR", now=_NOW + timedelta(seconds=20))
+        resolved = get_alert_events(db_session, state="resolved")
+        assert [event.condition for event in resolved] == ["live-caption-failure"]
+        resolution_attempts = get_event_deliveries(db_session, resolved[0].event_id)
+        assert len(resolution_attempts) == 2
+        assert all(attempt.status == "suppressed" for attempt in resolution_attempts)
+
     def test_first_off_air_no_channels_fires_event_and_logs_suppressed_delivery(
         self, db_session: Session, evaluator: AlertEvaluator, dispatched: list
     ) -> None:

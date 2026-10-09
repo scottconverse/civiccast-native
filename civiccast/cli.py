@@ -41,6 +41,7 @@ from civiccast.installer.service import (
     build_installer_summary,
     run_first_health_check,
 )
+from civiccast.native.admin_recovery import admin_app
 from civiccast.native.runtime_cli import runtime_app
 from civiccast.platform.hardware import HardwareProbe, probe
 
@@ -141,6 +142,7 @@ app.add_typer(output_app)
 # console script -- see that module's docstring for the dual-registration
 # rationale.
 app.add_typer(runtime_app)
+app.add_typer(admin_app)
 
 
 def _version_callback(value: bool) -> None:

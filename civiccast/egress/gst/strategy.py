@@ -828,6 +828,7 @@ class GstPlayoutStrategy:
         element_probe: Callable[[str], bool] | None = None,
         is_windows: bool | None = None,
         supports_content_reload: bool | None = None,
+        emergency_provider: Callable[[str], Any] | None = None,
     ) -> None:
         self._launch = worker_launcher or _default_worker_launcher
         self._python = python_executable or sys.executable
@@ -875,6 +876,115 @@ class GstPlayoutStrategy:
         # ``CaptionTapWorker._disabled_announced``. Cleared by ``start()``.
         self._hevc_caption_warning_announced: set[str] = set()
         self._caption_disabled_sessions: set[str] = set()
+        self._emergency_provider = emergency_provider
+        self._emergency_keys: dict[str, str] = {}
+        self._emergency_pending: dict[str, tuple[str, dict[str, Any] | None]] = {}
+        self._emergency_pending_sent: set[str] = set()
+        self._emergency_images: dict[str, set[Path]] = {}
+        self._emergency_channels: set[str] = set()
+
+    def emergency_presentation_ready(self, channel_id: str) -> bool:
+        return channel_id in self._emergency_channels
+
+    def _reserve_emergency_compositor(self, leg: Any, channel_dir: Path) -> Any:
+        from civiccast.eas.presentation import presentation_enabled
+        from civiccast.egress.gst.graph import ElementSpec, GraphicsOverlayLayer, GraphicsOverlayLeg
+        from civiccast.egress.gst.graphics_overlay import write_rgba_png
+
+        if not presentation_enabled():
+            return leg
+        factory = next(
+            (name for name in ("d3d11compositor", "compositor") if self._element_probe(name)), None
+        )
+        if factory is None:
+            raise RuntimeError(
+                "Emergency presentation requires a supported graphics compositor; no output capability is available."
+            )
+        if leg is not None:
+            return replace(leg, compositor=ElementSpec(factory, name="graphics_overlay_comp"))
+        channel_dir.mkdir(parents=True, exist_ok=True)
+        path = channel_dir / "emergency-reservation.png"
+        write_rgba_png(path, 1, 1, b"\0\0\0\0")
+        return GraphicsOverlayLeg(
+            layers=(
+                GraphicsOverlayLayer(name="emergency-reservation", image_path=str(path), alpha=0),
+            ),
+            compositor=ElementSpec(factory, name="graphics_overlay_comp"),
+        )
+
+    def sync_emergency_overlay(self, channel_id: str, config: Any, work_dir: Path) -> bool:
+        from civiccast.eas.presentation import presentation_enabled, render_presentation
+
+        if not presentation_enabled() or self._emergency_provider is None:
+            return False
+        presentation = self._emergency_provider(channel_id)
+        key = json.dumps(
+            [presentation[0], presentation[1].model_dump(mode="json")] if presentation else None,
+            sort_keys=True,
+        )
+        pending = self._emergency_pending.get(channel_id)
+        if pending is None and self._emergency_keys.get(channel_id) == key:
+            return True
+        images = self._emergency_images.setdefault(channel_id, set())
+        if pending is not None and pending[0] != key:
+            if channel_id not in self._emergency_pending_sent:
+                # A rendered candidate that was never sent cannot be referenced
+                # by the worker. Retire it before allocating a different one.
+                if pending[1] is not None:
+                    image = Path(pending[1]["image_path"])
+                    try:
+                        image.unlink(missing_ok=True)
+                    except OSError:
+                        return False
+                    images.discard(image)
+                self._emergency_pending.pop(channel_id, None)
+            pending = None
+        if pending is None:
+            payload = None
+            if presentation is not None:
+                profile = config.canonical_profile
+                # Keep the last usable warning on air throughout rendering.
+                # Failed render must never clear an accepted presentation.
+                payload = render_presentation(
+                    presentation[0],
+                    presentation[1],
+                    work_dir / channel_id,
+                    width=profile.width,
+                    height=profile.height,
+                )
+                images.add(Path(payload["image_path"]))
+            self._emergency_pending[channel_id] = (key, payload)
+            self._emergency_pending_sent.discard(channel_id)
+        else:
+            payload = pending[1]
+        candidate = Path(payload["image_path"]) if payload is not None else None
+        retired = images - ({candidate} if candidate is not None else set())
+        if retired or payload is None:
+            # A lost ACK may mean the worker already applied an older image.
+            # Confirm retirement of current/preroll references before unlinking.
+            if not self.send_command(work_dir, channel_id, "emergency bnVsbA=="):
+                return False
+            self._emergency_keys.pop(channel_id, None)
+            for image in retired:
+                try:
+                    image.unlink(missing_ok=True)
+                except OSError:
+                    # Keep owned paths/candidate; retry without allocating.
+                    return False
+                images.discard(image)
+        if payload is None:
+            self._emergency_keys[channel_id] = key
+            self._emergency_pending.pop(channel_id, None)
+            self._emergency_pending_sent.discard(channel_id)
+            return True
+        encoded = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+        self._emergency_pending_sent.add(channel_id)
+        if not self.send_command(work_dir, channel_id, f"emergency {encoded}"):
+            return False
+        self._emergency_keys[channel_id] = key
+        self._emergency_pending.pop(channel_id, None)
+        self._emergency_pending_sent.discard(channel_id)
+        return True
 
     def _caption_embed(self, channel_id: str) -> CaptionEmbedRequest | None:
         """The caption-embed request for graph assembly (None = embedding off).
@@ -1013,6 +1123,8 @@ class GstPlayoutStrategy:
         return None
 
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
+        self._emergency_keys.pop(request.channel_id, None)
+        self._emergency_channels.discard(request.channel_id)
         if request.captions_allowed:
             self._caption_disabled_sessions.discard(request.channel_id)
         else:
@@ -1040,8 +1152,11 @@ class GstPlayoutStrategy:
             audio_tracks=self._audio_tracks(request.channel_id),
             encoder_override=encoder_override,
             cg_overlay_image=self._cg_overlay_image(request, warn=True),
-            graphics_overlay=graphics_overlay_leg_from_config(
-                request.config, render_dir=channel_dir, sweep_stale=True
+            graphics_overlay=self._reserve_emergency_compositor(
+                graphics_overlay_leg_from_config(
+                    request.config, render_dir=channel_dir, sweep_stale=True
+                ),
+                channel_dir,
             ),
         )
         if request.captions_allowed:
@@ -1080,6 +1195,10 @@ class GstPlayoutStrategy:
         # is never logged here or elsewhere.
         logger.info("channel %s: starting GStreamer worker: %s", request.channel_id, argv)
         process = self._launch(argv, stdout_path, stderr_path)
+        from civiccast.eas.presentation import presentation_enabled
+
+        if presentation_enabled() and graph.graphics_overlay is not None:
+            self._emergency_channels.add(request.channel_id)
         return EncoderStartResult(
             process=process,
             concat_plan_path=graph_path,  # reuse: the serialized graph spec path
@@ -1137,7 +1256,13 @@ class GstPlayoutStrategy:
                 )
                 return False  # worker not started (or its channel was never registered)
             verb_token = text.strip().split(None, 1)
-            if not verb_token or verb_token[0].lower() not in ("reload", "swap", "caption", "stop"):
+            if not verb_token or verb_token[0].lower() not in (
+                "reload",
+                "swap",
+                "caption",
+                "emergency",
+                "stop",
+            ):
                 self._last_send_command_failure[channel_id] = f"unparseable control line: {text!r}"
                 return False  # unparseable per control.parse_control_line's own grammar
             applied = channel.send_and_wait(

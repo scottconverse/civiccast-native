@@ -22,7 +22,7 @@ Everything below `C:\ProgramData\CivicCast` survives an uninstall and survives a
 | Did the Windows service start, restart or give up? | `C:\ProgramData\CivicCast\logs\supervisor.log` | The service itself. Rotates at 10 MiB, keeps 10 old files, and is written to disk on every record. |
 | The application's own log (channels, captions, publishing, recording) | `C:\ProgramData\CivicCast\logs\control_plane-app.log` | Most of the log lines quoted in this chapter are here. Old files are named `control_plane-app.log.1` and up. |
 | Raw output of the web server process | `C:\ProgramData\CivicCast\logs\control_plane.log` | Crashes before the application logger starts land here. |
-| The database server | `C:\ProgramData\CivicCast\logs\postgres.log`, `postgres-launcher.log` | `postgres-launcher.log` is the short-lived start-up output. |
+| The database server | `C:\ProgramData\CivicCast\logs\postgres.log` | Contains startup and server output; rotates at 10 MiB and keeps 10 older files. |
 | Why the supervisor stopped trying to start | `C:\ProgramData\CivicCast\STATION-START-FAILED.md` | Written after 3 failed starts in a row with the same error. Removed after the next successful start. |
 | What setup did, step by step | `C:\ProgramData\CivicCast\install-progress.log` | Read it from the bottom. Find the last "begin" with no matching "returned". |
 | Which pack was missing or untrusted | `C:\ProgramData\CivicCast\install-manifest-report-<pid>-<time>.json` | One per setup run. |
@@ -44,7 +44,7 @@ And one to ask the running station how it is:
 curl.exe http://127.0.0.1:8000/health
 ```
 
-The answer is a short JSON document with `status` (`healthy` or `degraded`), `version`, and `schema` (`current`, `behind`, `not-configured` or `unknown`), plus `schema_db_revision`, `schema_expected_head` and `mode`. `status` is `healthy` only when `schema` is `current`; any other schema state reads `degraded`. The HTTP status is 200 whenever the web server process is alive, so read the words in the body, not the number.
+The answer is a short JSON document with `status` (`healthy` or `degraded`), `version`, `schema` (`current`, `behind`, `not-configured` or `unknown`), `live_captions`, `schema_db_revision`, `schema_expected_head` and `mode`. `status` is `healthy` only when the schema is current and live captions are neither degraded nor unknown. Disabled captions or no active channel do not themselves make readiness degraded. For caption failures, open authenticated System Health for channel details. The HTTP status is 200 whenever the web server process is alive, so read the words in the body, not the number.
 
 ## Install and activation (setup exit codes)
 
@@ -98,7 +98,7 @@ The service is `CivicCastSupervisor` ("CivicCast Native Supervisor"). It runs as
 | The marker file's reason is "Native station activation self-test receipt does not match this distribution" | `station-set.json` or `activation-self-test.json` in the install folder is missing, stale or from another build. The service will not start without them. | The reason text. | Run setup again so activation re-creates them. Do not edit either file by hand. |
 | `supervisor.log` says `singleton not acquired (<status>): <detail> -- another supervisor owns the station` | A second copy of the supervisor is running. | The line itself. | Stop the other copy. Check `Get-Service` and Task Manager for a second `CivicCast` process. |
 | State is `blocked_wsl_active` or `blocked_probe_unavailable` | The older WSL edition is active, or the check for it could not run. | `supervisor.log`. | Remove or cut over the WSL edition (see exit 135 above). |
-| `curl.exe http://127.0.0.1:8000/health` returns `"status":"degraded"` | The database schema is not `current`: it is `behind` (older than the program), `not-configured` or `unknown` (the database could not be read). This field says nothing about the other parts of the station. | The `schema` value in the answer, and `supervisor.log`. | `behind`: see "Upgrade problems". `unknown` or `not-configured`: see "Database problems". The next rows cover other faults. |
+| `curl.exe http://127.0.0.1:8000/health` returns `"status":"degraded"` | Database readiness or live-caption processing needs attention; captions can degrade readiness even with a current schema. | Read `schema` and `live_captions`; authenticated System Health shows channel details. | For `behind`, see "Upgrade problems"; for schema `unknown` or `not-configured`, see "Database problems". For caption `unknown` or `degraded`, inspect the affected enabled on-air channel's worker activity and fallback state. This probe does not certify every output or device. |
 | `supervisor.log`: `ffmpeg/ffprobe not staged at ... (degraded media handling, ...)` | FFmpeg is missing from the install folder. The station runs, but media preparation is degraded. | The line. | Run setup again to restore the files. |
 | `supervisor.log`: `ollama child skipped (degraded AI, service healthy): ...` | The AI engine could not start. Summaries and translation are unavailable; the station is otherwise healthy. | The line. Port 11434 belongs to CivicCast's own Ollama. | Check that another program is not holding `127.0.0.1:11434`. Run setup again if the files are damaged. |
 | `supervisor.log` (level ERROR): `... degrading egress to the FFmpeg concat engine (CIVICCAST_EGRESS_ENGINE=ffmpeg-concat) so the channel keeps airing.` | The GStreamer files are damaged. The station tried an in-place self-repair, it did not restore them, and the station switched to the older FFmpeg concat engine. | The line. | On **Readiness**, press **Repair GStreamer runtime & restore full egress** (Setup admin or Support admin). If that fails, run setup again. |
@@ -260,7 +260,7 @@ PostgreSQL listens on `127.0.0.1` on the first free port of 5432, 5433, 5434, 54
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
-| **Readiness** machine health row says the database is **Unreachable**, or alert `db-unreachable`: "Database is not reachable from the host." | PostgreSQL stopped or cannot be reached. | `logs\postgres.log` and `logs\postgres-launcher.log`. | Restart the service. If it fails again, read the PostgreSQL log for the cause (disk full, damaged files). |
+| **Readiness** machine health row says the database is **Unreachable**, or alert `db-unreachable`: "Database is not reachable from the host." | PostgreSQL stopped or cannot be reached. | `logs\postgres.log`. | Restart the service. If it fails again, read the PostgreSQL log for the cause (disk full, damaged files). |
 | Alert `service-down`: "The CivicCast egress service is not running." | The egress engine is not running. | The alert. | Check `supervisor.log`. |
 | Log: `DATABASE_URL source: environment override ...` or `... registry (HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl)` | This is an informational line that says which source won. | The line. | If an old `DATABASE_URL` machine variable points at a database that is gone, remove it. |
 | A command-line tool says "DATABASE_URL must point at the CivicCast database before running staff token lifecycle commands." | The `civiccast` command line did not find the database address. | The message. | In an Administrator PowerShell, set `$env:DATABASE_URL` from the registry value for that shell only. |
@@ -301,7 +301,7 @@ An upgrade is the same `setup.exe` run over an existing install. The service is 
 Collect these before you ask anyone for help. Together they answer most questions.
 
 1. **The time and what you saw.** Write down the clock time with its zone, the channel, and the words on screen. Say whether anyone changed a setting just before.
-2. **The whole `C:\ProgramData\CivicCast\logs` folder** (`supervisor.log`, `control_plane-app.log` and its numbered copies, `control_plane.log`, `postgres.log`), copied while the problem is fresh. Rotation can overwrite old lines.
+2. **The whole `C:\ProgramData\CivicCast\logs` folder** (`supervisor.log`, `control_plane-app.log`, `control_plane.log` and `postgres.log`, including numbered rotated copies), copied while the problem is fresh. Rotation can overwrite old lines.
 3. **`C:\ProgramData\CivicCast\install-progress.log`**, the `upgrade` and `provision` folders, and any `STATION-START-FAILED.md` or `install-manifest-report-*.json`, for install and upgrade problems.
 4. **The channel's own logs**: everything in `C:\ProgramData\CivicCast\data\egress\<channel>\logs\`.
 5. **The health answer**: the output of `curl.exe http://127.0.0.1:8000/health` and of `Get-Service CivicCastSupervisor`.

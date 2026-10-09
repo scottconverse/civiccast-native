@@ -51,6 +51,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from civiccast.eas.service import EasDisplayService
+from civiccast.eas.store import EasStore
 from civiccast.egress.daemon import AlertEvaluatorHook, EgressDaemon
 from civiccast.egress.engine_select import build_encoder_strategy, gstreamer_engine_selected
 from civiccast.egress.errors import SourcePrepareError
@@ -3304,7 +3306,8 @@ def build_channel_automation(
         encoder_strategy=build_encoder_strategy(
             audio_tracks_provider=lambda channel_id: AudioTrackStore(session_factory).list_tracks(
                 scope="channel", target_id=channel_id, enabled_only=True
-            )
+            ),
+            emergency_provider=EasDisplayService(EasStore(session_factory)).active_presentation,
         ),
         # S8: feed each health sample to the operational alert evaluator.
         alert_evaluator_hook=alert_evaluator_hook,

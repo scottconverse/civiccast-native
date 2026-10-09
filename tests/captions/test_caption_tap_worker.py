@@ -139,14 +139,14 @@ class _FakeClock:
         return self.now
 
 
-def _write_wav(path: Path, *, seconds: float = 1.0) -> None:
+def _write_wav(path: Path, *, seconds: float = 1.0, silence: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     frame_count = int(TAP_SAMPLE_RATE_HZ * seconds)
     with wave.open(str(path), "wb") as handle:
         handle.setnchannels(1)
         handle.setsampwidth(2)
         handle.setframerate(TAP_SAMPLE_RATE_HZ)
-        handle.writeframes(b"\x01\x00" * frame_count)
+        handle.writeframes((b"\x00\x00" if silence else b"\x01\x00") * frame_count)
 
 
 #: Mirrors the shipped ``tap_worker.DEFAULT_OVERLOAD_PERSISTENCE_SCANS``. It is a
@@ -208,6 +208,39 @@ def _active_vtt(tap_root: Path, channel_id: str) -> Path:
 def _runtime_status(tap_root: Path, channel_id: str) -> dict:
     path = tap_root.parent / "egress" / channel_id / "captions" / "runtime-status.json"
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def test_idle_scan_publishes_processing_heartbeat_without_audio(tmp_path: Path) -> None:
+    """An empty audio scan is observable without treating silence as a fault."""
+    tap_root = tmp_path / "tap"
+    (tap_root / "government").mkdir(parents=True)
+    worker = _worker(tap_root, _ScriptedRuntime(), InMemoryCaptionReviewStore())
+    worker.run_once()
+    status_path = tap_root.parent / "egress" / "government" / "captions" / "runtime-status.json"
+    assert status_path.is_file(), "the worker should publish a heartbeat even when no WAV is ready"
+    payload = json.loads(status_path.read_text(encoding="utf-8"))
+    assert payload["worker_heartbeat_at"]
+    assert payload["audio_signal"] == "unknown"
+    assert payload["last_processed_at"] is None
+
+
+def test_processed_digital_silence_is_reported_without_a_caption_failure(tmp_path: Path) -> None:
+    tap_root = tmp_path / "tap"
+    worker = _worker(
+        tap_root,
+        _ScriptedRuntime(),
+        InMemoryCaptionReviewStore(),
+        atomic_segments=True,
+    )
+    _write_wav(tap_root / "government" / "chunk-000001.wav", silence=True)
+
+    result = worker.run_once()
+    payload = _runtime_status(tap_root, "government")
+
+    assert result.consumed_segments == 1
+    assert payload["audio_signal"] == "digital-silence"
+    assert payload["last_input_at"]
+    assert payload["last_processed_at"]
 
 
 def _drive_to_the_edge_of_the_overload_window(

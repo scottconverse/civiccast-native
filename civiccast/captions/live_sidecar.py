@@ -96,6 +96,15 @@ def publish_caption_runtime_status(
     refusal_reason: str | None = None,
     resume_in_seconds: float | None = None,
     consecutive_overloads: int | None = None,
+    worker_heartbeat_at: datetime | None = None,
+    last_input_at: datetime | None = None,
+    last_processed_at: datetime | None = None,
+    pending_since_at: datetime | None = None,
+    inference_started_at: datetime | None = None,
+    audio_signal: Literal["digital-silence", "audio-present", "unknown"] | None = None,
+    provider_state: str | None = None,
+    provider_retry_in_seconds: int | None = None,
+    inference_inflight: bool = False,
 ) -> Path:
     """Atomically publish capacity state without implying decode-back readiness.
 
@@ -118,6 +127,24 @@ def publish_caption_runtime_status(
         "state": state,
         "updated_at": datetime.now(UTC).isoformat(),
     }
+    if worker_heartbeat_at is not None:
+        payload.update(
+            {
+                "worker_heartbeat_at": worker_heartbeat_at.isoformat(),
+                "last_input_at": last_input_at.isoformat() if last_input_at else None,
+                "last_processed_at": (last_processed_at.isoformat() if last_processed_at else None),
+                "pending_since_at": pending_since_at.isoformat() if pending_since_at else None,
+                "inference_started_at": (
+                    inference_started_at.isoformat() if inference_started_at else None
+                ),
+                "audio_signal": audio_signal or "unknown",
+                "inference_inflight": bool(inference_inflight),
+            }
+        )
+        if provider_state is not None:
+            payload["provider_state"] = provider_state
+        if provider_retry_in_seconds is not None:
+            payload["provider_retry_in_seconds"] = max(0, int(provider_retry_in_seconds))
     if refusal_reason is not None:
         payload["refusal_reason"] = refusal_reason
     if resume_in_seconds is not None:

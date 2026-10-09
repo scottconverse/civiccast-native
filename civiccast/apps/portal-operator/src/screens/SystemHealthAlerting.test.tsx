@@ -38,6 +38,56 @@ describe('RuntimeSafeToAirBanner', () => {
     expect(container.textContent).toContain('0 critical')
   })
 
+  it('shows worker heartbeat, digital silence, stalls, and provider recovery state', () => {
+    const { container } = render(
+      <RuntimeSafeToAirBanner
+        status={{
+          ...greenStatus,
+          channels: [
+            {
+              channel_id: 'public',
+              egress_state: 'ON_AIR',
+              on_air: true,
+              on_healthy_slate: false,
+              captions_expected: true,
+              captions_verified: false,
+              live_captions: {
+                processing_state: 'silent',
+                worker_heartbeat_at: '2026-06-15T12:00:00Z',
+                audio_signal: 'digital-silence',
+                provider_state: 'whistle-primary',
+                backlog_segments: 0,
+              },
+              color: 'green',
+            },
+            {
+              channel_id: 'government',
+              egress_state: 'ON_AIR',
+              on_air: true,
+              on_healthy_slate: false,
+              captions_expected: true,
+              captions_verified: false,
+              live_captions: {
+                processing_state: 'stalled',
+                worker_heartbeat_at: '2026-06-15T11:58:00Z',
+                provider_state: 'fallback-cooldown',
+                provider_retry_in_seconds: 7,
+                backlog_segments: 3,
+              },
+              color: 'red',
+            },
+          ],
+        }}
+      />,
+    )
+    expect(container.textContent).toContain('digital silence in latest processed audio')
+    expect(container.textContent).toContain('Whistle primary')
+    expect(container.textContent).toContain('worker heartbeat')
+    expect(container.textContent).toContain('worker stalled')
+    expect(container.textContent).toContain('Whisper fallback cooling down (7s)')
+    expect(container.textContent).toContain('3 queued')
+  })
+
   it('surfaces firing counts and a review-alerts action when alerts fire', () => {
     const onOpenAlerts = vi.fn()
     const { getAllByText, getByText } = render(

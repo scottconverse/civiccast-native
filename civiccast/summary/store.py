@@ -8,12 +8,15 @@ import json
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
+from threading import RLock
 from typing import Any, Protocol, cast
 
 from sqlalchemy import bindparam, text
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from civiccast.summary.fingerprint import sha256_fingerprint
 from civiccast.summary.models import OperatorApproval, SourcedClaim, SummaryDraft
 
 SessionFactory = Callable[[], AbstractContextManager[Session]]
@@ -31,7 +34,16 @@ class SummaryStore(Protocol):
     def create_summary(self, summary: SummaryDraft) -> SummaryDraft: ...
     def get_summary(self, summary_id: str) -> SummaryDraft | None: ...
     def list_review_items(self) -> list[SummaryDraft]: ...
-    def approve_summary(self, approval: OperatorApproval) -> SummaryDraft: ...
+    def edit_summary(
+        self,
+        summary_id: str,
+        *,
+        narrative: str,
+        expected_audit_fingerprint: str,
+    ) -> SummaryDraft: ...
+    def approve_summary(
+        self, approval: OperatorApproval, *, expected_audit_fingerprint: str
+    ) -> SummaryDraft: ...
     def get_approval(self, summary_id: str) -> OperatorApproval | None: ...
 
 
@@ -39,6 +51,7 @@ class InMemorySummaryStore:
     """In-memory summary store used by tests and no-DB local runs."""
 
     def __init__(self) -> None:
+        self._lock = RLock()
         self._summaries: dict[str, SummaryDraft] = {}
         self._approvals: dict[str, OperatorApproval] = {}
 
@@ -55,17 +68,57 @@ class InMemorySummaryStore:
         return [
             summary
             for summary in self._summaries.values()
-            if summary.status in {"pending_review", "refused"}
+            if summary.status in {"pending_review", "approved", "refused"}
         ]
 
-    def approve_summary(self, approval: OperatorApproval) -> SummaryDraft:
-        summary = self._summaries.get(approval.summary_id)
-        if summary is None:
-            raise SummaryStoreNotFoundError(approval.summary_id)
-        approved = summary.model_copy(update={"status": "approved"})
-        self._summaries[approval.summary_id] = approved
-        self._approvals[approval.summary_id] = approval
-        return approved
+    def edit_summary(
+        self,
+        summary_id: str,
+        *,
+        narrative: str,
+        expected_audit_fingerprint: str,
+    ) -> SummaryDraft:
+        with self._lock:
+            summary = self._summaries.get(summary_id)
+            if summary is None:
+                raise SummaryStoreNotFoundError(summary_id)
+            if (
+                summary.status != "pending_review"
+                or summary.audit_fingerprint != expected_audit_fingerprint
+            ):
+                raise SummaryStoreConflictError(
+                    f"Summary {summary_id!r} changed or is no longer pending review. Reload before editing."
+                )
+            if summary.narrative == narrative:
+                return summary
+            updated = summary.model_copy(
+                update={
+                    "narrative": narrative,
+                    "audit_fingerprint": _edited_audit_fingerprint(summary, narrative),
+                }
+            )
+            self._summaries[summary_id] = updated
+            return updated
+
+    def approve_summary(
+        self, approval: OperatorApproval, *, expected_audit_fingerprint: str
+    ) -> SummaryDraft:
+        with self._lock:
+            summary = self._summaries.get(approval.summary_id)
+            if summary is None:
+                raise SummaryStoreNotFoundError(approval.summary_id)
+            if (
+                summary.status != "pending_review"
+                or summary.audit_fingerprint != expected_audit_fingerprint
+            ):
+                raise SummaryStoreConflictError(
+                    f"Summary {approval.summary_id!r} changed or is no longer pending review. "
+                    "Reload and review it before approving."
+                )
+            approved = summary.model_copy(update={"status": "approved"})
+            self._summaries[approval.summary_id] = approved
+            self._approvals[approval.summary_id] = approval
+            return approved
 
     def get_approval(self, summary_id: str) -> OperatorApproval | None:
         return self._approvals.get(summary_id)
@@ -145,7 +198,7 @@ class PostgresSummaryStore:
                 text(
                     f"SELECT summary_id, meeting_id, status, narrative, provenance_json, "  # nosec B608
                     f"audit_fingerprint, operator_message FROM {table}summaries "
-                    "WHERE status IN ('pending_review', 'refused') "
+                    "WHERE status IN ('pending_review', 'approved', 'refused') "
                     "ORDER BY created_at ASC, summary_id ASC"
                 )
             ).fetchall()
@@ -169,19 +222,83 @@ class PostgresSummaryStore:
                 self._summary_from_rows(row, claims_by_summary[str(row.summary_id)]) for row in rows
             ]
 
-    def approve_summary(self, approval: OperatorApproval) -> SummaryDraft:
+    def edit_summary(
+        self,
+        summary_id: str,
+        *,
+        narrative: str,
+        expected_audit_fingerprint: str,
+    ) -> SummaryDraft:
         with self._session_factory() as session:
             table = self._table_prefix(session)
-            summary = self._load_summary(session, approval.summary_id)
+            summary = self._load_summary(session, summary_id)
             if summary is None:
-                raise SummaryStoreNotFoundError(approval.summary_id)
-
-            session.execute(
-                text(
-                    f"UPDATE {table}summaries SET status = 'approved' WHERE summary_id = :summary_id"  # nosec B608
+                raise SummaryStoreNotFoundError(summary_id)
+            if (
+                summary.status != "pending_review"
+                or summary.audit_fingerprint != expected_audit_fingerprint
+            ):
+                raise SummaryStoreConflictError(
+                    f"Summary {summary_id!r} changed or is no longer pending review. Reload before editing."
+                )
+            if summary.narrative == narrative:
+                return summary
+            updated_fingerprint = _edited_audit_fingerprint(summary, narrative)
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    text(
+                        f"UPDATE {table}summaries SET narrative = :narrative, "  # nosec B608
+                        "audit_fingerprint = :audit_fingerprint "
+                        "WHERE summary_id = :summary_id AND status = 'pending_review' "
+                        "AND audit_fingerprint = :expected_audit_fingerprint"
+                    ),
+                    {
+                        "summary_id": summary_id,
+                        "narrative": narrative,
+                        "audit_fingerprint": updated_fingerprint,
+                        "expected_audit_fingerprint": expected_audit_fingerprint,
+                    },
                 ),
-                {"summary_id": approval.summary_id},
             )
+            if result.rowcount != 1:
+                session.rollback()
+                raise SummaryStoreConflictError(
+                    f"Summary {summary_id!r} changed or is no longer pending review. Reload before editing."
+                )
+            session.commit()
+            updated = self._load_summary(session, summary_id)
+            if updated is None:
+                raise SummaryStoreNotFoundError(summary_id)
+            return updated
+
+    def approve_summary(
+        self, approval: OperatorApproval, *, expected_audit_fingerprint: str
+    ) -> SummaryDraft:
+        with self._session_factory() as session:
+            table = self._table_prefix(session)
+            result = cast(
+                CursorResult[Any],
+                session.execute(
+                    text(
+                        f"UPDATE {table}summaries SET status = 'approved' "  # nosec B608
+                        "WHERE summary_id = :summary_id AND status = 'pending_review' "
+                        "AND audit_fingerprint = :expected_audit_fingerprint"
+                    ),
+                    {
+                        "summary_id": approval.summary_id,
+                        "expected_audit_fingerprint": expected_audit_fingerprint,
+                    },
+                ),
+            )
+            if result.rowcount != 1:
+                session.rollback()
+                if self._load_summary(session, approval.summary_id) is None:
+                    raise SummaryStoreNotFoundError(approval.summary_id)
+                raise SummaryStoreConflictError(
+                    f"Summary {approval.summary_id!r} changed or is no longer pending review. "
+                    "Reload and review it before approving."
+                )
             existing = session.execute(
                 text(
                     f"SELECT summary_id FROM {table}summary_approvals "  # nosec B608
@@ -193,7 +310,13 @@ class PostgresSummaryStore:
                 "summary_id": approval.summary_id,
                 "operator_id": approval.operator_id,
                 "operator_display_name": approval.operator_display_name,
-                "approved_at": approval.approved_at,
+                # Raw SQL bypasses SQLAlchemy's DateTime binder. Serialize
+                # explicitly on SQLite instead of its deprecated DBAPI adapter.
+                "approved_at": (
+                    approval.approved_at.isoformat()
+                    if session.get_bind().dialect.name == "sqlite"
+                    else approval.approved_at
+                ),
                 "approval_note": approval.approval_note,
             }
             if existing is None:
@@ -291,3 +414,11 @@ class PostgresSummaryStore:
     def _table_prefix(session: Session) -> str:
         bind = session.get_bind()
         return "" if bind.dialect.name == "sqlite" else "civiccast."
+
+
+def _edited_audit_fingerprint(summary: SummaryDraft, narrative: str) -> str:
+    """Bind an operator narrative edit to the generated summary fingerprint."""
+
+    return sha256_fingerprint(
+        {"previous_audit_fingerprint": summary.audit_fingerprint, "narrative": narrative}
+    )

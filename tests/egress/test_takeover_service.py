@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 import civiccast.egress.models  # noqa: F401 - register takeover_audit
 from civiccast.db import Base, bind_engine, reset_engine
+from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.takeover_service import (
     AlreadyLiveError,
@@ -87,10 +88,21 @@ def _factory(engine: Engine):  # type: ignore[no-untyped-def]
 
 def _build(
     engine: Engine,
+    *,
+    egress_enabled: bool | None = True,
 ) -> tuple[TakeoverService, InMemoryEgressStore, PostgresTakeoverAuditStore]:
     factory = _factory(engine)
     audit = PostgresTakeoverAuditStore(factory)
     egress = InMemoryEgressStore()
+    if egress_enabled is not None:
+        egress.upsert_config(
+            EgressConfig(
+                channel_id="public",
+                enabled=egress_enabled,
+                sinks=[EgressSinkSpec(kind="file", label="test", uri="file:///tmp/output.ts")],
+                slate_message="Test slate",
+            )
+        )
     # A real ready ingest plan: one configured LiveSource makes
     # build_ingest_plan yield a READY path (bug B5 -- the legacy
     # local_default no longer claims ready with nothing configured), so no
@@ -122,6 +134,24 @@ class TestTake:
         pending = egress.pop_pending_commands("public")
         assert len(pending) == 1
         assert pending[0].action == "takeover"
+
+    def test_take_rejects_unknown_egress_channel_before_side_effects(self, engine: Engine) -> None:
+        service, egress, audit = _build(engine, egress_enabled=None)
+
+        with pytest.raises(TakeoverNotReadyError, match="no configured egress channel"):
+            service.take(channel_id="public", operator_id="dana")
+
+        assert audit.get_active("public") is None
+        assert egress.peek_pending_commands("public") == []
+
+    def test_take_rejects_disabled_egress_channel_before_side_effects(self, engine: Engine) -> None:
+        service, egress, audit = _build(engine, egress_enabled=False)
+
+        with pytest.raises(TakeoverNotReadyError, match="disabled"):
+            service.take(channel_id="public", operator_id="dana")
+
+        assert audit.get_active("public") is None
+        assert egress.peek_pending_commands("public") == []
 
     def test_take_when_already_live_raises(self, engine: Engine) -> None:
         service, _egress, _audit = _build(engine)

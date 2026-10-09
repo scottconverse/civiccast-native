@@ -48,6 +48,7 @@ def build_encoder_strategy(
     engine: str | None = None,
     *,
     audio_tracks_provider: Callable[[str], list[Any]] | None = None,
+    emergency_provider: Callable[[str], Any] | None = None,
 ) -> EncoderStrategy:
     """Build the configured ``EncoderStrategy``.
 
@@ -63,7 +64,9 @@ def build_encoder_strategy(
         # Imported lazily so the ffmpeg path never pulls in the gst package.
         from civiccast.egress.gst.strategy import GstPlayoutStrategy
 
-        return GstPlayoutStrategy(audio_tracks_provider=audio_tracks_provider)
+        return GstPlayoutStrategy(
+            audio_tracks_provider=audio_tracks_provider, emergency_provider=emergency_provider
+        )
     if name in _FFMPEG_ALIASES:
         return ConcatEncoderStrategy()
     raise ValueError(

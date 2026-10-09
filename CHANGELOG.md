@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+Development candidate: `v1.0.0-beta.12` (unpublished).
+
+- Channel health reports caption-worker activity, stalled processing, silence and the active speech-engine/fallback state. Enabled on-air channels receive a startup allowance before missing worker activity raises an alert; detailed status remains staff-only.
+- Alert rules expose destination assignments in the console, preserve unchanged assignments and show unavailable destinations. Setup administrators can make changes; support administrators can inspect the configuration without write controls.
+- Configured emergency alerts render through the existing broadcast compositor and show channel-specific warning text on the resident page. Clearing removes the alert layer while retaining other graphics; forced slates retain explicit confirmation and unconfigured broadcast presentation is refused with setup guidance.
+- Remote contribution embeds its VDO.Ninja director for targeted media commands. Requests remain explicitly unverified until observed; requesting disconnect or closing a room no longer invents a completed guest disconnection. Channel takeover is a separate confirmed action.
+- An elevated local `civiccast admin reset-password` command restores administrator access when credentials and recovery codes are lost. With the supervisor stopped, it preserves station data, backs up the credential state and revokes previous console sessions and recovery codes.
+- Control Room restores an existing session after refresh or navigation, shows its expiry and offers authorized release and reclaim. Expired ordinary cues are refused without discarding the session needed for an emergency Panic action.
+- Summary review supports editing pending narratives, retaining approved summaries for export, and reloading recent signed records for download and verification. Approval is bound to the draft the operator reviewed; changed drafts return a conflict and must be reloaded before approval.
+- Paywall settings preserve the saved signing secret during ordinary saves. Rotation and clearing are explicit, confirmed actions; invalid secret input is not echoed in validation errors.
+- Bound raw control-plane and PostgreSQL output logs with rotating supervisor-owned capture, including PostgreSQL output after its startup launcher exits. Existing oversized logs age out through rotation; upgrading does not immediately reclaim their space.
 - Correct stale project status, roadmap, technical operations and field quick-start wording: Beta 11 is published, Beta 12 is in development, and the corrected Beta 11 package's fresh-install results do not establish upgrades, GPU operation or sustained three-channel capacity.
 
 ## [1.0.0-beta.11] - 2026-10-08

@@ -13,6 +13,12 @@ This chapter is for the IT person who connects CivicCast to the outside world: t
 - **Times you type.** Several console screens treat a time you type as UTC, not local time (Recording, Program Guide, Schedule). Log lines are in local time. Keep that in mind whenever you compare a schedule with a log.
 - **Beta status of the interfaces.** Nothing in the code or in the repository's documents promises that any interface in this chapter will stay the same from one release to the next. Treat all of them as beta.
 
+## Remote Contribution controls
+
+Remote Contribution creates rooms only for configured, enabled egress channels. The server rejects missing or disabled channels even if a caller bypasses the menu. It embeds the self-hosted VDO.Ninja director and can send targeted guest audio, camera and hangup commands from the browser. The director iframe does not acknowledge command completion. CivicCast records the latest browser-reported command as **sent, not verified**; the guest's connection record remains active until an operator checks the director and marks the guest left.
+
+The audio controls act on the director's audio path; they do not establish that channel output is muted. Camera and hangup commands are sent to the targeted guest, but CivicCast does not receive an authoritative result. Guest media composition into the channel is not implemented. **Take channel live** is a separate confirmed action that switches to the channel's configured live source; it does not route a remote guest into that source. Closing a room stops new invitations but leaves any unverified guest sessions visible for inspection or retry.
+
 ## Cable headend: UDP transport streams
 
 A *headend* is the cable company's room of equipment that receives your channel and puts it on the cable. Many small stations send the headend a *UDP transport stream* (a continuous stream of MPEG packets sent over the network). CivicCast does this with an output of kind `udp-ts` and a destination address of the form `udp://host:port`.
@@ -247,7 +253,7 @@ When a subscriber webhook is delivered, the station sends a JSON body with `asse
 
 The **Alerts** screen can hold destinations of three kinds: email, text message and webhook. A webhook destination receives a JSON body with `event_id`, `condition`, `severity`, `state`, `resource_ref`, `summary`, `detail`, `first_observed_at` and `last_observed_at`. The body is signed with the destination's `secret` using HMAC-SHA256, and the header `X-CivicCast-Signature` carries the hex digest with no `sha256=` prefix. The timeout is 10 seconds. A failed delivery is retried after 120, 240, 480 and 960 seconds and then given up on after 5 attempts.
 
-> **Known issue (beta.11):** On a new install every alert rule is created with no destination attached, the rule editor cannot attach one, and adding a destination does not connect it to any rule. Alerts may never be delivered. Check by sending a test and watching for it.
+> **Known issue (beta.11; editor limitation fixed in beta.12):** On a new install every alert rule is created with no destination attached, so alerts may never be delivered until a Setup admin assigns destinations. In beta.11 the rule editor could not attach them; beta.12 adds a **Destinations** list to each rule card. There is no **Send test alert** button.
 
 ### Payments (inbound)
 

@@ -310,6 +310,7 @@ class AlertEvaluator:
         *,
         encoder_fps: float | None = None,
         encoder_bitrate_kbps: float | None = None,
+        additional_conditions: Sequence[tuple[str, str]] = (),
         now: datetime | None = None,
     ) -> None:
         """Derive conditions from the current channel state and manage alert lifecycle."""
@@ -320,6 +321,7 @@ class AlertEvaluator:
             encoder_fps=encoder_fps,
             encoder_bitrate_kbps=encoder_bitrate_kbps,
         )
+        active_conditions.extend(additional_conditions)
         active_kinds = {kind for kind, _ in active_conditions}
 
         with self._session_factory() as session:

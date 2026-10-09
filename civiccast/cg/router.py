@@ -33,7 +33,6 @@ from civiccast.cg.models import (
 )
 from civiccast.cg.service import (
     build_bulletin_queue,
-    build_emergency_overlay,
     build_feed_catalog,
     build_hls_manifest,
     build_hls_render_plan,
@@ -521,23 +520,20 @@ def idle_page(channel_id: str = "public") -> IdlePage:
     summary="Read the emergency-notification overlay state",
 )
 def emergency_overlay(
-    channel_id: str | None = None,
-    overlay_id: str = "test-emergency-overlay",
-    severity: str = "warning",
+    channel_id: str,
     provider: EmergencyOverlayProvider | None = Depends(get_eas_overlay_provider),
 ) -> EmergencyOverlay:
-    # When EAS is wired and a channel is given, render the real active alert overlay
-    # for that channel (or 404 when nothing is being displayed — the player shows no
-    # banner). Without a channel (or before EAS is wired) the deterministic placeholder
-    # keeps the endpoint usable for demos/tests. Never labeled "EAS".
-    if provider is not None and channel_id is not None:
+    # Publish only a real active decision for the requested channel.
+    if provider is not None:
         overlay = provider(channel_id)
         if overlay is not None:
             return overlay
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, detail="No emergency overlay is active for this channel."
         )
-    return build_emergency_overlay(overlay_id=overlay_id, severity=severity)
+    raise HTTPException(
+        status.HTTP_404_NOT_FOUND, detail="No emergency overlay is active for this channel."
+    )
 
 
 @public_router.get(

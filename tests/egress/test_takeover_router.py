@@ -26,6 +26,7 @@ from sqlalchemy.pool import StaticPool
 import civiccast.egress.models  # noqa: F401 - register takeover_audit
 from civiccast.auth.models import OperatorIdentity
 from civiccast.db import Base, bind_engine, reset_engine
+from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.router import get_takeover_service, staff_router
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.takeover_service import TakeoverService
@@ -83,6 +84,14 @@ def _make_service(engine: Engine) -> tuple[TakeoverService, InMemoryEgressStore]
             yield session
 
     egress = InMemoryEgressStore()
+    egress.upsert_config(
+        EgressConfig(
+            channel_id="public",
+            enabled=True,
+            sinks=[EgressSinkSpec(kind="file", label="test", uri="file:///tmp/output.ts")],
+            slate_message="Test slate",
+        )
+    )
     service = TakeoverService(
         PostgresTakeoverAuditStore(factory),
         egress,

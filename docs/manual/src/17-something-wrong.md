@@ -40,6 +40,10 @@ A channel tile uses these words:
 
 After the word you may see "on safety slate" (the channel is showing its fallback card) or "live captions off".
 
+When live captions are enabled, the channel tile also reports the caption worker state, its last heartbeat, and which recognition provider is selected. **Digital silence in latest processed audio** means the latest processed audio chunk contained zero-valued samples; it does not claim that speech was recognized. **Worker stalled** means the expected worker has stopped reporting fresh progress. A missing or stale worker heartbeat remains unknown during the first 180 seconds after a channel goes on air; after that, a heartbeat older than 90 seconds is stalled. When audio is waiting to be captioned, no completed chunk or active batch for 120 seconds is stalled, even if more audio keeps arriving. A recent heartbeat with no pending audio is not a failure. Channels that are stopped or have live captions switched off are not caption failures.
+
+The public `/health` probe continues to return HTTP 200 while the process answers. Its `status` is **degraded** when the schema is not current or live-caption readiness is failed, stalled, or not yet known. Its `live_captions` value is only a station-wide state; it never includes channel names. Signed-in staff see the per-channel worker details in **On air right now**.
+
 > **Known issue (beta.11):** A yellow station can show two different verdicts at once. The small pill at the top says **Check before meeting**, while the card below can say **Ready with optional items**. Both mean the required checks passed and an optional item needs a look. The second wording is not one of the five standard phrases.
 
 > **Known issue (beta.11):** The page does not refresh by itself, except for the **On air right now** banner. There is no **Refresh** button. The checklist updates only after you use one of its own buttons or re-open the page after about 30 seconds.
@@ -142,6 +146,7 @@ The alert titles you may see are:
 - Database unreachable
 - CivicCast service is down
 - Automatic self-check did not pass
+- Live caption worker failed or stalled
 
 Some alerts show a plain code with the dashes turned into spaces, for example "eas source unavailable", "asrun outbox degraded" or "caption tier degraded". "eas source unavailable" means an emergency-alert feed could not be reached. "asrun outbox degraded" concerns the on-air log that Reports reads.
 
@@ -149,25 +154,27 @@ Some alerts show a plain code with the dashes turned into spaces, for example "e
 
 Under the list are two sections for administrators.
 
-- **Alert rules** has one card for each of the 14 kinds of alert that come with a rule. Alert kinds added later have no card (see the Known issue below). On a card you can switch **Enabled** on or off, set **Severity** to Critical, Warning or Info, set **Re-alert after (minutes)** (how long CivicCast waits before warning you again while the problem continues), and tick **Notify on resolve**. Click **Save** to keep your changes.
+- **Alert rules** has cards for alert kinds with a rule, including **Live caption worker failed or stalled** and **EAS source unavailable**. On a card you can switch **Enabled** on or off, set **Severity** to Critical, Warning or Info, set **Re-alert after (minutes)** (how long CivicCast waits before warning you again while the problem continues), tick **Notify on resolve**, and choose destinations. Tick each email, text-message or webhook destination that should receive this alert, then click **Save**.
 - **Where alerts go** lists *destinations*: an email address, a text-message number or a webhook (a web address that receives a message). Click **Add destination**, choose a **Type**, give it a **Name**, type the address in **Where to send (email, phone, or webhook URL)**, and click **Create destination**.
+
+> **Beta.12 routing update:** A rule card's **Destinations** list shows the saved assignments. If an assigned destination no longer exists, it stays checked as **Unavailable destination** with its id; leave it checked to preserve the saved id, or uncheck it to remove it. Saving another rule setting without changing the destination checkboxes keeps its assignments.
 
 The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours end (UTC, HH:MM)**. These are in UTC, not local time. A quiet-hours window holds back WARNING and INFO alerts. CRITICAL alerts ignore quiet hours and are always sent.
 
 > **Warning:** Do not click **Delete** on a destination unless you mean it. The first click turns the button into **Confirm delete?**, and a second click deletes right away. There is no cancel and no timeout.
 
-### What happens in beta.11 when no destination is wired
+### What happens in beta.12 when no destination is wired
 
-> **Known issue (beta.11):** **You can follow the Alerts screen exactly and still never receive an email, text or webhook message.** This is the most important thing to know about alerts in beta.11.
+> **Known issue (beta.12):** A rule with no enabled destination assigned cannot deliver its alert. Set up routing on the rule card before relying on email, text or webhook notifications.
 >
 > - A new install ships every alert rule with *no destinations attached*.
-> - Adding a destination on this screen creates it, but does not attach it to any rule. The rule card has no way to choose destinations.
+> - Adding a destination on this screen does not attach it automatically. In each rule card's **Destinations** list, tick one or more destinations and click **Save** to attach them.
 > - When an alert fires and its rule has no live destination, CivicCast writes a "suppressed" delivery note that reads "No enabled alert channel is configured for condition ...". No screen shows that note.
 > - The alert itself does still appear on the **Alerts** screen and in the red and yellow counts on **Readiness**.
 > - There is no **Send test alert** button, so you cannot check a destination by pressing a button.
-> - Some kinds of alert have no rule at all: "Automatic self-check did not pass", "eas source unavailable", "asrun outbox degraded" and "caption tier degraded" are among them. They show on the **Alerts** screen as warnings, have no card under **Alert rules**, and can never be sent to a destination in beta.11, even by IT staff.
+> - Some kinds of alert still have no rule, including "Automatic self-check did not pass", "asrun outbox degraded" and "caption tier degraded". They show on the **Alerts** screen as warnings but cannot be routed from **Alert rules**. **Live caption worker failed or stalled** and **eas source unavailable** now have warning rules; destinations still need to be attached by an administrator before those alerts can be delivered.
 >
-> Until an IT person attaches destinations to rules, nobody is told about a problem unless somebody looks at the screen. Check **Readiness** and **Alerts** before every meeting and at the start of every shift.
+> Until a Setup admin assigns at least one enabled destination to each rule you rely on, those rules cannot notify anyone. Check **Readiness** and **Alerts** before every meeting and at the start of every shift.
 
 > **For IT staff:** A rule takes `channel_ids` (the ids of destinations) through `PUT /api/staff/alert-rules/{rule_id}`, with the Setup admin role. The 14 rules that exist come with ids like `default:off-air`. See [Chapter 14](#ch-troubleshooting) and [Chapter 15](#ch-integrations).
 
@@ -188,7 +195,7 @@ The feeds come from the National Weather Service (NWS), the federal alert system
 | A beta.11 station as installed | Nothing is polled and nothing airs by itself. The page says "No alert sources are configured. Ask your station administrator to configure an NWS, AMBER, or IPAWS (COG) feed." |
 | IT staff turn on alert polling | CivicCast reads the configured feeds, by default once a minute, and lists active alerts under **Active alerts** |
 | IT staff also turn on automatic display | Every active **severe** alert goes on every channel that is on air as a **crawl**. Every active **extreme** alert goes on as an **overlay**. A full-screen takeover is never automatic |
-| An operator presses a button | The alert is shown at once, as a crawl, an overlay or (after a tick box) a full-screen takeover |
+| An operator presses a button | The station queues a crawl, an overlay or (after a tick box) a full-screen takeover for the selected channel's next output update |
 
 A *crawl* is a line of text that scrolls across the screen. An *overlay* is a message box placed over the picture. A *forced slate* is a full-screen message that replaces the programming.
 
@@ -196,9 +203,13 @@ A *crawl* is a line of text that scrolls across the screen. An *overlay* is a me
 
 > **Known issue (beta.11):** Nothing on the page says that severe and extreme alerts go on air by themselves once IT turns on automatic display. The banner says only that CivicCast "never automatically pre-empts programming". Once automatic display is on, use **Clear** to take an alert down.
 
-> **Known issue (beta.11):** In testing we could not confirm that a crawl, overlay or slate is drawn onto the picture that goes out to cable or the stream. The station records a decision for the channel and makes it available at a public data address for that channel (`/api/public/cg/emergency-overlay?channel_id=` followed by the channel id) and in the channel's graphics data. We found no code that draws it into the playout engine's picture. The resident website's own emergency box does not use that data address by channel: it appears only when the page address ends in `?emergency=1`, and it then shows a generic "Emergency notice" placeholder, not your real alert. Before you tell the city or the board that CivicCast shows alerts on air, test it on your own channel output.
+CivicCast draws the selected alert into the channel's GStreamer output: a scrolling crawl, a lower-half message panel, or an operator-confirmed full-screen slate. The resident home page also reads the real alert for its current channel automatically, without a special page link, and refreshes it every five seconds. Clear, CAP cancellation, replacement and expiration update the presentation on the next successful delivery; clearing also prevents the same alert from being automatically shown again. If several alerts are active, the highest severity is shown. Other channel graphics remain in place when an alert changes or clears. Very long broadcast text is shortened; the resident notice carries the full public alert text. No cellular fallback is configured by this feature.
+
+When an alert changes, CivicCast prepares the replacement before removing the previous warning. A failed render leaves that warning in place while a later update retries. Delivery failures can delay replacement or clearing. If Windows prevents deletion of a retired image after clearing succeeds, the warning can be absent until cleanup retries succeed. Watch the actual output when making changes. Temporary alert images are bounded during retries; this is not a cleanup of files left by older runs or a crashed process.
 
 > **For IT staff:** The two settings are `CIVICCAST_EAS` and `CIVICCAST_EAS_AUTO_SURFACE`. `CIVICCAST_EAS` defaults to `off`; any other value (the code's own comment uses `inline`) starts the polling. `CIVICCAST_EAS_AUTO_SURFACE` is off unless set to `1`, `true`, `yes` or `on`, and it is read only when `CIVICCAST_EAS` is on. `CIVICCAST_EAS_POLL_SECONDS` sets the polling interval and defaults to 60. Polling skips any source that is disabled, is of the `manual` type or has no endpoint address. Sources are added with `PUT /api/staff/eas/sources/{id}`. See [Chapter 15](#ch-integrations).
+
+> **Output setup:** Keep emergency presentation off unless the station intends to use it. IT must enable `CIVICCAST_EAS=inline` with the GStreamer egress engine before starting the channel, so its graphics compositor is reserved. A display request is refused when emergency presentation or GStreamer is off. The installed runtime supports a CPU `compositor` fallback when D3D11 is unavailable; neither path requires a discrete GPU. Isolated MPEG-TS checks proved alert pixels and clearing on both CPU and D3D11 paths. This does not certify a cable headend or any live feed: verify the station's actual downstream output before relying on it.
 
 ### Check the feeds and active alerts
 

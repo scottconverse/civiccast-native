@@ -107,6 +107,8 @@ AlertConditionKind = Literal[
     # start comes up on the requested tier again. Unseeded, same "warning"
     # fallback posture as asrun-outbox-degraded above.
     "caption-tier-degraded",
+    # An enabled on-air channel whose live-caption worker has failed or stalled.
+    "live-caption-failure",
 ]
 
 AlertChannelKind = Literal["email", "sms", "webhook"]
@@ -115,6 +117,18 @@ AlertEventState = Literal["firing", "resolved"]
 SelfTestKind = Literal["daily", "weekly"]
 SelfTestStatus = Literal["pass", "warn", "fail"]
 SafeToAirColor = Literal["green", "yellow", "red"]
+CaptionProcessingState = Literal[
+    "disabled", "inactive", "waiting", "processing", "silent", "stalled", "failed", "unknown"
+]
+CaptionAudioSignal = Literal["digital-silence", "audio-present", "unknown"]
+CaptionProviderState = Literal[
+    "whistle-primary",
+    "whisper-primary",
+    "whisper-fallback",
+    "fallback-cooldown",
+    "fallback-retry-ready",
+    "unknown",
+]
 
 # ---------------------------------------------------------------------------
 # Pydantic models
@@ -279,6 +293,21 @@ class SystemSelfTest(BaseModel):
     evidence_path: Annotated[str | None, Field(default=None, max_length=500)] = None
 
 
+class ChannelCaptionProcessingStatus(BaseModel):
+    """Staff-safe view of worker progress, input level, and selected ASR path."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    processing_state: CaptionProcessingState = "unknown"
+    worker_heartbeat_at: datetime | None = None
+    last_input_at: datetime | None = None
+    last_processed_at: datetime | None = None
+    audio_signal: CaptionAudioSignal = "unknown"
+    provider_state: CaptionProviderState = "unknown"
+    provider_retry_in_seconds: Annotated[int | None, Field(ge=0)] = None
+    backlog_segments: Annotated[int, Field(ge=0)] = 0
+
+
 class ChannelRuntimeStatus(BaseModel):
     """Per-channel runtime snapshot feeding the dashboard + safe-to-air computation."""
 
@@ -301,6 +330,10 @@ class ChannelRuntimeStatus(BaseModel):
     captions_expected: bool = True
     # The latest health sample's decode-back proof read ``on``.
     captions_verified: bool = False
+    # Live recognition-worker observations are separate from the egress
+    # decode-back proof above. They report input/worker progress, not speech
+    # completeness or caption latency.
+    live_captions: ChannelCaptionProcessingStatus | None = None
     color: SafeToAirColor
 
 

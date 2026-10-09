@@ -1,14 +1,14 @@
 # About this manual {#about}
 
-This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.12**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
-Beta.11 was published on 8 October 2026 as a GitHub pre-release for testing, not as a production release. This manual describes the current beta.11 operating instructions. The [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package revision and its installation checks. An earlier beta.11 package was refreshed on an existing station and showed output on all three channels in two observations 41 seconds apart; that result applies only to that earlier package. A separate 36-hour soak belongs to an earlier dev7 development overlay, not a published package. Beta.10 measurements are preserved as historical evidence in [Appendix H](#app-evidence).
+Beta.12 is an unpublished candidate in development for unattended reliability and completion of existing operator workflows. Its installation and sustained-operation checks are pending. Beta.11, published on 8 October 2026, remains the current public pre-release for testing. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies that package revision and its installation checks; those results do not qualify Beta.12. The separate 36-hour soak belongs to an earlier dev7 development overlay. Beta.10 measurements are historical evidence in [Appendix H](#app-evidence).
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
 
-A **historical beta.10 observation** describes behavior or evidence from the superseded release. A **Known issue (beta.11)** describes current behavior checked against beta.11 sources. If either conflicts with the screen, follow the concrete steps in the relevant chapter and use the stated version scope.
+A **historical beta.10 observation** describes behavior or evidence from the superseded release. A **Known issue** names the version in which that behavior was observed. Retained Beta.11 findings are not Beta.12 verification results; affected chapters describe the fixes as they are implemented. If a note conflicts with the screen, follow the concrete steps in the relevant chapter and check its version scope.
 
 ## Who Reads What
 

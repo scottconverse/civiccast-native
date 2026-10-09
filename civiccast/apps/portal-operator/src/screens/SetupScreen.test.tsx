@@ -886,6 +886,9 @@ describe('SetupScreen stale staff token (HIGH 2, hostile review of PR #215)', ()
 
       const again = await screen.findByRole('button', { name: 'Sign in again' })
       expect(screen.queryByRole('button', { name: 'Sign in' })).toBeNull()
+      expect(
+        screen.getByText(/If you just reset the password locally, use the new password you entered\./),
+      ).toBeTruthy()
       fireEvent.click(again)
       expect(await screen.findByRole('button', { name: 'Sign in' })).toBeTruthy()
       expect(inputById('login-admin-username')).toBeTruthy()
@@ -1358,6 +1361,9 @@ describe('SetupScreen keeps browser autofill out of account creation (2026-09-09
 
     renderSetupScreen()
     await screen.findByText('Admin sign-in')
+    expect(
+      screen.getByText(/After a local password reset, use the new password you entered\./),
+    ).toBeTruthy()
 
     // Routine sign-in IS the one place a saved credential belongs.
     expect(inputById('login-admin-username').getAttribute('autocomplete')).toBe('username')

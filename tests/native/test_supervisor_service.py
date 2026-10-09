@@ -15,6 +15,7 @@ test_supervisor_service_win.py.
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 import sys
@@ -25,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from civiccast.native.supervisor import config as config_mod
+from civiccast.native.supervisor import service as supervisor_service
 from civiccast.native.supervisor.children import ChildSpec
 from civiccast.native.supervisor.config import (
     DISPLAY_NAME,
@@ -871,14 +873,8 @@ def test_build_production_service_wires_program_data_root_for_egress_workdir() -
     assert service._supervisor._program_data_root == sentinel
 
 
-def test_build_production_service_wires_postgres_log_path() -> None:
-    """Diagnosability regression (2026-08-12, TESTER2 b5 evidence):
-    postgres.log/nats.log were observed at 0 bytes for a 5+ hour run (nats
-    has since been cut entirely, ADR 0023). ``build_production_service`` must
-    thread postgres's OWN log path (the SAME path ``child_log_path`` already
-    names) into the Supervisor so ``postgres_child_spec`` can add its ``-l``
-    flag. Fails on the pre-fix base: the kwarg did not exist on
-    ``Supervisor`` at all, so this always reproduced as ``None``."""
+def test_build_production_service_uses_supervised_postgres_stdio() -> None:
+    """PostgreSQL logs through inherited stdio so the service can rotate it."""
 
     class _Guard:
         pass
@@ -897,8 +893,8 @@ def test_build_production_service_wires_postgres_log_path() -> None:
         program_data_root=sentinel,
     )
 
-    expected_root = Path(sentinel) / "CivicCast" / "logs"
-    assert service._supervisor._postgres_log_path == str(expected_root / "postgres.log")
+    spec = service._supervisor._spec_for("postgres")
+    assert "-l" not in spec.argv
 
 
 def test_build_production_service_wires_db_host_and_port_into_the_postgres_child() -> None:
@@ -2006,7 +2002,10 @@ def _captured_popen_call(
     def fake_popen(argv: object, **kwargs: object) -> object:
         captured["argv"] = argv
         captured.update(kwargs)
-        return FakePopen(pid=4242)
+        proc = FakePopen(pid=4242)
+        if spec.name in {"control_plane", "postgres"}:
+            proc.stdout = io.BytesIO()
+        return proc
 
     monkeypatch.setattr(subprocess, "Popen", fake_popen)
     _file_backed_popen_factory(spec, new_process_group, log_root=log_root)
@@ -2014,50 +2013,114 @@ def _captured_popen_call(
 
 
 # ---------------------------------------------------------------------------
-# Gate A run #4 (2026-08-21): every fresh native install failed because
-# postgres_child_spec's "-l" target and _file_backed_popen_factory's own
-# generic stdio capture were the SAME file. On Windows, pg_ctl's "-l"
-# relaunches through cmd.exe ("cmd /c ... >> <file> 2>&1"), and a second
-# process reopening a file the supervisor already has open (inherited by
-# pg_ctl as its own stdout/stderr) hits ERROR_SHARING_VIOLATION
-# deterministically -- confirmed by local repro against the real pg_ctl.exe
-# extracted from the failing Gate A kit (same-file: pg_ctl exit 1, identical
-# "process cannot access the file" text; split-file: pg_ctl exit 0, clean
-# startup). These pin the invariant purely (fake Popen, no real postgres):
-# whenever a ChildSpec sets stdio_log_name, _file_backed_popen_factory must
-# resolve its OWN capture file from THAT name, never from spec.name.
+# Bounded child-output rotation tests.
 # ---------------------------------------------------------------------------
 
 
-def test_file_backed_popen_factory_honors_stdio_log_name(
+def test_rotated_child_capture_uses_one_pipe_for_both_streams(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    spec = _pg_spec().model_copy(update={"stdio_log_name": "postgres-launcher"})
-    call = _captured_popen_call(monkeypatch, spec, new_process_group=False, log_root=tmp_path)
-
-    stdout_handle = call["stdout"]
-    assert call["stderr"] is stdout_handle
-    resolved = getattr(stdout_handle, "name", None)
-    assert resolved == str(tmp_path / "postgres-launcher.log")
-    # The invariant: this must NEVER be the same path postgres_child_spec's
-    # "-l" flag would target for the same log_root (child_log_path("postgres",
-    # log_root=tmp_path)) -- that collision is exactly what caused every
-    # fresh install to fail Gate A run #4.
-    assert resolved != str(tmp_path / "postgres.log")
-
-
-def test_file_backed_popen_factory_defaults_to_name_without_stdio_log_name(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """Backward compatibility: every child that never sets ``stdio_log_name``
-    (control_plane, and postgres itself when no ``-l`` target is in
-    play) keeps resolving its capture file from ``spec.name``, unchanged."""
+    import subprocess
 
     for spec in (_pg_spec(), _cp_spec()):
-        assert spec.stdio_log_name is None
-        call = _captured_popen_call(monkeypatch, spec, new_process_group=False, log_root=tmp_path)
-        resolved = getattr(call["stdout"], "name", None)
-        assert resolved == str(tmp_path / f"{spec.name}.log")
+        call = _captured_popen_call(
+            monkeypatch, spec, new_process_group=spec.new_process_group, log_root=tmp_path
+        )
+        assert call["stdout"] is subprocess.PIPE
+        assert call["stderr"] is subprocess.STDOUT
+        assert call["bufsize"] == 0
+
+
+def test_other_child_keeps_direct_file_capture(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Optional Ollama logging remains direct file-backed in this change."""
+
+    spec = _pg_spec().model_copy(update={"name": "ollama"})
+    call = _captured_popen_call(monkeypatch, spec, new_process_group=False, log_root=tmp_path)
+    resolved = getattr(call["stdout"], "name", None)
+    assert resolved == str(tmp_path / "ollama.log")
+    assert call["stderr"] is call["stdout"]
+
+
+def test_live_child_output_is_drained_and_rotated_after_launcher_exits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A pg_ctl-shaped short-lived launcher can hand its inherited standard
+    handles to a durable child. Its output must keep draining and rotate after
+    the launcher exits, with no blocking wait in the production stop path."""
+
+    max_bytes = 512
+    backups = 2
+    monkeypatch.setattr(supervisor_service, "CHILD_LOG_MAX_BYTES", max_bytes, raising=False)
+    monkeypatch.setattr(supervisor_service, "CHILD_LOG_BACKUP_COUNT", backups, raising=False)
+    monkeypatch.setattr(supervisor_service, "CHILD_LOG_READ_SIZE", 128, raising=False)
+    output_script = (
+        "import sys\n"
+        "for index in range(160):\n"
+        "    sys.stdout.write(f'OUT-{index:03d}:' + 'x' * 56 + '\\n')\n"
+        "    sys.stdout.flush()\n"
+        "    sys.stderr.write(f'ERR-{index:03d}\\n')\n"
+        "    sys.stderr.flush()\n"
+    )
+    launcher_script = (
+        "import subprocess, sys\n"
+        f"subprocess.Popen([sys.executable, '-u', '-c', {output_script!r}])\n"
+    )
+    spec = _pg_spec().model_copy(update={"argv": [sys.executable, "-u", "-c", launcher_script]})
+
+    process = _file_backed_popen_factory(spec, False, log_root=tmp_path)
+    # Like pg_ctl -w, the launcher exits as soon as the durable child starts.
+    assert process.wait(timeout=5) == 0
+    drainer = getattr(process, "_civiccast_log_drainer", None)
+    assert drainer is not None, "bounded child capture must keep draining after launcher exit"
+    drainer.join(timeout=5)
+    assert not drainer.is_alive(), "the inherited writer should close after the durable child exits"
+
+    log_path = tmp_path / "postgres.log"
+    rotated = list(tmp_path.glob("postgres.log.*"))
+    assert rotated, "output beyond the cap must rotate instead of growing the active log"
+    paths = [log_path, *rotated]
+    assert len(paths) <= backups + 1
+    assert all(
+        path.stat().st_size <= max_bytes + supervisor_service.CHILD_LOG_READ_SIZE + 1
+        for path in paths
+    )
+    assert sum(path.stat().st_size for path in paths) <= (backups + 1) * (
+        max_bytes + supervisor_service.CHILD_LOG_READ_SIZE + 1
+    )
+    text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    assert "OUT-159:" in text
+    assert "ERR-159" in text
+
+
+def test_child_pipe_keeps_draining_after_log_sink_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    def fail_sink(self: object, record: logging.LogRecord) -> None:
+        raise OSError("simulated full disk")
+
+    monkeypatch.setattr(supervisor_service._BestEffortRotatingFileHandler, "handle", fail_sink)
+    spec = _cp_spec().model_copy(
+        update={
+            "argv": [
+                sys.executable,
+                "-u",
+                "-c",
+                "import sys; sys.stdout.write('x' * 1048576); sys.stdout.flush()",
+            ]
+        }
+    )
+    process = _file_backed_popen_factory(spec, True, log_root=tmp_path)
+    drainer = process._civiccast_log_drainer
+    try:
+        assert process.wait(timeout=5) == 0
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=2)
+        drainer.join(timeout=5)
+    assert not drainer.is_alive(), "sink errors must not stop pipe drainage"
 
 
 @pytest.mark.windows_only
@@ -2092,9 +2155,7 @@ def test_f13_no_supervisor_child_is_given_a_console_window(
 def test_f13_suppressing_the_window_does_not_disturb_the_process_group_or_log_capture(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The two things the spawn already got right must survive the fix:
-    RAT-004's control-plane-only process group, and G3's file-backed
-    stdout/stderr capture (the flag suppresses a WINDOW, not the streams)."""
+    """Window suppression preserves process groups and the merged log pipe."""
 
     import subprocess
 
@@ -2118,7 +2179,5 @@ def test_f13_suppressing_the_window_does_not_disturb_the_process_group_or_log_ca
         "an infra child must NOT be given its own process group -- only the control plane is"
     )
     for call in (control_plane, infra):
-        assert call["stdout"] is not None, "G3's file-backed stdout capture must survive"
-        assert call["stderr"] is call["stdout"], (
-            "stderr must keep sharing the child's log-file handle"
-        )
+        assert call["stdout"] is subprocess.PIPE
+        assert call["stderr"] is subprocess.STDOUT

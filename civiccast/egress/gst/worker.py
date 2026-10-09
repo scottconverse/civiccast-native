@@ -282,6 +282,11 @@ def _dispatch_control_with_ack(
             if not pushed:
                 return "error", "no live caption source"
             return "applied", None
+        if verb == "emergency":
+            engine_instance.set_emergency_overlay(
+                json.loads(base64.b64decode(command[1]).decode("utf-8"))
+            )
+            return "applied", None
         if verb == "stop":
             if engine_instance._loop is not None:
                 engine_instance._loop.quit()

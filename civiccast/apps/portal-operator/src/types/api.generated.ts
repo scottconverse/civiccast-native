@@ -196,7 +196,7 @@ export interface AlertChannelInput {
 export interface AlertEvent {
   event_id: string
   rule_id: string
-  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure' | 'caption-tier-degraded'
+  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure' | 'caption-tier-degraded' | 'live-caption-failure'
   severity: 'critical' | 'warning' | 'info'
   state: 'firing' | 'resolved'
   resource_ref: string
@@ -213,7 +213,7 @@ export interface AlertEvent {
 
 export interface AlertRule {
   rule_id: string
-  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure' | 'caption-tier-degraded'
+  condition: 'off-air' | 'encoder-death' | 'server-crash' | 'schema-drift' | 'relay-blocked' | 'compliance-probe-fail' | 'missing-media' | 'commit-failure' | 'takeover-stuck-2h' | 'ai-runtime-down' | 'disk-low' | 'clock-skew' | 'db-unreachable' | 'service-down' | 'self-test-fail' | 'remote-contribution-coprocess-down' | 'remote-contribution-turn-unreachable' | 'remote-contribution-guest-drop' | 'eas-source-unavailable' | 'scheduled-recording-failure' | 'scheduled-recording-dropout' | 'asrun-outbox-degraded' | 'channel-automation-failure' | 'caption-tier-degraded' | 'live-caption-failure'
   enabled?: boolean
   severity: 'critical' | 'warning' | 'info'
   channel_ids?: Array<string>
@@ -996,6 +996,17 @@ export interface ChannelBrandingUpdate {
   logo_url?: string | null
 }
 
+export interface ChannelCaptionProcessingStatus {
+  processing_state?: 'disabled' | 'inactive' | 'waiting' | 'processing' | 'silent' | 'stalled' | 'failed' | 'unknown'
+  worker_heartbeat_at?: string | null
+  last_input_at?: string | null
+  last_processed_at?: string | null
+  audio_signal?: 'digital-silence' | 'audio-present' | 'unknown'
+  provider_state?: 'whistle-primary' | 'whisper-primary' | 'whisper-fallback' | 'fallback-cooldown' | 'fallback-retry-ready' | 'unknown'
+  provider_retry_in_seconds?: number | null
+  backlog_segments?: number
+}
+
 export interface ChannelCommissioningSetup {
   channel_id: string
   channel_name: string
@@ -1113,6 +1124,7 @@ export interface ChannelRuntimeStatus {
   last_proof_event_id?: string | null
   captions_expected?: boolean
   captions_verified?: boolean
+  live_captions?: ChannelCaptionProcessingStatus | null
   color: 'green' | 'yellow' | 'red'
 }
 
@@ -2609,6 +2621,10 @@ export interface MaterializeResult {
   skipped_asset: number
 }
 
+export interface MediaControlRequest {
+  action: 'audio_mute' | 'audio_unmute' | 'video_mute' | 'video_unmute' | 'disconnect'
+}
+
 export interface MediaManifestEntry {
   path: string
   size_bytes: number
@@ -3677,6 +3693,9 @@ export interface RemoteGuestSession {
   joined_at?: string | null
   on_air_at?: string | null
   ended_at?: string | null
+  media_control_state?: 'unknown' | 'sent_unverified'
+  media_control_action?: 'audio_mute' | 'audio_unmute' | 'video_mute' | 'video_unmute' | 'disconnect' | null
+  media_control_requested_at?: string | null
   proof_boundary: string
 }
 
@@ -4564,6 +4583,7 @@ export interface SubscriptionWebhookRequest {
 }
 
 export interface SummaryApprovalRequest {
+  expected_audit_fingerprint: string
   approval_note?: string | null
 }
 
@@ -4576,6 +4596,11 @@ export interface SummaryDraft {
   provenance: ModelProvenance
   audit_fingerprint: string
   operator_message?: string | null
+}
+
+export interface SummaryEditRequest {
+  narrative: string
+  expected_audit_fingerprint: string
 }
 
 export interface SummaryGenerateRequest {

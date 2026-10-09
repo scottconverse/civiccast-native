@@ -45,14 +45,13 @@ def test_404_when_no_active_overlay_for_channel() -> None:
     assert r.status_code == 404
 
 
-def test_placeholder_when_no_channel_id() -> None:
+def test_channel_scope_required_instead_of_placeholder() -> None:
     # back-compat: without channel_id (or provider) the deterministic placeholder serves
     client = _client(lambda _channel_id: None)
     r = client.get("/api/public/cg/emergency-overlay")
-    assert r.status_code == 200
-    assert r.json()["overlay_id"] == "test-emergency-overlay"
+    assert r.status_code == 422
 
 
-def test_placeholder_when_provider_unwired() -> None:
+def test_no_fabricated_alert_when_provider_unwired() -> None:
     r = _client(None).get("/api/public/cg/emergency-overlay?channel_id=gov")
-    assert r.status_code == 200  # no provider -> placeholder, channel_id ignored
+    assert r.status_code == 404

@@ -92,6 +92,26 @@ def test_failure_replays_exact_audio_once_then_stays_on_fallback(tmp_path):
     assert workers[0].closed
 
 
+def test_provider_status_reports_primary_then_fallback(tmp_path):
+    r, _calls, _workers = runtime(tmp_path, fail=True)
+    status = getattr(r, "live_provider_status", lambda _channel: ("missing", None))
+    assert status("public") == ("whistle-primary", None)
+    list(r.transcribe([chunk()]))
+    assert status("public") == ("whisper-fallback", None)
+
+
+def test_provider_status_does_not_wait_for_fallback_initialization_lock(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    r, _calls, _workers = runtime(tmp_path)
+    with r._guard, ThreadPoolExecutor(max_workers=1) as pool:
+        assert pool.submit(r.live_provider_status, "public").result(timeout=2) == (
+            "unknown",
+            None,
+        )
+    r.close()
+
+
 def test_a_failed_channel_does_not_disable_another_channel(tmp_path):
     r, calls, _workers = runtime(tmp_path, fail=True)
     list(r.transcribe([chunk()]))

@@ -9,6 +9,7 @@ import ctypes
 import hashlib
 import json
 import logging
+import math
 import os
 import queue
 import subprocess
@@ -42,6 +43,8 @@ class _PreparedCaptionRuntime(CaptionRuntime, Protocol):
 
 
 class _CloseableCaptionRuntime(_PreparedCaptionRuntime, Protocol):
+    def live_provider_status(self, channel: str) -> tuple[str, int | None]: ...
+
     def close(self) -> None: ...
 
 
@@ -326,6 +329,25 @@ class WhistleRuntime:
     def on_cuda(self) -> bool:
         return False  # Whistle itself is always CPU, regardless of fallback.
 
+    def live_provider_status(self, channel: str) -> tuple[str, int | None]:
+        """Return the selected live ASR path without probing or changing it."""
+
+        # Fallback construction holds this guard while Whisper starts. Status
+        # reporting must not make the caption scan wait on that initialization.
+        if not self._guard.acquire(blocking=False):
+            return "unknown", None
+        try:
+            if self._primary_error or channel in self._failed:
+                if self._fallback is not None:
+                    return "whisper-fallback", None
+                retry_in = self._fallback_retry_after - time.monotonic()
+                if retry_in > 0:
+                    return "fallback-cooldown", math.ceil(retry_in)
+                return "fallback-retry-ready", 0
+            return "whistle-primary", None
+        finally:
+            self._guard.release()
+
     def prepare(self) -> None:
         self._fallback_worker()
         for path, digest in ((self.weights, WEIGHTS_SHA256), (self.library, LIBRARY_SHA256)):
@@ -570,6 +592,11 @@ class MixedCaptionRuntime:
 
     def on_cuda(self) -> bool:
         return self._whisper.on_cuda()
+
+    def live_provider_status(self, channel: str) -> tuple[str, int | None]:
+        if channel in self._whistle_channels:
+            return self._whistle.live_provider_status(channel)
+        return "whisper-primary", None
 
     def prepare(self) -> None:
         if self._closed:

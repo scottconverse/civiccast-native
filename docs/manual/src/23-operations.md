@@ -105,12 +105,13 @@ All logs are in `C:\ProgramData\CivicCast\logs`.
 
 | File | What is in it | Rotation |
 | --- | --- | --- |
-| `supervisor.log` | The supervisor: state changes, child starts, exits, restarts, readiness checks, the stop watchdog. The first line is `supervisor logging initialized` with the process id and the log destinations. | 10 MiB per file, 10 files kept. Each record is flushed to disk. |
-| `control_plane-app.log` | The CivicCast application's own log (playout, schedule, captions, alerts). | 10 MiB per file, 10 files kept. Written only when the control plane runs under the supervisor. |
-| `control_plane.log` | Raw standard output and error of the control plane, including the web server's access log (one line per request). | None. The file is opened for append and grows without limit. |
-| `postgres.log` | Postgres server messages. | None (the Postgres log collector is switched off). |
-| `postgres-launcher.log` | Short-lived output from starting Postgres. | None. |
+| `supervisor.log` | The supervisor: state changes, child starts, exits, restarts, readiness checks, the stop watchdog. The first line is `supervisor logging initialized` with the process id and the log destinations. | 10 MiB per file; keeps 10 older files (up to 11 files total). Each record is flushed to disk. |
+| `control_plane-app.log` | The CivicCast application's own log (playout, schedule, captions, alerts). | 10 MiB per file; keeps 10 older files (up to 11 files total). Written only when the control plane runs under the supervisor. |
+| `control_plane.log` | Raw standard output and error of the control plane, including the web server's access log (one line per request). | 10 MiB per file; keeps 10 older files (up to 11 files total). |
+| `postgres.log` | PostgreSQL startup and server messages. The supervisor drains the inherited standard-output pipe after `pg_ctl` exits. | 10 MiB per file; keeps 10 older files (up to 11 files total). |
 | `ollama.log` | Output of the Ollama child, when it runs. | None. |
+
+After upgrading, an existing `control_plane.log` or `postgres.log` larger than 10 MiB rotates into an older copy without being shortened. That copy can exceed the normal size limit until later rotations replace it. New output follows the limits above; upgrading does not immediately reclaim space used by older logs.
 
 The supervisor also writes some failures (for example the stop watchdog) to the Windows **Application** event log. In testing we could not confirm the source name Windows displays for them.
 
@@ -118,8 +119,6 @@ Other logs you may need:
 
 - `C:\ProgramData\CivicCast\install-progress.log`: the installer's record of a first install.
 - `C:\ProgramData\CivicCast\upgrade\upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md`: the upgrade engine, described below.
-
-> **Known issue (beta.11):** `control_plane.log` (every web request) and `postgres.log` are not rotated. Check their size weekly and, when the service is stopped, move or truncate them; do not assume Windows or the installer trims them.
 
 To follow a log live:
 
@@ -141,9 +140,10 @@ The HTTP status is 200 whenever the control plane is alive, even if it is unheal
 
 | Field | Values | Meaning |
 | --- | --- | --- |
-| `status` | `healthy`, `degraded` | `healthy` only when the database schema is current. |
+| `status` | `healthy`, `degraded` | `healthy` requires a current database schema and no degraded or unknown live-caption verdict. This is not proof of every output or device. |
 | `version` | text | The running CivicCast version. |
 | `schema` | `current`, `behind`, `not-configured`, `unknown` | Whether the database matches this version of the program. |
+| `live_captions` | `disabled`, `idle`, `unknown`, `degraded`, `healthy` | Coarse caption readiness; authenticated System Health identifies affected channels. Disabled captions and channels that are not on air do not themselves make readiness degraded. |
 | `schema_db_revision`, `schema_expected_head` | text | The database's schema revision and the one this version expects. They differ when `schema` is `behind`. |
 | `mode` | `normal`, `maintenance` | In `maintenance` the body also shows `workers_started: false` and `mutating_disabled: true`. |
 
@@ -159,7 +159,7 @@ Signed in, open **Readiness** (page heading **Safe to broadcast**, section **Sys
 
 The station raises alerts for conditions including: off-air, encoder death, server crash, schema drift, relay blocked, compliance probe failure, missing media, commit failure, takeover stuck for 2 hours, AI runtime down, low disk, clock skew, database unreachable, service down, self-test failure, scheduled-recording failure or dropout, as-run outbox degraded, channel-automation failure, caption tier degraded, remote-contribution problems, and emergency-alert source unavailable.
 
-> **Known issue (beta.11):** A fresh install seeds every alert rule with no destinations attached. With no destination, the evaluator records a "suppressed" delivery row and sends nothing. The rule editor in the console does not send destinations. To make an e-mail or SMS alert arrive, a Setup admin must create a destination with `POST /api/staff/alert-channels` and attach it to each rule with `PUT /api/staff/alert-rules/{rule_id}` (field `channel_ids`). Until you have done that and tested it, assume no alert will reach you and monitor from outside the station as well: poll `/health` and the Windows service state with your own monitoring tool.
+> **Known issue (beta.11; destination editor updated in beta.12):** A fresh install seeds every alert rule with no destinations attached. With no destination, the evaluator records a "suppressed" delivery row and sends nothing. In beta.11 the rule editor could not set destinations; beta.12 adds a **Destinations** checklist to each rule card. To make an e-mail or SMS alert arrive, a Setup admin must create a destination with `POST /api/staff/alert-channels` and attach it to each rule with `PUT /api/staff/alert-rules/{rule_id}` (field `channel_ids`) or use the rule card. There is no **Send test alert** button. Until you have assigned at least one enabled destination to each rule you rely on, assume it cannot notify you and monitor from outside the station as well: poll `/health` and the Windows service state with your own monitoring tool.
 
 ### Self-tests
 
@@ -204,7 +204,7 @@ This routine uses checks that exist in beta.11.
 ### Each week
 
 1. Read the result of the Sunday weekly self-test.
-2. Check the size of `control_plane.log`, `postgres.log` and `ollama.log` (they are not rotated).
+2. Check the size of `ollama.log`; it is not rotated. The control-plane and PostgreSQL raw output logs rotate at 10 MiB and retain ten older files.
 3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The native beta.11 live-caption work area is bounded automatically and does not require weekly audio cleanup.
 4. Run `civiccast egress trim-health --older-than-days 30 --dry-run` and decide whether to trim (see the next section).
 5. Run the disaster-recovery drill (see below) at least when you have changed anything, and keep the report.

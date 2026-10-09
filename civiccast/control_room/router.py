@@ -58,6 +58,7 @@ from civiccast.control_room.service import (
     SessionAlreadyOpenError,
     SessionClosedError,
     SessionLockOverrideForbiddenError,
+    SessionOperatorMismatchError,
 )
 from civiccast.control_room.store import (
     ControlRoomStore,
@@ -222,7 +223,7 @@ def _translate(exc: ControlRoomServiceError | ControlRoomStoreError) -> HTTPExce
                 "admin can force-close it to release the lock."
             ),
         )
-    if isinstance(exc, SessionLockOverrideForbiddenError):
+    if isinstance(exc, (SessionLockOverrideForbiddenError, SessionOperatorMismatchError)):
         return HTTPException(status.HTTP_403_FORBIDDEN, detail=str(exc))
     if isinstance(exc, CueImmutableError):
         return HTTPException(status.HTTP_409_CONFLICT, detail=str(exc))
@@ -436,6 +437,21 @@ def get_surface(
     if surface is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail=surface_id)
     return SurfaceDetail(surface=surface, cues=st.list_cues_for_surface(surface_id))
+
+
+@staff_router.get(
+    "/surfaces/{surface_id}/session",
+    response_model=ControlRoomSession | None,
+    summary="Read the open session and lock holder for a control surface",
+    dependencies=[Depends(require_any_role(*_SESSION_CLOSE))],
+)
+def get_open_surface_session(
+    surface_id: str, store: ControlRoomStore | None = Depends(get_control_room_store)
+) -> ControlRoomSession | None:
+    st = _require_store(store)
+    if st.get_surface(surface_id) is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail=surface_id)
+    return st.get_open_session_for_surface(surface_id)
 
 
 @staff_router.post(

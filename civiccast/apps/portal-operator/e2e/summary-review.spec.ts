@@ -43,9 +43,15 @@ const refusedSummary = {
 
 async function mockSummaryBackend(
   page: import('@playwright/test').Page,
-  options: { items?: typeof summary[]; failList?: boolean; delayList?: boolean; roles?: string[] } = {},
+  options: {
+    items?: typeof summary[]
+    failList?: boolean
+    delayList?: boolean
+    roles?: string[]
+  } = {},
 ) {
   let items = options.items ?? [summary]
+  let savedRecords: Array<Record<string, unknown>> = []
   const roles = options.roles ?? ['records_clerk']
   await page.route('**/api/staff/auth/me', async (route) => {
     await route.fulfill({
@@ -169,8 +175,38 @@ async function mockSummaryBackend(
       body: JSON.stringify({ items, next_cursor: null }),
     })
   })
+  await page.route('**/api/staff/summaries/summary-1', async (route) => {
+    if (route.request().method() !== 'PATCH') {
+      await route.continue()
+      return
+    }
+    const payload = route.request().postDataJSON() as {
+      narrative?: string
+      expected_audit_fingerprint?: string
+    }
+    expect(payload.expected_audit_fingerprint).toBe(summary.audit_fingerprint)
+    const updated = {
+      ...summary,
+      narrative: payload.narrative,
+      audit_fingerprint: `sha256:${'c'.repeat(64)}`,
+    }
+    items = items.map((item) => (item.summary_id === summary.summary_id ? updated : item))
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(updated) })
+  })
   await page.route('**/api/staff/summaries/*/approve', async (route) => {
     const id = route.request().url().split('/summaries/')[1].split('/')[0]
+    const payload = route.request().postDataJSON() as Record<string, unknown>
+    expect(payload).toEqual({
+      expected_audit_fingerprint: items.find((item) => item.summary_id === id)?.audit_fingerprint,
+    })
+    if ('operator_id' in payload || 'operator_display_name' in payload) {
+      await route.fulfill({
+        status: 422,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Operator identity is read from the staff token.' }),
+      })
+      return
+    }
     items = items.map((item) => (item.summary_id === id ? { ...item, status: 'approved' } : item))
     await route.fulfill({
       status: 200,
@@ -178,9 +214,62 @@ async function mockSummaryBackend(
       body: JSON.stringify(items.find((item) => item.summary_id === id)),
     })
   })
-  await page.route('**/api/staff/records', async (route) => {
+  await page.route('**/api/staff/records**', async (route) => {
+    if (route.request().method() === 'GET') {
+      const url = new URL(route.request().url())
+      const summaryId = url.searchParams.get('summary_id')
+      const limit = Number(url.searchParams.get('limit') ?? '50')
+      expect(summaryId).toBe('summary-1')
+      expect(limit).toBe(10)
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(savedRecords.filter((record) => record.summary_id === summaryId).slice(0, limit)),
+      })
+      return
+    }
+    const record = {
+      record_id: 'record-1',
+      summary_id: 'summary-1',
+      status: 'verified',
+      audit_fingerprint: `sha256:${'b'.repeat(64)}:${'c'.repeat(64)}`,
+      pdfa: {
+        conformance: 'PDF/A-3B',
+        file_name: 'council-2026-05-14-record.pdf',
+        media_type: 'application/pdf',
+        byte_size: 4096,
+        embedded_metadata_names: [
+          'sourced-claims.json',
+          'provenance.json',
+          'approval.json',
+          'timestamp-token.der',
+        ],
+      },
+      timestamp_proof: {
+        algorithm: 'sha256',
+        artifact_digest: `sha256:${'d'.repeat(64)}`,
+        token_der_b64: 'MII=',
+        timestamped_at: '2026-05-14T12:30:00Z',
+      },
+      artifact_digest: `sha256:${'d'.repeat(64)}`,
+    }
+    savedRecords = [record]
     await route.fulfill({
       status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify(record),
+    })
+  })
+  await page.route('**/api/staff/records/record-1/download', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/pdf',
+      body: '%PDF-1.7\nsummary record\n%%EOF',
+    })
+  })
+  await page.route('**/api/staff/records/record-1/verify', async (route) => {
+    await route.fulfill({
+      status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         record_id: 'record-1',
@@ -192,12 +281,7 @@ async function mockSummaryBackend(
           file_name: 'council-2026-05-14-record.pdf',
           media_type: 'application/pdf',
           byte_size: 4096,
-          embedded_metadata_names: [
-            'sourced-claims.json',
-            'provenance.json',
-            'approval.json',
-            'timestamp-token.der',
-          ],
+          embedded_metadata_names: ['sourced-claims.json', 'provenance.json'],
         },
         timestamp_proof: {
           algorithm: 'sha256',
@@ -217,6 +301,31 @@ async function openSummaryReview(page: import('@playwright/test').Page) {
 }
 
 test.describe('summary review', () => {
+  test('stale approval stays bound to the displayed draft and offers reload', async ({ page }) => {
+    await mockSummaryBackend(page)
+    await openSummaryReview(page)
+    const changed = { ...summary, narrative: 'Another clerk saved this updated draft.', audit_fingerprint: `sha256:${'e'.repeat(64)}` }
+    await page.route('**/api/staff/summaries/*/approve', async (route) => {
+      expect(route.request().postDataJSON()).toEqual({ expected_audit_fingerprint: summary.audit_fingerprint })
+      await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'Summary changed. Reload and review it before approving.' }),
+      })
+    })
+    await page.route('**/api/staff/summaries/review-items', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ items: [changed], next_cursor: null }) })
+    })
+    await page.getByRole('button', { name: 'Approve summary' }).click()
+    await expect(page.getByRole('alert')).toContainText('Reload and review it before approving.')
+    await page.getByRole('button', { name: 'Reload summaries' }).click()
+    await expect(page.getByText(changed.narrative)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Approve summary' })).toBeEnabled()
+    await page.getByRole('button', { name: 'Edit summary' }).click()
+    await expect(page.getByLabel('Edit summary narrative')).toHaveValue(changed.narrative)
+    await expect(page.getByRole('button', { name: 'Save changes' })).toBeDisabled()
+  })
+
   test('desktop success preserves focus while sourced claim seeks transcript', async ({ page }) => {
     const errors: string[] = []
     page.on('console', (message) => {
@@ -232,12 +341,43 @@ test.describe('summary review', () => {
     await expect(approve).toBeFocused()
     await expect(page.getByText('cue-42 / 3:08-3:25')).toBeVisible()
 
+    await page.getByRole('button', { name: 'Edit summary' }).click()
+    const editedNarrative = 'The council approved the paving contract by a 4-1 vote.'
+    await page.getByLabel('Edit summary narrative').fill(editedNarrative)
+    await page.getByRole('button', { name: 'Save changes' }).click()
+    await expect(page.getByText(editedNarrative)).toBeVisible()
+
     await approve.click()
+    await expect(page.getByText('Approved', { exact: true })).toBeVisible()
     await page.getByRole('button', { name: 'Export signed record' }).click()
     await expect(page.getByText(/Signed record exported: record-1/)).toBeVisible()
     await expect(page.getByText(/server validates the\s+PDF\/A-3B artifact/i)).toBeVisible()
     await expect(errors).toEqual([])
+
+    const downloadPromise = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Download signed record' }).click()
+    const download = await downloadPromise
+    expect(download.suggestedFilename()).toBe('council-2026-05-14-record.pdf')
+    await page.getByRole('button', { name: 'Verify signed record' }).click()
+    await expect(page.getByText('Record verification: Verified')).toBeVisible()
+    await expect(errors).toEqual([])
     await page.screenshot({ path: `${evidenceDir}/v0.6-summary-review-success-desktop.png`, fullPage: true })
+  })
+
+  test('approved summary can reload and verify an earlier signed record', async ({ page }) => {
+    await mockSummaryBackend(page, {
+      items: [{ ...summary, status: 'approved' }],
+    })
+    await openSummaryReview(page)
+
+    await page.getByRole('button', { name: 'Export signed record' }).click()
+    await expect(page.getByText(/Signed record exported: record-1/)).toBeVisible()
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Summary review' })).toBeVisible()
+    await page.getByRole('button', { name: 'Load saved records' }).click()
+    await expect(page.getByText('council-2026-05-14-record.pdf')).toBeVisible()
+    await page.getByRole('button', { name: 'Verify saved record record-1' }).click()
+    await expect(page.getByText('Record verification: Verified')).toBeVisible()
   })
 
   test('mobile partial/refusal state is actionable', async ({ page }) => {
@@ -285,7 +425,7 @@ test.describe('summary review', () => {
     await mockSummaryBackend(page, { roles: ['meeting_operator'] })
     await openSummaryReview(page)
 
-    await expect(page.getByText(/Summary approval and signed-record export require the records clerk role/)).toBeVisible()
+    await expect(page.getByText(/Summary approval and signed-record actions require the records clerk role/)).toBeVisible()
     await expect(page.getByRole('button', { name: 'Approve summary' })).toBeDisabled()
     await expect(page.getByRole('button', { name: 'Export signed record' })).toBeDisabled()
     await expect(page.getByText('The paving contract passed 4-1.')).toBeVisible()

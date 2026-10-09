@@ -147,7 +147,7 @@ function emptyConfig(): PaywallConfig {
     enabled: false,
     provider: 'stripe',
     tiers: [],
-    signing_secret: null,
+    signing_secret_present: false,
     created_at: now,
     updated_at: now,
   }
@@ -287,18 +287,20 @@ function PaywallEditor({
   // click Save, which fires PUT with the whole local state.
   const [enabled, setEnabled] = useState<boolean>(initialConfig.enabled)
   const [provider, setProvider] = useState<PaywallProvider>(initialConfig.provider)
-  const [signingSecret, setSigningSecret] = useState<string>(
-    initialConfig.signing_secret ?? '',
+  // The server returns only a presence flag. Keep the secret write-only in
+  // the browser too: a blank field means "keep the saved value".
+  const [signingSecret, setSigningSecret] = useState<string>('')
+  const [hasSavedSigningSecret, setHasSavedSigningSecret] = useState<boolean>(
+    initialConfig.signing_secret_present,
   )
+  const [clearSavedSecret, setClearSavedSecret] = useState<boolean>(false)
   const [showSecret, setShowSecret] = useState<boolean>(false)
   const [tiers, setTiers] = useState<PaywallTier[]>(initialConfig.tiers)
   const [newTier, setNewTier] = useState<NewTierFormState>(EMPTY_NEW_TIER)
   const [confirmDeleteConfig, setConfirmDeleteConfig] = useState<boolean>(false)
-  // UX-7: rotating the signing secret is destructive (invalidates every
-  // unredeemed magic link + breaks Stripe webhook verification). Match the
-  // delete-config two-step: arm-then-confirm. The arm step is skipped when
-  // the current secret is empty (regenerating "nothing" is harmless).
-  const [confirmRegenerateSecret, setConfirmRegenerateSecret] = useState<boolean>(false)
+  const [confirmClearSecret, setConfirmClearSecret] = useState<boolean>(false)
+  const [secretDraftRevision, setSecretDraftRevision] = useState(0)
+  const [confirmedSecretRevision, setConfirmedSecretRevision] = useState<number | null>(null)
   const [grants, setGrants] = useState<AccessGrant[]>([])
   const [newGrant, setNewGrant] = useState<NewGrantFormState>(EMPTY_NEW_GRANT)
   const [grantDateError, setGrantDateError] = useState<string | null>(null)
@@ -311,9 +313,26 @@ function PaywallEditor({
   // sets it back.
   const [dirtySinceSave, setDirtySinceSave] = useState(false)
 
+  const setSecretDraft = (next: string) => {
+    setSigningSecret(next)
+    setSecretDraftRevision((revision) => revision + 1)
+    setConfirmedSecretRevision(null)
+  }
+  const confirmingSecretReplacement =
+    hasSavedSigningSecret &&
+    signingSecret.trim() !== '' &&
+    confirmedSecretRevision !== secretDraftRevision
+
   const upsertMut = useMutation({
     mutationFn: (payload: PaywallConfigInput) => upsertPaywallConfig(payload),
-    onSuccess: () => {
+    onSuccess: (saved) => {
+      setHasSavedSigningSecret(saved.signing_secret_present)
+      setSigningSecret('')
+      setShowSecret(false)
+      setClearSavedSecret(false)
+      setConfirmClearSecret(false)
+      setSecretDraftRevision((revision) => revision + 1)
+      setConfirmedSecretRevision(null)
       setDirtySinceSave(false)
       onConfigInvalidated()
     },
@@ -343,13 +362,19 @@ function PaywallEditor({
   })
 
   const handleSave = () => {
+    if (confirmingSecretReplacement) return
+
     const payload: PaywallConfigInput = {
       config_id: initialConfig.config_id,
       station_id: initialConfig.station_id,
       enabled,
       provider,
       tiers,
-      signing_secret: signingSecret.trim() === '' ? null : signingSecret,
+    }
+    if (clearSavedSecret) {
+      payload.signing_secret = ''
+    } else if (signingSecret.trim() !== '') {
+      payload.signing_secret = signingSecret
     }
     upsertMut.mutate(payload)
   }
@@ -418,6 +443,13 @@ function PaywallEditor({
         enabled={enabled}
         provider={provider}
         signingSecret={signingSecret}
+        hasSavedSecret={hasSavedSigningSecret}
+        clearSavedSecret={clearSavedSecret}
+        replacementConfirmed={
+          hasSavedSigningSecret &&
+          signingSecret.trim() !== '' &&
+          confirmedSecretRevision === secretDraftRevision
+        }
         showSecret={showSecret}
         saving={upsertMut.isPending}
         deleting={deleteMut.isPending}
@@ -438,26 +470,41 @@ function PaywallEditor({
           setDirtySinceSave(true)
         }}
         onSigningSecretChange={(next) => {
-          setSigningSecret(next)
+          setSecretDraft(next)
+          if (next.trim() !== '') {
+            setClearSavedSecret(false)
+            setConfirmClearSecret(false)
+          }
           setDirtySinceSave(true)
         }}
         onToggleShowSecret={() => setShowSecret((v) => !v)}
-        confirmingRegenerate={confirmRegenerateSecret}
+        confirmingRegenerate={confirmingSecretReplacement}
         onArmRegenerateSecret={() => {
-          // No-confirm shortcut when there's nothing to overwrite: empty
-          // → fresh-generated is a safe single-click path.
-          if (signingSecret.trim() === '') {
-            setSigningSecret(generateSigningSecret())
-            setDirtySinceSave(true)
-            return
-          }
-          setConfirmRegenerateSecret(true)
-        }}
-        onCancelRegenerateSecret={() => setConfirmRegenerateSecret(false)}
-        onConfirmRegenerateSecret={() => {
-          setSigningSecret(generateSigningSecret())
+          setConfirmClearSecret(false)
+          setClearSavedSecret(false)
+          setSecretDraft(generateSigningSecret())
           setDirtySinceSave(true)
-          setConfirmRegenerateSecret(false)
+        }}
+        onCancelRegenerateSecret={() => setSecretDraft('')}
+        onConfirmRegenerateSecret={() => {
+          setConfirmedSecretRevision(secretDraftRevision)
+        }}
+        confirmingClear={confirmClearSecret}
+        onArmClearSecret={() => {
+          setSecretDraft('')
+          setClearSavedSecret(false)
+          setConfirmClearSecret(true)
+        }}
+        onCancelClearSecret={() => {
+          setConfirmClearSecret(false)
+          setClearSavedSecret(false)
+          setSecretDraft('')
+        }}
+        onConfirmClearSecret={() => {
+          setSecretDraft('')
+          setClearSavedSecret(true)
+          setConfirmClearSecret(false)
+          setDirtySinceSave(true)
         }}
         onSave={handleSave}
         onArmDelete={() => setConfirmDeleteConfig(true)}
@@ -500,11 +547,15 @@ function ConfigCard({
   enabled,
   provider,
   signingSecret,
+  hasSavedSecret,
+  clearSavedSecret,
+  replacementConfirmed,
   showSecret,
   saving,
   deleting,
   confirmingDelete,
   confirmingRegenerate,
+  confirmingClear,
   saveError,
   deleteError,
   saved,
@@ -515,6 +566,9 @@ function ConfigCard({
   onArmRegenerateSecret,
   onCancelRegenerateSecret,
   onConfirmRegenerateSecret,
+  onArmClearSecret,
+  onCancelClearSecret,
+  onConfirmClearSecret,
   onSave,
   onArmDelete,
   onCancelDelete,
@@ -523,11 +577,15 @@ function ConfigCard({
   enabled: boolean
   provider: PaywallProvider
   signingSecret: string
+  hasSavedSecret: boolean
+  clearSavedSecret: boolean
+  replacementConfirmed: boolean
   showSecret: boolean
   saving: boolean
   deleting: boolean
   confirmingDelete: boolean
   confirmingRegenerate: boolean
+  confirmingClear: boolean
   saveError: string | null
   deleteError: string | null
   saved: boolean
@@ -538,6 +596,9 @@ function ConfigCard({
   onArmRegenerateSecret: () => void
   onCancelRegenerateSecret: () => void
   onConfirmRegenerateSecret: () => void
+  onArmClearSecret: () => void
+  onCancelClearSecret: () => void
+  onConfirmClearSecret: () => void
   onSave: () => void
   onArmDelete: () => void
   onCancelDelete: () => void
@@ -601,7 +662,7 @@ function ConfigCard({
             id={idSecret}
             type={showSecret ? 'text' : 'password'}
             value={signingSecret}
-            placeholder="base64 secret; rotate via Generate"
+            placeholder={hasSavedSecret ? 'Leave blank to keep the saved secret' : 'Enter a new secret (32+ characters)'}
             onChange={(e) => onSigningSecretChange(e.target.value)}
             className="flex-1 rounded-md px-2 py-1.5"
             style={INPUT_STYLE}
@@ -617,19 +678,18 @@ function ConfigCard({
           >
             {showSecret ? 'Hide' : 'Show'}
           </button>
-          {/* UX-7: when a non-empty secret is already set, Generate is a
-              two-step (arm → confirm) just like Delete. An empty starting
-              state skips the confirm — generating into "nothing" is safe. */}
+          {/* The candidate is already in the field before confirmation, so
+              confirmation always covers the exact value that Save will send. */}
           {confirmingRegenerate ? (
             <>
               <button
                 type="button"
-                aria-label="Confirm regenerate signing secret"
+                aria-label="Confirm replacement signing secret"
                 onClick={onConfirmRegenerateSecret}
                 className="rounded-md px-2 py-1 text-xs font-semibold"
                 style={{ background: 'var(--cc-warn-soft)', border: '1px solid var(--cc-warn)' }}
               >
-                Confirm regenerate
+                Confirm replacement
               </button>
               <button
                 type="button"
@@ -651,16 +711,77 @@ function ConfigCard({
               Generate new secret
             </button>
           )}
+          {confirmingClear ? (
+            <>
+              <button
+                type="button"
+                aria-label="Confirm clear signing secret"
+                onClick={onConfirmClearSecret}
+                className="rounded-md px-2 py-1 text-xs font-semibold"
+                style={{ background: 'var(--cc-warn-soft)', border: '1px solid var(--cc-warn)' }}
+              >
+                Confirm clear
+              </button>
+              <button
+                type="button"
+                onClick={onCancelClearSecret}
+                className="rounded-md px-2 py-1 text-xs font-medium"
+                style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+              >
+                Cancel
+              </button>
+            </>
+          ) : clearSavedSecret ? (
+            <button
+              type="button"
+              onClick={onCancelClearSecret}
+              className="rounded-md px-2 py-1 text-xs font-medium"
+              style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+            >
+              Keep saved secret
+            </button>
+          ) : hasSavedSecret ? (
+            <button
+              type="button"
+              aria-label="Clear saved signing secret"
+              onClick={onArmClearSecret}
+              className="rounded-md px-2 py-1 text-xs font-medium"
+              style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+            >
+              Clear saved secret
+            </button>
+          ) : null}
         </div>
+        <span className="text-xs" style={{ color: clearSavedSecret ? 'var(--cc-warn)' : 'var(--cc-ink-3)' }}>
+          {clearSavedSecret
+            ? 'The saved secret will be removed when you save.'
+            : hasSavedSecret
+              ? signingSecret.trim() === ''
+                ? 'A secret is saved. Leave this field blank to keep it; enter a replacement or generate a new one to rotate it.'
+                : replacementConfirmed
+                  ? 'This exact replacement is confirmed. Save to replace the currently saved value.'
+                  : 'A replacement secret is ready. Confirm this exact value before saving it.'
+              : signingSecret.trim() === ''
+                ? 'No secret is saved. Enter or generate a secret to set one.'
+                : 'A new secret is ready. Save to store it.'}
+        </span>
+        {confirmingClear && (
+          <p role="alert" className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+            Clearing removes the saved secret when you save. Magic links and Stripe webhook
+            signatures cannot be verified until you set a new secret.
+          </p>
+        )}
         <span className="text-xs" style={{ color: 'var(--cc-warn)' }}>
           Rotating this invalidates all unredeemed magic links and breaks webhook
           verification until Stripe is updated.
         </span>
         {confirmingRegenerate && (
           <p role="alert" className="text-xs" style={{ color: 'var(--cc-warn)' }}>
-            Confirming will overwrite the current secret. All unredeemed magic
-            links stop working and Stripe webhook verification will fail until
-            you update Stripe&rsquo;s webhook secret.
+            Confirm the value currently in the field before saving it. Editing
+            the value clears this confirmation. Cancelling removes the unsaved
+            replacement and keeps the saved secret. Replacing invalidates all
+            unredeemed magic links and breaks webhook verification until Stripe
+            is updated.
           </p>
         )}
       </label>

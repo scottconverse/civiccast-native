@@ -70,7 +70,7 @@ def alert_to_emergency_overlay(alert: EasCapAlert, *, overlay_id: str) -> Emerge
         title=title,
         message=message,
         instructions=instructions,
-        cellular_fallback_enabled=True,
+        cellular_fallback_enabled=False,
         aria_live="assertive",
     )
 
@@ -128,9 +128,8 @@ class EasDisplayService:
     def auto_surface_active(self, *, channel_id: str) -> list[EasDisplayDecision]:
         """Auto-surface (crawl/overlay) every active severe+ alert not already shown
         on this channel. Never creates a forced slate. Idempotent per (channel, alert)."""
-        shown = {
-            d.alert_id for d in self._store.list_decisions(channel_id=channel_id, state="displayed")
-        }
+        # An operator clear is authoritative until a new CAP alert/update arrives.
+        shown = {d.alert_id for d in self._store.list_decisions(channel_id=channel_id)}
         decisions: list[EasDisplayDecision] = []
         for alert in self._store.list_alerts(active_only=True):
             if alert.alert_id in shown:
@@ -157,17 +156,36 @@ class EasDisplayService:
         This is what the public emergency-overlay endpoint renders. Returns None when
         nothing is being displayed (the player shows no banner). Decisions whose alert
         is no longer active (expired/superseded/cancelled) are skipped."""
+        presentation = self.active_presentation(channel_id)
+        return presentation[1] if presentation is not None else None
+
+    def active_presentation(
+        self, channel_id: str
+    ) -> tuple[EasDisplayMode, EmergencyOverlay] | None:
+        """Resolve mode and real content; expiration does not depend on the poll loop."""
         best_alert: EasCapAlert | None = None
+        best_decision: EasDisplayDecision | None = None
+        now = self._clock()
+
+        def utc(value: datetime) -> datetime:
+            return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
         for decision in self._store.list_decisions(channel_id=channel_id, state="displayed"):
             alert = self._store.get_alert(decision.alert_id)
             if alert is None or alert.status != "active":
+                continue
+            if alert.expires is not None and utc(alert.expires) <= utc(now):
+                continue
+            if alert.effective is not None and utc(alert.effective) > utc(now):
                 continue
             if best_alert is None or SEVERITY_RANK.get(alert.severity, 0) > SEVERITY_RANK.get(
                 best_alert.severity, 0
             ):
                 best_alert = alert
+                best_decision = decision
         if best_alert is None:
             return None
-        return alert_to_emergency_overlay(
+        assert best_decision is not None
+        return best_decision.mode, alert_to_emergency_overlay(
             best_alert, overlay_id=self._overlay_id(channel_id, best_alert.alert_id)
         )

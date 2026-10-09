@@ -218,12 +218,15 @@ test('@fullstack @realboundary publishes, reviews, and subscribes against real A
 
   const review = await api('/api/staff/summaries/review-items')
   expect(review.status).toBe(200)
-  const reviewBody = (await review.json()) as { items: Array<{ summary_id: string }> }
+  const reviewBody = (await review.json()) as { items: Array<{ summary_id: string; audit_fingerprint: string }> }
   expect(reviewBody.items.map((item) => item.summary_id)).toContain('summary-real-boundary')
 
   const approval = await api('/api/staff/summaries/summary-real-boundary/approve', {
     method: 'POST',
-    body: JSON.stringify({ approval_note: 'Real-boundary smoke checked by Playwright.' }),
+    body: JSON.stringify({
+      approval_note: 'Real-boundary smoke checked by Playwright.',
+      expected_audit_fingerprint: reviewBody.items.find((item) => item.summary_id === 'summary-real-boundary')?.audit_fingerprint,
+    }),
   })
   expect(approval.status).toBe(200)
   expect((await approval.json()).status).toBe('approved')

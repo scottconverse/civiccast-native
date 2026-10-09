@@ -115,6 +115,10 @@ class SessionLockOverrideForbiddenError(ControlRoomServiceError):
     operator's open session (breaking their surface lock)."""
 
 
+class SessionOperatorMismatchError(ControlRoomServiceError):
+    """Raised when a non-owner tries to fire a cue from another operator's session."""
+
+
 class OnAirConfirmationRequiredError(ControlRoomServiceError):
     """Raised when On-Air Mode is requested without the explicit operator confirm."""
 
@@ -307,7 +311,6 @@ class ControlRoomService:
             return
         if self._clock() <= session.on_air_expires_at:
             return
-        self._store.close_session(session.session_id, ended_at=self._clock())
         raise OnAirSessionExpiredError(
             "On-Air Mode expired before this cue could fire. Open a new On-Air session to continue."
         )
@@ -379,6 +382,10 @@ class ControlRoomService:
         on an expired on-air session -- that is precisely when it is needed
         most -- while a normal cue fire must keep respecting expiry."""
         session, cue, device = self._resolve_cue(session_id, cue_id)
+        if session.operator_id != operator_id:
+            raise SessionOperatorMismatchError(
+                "This control-room session belongs to another operator."
+            )
         if not device.enabled:
             raise CueNotReadyError(f"device {device.device_id} is disabled")
         profile = self._profile_for(device.device_id)

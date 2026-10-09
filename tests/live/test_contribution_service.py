@@ -116,6 +116,7 @@ def _make_service(store: ContributionStore, **kw: object):
         clock=lambda: now[0],
         id_factory=_id,
         token_factory=_token,
+        channel_enabled=kw.pop("channel_enabled", lambda _channel_id: True),
         **kw,  # type: ignore[arg-type]
     )
     return svc, now
@@ -320,7 +321,9 @@ def _join(svc, room) -> str:
     return svc.resolve_invite(inv.invite_token).session_id
 
 
-def test_on_air_requires_admit_then_fires_hook_and_room_goes_live(store: ContributionStore) -> None:
+def test_on_air_requires_admit_and_records_lifecycle_without_media_takeover(
+    store: ContributionStore,
+) -> None:
     fired: list[tuple[str, str]] = []
     svc, _ = _make_service(
         store, on_air_hook=lambda gs, room: fired.append((gs.session_id, room.room_id))
@@ -339,7 +342,7 @@ def test_on_air_requires_admit_then_fires_hook_and_room_goes_live(store: Contrib
     on_air = svc.put_on_air(sid)
     assert on_air.state == "on_air" and on_air.on_air_at is not None
     assert svc.get_room(room.room_id).state == "live"
-    assert fired == [(sid, room.room_id)]
+    assert fired == []  # channel takeover is a separate confirmed action
 
 
 def test_mute_off_air_and_drop_transitions(store: ContributionStore) -> None:
@@ -358,15 +361,22 @@ def test_mute_off_air_and_drop_transitions(store: ContributionStore) -> None:
         svc.admit_guest(sid)
 
 
-def test_close_room_ends_active_guests(store: ContributionStore) -> None:
+def test_close_room_preserves_guest_lifecycle_until_disconnect_is_observed(
+    store: ContributionStore,
+) -> None:
     svc, _ = _make_service(store)
     room = _open_room(svc)
     sid = _join(svc, room)
     svc.admit_guest(sid)
-    svc.put_on_air(sid)
+    svc.record_media_control_request(sid, "disconnect")
     svc.close_room(room.room_id)
     assert svc.get_room(room.room_id).state == "closed"
-    assert svc.get_session(sid).state == "ended"
+    session = svc.get_session(sid)
+    assert session.state == "connected"
+    assert session.media_control_state == "sent_unverified"
+    assert [
+        guest.session_id for guest in svc.list_sessions(room_id=room.room_id, active_only=True)
+    ] == [sid]
 
 
 def test_update_connection_quality_is_advisory(store: ContributionStore) -> None:
@@ -376,6 +386,23 @@ def test_update_connection_quality_is_advisory(store: ContributionStore) -> None
     updated = svc.update_connection_quality(sid, "degraded")
     assert updated.connection_quality == "degraded"
     assert updated.state == "connected"  # quality never changes the state
+
+
+def test_media_control_request_is_persisted_as_unverified_without_changing_lifecycle(
+    store: ContributionStore,
+) -> None:
+    svc, _ = _make_service(store)
+    room = _open_room(svc)
+    sid = _join(svc, room)
+    requested = svc.record_media_control_request(sid, "video_mute")
+    assert requested.state == "connected"
+    assert requested.media_control_state == "sent_unverified"
+    assert requested.media_control_action == "video_mute"
+    assert requested.media_control_requested_at is not None
+    restored = svc.get_session(sid)
+    assert restored is not None
+    assert restored.media_control_state == "sent_unverified"
+    assert restored.state == "connected"
 
 
 def test_diagnostics_delegates_to_bridge(store: ContributionStore) -> None:

@@ -1851,6 +1851,20 @@ class EgressDaemon:
         else:
             self._chained_slate_program[channel_id] = (proof_event_id, chained_program_end_at)
 
+    def emergency_presentation_ready(self, channel_id: str) -> bool:
+        """Read-only admission check for operator emergency display requests."""
+        ready = getattr(self._encoder_strategy, "emergency_presentation_ready", None)
+        process = self._processes.get(channel_id)
+        state = self._store.read_state(channel_id)
+        return bool(
+            callable(ready)
+            and ready(channel_id)
+            and process is not None
+            and _process_poll(process) is None
+            and state is not None
+            and state.state == "ON_AIR"
+        )
+
     def send_caption_cue(
         self,
         channel_id: str,
@@ -2984,6 +2998,15 @@ class EgressDaemon:
             )
         )
         # S8-3: alert evaluator hook — derive conditions from the just-written sample.
+        sync_emergency = getattr(self._encoder_strategy, "sync_emergency_overlay", None)
+        if state == "ON_AIR" and callable(sync_emergency):
+            config = self._store.get_config(channel_id)
+            if config is not None and config.enabled:
+                try:
+                    if not sync_emergency(channel_id, config, self._work_dir):
+                        _LOG.debug("channel %s emergency graphics update not accepted", channel_id)
+                except Exception:
+                    _LOG.exception("channel %s emergency graphics update failed", channel_id)
         if self._alert_evaluator_hook is not None:
             self._alert_evaluator_hook(
                 channel_id, state, metrics.encoder_fps, metrics.encoder_bitrate_kbps

@@ -90,13 +90,13 @@ def client(engine: Engine) -> Iterator[TestClient]:
         yield c
 
 
-def _seed_channel(engine: Engine, channel_id: str = "public") -> None:
+def _seed_channel(engine: Engine, channel_id: str = "public", *, auto_start: bool = True) -> None:
     store = PostgresEgressStore(lambda: _factory_for(engine))
     store.upsert_config(
         EgressConfig(
             channel_id=channel_id,
             enabled=True,
-            auto_start=True,
+            auto_start=auto_start,
             slate_message="CivicCast is preparing the channel.",
             sinks=[EgressSinkSpec(kind="udp-ts", label="Headend", uri="udp://239.0.0.1:5000")],
         )
@@ -113,10 +113,61 @@ def test_runtime_safe_to_air_returns_status(client: TestClient, engine: Engine) 
     assert any(c["channel_id"] == "public" for c in body["channels"])
 
 
+def test_runtime_safe_to_air_exposes_active_manual_caption_worker(
+    client: TestClient,
+    engine: Engine,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import civiccast.installer.station_state
+
+    _seed_channel(engine, auto_start=False)
+    monkeypatch.setenv("CIVICCAST_EGRESS_WORK_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        civiccast.installer.station_state,
+        "resolve_live_captions_enabled_or_default",
+        lambda: True,
+    )
+    status_path = tmp_path / "public" / "captions" / "runtime-status.json"
+    status_path.parent.mkdir(parents=True)
+    now = datetime.now(UTC)
+    status_path.write_text(
+        json.dumps(
+            {
+                "state": "within-capacity",
+                "worker_heartbeat_at": now.isoformat(),
+                "last_input_at": now.isoformat(),
+                "last_processed_at": now.isoformat(),
+                "audio_signal": "audio-present",
+                "provider_state": "whistle-primary",
+                "backlog_segments": 0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    response = client.get("/api/staff/runtime-safe-to-air")
+
+    assert response.status_code == 200, response.text
+    channel = next(row for row in response.json()["channels"] if row["channel_id"] == "public")
+    assert channel["live_captions"]["processing_state"] == "waiting"
+    assert channel["live_captions"]["provider_state"] == "whistle-primary"
+    heartbeat = datetime.fromisoformat(
+        channel["live_captions"]["worker_heartbeat_at"].replace("Z", "+00:00")
+    )
+    assert heartbeat == now
+
+
 def test_runtime_safe_to_air_no_channels_is_idle(client: TestClient) -> None:
     r = client.get("/api/staff/runtime-safe-to-air")
     assert r.status_code == 200, r.text
     assert r.json()["channels"] == []
+
+
+def test_runtime_safe_to_air_still_requires_staff_auth() -> None:
+    with TestClient(create_app()) as unauthenticated:
+        response = unauthenticated.get("/api/staff/runtime-safe-to-air")
+    assert response.status_code == 401
 
 
 def test_system_resources_lists_recent_samples(client: TestClient, engine: Engine) -> None:

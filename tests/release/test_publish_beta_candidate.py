@@ -304,9 +304,9 @@ def _write_direct_kit(
     consumer_mode: str = "sandbox",
 ) -> tuple[Path, Path]:
     kit_dir.mkdir(parents=True)
-    setup = kit_dir / "CivicCast (Native)_1.0.0-beta.11_x64-setup.exe"
-    setup.write_bytes(b"fake signed Beta 11 installer")
-    (kit_dir / "QUICKSTART-OPERATOR.md").write_text("Beta 11 quickstart\n", encoding="utf-8")
+    setup = kit_dir / f"CivicCast (Native)_{VERSION}_x64-setup.exe"
+    setup.write_bytes(f"fake signed {VERSION} installer".encode())
+    (kit_dir / "QUICKSTART-OPERATOR.md").write_text(f"{VERSION} quickstart\n", encoding="utf-8")
     packs_dir = kit_dir / "packs"
     packs_dir.mkdir()
     for name in (
@@ -435,7 +435,7 @@ def _write_direct_consumer_receipt(
         evidence_dir = tmp_path / "consumer-evidence"
         manifest = {
             "civiccast": {
-                "version": "1.0.0b11",
+                "version": VERSION.replace("-beta.", "b"),
                 "source_state": {"head": source_sha, "dirty": False},
             },
             "files": [],
@@ -466,6 +466,8 @@ def _write_direct_consumer_receipt(
                     "status": "healthy",
                     "version": previous_version,
                     "schema": "current",
+                    # The published Beta 11 install is the pre-0088/0089
+                    # baseline; only the candidate's after-state reaches 0089.
                     "schema_db_revision": "0087_retention_terms",
                 },
             },
@@ -478,7 +480,7 @@ def _write_direct_consumer_receipt(
                     "status": "healthy",
                     "version": VERSION,
                     "schema": "current",
-                    "schema_db_revision": "0087_retention_terms",
+                    "schema_db_revision": "0089_contribution_media_control_requests",
                 },
                 "app_payload_manifest_path": "C:/Program Files/CivicCast (Native)/runtime/app-payload-manifest.json",
                 "app_payload_manifest_sha256": manifest_ref["sha256"],
@@ -564,13 +566,13 @@ def _write_direct_consumer_receipt(
         )
         return receipt_path, setup
 
-    beta11_state = {
+    candidate_state = {
         "installed_version": VERSION,
         "service_state": "Running",
         "health": {"status": "healthy", "version": VERSION},
         "receipt": {"product_version": VERSION},
     }
-    beta11_activation = {
+    candidate_activation = {
         "product_version": VERSION,
         "distribution_index_sha256": "c" * 64,
         "result": "passed",
@@ -586,9 +588,9 @@ def _write_direct_consumer_receipt(
         root = evidence_dir / folder
         return {
             "installer_run": _write_bound_json(root / "installer-run.json", installer_run),
-            "install_state": _write_bound_json(root / "install-state.json", beta11_state),
+            "install_state": _write_bound_json(root / "install-state.json", candidate_state),
             "activation_self_test": _write_bound_json(
-                root / "activation-self-test.json", beta11_activation
+                root / "activation-self-test.json", candidate_activation
             ),
         }
 
@@ -655,14 +657,15 @@ def _write_direct_consumer_receipt(
             evidence_dir / "Beta10ToBeta11Upgrade" / "installer-run.json", installer_run
         ),
         "install_state": _write_bound_json(
-            evidence_dir / "Beta10ToBeta11Upgrade" / "install-state.json", beta11_state
+            evidence_dir / "Beta10ToBeta11Upgrade" / "install-state.json", candidate_state
         ),
         "activation_self_test": _write_bound_json(
-            evidence_dir / "Beta10ToBeta11Upgrade" / "activation-self-test.json", beta11_activation
+            evidence_dir / "Beta10ToBeta11Upgrade" / "activation-self-test.json",
+            candidate_activation,
         ),
         "upgrade_engine_log": _write_bound_text(
             evidence_dir / "Beta10ToBeta11Upgrade" / "upgrade-engine.log.tail.txt",
-            "upgrade engine starting: old=1.0.0-beta.10 new=1.0.0-beta.11\nroute: upgrade\n",
+            f"upgrade engine starting: old=1.0.0-beta.10 new={VERSION}\nroute: upgrade\n",
         ),
     }
     verified = {
@@ -828,8 +831,8 @@ def test_direct_consumer_evidence_dry_run_names_producer_and_tag_target(tmp_path
     )
     assert f"Artifact producer commit: {DIRECT_SOURCE_SHA}" in notes
     assert f"Tag target commit: {SOURCE_SHA}" in notes
-    assert "fresh beta 11 install" in notes.lower()
-    assert "Beta 10 to Beta 11 setup-only upgrade" in notes
+    assert f"fresh {VERSION} install" in notes.lower()
+    assert f"Beta 10 to {VERSION} setup-only upgrade" in notes
     assert "three-channel" in notes.lower() and "five minutes" in notes.lower()
     assert "Gate A workflow lanes: not run" in notes
     assert "download-only network route: not tested" in notes.lower()
@@ -1800,3 +1803,91 @@ def test_asset_naming_constants_are_the_contract():
     assert m.SHA256SUMS_ASSET_NAME == "SHA256SUMS.txt"
     assert m.SIDECAR_SUFFIX == ".sidecar.json"
     assert m.PACK_SUFFIX == ".ccpack"
+
+
+@pytest.mark.parametrize("field", ("setup-signature", "after-health", "manifest", "runtime-health"))
+def test_physical_host_refuses_stale_candidate_version_with_valid_hashes(
+    tmp_path, monkeypatch, field
+):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, consumer_mode="physical-host", previous_version="1.0.0-beta.11"
+    )
+    receipt = json.loads(receipt_path.read_text())
+    evidence = receipt["evidence"]
+    install_ref = evidence["host_install"]["receipt"]
+    install_path = Path(install_ref["path"])
+    install = json.loads(install_path.read_text())
+    stale = "0.0.0-beta.1"
+    if field == "setup-signature":
+        install["setup_authenticode"]["file_version"] = stale
+    elif field == "after-health":
+        install["after"]["health"]["version"] = stale
+    elif field == "manifest":
+        manifest_ref = evidence["host_install"]["installed_manifest"]
+        manifest_path = Path(manifest_ref["path"])
+        manifest = json.loads(manifest_path.read_text())
+        manifest["civiccast"]["version"] = "0.0.0b1"
+        manifest_ref.update(_write_bound_json(manifest_path, manifest))
+        install["after"]["app_payload_manifest_sha256"] = manifest_ref["sha256"]
+    else:
+        snapshot_ref = evidence["host_three_channel_runtime"]["snapshots"][0]
+        snapshot_path = Path(snapshot_ref["path"])
+        snapshot = json.loads(snapshot_path.read_text())
+        snapshot["health"]["version"] = stale
+        snapshot_ref.update(_write_bound_json(snapshot_path, snapshot))
+    install_ref.update(_write_bound_json(install_path, install))
+    receipt_path.write_text(json.dumps(receipt))
+    fake = _fake_command_factory()
+    monkeypatch.setattr(m, "run_command", fake)
+    assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, dry_run=False)) == 1
+    _assert_no_tag_or_public_release(fake.calls)
+
+
+@pytest.mark.parametrize(
+    "proof,member,field",
+    (
+        ("fresh_install", "activation_self_test", "product_version"),
+        ("failed_install_repair", "post_repair_result", "product_version"),
+        ("verify_after_upgrade", "result", "product_version"),
+        ("three_channel_runtime", "preserve_marker", "product_version"),
+    ),
+)
+def test_sandbox_refuses_stale_candidate_version_with_valid_hashes(
+    tmp_path, monkeypatch, proof, member, field
+):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text())
+    reference = receipt["evidence"][proof][member]
+    path = Path(reference["path"])
+    record = json.loads(path.read_text())
+    record[field] = "0.0.0-beta.1"
+    reference.update(_write_bound_json(path, record))
+    receipt_path.write_text(json.dumps(receipt))
+    fake = _fake_command_factory()
+    monkeypatch.setattr(m, "run_command", fake)
+    assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, dry_run=False)) == 1
+    _assert_no_tag_or_public_release(fake.calls)
+
+
+@pytest.mark.parametrize(
+    "kind",
+    ("civiccast-native-exact-host-install", f"beta{VERSION.rsplit('.', 1)[-1]}-exact-host-install"),
+)
+def test_physical_host_current_receipt_kind_preserves_previous_version(tmp_path, monkeypatch, kind):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, consumer_mode="physical-host", previous_version="1.0.0-beta.11"
+    )
+    receipt = json.loads(receipt_path.read_text())
+    reference = receipt["evidence"]["host_install"]["receipt"]
+    path = Path(reference["path"])
+    install = json.loads(path.read_text())
+    install["kind"] = kind
+    reference.update(_write_bound_json(path, install))
+    receipt_path.write_text(json.dumps(receipt))
+    fake = _fake_command_factory()
+    monkeypatch.setattr(m, "run_command", fake)
+    assert m.main(_direct_args(tmp_path, kit_dir, receipt_path)) == 0
+    _assert_no_tag_or_public_release(fake.calls)

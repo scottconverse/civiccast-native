@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +14,8 @@ from civiccast.alerting.models import AlertEvent
 from civiccast.alerting.runtime_status import (
     compute_channel_runtime_status,
     compute_runtime_safe_to_air,
+    derive_live_caption_processing_status,
+    live_caption_readiness,
 )
 from civiccast.egress.models import (
     EgressConfig,
@@ -21,6 +25,145 @@ from civiccast.egress.models import (
 )
 
 _NOW = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+
+
+def test_missing_or_stale_worker_is_unknown_during_startup_then_stalled() -> None:
+    startup = derive_live_caption_processing_status(
+        None,
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+        on_air_since=_NOW - timedelta(seconds=60),
+    )
+    assert startup.processing_state == "unknown"
+
+    missing_worker = derive_live_caption_processing_status(
+        None,
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+        on_air_since=_NOW - timedelta(seconds=181),
+    )
+    assert missing_worker.processing_state == "stalled"
+
+    stale_heartbeat = derive_live_caption_processing_status(
+        {"worker_heartbeat_at": (_NOW - timedelta(seconds=91)).isoformat()},
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+        on_air_since=_NOW - timedelta(seconds=300),
+    )
+    assert stale_heartbeat.processing_state == "stalled"
+
+    recently_started = derive_live_caption_processing_status(
+        {"worker_heartbeat_at": (_NOW - timedelta(seconds=91)).isoformat()},
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+        on_air_since=_NOW - timedelta(seconds=30),
+    )
+    assert recently_started.processing_state == "unknown"
+
+
+@pytest.mark.parametrize(
+    "last_processed_at",
+    [None, (_NOW - timedelta(seconds=600)).isoformat()],
+    ids=["no-prior-completion", "prior-progress"],
+)
+def test_continuous_new_audio_does_not_mask_hung_inference(
+    last_processed_at: str | None,
+) -> None:
+    """A fresh input timestamp cannot make a batch stalled for 10 minutes look healthy."""
+    status = derive_live_caption_processing_status(
+        {
+            "worker_heartbeat_at": _NOW.isoformat(),
+            "last_input_at": (_NOW - timedelta(seconds=5)).isoformat(),
+            "last_processed_at": last_processed_at,
+            "pending_since_at": (_NOW - timedelta(seconds=600)).isoformat(),
+            "inference_started_at": (_NOW - timedelta(seconds=590)).isoformat(),
+            "inference_inflight": True,
+            "backlog_segments": 10,
+        },
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+    )
+
+    assert status.processing_state == "stalled"
+
+
+def test_digital_silence_is_not_caption_failure_and_disabled_or_stopped_is_inactive() -> None:
+    silent = derive_live_caption_processing_status(
+        {
+            "state": "within-capacity",
+            "worker_heartbeat_at": _NOW.isoformat(),
+            "last_input_at": (_NOW - timedelta(seconds=5)).isoformat(),
+            "last_processed_at": (_NOW - timedelta(seconds=1)).isoformat(),
+            "audio_signal": "digital-silence",
+            "inference_inflight": False,
+            "backlog_segments": 0,
+        },
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+    )
+    assert silent.processing_state == "silent"
+    assert silent.audio_signal == "digital-silence"
+    status = compute_channel_runtime_status(
+        _config(),
+        _state("public", "ON_AIR"),
+        _sample("public", "ON_AIR", caption_status="not-verified"),
+        now=_NOW,
+        live_caption_status=silent,
+    )
+    assert status.color == "green"
+
+    stopped = derive_live_caption_processing_status(
+        {"state": "storage-refused"},
+        egress_state="STOPPED",
+        captions_expected=True,
+        now=_NOW,
+    )
+    disabled = derive_live_caption_processing_status(
+        {"state": "storage-refused"},
+        egress_state="ON_AIR",
+        captions_expected=False,
+        now=_NOW,
+    )
+    assert stopped.processing_state == "inactive"
+    assert disabled.processing_state == "disabled"
+
+
+def test_readiness_ignores_stopped_channels_and_reads_each_state_once(
+    tmp_path: Path,
+) -> None:
+    class CountingStore(_FakeStore):
+        def __init__(self):
+            super().__init__(
+                [_config("public", auto_start=False)],
+                {"public": _state("public", "STOPPED")},
+                {},
+            )
+            self.state_reads = 0
+
+        def read_state(self, channel_id):
+            self.state_reads += 1
+            return super().read_state(channel_id)
+
+    store = CountingStore()
+    status_path = tmp_path / "public" / "captions" / "runtime-status.json"
+    status_path.parent.mkdir(parents=True)
+    status_path.write_text(json.dumps({"state": "storage-refused"}), encoding="utf-8")
+    assert (
+        live_caption_readiness(
+            store,
+            captions_expected=True,
+            work_dir=tmp_path,
+            now=_NOW,
+        )
+        == "idle"
+    )
+    assert store.state_reads == 1
 
 
 def _config(

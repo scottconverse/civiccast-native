@@ -6,6 +6,8 @@ import { MemoryRouter } from 'react-router'
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+  vi.mocked(getOpenControlRoomSession).mockReset().mockResolvedValue(null)
+  window.sessionStorage.removeItem('civiccast.controlRoom.selectedSurface')
 })
 
 import type {
@@ -142,30 +144,31 @@ describe('SafeStatePanel', () => {
     state: 'open', started_at: '2026-01-01T00:00:00Z', on_air_expires_at: '2026-01-01T00:30:00Z', ended_at: null,
   }
 
-  it('requires a dry run before the safe-state action can fire', () => {
+  it('keeps Panic available without a dry run and sends it through the recovery action', () => {
     const onPlan = vi.fn()
     const onFire = vi.fn()
-    const { getByText, rerender } = render(
-      <SafeStatePanel session={session} cues={[CUE]} planned={null} busy={false} onPlan={onPlan} onFire={onFire} />,
+    const onPanic = vi.fn()
+    const { getByText } = render(
+      <SafeStatePanel session={session} cues={[CUE]} planned={null} busy={false}
+        onPlan={onPlan} onFire={onFire} onPanic={onPanic} />,
     )
     const run = getByText('Panic: Run Safe State') as HTMLButtonElement
-    expect(run.disabled).toBe(true)
-    fireEvent.click(getByText('Dry Run Safe State'))
-    expect(onPlan).toHaveBeenCalledWith('cue_1')
-
-    rerender(<SafeStatePanel session={session} cues={[CUE]} planned={PLAN} busy={false} onPlan={onPlan} onFire={onFire} />)
-    fireEvent.click(getByText('Panic: Run Safe State'))
-    expect(onFire).toHaveBeenCalledWith('cue_1')
+    expect(run.disabled).toBe(false)
+    fireEvent.click(run)
+    expect(onPanic).toHaveBeenCalledOnce()
+    expect(onPlan).not.toHaveBeenCalled()
+    expect(onFire).not.toHaveBeenCalled()
   })
 
   it('keeps the safe-state action disabled when the dry run is not ready', () => {
     const notReadyPlan: CuePlan = { ...PLAN, ready_to_send: false, operator_action: 'Fix device state first.' }
     const onFire = vi.fn()
+    const testSession = { ...session, mode: 'test' as const }
     const { getByText } = render(
-      <SafeStatePanel session={session} cues={[CUE]} planned={notReadyPlan} busy={false}
+      <SafeStatePanel session={testSession} cues={[CUE]} planned={notReadyPlan} busy={false}
         onPlan={vi.fn()} onFire={onFire} />,
     )
-    const run = getByText('Panic: Run Safe State') as HTMLButtonElement
+    const run = getByText('Record Safe State Test') as HTMLButtonElement
     expect(run.disabled).toBe(true)
     fireEvent.click(run)
     expect(onFire).not.toHaveBeenCalled()
@@ -180,12 +183,12 @@ describe('SafeStatePanel', () => {
     expect(getByText('Safe State dry run failed: TSR control service unavailable.')).toBeTruthy()
   })
 
-  it('uses operator-facing copy for the dry-run precondition', () => {
+  it('explains that Panic sends the configured safe-state cue immediately', () => {
     const { getByText } = render(
       <SafeStatePanel session={session} cues={[CUE]} planned={null} busy={false}
         onPlan={vi.fn()} onFire={vi.fn()} />,
     )
-    expect(getByText(/Dry Run checks the current device and cue state/)).toBeTruthy()
+    expect(getByText(/Panic sends the configured safe-state cue immediately/)).toBeTruthy()
   })
 })
 
@@ -296,6 +299,7 @@ vi.mock('../api/client', () => ({
   listProductionDevices: vi.fn(),
   listControlSurfaces: vi.fn(),
   getControlSurface: vi.fn(),
+  getOpenControlRoomSession: vi.fn().mockResolvedValue(null),
   getControlRoomSessionAudit: vi.fn(),
   openControlRoomSession: vi.fn(),
   closeControlRoomSession: vi.fn(),
@@ -309,8 +313,10 @@ vi.mock('../api/client', () => ({
 import type { StaffIdentityResponse } from '../types/api.generated'
 import {
   createSupportBundle,
+  closeControlRoomSession,
   getControlRoomReadiness,
   getControlSurface,
+  getOpenControlRoomSession,
   getStaffIdentity,
   getControlRoomSessionAudit,
   listControlSurfaces,
@@ -324,6 +330,23 @@ import { ControlRoomScreen } from './ControlRoomScreen'
 
 function identity(roles: StaffIdentityResponse['roles']): StaffIdentityResponse {
   return { operator_id: 'op', operator_display_name: 'Op', roles }
+}
+
+function openSession(overrides: Partial<ControlRoomSession> = {}): ControlRoomSession {
+  return {
+    session_id: 's1',
+    surface_id: 'srf',
+    operator_id: 'op',
+    operator_name: 'Op',
+    program_feed_source_ref: 'public:control-room',
+    mode: 'test',
+    safe_state_cue_id: null,
+    state: 'open',
+    started_at: '2026-01-01T00:00:00Z',
+    on_air_expires_at: null,
+    ended_at: null,
+    ...overrides,
+  }
 }
 
 function readinessReport(overrides: Partial<ControlRoomReadinessReport> = {}): ControlRoomReadinessReport {
@@ -402,6 +425,90 @@ describe('ControlRoomScreen container role gate', () => {
     expect(await findByText('Open Test Session')).toBeTruthy()
   })
 
+  it('resumes the same operator session after refresh without opening a duplicate', async () => {
+    window.sessionStorage.setItem('civiccast.controlRoom.selectedSurface', 'srf')
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+    vi.mocked(getControlRoomReadiness).mockResolvedValue(readinessReport())
+    vi.mocked(listProductionDevices).mockResolvedValue([DEVICE])
+    vi.mocked(listControlSurfaces).mockResolvedValue([
+      { surface_id: 'srf', label: 'Chamber', assigned_role: 'meeting_operator', created_by: 'op', created_at: 'x', updated_at: 'x' },
+    ])
+    vi.mocked(getControlSurface).mockResolvedValue({
+      surface: { surface_id: 'srf', label: 'Chamber', assigned_role: 'meeting_operator', created_by: 'op', created_at: 'x', updated_at: 'x' },
+      cues: [CUE],
+    })
+    vi.mocked(getOpenControlRoomSession).mockResolvedValue(openSession())
+    vi.mocked(getControlRoomSessionAudit).mockResolvedValue([])
+
+    const { findByText, getByLabelText } = renderScreen()
+
+    expect((await findByText('Test session open')).textContent).toBe('Test session open')
+    expect((getByLabelText('Control surface') as HTMLSelectElement).value).toBe('srf')
+    expect(getOpenControlRoomSession).toHaveBeenCalledWith('srf')
+    expect(openControlRoomSession).not.toHaveBeenCalled()
+  })
+
+  it('shows another operator’s lock read-only and lets support admin release it with confirmation', async () => {
+    window.sessionStorage.setItem('civiccast.controlRoom.selectedSurface', 'srf')
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['support_admin']))
+    vi.mocked(getControlRoomReadiness).mockResolvedValue(readinessReport())
+    vi.mocked(listProductionDevices).mockResolvedValue([DEVICE])
+    vi.mocked(listControlSurfaces).mockResolvedValue([
+      { surface_id: 'srf', label: 'Chamber', assigned_role: 'meeting_operator', created_by: 'op', created_at: 'x', updated_at: 'x' },
+    ])
+    vi.mocked(getControlSurface).mockResolvedValue({
+      surface: { surface_id: 'srf', label: 'Chamber', assigned_role: 'meeting_operator', created_by: 'op', created_at: 'x', updated_at: 'x' },
+      cues: [CUE],
+    })
+    vi.mocked(getOpenControlRoomSession).mockResolvedValue(
+      openSession({ operator_id: 'op_dana', operator_name: 'Dana', mode: 'on_air', on_air_expires_at: '2026-01-01T00:30:00Z' }),
+    )
+    vi.mocked(closeControlRoomSession).mockResolvedValue(openSession({ state: 'closed' }))
+
+    const { findByRole, findByText, queryByText } = renderScreen()
+
+    expect(await findByText(/Dana owns this surface/)).toBeTruthy()
+    fireEvent.click(await findByRole('button', { name: 'Force-close session' }))
+    expect(await findByText(/This will release Dana's On-Air operator lock/)).toBeTruthy()
+    fireEvent.click(await findByRole('button', { name: 'Confirm force-close' }))
+    await waitFor(() => expect(closeControlRoomSession).toHaveBeenCalledWith('s1'))
+    expect(queryByText('Open On-Air Session')).toBeNull()
+  })
+
+  it('shows the On-Air deadline and lets Panic run directly even after expiry', async () => {
+    window.sessionStorage.setItem('civiccast.controlRoom.selectedSurface', 'srf')
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
+    vi.mocked(getControlRoomReadiness).mockResolvedValue(readinessReport())
+    vi.mocked(listProductionDevices).mockResolvedValue([DEVICE])
+    vi.mocked(listControlSurfaces).mockResolvedValue([
+      { surface_id: 'srf', label: 'Chamber', assigned_role: 'meeting_operator', created_by: 'op', created_at: 'x', updated_at: 'x' },
+    ])
+    vi.mocked(getControlSurface).mockResolvedValue({
+      surface: { surface_id: 'srf', label: 'Chamber', assigned_role: 'meeting_operator', created_by: 'op', created_at: 'x', updated_at: 'x' },
+      cues: [CUE],
+    })
+    vi.mocked(getOpenControlRoomSession).mockResolvedValue(openSession({
+      mode: 'on_air',
+      safe_state_cue_id: 'cue_1',
+      on_air_expires_at: new Date(Date.now() - 5_000).toISOString(),
+    }))
+    vi.mocked(rollbackControlRoomSession).mockResolvedValue({
+      event_id: 'e-panic', session_id: 's1', cue_id: 'cue_1', operator_id: 'op',
+      device_id: 'dev_obs', action: 'scene', result: 'fired', fired_at: new Date().toISOString(), detail: {},
+    })
+
+    const { findByRole, findByText } = renderScreen()
+
+    expect(await findByText(/On-Air session expired/)).toBeTruthy()
+    expect((await findByRole('button', { name: /Take CAM2/ }) as HTMLButtonElement).disabled).toBe(true)
+    const panic = await findByRole('button', { name: 'Panic: Run Safe State' }) as HTMLButtonElement
+    expect(panic.disabled).toBe(false)
+    fireEvent.click(panic)
+    await waitFor(() => expect(rollbackControlRoomSession).toHaveBeenCalledWith('s1'))
+    expect(planControlRoomCue).not.toHaveBeenCalled()
+    expect(fireControlRoomCue).not.toHaveBeenCalled()
+  })
+
   it('refreshes readiness after opening a control-room session', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
     vi.mocked(getControlRoomReadiness).mockResolvedValue(readinessReport({ cues_configured: 1 }))
@@ -434,7 +541,7 @@ describe('ControlRoomScreen container role gate', () => {
     await waitFor(() => expect(getControlRoomReadiness).toHaveBeenCalledTimes(2))
   })
 
-  it('dry-runs and fires the configured safe-state cue with the material fingerprint', async () => {
+  it('runs Panic through the direct safe-state recovery route without a dry run', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
     vi.mocked(getControlRoomReadiness).mockResolvedValue(readinessReport({
       ready_for_on_air: true,
@@ -463,7 +570,7 @@ describe('ControlRoomScreen container role gate', () => {
       safe_state_cue_id: 'cue_1',
       state: 'open',
       started_at: '2026-01-01T00:00:00Z',
-      on_air_expires_at: '2026-01-01T00:30:00Z',
+      on_air_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
       ended_at: null,
     })
     vi.mocked(getControlRoomSessionAudit).mockResolvedValue([])
@@ -478,6 +585,11 @@ describe('ControlRoomScreen container role gate', () => {
       result: 'fired',
       fired_at: '2026-01-01T00:00:01Z',
       detail: {},
+    })
+    vi.mocked(rollbackControlRoomSession).mockResolvedValue({
+      event_id: 'e-panic', session_id: 's1', cue_id: 'cue_1', operator_id: 'op',
+      device_id: 'dev_obs', action: 'scene', result: 'fired',
+      fired_at: new Date().toISOString(), detail: {},
     })
     const { findByLabelText, findByRole, findByText } = renderScreen()
 
@@ -495,12 +607,10 @@ describe('ControlRoomScreen container role gate', () => {
       safe_state_cue_id: 'cue_1',
       confirm_on_air: true,
     }))
-    fireEvent.click(await findByText('Dry Run Safe State'))
-    await waitFor(() => expect(planControlRoomCue).toHaveBeenCalledWith('s1', 'cue_1'))
     fireEvent.click(await findByText('Panic: Run Safe State'))
-    await waitFor(() => expect(fireControlRoomCue).toHaveBeenCalledWith('s1', 'cue_1', {
-      material_state_fingerprint: PLAN.material_state_fingerprint,
-    }))
+    await waitFor(() => expect(rollbackControlRoomSession).toHaveBeenCalledWith('s1'))
+    expect(planControlRoomCue).not.toHaveBeenCalled()
+    expect(fireControlRoomCue).not.toHaveBeenCalled()
   })
 
   it('offers a rollback to safe state when a cue fails to fire on-air, and fires it', async () => {
@@ -522,6 +632,13 @@ describe('ControlRoomScreen container role gate', () => {
       surface: { surface_id: 'srf', label: 'Chamber', assigned_role: 'meeting_operator', created_by: 'op', created_at: 'x', updated_at: 'x' },
       cues: [CUE],
     })
+    vi.mocked(getOpenControlRoomSession)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValue(openSession({
+        mode: 'on_air',
+        safe_state_cue_id: 'cue_1',
+        on_air_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
+      }))
     vi.mocked(openControlRoomSession).mockResolvedValue({
       session_id: 's1',
       surface_id: 'srf',
@@ -532,7 +649,7 @@ describe('ControlRoomScreen container role gate', () => {
       safe_state_cue_id: 'cue_1',
       state: 'open',
       started_at: '2026-01-01T00:00:00Z',
-      on_air_expires_at: '2026-01-01T00:30:00Z',
+      on_air_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
       ended_at: null,
     })
     vi.mocked(getControlRoomSessionAudit).mockResolvedValue([])
@@ -566,7 +683,7 @@ describe('ControlRoomScreen container role gate', () => {
     fireEvent.click(await findByText('Confirm fire'))
     await waitFor(() => expect(fireControlRoomCue).toHaveBeenCalled())
 
-    fireEvent.click(await findByText('Roll back to Safe State'))
+    fireEvent.click(await findByRole('button', { name: 'Panic: Run Safe State' }))
     await waitFor(() => expect(rollbackControlRoomSession).toHaveBeenCalledWith('s1'))
     expect(await findByText('Rolled back to Safe State.')).toBeTruthy()
   })
@@ -600,7 +717,7 @@ describe('ControlRoomScreen container role gate', () => {
       safe_state_cue_id: 'cue_1',
       state: 'open',
       started_at: '2026-01-01T00:00:00Z',
-      on_air_expires_at: '2026-01-01T00:30:00Z',
+      on_air_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
       ended_at: null,
     })
     vi.mocked(getControlRoomSessionAudit).mockResolvedValue([])
@@ -707,14 +824,14 @@ describe('ControlRoomScreen container role gate', () => {
       safe_state_cue_id: 'cue_1',
       state: 'open',
       started_at: '2026-01-01T00:00:00Z',
-      on_air_expires_at: '2026-01-01T00:30:00Z',
+      on_air_expires_at: new Date(Date.now() + 30 * 60_000).toISOString(),
       ended_at: null,
     })
     vi.mocked(getControlRoomSessionAudit).mockResolvedValue([])
     vi.mocked(planControlRoomCue)
       .mockResolvedValueOnce(PLAN)
       .mockRejectedValueOnce(new Error('TSR control service unavailable.'))
-    const { findByLabelText, findByRole, findByText } = renderScreen()
+    const { findByLabelText, findByRole, findByText, queryByText } = renderScreen()
 
     await findByText('Chamber')
     fireEvent.change(await findByLabelText('Control surface'), { target: { value: 'srf' } })
@@ -730,8 +847,10 @@ describe('ControlRoomScreen container role gate', () => {
 
     fireEvent.click(await findByText('Dry Run Safe State'))
     expect(await findByText('Safe State dry run failed: TSR control service unavailable.')).toBeTruthy()
-    await waitFor(() => expect(panic.disabled).toBe(true))
+    expect(queryByText(PLAN.command_preview)).toBeNull()
+    await waitFor(() => expect(panic.disabled).toBe(false))
     fireEvent.click(panic)
+    await waitFor(() => expect(rollbackControlRoomSession).toHaveBeenCalledWith('s1'))
     expect(fireControlRoomCue).not.toHaveBeenCalled()
   })
 })

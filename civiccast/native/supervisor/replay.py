@@ -37,7 +37,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-Verb = Literal["reload", "swap", "caption", "stop"]
+Verb = Literal["reload", "swap", "caption", "stop", "emergency"]
 """The four control verbs (``parse_control_line`` grammar, unchanged)."""
 
 LostAckOutcome = Literal["reissue_desired_state", "report_dropped", "keep_stopping"]
@@ -58,6 +58,9 @@ class DeliverySemantics(BaseModel):
 
 
 _SEMANTICS: dict[str, DeliverySemantics] = {
+    "emergency": DeliverySemantics(
+        verb="emergency", replayed=True, at_most_once=False, on_lost_ack="reissue_desired_state"
+    ),
     "reload": DeliverySemantics(
         verb="reload", replayed=True, at_most_once=False, on_lost_ack="reissue_desired_state"
     ),
@@ -101,6 +104,7 @@ class ChannelReplay(BaseModel):
     # this, never a history of commands. None until first set.
     desired_reload_line: str | None = None
     desired_swap_line: str | None = None
+    desired_emergency_line: str | None = None
     # Terminal: once an unacknowledged (or acknowledged) stop pins the channel,
     # no reissue and no restart may resurrect it.
     stopping: bool = False
@@ -114,6 +118,8 @@ class ChannelReplay(BaseModel):
             self.desired_reload_line = command.line
         elif command.verb == "swap":
             self.desired_swap_line = command.line
+        elif command.verb == "emergency":
+            self.desired_emergency_line = command.line
         elif command.verb == "stop":
             self.stopping = True
 
@@ -152,6 +158,14 @@ class ChannelReplay(BaseModel):
             out.append(
                 Command(
                     id=f"reissue-swap-{self.channel_id}", verb="swap", line=self.desired_swap_line
+                )
+            )
+        if self.desired_emergency_line is not None:
+            out.append(
+                Command(
+                    id=f"reissue-emergency-{self.channel_id}",
+                    verb="emergency",
+                    line=self.desired_emergency_line,
                 )
             )
         return out

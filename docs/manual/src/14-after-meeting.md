@@ -236,7 +236,7 @@ Everyone can read the queue and play audio. Only a records clerk can approve, ed
 
 ## Review an AI summary
 
-CivicCast can write a draft summary of a meeting from its approved caption lines. The summary is saved for a records clerk to check. Treat approval and signed-record export as unfinished in beta.11.
+CivicCast can write a draft summary of a meeting from its approved caption lines. A records clerk checks and approves the draft, then exports a signed-record PDF for station records.
 
 ### Make a summary
 
@@ -251,29 +251,25 @@ If there are no approved cues the card says "No committed transcript cues yet. A
 
 1. In the left menu, click **Summary review** (page heading "Summary review", label "Summary + signed records").
 2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are buttons labeled with a cue ID and its time range.
-3. Click a cue button. The **Inline transcript player** box highlights that range.
+3. Click a cue button. The **Inline transcript player** box highlights that range. It shows cue IDs and times only; to read the caption text, open the recording or Review queue.
 
-The statuses are **Pending review**, **Approved**, **Rejected** and **Needs evidence**. A **Needs evidence** card has an empty paragraph and a red message: the model's output could not be tied to caption cues with timestamps. A yellow bar counts the summaries that need more evidence. The only list shown is Pending review and Needs evidence.
+The page shows **Pending review**, **Approved** and **Needs evidence** items. Approved summaries remain on the page so you can export or revisit their signed records. A **Needs evidence** card has a message explaining that the model's output could not be tied to caption cues with timestamps. A yellow bar counts items that need more evidence.
 
 If nothing is waiting, the page says "No summaries need review." and tells you to use **Generate summary** on a recording's detail page.
 
-> **Known issue (beta.11):** The **Inline transcript player** does not show the caption text and does not play audio. It shows only cue IDs and times. You cannot check a claim against the words from this page. Open the **Review queue** or the recording to read the cues.
+### Edit, approve and export
 
-### What Approve summary can and cannot do
+1. For a **Pending review** item, click **Edit summary** to revise its narrative. Click **Save changes** to keep the edit or **Cancel edit** to discard it. Sourced claims and their transcript references remain unchanged; compare the narrative with those claims before approval.
+2. Click **Approve summary** only after checking the summary against its source cues. Approval is recorded with the identity from your signed-in staff account. After approval the card stays available with its status set to **Approved**.
+3. On an approved card, click **Export signed record**. CivicCast creates a PDF/A-3B record and shows its record ID and digest. The timestamp is a deterministic test timestamp unless the station has configured a real timestamp authority.
+4. Click **Download signed record** to save the PDF. Click **Verify signed record** to ask CivicCast to check its stored artifact and timestamp proof.
+5. To return to an earlier export after leaving or refreshing the page, open the approved card and click **Load saved records**. CivicCast lists up to 10 recent exports for that summary; use each row's **Download** or **Verify** action.
 
-> **Known issue (beta.11):** **Approve summary** is wired to fail. The button is enabled only for a Pending review summary that has at least one sourced claim, and only for a records clerk. When clicked, it sends the server three fields: an operator ID, an operator name and a note. The server accepts only the note and rejects the other fields, so the request fails with HTTP 422 and the page shows a red error box. Do not rely on this approval path.
+Only a records clerk can edit, approve, export, download or verify. If an action fails, the page shows an error and a recovery step. Stale edits and approvals are rejected; reload and review the updated summary before trying again.
 
-A second problem sits behind the first. If **Approve summary** did succeed, the summary would become **Approved** and disappear from this page, because the page lists only Pending review and Needs evidence. **Export signed record** is enabled only for Approved summaries, so it could no longer be reached. Nothing in the console lists, downloads or checks signed records.
+The summary review page does not provide a reject or regenerate action. To generate another draft, update the caption review as needed and use **Generate summary** on the recording's detail page.
 
-What is possible today:
-
-- You can generate a summary and read it on the Summary review page.
-- You cannot reject a summary, regenerate one from this page, download a signed record, or check one. There are no buttons for them.
-- Yellow-bar and refusal messages tell you to "regenerate". The AI summary card does not offer a second **Generate summary** once a job exists.
-
-> **Warning:** Do not tell your records officer that summaries are approved or signed records can be exported from this screen in beta.11.
-
-> **For IT staff:** The approve route is `POST /api/staff/summaries/{id}/approve`, which accepts `{"approval_note": ...}` only. The signed-record export is `POST /api/staff/records`, with download and verify routes under `/api/staff/records/{id}`. The signing timestamp is a deterministic test timestamp unless a real timestamp authority is configured. See the API appendix.
+> **For IT staff:** The approve route is `POST /api/staff/summaries/{id}/approve`; the request requires the displayed draft's `expected_audit_fingerprint`, and the server takes operator identity from the signed-in staff session. Approval atomically checks that the draft is still pending and unchanged; otherwise it returns 409 with reload guidance. Edits use `PATCH /api/staff/summaries/{id}` with the draft's expected audit fingerprint. Signed-record metadata is available from the records-clerk-only `GET /api/staff/records?summary_id={id}&limit=10` route; export, download and verify routes remain under `/api/staff/records`. See the API appendix.
 
 ## Check for videos that are missing before a meeting
 

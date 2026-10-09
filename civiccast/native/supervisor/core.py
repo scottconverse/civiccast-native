@@ -387,7 +387,6 @@ class Supervisor:
         pg_ctl_path: str = "pg_ctl",
         db_host: str = "127.0.0.1",
         db_port: int = 5432,
-        postgres_log_path: str | None = None,
         python_path: str = "python",
         control_plane_env: Mapping[str, str] | None = None,
         control_plane_host: str = "127.0.0.1",
@@ -466,12 +465,6 @@ class Supervisor:
         self._pg_ctl_path = pg_ctl_path
         self._db_host = db_host
         self._db_port = db_port
-        # Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence): when
-        # given, threaded into postgres_child_spec's own ``-l`` flag so it
-        # writes its OWN log file directly instead of relying solely on the
-        # generic inherited-stdio capture. None reproduces the prior behavior
-        # exactly (see children.py).
-        self._postgres_log_path = postgres_log_path
         self._python_path = python_path
         self._control_plane_env = dict(control_plane_env or {})
         self._cp_host = control_plane_host
@@ -576,7 +569,6 @@ class Supervisor:
                 data_dir=self._postgres_data_dir,
                 host=self._db_host,
                 port=self._db_port,
-                log_path=self._postgres_log_path,
             )
         if name == "control_plane":
             mode: Literal["normal", "maintenance"] = "maintenance" if maintenance else "normal"

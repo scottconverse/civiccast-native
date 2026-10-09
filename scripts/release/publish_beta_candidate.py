@@ -310,6 +310,7 @@ def _verify_physical_host_consumer(
     build_run_id: str,
     setup: Path,
     installer_sha256: str,
+    candidate_version: str,
 ) -> dict[str, str]:
     """Verify this exact installer on the already-running physical host.
 
@@ -329,8 +330,14 @@ def _verify_physical_host_consumer(
     manifest_path, manifest = _bound_json(
         receipt_dir, install_proof.get("installed_manifest"), label="installed app payload manifest"
     )
+    # The historical kind identifies the receipt contract, not its installed
+    # version. Every candidate identity field below must still match this release.
+    supported_kinds = {"beta11-exact-host-install", "civiccast-native-exact-host-install"}
+    beta = re.fullmatch(r"\d+\.\d+\.\d+-beta\.(\d+)", candidate_version)
+    if beta is not None:
+        supported_kinds.add(f"beta{beta[1]}-exact-host-install")
     if (
-        install.get("kind") != "beta11-exact-host-install"
+        install.get("kind") not in supported_kinds
         or install.get("stage") != "completed"
         or install.get("status") != "passed"
         or str(install.get("source_sha", "")).casefold() != artifact_source_sha.casefold()
@@ -349,11 +356,11 @@ def _verify_physical_host_consumer(
     setup_signature = _record(install.get("setup_authenticode"), label="host setup Authenticode")
     if (
         setup_signature.get("status") != "Valid"
-        or setup_signature.get("file_version") != "1.0.0-beta.11"
+        or setup_signature.get("file_version") != candidate_version
         or "CN=Scott Converse" not in str(setup_signature.get("signer_subject", ""))
     ):
         raise PublishError(
-            "physical-host receipt does not record the expected signed Beta 11 setup"
+            f"physical-host receipt does not record the expected signed {candidate_version} setup"
         )
 
     before = _record(install.get("before"), label="host pre-install state")
@@ -367,16 +374,16 @@ def _verify_physical_host_consumer(
         or not before.get("display_version")
         or before_health.get("version") != before.get("display_version")
         or after.get("service_state") != "Running"
-        or after.get("display_version") != "1.0.0-beta.11"
+        or after.get("display_version") != candidate_version
         or after_health.get("status") != "healthy"
-        or after_health.get("version") != "1.0.0-beta.11"
+        or after_health.get("version") != candidate_version
         or after_health.get("schema") != "current"
         or before.get("install_location") != after.get("install_location")
         or before.get("schedule_loop_enabled") is not True
         or after.get("schedule_loop_enabled") is not True
     ):
         raise PublishError(
-            "physical-host receipt does not prove a healthy in-place Beta 11 install"
+            f"physical-host receipt does not prove a healthy in-place {candidate_version} install"
         )
 
     reported_manifest_path = after.get("app_payload_manifest_path")
@@ -398,12 +405,12 @@ def _verify_physical_host_consumer(
         civiccast.get("source_state"), label="installed manifest source identity"
     )
     if (
-        civiccast.get("version") != "1.0.0b11"
+        civiccast.get("version") != re.sub(r"-beta\.(\d+)$", r"b\1", candidate_version)
         or str(source_state.get("head", "")).casefold() != artifact_source_sha.casefold()
         or source_state.get("dirty") is not False
     ):
         raise PublishError(
-            "installed app payload manifest does not identify the exact clean Beta 11 source"
+            f"installed app payload manifest does not identify the exact clean {candidate_version} source"
         )
 
     runtime_proof = _record(
@@ -435,8 +442,10 @@ def _verify_physical_host_consumer(
             first_snapshot_at = snapshot_at
         previous_snapshot_at = snapshot_at
         health = _record(snapshot.get("health"), label=f"host runtime observation {index} health")
-        if health.get("status") != "healthy" or health.get("version") != "1.0.0-beta.11":
-            raise PublishError(f"physical-host runtime observation {index} is not healthy Beta 11")
+        if health.get("status") != "healthy" or health.get("version") != candidate_version:
+            raise PublishError(
+                f"physical-host runtime observation {index} is not healthy {candidate_version}"
+            )
         channels = snapshot.get("channels")
         if (
             not isinstance(channels, list)
@@ -520,7 +529,7 @@ def _verify_physical_host_consumer(
     return {
         "consumer_mode": "physical-host",
         "host_install": (
-            "PASS (exact signed Beta 11 installer; existing "
+            f"PASS (exact signed {candidate_version} installer; existing "
             f"{before['display_version']} host updated in place)"
         ),
         "host_preservation": "PASS (install location and service-loop setting retained; schema current)",
@@ -551,6 +560,7 @@ def verify_consumer_evidence_receipt(
     kit_dir: Path,
     artifact_source_sha: str,
     build_run_id: str,
+    candidate_version: str,
 ) -> tuple[Path, list[Path], dict[str, str]]:
     """Verify a bounded receipt over the assembled kit and executed Sandbox evidence."""
 
@@ -654,7 +664,7 @@ def verify_consumer_evidence_receipt(
         or membership.get("station_folder_present") is not True
     ):
         raise PublishError(
-            "kit assembly receipt does not describe the complete 19-file Beta 11 kit"
+            "kit assembly receipt does not describe the complete 19-file candidate kit"
         )
 
     raw_members = assembly.get("kit_members")
@@ -721,6 +731,7 @@ def verify_consumer_evidence_receipt(
             build_run_id=build_run_id,
             setup=setup,
             installer_sha256=installer_sha256,
+            candidate_version=candidate_version,
         )
         return setup, packs, verification
 
@@ -741,41 +752,43 @@ def verify_consumer_evidence_receipt(
         _, value = _bound_json(receipt_dir, proof.get(file_name), label=f"{proof_name}.{file_name}")
         return value
 
-    def require_beta11_install(proof_name: str) -> None:
+    def require_candidate_install(proof_name: str) -> None:
         run = read_json(proof_name, "installer_run")
         if (
             run.get("exit_code") != 0
             or str(run.get("sha256", "")).casefold() != installer_sha256.casefold()
         ):
             raise PublishError(
-                f"direct consumer evidence {proof_name} did not run this Beta 11 installer successfully"
+                f"direct consumer evidence {proof_name} did not run this {candidate_version} installer successfully"
             )
         _verify_install_state(
-            read_json(proof_name, "install_state"), version="1.0.0-beta.11", label=proof_name
+            read_json(proof_name, "install_state"), version=candidate_version, label=proof_name
         )
         activation = read_json(proof_name, "activation_self_test")
         if (
-            activation.get("product_version") != "1.0.0-beta.11"
+            activation.get("product_version") != candidate_version
             or activation.get("result") != "passed"
         ):
             raise PublishError(
                 f"direct consumer evidence {proof_name} activation self-test did not pass"
             )
 
-    require_beta11_install("fresh_install")
+    require_candidate_install("fresh_install")
 
-    require_beta11_install("failed_install_repair")
+    require_candidate_install("failed_install_repair")
     repair = _record(evidence.get("failed_install_repair"), label="failed_install_repair")
     _, fixture = _bound_json(receipt_dir, repair.get("fixture"), label="failed-install fixture")
+    # This is a failed fresh install of the candidate being repaired. The
+    # independent Beta 10 baseline and physical-host before-version stay intact.
     if (
-        fixture.get("previous_installed_version") != "1.0.0-beta.11"
+        fixture.get("previous_installed_version") != candidate_version
         or fixture.get("missing_runtime_key") != "whistle_assets_root"
         or fixture.get("installed_version_marker_removed") is not True
         or fixture.get("upgrade_journal_exists") is not False
         or fixture.get("service_status") != "Stopped"
     ):
         raise PublishError(
-            "failed-install repair fixture does not record the known Beta 11 broken state"
+            f"failed-install repair fixture does not record the known {candidate_version} broken state"
         )
     repair_install_log = _read_bound_text(
         receipt_dir, repair.get("repair_install_log"), label="repair install command log"
@@ -796,7 +809,7 @@ def verify_consumer_evidence_receipt(
         repair_result.get("result") != "PASS"
         or repair_result.get("login") != "PASS"
         or repair_result.get("preserve_install_and_database") is not True
-        or repair_result.get("product_version") != "1.0.0-beta.11"
+        or repair_result.get("product_version") != candidate_version
         or not isinstance(repair_health, dict)
         or repair_health.get("status") != "healthy"
         or not isinstance(repaired_schedules, list)
@@ -825,16 +838,20 @@ def verify_consumer_evidence_receipt(
         label="Beta 10 baseline",
     )
 
-    require_beta11_install("beta10_to_beta11_upgrade")
+    require_candidate_install("beta10_to_beta11_upgrade")
     upgrade = _record(evidence.get("beta10_to_beta11_upgrade"), label="beta10_to_beta11_upgrade")
     upgrade_log = _read_bound_text(
-        receipt_dir, upgrade.get("upgrade_engine_log"), label="Beta 10 to Beta 11 upgrade log"
+        receipt_dir,
+        upgrade.get("upgrade_engine_log"),
+        label=f"Beta 10 to {candidate_version} upgrade log",
     )
     if (
-        "old=1.0.0-beta.10 new=1.0.0-beta.11" not in upgrade_log
+        f"old=1.0.0-beta.10 new={candidate_version}" not in upgrade_log
         or "route: upgrade" not in upgrade_log
     ):
-        raise PublishError("upgrade log does not prove the Beta 10 to Beta 11 upgrade path")
+        raise PublishError(
+            f"upgrade log does not prove the Beta 10 to {candidate_version} upgrade path"
+        )
 
     verify_result = read_json("verify_after_upgrade", "result")
     verify_marker = read_json("verify_after_upgrade", "preserve_marker")
@@ -846,7 +863,7 @@ def verify_consumer_evidence_receipt(
         verify_result.get("result") != "PASS"
         or verify_result.get("login") != "PASS"
         or verify_result.get("preserve_install_and_database") is not True
-        or verify_result.get("product_version") != "1.0.0-beta.11"
+        or verify_result.get("product_version") != candidate_version
         or not isinstance(verify_health, dict)
         or verify_health.get("status") != "healthy"
         or not isinstance(schedule_ids, list)
@@ -871,10 +888,10 @@ def verify_consumer_evidence_receipt(
         or runtime_result.get("channels") != list(runtime_channels)
         or runtime_result.get("preserve_install_and_database") is not True
         or runtime_marker.get("preserve_install_and_database") is not True
-        or runtime_marker.get("product_version") != "1.0.0-beta.11"
+        or runtime_marker.get("product_version") != candidate_version
     ):
         raise PublishError(
-            f"{runtime_proof_scope} runtime receipt does not record the five-minute Beta 11 pass"
+            f"{runtime_proof_scope} runtime receipt does not record the five-minute {candidate_version} pass"
         )
 
     runtime_proof = _record(evidence.get(runtime_proof_group), label=runtime_proof_group)
@@ -903,7 +920,7 @@ def verify_consumer_evidence_receipt(
             snapshot.get("minute") != expected_minute
             or not isinstance(snapshot_health, dict)
             or snapshot_health.get("status") != "healthy"
-            or snapshot_health.get("version") != "1.0.0-beta.11"
+            or snapshot_health.get("version") != candidate_version
             or snapshot.get("pinned_whistle_error_seen") is not False
             or snapshot.get("whistle_active_seen") != dict.fromkeys(runtime_channels, True)
             or snapshot.get("whistle_fallback_seen") != dict.fromkeys(runtime_channels, False)
@@ -1603,6 +1620,12 @@ def _run(args: argparse.Namespace) -> None:
     print("publish_beta_candidate: verifying gh authentication")
     verify_gh_auth()
 
+    if not tag.startswith("v"):
+        raise PublishError(f"--tag must start with 'v': {tag!r}")
+    candidate_version = tag[1:]
+    if candidate_version != get_native_source_version():
+        raise PublishError(f"civiccast._native_version.__version__ does not match tag {tag!r}")
+
     print(f"publish_beta_candidate: verifying kit layout at {kit_dir}")
     direct_verification: dict[str, str] | None = None
     if direct_receipt is not None:
@@ -1611,6 +1634,7 @@ def _run(args: argparse.Namespace) -> None:
             kit_dir=kit_dir,
             artifact_source_sha=artifact_source_sha,
             build_run_id=args.build_run_id,
+            candidate_version=candidate_version,
         )
         print(
             "publish_beta_candidate: direct consumer evidence, assembly receipt, and all kit member hashes verified"

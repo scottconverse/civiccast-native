@@ -1,5 +1,10 @@
 # CivicCast
 
+Development source: **`v1.0.0-beta.12` — unpublished candidate**. The Beta 12
+hardening and workflow fixes are in progress; installation and runtime results
+for Beta 11 below do not qualify this candidate. Beta 11 remains the public
+download until Beta 12 has been built and verified.
+
 **CivicCast `v1.0.0-beta.11` is the current release**, published 2026-10-08 as a GitHub pre-release. Live captions use Whistle as the CPU primary; Whisper fallback is scoped to the affected channel, and operators can select NVIDIA CUDA for Whisper or recorded-media captions. The first recognition is published without repeat-agreement gating. Whistle primary inference is serialized across channels within each station runtime; fallback Whisper requests use a separate serialization lock.
 
 The October 8 documentation/help download revision (producer `400cff08`, signed build `37857705750`) passed a fresh CPU-only Windows Sandbox installation, a five-minute single-channel caption/output check, and installed Help verification. Its manual, contextual instructions, PDF and Word editions are reconciled with the software. The published tag remains unchanged; the verification record identifies the revised source and keeps earlier package and development-soak results separate. See [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) for results and limits.

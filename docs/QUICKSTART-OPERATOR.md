@@ -1,15 +1,19 @@
-# CivicCast beta.11 - Field-Test Quick Start
+# CivicCast beta.12 - Field-Test Quick Start
 
 This is a field-test guide for the native Windows beta. It is not a production
 cutover instruction. Use the exact beta release named in your tester handoff;
 the public release page and `release-truth.yaml` decide which version is
 currently available.
 
+Beta 12 is an unpublished candidate while implementation and package checks
+are in progress. Beta 11 remains the current public release. Follow this guide
+only with a candidate kit and its matching verification report.
+
 ## Before you begin
 
-1. Read the exact beta.11 tester handoff and the Windows release-trust
+1. Read the exact beta.12 tester handoff and the Windows release-trust
    instructions.
-2. Use the complete signed beta.11 USB/LAN kit for a first install unless the
+2. Use the complete signed beta.12 USB/LAN kit for a first install unless the
    handoff names a different, verified test path. The kit
    includes the installer, runtime packs, and the signed `station\` model
    bundle (about 21 GB), the offline way to bring the large AI components. The
@@ -17,7 +21,7 @@ currently available.
    uses a copy already on the computer (**Found locally - verified**) and
    downloads the rest with a progress display and a **Stop downloading**
    button. The setup-only path with no complete kit has not been proven for a
-   first install of this beta.11 candidate.
+   first install of this beta.12 candidate.
 3. For an upgrade, use only the exact installer and procedure named in the
    handoff. Do not assume that another release's upgrade evidence covers this
    candidate.
@@ -32,7 +36,7 @@ currently available.
 ## Install
 
 1. On the station computer, open the signed USB/LAN kit and run its branded
-   `CivicCast (Native)_1.0.0-beta.11_x64-setup.exe` installer. A GitHub download
+   `CivicCast (Native)_1.0.0-beta.12_x64-setup.exe` installer. A GitHub download
    uses the name `setup.exe`; its hash must identify the same approved release.
    Do not substitute a source ZIP, an older release, or a generic "latest"
    download.
@@ -95,7 +99,10 @@ proof that the station is ready for public cutover.
   setup. Preserve the logs and consult your technical lead before retrying or
   rebooting to clear an unexplained failure.
 
-## Known limits of this beta.11 candidate - read before operating a station
+## Verification limits - read before operating a station
+
+Beta 12 installation, upgrade and sustained-operation results are pending.
+The earlier measurements below describe Beta 11 and do not qualify Beta 12.
 
 The owner accepted a 24-hour three-station caption soak on the local beta.11
 development overlay. It recorded 198 successful sampled channel checks across
@@ -129,5 +136,6 @@ a cable headend and production cutover are outside this field-test evidence.
 
 Keep the signed kit, trusted handoff, installer log, recovery-kit confirmation,
 and candidate-bound tester evidence together. A successful local installation
-or soak is evidence for the named candidate only. Beta 11 is already publicly
-published as a pre-release; field results inform suitability for your station.
+or soak is evidence for the named candidate only. Beta 11 is the current public
+pre-release; Beta 12 needs its own package results before release. Field results
+inform suitability for your station.

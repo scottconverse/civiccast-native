@@ -43,8 +43,18 @@ notifications; bounded logs; summary approval/export; local administrator
 recovery; Control Room session recovery; remote contribution media controls;
 alert routing and emergency presentation; paywall secret preservation;
 target-machine operation; and documentation/release identity consistency.
-Implementation and package verification are in progress. This page does not
-claim that these outcomes have passed or that Beta 12 has been released.
+Source changes cover caption health, bounded logs, summary approval/export,
+local administrator recovery, Control Room recovery, remote guest commands,
+alert routing and emergency presentation, and paywall secret preservation.
+Affected tests and independent reviews are being integrated; the manual,
+in-app manual and API reference have been regenerated for this candidate.
+Actual synthetic VDO peers exercised camera mute, audio gain mute and
+disconnect. This does not establish guest routing into the native broadcast
+compositor. Exact-package installation, upgrade/recovery and target-machine
+operation remain pending. This page does not claim that Beta 12 is released
+or that its installation and sustained-operation outcomes have passed.
+See the [Beta 12 candidate verification record](docs/releases/v1.0.0-beta.12-verification.md)
+for source-check scope and the package/field checks still outstanding.
 
 ## Where the history went
 

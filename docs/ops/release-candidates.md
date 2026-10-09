@@ -129,8 +129,8 @@ never downloads Gate A artifacts or manufactures lane verdicts.
 The default direct receipt is Sandbox evidence, with all install, repair,
 preservation and scoped runtime groups below. An explicit
 `consumer_mode: "physical-host"` is a separate, bounded in-place update route.
-It binds the exact signed setup to a healthy pre-install host, successful Beta
-11 install, verified installed app manifest and retained service-loop/schema
+It binds the exact signed setup to a healthy pre-install host, successful
+candidate install, verified installed app manifest and retained service-loop/schema
 state. Its runtime group contains at least two time-ordered snapshots covering
 public, government and education, spanning at least 30 seconds, with HLS no
 older than 30 seconds, advancing playlists/segments, H.264/AAC and changing
@@ -148,8 +148,10 @@ and an `evidence` object containing all of these named proof groups:
   fixture, installer run/state/self-test, repair and verification command
   logs, and post-repair result/preservation marker.
 - `beta10_baseline_install`: the Beta 10 installer run and healthy state.
-- `beta10_to_beta11_upgrade`: the Beta 11 installer run/state/self-test and
-  upgrade-engine log.
+- `beta10_to_beta11_upgrade`: the current candidate's installer run/state/self-test
+  and upgrade-engine log. This legacy field name is retained for receipt
+  compatibility; the validated installed version must match the candidate,
+  including Beta 12, rather than being accepted because the field says Beta 11.
 - `verify_after_upgrade`: the actual sign-in, existing asset and saved
   schedule verification result plus its preservation marker.
 - A runtime proof group selected by the explicit scope below: its five-minute

@@ -3,7 +3,7 @@
   "info": {
     "title": "CivicCast",
     "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, FastAPI standard). Integrators should branch on status code first, then on the type of `detail`.",
-    "version": "1.0.0-beta.11"
+    "version": "1.0.0-beta.12"
   },
   "paths": {
     "/health": {
@@ -12,7 +12,7 @@
           "platform"
         ],
         "summary": "Liveness plus station readiness",
-        "description": "Liveness probe carrying a readiness verdict; no auth required.\n\nSpec \u00a75.4 names this as the standard CivicSuite-shaped liveness path.\n``schema`` reports migration currency (audit ENG-004): ``current`` /\n``behind`` / ``not-configured`` / ``unknown``.\n\nTwo signals, deliberately separated (walkthrough W-1):\n\n* **HTTP status is liveness.** Always 200 while the process answers, in\n  every schema state. Restart-on-failure supervisors and the installer's\n  own probe key on this; a station mid-setup is alive by design.\n* **``status`` is readiness.** ``healthy`` only when the schema matches\n  the running code; otherwise ``degraded``. Uptime monitors should alert\n  on this field, not on the status code -- a station with no database\n  cannot serve a recording, and reporting \"healthy\" for it told an\n  operator the opposite of the truth.",
+        "description": "Liveness probe carrying a readiness verdict; no auth required.\n\nSpec \u00a75.4 names this as the standard CivicSuite-shaped liveness path.\n``schema`` reports migration currency (audit ENG-004): ``current`` /\n``behind`` / ``not-configured`` / ``unknown``.\n\nTwo signals, deliberately separated (walkthrough W-1):\n\n* **HTTP status is liveness.** Always 200 while the process answers, in\n  every schema state. Restart-on-failure supervisors and the installer's\n  own probe key on this; a station mid-setup is alive by design.\n* **``status`` is readiness.** ``healthy`` only when the schema matches\n  the running code and live-caption readiness is neither ``degraded``\n  nor ``unknown``; otherwise ``degraded``. Uptime monitors should alert\n  on this field, not on the status code -- a station with no database\n  cannot serve a recording, and reporting \"healthy\" for it told an\n  operator the opposite of the truth.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -8245,37 +8245,10 @@
           {
             "name": "channel_id",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
+              "type": "string",
               "title": "Channel Id"
-            }
-          },
-          {
-            "name": "overlay_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "test-emergency-overlay",
-              "title": "Overlay Id"
-            }
-          },
-          {
-            "name": "severity",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "default": "warning",
-              "title": "Severity"
             }
           }
         ],
@@ -15422,6 +15395,76 @@
         ]
       }
     },
+    "/api/staff/control-room/surfaces/{surface_id}/session": {
+      "get": {
+        "tags": [
+          "staff",
+          "control-room"
+        ],
+        "summary": "Read the open session and lock holder for a control surface",
+        "operationId": "get_open_surface_session_api_staff_control_room_surfaces__surface_id__session_get",
+        "parameters": [
+          {
+            "name": "surface_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Surface Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ControlRoomSession"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Get Open Surface Session Api Staff Control Room Surfaces  Surface Id  Session Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/control-room/surfaces/{surface_id}/cues": {
       "post": {
         "tags": [
@@ -16336,7 +16379,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Close Room",
+        "summary": "Close the CivicCast room record (does not disconnect provider guests)",
         "operationId": "close_room_api_staff_contribution_rooms__room_id__close_post",
         "parameters": [
           {
@@ -16596,7 +16639,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Put On Air",
+        "summary": "Mark the CivicCast guest lifecycle record on-air (does not route media or take the channel live)",
         "operationId": "put_on_air_api_staff_contribution_sessions__session_id__on_air_post",
         "parameters": [
           {
@@ -16658,7 +16701,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Mute Guest",
+        "summary": "Mark the CivicCast guest lifecycle record muted (does not send a provider media command)",
         "operationId": "mute_guest_api_staff_contribution_sessions__session_id__mute_post",
         "parameters": [
           {
@@ -16720,7 +16763,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Off Air Guest",
+        "summary": "Mark the CivicCast guest lifecycle record connected (does not remove provider media)",
         "operationId": "off_air_guest_api_staff_contribution_sessions__session_id__off_air_post",
         "parameters": [
           {
@@ -16782,7 +16825,7 @@
           "staff",
           "contribution"
         ],
-        "summary": "Drop Guest",
+        "summary": "Mark the CivicCast guest lifecycle record dropped (does not disconnect provider media)",
         "operationId": "drop_guest_api_staff_contribution_sessions__session_id__drop_post",
         "parameters": [
           {
@@ -16795,6 +16838,79 @@
             }
           }
         ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteGuestSession"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/contribution/sessions/{session_id}/media-control-request": {
+      "post": {
+        "tags": [
+          "staff",
+          "contribution"
+        ],
+        "summary": "Record Media Control Request",
+        "description": "Record a browser-sent provider command as unverified, never completed.",
+        "operationId": "record_media_control_request_api_staff_contribution_sessions__session_id__media_control_request_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MediaControlRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -18707,7 +18823,7 @@
           "staff",
           "summaries"
         ],
-        "summary": "List sourced summaries awaiting operator review",
+        "summary": "List sourced summaries awaiting review or ready for export",
         "operationId": "list_review_items_api_staff_summaries_review_items_get",
         "responses": {
           "200": {
@@ -18716,6 +18832,84 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SummaryReviewQueueResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/summaries/{summary_id}": {
+      "patch": {
+        "tags": [
+          "staff",
+          "summaries"
+        ],
+        "summary": "Edit a pending summary narrative before approval",
+        "operationId": "edit_summary_api_staff_summaries__summary_id__patch",
+        "parameters": [
+          {
+            "name": "summary_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Summary Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SummaryEditRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryDraft"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Summary not found"
+          },
+          "409": {
+            "description": "Summary is no longer pending review or has changed"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -18848,6 +19042,9 @@
           },
           "404": {
             "description": "Summary not found"
+          },
+          "409": {
+            "description": "Summary changed or is no longer pending; reload before approving"
           },
           "422": {
             "description": "Validation Error",
@@ -23950,7 +24147,7 @@
           "paywall"
         ],
         "summary": "Create or replace the paywall config for the station",
-        "description": "Create or replace the paywall config. A PUT against a different\n``config_id`` for the SAME ``station_id`` is a 409 \u2014 the store's\nunique index enforces \"one config per station\". Response is the\npublic projection (Q-2).",
+        "description": "Create or replace the paywall config. A PUT against a different\n``config_id`` for the SAME ``station_id`` is a 409 \u2014 the store's\nunique index enforces \"one config per station\". An absent or null\nsigning secret preserves an existing value; ``\"\"`` explicitly clears\nit, while a valid non-empty value rotates it. Response is the public\nprojection (Q-2).",
         "operationId": "put_config_api_staff_paywall_config_put",
         "requestBody": {
           "content": {
@@ -26632,6 +26829,156 @@
         ]
       }
     },
+    "/api/staff/records": {
+      "get": {
+        "tags": [
+          "staff",
+          "records"
+        ],
+        "summary": "List recent signed-record metadata",
+        "description": "List a bounded record window, optionally for one approved summary.",
+        "operationId": "list_records_api_staff_records_get",
+        "parameters": [
+          {
+            "name": "summary_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 160
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Summary Id"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Metadata only; PDF artifact bytes are never included.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/RecordExportResponse"
+                  },
+                  "title": "Response List Records Api Staff Records Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "staff",
+          "records"
+        ],
+        "summary": "Create a PDF/A-3B signed-record export",
+        "operationId": "export_record_api_staff_records_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordExportApiRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordExportResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Summary is not approved"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/records/disposition-queue": {
       "get": {
         "tags": [
@@ -26658,70 +27005,6 @@
           },
           "503": {
             "description": "Durable storage is not ready; the disposition queue requires it."
-          },
-          "401": {
-            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
-          },
-          "429": {
-            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
-            "headers": {
-              "Retry-After": {
-                "description": "Seconds until the failure window reopens.",
-                "schema": {
-                  "type": "integer"
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "CivicCastStaffBearer": []
-          }
-        ]
-      }
-    },
-    "/api/staff/records": {
-      "post": {
-        "tags": [
-          "staff",
-          "records"
-        ],
-        "summary": "Create a PDF/A-3B signed-record export",
-        "operationId": "export_record_api_staff_records_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RecordExportApiRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RecordExportResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Summary is not approved"
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -32043,7 +32326,8 @@
               "scheduled-recording-dropout",
               "asrun-outbox-degraded",
               "channel-automation-failure",
-              "caption-tier-degraded"
+              "caption-tier-degraded",
+              "live-caption-failure"
             ],
             "title": "Condition"
           },
@@ -32192,7 +32476,8 @@
               "scheduled-recording-dropout",
               "asrun-outbox-degraded",
               "channel-automation-failure",
-              "caption-tier-degraded"
+              "caption-tier-degraded",
+              "live-caption-failure"
             ],
             "title": "Condition"
           },
@@ -37324,6 +37609,106 @@
         "title": "ChannelBrandingUpdate",
         "description": "Operator-editable channel branding fields."
       },
+      "ChannelCaptionProcessingStatus": {
+        "properties": {
+          "processing_state": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "inactive",
+              "waiting",
+              "processing",
+              "silent",
+              "stalled",
+              "failed",
+              "unknown"
+            ],
+            "title": "Processing State",
+            "default": "unknown"
+          },
+          "worker_heartbeat_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Worker Heartbeat At"
+          },
+          "last_input_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Input At"
+          },
+          "last_processed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Processed At"
+          },
+          "audio_signal": {
+            "type": "string",
+            "enum": [
+              "digital-silence",
+              "audio-present",
+              "unknown"
+            ],
+            "title": "Audio Signal",
+            "default": "unknown"
+          },
+          "provider_state": {
+            "type": "string",
+            "enum": [
+              "whistle-primary",
+              "whisper-primary",
+              "whisper-fallback",
+              "fallback-cooldown",
+              "fallback-retry-ready",
+              "unknown"
+            ],
+            "title": "Provider State",
+            "default": "unknown"
+          },
+          "provider_retry_in_seconds": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider Retry In Seconds"
+          },
+          "backlog_segments": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Backlog Segments",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ChannelCaptionProcessingStatus",
+        "description": "Staff-safe view of worker progress, input level, and selected ASR path."
+      },
       "ChannelCommissioningSetup": {
         "properties": {
           "channel_id": {
@@ -38125,6 +38510,16 @@
             "type": "boolean",
             "title": "Captions Verified",
             "default": false
+          },
+          "live_captions": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChannelCaptionProcessingStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "color": {
             "type": "string",
@@ -40450,6 +40845,8 @@
         "properties": {
           "channel_id": {
             "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
             "title": "Channel Id"
           },
           "name": {
@@ -47753,6 +48150,27 @@
         "title": "MaterializeResult",
         "description": "Outcome of an on-demand materialization run."
       },
+      "MediaControlRequest": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "audio_mute",
+              "audio_unmute",
+              "video_mute",
+              "video_unmute",
+              "disconnect"
+            ],
+            "title": "Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "title": "MediaControlRequest"
+      },
       "MediaManifestEntry": {
         "properties": {
           "path": {
@@ -49191,8 +49609,7 @@
             "anyOf": [
               {
                 "type": "string",
-                "maxLength": 200,
-                "minLength": 32
+                "maxLength": 200
               },
               {
                 "type": "null"
@@ -49208,7 +49625,7 @@
           "station_id"
         ],
         "title": "PaywallConfigInput",
-        "description": "Create/replace config request body."
+        "description": "Create/replace config request body.\n\nOn PUT, an absent or null ``signing_secret`` preserves the current\nvalue. The explicit empty-string sentinel clears it; a non-empty value\nrotates it and must meet the 32-character floor."
       },
       "PaywallConfigPublic": {
         "properties": {
@@ -54525,6 +54942,45 @@
               }
             ],
             "title": "Ended At"
+          },
+          "media_control_state": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "sent_unverified"
+            ],
+            "title": "Media Control State",
+            "default": "unknown"
+          },
+          "media_control_action": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "audio_mute",
+                  "audio_unmute",
+                  "video_mute",
+                  "video_unmute",
+                  "disconnect"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Control Action"
+          },
+          "media_control_requested_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Media Control Requested At"
           },
           "proof_boundary": {
             "type": "string",
@@ -60454,6 +60910,11 @@
       },
       "SummaryApprovalRequest": {
         "properties": {
+          "expected_audit_fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Expected Audit Fingerprint"
+          },
           "approval_note": {
             "anyOf": [
               {
@@ -60468,6 +60929,9 @@
         },
         "additionalProperties": false,
         "type": "object",
+        "required": [
+          "expected_audit_fingerprint"
+        ],
         "title": "SummaryApprovalRequest"
       },
       "SummaryDraft": {
@@ -60537,6 +61001,28 @@
         ],
         "title": "SummaryDraft",
         "description": "Operator-reviewable sourced summary."
+      },
+      "SummaryEditRequest": {
+        "properties": {
+          "narrative": {
+            "type": "string",
+            "maxLength": 12000,
+            "minLength": 1,
+            "title": "Narrative"
+          },
+          "expected_audit_fingerprint": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Expected Audit Fingerprint"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "narrative",
+          "expected_audit_fingerprint"
+        ],
+        "title": "SummaryEditRequest"
       },
       "SummaryGenerateRequest": {
         "properties": {
