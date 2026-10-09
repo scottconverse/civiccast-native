@@ -97,7 +97,7 @@ function LoadingState() {
   )
 }
 
-function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
+function ErrorState({ error, onRetry, actionFailed = false }: { error: Error; onRetry: () => void; actionFailed?: boolean }) {
   const isApiError = error instanceof ApiError
   const is503 = isApiError && error.status === 503
   return (
@@ -107,16 +107,18 @@ function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
       style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-ink)' }}
     >
       <div className="text-sm font-semibold">
-        {is503 ? 'Caption review backend unavailable.' : 'Could not load caption review.'}
+        {is503 ? 'Caption review backend unavailable.' : actionFailed ? 'Could not complete caption review action.' : 'Could not load caption review.'}
       </div>
       <div className="mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
         {apiMessage(error, 'The caption review request failed.')}
       </div>
       <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
         <strong>Next step.</strong>{' '}
-        {is503
-          ? 'Start the CivicCast server with a connected database, then retry.'
-          : 'Retry this request. If it fails again, check caption review logs in deployment settings.'}
+        {actionFailed
+          ? 'Dismiss this message and try the action again. If it continues, ask your station administrator to check CivicCast server and database health.'
+          : is503
+          ? 'Ask your station administrator to check the CivicCast service and database, then retry.'
+          : 'Retry the request. If it continues to fail, ask your station administrator to check CivicCast server and database health.'}
       </div>
       <button
         type="button"
@@ -124,7 +126,7 @@ function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
         className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium"
         style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
       >
-        Retry
+        {actionFailed ? 'Dismiss' : 'Retry'}
       </button>
     </div>
   )
@@ -138,8 +140,9 @@ function EmptyState() {
     >
       <div className="text-sm font-semibold">No caption cues need review.</div>
       <div className="mt-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-        Stable caption cues will appear here after the captions runtime emits
-        review items. Next step: run a captioned recording or live session.
+        Caption review items from recording transcription appear here.
+        In the standard native setup, live captions go to broadcast but are not
+        saved to this queue.
       </div>
     </div>
   )
@@ -354,6 +357,12 @@ export function ReviewCard({
             I compared this low-confidence cue with its audio evidence.
           </span>
         </label>
+      )}
+
+      {dirty && (
+        <p className="m-0 text-xs" style={{ color: 'var(--cc-warn-text)' }}>
+          Save edit before approving if you want to keep these text changes.
+        </p>
       )}
 
       <div className="flex flex-wrap gap-2">
@@ -619,6 +628,7 @@ export function ReviewQueueScreen() {
       {mutationError && (
         <ErrorState
           error={mutationError}
+          actionFailed
           onRetry={() => {
             approveMutation.reset()
             editMutation.reset()

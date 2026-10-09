@@ -2,7 +2,7 @@
 
 This chapter covers the "business side" of a station: how many residents watched, what aired and when, the schedule file that outside TV-guide services read, sponsor messages, the resident apps, and the optional paid-access feature. A PEG station employee, a records clerk or a station manager normally uses these screens. You do not need any technical background, but a few steps need an IT person, and this chapter says so each time.
 
-Read the "Known issue" boxes. Several of these screens in beta.10 look finished but do less than their wording suggests.
+Read the "Known issue" boxes. Several of these screens in beta.11 look finished but do less than their wording suggests.
 
 ## Before you start
 
@@ -21,7 +21,7 @@ CivicCast gives each person one or more *roles*. A role is a named set of permis
 
 > **Note:** In a normal station, everyone signs in with the first administrator account made during First Setup. That account carries all five roles, so you will see every screen and every button. The limits in the table matter only if your IT person made narrower sign-in passes for some staff.
 
-> **Note:** Beta.10 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. We read the code behind every screen in this chapter. We could not run every feature against a live station. Where that matters, the text says "In testing we could not confirm".
+> **Note:** Beta.11 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. We read the code behind every screen in this chapter. We could not run every feature against a live station. Where that matters, the text says "In testing we could not confirm".
 
 > **Warning:** Several screens in this chapter ask you to type dates. CivicCast treats those dates as **UTC**, the world reference clock. In the United States UTC is several hours ahead of local time. Mountain daylight time is 6 hours behind UTC. A meeting that starts at 7 p.m. Mountain daylight time is already 1 a.m. UTC *the next day*. When a report looks one day off, this is almost always why.
 
@@ -41,8 +41,6 @@ You should see two panels, **VOD** and **Live**. Each starts with a line in the 
 > **Note:** **Quarter** means the last 90 days and **Year** means the last 365 days, counted back from now. They are not calendar quarters or calendar years.
 
 > **Note:** The two panels and their charts read totals that CivicCast recalculates in the background about every 5 minutes by default, so they can trail the tiles under them by a few minutes.
-
-![The Analytics screen on a station where counting is not switched on. A box headed "Audience telemetry is off" appears under the toolbar.](manual/images/operator-analytics-telemetry-off.png){width=90%}
 
 Under the panels, the page shows:
 
@@ -69,11 +67,11 @@ CivicCast does **not** keep names, email addresses, IP addresses, session ids or
 
 By default CivicCast discards events older than 366 days.
 
-> **Note:** In beta.10 the resident website does not show residents a notice that views are counted. If your station wants one, you will need to post your own.
+> **Note:** In beta.11 the resident website does not show residents a notice that views are counted. If your station wants one, you will need to post your own.
 
-> **Known issue (beta.10):** Most of the extra tables stay empty. The resident website sends only the five messages above. It does not send the viewer's device, platform, country, caption language, audio track or how many people are watching live. The **Geography**, **Device**, **Platform**, **Caption Usage**, **Audio Usage** and **Subscription Growth** tables, the **Live peak** tile and **Live Concurrent Viewers** table therefore stay empty unless another app sends that information. This is expected, not a fault with your station. Watch time is also approximate: in both the file-based and the database-backed store we read, it is added up only from the position reported when a video finishes, so people who stop early add nothing.
+> **Known issue (beta.11):** Most of the extra tables stay empty. The resident website sends only the five messages above. It does not send the viewer's device, platform, country, caption language, audio track or how many people are watching live. The **Geography**, **Device**, **Platform**, **Caption Usage**, **Audio Usage** and **Subscription Growth** tables, the **Live peak** tile and **Live Concurrent Viewers** table therefore stay empty unless another app sends that information. This is expected, not a fault with your station. Watch time is also approximate: in both the file-based and the database-backed store we read, it is added up only from the position reported when a video finishes, so people who stop early add nothing.
 
-> **Known issue (beta.10):** The empty-state box says "Turn it on in Setup to collect Viewer Count and Time Viewed." No screen in Setup has that switch. Counting is turned on by an IT person changing a station setting and restarting CivicCast. The report and the PDF can show nothing until that is done.
+> **Note:** When audience telemetry is off, the empty-state box says, "Ask your station administrator to enable audience telemetry in the service settings to collect Viewer Count and Time Viewed. The Reports tab (as-run / proof-of-performance) still works — it reads the program log, not the beacon." There is no Setup-screen switch; the station administrator changes the service settings. Until then, the Analytics report and PDF have no viewer-count or time-viewed data.
 
 > **For IT staff:** The two settings are `CIVICCAST_PUBLIC_ANALYTICS_KEY` and `CIVICCAST_PUBLIC_ANALYTICS_ALLOWED_ORIGINS`; see [Chapter 11](#ch-configuration) and [Chapter 13](#ch-security). The resident website sends no key, so the website's own messages are accepted only when its address is listed in the allowed-origins setting (a comma-separated list of exact addresses such as `https://tv.example.gov`, matched against the browser's origin header). Setting only the key removes the "telemetry is off" box, but the website's messages are then refused.
 
@@ -85,7 +83,7 @@ By default CivicCast discards events older than 366 days.
 
 Your browser saves a file named like `analytics-rollups-vod-30d.csv`. CSV is a plain table you can open in Excel or Google Sheets.
 
-> **Known issue (beta.10):** With **ALL** selected, **Export CSV** exports the **VOD** table only, and says nothing about it. The file holds the totals table, not everything the page shows. If the download fails, nothing appears on screen. Choose **LIVE** and export again to get the live table.
+> **Known issue (beta.11):** With **ALL** selected, **Export CSV** exports the **VOD** table only, and says nothing about it. The file holds the totals table, not everything the page shows. If the download fails, nothing appears on screen. Choose **LIVE** and export again to get the live table.
 
 ### Make the board report (PDF)
 
@@ -97,9 +95,9 @@ Your browser saves `audience-report-` followed by today's date (UTC). The PDF st
 
 If it fails, the page says "Could not generate the board PDF. Try again."
 
-> **Known issue (beta.10):** The PDF always covers "now minus the range you chose" and ignores the **VOD**/**LIVE**/**ALL** buttons. Its title always reads "CivicCast station", even if your station has a name. If you need your station's name on the report, add it by hand before you send it on.
+> **Known issue (beta.11):** The PDF always covers "now minus the range you chose" and ignores the **VOD**/**LIVE**/**ALL** buttons. Its title always reads "CivicCast station", even if your station has a name. If you need your station's name on the report, add it by hand before you send it on.
 
-> **Known issue (beta.10):** The **Analytics** menu entry is visible to every role, but only Support admin and Publish operator can load it. Anyone else sees the frame of the page and the words "Report unavailable.", which does not say why. If you see this message and you expect access, ask your station admin.
+> **Known issue (beta.11):** The **Analytics** menu entry is visible to every role, but only Support admin and Publish operator can load it. Anyone else sees the frame of the page and the words "Report unavailable.", which does not say why. If you see this message and you expect access, ask your station admin.
 
 ## Find out what aired, and when (Reports)
 
@@ -118,8 +116,6 @@ The page opens on today's date through tomorrow's, UTC midnight to UTC midnight.
 
 > **Warning:** Dates here are UTC. A station on Mountain time should widen the range by a day when looking for an evening meeting.
 
-![The Reports screen on the Shows tab, with the From, Through and Channel filters above an empty table.](manual/images/operator-reports-shows.png){width=90%}
-
 ### What each tab shows
 
 | Tab | Columns | Use it to |
@@ -136,7 +132,7 @@ The **Source** column uses these words:
 - `filler`: a community bulletin board graphics page.
 - `live`: a live source.
 - `slate`: the safety card the station shows in place of video, for example when a feed fails.
-- `spot`: a sponsor message. In beta.10 this word never appears. See Underwriting below.
+- `spot`: a sponsor message. In beta.11 this word never appears. See Underwriting below.
 
 **Verified** reads "yes" for every row the playout engine wrote, because a row exists only when the engine confirmed that it went on air.
 
@@ -146,7 +142,7 @@ On **Shows** and **As-Run**, click **Download CSV** or **Download XML**. Both us
 
 The **Hours by Category** tab has no download buttons. Read it on screen.
 
-> **Known issue (beta.10):** The **Hours by Category** tab needs a *custom field* (an extra label you add to recordings, such as "category"). An unknown name shows: `No custom field named "{key}" is defined for this station. Define it in Setup → Custom Fields, then re-run the report.` Only the Setup admin role can open **Custom Fields**, while Reports is for the Support admin role. If you are not both, ask your Setup admin.
+> **Known issue (beta.11):** The **Hours by Category** tab needs a *custom field* (an extra label you add to recordings, such as "category"). An unknown name shows: `No custom field named "{key}" is defined for this station. Define it in Setup → Custom Fields, then re-run the report.` Only the Setup admin role can open **Custom Fields**, while Reports is for the Support admin role. If you are not both, ask your Setup admin.
 
 > **Note:** A copy of the as-run list is also available to the public at `/api/public/reports/as-run` with no sign-in. It leaves out Category and Verified. Reports does not tell you this, so do not treat the as-run list as private.
 
@@ -163,8 +159,6 @@ An *EPG* (electronic program guide) is the schedule file that cable boxes, TV-gu
 - The items you want in the file must be **published** on the Schedule screen. The file contains only published items on that channel that start between now and the number of days ahead.
 - You need the channel's id. The **Reports** screen has a channel drop-down that lists them as `slug (channel_id)`, or ask your IT person.
 - Ask the guide service for a sample file and its address first. In testing we could not confirm that any particular service, such as TitanTV, accepts what CivicCast makes. The "X-List" format here is a generic eight-column table.
-
-![The EPG Export screen with the Create export config form above the empty list of configured exports.](manual/images/operator-epg-form.png){width=90%}
 
 ### Create an export and download the file
 
@@ -184,9 +178,9 @@ If the panel says `0 slots`, the channel has no published items in the window, o
 
 Each slot carries a start and end date and time in **UTC**, and the recording's title.
 
-> **Known issue (beta.10):** The description, category and rating columns are always empty. The screen's wording suggests a full guide. Do not promise a service genre or rating information from this export in beta.10.
+> **Known issue (beta.11):** The description, category and rating columns are always empty. The screen's wording suggests a full guide. Do not promise a service genre or rating information from this export in beta.11.
 
-> **Known issue (beta.10):** The **Field map** box does less than its example suggests. It only renames column headings in the CSV and X-List files, and has no effect on XMLTV. Its example, `channel=pub-1`, is wrong because `channel` is not a column. The real columns are `start_date`, `start_time`, `end_date`, `end_time`, `title`, `description`, `category` and `rating`. If you rename a heading, write the line as `title=Program Title` (left side is the CivicCast column, right side is the heading you want).
+> **Note:** **Field map** accepts one `key=value` pair per line; blank lines and lines beginning with `#` are ignored. It renames headings in CSV and X-List only; XMLTV is unchanged. The current examples use valid columns: `title=Program Title` and `description=Meeting summary`. Available keys are `start_date`, `start_time`, `end_date`, `end_time`, `title`, `description`, `category` and `rating`.
 
 ### Send the file to an address instead
 
@@ -219,17 +213,17 @@ Underwriting means paid "sponsor acknowledgment" messages, such as "Support for 
 - A **placement** is a specific schedule slot a spot was assigned to.
 - An **affidavit** is a sponsor-ready list of every time their spot aired, used for billing.
 
-> **Known issue (beta.10):** **In beta.10 Underwriting is a planning list, not a working sponsor system.** You can record spots and flights, but nothing puts a spot on the air, and the affidavit stays empty. In the code we read:
+> **Known issue (beta.11):** **In beta.11 Underwriting is a planning list, not a working sponsor system.** You can record spots and flights, but nothing puts a spot on the air, and the affidavit stays empty. In the code we read:
 >
 > - The only thing that creates placements is a manual request sent to the station's programming interface. No button on this screen sends it, and nothing in the station sends it by itself.
 > - Nothing that plays video reads placements.
 > - The playout engine never records an airing of kind `spot`, yet the affidavit counts only airings of that kind.
 >
-> The words on screen, "airing reports build from it" and "placements appear here automatically", are therefore wrong for beta.10. We have not run this on a live station. Do not tell a sponsor that CivicCast will insert their message or produce billing proof.
+> The words on screen, "airing reports build from it" and "placements appear here automatically", are therefore wrong for beta.11. We have not run this on a live station. Do not tell a sponsor that CivicCast will insert their message or produce billing proof.
 
 ### What does work
 
-| You can | Result in beta.10 |
+| You can | Result in beta.11 |
 | --- | --- |
 | Create, edit and delete spots | Saved |
 | Create, edit and delete flights | Saved |
@@ -237,8 +231,6 @@ Underwriting means paid "sponsor acknowledgment" messages, such as "Support for 
 | Read **Placements** | Empty unless IT staff trigger the compile request |
 | Read **Affidavits** | Empty |
 | Click **Download CSV**, **Download XML**, **Download PDF** | Shows an error instead of a file (below) |
-
-![The Underwriting screen on the Spots tab, showing the Create spot form with the compliance reminder and attestation checkbox.](manual/images/operator-underwriting-spots.png){width=90%}
 
 ### Add a spot
 
@@ -274,11 +266,11 @@ To delete a spot or flight, click **Delete**, then **Confirm delete**. Deleting 
 
 On **Placements**, set **From** and **Through** (UTC; **From** is included and **Through** is not), and optionally a channel and flight. On **Affidavits**, type the sponsor's name and a date range. The affidavit includes *both* the first and last day, in UTC.
 
-An empty affidavit shows "No airings recorded for {name} between {from} and {to}." with three possible reasons: the name does not match exactly, there are no flights in the period, or nothing has aired yet. In beta.10 add a fourth: nothing records airings of spots.
+An empty affidavit shows "No airings recorded for {name} between {from} and {to}." with three possible reasons: the name does not match exactly, there are no flights in the period, or nothing has aired yet. In beta.11 add a fourth: nothing records airings of spots.
 
-> **Known issue (beta.10):** The **Download CSV**, **Download XML** and **Download PDF** links on the affidavit are plain web links. Staff requests need a sign-in that a plain link cannot carry. The expected result is the message `Missing Authorization header. Use Bearer <staff-token>.` instead of a file. We read this in the code and did not click the links in a running station. Until fixed, read the totals on screen, and ask IT staff for the file.
+> **Known issue (beta.11):** The **Download CSV**, **Download XML** and **Download PDF** links on the affidavit are plain web links. Staff requests need a sign-in that a plain link cannot carry. The expected result is the message `Missing Authorization header. Use Bearer <staff-token>.` instead of a file. We read this in the code and did not click the links in a running station. Until fixed, read the totals on screen, and ask IT staff for the file.
 
-> **Known issue (beta.10):** If your IT person switches on the setting `CIVICCAST_REQUIRE_FCC_ACK=1`, saving a spot without the tick fails with "Station policy requires fcc_compliant_ack=true". Without that setting an un-attested spot saves, despite the "NOT attested" wording.
+> **Known issue (beta.11):** If your IT person switches on the setting `CIVICCAST_REQUIRE_FCC_ACK=1`, saving a spot without the tick fails with "Station policy requires fcc_compliant_ack=true". Without that setting an un-attested spot saves, despite the "NOT attested" wording.
 
 > **For IT staff:** See [Chapter 15](#ch-integrations) for the programming interface.
 
@@ -287,8 +279,6 @@ An empty affidavit shows "No airings recorded for {name} between {from} and {to}
 A resident app lets people watch your station on a phone or a TV box. CivicCast can package a *starter app* for web (a "PWA", a website that installs like an app), Roku, Apple TV, Fire TV, Android TV, Android phones and tablets, and iPhone and iPad. App Admin builds that package on the station computer, keeps a history of builds with download buttons, and gives you a notebook for tracking app-store submissions.
 
 > **Warning:** App Admin does not put any app in any app store. CivicCast never contacts a store. Someone technical still has to sign each package and submit it. The built package is a generic starter. The page says apps read the station's settings when they run, so name and branding update without a rebuild. In testing we could not confirm this in a running app, and store review is separate work.
-
-![The App Admin screen with the Build profile, New build, Build history and Store submissions sections.](manual/images/operator-appadmin-empty.png){width=90%}
 
 ### Make a build
 
@@ -305,11 +295,11 @@ You must have the Setup admin role.
 
 Your browser saves `{platform}-{record id}.zip`. Each row shows the time, the first 12 characters of a *SHA fingerprint* (a code that changes if the file is altered, useful for checking that a file you pass on arrived unchanged) and who made the build.
 
-> **Known issue (beta.10):** **Tier** only labels the build record. The build uses the same steps for **unbranded** and **branded**, and does not read the station's settings. Do not expect the tier to change the file.
+> **Known issue (beta.11):** **Tier** only labels the build record. The build uses the same steps for **unbranded** and **branded**, and does not read the station's settings. Do not expect the tier to change the file.
 
-> **Known issue (beta.10):** The build runs inside a single web request. The page shows **Building…** with no progress bar and no time estimate, and it must stay open. In testing we could not confirm how long builds take.
+> **Known issue (beta.11):** The build runs inside a single web request. The page shows **Building…** with no progress bar and no time estimate, and it must stay open. In testing we could not confirm how long builds take.
 
-> **Known issue (beta.10):** The **Store submissions** section stays on "No submissions tracked yet." The screen offers no way to add a platform, so the notebook has no rows. Only IT staff can create one through the programming interface.
+> **Known issue (beta.11):** The **Store submissions** section stays on "No submissions tracked yet." The screen offers no way to add a platform, so the notebook has no rows. Only IT staff can create one through the programming interface.
 
 > **Note:** **Store-ready: yes** is a flag someone set on the Channels screen. It does not test anything.
 
@@ -321,13 +311,11 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
-![The Subscription paywall screen in its default state. A banner says the paywall is off, and the Tiers and Comp access grants cards are greyed.](manual/images/operator-paywall-off.png){width=90%}
+> **Warning:** Leave the paywall **off** in beta.11. The code we read shows the feature is unfinished.
 
-> **Warning:** Leave the paywall **off** in beta.10. The code we read shows the feature is unfinished.
+> **Known issue (beta.11):** Saving the paywall settings can erase the stored signing secret. The screen never shows the secret, so the secret box is empty every time you open the page. A blank box is saved as "no secret". Changing any setting and clicking **Save** therefore wipes it, and sign-in links and payment confirmations stop working.
 
-> **Known issue (beta.10):** Saving the paywall settings can erase the stored signing secret. The screen never shows the secret, so the secret box is empty every time you open the page. A blank box is saved as "no secret". Changing any setting and clicking **Save** therefore wipes it, and sign-in links and payment confirmations stop working.
-
-> **Known issue (beta.10):** In the code we read, the email that carries a resident's sign-in link is not sent by default. No server code blocks the recording file itself; the check is a question the resident website asks. The website also asks for a tier-list route and a checkout route that we did not find on the station. The list of free passes (**Recently issued grants**) shows only passes issued in this browser session; you cannot see or cancel passes you issued earlier.
+> **Known issue (beta.11):** In the code we read, the email that carries a resident's sign-in link is not sent by default. No server code blocks the recording file itself; the check is a question the resident website asks. The website also asks for a tier-list route and a checkout route that we did not find on the station. The list of free passes (**Recently issued grants**) shows only passes issued in this browser session; you cannot see or cancel passes you issued earlier.
 
 > **For IT staff:** See [Chapter 15](#ch-integrations) before enabling this on a live station.
 

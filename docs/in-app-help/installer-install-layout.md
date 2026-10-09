@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Install layout: folders, service, ports, data and logs (reference; no screen of its own)
 
 Paths relative to `civiccast/` unless stated. Hooks = `apps/installer/src-tauri/nsis-hooks-bootstrap.nsh`; main = `apps/installer/src-tauri/src/main.rs`; IL = `native/supervisor/install_layout.py`.

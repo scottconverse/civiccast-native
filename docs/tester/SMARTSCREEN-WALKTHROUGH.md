@@ -1,8 +1,14 @@
 # "Windows protected your PC" — what to expect, and what to do
 
+> **Current installers:** Beta 11 is the current release. Follow the
+> [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
+> and exact package handoff for present-day instructions. The release-specific
+> details below are historical Beta 10 context.
+
 ## Release State
 
-`v1.0.0-beta.10` is the current published release (published 2026-10-02), a
+`v1.0.0-beta.10` was the current published release when this page was written
+(published 2026-10-02), a
 GitHub **pre-release** (a "Beta Candidate", not a production release) at
 <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>:
 `setup.exe`, `.ccpack` runtime packs, `SHA256SUMS.txt`, and
@@ -15,7 +21,7 @@ only as an internal Gate A upgrade-baseline kit. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
-`v1.0.0-beta.10` is still a beta candidate: its clean-install automated check
+Beta 10 was a beta candidate: its clean-install automated check
 passed, upgrade paths were not run for it, and the human/station acceptance
 pass is not done (see
 [`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)).

@@ -212,8 +212,9 @@ test.describe('signed record export', () => {
   test('export error gives a concrete recovery step', async ({ page }) => {
     await openWithRecordBackend(page, { failExport: true })
     await page.getByRole('button', { name: 'Export signed record' }).click()
-    await expect(page.getByText('Could not load summary review.')).toBeVisible()
+    await expect(page.getByText('Could not complete summary review action.')).toBeVisible()
     await expect(page.getByText(/Approve the sourced summary before exporting/)).toBeVisible()
-    await expect(page.getByText(/Retry this request/)).toBeVisible()
+    await expect(page.getByText(/Dismiss this message and try the action again/)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Dismiss' })).toBeVisible()
   })
 })

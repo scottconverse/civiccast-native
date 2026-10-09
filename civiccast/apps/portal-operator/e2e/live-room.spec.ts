@@ -503,7 +503,7 @@ test.describe('operator live room', () => {
     await expect(page.getByText('Pre-flight ready')).toBeVisible()
 
     await page.getByRole('button', { name: 'Start Live Stream' }).click()
-    await expect(page.getByText('On air')).toBeVisible()
+    await expect(page.getByText('On air', { exact: true })).toBeVisible()
 
     await page.getByRole('radio', { name: /Council Chamber Encoder/ }).press('ArrowRight')
     await expect(page.getByRole('radio', { name: /Floor Camera NDI/ })).toHaveAttribute(
@@ -662,7 +662,7 @@ test.describe('operator live room', () => {
   test('configuration error state is actionable', async ({ page }) => {
     await openLive(page, { failConfiguration: true })
     await expect(page.getByText('Could not load live room.')).toBeVisible()
-    await expect(page.getByText(/connected to its database/)).toBeVisible()
+    await expect(page.getByText(/CivicCast service and database/)).toBeVisible()
   })
 
   test('blocked pre-flight keeps Start Live Stream disabled with next steps', async ({

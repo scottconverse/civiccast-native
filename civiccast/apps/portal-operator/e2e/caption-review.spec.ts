@@ -203,18 +203,19 @@ test.describe('caption review queue', () => {
     await expect(page.locator('.animate-pulse').first()).toBeVisible()
   })
 
-  test('empty state is actionable', async ({ page }) => {
+  test('empty state explains where caption review items come from', async ({ page }) => {
     await mockReviewBackend(page, { items: [] })
     await openReview(page)
     await expect(page.getByText('No caption cues need review.')).toBeVisible()
-    await expect(page.getByText(/Next step: run a captioned recording/)).toBeVisible()
+    await expect(page.getByText(/Caption review items from recording transcription appear here/)).toBeVisible()
+    await expect(page.getByText(/live captions go to broadcast but are not saved to this queue/)).toBeVisible()
   })
 
   test('error state is actionable', async ({ page }) => {
     await mockReviewBackend(page, { failList: true })
     await openReview(page)
     await expect(page.getByText('Caption review backend unavailable.')).toBeVisible()
-    await expect(page.getByText(/connected database/)).toBeVisible()
+    await expect(page.getByText(/CivicCast service and database, then retry/)).toBeVisible()
   })
 
   test('unavailable retained evidence blocks acknowledgement and approval', async ({ page }) => {

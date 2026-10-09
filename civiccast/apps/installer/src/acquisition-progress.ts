@@ -466,18 +466,8 @@ export function diskSpaceCheck(freeDiskBytes: number | null, requiredBytes: numb
 export interface CaptionEngineDecision {
   /** The engine that will actually be installed. */
   installedTier: HardwareInventory["recommended_caption_tier"];
-  /**
-   * Whether the large engine would keep up with a live meeting on THIS
-   * station.
-   *
-   * `null` means the graphics probe could not run, and it must stay null
-   * rather than collapsing to `false`: `hardware_capable_caption_tier` falls
-   * back to the floor tier when DXGI could not be reached, so treating a
-   * missing reading as "no" would print "too slow for live captioning on this
-   * station" about a card nobody looked at -- the exact class of fabrication
-   * G011.1 removed from the facts panel.
-   */
-  largeRunsLiveHere: boolean | null;
+  /** `null` means the graphics probe was unavailable; otherwise this is the Large-model hardware tier check. */
+  largeMeetsHardwareTier: boolean | null;
   /** Whether the large engine can be downloaded at all in this release. */
   largeObtainable: boolean;
   /** Whether a fresh install starts out with the large engine selected. */
@@ -491,7 +481,7 @@ export function captionEngineDecision(
   const large = catalog.find((component) => component.id === "captions_large");
   return {
     installedTier: hardware?.recommended_caption_tier ?? "floor",
-    largeRunsLiveHere: hardware?.gpus == null ? null : hardware.hardware_capable_caption_tier === "large-v3",
+    largeMeetsHardwareTier: hardware?.gpus == null ? null : hardware.hardware_capable_caption_tier === "large-v3",
     largeObtainable: Boolean(large?.deliverable),
     largeSelectedByDefault: hardware
       ? defaultSelectedComponentIds(hardware, catalog).includes("captions_large")
@@ -499,14 +489,14 @@ export function captionEngineDecision(
   };
 }
 
-/** The live-captioning clause both screens spend, from the one fact. */
-function liveCaptioningClause(decision: CaptionEngineDecision): string {
-  if (decision.largeRunsLiveHere === null) {
-    return "CivicCast could not check whether this station can run it during a meeting.";
+/** The hardware-tier clause both installer screens share, from the same fact. */
+function largeModelHardwareClause(decision: CaptionEngineDecision): string {
+  if (decision.largeMeetsHardwareTier === null) {
+    return "CivicCast could not check whether this station meets the hardware tier for the larger Whisper model.";
   }
-  return decision.largeRunsLiveHere
-    ? "This station's graphics card can run it live, while the meeting is happening."
-    : "It is too slow for live captioning on this station, so it captions recordings after the meeting instead.";
+  return decision.largeMeetsHardwareTier
+    ? "This station meets the hardware tier for the larger Whisper model; supported NVIDIA graphics can accelerate Whisper fallback."
+    : "This station does not meet the hardware tier for the larger Whisper model. The required Medium Whisper model remains available for fallback and recording transcription.";
 }
 
 /**
@@ -518,12 +508,12 @@ export function largeCaptionEngineExplanation(
   decision: CaptionEngineDecision,
   catalog: readonly CatalogComponent[] = COMPONENT_CATALOG
 ): string {
-  const live = liveCaptioningClause(decision);
+  const hardware = largeModelHardwareClause(decision);
   if (!decision.largeObtainable) {
     // Nothing to decide, so no size and no trade-off to weigh -- offering
     // either would be noise on a row that is only there to be honest about
     // what this release does not include.
-    return `Not available to download in this release. ${live} A future update will make it available.`;
+    return `Not available to download in this release. ${hardware}`;
   }
   // F-22: the size and the cost of declining belong in the sentence that asks
   // for the decision, not only in the column at the far right of the row.
@@ -535,15 +525,16 @@ export function largeCaptionEngineExplanation(
     // selected. The sentence must say so — "off unless you choose it" would
     // be false about the checked box sitting right next to it.
     return (
-      `Selected for this station — ${size}. ${live} ` +
-      "Untick it to skip the download; CivicCast still captions with the standard engine, " +
-      "and you can add this one later at any time."
+      `Selected for this station — ${size}. ${hardware} ` +
+      "Whistle remains the CPU primary for live captions. Untick this model to skip the download; " +
+      "the required Medium Whisper model remains available for fallback and recording transcription. " +
+      "You can add this model later at any time."
     );
   }
   return (
-    `Optional, and off unless you choose it — ${size}. ${live} ` +
-    "If you skip it, CivicCast still captions live meetings and recordings with the standard engine; " +
-    "you can add this one later at any time."
+    `Optional, and off unless you choose it — ${size}. ${hardware} ` +
+    "Whistle remains the CPU primary for live captions. If you skip Large, the required Medium Whisper " +
+    "model remains available for fallback and recording transcription. You can add this model later at any time."
   );
 }
 
@@ -556,10 +547,9 @@ export function largeCaptionEngineExplanation(
  * caption-engine decision it is coupled to.
  *
  * `cuda_runtime` is pre-selected under the EXACT same condition
- * `captions_large` is (`hardware_capable_caption_tier === "large-v3"`) --
- * see {@link defaultSelectedComponentIds}'s doc for why: a GPU capable of
- * running the large caption model live is the GPU this pack lets that model
- * actually use.
+ * `captions_large` is (`hardware_capable_caption_tier === "large-v3"`).
+ * Supported NVIDIA hardware and this pack determine whether Whisper can use
+ * GPU acceleration; Whistle itself remains CPU-only.
  */
 export interface GpuAccelerationDecision {
   /** Whether the GPU acceleration pack can be downloaded at all in this release. */
@@ -602,14 +592,14 @@ export function gpuAccelerationExplanation(
   );
   if (decision.selectedByDefault) {
     return (
-      `Selected for this station — ${size}. This station's graphics card can run the caption engine. ` +
-      "Untick it to skip the download; CivicCast still runs captions on this computer's processor, " +
-      "and you can add this one later at any time."
+      `Selected for this station — ${size}. This lets Whisper use supported NVIDIA graphics acceleration. ` +
+      "Whistle remains the CPU primary for live captions. Untick it to use the CPU Whisper fallback; " +
+      "you can add it later at any time."
     );
   }
   return (
-    `Optional, and off unless you choose it — ${size}. If you skip it, CivicCast still runs captions ` +
-    "on this computer's processor; you can add this one later at any time."
+    `Optional, and off unless you choose it — ${size}. It lets Whisper use supported NVIDIA graphics acceleration. ` +
+    "If you skip it, Whisper uses the CPU fallback and Whistle remains CPU-only. You can add it later at any time."
   );
 }
 
@@ -622,13 +612,12 @@ export function gpuAccelerationExplanation(
  * 1. The graphics probe could not run (`gpus === null`) -- say so. The old
  *    copy asserted "This station has no dedicated graphics card", which is a
  *    claim about the machine, not about the probe.
- * 2. The hardware could run the quality engine live but that engine is not
+ * 2. The hardware meets the quality model tier but that model is not
  *    obtainable in this release -- say THAT, rather than telling the owner of
  *    a 4090 that their station has no dedicated graphics card.
- * 3. The hardware could run it live AND it is obtainable -- the case F-06 was
- *    captured in. The sentence now states whether it was actually selected
- *    instead of asserting "We've selected it for you" regardless (which was
- *    false whenever the component was not in the default set).
+ * 3. The hardware meets the tier AND the model is obtainable. The sentence
+ *    states whether it was actually selected, while keeping Whistle identified
+ *    as the live primary and Whisper as the fallback.
  * 4. There is a dedicated card, but not one that reaches the quality tier
  *    (an AMD/Intel card, or a small NVIDIA one) -- name the card's presence
  *    honestly instead of denying it.
@@ -641,38 +630,40 @@ export function recommendationSentence(
 ): string {
   if (hardware.gpus === null) {
     return (
-      "CivicCast could not check this computer's graphics card, so it is installing the standard " +
-      "caption engine (Medium), which runs in real time on any supported CPU."
+      "CivicCast could not check this computer's graphics card. The required Medium Whisper model is " +
+      "installed for live-caption fallback and recording transcription; Whistle is the CPU primary for live captions."
     );
   }
   const decision = captionEngineDecision(hardware, catalog);
-  if (decision.largeRunsLiveHere) {
+  if (decision.largeMeetsHardwareTier) {
     if (!decision.largeObtainable) {
       return (
-        "This station's graphics card could run the higher-quality caption engine live, but that " +
-        "engine is not available to download in this release. CivicCast is installing the standard " +
-        "caption engine (Medium), which runs in real time on this station."
+        "This station meets the hardware tier for the optional Large Whisper model, but it is not " +
+        "available to download in this release. The required Medium Whisper model is installed for " +
+        "fallback and recording transcription; Whistle remains the CPU primary for live captions."
       );
     }
     if (decision.largeSelectedByDefault) {
       return (
-        "This station's graphics card can run the higher-quality caption engine live, and CivicCast " +
-        "has selected it. You can uncheck it on the next screen."
+        "This station meets the hardware tier for the optional Large Whisper model, and CivicCast " +
+        "has selected it. Whistle remains the CPU primary for live captions; supported NVIDIA graphics " +
+        "can accelerate Whisper fallback. You can uncheck Large and its GPU pack on the next screen."
       );
     }
     return (
-      "This station's graphics card can run the higher-quality caption engine live. CivicCast " +
-      "installs the standard caption engine (Medium); the next screen offers the higher-quality " +
-      "one as an extra download."
+      "This station meets the hardware tier for the optional Large Whisper model. CivicCast installs " +
+      "the required Medium Whisper model; the next screen offers Large and optional GPU acceleration. " +
+      "Whistle remains the CPU primary for live captions."
     );
   }
   const hasDedicatedGpu = hardware.gpus.some((gpu) => gpu.dedicated_vram_mb > 0);
   if (!hasDedicatedGpu) {
-    return "This station has no dedicated graphics card. We recommend the standard caption engine (Medium), which runs in real time on this CPU.";
+    return "This station has no dedicated graphics card. The required Medium Whisper model is installed for live-caption fallback and recording transcription; Whistle is the CPU primary for live captions.";
   }
   return (
-    "This station's graphics card is not one CivicCast can run the higher-quality caption engine " +
-    "on. We recommend the standard caption engine (Medium), which runs in real time here."
+    "This station's graphics card does not meet the hardware tier for the optional Large Whisper model. " +
+    "The required Medium Whisper model is installed for fallback and recording transcription; Whistle " +
+    "remains the CPU primary for live captions."
   );
 }
 

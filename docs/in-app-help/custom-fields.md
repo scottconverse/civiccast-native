@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Custom Fields (nav id: custom-fields)
 
 Sidebar: Setup > **Custom Fields**. Manual authority: `docs/manual/src/22-configuration.md` section "Define Custom Fields" (`#configuration-custom-fields`). The values are typed on each asset (Assets > open an asset > Custom fields).

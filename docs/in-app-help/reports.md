@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Reports (nav id: reports)
 
 Console group: Publish. Spec for the in-app help of the as-run (what aired) reports. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`; line numbers are in `screens/ReportsScreen.tsx` unless stated.

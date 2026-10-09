@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Home: live now, coming up, latest recordings (route: `#/`)
 
 Paths are under `civiccast/apps/portal-public/`. Line numbers are `src/screens/HomeScreen.tsx` unless noted. The follow-by-email and "Submit a program" parts of Home have their own files (`public-subscribe.md`, `public-contribute.md`).

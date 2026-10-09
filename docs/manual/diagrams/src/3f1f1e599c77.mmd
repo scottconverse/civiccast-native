@@ -1,0 +1,18 @@
+flowchart LR
+    subgraph SMALL["Small station"]
+        S1["One Windows PC<br/>CivicCast service<br/>1 or 2 channels"]
+        S2["Camera or capture card"]
+        S3["Headend UDP-TS<br/>or HLS only"]
+        S2 --> S1 --> S3
+    end
+    subgraph LARGE["Larger station"]
+        L1["One stronger Windows PC<br/>more channel/video workload,<br/>optional NVIDIA GPU for Whisper"]
+        L2["NAS archive"]
+        L3["CDN for residents"]
+        L4["Headend: UDP multicast,<br/>SRT, NDI or SDI relay"]
+        L5["Staff by Remote Desktop"]
+        L1 --> L2
+        L1 --> L3
+        L1 --> L4
+        L5 --> L1
+    end

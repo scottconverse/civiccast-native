@@ -1,8 +1,8 @@
 # Cable headend, streaming, CDN, federation, emergency alerts, and the API {#ch-integrations}
 
-This chapter is for the IT person who connects CivicCast to the outside world: the cable company's equipment, a content delivery network, other servers on the internet, weather and emergency feeds, and other software that wants to talk to the station. It describes what the code really does in beta.10. Most of the connections in this chapter are **off by default**, and several were **not exercised** in the beta.10 acceptance run, so each section says which.
+This chapter is for the IT person who connects CivicCast to the outside world: the cable company's equipment, a content delivery network, other servers on the internet, weather and emergency feeds, and other software that wants to talk to the station. It describes beta.11 source behavior and identifies connections that remain **off by default**.
 
-> **Note:** Beta.10 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Gate A, the formal acceptance run, passed for the clean-install lane only. The upgrade and download-only lanes were not run. A first install with neither the full kit nor an earlier install is not proven. No human field-tester has signed it off, and the 8-hour soak run used an earlier internal build (C16). None of the outside connections below, with the exception of the loopback path that feeds the web player, was proven against real outside equipment or services.
+> **Note:** Beta.11 is a GitHub pre-release for testing, not a production release. The [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) describes the published package checks; it does not report acceptance by a real cable headend, CDN or outside publishing service. The source notes below explain configuration behavior, not field acceptance.
 
 ## Before you start
 
@@ -17,7 +17,7 @@ This chapter is for the IT person who connects CivicCast to the outside world: t
 
 A *headend* is the cable company's room of equipment that receives your channel and puts it on the cable. Many small stations send the headend a *UDP transport stream* (a continuous stream of MPEG packets sent over the network). CivicCast does this with an output of kind `udp-ts` and a destination address of the form `udp://host:port`.
 
-> **Known issue (beta.10):** No headend preset, and no part of the cable delivery path, was field-proven against a real cable headend. The presets below come from vendor documents and the code says so ("Not field-proven against a real cable headend"). Agree the exact stream settings with your cable company before you rely on any of them.
+> **Known issue (beta.11):** The beta.11 package verification does not include acceptance by a real cable headend. The presets below come from vendor documents and the code says so ("Not field-proven against a real cable headend"). Agree the exact stream settings with your cable company before you rely on any of them.
 
 ### Headend presets
 
@@ -71,7 +71,7 @@ What the log says (in `C:\ProgramData\CivicCast\logs\control_plane-app.log`):
 | `TS relay failed to start for <channel> -> <destination>; udp-ts falls back to ...` | The relay program would not start; output went direct. |
 | `TS relay skipped for <channel>: udp-ts uri ... has no host:port.` | The destination address has no port. |
 
-> **Known issue (beta.10):** The comments at the top of the relay's code describe it for the older FFmpeg concat engine. The code that starts it runs for every engine, including the default GStreamer engine. If you read the source, trust the behavior above.
+> **Known issue (beta.11):** The comments at the top of the relay's code describe it for the older FFmpeg concat engine. The code that starts it runs for every engine, including the default GStreamer engine. If you read the source, trust the behavior above.
 
 ### Check the stream with the verify probe
 
@@ -95,7 +95,7 @@ The shipped GStreamer runtime has no HLS writer. So for an output of kind `hls`,
 
 What residents see is decided by `GET /api/public/live/current`. Its `state` is one of `offline`, `on_air`, `on_air_no_web_output` or `standing_by`, and the `reason` can be "no HLS output configured", "HLS output configured but not serving yet" or "fallback slate, no program on air". `/api/public/channels/<channel>/live.m3u8` redirects to the live playlist, and `/api/public/channels/<channel>/captions.vtt` serves the current live captions.
 
-> **Note:** Live captions are off by default in beta.10 and can have gaps under load. See [the captions section of the troubleshooting matrix](#ch-troubleshooting).
+> **Note:** Live captions are off by default in beta.11 and can have gaps under load. See [the captions section of the troubleshooting matrix](#ch-troubleshooting).
 
 ## CDN and provider options
 
@@ -116,7 +116,7 @@ There is a separate *surge switch* that would send the live stream to the CDN du
 
 If a CDN or other server sits in front of the portal and you use the analytics features, set `CIVICCAST_ANALYTICS_TRUSTED_PROXY_CIDRS` to the address ranges of that server so viewer addresses are counted correctly.
 
-> **Known issue (beta.10):** The CDN paths were not exercised in Gate A or in the 8-hour run. They are unproven in this build. Test with one recording before you rely on a CDN.
+> **Known issue (beta.11):** The current package verification record does not include an end-to-end CDN upload. Test one recording and verify it at the CDN before relying on that path.
 
 ### Publishing providers
 
@@ -132,9 +132,9 @@ Separate from the CDN, each publishing destination has a provider setting that i
 
 All of them default to `mock`. A mock provider does not send anything. Set the variable to `real` only after you have placed the credentials the provider needs.
 
-> **Known issue (beta.10):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Check the far end after your first real publish.
+> **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Check the far end after your first real publish.
 
-> **Known issue (beta.10):** The Publish screen has targets for a podcast episode and for subscriber notifications, but real sends were parked by an owner decision on 2026-09-02. Nothing is mailed or posted when you publish. See [Publishing](#ch-publishing).
+> **Known issue (beta.11):** The Publish screen has targets for a podcast episode and for subscriber notifications, but real sends were parked by an owner decision on 2026-09-02. Nothing is mailed or posted when you publish. See [Publishing](#ch-publishing).
 
 ## Cable file packages
 
@@ -147,7 +147,7 @@ Some cable stations take recordings as files, not as a live stream. A *cable fil
 
 You can also run the command `civiccast cable package` from the command line; see [Appendix: command line](#app-cli).
 
-> **Known issue (beta.10):** If `CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR` is not set, the Publish row reads "not set up (optional)" and has no retry afterwards (HELP-08). Set the folder first, then approve; do not approve first and fix it later.
+> **Known issue (beta.11):** If `CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR` is not set, the Publish row reads "not set up (optional)" and has no retry afterwards (HELP-08). Set the folder first, then approve; do not approve first and fix it later.
 
 > **Note:** The package is a file. Its creation is not proof that any cable company accepted it. The `leightronix-file-drop` preset (above) is a different thing: it configures a channel's output, not this ZIP.
 
@@ -182,11 +182,11 @@ The public routes are `/.well-known/webfinger`, `/.well-known/nodeinfo`, `/nodei
 
 The control plane listens on `127.0.0.1` only, so servers on the internet cannot reach these routes until you provide a path from your public address to port 8000. The same caution as above applies: a same-host reverse proxy changes how the station sees addresses.
 
-> **Known issue (beta.10):** The console cannot switch federation on. The **ActivityPub** screen shows status and followers only. You must use the variables above.
+> **Known issue (beta.11):** The console cannot switch federation on. The **ActivityPub** screen shows status and followers only. You must use the variables above.
 
-> **Known issue (beta.10):** There is no control to unblock a server you blocked. Approve, Reject and Block need the Publish operator or Support admin role, and the moderation error shows the same generic text even when the real cause is a missing role.
+> **Known issue (beta.11):** There is no control to unblock a server you blocked. Approve, Reject and Block need the Publish operator or Support admin role, and the moderation error shows the same generic text even when the real cause is a missing role.
 
-> **Known issue (beta.10):** Approving a recording on **Publish** announces it to followers when federation is on. This is not shown on the Publish screen.
+> **Known issue (beta.11):** Approving a recording on **Publish** announces it to followers when federation is on. This is not shown on the Publish screen.
 
 > **Warning:** Federation lets other servers send requests to the station's public address. Do not turn it on until the public path is designed, and read [Security and privacy](#ch-security).
 
@@ -202,7 +202,7 @@ Two things must be switched on, and the installer sets neither:
 | `CIVICCAST_EAS_AUTO_SURFACE` | Automatic display of severe and higher alerts needs `1`, `true`, `yes` or `on`. Without it, severe and higher alerts are not put on air automatically. |
 | `CIVICCAST_EAS_POLL_SECONDS` | How often to poll; default 60. |
 
-> **Known issue (beta.10):** The screen inventory for Emergency Alerts says severe alerts air automatically. In the code they do so only when both `CIVICCAST_EAS` is on and `CIVICCAST_EAS_AUTO_SURFACE` is on. With a stock install, nothing is polled and nothing is surfaced. We followed the code.
+> **Known issue (beta.11):** The screen inventory for Emergency Alerts says severe alerts air automatically. In the code they do so only when both `CIVICCAST_EAS` is on and `CIVICCAST_EAS_AUTO_SURFACE` is on. With a stock install, nothing is polled and nothing is surfaced. We followed the code.
 
 ### Add a feed
 
@@ -225,9 +225,9 @@ For any feed that has a `credential_ref`, the station sends `Authorization: Bear
 
 The public overlay data is at `/api/public/cg/emergency-overlay`.
 
-> **Known issue (beta.10):** A feed that fails raises the alert kind `eas-source-unavailable`, but the console still shows the feed as "polling". Watch the **Alerts** screen, not that word.
+> **Known issue (beta.11):** A feed that fails raises the alert kind `eas-source-unavailable`, but the console still shows the feed as "polling". Watch the **Alerts** screen, not that word.
 
-> **Known issue (beta.10):** We could not confirm whether the emergency crawl is burned into the video that goes to the cable headend, or shown only on the web overlay (HELP-03 of the emergency-alerts inventory). Do not assume it reaches cable.
+> **Known issue (beta.11):** We could not confirm whether the emergency crawl is burned into the video that goes to the cable headend, or shown only on the web overlay (HELP-03 of the emergency-alerts inventory). Do not assume it reaches cable.
 
 ## Webhooks and subscriptions
 
@@ -239,21 +239,21 @@ Residents can sign up on the public portal with `POST /api/public/subscribe/emai
 
 When a subscriber webhook is delivered, the station sends a JSON body with `asset_id`, `title`, `portal_url`, `podcast_url`, `summary` and `published_at`, and two headers: `x-civiccast-signature: sha256=<hex>` (an HMAC-SHA256 of the body written with sorted keys and compact separators) and `x-civiccast-asset-id`. The timeout is `CIVICCAST_WEBHOOK_TIMEOUT_SECONDS` (default 30), with retries set by the `CIVICCAST_WEBHOOK_RETRY_*` variables.
 
-> **Known issue (beta.10):** Nothing is delivered automatically when a recording is published; only the staff test dispatch sends. Subscriber notifications are parked (see above).
+> **Known issue (beta.11):** Nothing is delivered automatically when a recording is published; only the staff test dispatch sends. Subscriber notifications are parked (see above).
 
-> **Known issue (beta.10):** The signing secret for a subscriber webhook is calculated from the subscription's own identifier, not chosen at random, and it is never shown to the subscriber. A receiver therefore cannot check the signature. Webhook "confirmation" does not prove that the person owns the address: the confirmation token is returned in the sign-up response, and any `http` or `https` address is accepted. If `CIVICCAST_PROVIDER_WEBHOOK` is set to `real`, this can be used to make the station send requests to addresses of an attacker's choosing (audit findings E-001 and B-002). Leave the webhook provider on `mock` until this is fixed.
+> **Known issue (beta.11):** The signing secret for a subscriber webhook is calculated from the subscription's own identifier, not chosen at random, and it is never shown to the subscriber. A receiver therefore cannot check the signature. Webhook "confirmation" does not prove that the person owns the address: the confirmation token is returned in the sign-up response, and any `http` or `https` address is accepted. If `CIVICCAST_PROVIDER_WEBHOOK` is set to `real`, this can be used to make the station send requests to addresses of an attacker's choosing (audit findings E-001 and B-002). Leave the webhook provider on `mock` until this is fixed.
 
 ### Alert destinations
 
 The **Alerts** screen can hold destinations of three kinds: email, text message and webhook. A webhook destination receives a JSON body with `event_id`, `condition`, `severity`, `state`, `resource_ref`, `summary`, `detail`, `first_observed_at` and `last_observed_at`. The body is signed with the destination's `secret` using HMAC-SHA256, and the header `X-CivicCast-Signature` carries the hex digest with no `sha256=` prefix. The timeout is 10 seconds. A failed delivery is retried after 120, 240, 480 and 960 seconds and then given up on after 5 attempts.
 
-> **Known issue (beta.10):** On a new install every alert rule is created with no destination attached, the rule editor cannot attach one, and adding a destination does not connect it to any rule. Alerts may never be delivered. Check by sending a test and watching for it.
+> **Known issue (beta.11):** On a new install every alert rule is created with no destination attached, the rule editor cannot attach one, and adding a destination does not connect it to any rule. Alerts may never be delivered. Check by sending a test and watching for it.
 
 ### Payments (inbound)
 
 `POST /api/webhooks/stripe` accepts a payment provider's notification. It requires a `Stripe-Signature` header, rejects a body over 1 MiB, and answers 401 for a bad signature. It is not reachable from the internet unless you build a path to it.
 
-> **Known issue (beta.10):** The public portal asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), and the sign-in link emails are not sent in this build. See [Publishing](#ch-publishing).
+> **Known issue (beta.11):** The public portal asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), and the sign-in link emails are not sent in this build. See [Publishing](#ch-publishing).
 
 ## External agenda import
 
@@ -263,7 +263,7 @@ The tenant or site code that staff type on the screen must be 1 to 64 letters, d
 
 ## The HTTP API
 
-Everything the console shows comes through the station's HTTP API, and the same calls are open to your own scripts. Calls under `/api/staff/` need a staff token; calls under `/api/public/` and a few others do not. The list of every route is in `ops/docs-sprint/inventory/generated/api.md` and in the API appendix: 405 paths and 488 operations in 81 groups for beta.10.
+Everything the console shows comes through the station's HTTP API, and the same calls are open to your own scripts. Calls under `/api/staff/` need a staff token; calls under `/api/public/` and a few others do not. The list of every route is in `ops/docs-sprint/inventory/generated/api.md` and in the API appendix: 405 paths and 488 operations in 81 groups for beta.11.
 
 ### Which areas are stable?
 
@@ -293,7 +293,7 @@ $env:DATABASE_URL = (Get-ItemProperty 'HKLM:\SOFTWARE\CivicCast\Native').Databas
 
 The scopes `operator` and `admin` each grant all five roles (Setup admin, Meeting operator, Records clerk, Publish operator and Support admin); a token with no scopes grants none. To give a script only what it needs, name the roles instead, comma-separated: `setup_admin`, `meeting_operator`, `records_clerk`, `publish_operator`, `support_admin` (the code also accepts the hyphenated and short forms such as `meeting-operator` and `meeting`). See [Security and privacy](#ch-security). Other token commands are `token list`, `token revoke` and `token rotate`.
 
-> **Known issue (beta.10):** The token commands are in the code, but we did not run them on an installed station. The `civiccast` command may exist at `runtime\Lib\site-packages\bin\civiccast.exe` (see [Running it day to day](#ch-operations)); we could not confirm it is there, so the commands in this chapter use `runtime\python.exe -m civiccast.cli`, which runs the same program.
+The installed package places the `civiccast.exe` command under `<install folder>\runtime\Lib\site-packages\bin\civiccast.exe`. If that executable is missing, run the same command through `<install folder>\runtime\python.exe -m civiccast.cli`.
 
 > **Warning:** A token with all five roles can change the station and stop channels. Keep it out of scripts that others can read, and revoke it when you are done.
 
@@ -369,7 +369,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 | 422 | The request body is wrong; `detail` is a list of field errors | Fix the fields. |
 | 429 | Too many failed tokens: 10 failures in 60 seconds from one address (by default). The `detail` reads "Too many failed staff authentication attempts. Wait and retry." | Wait; the `Retry-After` header gives the seconds. A request with no token at all does not count. |
 
-> **Known issue (beta.10):** The whole-repository review found places where tests and features had diverged (audit finding C-001). Try a call on a test channel before you automate it.
+**Historical beta.10 audit note:** A whole-repository audit reported test/feature divergence at that time. It is not a beta.11 test result. Use the current verification record for this release's checks and try an integration on a test channel before automating it.
 
 ## If it did not work
 

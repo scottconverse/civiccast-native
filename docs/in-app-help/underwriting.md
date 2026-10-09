@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Underwriting (nav id: underwriting)
 
 Console group: Publish. Spec for the in-app help of the sponsor-spot planning screen. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`; line numbers are in `screens/UnderwritingScreen.tsx` unless stated.

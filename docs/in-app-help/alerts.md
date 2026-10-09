@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Alerts & monitoring (nav id: alerts)
 
 Sidebar: System Health > **Alerts**; page H1 "Alerts & monitoring"; small label "Operations". Manual authority: `docs/manual/src/17-something-wrong.md` section "Watch for alerts (Alerts)" (`#watch-for-alerts-alerts`), including "What happens in beta.10 when no destination is wired" (`#what-happens-in-beta.10-when-no-destination-is-wired`).

@@ -45,8 +45,8 @@ class TestManualEndpoint:
 
     def test_manual_explains_live_engine_and_backup(self, client: TestClient) -> None:
         html = client.get("/api/public/manual").json()["html"]
-        assert "Whistle is the default live speech engine" in html
-        assert "Whisper is the backup" in html
+        assert "Native stations use Whistle on CPU as the primary engine" in html
+        assert "with Whisper as fallback" in html
         assert "CIVICCAST_LIVE_CAPTION_ENGINE=whisper" in html
 
     def test_html_never_carries_a_script_tag(self, client: TestClient) -> None:

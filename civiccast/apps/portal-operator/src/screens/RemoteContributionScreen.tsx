@@ -355,7 +355,7 @@ export function RemoteContributionScreen() {
                     onClick={() =>
                       setPendingConfirm({
                         title: `Close "${detail.room.name}"?`,
-                        body: 'Every guest connected right now is disconnected immediately and the room stops accepting contribution. If the meeting is live, their video/audio drops from the broadcast the instant you confirm. You can reopen the room and re-invite guests afterward.',
+                        body: 'This closes the CivicCast room record and stops accepting contributions; it does not remove guest video or audio from the broadcast. Remove or mute the guest in the VDO.Ninja director view and check the channel monitor. When the meeting ends, use Channels → Return to schedule. You can reopen the room and send new invites afterward.',
                         confirmLabel: 'Close room now',
                         run: () => closeMutation.mutate(detail.room.room_id),
                       })
@@ -664,8 +664,8 @@ export function GuestTray({
                         title: `Drop ${s.guest_display_name}?`,
                         body:
                           s.state === 'on_air'
-                            ? `${s.guest_display_name} is on air right now — dropping ends their connection immediately and their video/audio cuts from the broadcast mid-session. They would need a new invite to rejoin.`
-                            : `Ends ${s.guest_display_name}'s connection to this room immediately. They would need a new invite to rejoin.`,
+                            ? `${s.guest_display_name} is on air right now. Dropping updates the CivicCast room record but does not remove their video or audio from the broadcast. Remove or mute them in the VDO.Ninja director view and check the channel monitor. They would need a new invite to rejoin.`
+                            : `Marks ${s.guest_display_name} as dropped in the CivicCast room record; it does not end the VDO.Ninja connection or remove media from the broadcast. Remove them in the VDO.Ninja director view and check the channel monitor. They would need a new invite to rejoin.`,
                         confirmLabel: 'Drop guest',
                         run: () => onAction(s.session_id, 'drop'),
                       })
@@ -678,6 +678,14 @@ export function GuestTray({
             </li>
           ))}
         </ul>
+      )}
+
+      {active.some((session) => session.state === 'on_air' || session.state === 'muted') && (
+        <p className="mt-2 text-xs" style={{ color: 'var(--cc-warn-text)' }}>
+          Mute and Off air update CivicCast&apos;s guest status; they do not mute or remove
+          VDO.Ninja media from the channel. Use the VDO.Ninja director view and check the
+          channel monitor.
+        </p>
       )}
 
       {pendingConfirm && (

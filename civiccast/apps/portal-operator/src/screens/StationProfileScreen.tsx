@@ -378,7 +378,7 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
         yourself may not work. You do not need file access to find a recording: use{' '}
         <strong>Assets</strong> instead. If you do need the files, use Copy path above, then paste
         into File Explorer&apos;s address bar; ask an administrator if it says access is denied.{' '}
-        <Link to={manualLink('where-recordings-live')} style={{ color: 'var(--cc-brand)' }}>
+        <Link to={manualLink('configuration-storage')} style={{ color: 'var(--cc-brand)' }}>
           Read more in the manual
         </Link>
         . An env-var override (CIVICCAST_STATION_TZ, CIVICCAST_STATION_NAME,
@@ -409,19 +409,17 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
           <span style={{ color: 'var(--cc-ink)' }}>Show live captions on air</span>
         </label>
         <p id="live-captions-help" className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          Off when the station is installed in this beta: with live captions on, the picture can
-          freeze for 25–30 seconds and then catch up in a burst every minute or two, and rarely a
-          channel restarts itself. When this is on, CivicCast writes captions in real time — but
-          one channel at a time. On a station with more than one channel on air, the others are
-          paused most of the time, with no live captions showing and their audio discarded. It is
-          useful, and it is hard work for this computer. If playout is stuttering or channels are
-          restarting, turn it off: the picture and sound always come first, and
-          nothing else about the broadcast changes. Captions on recordings you publish are
-          produced separately and are <strong>not</strong> affected by this setting.{' '}
+          Live captions are off on a newly installed station. When enabled, they share computer
+          resources with playout, so captions may have gaps under heavy load; picture and sound
+          take priority. Turning captions off stops speech recognition and drains queued audio on
+          the next worker scan; caption routing is removed at the next channel start. Turning
+          captions on resumes speech recognition on the next worker scan, with caption routing
+          added at the next channel start. Recording captions are produced separately and are
+          <strong> not</strong> affected by this setting.{' '}
           {/* Deliberately NOT another "Read more in the manual": this screen
               already has one, and two links with identical text are ambiguous
               to anyone navigating by link list rather than by eye. */}
-          <Link to={manualLink('live-captions-switch')} style={{ color: 'var(--cc-brand)' }}>
+          <Link to={manualLink('live-captions-what-the-settings-change')} style={{ color: 'var(--cc-brand)' }}>
             More about live captions in the manual
           </Link>
           .

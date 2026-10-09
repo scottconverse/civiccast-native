@@ -112,6 +112,11 @@
 % Softer rules in tables; pandoc emits booktabs.
 \usepackage{booktabs}
 
+% Figure captions in the manual carry stable identifiers such as "Figure 16-15".
+% Hide LaTeX's automatically generated global figure number to avoid a duplicate.
+\usepackage{caption}
+\captionsetup[figure]{labelformat=empty}
+
 % Lists that breathe a little.
 \usepackage{enumitem}
 \setlist[itemize]{itemsep=2pt, topsep=4pt, parsep=0pt}

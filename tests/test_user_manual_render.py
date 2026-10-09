@@ -38,7 +38,6 @@ _REQUIRED_FRAGMENTS = (
     "Records Clerk Quick Guide",
     "Technical Operations Reference",
 )
-_TRACKED_MANUAL_BASELINE_VERSION = "v1.0.0-beta.10"
 
 
 def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
@@ -160,19 +159,18 @@ class TestUserManualVersionHeaderConsistency:
                 "---\ntitle: X\nsubtitle: no version here\n---\n"
             )
 
-    def test_tracked_manual_remains_the_historical_beta10_baseline(self) -> None:
-        """The tracked downloads stay pinned to Beta 10 while candidate
-        renders are staged outside docs/ and publication links move to assets."""
+    def test_tracked_manual_downloads_match_the_current_source(self) -> None:
+        """The website's downloads must match the manual they advertise."""
         manifest_path = render_user_manual.ROOT / "docs" / render_user_manual.MANIFEST_NAME
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         pdf_path = render_user_manual.ROOT / "docs" / "USER-MANUAL.pdf"
         docx_path = render_user_manual.ROOT / "docs" / "USER-MANUAL.docx"
 
-        assert (
-            render_user_manual._rendered_header_version_token(pdf_path)
-            == _TRACKED_MANUAL_BASELINE_VERSION
-        )
+        assert render_user_manual._rendered_header_version_token(
+            pdf_path
+        ) == render_user_manual._source_version_token(_SOURCE.read_text(encoding="utf-8"))
         assert manifest["source"] == "docs/USER-MANUAL.md"
+        assert manifest["source_sha256"] == render_user_manual._source_sha256(_SOURCE)
         entries = {entry["path"]: entry for entry in manifest["artifacts"]}
         assert set(entries) == {"docs/USER-MANUAL.pdf", "docs/USER-MANUAL.docx"}
         for path in (pdf_path, docx_path):

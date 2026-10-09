@@ -14,4 +14,6 @@
 #
 # Format: <glob>    # YYYY-MM-DD reason
 #
-# (no entries)
+# Canonical website manuals are tracked documentation, not installers or proof kits.
+docs/USER-MANUAL.pdf    # 2026-10-08 current Beta 11 manual with architecture graphics
+docs/USER-MANUAL.docx   # 2026-10-08 editable edition of the same canonical manual

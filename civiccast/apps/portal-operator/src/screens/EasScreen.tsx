@@ -97,8 +97,8 @@ export function SourcesSection({ sources, loading = false }: { sources: EasCapSo
         <Loading label="Loading sources…" />
       ) : sources.length === 0 ? (
         <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-          No alert sources are configured yet. Add an NWS, AMBER, or IPAWS (COG) feed to begin
-          ingesting public-safety alerts.
+          No alert sources are configured. Ask your station administrator to configure an NWS,
+          AMBER, or IPAWS (COG) feed.
         </p>
       ) : (
         <ul className="space-y-1">

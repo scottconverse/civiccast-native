@@ -2,7 +2,7 @@
 
 This chapter covers the work you do before a meeting starts and before a program airs. You will put programs on a channel's schedule, repeat a program every week, let CivicCast fill a time of day by rule, set up automatic recording of a meeting, publish an agenda that residents can read next to the video, and review programs that residents and community producers send in. Station staff with the publish operator, meeting operator, or records clerk role normally do this work.
 
-> **Note:** This chapter describes CivicCast beta.10, which was published on 2026-10-02 as a GitHub pre-release (a beta candidate). It has not had a sign-off from human field testers. Everything below comes from reading the beta.10 program and the text on its screens. Where we could not run something on a live station, we say so. Several screens in this build have help text that is wrong or misleading, so this chapter tells you what the screen really does, and marks each difference as a **Known issue (beta.10)**.
+> **Note:** This chapter describes the current beta.11 screens and program behavior. The release is a GitHub pre-release for testing, not a production release. Where a button's wording differs from what the program does, a **Known issue (beta.11)** note explains the current behavior and the safe next step. Check the [beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for package-specific checks.
 
 ## Before you start
 
@@ -19,7 +19,7 @@ What you can do on each screen depends on your role. The table shows who can loo
 | Agendas | Records clerk, meeting operator | Records clerk, meeting operator |
 | Contributors | Publish operator, meeting operator, support admin | Publish operator, meeting operator |
 
-> **Known issue (beta.10):** The menu shows some screens to roles that cannot use them. A meeting operator or records clerk who opens **Schedule** sees a red box, "Could not load schedule." A support admin can open **Contributors** but every button there fails. A publish operator who fills in the form on **Program Guide** is told "This action requires one of these CivicCast roles: meeting_operator, support_admin." only after pressing **Add to guide**. If a screen refuses you, ask your station administrator which role you need.
+> **Known issue (beta.11):** The menu shows some screens to roles that cannot use them. A meeting operator or records clerk who opens **Schedule** sees a red box, "Could not load schedule." A support admin can open **Contributors** but every button there fails. A publish operator who fills in the form on **Program Guide** is told "This action requires one of these CivicCast roles: meeting_operator, support_admin." only after pressing **Add to guide**. If a screen refuses you, ask your station administrator which role you need.
 
 You also need at least one video in the library, and at least one channel set up on the station. Videos are managed on the **Assets** screen ([Chapter 5](#ch-after-meeting)).
 
@@ -64,7 +64,7 @@ Residents see two different lists, built from two different sources.
 
 *Figure: the Channel schedule page that residents see.*
 
-> **Known issue (beta.10):** The Channel schedule page can show an airing that will not air, because it reads the guide's own list, not the published state. The guide also keeps listing an airing if you cancel that item on the Schedule screen, because nothing updates the guide when an item is cancelled. Items you add directly on the Schedule screen never appear on the Channel schedule page at all; they appear in **Coming up** after they are published. The two pages do not explain the difference to residents.
+> **Known issue (beta.11):** The Channel schedule page can show an airing that will not air, because it reads the guide's own list, not the published state. The guide also keeps listing an airing if you cancel that item on the Schedule screen, because nothing updates the guide when an item is cancelled. Items you add directly on the Schedule screen never appear on the Channel schedule page at all; they appear in **Coming up** after they are published. The two pages do not explain the difference to residents.
 
 ## Which time zone are you typing in?
 
@@ -98,17 +98,11 @@ Use the **Schedule** screen to place one recording on a channel at one time. Thi
 
 You should see the panel close and a message, "Scheduled.", with a line such as "Premiere · City Council · Tue, Oct 6, 7:00 PM".
 
-![The New scheduled item panel with Mode, Asset, Channel, Start at, Duration and Notes.](manual/images/operator-schedule-drawer.png){width=60%}
-
-*Figure: the New scheduled item panel.*
-
 > **Warning:** The item you just made is **Scheduled**. It is not on the air and residents cannot see it. Go on to the next task, "Approve a program to air".
 
-> **Known issue (beta.10):** The **Premiere** card says "Publish a recorded asset to the public portal at a scheduled time." That is wrong. Saving only creates a draft. Nothing airs and nothing appears to residents until you press **Publish to residents**.
+> **Note:** Embargo release is unavailable in this build. Use **Premiere**, then publish the scheduled item to residents separately. An Embargo item is left out of the channel's program and **Coming up**, and the approval check refuses it with "embargo entries publish at a single moment and cannot be committed to air".
 
-> **Known issue (beta.10):** Do not choose **Embargo**. Its card says "Approve now; release becomes public at the embargo time." We read the whole beta.10 program and found nothing that releases an embargo item: it is left out of the channel's program, left out of **Coming up**, and the approval check refuses it (its message reads "embargo entries publish at a single moment and cannot be committed to air"). Use **Premiere**.
-
-> **Known issue (beta.10):** The **Asset** drop-down lists only videos in the Validated state. A video that CivicCast recorded itself (a live meeting or a scheduled recording) is in the Recorded state and is **not offered**, even though the approval step accepts Recorded videos. If the list is empty you will see "No validated assets." with the advice "Upload and validate an asset in the Assets tab first." We found no screen in beta.10 that changes a Recorded video into a Validated one. A video you upload on the **Assets** screen becomes Validated, so uploading the file again makes it appear. Auto-schedule (below) accepts Recorded videos.
+> **Known issue (beta.11):** The **Asset** drop-down lists only videos in the Validated state. A video that CivicCast recorded itself (a live meeting or a scheduled recording) is in the Recorded state and is **not offered**, even though the approval step accepts Recorded videos. If the list is empty you will see "No validated assets." with the advice "Upload and validate an asset in the Assets tab first." The console has no action that changes a Recorded video into a Validated one. A video you upload on the **Assets** screen becomes Validated, so uploading the file again makes it appear. Auto-schedule (below) accepts Recorded videos.
 
 > **Tip:** The yellow box in the panel reads "Timezone check". During the weeks when clocks change, compare the time with your station calendar before you press **Schedule premiere**.
 
@@ -122,7 +116,7 @@ The top of the screen says "Week of" and a date range, with "times shown in your
 
 The list shows every item, not only this week's. Clicking an item in the week grid switches to the list; it does not open a detail panel.
 
-> **Known issue (beta.10):** The heading says "Conflicts on the same channel are rejected at the database layer." In plain words: the station will not let two programs overlap on one channel. If you try, you see "Time slot conflicts." with the ID, channel and start time of the item in the way and the advice "Pick a different time, channel, or cancel the conflicting item."
+> **Note:** The Schedule screen says, "Conflicts are checked when you submit." An overlapping item can be entered in the form, then rejected by the server when you submit it, with "Time slot conflicts." and the conflicting item's ID, channel and start time. Choose a different time or channel, or cancel the conflicting item, then submit again.
 
 ## Approve a program to air
 
@@ -139,23 +133,15 @@ A program on the Schedule screen airs only after someone with the publish operat
 
 You should see the message "Visible to residents." with the program title, and the row now reads "Visible to residents". The item is **Published**. CivicCast also tells the channel's playout engine to read the schedule again, and starts the channel if it was stopped.
 
-![The Schedule list with one program waiting for approval. The row reads Not yet visible to residents and has a Publish to residents button.](manual/images/operator-schedule-list.png){width=90%}
-
-*Figure: a Scheduled row with its Publish to residents button.*
-
-![The review panel after the check, with the Safe to air badge.](manual/images/operator-schedule-review-safe.png){width=70%}
-
-*Figure: the review panel for a program that passed the check.*
-
 > **Warning:** The final **Publish to residents** click has no further confirmation. It approves the program to air on the channel, not only to appear on the portal.
 
 If the panel says **Not safe to air yet**, the approve button stays grey. Fix the reason shown (move or cancel the clashing program, or fix the video) and start again.
 
 If your role cannot approve, the **Publish to residents** button is grey and a note explains that you can view the schedule but publishing needs the publish operator or setup admin role.
 
-> **Known issue (beta.10):** The words "to residents" hide what this button does. It is the approval to air on the channel. The Channels screen has the same approval under another name, **Commit programs to air** with **Review & prepare** and **Approve & put on air** ([Chapter 4](#ch-running-meeting)). Either place works.
+> **Known issue (beta.11):** The words "to residents" hide what this button does. It is the approval to air on the channel. The Channels screen has the same approval under another name, **Commit programs to air** with **Review & prepare** and **Approve & put on air** ([Chapter 4](#ch-running-meeting)). Either place works.
 
-> **Known issue (beta.10):** The screen shows "Visible to residents." whenever the approval was saved, even if the message to the playout engine failed. The approval stays saved, and the engine picks the schedule up on its own cycle. The Channels screen shows "Couldn't reach the engine" for that case.
+> **Known issue (beta.11):** The screen shows "Visible to residents." whenever the approval was saved, even if the message to the playout engine failed. The approval stays saved, and the engine picks the schedule up on its own cycle. The Channels screen shows "Couldn't reach the engine" for that case.
 
 ## Cancel a scheduled item
 
@@ -167,7 +153,7 @@ You should see the message "Cancelled." and the row's state label change to Canc
 
 > **Warning:** This cannot be undone. The box says you would need to create a new scheduled item to air it again.
 
-> **Known issue (beta.10):** A **Published** row has no **Cancel** button on this screen. To take a program that you approved by hand off the air, use **Take off air** on the Channels screen ([Chapter 4](#ch-running-meeting)); it asks for a reason. Programs that Auto-schedule placed have no approval record, and we found no button in beta.10 that removes one. The station's programming interface can cancel a Published item; ask your IT person ([Part II, Integrations](#ch-integrations)).
+> **Known issue (beta.11):** A **Published** row has no **Cancel** button on this screen. To take a program that you approved by hand off the air, use **Take off air** on the Channels screen ([Chapter 4](#ch-running-meeting)); it asks for a reason. Programs that Auto-schedule placed have no approval record, and the console has no button to remove one. The station's programming interface can cancel a Published item; ask your IT person ([Part II, Integrations](#ch-integrations)).
 
 ## Repeat a program on a schedule (Program Guide)
 
@@ -192,23 +178,17 @@ Use **Program Guide** when a recording should air again and again, for example e
 
 You should see the message "Added to guide." with a line such as "City Council · Weekly" (the line shows the guide title if you typed one, otherwise the recording's ID). The new slot appears under **Recurring slots**. Airings that fall in the next 72 hours are built at once and appear under **Next 7 days**, grouped by day, with the status **Scheduled**. Later airings are added as they come inside that 72-hour reach.
 
-![The Program guide screen with two recurring slots and the Next 7 days list.](manual/images/operator-guide-populated.png){width=90%}
-
-*Figure: the Program guide screen. Recurring slots are at the top; the day-by-day list is below.*
-
 The guide is rebuilt in the background. By default it looks 72 hours ahead and runs about every five minutes. The **Refresh guide** button builds it immediately, for every channel, not only the one shown.
 
 > **For IT staff:** the background job, its 5-minute interval and its 72-hour reach are set by environment variables; see [Part II, Running it day to day](#ch-operations).
 
-> **Known issue (beta.10):** The text at the top of the screen says "The automation engine airs scheduled entries and falls back to filler between programs." That is misleading. The engine airs only **Published** items. Open **Schedule** and press **Publish to residents** on each airing the guide built.
+> **Known issue (beta.11):** The **Weekdays** rule counts days on the UTC calendar, not on your local calendar. For a US evening start, a Friday-evening program lands on Saturday in UTC and is left out, while a Sunday-evening program lands on Monday in UTC and is included. We derived this from reading the program and did not run it on a live station. Until it is fixed, use **Weekly** with a separate slot for each day, or check the **Next 7 days** list after adding a Weekdays slot.
 
-> **Known issue (beta.10):** The **Weekdays** rule counts days on the UTC calendar, not on your local calendar. For a US evening start, a Friday-evening program lands on Saturday in UTC and is left out, while a Sunday-evening program lands on Monday in UTC and is included. We derived this from reading the program and did not run it on a live station. Until it is fixed, use **Weekly** with a separate slot for each day, or check the **Next 7 days** list after adding a Weekdays slot.
+> **Known issue (beta.11):** The status in **Next 7 days** stays **Scheduled** even after you publish the item, so this list cannot tell you whether a program is approved. Check **Schedule** for that. Items you added directly on the Schedule screen are also listed here, with the status shown as the lower-case word `manual` and the detail "Scheduled directly (no recurring slot)."
 
-> **Known issue (beta.10):** The status in **Next 7 days** stays **Scheduled** even after you publish the item, so this list cannot tell you whether a program is approved. Check **Schedule** for that. Items you added directly on the Schedule screen are also listed here, with the status shown as the lower-case word `manual` and the detail "Scheduled directly (no recurring slot)."
+> **Known issue (beta.11):** Like the Schedule screen, the **Recording** drop-down lists only Validated videos. A video that CivicCast recorded is not offered (see the Known issue under "Put a recording on a channel once").
 
-> **Known issue (beta.10):** Like the Schedule screen, the **Recording** drop-down lists only Validated videos. A video that CivicCast recorded is not offered (see the Known issue under "Put a recording on a channel once").
-
-> **Known issue (beta.10):** You cannot change a slot after you add it, even though the station's programming interface allows it. To change one, disable it and add a new one.
+> **Known issue (beta.11):** You cannot change a slot after you add it, even though the station's programming interface allows it. To change one, disable it and add a new one.
 
 ### Fix a skipped airing
 
@@ -235,7 +215,7 @@ You should see "Slot disabled." with a line such as "City Council · 3 future ai
 
 > **Warning:** Disabling a slot cancels every future airing it built. It cancels them even if you already approved them. Airings that already played, or are playing, are not touched.
 
-> **Known issue (beta.10):** The box says nothing new will schedule "until the slot is re-enabled", but there is no button to re-enable a slot. To start it again, add it again with **Add to guide**.
+> **Note:** To schedule this program again after disabling its slot, add a new slot with **Add to guide**.
 
 ## Fill a channel by rule (Auto-schedule)
 
@@ -247,9 +227,7 @@ Use **Auto-schedule** when you want CivicCast to pick recordings for a time of d
 
 For each matching day in a rule's window, CivicCast places **one** recording. It starts at the start time of the daypart and uses the recording's own length. If anything is already scheduled anywhere inside that day's daypart, that day is left alone.
 
-> **Warning:** Programs placed by Auto-schedule are written as **Published**. They are approved to air with no separate approval step. Reviewing the **Simulate** preview is the only check you get. And CivicCast also runs the compile by itself about once an hour, so a saved rule can put programs on the air without anyone pressing a button.
-
-> **Known issue (beta.10):** The text under **Compile now** says "The new items still need an operator commit before they air." That is **wrong**. They are already approved. The text at the top of the screen ("Compiling a rule approves its picked items to air") is the correct one. The success message "Added N scheduled items across M rules." also uses the wrong word: those programs are Published. The line under **Auto-schedule rules**, "rules feed the commit gate before air", is wrong for the same reason. The hourly automatic run is not mentioned on the screen at all.
+> **Warning:** Programs placed by Auto-schedule are written as **Published**. They are approved to air with no separate approval step. Reviewing the **Simulate** preview is the only check you get. In the standard configuration, enabled rules also compile hourly, so a saved rule can put programs on the air without anyone pressing a button.
 
 You need the publish operator or setup admin role to change anything here. A support admin can look and run **Simulate**, but the **Add**, **Edit**, **Delete** and **Compile now** controls do not appear.
 
@@ -277,9 +255,9 @@ To change or remove one later, click **Edit**, or click **Delete** and then **Co
 5. Tick the **Days** the daypart applies to. Monday to Friday are ticked to begin with.
 6. Click **Create daypart**.
 
-> **Known issue (beta.10):** The **Channel** box is free text, unlike the drop-downs on Schedule and Program Guide. A mistyped channel ID makes a daypart for a channel that does not exist. In testing we could not confirm whether the station refuses that. Copy the ID from the Channels screen.
+> **Known issue (beta.11):** The **Channel** box is free text, unlike the drop-downs on Schedule and Program Guide. A mistyped channel ID makes a daypart for a channel that does not exist. In testing we could not confirm whether the station refuses that. Copy the ID from the Channels screen.
 
-> **Known issue (beta.10):** The line under **Dayparts** says times follow "CIVICCAST_STATION_TZ; UTC if unset". In plain words: the times use the station's time zone, which is set in the **Timezone** box on the **Station Profile** screen (the First Setup form has no such box). A new station starts with the value "local", which CivicCast treats as UTC, so "18:00" means 18:00 UTC until someone sets a real zone name there.
+> **Known issue (beta.11):** The line under **Dayparts** says times follow "CIVICCAST_STATION_TZ; UTC if unset". In plain words: the times use the station's time zone, which is set in the **Timezone** box on the **Station Profile** screen (the First Setup form has no such box). A new station starts with the value "local", which CivicCast treats as UTC, so "18:00" means 18:00 UTC until someone sets a real zone name there.
 
 ### Create a rule
 
@@ -304,15 +282,7 @@ To change or remove one later, click **Edit**, or click **Delete** and then **Co
    - **No usable duration**: the recording picked has no length.
 2. If you are happy, click **Compile now** in the **Compile schedule** card. There is no confirmation box.
 
-You should see "Added N scheduled items across M rules." The programs now show on **Schedule** as **Published**.
-
-![The Auto-schedule screen with one saved search, one daypart and one rule.](manual/images/operator-autoschedule-overview.png){width=90%}
-
-*Figure: the Auto-schedule screen.*
-
-![A Simulate result with Will air and Already scheduled labels.](manual/images/operator-autoschedule-simulate.png){width=70%}
-
-*Figure: the Simulate preview for one rule.*
+You should see "Published N schedule items across M rules." The programs now show on **Schedule** as **Published**.
 
 ### Retire a rule
 
@@ -320,7 +290,7 @@ You should see "Added N scheduled items across M rules." The programs now show o
 
 > **Warning:** Deleting a rule stops it from placing new programs. It does not remove programs it already placed. The delete changes only the rule, and the screen gives no hint about this. The programs stay Published and will air.
 
-> **Known issue (beta.10):** There is no way on this screen to switch a rule off without deleting it. A **disabled** label exists on rule cards, but nothing here sets it. You also cannot set a rule's priority or its active dates; every new rule is saved with priority 100 and no date limits. If you edit a rule, set it up again with the same care as when you created it.
+> **Known issue (beta.11):** There is no way on this screen to switch a rule off without deleting it. A **disabled** label exists on rule cards, but nothing here sets it. You also cannot set a rule's priority or its active dates; every new rule is saved with priority 100 and no date limits. If you edit a rule, set it up again with the same care as when you created it.
 
 ## Record a meeting automatically (Recording)
 
@@ -352,17 +322,13 @@ A *recording schedule* is a saved plan: one source, one time pattern, one length
 
 You should see the new schedule appear in the **Schedules** table above the form.
 
-![The New schedule form with Weekly selected and the Next 3 fires preview.](manual/images/operator-recording-form-weekly.png){width=80%}
-
-*Figure: a weekly recording schedule being created.*
-
 > **Warning:** The time you type is **UTC**, not local time. Under **Start (UTC)** and **Time (HH:MM UTC)** the screen shows "In your local time: …" so you can check it. The weekday boxes are also UTC days, and they get no such line. A Monday 7 PM meeting in US Mountain Time (UTC−6 in summer, UTC−7 in winter) is already Tuesday in UTC: in summer it is Tuesday 01:00 UTC, in winter Tuesday 02:00 UTC. Tick **Tue**, not **Mon**. Use the **Next 3 fires** lines to confirm the local day and time before you save. After the clocks change, edit the schedule: the UTC time does not move, so your local time does.
 
-> **Known issue (beta.10):** After **Create schedule** works, the form is not cleared and no "saved" message appears. Look for the new row in the **Schedules** table. If you click **Create schedule** a second time, the station answers "Recording schedule '&lt;id&gt;' already exists. Use PATCH to update." That means the first click worked.
+> **Known issue (beta.11):** After **Create schedule** works, the form is not cleared and no "saved" message appears. Look for the new row in the **Schedules** table. If you click **Create schedule** a second time, the station answers "Recording schedule '&lt;id&gt;' already exists. Use PATCH to update." That means the first click worked.
 
-> **Known issue (beta.10):** "Quality preset" is a free text box and the screen does not know which names are valid. Its note says "Contact your station admin for the full list of available presets." We could not confirm what the station does with a name it does not know.
+> **Known issue (beta.11):** "Quality preset" is a free text box and the screen does not know which names are valid. Its note says "Contact your station admin for the full list of available presets." We could not confirm what the station does with a name it does not know.
 
-> **Known issue (beta.10):** If the stream address contains a user name and password, the screen does not warn you. We could not confirm how CivicCast stores or hides it. Ask your IT person before you save such an address.
+> **Known issue (beta.11):** If the stream address contains a user name and password, the screen does not warn you. We could not confirm how CivicCast stores or hides it. Ask your IT person before you save such an address.
 
 > **For IT staff:** the capture-device list, recording folders and the runtime switch are described in [Part II, Running it day to day](#ch-operations).
 
@@ -389,7 +355,7 @@ These labels appear in lower case on the screen.
 
 You should see a new row in **Recordings** that goes from `arming` to `recording`. The capture lasts for the schedule's **Duration** unless you stop it earlier. There is no success message; the row is the confirmation.
 
-> **Known issue (beta.10):** The empty-screen text says "use Record Now for a one-off capture". The button is named **Record now** and exists only on a saved schedule's row. The button is grey if the schedule is disabled.
+> **Known issue (beta.11):** The empty-screen text says "use Record Now for a one-off capture". The button is named **Record now** and exists only on a saved schedule's row. The button is grey if the schedule is disabled.
 
 ### Stop a recording
 
@@ -400,7 +366,7 @@ If the job was in `recording`, the file recorded so far is finished into an asse
 
 > **Warning:** Stopping ends the capture for good. The recording stops at that moment.
 
-> **Known issue (beta.10):** **Stop** is also shown on a job still in `scheduled` state, but the station refuses it ("Cannot stop job '…': state is 'scheduled'; only ['arming', 'finalizing', 'recording'] are stoppable."), and the screen shows nothing, so the click appears to do nothing. To stop a capture that has not started, remove its schedule's **Enabled** tick (see below).
+> **Known issue (beta.11):** **Stop** is also shown on a job still in `scheduled` state, but the station refuses it ("Cannot stop job '…': state is 'scheduled'; only ['arming', 'finalizing', 'recording'] are stoppable."), and the screen shows nothing, so the click appears to do nothing. To stop a capture that has not started, remove its schedule's **Enabled** tick (see below).
 
 ### Change or remove a schedule
 
@@ -413,10 +379,6 @@ If the job was in `recording`, the file recorded so far is finished into an asse
 1. Use the **Recordings** filters: **State**, **Schedule ID**, and **Limit** (1 to 500, 50 to begin with). Click **Refresh** to reload.
 2. The screen reloads by itself every 5 seconds while any job is active; the label reads "Live · refreshing every 5 s". Click **Pause** to stop it and **Resume** to start it again.
 3. For a failed capture, set **State** to `failed` and read the red text in the **Failure** column.
-
-![The Recordings table with a job in the recording state.](manual/images/operator-recording-jobs.png){width=90%}
-
-*Figure: the Recordings table.*
 
 ## Publish an agenda for a meeting (Agendas)
 
@@ -434,9 +396,9 @@ An agenda belongs to one recording. Each recording can have only one agenda. Age
 
 You should see the new agenda selected. Its card shows the ID, a **draft** label, and "meeting asset: &lt;id&gt;". If you have more than one agenda, the **Pick an agenda** drop-down at the top switches between them.
 
-> **Known issue (beta.10):** The IDs are made-up codes, and a wrong character (for example a capital letter) shows raw technical text instead of a plain message. There is no list of recordings to choose from. We could not confirm whether the station checks that the recording exists.
+> **Known issue (beta.11):** The IDs are made-up codes, and a wrong character (for example a capital letter) shows raw technical text instead of a plain message. There is no list of recordings to choose from. We could not confirm whether the station checks that the recording exists.
 
-> **Known issue (beta.10):** If you press **Create agenda** for a recording that already has an agenda, you see "An agenda already exists for (station_id='…', meeting_asset_id='…')." Select the existing one with **Pick an agenda**.
+> **Known issue (beta.11):** If you press **Create agenda** for a recording that already has an agenda, you see "An agenda already exists for (station_id='…', meeting_asset_id='…')." Select the existing one with **Pick an agenda**.
 
 ### Add items by hand
 
@@ -452,9 +414,9 @@ You should see the new agenda selected. Its card shows the ID, a **draft** label
 
 You should see the item in the **Agenda items** table. Use **Edit** on a row to change it (the button becomes **Save item**, and **Cancel** leaves edit mode). Use **Delete**, then **Confirm delete**, to remove a row.
 
-> **Known issue (beta.10):** The **Order** box starts at 0 every time. If you add a second item without changing it, the station refuses with "Another agenda item already occupies (agenda_id='…', order=0)." Change **Order** to the next free number (0, 1, 2, and so on) for each new item.
+> **Known issue (beta.11):** The **Order** box starts at 0 every time. If you add a second item without changing it, the station refuses with "Another agenda item already occupies (agenda_id='…', order=0)." Change **Order** to the next free number (0, 1, 2, and so on) for each new item.
 
-> **Known issue (beta.10):** The timecode must be typed as seconds. The screen does not accept hours and minutes.
+> **Known issue (beta.11):** The timecode must be typed as seconds. The screen does not accept hours and minutes.
 
 ### Fill the agenda automatically
 
@@ -467,7 +429,7 @@ The **Bulk actions** section has four ways to fill an agenda without typing each
 
 > **Warning:** Importing a PDF or an external meeting into an agenda that is already **published** moves it back to **draft**. Review it and publish again.
 
-> **Known issue (beta.10):** The **Import from an external agenda system** block is shown on every station but is **switched off** unless your IT person turns it on. If it is off, **Find meetings** answers in a yellow banner: "Agenda import is not enabled. Set CIVICCAST_AGENDA_SOURCE to 'legistar', 'primegov', 'civicclerk', or 'js_portal' to turn it on." You cannot fix that from this screen. Ask your IT person. "Tenant / site code" is the short name your city has in that system (the screen's example is `longmont`). The JS-portal choice also needs an optional add-on; if it is missing, the screen says "JS-portal runtime: not installed." and **Find meetings** is grey.
+> **Known issue (beta.11):** The **Import from an external agenda system** block is shown on every station but is **switched off** unless your IT person turns it on. If it is off, **Find meetings** answers in a yellow banner: "Agenda import is not enabled. Set CIVICCAST_AGENDA_SOURCE to 'legistar', 'primegov', 'civicclerk', or 'js_portal' to turn it on." You cannot fix that from this screen. Ask your IT person. "Tenant / site code" is the short name your city has in that system (the screen's example is `longmont`). The JS-portal choice also needs an optional add-on; if it is missing, the screen says "JS-portal runtime: not installed." and **Find meetings** is grey.
 
 > **For IT staff:** turning on agenda import is covered in [Part II, Integrations](#ch-integrations).
 
@@ -480,19 +442,15 @@ The **Bulk actions** section has four ways to fill an agenda without typing each
 
 > **Warning:** Delete removes the agenda and every item in it. There is no undo. Once the red **Confirm delete** button is showing, the only way to back out is to choose a different agenda in **Pick an agenda**.
 
-> **Known issue (beta.10):** If the station refuses to publish an empty agenda, the message ends with "Add at least one item (DC-1) before publishing." The "DC-1" is an internal code; ignore it.
+> **Known issue (beta.11):** If the station refuses to publish an empty agenda, the message ends with "Add at least one item (DC-1) before publishing." The "DC-1" is an internal code; ignore it.
 
-> **Known issue (beta.10):** The screen does not tell you that changes to items of an agenda that is **already published** go live as soon as you save. Only a PDF or external import reopens it as a draft. Edit a published agenda only when you are sure.
+> **Known issue (beta.11):** The screen does not tell you that changes to items of an agenda that is **already published** go live as soon as you save. Only a PDF or external import reopens it as a draft. Edit a published agenda only when you are sure.
 
 ### What residents see
 
 On the recording's watch page, residents see a card headed "Agenda" beside the video. It shows each item's number, title and time. Clicking an item that has a time jumps the video to it. An item with no time shows "—" and cannot be clicked. If you gave a **Source doc URL**, there is an "Agenda document" link, and if the address ends in `.pdf`, the document appears in a viewer. Residents never see your **Notes**. While the agenda is a draft, residents see nothing at all.
 
-![A recording's watch page with the published agenda beside the video.](manual/images/portal-agenda-sidebar.png){width=90%}
-
-*Figure: the agenda card beside the video on the resident watch page.*
-
-> **Known issue (beta.10):** The operator screen does not say where residents see the agenda, and it only links to the public page when the station was built with a public portal address set. Open the recording on the resident portal ([Chapter 6](#ch-publishing)) to check how it looks.
+> **Known issue (beta.11):** The operator screen does not say where residents see the agenda, and it only links to the public page when the station was built with a public portal address set. Open the recording on the resident portal ([Chapter 6](#ch-publishing)) to check how it looks.
 
 ## Review programs sent in by the community (Contributors)
 
@@ -509,17 +467,13 @@ Tell producers to open the station's resident portal and scroll to **Submit a pr
 
 Later, the producer pastes both into **Check submission status** and clicks **Check status** to see the state of the submission.
 
-![The Submit a program form on the resident portal home page.](manual/images/portal-contribute-form.png){width=80%}
+> **Known issue (beta.11):** The receipt and status token are shown only on the page and are lost if the producer reloads it. The page does not say so. Tell producers to copy both before they leave.
 
-*Figure: the Submit a program form.*
+> **Known issue (beta.11):** The form shows an agreement summary but has no "I agree" box. Pressing **Send to review** counts as accepting the agreement, in the name typed in **Producer name**. Ask your station's lawyer or administrator whether that is acceptable.
 
-> **Known issue (beta.10):** The receipt and status token are shown only on the page and are lost if the producer reloads it. The page does not say so. Tell producers to copy both before they leave.
+> **Known issue (beta.11):** The form says nothing about file type, size, length or how long review takes. It lets the producer pick any video file. By default the station refuses files over 2 GiB (about 2 gigabytes); the producer then sees "Contributor media exceeds the station's upload limit of …". Your IT person can change the limit. The station also limits the total size of the intake folder and how much one address can send.
 
-> **Known issue (beta.10):** The form shows an agreement summary but has no "I agree" box. Pressing **Send to review** counts as accepting the agreement, in the name typed in **Producer name**. Ask your station's lawyer or administrator whether that is acceptable.
-
-> **Known issue (beta.10):** The form says nothing about file type, size, length or how long review takes. It lets the producer pick any video file. By default the station refuses files over 2 GiB (about 2 gigabytes); the producer then sees "Contributor media exceeds the station's upload limit of …". Your IT person can change the limit. The station also limits the total size of the intake folder and how much one address can send.
-
-> **Known issue (beta.10):** We could not find anything in beta.10 that emails the producer when the state changes. The producer learns about the state only by using **Check status**.
+> **Known issue (beta.11):** The contributor workflow does not email the producer when the state changes. The producer learns about the state only by using **Check status**.
 
 ### Review a submission
 
@@ -547,21 +501,17 @@ There are **no confirmation boxes**. Each click acts at once.
 
 > **Warning:** **Decline** on a submission that already has a schedule entry cancels that entry first, without asking. If that cannot be done, the decline is refused. A submission that is already Published cannot be declined ("Cannot decline a submission that has already been published.").
 
-> **Known issue (beta.10):** **Send to schedule** does **not** put anything on the air. It makes a **Scheduled** entry. You must then open **Schedule** and approve it with **Publish to residents**. The screen does not say so, and the message producers see, "Your program has a real spot on the schedule and will air automatically.", is untrue until you do.
+> **Known issue (beta.11):** **Send to schedule** does **not** put anything on the air. It makes a **Scheduled** entry. You must then open **Schedule** and approve it with **Publish to residents**. The screen does not say so, and the message producers see, "Your program has a real spot on the schedule and will air automatically.", is untrue until you do.
 
-> **Known issue (beta.10):** **Send to schedule** uses settings you cannot see first: the channel is whatever the form stored (the portal form always sends `public`), the length is the **Minutes** box beside the button (30 to begin with, never less than 60 seconds) rather than the video's real length, and the start is the producer's **Requested air date**, or the moment you click if there was none. A start time in the past is likely not what you want. We read the code and tested the data checks, but did not run this on a live station. They show that the screen sends the producer's date without a time zone, and the Schedule rules refuse a time with no zone. So expect **Send to schedule** to fail with "Could not build a schedule item from this handoff" for any submission that has a **Requested air date**.
+> **Known issue (beta.11):** **Send to schedule** uses settings you cannot see first: the channel is whatever the form stored (the portal form always sends `public`), the length is the **Minutes** box beside the button (30 to begin with, never less than 60 seconds) rather than the video's real length, and the start is the producer's **Requested air date**, or the moment you click if there was none. A start time in the past is likely not what you want. We read the code and tested the data checks, but did not run this on a live station. They show that the screen sends the producer's date without a time zone, and the Schedule rules refuse a time with no zone. So expect **Send to schedule** to fail with "Could not build a schedule item from this handoff" for any submission that has a **Requested air date**.
 
 > **Tip:** The more reliable path is to **Accept**, then use **New scheduled item** on the Schedule screen ([Put a recording on a channel once](#put-a-recording-on-a-channel-once)). The accepted file is Validated, so the **Asset** drop-down offers it. You choose the channel, start time and length yourself. A schedule conflict on Send to schedule shows "Schedule conflict on channel '…': …".
 
-> **Known issue (beta.10):** The producer cannot see your notes. The producer sees only a fixed message for each state. For **Request changes** that message is "The operator needs changes before this program can move forward." and does not include what you wrote in **Operator note or change request**. Only a **Decline reason** is passed on, and only when you decline. Write a decline reason you are happy for the producer to read. If you need to tell a producer what to fix, contact them yourself.
+> **Known issue (beta.11):** The producer cannot see your notes. The producer sees only a fixed message for each state. For **Request changes** that message is "The operator needs changes before this program can move forward." and does not include what you wrote in **Operator note or change request**. Only a **Decline reason** is passed on, and only when you decline. Write a decline reason you are happy for the producer to read. If you need to tell a producer what to fix, contact them yourself.
 
-> **Known issue (beta.10):** Every failure on this screen, including a refused **Accept** or **Decline**, is shown under the title "Contributor queue could not load." with the real reason underneath, and a **Retry** button. Read the reason, not the title.
+> **Known issue (beta.11):** Every failure on this screen, including a refused **Accept** or **Decline**, is shown under the title "Contributor queue could not load." with the real reason underneath, and a **Retry** button. Read the reason, not the title.
 
-> **Known issue (beta.10):** The "Status notification outbox" and the **Status notices** tile suggest messages were sent. They are only a log of what the status page will say. They are not emails. The **Producer activity** tiles show a count of submitted, scheduled and declined programs for each producer.
-
-![The Contributors queue with several submissions in different states.](manual/images/operator-contribute-queue.png){width=90%}
-
-*Figure: the Contributors queue.*
+> **Known issue (beta.11):** The "Status notification outbox" and the **Status notices** tile suggest messages were sent. They are only a log of what the status page will say. They are not emails. The **Producer activity** tiles show a count of submitted, scheduled and declined programs for each producer.
 
 > **For IT staff:** upload limits, the intake folder, and the file that holds submissions are described in [Part II, Running it day to day](#ch-operations).
 

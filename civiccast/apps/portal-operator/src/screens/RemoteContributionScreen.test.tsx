@@ -156,7 +156,7 @@ describe('GuestTray', () => {
       fireEvent.click(getByText('Drop'))
       const dialog = getByRole('alertdialog')
       expect(dialog.textContent).toContain('on air right now')
-      expect(dialog.textContent).toMatch(/cuts from the broadcast/i)
+      expect(dialog.textContent).toMatch(/does not remove their video or audio from the broadcast/i)
     })
 
     it('drops nothing when the operator cancels', () => {
@@ -328,7 +328,7 @@ describe('RemoteContributionScreen: Close room requires confirmation (round-3 au
 
     const dialog = await findByRole('alertdialog')
     expect(dialog.textContent).toContain('Close "Chamber"?')
-    expect(dialog.textContent).toMatch(/disconnected immediately/i)
+    expect(dialog.textContent).toMatch(/does not remove guest video or audio from the broadcast/i)
     expect(closeContributionRoom).not.toHaveBeenCalled()
 
     fireEvent.click(getByRole('button', { name: 'Close room now' }))

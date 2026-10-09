@@ -117,17 +117,39 @@ record with the station's retention files.
 
 ## Live caption tap
 
-Beta B6 (product decision #1, option A — egress audio fork). When configured,
-the native GStreamer playout pipeline forks audio into
-rolling mono 16 kHz s16le WAV segments under
-`CIVICCAST_CAPTION_TAP_DIR/<channel_id>/chunk-NNNNNN.wav`. The caption tap
-worker consumes a segment only once a newer-numbered sibling exists (so a
-half-written file is never read), feeds it through the existing live caption
-seam (pipeline → two-window stabilization → **durable review queue**), then
-moves it to `processed/` when retained-audio permission is current. While a
-periodic storage check is pending, processed and unreadable audio is discarded
-instead of retained; review text can still be created without an audio clip.
-With verified storage, unreadable segments go to `quarantine/`.
+On a native Windows station, enabling live captions adds an audio tap to each
+newly started channel's GStreamer playout pipeline. It writes rolling mono
+16 kHz s16le WAV segments under
+`CIVICCAST_CAPTION_TAP_DIR/<channel_id>/chunk-NNNNNN.wav`; the worker reads only
+settled segments and publishes caption output to that channel's live VTT. Live
+cue history and delivery bookkeeping are bounded. Live captions do not
+automatically create permanent review records or an audio-evidence archive.
+
+### Current native live recognition
+
+- Whistle is the native station's default CPU primary. Whistle primary
+  inference is serialized across channels within one station runtime; Whisper
+  fallback requests use a separate serialization lock. Fallback is sticky
+  only for the affected channel; a failure on one channel does not switch the
+  others.
+- `CIVICCAST_LIVE_CAPTION_ENGINE=whistle` selects Whistle with Whisper fallback;
+  `whisper` selects Whisper directly. `CIVICCAST_WHISPER_DEVICE=auto|cpu|cuda`
+  selects Whisper's device. Whistle itself always runs on CPU; CUDA applies to
+  Whisper on supported NVIDIA hardware with the required CUDA libraries.
+- A failed Whisper child is closed before replacement. The runtime replays the
+  current audio once immediately; if that replacement also fails, it waits
+  30 seconds before another fallback child can be created. The cooldown is
+  internal to the runtime, not an environment setting.
+- The Station Profile switch `live_captions_enabled` is off by default and is
+  checked by the tap worker each scan. Switching it off stops transcription on
+  the next scan; adding or removing the GStreamer tap and caption-embed graph
+  legs takes effect on that channel's next start. A content reload does not
+  rebuild those graph legs.
+
+The `CIVICCAST_CAPTION_TAP_DIR` and `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS`
+settings control the audio fork's storage root and segment length. Do not treat
+an audio segment as a permanent review artifact: automatic live review and
+audio-evidence retention are disabled in the native station wiring.
 
 Three rules keep the tap from pausing over audio it never had a chance to
 transcribe (U11, 2026-09-24; U23, 2026-09-25):
@@ -162,40 +184,33 @@ transcribe (U11, 2026-09-24; U23, 2026-09-25):
 |---|---|---|
 | `CIVICCAST_CAPTION_TAP` | `off` | `inline` runs the worker as a lifespan-supervised thread; `external` means you run `python -m civiccast.captions.tap_worker` as a separate process (same env + `DATABASE_URL`); `off` disables the worker AND the egress fork (item 91, 2026-09: `off` now wins even if a tap dir is still set -- `build_audio_tap_plan` checks the mode itself before it ever looks at the dir). |
 | `CIVICCAST_CAPTION_TAP_DIR` | unset | Tap root shared by the egress fork and the worker. Required when the mode is not `off`; setting it also enables the egress fork -- UNLESS the mode is explicitly `off`, which now suppresses the fork regardless of a configured (or stray leftover) dir. |
-| `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → transcribe → stabilize → review queue). |
+| `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | `5` | Segment length — the floor of the caption latency budget (tap → recognize → publish to live VTT). |
 | `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | `2` | Worker scan interval. |
-| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | hardware-selected: `1` CPU, up to `3` CUDA | How many channels' ASR calls may be in flight **at the same time**. CPU remains serialized so playout keeps the machine. CUDA follows the faster-whisper runtime's worker capacity (up to three) so the station's three five-second audio streams do not queue behind one another. An explicit value remains authoritative. |
+| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | hardware-selected | Bounds concurrent channel work in the tap worker. In Whistle mode, primary calls and fallback Whisper calls are serialized separately. Direct Whisper selection uses its configured CTranslate2 worker concurrency. |
 | `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | `2` | Settled segments a channel may be behind before a scan counts as over-limit. Reaching this bound on a single scan no longer pauses the channel, and neither does a persistent overshoot — see `..._OVERLOAD_PERSISTENCE_SCANS` and `..._CATCH_UP_SHED_LIMIT`. It is also the number of newest segments a catch-up keeps and submits, so a shed never issues a larger ASR call than a legal batch. |
 | `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` | `15` | Consecutive over-limit scans required before the tap acts on a channel (U11, 2026-09-24). Must be at least `1`. `15` is ~30 s at the default 2 s poll, chosen to clear the measured worst-case slow batch (19 s) with margin while staying short enough to react during a real ASR collapse. Under U23 the action at this trigger is a **catch-up shed**, not a pause; `1` therefore restores the pre-U11 trigger *timing*, not the pre-U11 behaviour. For the pre-U23 pause, use `..._CATCH_UP_SHED_LIMIT=0`. |
 | `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT` | `3` | How many catch-up sheds a channel may take inside `..._CATCH_UP_SHED_WINDOW_SECONDS` before the tap concludes the box genuinely cannot keep up and falls back to the retained pause ladder (U23, 2026-09-25). Three sheds in five minutes needs at least ~90 s of over-limit scans in that span — three whole persistence windows — which no transient produces. `1` escalates on the second episode; `0` disables catch-up entirely and restores the pre-U23 rule (pause on the first persistent overshoot). A negative value, or anything unparseable, is **refused with a WARNING and the default `3` is used** — it is not read as "catch-up off" (the value is discarded, not clamped to the minimum), so switch catch-up off with an explicit `0`. |
 | `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_WINDOW_SECONDS` | `300` | Window over which catch-up sheds are counted. Long enough to contain a real under-capacity episode and short enough that a station which recovers — the operator lowers the caption tier, a channel goes off air — returns to catch-up behaviour instead of carrying a stale verdict. Must be at least `1`; an unparseable or smaller value is refused with a WARNING and the default `300` is used. |
 | `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | `120` | First pause after an overload; each consecutive overload doubles it. Item 79 (2026-09): doubled from `60` — a struggling station needs real recovery room before ASR is attempted again. |
 | `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | `900` | Ceiling on that doubling. |
-| `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for the **live tap only** (item 79, 2026-09). "One per 8 CPUs, max 2" is the *default* — an operator override is honoured up to `2` (`LIVE_TAP_CPU_THREADS_CEILING`); asking for more is refused, not silently clamped: the value is capped at `2` and a WARNING is logged naming the rejected value. Recorded-meeting transcription is unaffected. |
-| `CIVICCAST_WHISPER_CPU_THREADS` | (unset) | CTranslate2 threads per transcription; overrides `..._TAP_CPU_THREADS` above when set. For batch/VOD, `0` means "every core" and is honoured as before, with no ceiling. For the **live tap**, `0` is refused (item 79, 2026-09): it falls back to the live default instead, with a warning logged, so this variable can no longer hand the live tap "every core" even by mistake — and, same as the tap-only variable above, any live value above `2` (`LIVE_TAP_CPU_THREADS_CEILING`) is capped at `2` rather than honoured, also with a WARNING. The live tap's `cpu_threads` is therefore never more than `2`, however either variable is set. |
-| `CIVICCAST_WHISPER_BEAM_SIZE` | `1` on CPU, `5` on CUDA | Decoder beam width. Wider is slightly more accurate and roughly linearly more expensive. |
+| `CIVICCAST_CAPTION_TAP_CPU_THREADS` | one per 8 CPUs, max 2 | CTranslate2 intra-op threads for Whisper in the live tap. This does not tune Whistle, which uses its own CPU recognizer. |
+| `CIVICCAST_WHISPER_CPU_THREADS` | (unset) | CTranslate2 threads for Whisper; overrides the tap-specific value when set. Live values are capped at `2`; batch/VOD settings are separate. |
+| `CIVICCAST_WHISPER_BEAM_SIZE` | `1` on CPU, `5` on CUDA | Whisper decoder beam width. It does not tune Whistle. Wider is slightly more accurate and roughly linearly more expensive. |
 
 ### Turning live captions off
 
 `PUT /api/staff/station/profile` with `{"live_captions_enabled": false}`
-(role: `setup_admin`), or `true` to turn them on. It remains **off by default
-in beta.10** (`LIVE_CAPTIONS_DEFAULT` in `civiccast/installer/models.py`),
-persisted in station-state explicitly at
-first-admin setup, returned by `GET /api/staff/station/profile`, and read on
-**every scan** — so turning it off stops the ASR within one poll interval on a
-station that is on air, with no control-plane restart (the audio-tap and
-caption-embed legs already built into a running channel's pipeline are only
-removed at that channel's next start). A station-state file
-without the key (commissioned before the switch existed) reads as off; an
-explicitly stored `true` is kept across the upgrade. Turning it **on** takes
-effect at each channel's next start, because the audio-tap and caption-embed
-legs are built only when a channel's pipeline is constructed. Until each
-channel next goes on air, those channels show red on *On air right now*
-because the station is looking for captions it cannot see yet: the
-safe-to-air caption gate (`compute_channel_runtime_status`,
-`civiccast/alerting/runtime_status.py`) arms as soon as the switch reads on,
-while a running channel has no embed leg to prove until it restarts. Restart
-each channel to clear it.
+(role: `setup_admin`), or `true` to turn them on. The persisted Station Profile
+setting defaults off (`LIVE_CAPTIONS_DEFAULT` in `civiccast/installer/models.py`).
+The caption tap checks it on each worker scan: switching captions off stops
+transcription on the next scan and discards queued tap audio. Turning captions
+on lets the worker process audio on its next scan, but the GStreamer audio-tap
+and caption-embed graph legs are built only when a channel starts. Turning
+captions off likewise removes those graph legs on that channel's next **START**.
+A content reload does not rebuild them. A station-state file without the key
+reads as off; an explicitly stored `true` is kept across upgrades. The
+safe-to-air gate can expect captions before a running channel has rebuilt its
+embed leg, so start that channel after enabling captions.
 
 Every runtime reader of the switch -- the egress strategy, the safe-to-air
 banner, and the `is_enabled` callbacks of the caption tap, feed, and proof
@@ -219,35 +234,20 @@ caption-readiness gate while the switch is off; each channel reports
 offline caption job below) are unaffected — that is the legal requirement;
 this switch is the live/accessibility one.
 
-`CIVICCAST_CAPTION_TAP=off` in the environment also forces live captions off,
-and wins over the persisted value. The reverse is deliberately *not* true: no
-environment value can turn live captions back on against an operator who
-switched them off. An activated native station sets
-`CIVICCAST_CAPTION_TAP=inline` UNLESS the service's own environment (the
-Windows service's registry `Environment`) already carries
-`CIVICCAST_CAPTION_TAP=off`, in which case that value is passed through
-instead of being overwritten (item 91, 2026-09) -- so the reverse
-precedence (letting a persisted "on" win over an explicit env "off") would
-still make the switch unreachable on exactly the deployments that need it,
-and the asymmetric-safe rule above still governs when both are set.
-Either switch -- the env variable or the station-profile toggle -- now stops
-the egress audio-fork leg itself, not only the transcription step downstream
-of it. Both take effect at a channel's next **start** only (going off air
-and back on, or a control-plane restart) -- NOT at a content reload: the
-reload path (`engine.py`'s `_dispatch_control`/`worker.py`'s D2 pipe reload
-branch) reads the reloaded graph back with `graph_from_json` and re-applies
-only its program source (`reload_program`) and its graphics-overlay leg
-(`reload_graphics_overlay`); the reloaded graph's `audio_tap` field is read
-into memory and discarded, because the tee/appsink is built exactly once, at
-initial pipeline construction (`GstPlayoutStrategy.start()`), and nothing on
-the reload path can touch it either way. The env variable additionally
-requires a control-plane restart to be READ at all (it is composed into the
-child's environment once, at station-runtime spawn time); the station-profile
-toggle does not require that restart, but still only reaches a channel that
-is starting fresh, same as the graphics-overlay lower-third's own "not a
-live, hot text update" limit documented in USER-MANUAL.md.
+`CIVICCAST_CAPTION_TAP=off` in the native service environment overrides the
+profile setting and disables the tap. The native runtime normally sets the
+mode to `inline`; it reads the service environment when its child starts, so
+changing that override requires restarting the native runtime. The Station
+Profile value is checked on each tap scan, but GStreamer graph legs are added
+or removed only when a channel next starts. A content reload does not rebuild
+the audio tap or caption embed.
 
-### Beta.8 retention and runtime diagnostics
+### Optional retained-evidence mode and runtime diagnostics
+
+The retention behavior below applies only when a caption worker is explicitly
+constructed with `retain_review_evidence=True`. The native station wiring
+leaves this option off, so live captions do not create permanent review records
+or retain an audio-evidence archive.
 
 The live tap makes its first retained-audio readiness check synchronously.
 Later retention sweeps run on a guarded background thread rather than
@@ -294,28 +294,26 @@ not.
 CivicCast therefore enforces an explicit ordering, and none of it is
 negotiable at runtime by the caption feature itself:
 
-- **ASR is bounded.** CPU mode transcribes **one** channel at a time so caption
-  work cannot take the processor away from playout. CUDA mode allows up to
-  three channel transcriptions at once and configures the shared
-  faster-whisper/CTranslate2 runtime with the same worker capacity. This lets
-  a three-channel station process each five-second audio cycle concurrently
-  on a suitable GPU. Within a scan, channels beyond the selected concurrency
-  bound queue on the worker pool. If any channel's settled backlog exceeds
-  `..._MAX_BACKLOG_SEGMENTS`, its oldest settled audio is discarded by the
-  catch-up path below rather than queued indefinitely. An explicit
-  `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` value remains authoritative.
+- **ASR is bounded.** Whistle primary inference is serialized across channels
+  within one station runtime; independent station runtimes do not share that
+  lock. Whistle fallback requests have a separate lock. The tap worker bounds
+  channel work with `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`; direct Whisper
+  selection uses its configured CTranslate2 worker concurrency. NVIDIA CUDA
+  can accelerate Whisper; it does not move Whistle off CPU.
+  If any channel's settled backlog exceeds `..._MAX_BACKLOG_SEGMENTS`, its old
+  audio is handled by the catch-up path below rather than queued indefinitely.
+  An explicit `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` value remains
+  authoritative.
 - **A persistent overload catches up; only a hopeless one pauses.** When a
   channel's backlog stays over `..._MAX_BACKLOG_SEGMENTS` for the whole
   persistence window, the tap **sheds** the oldest settled segments down to the
   newest `..._MAX_BACKLOG_SEGMENTS` and keeps captioning from there — one
-  `WARNING` per episode, no blanked caption file, no pause. This is the shape
-  the live station actually produces: measured (U22, 2026-09-25) ASR keeps up
-  on the **mean** — 2.8–3.4 s per 10 s window against a 5 s cadence, 1.86×
-  headroom — and fails at the **tail**, where a single window takes 10.6–19.5 s
-  because the three channel callers share one GPU model. A ~16 s stall used to
-  cost **2–8 minutes** of no captions at all, which the station acceptance
-  verifier samples as "no embedded cues". Shedding costs the seconds the box
-  genuinely could not transcribe and nothing more.
+  `WARNING` per episode, no blanked caption file, no pause. A historical U22
+  measurement (2026-09-25) found faster-whisper on CUDA kept up on average —
+  2.8–3.4 s per 10 s window against a 5 s cadence, 1.86× headroom — but a
+  single window could take 10.6–19.5 s as three channel callers shared one GPU
+  model. These figures are not a Whistle CPU capacity result. Shedding costs
+  the seconds the box genuinely could not transcribe and nothing more.
   A channel that sheds `..._CATCH_UP_SHED_LIMIT` times inside
   `..._CATCH_UP_SHED_WINDOW_SECONDS` is a different animal — it is shedding as
   fast as the persistence window allows and still not holding the cadence — and
@@ -328,12 +326,11 @@ negotiable at runtime by the caption feature itself:
   not keep up. Captions resume automatically once the window expires and the
   backlog is clear; a channel has to stay healthy for several scans before its
   escalation is forgiven.
-- **Playout outranks captions in the scheduler.** On Windows the playout
-  workers are spawned at `ABOVE_NORMAL` priority class. The caption side
-  lowers only its own Python ASR threads to `BELOW_NORMAL`, *not* CTranslate2's
-  internal thread pool where the inference CPU is actually spent — so treat
-  this as a nudge, not a guarantee, and rely on the two bullets above. Neither
-  priority change has been measured on a station yet.
+- **Playout outranks the caption caller thread.** On Windows the playout
+  workers are spawned at `ABOVE_NORMAL` priority class. The caption tap lowers
+  its own Python ASR caller threads to `BELOW_NORMAL`; this does not reprioritize
+  a separate Whistle process or Whisper's internal CTranslate2 pool. Treat the
+  thread setting as a scheduling hint, not a CPU-capacity guarantee.
 
 **What you will see in the log.** Two different `WARNING` lines, deliberately
 worded so a grep for one does not find the other:
@@ -376,38 +373,17 @@ shedding channel keeps publishing `within-capacity` with its
 only the pause ladder appends to `overloaded_channels`/`paused_channels`. Use
 the log to see catch-ups; use this file to see a channel in trouble.
 
-**If a station is permanently paused,** the fix is to reduce the caption work,
-not to raise the CPU limits: move to a lower caption tier, caption fewer
-channels at once, or put a supported GPU in the box. Raising
-`CIVICCAST_WHISPER_CPU_THREADS` (or `CIVICCAST_CAPTION_TAP_CPU_THREADS`) on a
-CPU-only station that is on air is no longer a lever that trades broadcast
-reliability for more captions (item 79, 2026-09): the live tap caps both
-variables at `LIVE_TAP_CPU_THREADS_CEILING` (`2`) and logs a WARNING when an
-operator asks for more, precisely so this trade can no longer be made by
-raising a number — the tap shares its box with playout and must never
-approach "every core" again, which is what produced the original field
-failure this whole knob-hardening effort exists to prevent.
+**If a station is permanently paused,** reduce caption work: use a lighter
+caption tier or caption fewer channels at once. Optional NVIDIA acceleration
+applies to Whisper, not to the Whistle CPU primary. Whisper thread settings do
+not tune Whistle.
 
-**Why off by default:** live transcription needs the local faster-whisper
-model runtime. Enabling `inline` without the model installed fails fast at
-startup rather than silently captioning nothing. Cues land in the operator
-caption review queue (`caption_review_items`) exactly like the proof path —
-review and publication flow is unchanged.
-
-**`off` is the default of the *variable*, not of an activated native
-station.** `civiccast.native.station_runtime` sets `CIVICCAST_CAPTION_TAP=inline`
-for every activated station unless the service environment already carries
-the literal `off` (item 91, 2026-09 -- see *Turning live captions off*
-above), so on a real station live captioning runs for every ON_AIR channel by
-default, whether or not the operator asked for it. That is why the
-guarantees in *Captions are best effort; playout wins* above are enforced in
-code rather than left to configuration: on a station that never opted in, an
-unbounded caption feature is a defect in the broadcast, not a degraded
-optional feature. The operator's day-to-day off switch is still the
-station-profile setting in *Turning live captions off* above; the
-`CIVICCAST_CAPTION_TAP=off` environment variable is the ops/experiment-level
-switch (set once, in the service environment, before the station starts) --
-both now actually stop the audio-fork leg, not only ASR.
+Live captions are off by default. When enabled, Whistle is the CPU primary;
+Whisper can serve as a sticky fallback for the affected channel, or can be
+selected directly with `CIVICCAST_LIVE_CAPTION_ENGINE=whisper`. The native tap
+publishes live VTT and does not automatically create review records or retain
+audio evidence. Published-recording captions use the separate offline job and
+review workflow below.
 
 ## Offline caption job (published-file captions)
 
@@ -415,27 +391,27 @@ The live tap above is the accessibility path. This one is the **legal**
 path: captions on the file a station publishes. Approving publish for a
 recording queues a durable job in `offline_caption_jobs`; the worker
 transcribes the recording's audio with the station's staged caption model
-and files every cue in the same operator review queue the live path uses.
+and queues the recording's cues for operator review before attaching them to
+the published file. The live tap publishes VTT through its separate path.
 
-Every worker tick also runs the retained-audio-evidence retention sweep
-(`CaptionEvidenceRetentionPolicy.from_system`, `civiccast/captions/retention.py`)
-against the same review queue -- the same 90-day/free-space lifecycle the
-live tap's readiness tick already enforced, but previously only from the
-live tap: a station running offline/VOD captioning with no airing live
-channel never pruned these per-cue WAVs (audit finding, MAJOR), so they grew
-unbounded on disk. A sweep *failure* (an exception, including building the
-policy the first time) never fails the caption job it runs alongside; it is
-logged and retried on the next tick.
+Every offline worker tick also runs the retained-audio-evidence retention
+sweep (`CaptionEvidenceRetentionPolicy.from_system`,
+`civiccast/captions/retention.py`) for its review WAVs. This policy is shared
+with optional live-tap evidence retention, but the standard native live path
+does not retain review evidence or gate live-caption readiness on this sweep.
+A station running offline/VOD captioning with no airing live channel still
+gets retention cleanup for its per-cue WAVs. A sweep *failure* (an exception,
+including building the policy the first time) never fails the caption job it
+runs alongside; it is logged and retried on the next tick.
 
 A clean sweep *result* is a different thing from a failure, and is honored:
 when the sweep reports the storage is not ready (the free-space reserve
 would be breached, or retained evidence is still over the storage cap even
 after pruning everything eligible), `run_once` skips every due job that
 tick -- neither stage-one transcription (which writes new evidence WAVs)
-nor stage-two publish runs -- exactly mirroring
-`CaptionTapWorker.run_once`'s own `if not retention.ready: ...` gate before
-any channel work (audit finding, P1; the result used to be discarded and
-every due job transcribed regardless of what the sweep found).
+nor stage-two publish runs. This readiness gate applies to the offline job;
+it does not describe ordinary live-caption scans, whose standard native
+configuration leaves retained-review-evidence mode off.
 
 The sweep's free-space reserve and storage-cap decisions are measured
 against the volume that actually holds this worker's evidence WAVs: the VOD
@@ -458,8 +434,10 @@ deferred -- the change only ever delays a prune, never advances one, so it
 cannot make live evidence disappear earlier than before). This is shared
 code path for both the live tap and the offline job.
 
-The job has two stages because operator approval sits between them
-(spec §4.1 — no AI-generated text reaches a public surface unreviewed):
+The job has two stages because operator approval sits between them: for this
+recorded-file workflow, caption cues are reviewed before they attach to a
+published VOD. Live VTT follows a separate path and may be published without
+operator review.
 
 1. `pending` → transcribe and queue for review. **Publishes nothing.**
 2. `awaiting_review` → re-checked each poll. Once every queued cue has an

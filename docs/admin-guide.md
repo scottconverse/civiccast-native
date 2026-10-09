@@ -155,7 +155,9 @@ but cannot change them.
 
 The AI Models console also offers **hosted cloud and frontier models** for
 **summary and translation** as an opt-in alternative to their local defaults.
-Captions has no hosted option and always runs locally on faster-whisper.
+Captions have no hosted option. Live captions use Whistle as the on-station CPU
+primary, with Whisper fallback scoped to the affected channel. Recorded-media
+captions use Whisper, which can use optional NVIDIA CUDA acceleration.
 Treat a hosted selection as a deliberate cost-and-privacy decision, not a
 default:
 

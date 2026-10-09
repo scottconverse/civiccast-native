@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Navigation, top bar and roles (nav id: _shell-navigation-and-roles)
 
 A shared surface: the top bar, the sidebar (6 sections, 37 entries), the "not found" page and the role model. Manual authority: `docs/manual/src/11-signing-in.md` (sections "Find your way around the console", "Which screens you can see") and Appendix F (`app-roles`).

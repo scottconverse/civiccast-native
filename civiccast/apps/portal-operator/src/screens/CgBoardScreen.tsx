@@ -123,7 +123,7 @@ export function LayoutPreview({
     <section className="min-w-0 overflow-hidden rounded-md p-4" style={panelStyle}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="m-0 text-lg font-semibold">Visual layout editor</h2>
+          <h2 className="m-0 text-lg font-semibold">Read-only board preview</h2>
           <div className="cc-mono text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
             {template?.template_id ?? 'Loading template…'}
           </div>
@@ -711,7 +711,7 @@ export function CgBoardScreen() {
         <div>
           <h1 className="m-0 text-2xl font-semibold tracking-tight">CG Board</h1>
           <p className="m-0 mt-1 max-w-3xl text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-            Build the between-streams board, live ticker, schedule zones, and streaming output contract.
+            Review and approve between-program bulletins. Board layout, zones, and feeds are read-only here.
           </p>
         </div>
         <label className="grid gap-1 text-sm" htmlFor="cg-channel">

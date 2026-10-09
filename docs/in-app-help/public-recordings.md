@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Browse recordings (route: `#/recordings?q=&year=&body=&cf.<key>=&page=`)
 
 Paths are under `civiccast/apps/portal-public/`. Line numbers are `src/screens/RecordingsScreen.tsx` unless noted.

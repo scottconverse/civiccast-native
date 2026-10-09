@@ -161,6 +161,8 @@ section { padding-block: var(--s6); }
 .limits ul { margin: 0; padding-left: 1.1rem; }
 .limits li { margin-bottom: .55rem; }
 .fine { font-size: .95rem; color: var(--slate); }
+.on-dark .fine { color: var(--mist); }
+.on-dark .fine a { color: var(--onair); }
 
 /* ---------- quick start ---------- */
 .steps { counter-reset: s; list-style: none; padding: 0; margin: var(--s3) 0 0; max-width: 820px; }

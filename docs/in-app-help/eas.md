@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Emergency Alerts (nav id: eas)
 
 Sidebar: System Health > **Emergency Alerts**. Manual authority: `docs/manual/src/17-something-wrong.md` section "Understand emergency alerts" (`#understand-emergency-alerts-emergency-alerts`) and `26-integrations.md`.

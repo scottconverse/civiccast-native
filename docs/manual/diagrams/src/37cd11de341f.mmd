@@ -1,0 +1,9 @@
+flowchart LR
+    LK["Lock files<br/>versions, sizes,<br/>SHA-256"] --> PR["Provision toolchain and<br/>runtime, verify hashes"]
+    PR --> BD["Build app payload, GStreamer<br/>closure and packs"]
+    BD --> SP["Sign packs<br/>Ed25519"]
+    SP --> BS["Build installer<br/>with release trust root"]
+    BS --> TB["Trust-bridge check:<br/>installer verifies each new pack"]
+    TB --> AS["Sign setup.exe<br/>Azure Trusted Signing"]
+    AS --> GA["Consumer verification<br/>Sandbox or physical-host evidence"]
+    GA --> PB["Draft release, verify<br/>assets, publish"]

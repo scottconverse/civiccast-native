@@ -14,9 +14,10 @@ pre-release, not a production release. The release includes the signed
 `setup.exe`, five runtime `.ccpack` assets, `SHA256SUMS.txt`, installer
 sidecar metadata, and manuals:
 <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>.
-The exact package was installed as an in-place refresh over an existing Beta
-11 host; it returned healthy on the current schema, and a brief three-channel
-observation showed advancing HLS and changing captions. A clean-machine
+The October 8 package (producer source `b7cc3e7c`, build `37827938199`) was
+installed as an in-place refresh over an existing Beta 11 host; it returned
+healthy on the current schema, and a brief three-channel observation showed
+advancing HLS and changing captions. A clean-machine
 install, failed-install repair, Beta 10 upgrade, and longer capacity run were
 not performed for this exact package. See
 [`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md)
@@ -58,14 +59,19 @@ never a release a station receives.
   already on the computer (shown as **Found locally - verified**, for example
   from the `station\` folder of a USB/LAN kit or from an earlier install), and
   downloads the rest with a progress display and a **Stop downloading**
-  button. The complete signed USB/LAN kit (installer, runtime packs, and the
+  button. File download and station activation are separate steps; a visible
+  download completing does not establish that a first install will activate.
+  The complete signed USB/LAN kit (installer, runtime packs, and the
   `station\` model bundle, about 21 GB) is the offline alternative for a
   station without a reliable internet connection. **Not proven for this Beta
   11 package:** a first install on a clean machine that has neither a kit nor an
-  earlier install. The setup step that activates the station fails closed when
-  it cannot find the model packs in the kit or in an earlier install's cache
-  (see "Download-only lane" in [`docs/ops/gate-a.md`](docs/ops/gate-a.md)), so
-  use the kit your tester handoff names. After setup there is no further
+  earlier install. The exact Beta 11 package has not passed a clean first-install
+  check using downloads alone. If a required runtime pack is missing, staging
+  stops with exit 110; station activation and self-test failures occur later
+  and are reported at the activation step (overall setup exit 123, with the
+  inner cause in the installer log). See "Download-only lane" in
+  [`docs/ops/gate-a.md`](docs/ops/gate-a.md); use the complete kit your tester
+  handoff names. After setup there is no further
   background model download; a technical admin can fetch or import models later
   with `civiccast model download` or `civiccast model import-offline`.
 - **Upgrade of an already-installed station** can be download-only starting

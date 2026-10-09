@@ -1,6 +1,6 @@
 # CivicCast
 
-**CivicCast `v1.0.0-beta.11` is the current release**, published 2026-10-08 as a GitHub pre-release. Live captions default to Whistle on the CPU, with Whisper fallback; Whisper remains available for NVIDIA CUDA acceleration and recorded-media captions. The first recognition is published without repeat-agreement gating. The exact signed installer refreshed an existing Beta 11 host, and a brief three-channel output check showed advancing HLS and changing captions. See the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md) for the tested scope and limits.
+**CivicCast `v1.0.0-beta.11` is the current release**, published 2026-10-08 as a GitHub pre-release. Live captions use Whistle as the CPU primary; Whisper fallback is scoped to the affected channel, and operators can select NVIDIA CUDA for Whisper or recorded-media captions. The first recognition is published without repeat-agreement gating. Whistle primary inference is serialized across channels within each station runtime; fallback Whisper requests use a separate serialization lock. The October 8 package (producer source `b7cc3e7c`, build `37827938199`) refreshed an existing Beta 11 host, and a brief three-channel output check showed advancing HLS and changing captions. See the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md) for the tested scope and limits.
 
 `v1.0.0-beta.10` was published on 2026-10-02 and is now superseded. Its
 historical Gate A clean-install lane passed 10 of 10 criteria; its upgrade and
@@ -13,8 +13,8 @@ PEG/local-government stations** — record a meeting, generate offline
 captions, let an operator review and approve the recording, get an
 AI-drafted summary linked back to the transcript, schedule it, and publish
 it to residents on a branded portal with captions. It's built to run on
-commodity Windows hardware: no per-minute fees, no proprietary appliance,
-no vendor lock-in.
+commodity Windows hardware, with no per-minute CivicCast software fee and no
+proprietary appliance. Optional cloud AI providers may charge for usage.
 
 This repository (`civiccast-native`) is the one product line: a native
 Windows station-in-a-box, installed with a signed installer that registers
@@ -127,7 +127,11 @@ new limit on their text buffers.
 
 ![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
 
-## What's proven in this candidate
+## Product capabilities and prior-release evidence
+
+These capabilities span several releases and do not mean every item was
+re-verified against the October 8 Beta 11 package. Its exact installer and
+output-check scope is in the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md).
 
 The core meeting-to-resident pipeline works end to end and is exercised by
 the automated test suite and, for the recording/playout path, by live
@@ -174,11 +178,12 @@ pipeline proofs against the real bundled GStreamer runtime (not mocks):
   uploaded files survive the full cycle byte-for-byte. That lane was not run
   for beta.10.
 
-## New this candidate: on-air graphics and live broadcast
+## Capabilities introduced in candidate #22: on-air graphics and live broadcast
 
-Two capabilities landed for the first time in candidate #22, proven at the
-playout-engine level and operator-drivable, but not yet hardened for
-unattended production use:
+These capabilities first landed in candidate #22. They were proven at the
+playout-engine level and are operator-drivable, but were not hardened for
+unattended production use. This is historical capability evidence, not an
+additional Beta 11 package test:
 
 - **On-air graphics (station bug + lower-third).** The GStreamer playout
   engine can now composite a station bug/logo (any corner) and a
@@ -208,10 +213,10 @@ candidate. They are either partially built, lab-only, or dependent on
 things outside this repository's control:
 
 
-### Known limitations of this build (v1.0.0-beta.10) — read before operating a station
+### Historical Beta 10 limitations — not Beta 11 package test results
 
-These are the known, measured limitations of the `v1.0.0-beta.10` candidate,
-taken from its eight-hour three-channel run (see the
+These are historical, measured limits of `v1.0.0-beta.10`, taken from its
+eight-hour three-channel run (see the
 [verification record](docs/releases/v1.0.0-beta.10-verification.md)). It is a
 beta candidate: only the Gate A clean-install lane was run for it (it passed),
 the upgrade and download-only lanes were not run, and no human field tester
@@ -489,9 +494,9 @@ apps. The [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml) is a
 repo-verified, fail-closed manifest that checks each spec item's claimed
 status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
-candidate — the "What's proven in this candidate" and "Honestly scoped"
-sections above are the accurate summary for a reader deciding whether to
-run beta.11 today.
+candidate. The "Product capabilities and prior-release evidence" and
+"Historical Beta 10 limitations" sections above distinguish current behavior
+from earlier candidate evidence.
 
 Proprietary-appliance capabilities are **out of scope** for V1 by explicit
 decision, documented in

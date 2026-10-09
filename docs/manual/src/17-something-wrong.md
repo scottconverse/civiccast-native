@@ -8,9 +8,9 @@ The four screens live in the left sidebar under **System Health**: **Readiness**
 
 > **Note:** In a normal station, everyone signs in with the first administrator account made at First Setup, and that account carries all five roles. You will usually see every button.
 
-> **Known issue (beta.10):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
+> **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
-> **Note:** Beta.10 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how.
+> **Note:** Beta.11 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how.
 
 ## Check whether the station is ready (Readiness)
 
@@ -21,8 +21,6 @@ Readiness answers one question: "Can we broadcast right now?"
 3. Read the banner at the top, **On air right now**. It shows each channel, a coloured label and a message. The banner refreshes by itself every 5 seconds.
 4. Read the card below it. Its heading is the station's overall verdict, followed by a message and "Last checked" with the date and time.
 5. Scroll down to **Required before broadcast** and **Optional and advanced**. Each row is one check, with a coloured label, a short message and a "Next step".
-
-![The Readiness page. The top shows the On air right now banner, then a card with the station's readiness label, a Check broadcast readiness button and a link to the resident preview.](manual/images/operator-readiness-top.png){width=90%}
 
 ### What the colours and words mean
 
@@ -42,9 +40,9 @@ A channel tile uses these words:
 
 After the word you may see "on safety slate" (the channel is showing its fallback card) or "live captions off".
 
-> **Known issue (beta.10):** A yellow station can show two different verdicts at once. The small pill at the top says **Check before meeting**, while the card below can say **Ready with optional items**. Both mean the required checks passed and an optional item needs a look. The second wording is not one of the five standard phrases.
+> **Known issue (beta.11):** A yellow station can show two different verdicts at once. The small pill at the top says **Check before meeting**, while the card below can say **Ready with optional items**. Both mean the required checks passed and an optional item needs a look. The second wording is not one of the five standard phrases.
 
-> **Known issue (beta.10):** The page does not refresh by itself, except for the **On air right now** banner. There is no **Refresh** button. The checklist updates only after you use one of its own buttons or re-open the page after about 30 seconds.
+> **Known issue (beta.11):** The page does not refresh by itself, except for the **On air right now** banner. There is no **Refresh** button. The checklist updates only after you use one of its own buttons or re-open the page after about 30 seconds.
 
 ### What each check means
 
@@ -90,9 +88,9 @@ The broadcast gate reads "All required items ready", or "N required item(s) need
 
 > **Warning:** The rehearsal makes a real private test session called "Private first-broadcast rehearsal" on the channel named `government`, copies a sample video, and saves a test recording. The button gives no warning and no "running" message. Run it before a meeting, not while a meeting is on the air. In testing we could not confirm whether the test recording is visible on the Assets screen.
 
-> **Known issue (beta.10):** Items listed under the gate are links to the matching row lower on the page. In testing we could not confirm that they work in beta.10, and a bare link like this has failed elsewhere in the same console by opening "Page not found". If it does, scroll down to the row yourself.
+> **Note:** Items listed under the gate link to matching rows lower on the page. If selecting one does not move the page to its row, scroll down and look for the same label.
 
-> **Known issue (beta.10):** Some buttons on this page are grey with no reason shown, for example **Open maintenance window** and **Run failed-update rehearsal**. They need earlier steps to pass first. Only the role limits are explained on screen.
+> **Known issue (beta.11):** Some buttons on this page are grey with no reason shown, for example **Open maintenance window** and **Run failed-update rehearsal**. They need earlier steps to pass first. Only the role limits are explained on screen.
 
 ### The other panels on this page
 
@@ -110,7 +108,7 @@ Below the checklist, the page also holds tools for IT staff or trained staff. Do
 
 The feed buttons ask you to confirm before they act. They only *queue* a command for the channel's feed. Nothing tells you to wait.
 
-> **Known issue (beta.10):** After **Restart feed**, the state label may stay on the old value until you re-open the page. The page does not poll these cards. Wait a minute, then reload Readiness.
+> **Known issue (beta.11):** After **Restart feed**, the state label may stay on the old value until you re-open the page. The page does not poll these cards. Wait a minute, then reload Readiness.
 
 > **Warning:** **Stop** takes a channel off the air. **Finish current item, then stop** does the same after the current program ends. Only press these on purpose, and never on a channel you do not intend to stop.
 
@@ -124,8 +122,6 @@ An *alert* is a warning the station raises by itself, such as "Disk space low" o
 4. Click **Acknowledge** on a row to say you have seen it. The row then shows "Acknowledged by" your name and the date.
 
 An empty list says: "No active alerts. Everything the watch box monitors is healthy." The screen calls the station's own monitor "the watch box".
-
-![The Alerts screen with the Active and Resolved buttons at the top, the alert list, and the Alert rules and Where alerts go sections below.](manual/images/operator-alerts-empty.png){width=90%}
 
 > **Note:** **Acknowledge** means "I have seen this". It does not fix the problem and does not close the alert. An alert closes itself when the problem goes away, and then moves to **Resolved**.
 
@@ -160,22 +156,22 @@ The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours en
 
 > **Warning:** Do not click **Delete** on a destination unless you mean it. The first click turns the button into **Confirm delete?**, and a second click deletes right away. There is no cancel and no timeout.
 
-### What happens in beta.10 when no destination is wired
+### What happens in beta.11 when no destination is wired
 
-> **Known issue (beta.10):** **You can follow the Alerts screen exactly and still never receive an email, text or webhook message.** This is the most important thing to know about alerts in beta.10.
+> **Known issue (beta.11):** **You can follow the Alerts screen exactly and still never receive an email, text or webhook message.** This is the most important thing to know about alerts in beta.11.
 >
 > - A new install ships every alert rule with *no destinations attached*.
 > - Adding a destination on this screen creates it, but does not attach it to any rule. The rule card has no way to choose destinations.
 > - When an alert fires and its rule has no live destination, CivicCast writes a "suppressed" delivery note that reads "No enabled alert channel is configured for condition ...". No screen shows that note.
 > - The alert itself does still appear on the **Alerts** screen and in the red and yellow counts on **Readiness**.
 > - There is no **Send test alert** button, so you cannot check a destination by pressing a button.
-> - Some kinds of alert have no rule at all: "Automatic self-check did not pass", "eas source unavailable", "asrun outbox degraded" and "caption tier degraded" are among them. They show on the **Alerts** screen as warnings, have no card under **Alert rules**, and can never be sent to a destination in beta.10, even by IT staff.
+> - Some kinds of alert have no rule at all: "Automatic self-check did not pass", "eas source unavailable", "asrun outbox degraded" and "caption tier degraded" are among them. They show on the **Alerts** screen as warnings, have no card under **Alert rules**, and can never be sent to a destination in beta.11, even by IT staff.
 >
 > Until an IT person attaches destinations to rules, nobody is told about a problem unless somebody looks at the screen. Check **Readiness** and **Alerts** before every meeting and at the start of every shift.
 
 > **For IT staff:** A rule takes `channel_ids` (the ids of destinations) through `PUT /api/staff/alert-rules/{rule_id}`, with the Setup admin role. The 14 rules that exist come with ids like `default:off-air`. See [Chapter 14](#ch-troubleshooting) and [Chapter 15](#ch-integrations).
 
-> **Known issue (beta.10):** The page says Setup admin *or* Support admin can manage rules and destinations. The station accepts changes only from the Setup admin role. A Support admin sees the editors and gets a "requires one of these CivicCast roles" error on **Save**. Publish operators and Records clerks may also see the Alerts page but cannot read the alerts list.
+> **Known issue (beta.11):** The page says Setup admin *or* Support admin can manage rules and destinations. The station accepts changes only from the Setup admin role. A Support admin sees the editors and gets a "requires one of these CivicCast roles" error on **Save**. Publish operators and Records clerks may also see the Alerts page but cannot read the alerts list.
 
 ## Understand emergency alerts (Emergency Alerts)
 
@@ -185,24 +181,22 @@ The **Emergency Alerts** screen shows public-safety alerts the station has pulle
 
 The feeds come from the National Weather Service (NWS), the federal alert system IPAWS, and AMBER child-abduction alerts. IPAWS and AMBER alerts are read in a standard format called CAP (Common Alerting Protocol); the code reads National Weather Service alerts from that service's GeoJSON feed instead. We did not test any live feed.
 
-![The Emergency Alerts screen. The permanent banner "Public-safety display — not an EAS device" sits above the Channel picker and the Alert sources, Active alerts and On-channel now lists.](manual/images/operator-eas-empty.png){width=90%}
-
 ### What airs by itself, and what staff must do
 
 | Situation | What happens |
 | --- | --- |
-| A beta.10 station as installed | Nothing is polled and nothing airs by itself. The page says "No alert sources are configured yet." |
+| A beta.11 station as installed | Nothing is polled and nothing airs by itself. The page says "No alert sources are configured. Ask your station administrator to configure an NWS, AMBER, or IPAWS (COG) feed." |
 | IT staff turn on alert polling | CivicCast reads the configured feeds, by default once a minute, and lists active alerts under **Active alerts** |
 | IT staff also turn on automatic display | Every active **severe** alert goes on every channel that is on air as a **crawl**. Every active **extreme** alert goes on as an **overlay**. A full-screen takeover is never automatic |
 | An operator presses a button | The alert is shown at once, as a crawl, an overlay or (after a tick box) a full-screen takeover |
 
 A *crawl* is a line of text that scrolls across the screen. An *overlay* is a message box placed over the picture. A *forced slate* is a full-screen message that replaces the programming.
 
-> **Known issue (beta.10):** There is no way to add an alert feed from the console. The page's empty message says "Add an NWS, AMBER, or IPAWS (COG) feed to begin ingesting", but the screen has no form for it. Only an IT person with the Setup admin role can add feeds, through the programming interface. Both the polling and the automatic display are *off* unless IT staff turn on two station settings.
+> **Note:** There is no form to add an alert feed in the console. A station administrator must configure an NWS, AMBER, or IPAWS (COG) feed through the programming interface. Polling and automatic display remain off unless IT staff turn on the two station settings.
 
-> **Known issue (beta.10):** Nothing on the page says that severe and extreme alerts go on air by themselves once IT turns on automatic display. The banner says only that CivicCast "never automatically pre-empts programming". Once automatic display is on, use **Clear** to take an alert down.
+> **Known issue (beta.11):** Nothing on the page says that severe and extreme alerts go on air by themselves once IT turns on automatic display. The banner says only that CivicCast "never automatically pre-empts programming". Once automatic display is on, use **Clear** to take an alert down.
 
-> **Known issue (beta.10):** In testing we could not confirm that a crawl, overlay or slate is drawn onto the picture that goes out to cable or the stream. The station records a decision for the channel and makes it available at a public data address for that channel (`/api/public/cg/emergency-overlay?channel_id=` followed by the channel id) and in the channel's graphics data. We found no code that draws it into the playout engine's picture. The resident website's own emergency box does not use that data address by channel: it appears only when the page address ends in `?emergency=1`, and it then shows a generic "Emergency notice" placeholder, not your real alert. Before you tell the city or the board that CivicCast shows alerts on air, test it on your own channel output.
+> **Known issue (beta.11):** In testing we could not confirm that a crawl, overlay or slate is drawn onto the picture that goes out to cable or the stream. The station records a decision for the channel and makes it available at a public data address for that channel (`/api/public/cg/emergency-overlay?channel_id=` followed by the channel id) and in the channel's graphics data. We found no code that draws it into the playout engine's picture. The resident website's own emergency box does not use that data address by channel: it appears only when the page address ends in `?emergency=1`, and it then shows a generic "Emergency notice" placeholder, not your real alert. Before you tell the city or the board that CivicCast shows alerts on air, test it on your own channel output.
 
 > **For IT staff:** The two settings are `CIVICCAST_EAS` and `CIVICCAST_EAS_AUTO_SURFACE`. `CIVICCAST_EAS` defaults to `off`; any other value (the code's own comment uses `inline`) starts the polling. `CIVICCAST_EAS_AUTO_SURFACE` is off unless set to `1`, `true`, `yes` or `on`, and it is read only when `CIVICCAST_EAS` is on. `CIVICCAST_EAS_POLL_SECONDS` sets the polling interval and defaults to 60. Polling skips any source that is disabled, is of the `manual` type or has no endpoint address. Sources are added with `PUT /api/staff/eas/sources/{id}`. See [Chapter 15](#ch-integrations).
 
@@ -213,7 +207,7 @@ A *crawl* is a line of text that scrolls across the screen. An *overlay* is a me
 3. Under **Active alerts**, read each alert: the event, a severity badge (extreme, severe, moderate, minor or unknown), a headline and the areas.
 4. Under **On-channel now**, see what is currently shown on the channel you picked in **Channel**. Each line gives the channel name and the display type (`crawl`, `overlay` or `forced_slate`), not the alert's name.
 
-> **Known issue (beta.10):** **polling** only means the source is switched on. A feed that is failing still says **polling**. A failing feed raises an alert, "eas source unavailable", on the Alerts screen. That alert has no alert rule in beta.10, so it can never notify anybody. It appears on the screen only.
+> **Known issue (beta.11):** **polling** only means the source is switched on. A feed that is failing still says **polling**. A failing feed raises an alert, "eas source unavailable", on the Alerts screen. That alert has no alert rule in beta.11, so it can never notify anybody. It appears on the screen only.
 
 ### Show an alert on a channel
 
@@ -248,9 +242,7 @@ Residents on that channel go back to regular programming.
 1. In the sidebar, open **System Health**, then click **Federation**.
 2. If you see **Federation is off** with a green tag, **Default-safe**, nothing is shared and the station is not advertised. You can stop here.
 
-![The Federation screen in its default state. The card is headed "Federation is off" and has a Generate station key button.](manual/images/operator-federation-off.png){width=90%}
-
-> **Known issue (beta.10):** There is no on/off switch in the console. The page says nothing about how federation is turned on. An IT person has to change station settings and restart CivicCast. The old built-in manual points to a switch that does not exist.
+> **Known issue (beta.11):** There is no on/off switch in the console. The page says nothing about how federation is turned on. An IT person has to change station settings and restart CivicCast. The old built-in manual points to a switch that does not exist.
 
 ### Prepare to turn it on (Setup admin)
 
@@ -274,7 +266,7 @@ The page shows counts (Pending, Accepted, Blocked, Rejected, Removed), your sett
 
 > **Warning:** **Block** cannot be undone from the console. The box says a blocked site "cannot re-follow until unblocked", but the screen has no **Unblock** control.
 
-> **Known issue (beta.10):** If an **Approve**, **Reject** or **Block** fails, the page always says "Federation moderation failed. Check the API logs, then retry the follower action." That includes a failure caused only by your role. The buttons show for every role. Ask your IT person if it keeps failing.
+> **Known issue (beta.11):** If an **Approve**, **Reject** or **Block** fails, the page says, "Federation moderation failed. Ask your station administrator to check your access and the CivicCast service, then retry the follower action." The buttons show for every role, so a role mismatch can cause a failure. Ask your administrator if it keeps failing.
 
 ## What to do, and what not to do
 
@@ -283,7 +275,7 @@ If you are not technical, this list is for you.
 **Do**
 
 - **Read the words, not only the colour.** Write down the exact message on the screen.
-- **Check Readiness and Alerts before every meeting**, and at the start of every shift. In beta.10 nothing tells you about a problem unless you look.
+- **Check Readiness and Alerts before every meeting**, and at the start of every shift. In beta.11 nothing tells you about a problem unless you look.
 - **Click Acknowledge** on an alert you have seen, so your colleagues know someone has it.
 - **Take a screenshot** of anything odd, including the time shown on the screen.
 - **Note the time, the channel and what you were doing**, and write down whether the time is UTC or your local time.
@@ -293,11 +285,11 @@ If you are not technical, this list is for you.
 
 **Do not**
 
-- **Do not wait for an email or text.** In beta.10 alerts are probably not wired to send any.
+- **Do not wait for an email or text.** In beta.11 alerts are probably not wired to send any.
 - **Do not rely on Emergency Alerts as your EAS.** CivicCast is not an EAS device.
 - **Do not press Stop, Restart feed, Repair, Update, Rollback or Restore buttons** unless you were trained to, or your IT person told you to.
 - **Do not click Block or Delete casually.** Neither can be undone from the console.
-- **Do not turn on the Paywall** in beta.10 (see [Chapter 7](#ch-station-business)).
+- **Do not turn on the Paywall** in beta.11 (see [Chapter 7](#ch-station-business)).
 - **Do not type or paste passwords, recovery codes, staff passes (tokens) or private meeting material** into a report, an email or a public issue.
 - **Do not keep pressing a button that did nothing.** Some actions only queue a request, and the page does not refresh by itself. Reload the page and look again.
 
@@ -323,7 +315,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 ## Report a beta issue
 
-CivicCast is a beta (beta.10 was published as a GitHub pre-release on 2026-10-02). Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
+CivicCast is a beta (beta.11 was published as a GitHub pre-release on 2026-10-02). Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
 
 1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
@@ -331,7 +323,7 @@ CivicCast is a beta (beta.10 was published as a GitHub pre-release on 2026-10-02
 
 In every report, include:
 
-- The CivicCast version. It is shown at the top of the console, as `v1.0.0-beta.10`.
+- The CivicCast version. It is shown at the top of the console, as `v1.0.0-beta.11`.
 - Your Windows version.
 - The screen where it happened.
 - The exact message.
@@ -344,7 +336,7 @@ If the problem is with installing, also include the installer's file name and wh
 
 > **Warning:** If you think you have found a *security* problem, do **not** open a public issue. Use the private contact in the security policy linked above.
 
-> **Known issue (beta.10):** The Manual section that **Report a beta issue** opens tells people to use "System Health" and the **Create support bundle** button. The screen is called **Readiness**, and the button works only for the Support admin role.
+> **Known issue (beta.11):** The Manual section that **Report a beta issue** opens tells people to use "System Health" and the **Create support bundle** button. The screen is called **Readiness**, and the button works only for the Support admin role.
 
 ## If it did not work
 

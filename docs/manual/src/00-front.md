@@ -1,18 +1,14 @@
 # About this manual {#about}
 
-This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11 candidate**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
-Beta.11 is being prepared for release. Its Whistle live-caption changes completed an owner-accepted 24-hour three-station lab soak. The packaged beta.11 installer has not yet completed installation verification. The previous beta.10 was published on 2 October 2026 as a GitHub pre-release; its installation evidence below is historical and does not verify beta.11. Neither version is a production release. This manual says plainly what was tested and what was not, so you can decide how much to rely on it.
-
-- **Beta.10 installer tested and passed:** a clean install in a Windows test sandbox ran the installer, started the station, showed the staff console and the resident portal, ran a clerk workflow, produced captions, played a channel and ran a short five-minute soak. All 10 checks in the clean-install lane passed.
-- **Earlier beta.10 operation evidence:** an eight-hour lab run with three channels on one machine, and about 59 hours of two channels staying on the air on one lab station. Details and limits are in [Appendix H](#app-evidence).
-- **Not tested:** upgrading from an earlier release, a first install with neither the full kit nor an earlier install, and use at a real station. No human field tester has signed off. Real cable-company acceptance and physical broadcast video cards are unproven.
+Beta.11 was published on 8 October 2026 as a GitHub pre-release for testing, not as a production release. This manual describes the current beta.11 operating instructions. The [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package revision and its installation checks. An earlier beta.11 package was refreshed on an existing station and showed output on all three channels in two observations 41 seconds apart; that result applies only to that earlier package. A separate 36-hour soak belongs to an earlier dev7 development overlay, not a published package. Beta.10 measurements are preserved as historical evidence in [Appendix H](#app-evidence).
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
 
-Every place where the software does something different from what its own on-screen help says is marked in this manual with a **Known issue (beta.10)** note. Believe the manual over the screen where the two disagree.
+A **historical beta.10 observation** describes behavior or evidence from the superseded release. A **Known issue (beta.11)** describes current behavior checked against beta.11 sources. If either conflicts with the screen, follow the concrete steps in the relevant chapter and use the stated version scope.
 
 ## Who Reads What
 
@@ -40,7 +36,7 @@ Earlier releases split this manual into separate guides. Their names are still u
 
 > **Warning:** something that can change what is on the air, delete data, or cannot be undone.
 
-> **Known issue (beta.10):** this build behaves differently from what the screen suggests; the note says what really happens and what to do.
+> **Known issue (beta.11):** current behavior differs from what the screen suggests; the note says what really happens and what to do.
 
 > **For IT staff:** a pointer from the non-technical part to the technical chapter that has the detail.
 
@@ -59,6 +55,6 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Where to get help and report problems
 
-Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. The latest release and its downloads are at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>.
+Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. The beta.11 release and its downloads are at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>. The [beta.11 package verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) describes the checked package and its limits.
 
-<!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->
+<!-- SOURCES: docs/releases/v1.0.0-beta.11-verification.md; docs/releases/v1.0.0-beta.10-verification.md (historical appendix only); docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->

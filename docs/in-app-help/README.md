@@ -1,15 +1,10 @@
-# In-app help specifications for beta.11
+# Historical in-app help audit: beta.10 snapshot
 
-Written by the documentation sprint (2026-10-03) for the incoming coder. **Nothing here has been implemented.** Each file covers one screen, page or installer step of CivicCast beta.10 and has six sections: where the text lives now (source file and line), the current text, what the screen really does, the mismatches between the two, ready-to-paste proposed text, and notes for the coder.
+This is the archived documentation-sprint index from 2026-10-03. It describes beta.10 screens and proposed copy from before the current beta.11 work. The 62 linked per-screen audit files are retained for traceability and each is marked as a historical snapshot. Do not apply their proposed strings as current guidance. The current beta.11 surface inventory and reconciled findings are in [help.md](help.md).
 
 ## How to use these files
 
-1. Read the **Mismatches** section first. Each row says what the text claims, what the code really does (with a citation) and how bad it is (blocks work, misleading, cosmetic).
-2. Apply the **Proposed text** strings in the file named under *Where the text lives now*. Where a feature is broken, the file gives two versions: honest text for beta.10 as it is, and an `after fix:` version to use once the code is repaired.
-3. Before changing a string, search `tests/` and the `*.test.tsx` and `e2e/` files for the old text. Each file's *Notes for the coder* lists the tests that pin strings.
-4. Anything marked as needing a **code fix rather than a text fix** is listed in the file but is not a documentation task. The consolidated list is at the end of this page.
-5. IDs: `HELP-nn` and `SHELL-nn` come from the screen inventories in `ops/docs-sprint/inventory/`; `NEW-n` ids restart in every file, so cite them as `<file>:NEW-n`.
-6. Everything was read from code and checked against the fact-checked User Manual (`docs/USER-MANUAL.md`). Nothing was run on a station; items the writers could not confirm are marked inside each file.
+The tables below are the historical beta.10 audit index, not a current implementation checklist. Their mismatch counts, source lines, and proposed copy record what that audit found at the time. Nothing in those archived tables establishes current beta.11 behavior; use [help.md](help.md) for the current code coverage and findings.
 
 ## Operator console: Run Meeting
 

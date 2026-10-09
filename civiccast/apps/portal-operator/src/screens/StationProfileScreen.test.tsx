@@ -255,7 +255,7 @@ describe('StationProfileScreen', () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
     const { findByRole } = renderScreen()
     const link = await findByRole('link', { name: /read more in the manual/i })
-    expect(link.getAttribute('href')).toBe('/help#where-recordings-live')
+    expect(link.getAttribute('href')).toBe('/help#configuration-storage')
   })
 
   it('shows a save-error banner when the PUT fails', async () => {
@@ -352,18 +352,21 @@ describe('StationProfileScreen', () => {
       const helpId = toggle.getAttribute('aria-describedby')
       expect(helpId).toBe('live-captions-help')
 
-      const help = getByText(/if playout is stuttering or channels are restarting, turn it off/i)
+      const help = getByText(/live captions are off on a newly installed station/i)
       expect(help.id).toBe(helpId)
-      // The operator must be told what is NOT affected, or "off" reads as
-      // "this station stops captioning anything at all".
-      expect(help.textContent).toMatch(/captions on recordings you publish/i)
+      expect(help.textContent).toMatch(/recording captions are produced separately/i)
+      expect(help.textContent).toMatch(/picture and sound take priority/i)
+      expect(help.textContent).toMatch(/stops speech recognition and drains queued audio on the next worker scan/i)
+      expect(help.textContent).toMatch(/routing is removed at the next channel start/i)
+      expect(help.textContent).toMatch(/resumes speech recognition on the next worker scan/i)
+      expect(help.textContent).toMatch(/routing added at the next channel start/i)
       // Its own manual link, with text distinct from the storage-roots one:
       // two links reading "Read more in the manual" on one screen are
       // ambiguous to anyone navigating by link list.
       const manualLinks = getAllByRole('link', { name: /manual/i }).map((a) =>
         a.getAttribute('href'),
       )
-      expect(manualLinks).toContain('/help#live-captions-switch')
+      expect(manualLinks).toContain('/help#live-captions-what-the-settings-change')
       expect(new Set(manualLinks).size).toBe(manualLinks.length)
     })
 

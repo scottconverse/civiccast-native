@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Setup failures: exit codes and logs (reference; dialogs, `install-progress.log`)
 
 Paths relative to `civiccast/apps/installer/src-tauri/`. Hooks = `nsis-hooks-bootstrap.nsh`. No screen of its own: this page is the in-app help and the shared wording the other installer files use.

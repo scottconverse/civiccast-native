@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Schedule (nav id: schedule)
 
 Console group: Run Meeting. Spec written against beta.10. Paths are under `civiccast/apps/portal-operator/src/` unless they start with `civiccast/`. Authority: `docs/manual/src/12-before-meeting.md` ("Put a recording on a channel once", "Approve a program to air", "Cancel a scheduled item") and `ops/docs-sprint/inventory/screens/schedule.md`. Line numbers re-checked.

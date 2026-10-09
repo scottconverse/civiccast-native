@@ -247,14 +247,14 @@ function EpgConfigForm({
 
       <label htmlFor={idMap} className="grid gap-1 text-xs">
         <span style={{ color: 'var(--cc-ink-3)' }}>
-          Field map (one <code>key=value</code> per line; blank lines + # comments ignored)
+          Field map (CSV and X-List only; ignored for XMLTV; one <code>key=value</code> per line; blank lines + # comments ignored)
         </span>
         <textarea
           id={idMap}
           aria-label="Field map"
           rows={4}
           value={form.field_map_text}
-          placeholder={'channel=pub-1\ngenre=category'}
+          placeholder={'title=Program Title\ndescription=Meeting summary'}
           onChange={(e) => onChange({ ...form, field_map_text: e.target.value })}
           className="rounded-md px-2 py-1.5 font-mono"
           style={{

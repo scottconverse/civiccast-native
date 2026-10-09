@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # AI Models (nav id: ai-models)
 
 Sidebar: Setup > **AI Models**. Manual authority: `docs/manual/src/22-configuration.md` sections "Configure AI models" (`#configuration-ai`) and "Configure captions" (`#configuration-captions`).

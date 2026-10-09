@@ -1,0 +1,6 @@
+flowchart TB
+  A[Computer has no CivicCast yet] --> B{Do you have the full kit?<br/>setup.exe + packs + station}
+  B -- Yes --> C[Install from the kit<br/>see current verification record]
+  B -- No --> D[Get the kit first.<br/>setup.exe alone stops with exit 110]
+  E[Computer already runs CivicCast] --> F[Run the newer setup.exe over it]
+  F --> G[Upgrade from existing station<br/>see current verification record]

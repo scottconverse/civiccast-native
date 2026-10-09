@@ -1,29 +1,31 @@
 # CivicCast Architecture
 
-> **Release state: `v1.0.0-beta.10` is the current release** (published
-> 2026-10-02 as a GitHub pre-release) -- `setup.exe` and the
-> runtime `.ccpack` packs are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10).
-> It is still a beta candidate, not a finished production release; it describes the
-> state a technical reviewer finds by checking out `main` today. See
-> [BRANCHES.md](BRANCHES.md) for release identity and status.
+> **Current native release: `v1.0.0-beta.11`**, published 2026-10-08 as a
+> GitHub pre-release for testing. `setup.exe` and the runtime `.ccpack` packs
+> are attached to its
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11).
+> This is a public beta, not a production release or an SLA-backed field
+> release. The [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md)
+> identifies the exact package and its evidence: a same-version refresh on one
+> existing development host, with two output observations 41 seconds apart.
+> That check did not establish a clean install, failed-install repair, Beta 10
+> upgrade, Gate A acceptance, long-duration operation, capacity, or field
+> acceptance. See [BRANCHES.md](BRANCHES.md) for release identity and status.
 >
-> `v1.0.0-beta.7` is superseded (`v1.0.0-beta.8` and `v1.0.0-beta.9` were never
-> published; their work is inside beta.10). Beta.10 was held
-> on air for eight hours on a three-channel lab station. Its Gate A clean-install
-> lane passed (10 of 10 criteria, Windows Sandbox, 2026-10-02); the upgrade and
-> download-only lanes were not run (waived by the owner) and the human/station
-> acceptance pass has not been done. See
-> [its verification record](docs/releases/v1.0.0-beta.10-verification.md).
+> **Historical Beta 10 evidence:** the published Beta 10 package passed its
+> Gate A clean-install lane (10 of 10 criteria in Windows Sandbox on
+> 2026-10-02). A separate eight-hour, three-channel lab run used an earlier
+> internal build. These results describe Beta 10 only and do not establish
+> Beta 11 package behavior. Beta 10, Beta 7, and earlier downloadable releases
+> are superseded; Beta 8 and Beta 9 were never published. See the
+> [Beta 10 verification record](docs/releases/v1.0.0-beta.10-verification.md).
 >
-> Treat the repository state as bounded source and local contract-lab proof,
-> not as approval of any withdrawn candidate or as broad validation across
-> many machines, live external provider delivery, app stores, live hardware,
-> downstream cable headends, QAM, SDI/DeckLink, EAS, CEA-708 broadcast
-> compliance, or production operations. Local contract-lab work is
-> development work and must not be described as public-beta, LPM field, or
-> production proof until its own gates pass and station-device evidence is
-> attached.
+> Source behavior and package evidence have different scopes. The current
+> verification record is the authority for the published package; this
+> architecture describes the source tree. Neither the brief output check nor
+> the historical Beta 10 results establish broad field operation, external
+> provider delivery, app-store acceptance, live hardware, cable-headend,
+> QAM, SDI/DeckLink, EAS, or CEA-708 broadcast acceptance.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -46,9 +48,11 @@ for historical reference only (its own header says so).
 CivicCast is a self-hostable civic broadcast platform. A single FastAPI
 umbrella app mounts the public, staff, installer, release, and federation
 routers. Three Vite/React frontends cover the operator console, resident portal,
-and installer shell. Installer-managed local SQLite is the default durable data
-store for operator and beta use; technical deployments can point `DATABASE_URL`
-at Postgres. In-memory stores exist for tests and throwaway development only.
+and installer shell. A native Windows station uses the installer-provisioned
+local PostgreSQL service as its durable database. The standalone app's managed
+storage fallback can use a local SQLite file when no database URL is configured;
+that is not the native service's default. In-memory stores are limited to tests
+and explicitly enabled throwaway development.
 
 ```mermaid
 flowchart LR
@@ -96,7 +100,7 @@ flowchart LR
 | Streaming | `civiccast.stream`, `civiccast.vod` | HLS packaging, public embeds, CDN upload. |
 | Schedule | `civiccast.schedule` | Assets, premieres, embargoes, operator asset library. |
 | Live | `civiccast.live` | Live sessions, fail-closed source verification, and recording finalization. |
-| Captions | `civiccast.captions` | Faster-whisper contracts, stabilization, WebVTT output, review queue. |
+| Captions | `civiccast.captions` | Recorded-media transcription with faster-whisper, native live Whistle/Whisper runtimes, bounded live cue history, WebVTT output, recorded-caption review queue. |
 | Summary | `civiccast.summary` | Sourced summaries, approval, transcript CSV export. |
 | Records | `civiccast.records` | PDF/A-3B signed-record export and provenance. |
 | Publish | `civiccast.publish` | Portal, Internet Archive, NAS, YouTube, subscriber, and podcast surfaces. |
@@ -161,24 +165,42 @@ flowchart LR
 - **Record keeping.** `civiccast.egress.asrun` is the seam that records what
   actually aired, as distinct from what was scheduled.
 
-Live captions, SDI/NDI hardware paths and cable-headend delivery are described
-with their evidence boundaries in the
-[User Manual](docs/USER-MANUAL.md) and the
-[beta.10 verification record](docs/releases/v1.0.0-beta.10-verification.md).
+For native Windows, Whistle is the CPU live-caption primary; a failure or
+timeout moves that channel to the faster-whisper runtime until the station
+runtime restarts. Recorded-media captions use faster-whisper. Needle usage
+telemetry is disabled, and the speech models run locally. Live captions,
+SDI/NDI hardware paths, and cable-headend delivery are described with their
+evidence boundaries in the [User Manual](docs/USER-MANUAL.md) and the
+[Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md).
 
 ## Data And Durability
 
-CivicCast prepares a durable local SQLite database by default when
-`DATABASE_URL` is unset, applies the Alembic migration graph, and wires
-database-backed stores at app startup. Technical deployments can set
-`DATABASE_URL` to use Postgres instead. The app refuses volatile staff-write
-stores unless `CIVICCAST_ALLOW_EPHEMERAL_STORES=1` is set explicitly for tests
-or throwaway development.
+On native Windows, the installer provisions bundled PostgreSQL under
+`%PROGRAMDATA%\CivicCast\data\pgdata` and persists its connection URL for the
+service. `DATABASE_URL` in the service environment overrides the installer
+value. Standalone app startup can instead prepare a local SQLite database when
+no URL is configured. Both durable paths apply the Alembic migrations and wire
+database-backed stores; staff writes fail closed without durable storage unless
+`CIVICCAST_ALLOW_EPHEMERAL_STORES=1` is explicitly set for tests or throwaway
+development.
 
 The CDN holds derived HLS bytes. The database remains the source of truth for
 asset metadata, schedules, publish state, summaries, signed records,
 subscriptions, and podcast state. External provider proofs are credential-gated;
 deterministic mocks are not public-provider evidence.
+
+Media files, station state, and credentials live outside the database, so a
+database dump alone is not a complete station backup. `civiccast dr run-drill`
+backs up the database and restores it into a scratch database; its media
+manifest is not a copy of the media. Beta 11 has no scheduled backup or
+supported live-database restore. The as-run outbox is a separate local SQLite
+journal that retries delivery to PostgreSQL. See the [User Manual](docs/USER-MANUAL.md)
+for the file locations and recovery limits.
+
+Audience analytics is separate from caption-engine telemetry. The resident
+portal's audience beacons are accepted only when the service's analytics key
+and allowed-origin settings are configured; otherwise they are dropped, while
+as-run reports remain available. Whistle/Needle usage telemetry is disabled.
 
 ## Core Flows
 
@@ -258,10 +280,10 @@ broker (`civiccast.platform.broker.InProcessBrokerClient`) is the sole
 event-bus implementation for all deployments (see ADR 0023, which
 supersedes ADR 0001's NATS JetStream choice).
 
-## Beta-Readiness Gates
+## Current Source Contracts
 
-The current beta-readiness posture closes the audit gates that affected
-operator handoff:
+These describe current source behavior and test coverage. Package acceptance
+remains scoped to the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md):
 
 - Staff-write stores fail closed without managed durable storage or `DATABASE_URL` unless ephemeral mode
   is explicitly acknowledged for local development.

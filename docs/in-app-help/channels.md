@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Channels (nav id: channels)
 
 Console group: Run Meeting. Spec written against beta.10. Paths are under `civiccast/apps/portal-operator/src/screens/` unless they start with `civiccast/`. Authority: `docs/manual/src/13-running-meeting.md` (Start, Stop, 24/7, Take live, Commit to air, Lower-third, Headend tasks) and `ops/docs-sprint/inventory/screens/channels.md`. Line numbers re-checked. This spec covers the controls that change what is on the air; the read-only cards (Now / next, Playout plan, Proof log, Loudness, Captions, Audio tracks, Software outputs, Reference CTV feed) are only listed in the coder notes.

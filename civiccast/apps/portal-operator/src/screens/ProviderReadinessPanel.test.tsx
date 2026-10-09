@@ -70,7 +70,7 @@ describe('ProviderReadinessPanel manual cross-links', () => {
     renderPanel([item({ manual_section: 'provider-internet-archive' })])
 
     const link = await screen.findByRole('link', { name: /read more in the manual/i })
-    expect(link.getAttribute('href')).toBe('/help#provider-internet-archive')
+    expect(link.getAttribute('href')).toBe('/help#publishing-providers')
   })
 
   it('omits the manual link for a card with no manual_section', async () => {

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Windows setup: start, folder page, pre-install checks (NSIS wizard, setup.exe)
 
 Paths below are relative to `civiccast/apps/installer/src-tauri/`. Hooks = `nsis-hooks-bootstrap.nsh`; Lang = `nsis-lang-native-english.nsh`. Authority for behavior: manual chapter `docs/manual/src/21-installing.md`.

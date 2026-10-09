@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Readiness (nav id: health)
 
 Sidebar: System Health > **Readiness**. The page H1 is "Safe to broadcast" and its small label is "System Health": three names for one screen. A successful sign-in lands here. Manual authority: `docs/manual/src/17-something-wrong.md` section "Check whether the station is ready (Readiness)" (`#check-whether-the-station-is-ready-readiness`).

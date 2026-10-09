@@ -1,19 +1,19 @@
 # Running it day to day: service, logs, backups, updates {#ch-operations}
 
-This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes beta.10, published 2026-10-02 as a GitHub pre-release (a beta candidate). Where the code and a convenient assumption disagree, this chapter follows the code and says so in a **Known issue (beta.10)** callout.
+This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes beta.11, a GitHub pre-release for testing rather than a production release. Where the code and a convenient assumption disagree, a **Known issue (beta.11)** callout explains the current behavior.
 
 ## Before you start
 
 You need:
 
 - An **Administrator** account on the station computer. Starting, stopping and restarting the service, reading `HKLM` registry values and reading the log folder all need elevation.
-- The install folder, written `<INSTDIR>` in this chapter. The installer places the program under it (`runtime\`, `packs\`, `dependencies\`, `models\`). In testing we could not confirm the default folder name, so read it from the **CivicCast Native Supervisor** service's **Path to executable** in the Windows Services app, or from the Start menu shortcut.
+- The install folder, written `<INSTDIR>` in this chapter. The current default is `C:\Program Files\CivicCast (Native)`; a custom install can use another location. The installer places the program under it (`runtime\`, `packs\`, `dependencies\`, `models\`).
 - The data folder, `C:\ProgramData\CivicCast`. Everything the station writes while it runs lives here (the code honours the `PROGRAMDATA` environment variable if it is set differently).
 - An elevated PowerShell window for the commands below.
 
-> **Note:** Earlier descriptions of CivicCast mention a message bus called NATS. NATS JetStream was removed from the product (owner decision of 2026-08-20) and is not part of beta.10. Do not look for it, monitor it or open a firewall port for it.
+> **Note:** Earlier descriptions of CivicCast mention a message bus called NATS. NATS JetStream was removed from the product and is not part of beta.11. Do not look for it, monitor it or open a firewall port for it.
 
-> **Note:** Proof status. Beta.10's clean-install test lane passed (10 of 10 checks, in Windows Sandbox). The upgrade lane and the download-only lane were not run. A first install with neither the full kit (installer plus its `packs` and `station` folders) nor an earlier install is not proven. There is no human field-tester sign-off yet, and the longest lab run (8 hours, on an earlier internal build) is not a 24-hour or 72-hour soak. See [Appendix H](#app-evidence) for the exact wording.
+> **Note:** Package proof status is in the [beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). The published package was refreshed on an existing beta.11 station and observed twice 41 seconds apart; this was not a clean install, repair, earlier-version upgrade, or capacity test. Older beta.10 and development-station measurements are separated in [Appendix H](#app-evidence).
 
 ## What the service runs
 
@@ -50,7 +50,7 @@ If CivicCast finds another CivicCast runtime active on the same computer (the ol
 
 ### Supervisor states
 
-The supervisor keeps one of seven states internally. In testing we could not confirm that any beta.10 screen or command prints the state name: the **Readiness** screen is not documented as showing it, and the supervisor's control pipe, which reports it, has no command-line client. Use `/health`, `civiccast runtime status` and `supervisor.log` to see the effects described below.
+The supervisor keeps one of seven states internally. The operator console does not show these internal names; use `/health`, `civiccast runtime status` and `supervisor.log` to see the effects described below.
 
 | State | Meaning |
 | --- | --- |
@@ -73,7 +73,7 @@ The supervisor keeps one of seven states internally. In testing we could not con
 
 ## Start, stop and restart the service
 
-The supervisor has an internal control pipe, but beta.10 has no command-line tool that uses it. Operate the service with Windows itself.
+The supervisor has an internal control pipe, but beta.11 has no command-line tool that uses it. Operate the service with Windows itself.
 
 1. Open an elevated PowerShell window.
 2. Check the current state: `sc.exe query CivicCastSupervisor`
@@ -95,7 +95,7 @@ CivicCast reads many settings from environment variables (the full list is in [A
 2. Create or edit the `Environment` value (type **Multi-String Value**). Put one `NAME=value` per line.
 3. Restart the service.
 
-> **Known issue (beta.10):** In testing we could not confirm that the installer creates this `Environment` value. Code comments say a station sets values there, but the installer source we read does not write it. Treat it as a value you create yourself, and check it again after every upgrade.
+> **Known issue (beta.11):** The installer does not create a service `Environment` value for optional variables. Create it yourself when a setting requires one, and check it again after every upgrade.
 
 > **Note:** The database address comes from the registry value `HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl`, which only SYSTEM and Administrators can read. The supervisor copies it into the control plane's environment unless `DATABASE_URL` is already set in the service environment, in which case the environment wins. `supervisor.log` records which source won.
 
@@ -118,9 +118,8 @@ Other logs you may need:
 
 - `C:\ProgramData\CivicCast\install-progress.log`: the installer's record of a first install.
 - `C:\ProgramData\CivicCast\upgrade\upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md`: the upgrade engine, described below.
-- `C:\ProgramData\CivicCast\data\caption-tap\caption-retention-audit.jsonl`: the historical beta.10 live retention audit (no rotation). Ordinary live captioning in the local beta.11 dev7 candidate does not run that archive sweep or append per-cue evidence records.
 
-> **Known issue (beta.10):** `control_plane.log` (every web request) and `postgres.log` are never rotated. On a busy station they grow forever. Check their size weekly and, when the service is stopped, move or truncate them. We could not confirm that Windows or the installer trims them.
+> **Known issue (beta.11):** `control_plane.log` (every web request) and `postgres.log` are not rotated. Check their size weekly and, when the service is stopped, move or truncate them; do not assume Windows or the installer trims them.
 
 To follow a log live:
 
@@ -160,7 +159,7 @@ Signed in, open **Readiness** (page heading **Safe to broadcast**, section **Sys
 
 The station raises alerts for conditions including: off-air, encoder death, server crash, schema drift, relay blocked, compliance probe failure, missing media, commit failure, takeover stuck for 2 hours, AI runtime down, low disk, clock skew, database unreachable, service down, self-test failure, scheduled-recording failure or dropout, as-run outbox degraded, channel-automation failure, caption tier degraded, remote-contribution problems, and emergency-alert source unavailable.
 
-> **Known issue (beta.10):** A fresh install seeds every alert rule with no destinations attached. With no destination, the evaluator records a "suppressed" delivery row and sends nothing. The rule editor in the console never sends destinations. To make an e-mail or SMS alert arrive, a Setup admin must create a destination with `POST /api/staff/alert-channels` and attach it to each rule with `PUT /api/staff/alert-rules/{rule_id}` (field `channel_ids`). Until you have done that and tested it, assume no alert will reach you and monitor from outside the station as well: poll `/health` and the Windows service state with your own monitoring tool.
+> **Known issue (beta.11):** A fresh install seeds every alert rule with no destinations attached. With no destination, the evaluator records a "suppressed" delivery row and sends nothing. The rule editor in the console does not send destinations. To make an e-mail or SMS alert arrive, a Setup admin must create a destination with `POST /api/staff/alert-channels` and attach it to each rule with `PUT /api/staff/alert-rules/{rule_id}` (field `channel_ids`). Until you have done that and tested it, assume no alert will reach you and monitor from outside the station as well: poll `/health` and the Windows service state with your own monitoring tool.
 
 ### Self-tests
 
@@ -190,7 +189,7 @@ If `civiccast.exe` is missing, `<INSTDIR>\runtime\python.exe -m civiccast.cli` r
 
 ## Do the daily and weekly routine
 
-This routine uses only checks that exist in beta.10.
+This routine uses checks that exist in beta.11.
 
 ### Each day (about five minutes)
 
@@ -206,7 +205,7 @@ This routine uses only checks that exist in beta.10.
 
 1. Read the result of the Sunday weekly self-test.
 2. Check the size of `control_plane.log`, `postgres.log` and `ollama.log` (they are not rotated).
-3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The local beta.11 dev7 live-caption work area is bounded automatically and does not require weekly audio cleanup.
+3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The native beta.11 live-caption work area is bounded automatically and does not require weekly audio cleanup.
 4. Run `civiccast egress trim-health --older-than-days 30 --dry-run` and decide whether to trim (see the next section).
 5. Run the disaster-recovery drill (see below) at least when you have changed anything, and keep the report.
 6. Copy the things the drill does not back up (see below) to storage that is not on this computer.
@@ -220,7 +219,7 @@ This routine uses only checks that exist in beta.10.
 | `C:\ProgramData\CivicCast\data\pgdata` | The Postgres database | With use | No |
 | `C:\ProgramData\CivicCast\data\uploads` | Uploaded media | With use | No |
 | `C:\ProgramData\CivicCast\data\egress` | Playout working files, including `conform-cache` | Yes | Yes, see below |
-| `C:\ProgramData\CivicCast\data\caption-tap` | Temporary live-caption audio; `active.vtt` is in the channel's egress caption folder | Bounded in local beta.11 dev7 | Consumed chunks deleted; queued audio limited, see below |
+| `C:\ProgramData\CivicCast\data\caption-tap` | Temporary live-caption audio; `active.vtt` is in the channel's egress caption folder | Bounded in the native beta.11 runtime | Processed chunks deleted; queued audio limited, see below |
 | `C:\ProgramData\CivicCast\logs` | Logs | Yes | Only the rotated logs |
 | `C:\ProgramData\CivicCast\upgrade` | Upgrade engine log, journal and pre-upgrade backups | Per upgrade | No |
 
@@ -233,9 +232,9 @@ The **conform cache** is a folder where CivicCast keeps ready-to-play copies of 
 - **Too small a cap:** if one video's conformed copy cannot fit in the budget, preparation of that video fails with: `Conform-cache budget too small to retain '<name>'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset.` Raise `CIVICCAST_CONFORM_CACHE_GB` in the service environment and restart.
 - **Failed background conforms:** after a failed or timed-out background (warm-up) conform the station waits 6 hours before trying that asset again. The time allowed for a background conform scales with the length of the asset and is capped at 7,200 seconds.
 
-Measured evidence: in the 8-hour lab run on an earlier internal build (three channels), the cache reached 46 GB of the 60 GB cap on a drive with 810 GB free, and the longest single preparation took 389 seconds. That is one lab run, not a sizing rule. Size the cap from your own library: it should hold the conformed copies of everything you expect to air in the next several days.
+Historical measurement: in an eight-hour lab run on an earlier development build (three channels), the cache reached 46 GB of the 60 GB cap on a drive with 810 GB free, and the longest single preparation took 389 seconds. That is not beta.11 package evidence or a sizing rule. Size the cap from your own library: it should hold the conformed copies of everything you expect to air in the next several days.
 
-> **Known issue (beta.10):** There is no free-space guard on the conform cache. The 60 GB figure is a cap on the cache, not a promise that the disk has that much room. Make sure the drive has more free space than the cap plus the database, uploads and logs, and watch the **low disk** alert (which, remember, may have no destination).
+> **Known issue (beta.11):** There is no free-space guard on the conform cache. The 60 GB figure is a cap on the cache, not a promise that the disk has that much room. Make sure the drive has more free space than the cap plus the database, uploads and logs, and watch the **low disk** alert (which may have no destination).
 
 ### Playout health records
 
@@ -248,19 +247,19 @@ The playout engine stores health telemetry in the database. Nothing trims it aut
 
 ### Caption data
 
-**Beta.11 caption candidate:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
+**Beta.11 live captions:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
 
 The live caption file and delivery bookkeeping retain a rolling 300-second window with at most 512 cues. The live worker does not scan the caption-review archive, and archive evidence does not gate broadcast readiness. These bounds replace manual weekly live-caption cleanup. If working files exceed these bounds, report a fault rather than treating routine deletion by an operator as normal operation.
 
 Original recordings, archived caption tracks and recorded-caption review remain available and are unaffected by these temporary live-caption limits. Analytics retention is separate: events are kept up to 366 days (`CIVICCAST_ANALYTICS_RETENTION_DAYS`, allowed range 1 to 366).
 
-> **Historical finding (published beta.10):** The audit found unlimited live caption review/evidence accumulation, uncovered raw chunks, growing `active.vtt`, and unpruned quarantine/collision folders. The local beta.11 dev7 candidate changes the live path described above; the published beta.10 installer and its historical test results are unchanged. Long unattended operation of the new candidate still requires verification.
+> **Historical finding (published beta.10):** The audit found unlimited live-caption review/evidence accumulation, uncovered raw chunks, growing `active.vtt`, and unpruned quarantine/collision folders. Beta.11 changes that live path; the ordinary published beta.11 runtime does not run the archive sweep or append per-cue evidence records. Its exact-package record contains only a brief output observation; the separate 36-hour dev7 overlay soak is development-station history, not package proof. Long unattended operation remains unproven for the published package.
 
 ## Back up and restore
 
-### What exists in beta.10
+### What exists in beta.11
 
-> **Known issue (beta.10):** The CivicCast command line has no `backup` command and no `restore` command, even though a comment at the top of the command-line source mentions them. The only backup-related command is `civiccast dr run-drill`. It makes a real backup and proves that the backup can be restored into a throwaway database, but it does not restore the live station. There is no scheduled backup in beta.10: the console's **Backup destination** and **Verify backup** buttons only write and delete a small test file, and the station never records a "last backup" time.
+> **Known issue (beta.11):** The CivicCast command line has no `backup` command and no `restore` command, even though a comment at the top of the command-line source mentions them. The only backup-related command is `civiccast dr run-drill`. It makes a real backup and proves that the backup can be restored into a throwaway database, but it does not restore the live station. There is no scheduled backup in beta.11: the console's **Backup destination** and **Verify backup** buttons only write and delete a small test file, and the station never records a "last backup" time.
 
 What you can rely on:
 
@@ -293,7 +292,7 @@ The drill does the following:
 
 It exits 0 if everything passed, 1 if a drill failed, and 2 if there is no `DATABASE_URL` or the address scheme is unsupported (`No DATABASE_URL configured; pass --database-url or set $DATABASE_URL.` or `Unsupported DATABASE_URL scheme for the DR drill; use sqlite:// or postgresql://.`). Read the report: the code itself says media is a manifest and not a copy, the crash drill covers only automatic restart of a worker, and there is no hot failover.
 
-> **Known issue (beta.10):** From the code, the drill calls `pg_dump`, `pg_dumpall`, `pg_restore` and `psql` by bare name, so Windows must find them through PATH. The installer does not add them to PATH, and the service adds only the ffmpeg folder. Run from a normal prompt, the drill will most likely fail with: `pg_dump could not be started: the executable "pg_dump" is a bare command name that could not be resolved through PATH.` The console's **Run real database restore drill** button calls the same code, and we could not confirm that it works on a native station. The upgrade engine does not have this problem, because it passes full paths. Use the workaround below.
+> **Known issue (beta.11):** The drill calls `pg_dump`, `pg_dumpall`, `pg_restore` and `psql` by bare name, so Windows must find them through `PATH`. The installer does not add them to `PATH`, and the service adds only the FFmpeg folder. Run from a normal prompt and the drill can fail with `pg_dump could not be started: the executable "pg_dump" is a bare command name that could not be resolved through PATH.` The console's **Run real database restore drill** button calls the same code. The upgrade engine uses full paths and does not have this issue. Use the workaround below.
 
 Workaround, from an elevated PowerShell window on the station:
 
@@ -323,20 +322,20 @@ The drill's backup holds the database only. Anything else you need after a disas
 | Internal certificates (`CIVICCAST_CERT_ROOT`) | No | Default `~\.civiccast\certs` | Re-issued with `civiccast cert rotate` |
 | Registry value `DatabaseUrl` and the service `Environment` value | No | `HKLM` | Export both keys with `reg export` |
 | Program, packs, models | No | `<INSTDIR>` | Reinstall |
-| Raw caption audio, evidence audio | No | `data\caption-tap` | Not recoverable |
+| Temporary live-caption working audio | No | `data\caption-tap` | Normally deleted as it is processed; it is not a retained evidence archive |
 | Conform cache | No | `data\egress\conform-cache` | Rebuilt automatically from the media |
 
 > **Tip:** Put the registry export, `station-state.json`, `subscribe-secrets.json`, the alert credentials file and the `Environment` value in the same off-computer location as your database backup, and encrypt them: they contain secrets.
 
 ### Restore into the live station
 
-Beta.10 has no supported command that restores into the live database. The only code path that does is the upgrade engine's automatic rollback after a failed upgrade. If you must restore by hand, you are using Postgres's own tools on a backup that the drill wrote. We have not run a manual live restore, so this chapter gives no step-by-step procedure for it. Rehearse the restore into a spare computer or a throwaway database first, and have your own written procedure before you need it.
+Beta.11 has no supported command that restores into the live database. The only code path that does is the upgrade engine's automatic rollback after a failed upgrade. If you must restore by hand, you are using Postgres's own tools on a backup that the drill wrote. We have not run a manual live restore for the exact published package, so this chapter gives no step-by-step procedure for it. Rehearse the restore into a spare computer or a throwaway database first, and have your own written procedure before you need it.
 
 ## Recover from a disaster
 
 The drill does not prove that you can rebuild a station from nothing. Plan on this order, and rehearse it:
 
-1. Install CivicCast on the replacement computer from the full kit. Beta.10's proven install path is a clean install; see [Chapter 10](#ch-installing).
+1. Install CivicCast on the replacement computer from the full kit (setup, `packs` and `station` folders together). Check [Chapter 10](#ch-installing) and the [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for the latest package's installation checks and limits.
 2. Stop the service.
 3. Restore the database from your off-computer copy using Postgres's tools, as above.
 4. Restore the registry values, `station-state.json`, `subscribe-secrets.json` and the alert credentials file.
@@ -368,7 +367,7 @@ It writes `upgrade-engine.log`, `upgrade-journal.json` and, if a rollback itself
 
 Related provisioning exits: 75 maps to setup exit 116, 87 to 135 (another CivicCast product or the WSL runtime is present), 85 to 127.
 
-> **Known issue (beta.10):** The upgrade lane was not run for beta.10, and an upgrade over an earlier release is not proven. Before you upgrade a station that is on the air, stop the service, copy the data folder, `HKLM\SOFTWARE\CivicCast` and the files listed in the backup table to another computer, and schedule a window in which you can reinstall if needed.
+> **Known issue (beta.11):** The exact published package has not been tested as an upgrade from an earlier release. Before you upgrade a station that is on the air, stop the service, copy the data folder, `HKLM\SOFTWARE\CivicCast` and the files listed in the backup table to another computer, and schedule a window in which you can reinstall if needed. See the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for package-specific results.
 
 > **Warning:** Do not upgrade during a meeting. The upgrade stops the service and takes every channel off the air.
 
@@ -376,7 +375,7 @@ After any upgrade, run through the daily routine, then run the drill.
 
 ## Capacity guidance
 
-CivicCast's own evidence supports only these figures. Everything else is not measured, so we do not give it.
+Historical measurements and current package checks have different scopes. The old eight-hour development run is not a beta.11 package measurement; the exact beta.11 package check is described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md).
 
 - The cache cap default is 60 GB. A 3-channel, 8-hour lab run used 46 GB of it.
 - The longest conform in that run took 389 seconds.
@@ -385,7 +384,7 @@ CivicCast's own evidence supports only these figures. Everything else is not mea
 
 Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning) and is not repeated here.
 
-> **Known issue (beta.10):** The program-change watchdog has a gap (audit finding A-001), so a program change can be missed. Compare the as-run log with the schedule weekly. The audit also found that tests are red in about 110 places and that the loudness ride can time out (A-004). These are recorded in [Chapter 13](#ch-security) under known limitations.
+> **Historical beta.10 finding:** An earlier audit reported a program-change watchdog gap. The current daemon includes a reload-stall watchdog that reissues a stuck rollover once, then restarts the channel if it remains pinned. That recovery is code behavior, not evidence of long-duration reliability; compare the as-run log with the schedule and consult the current verification record for package test scope.
 
 ## If it did not work {#ch-operations-did-not-work}
 

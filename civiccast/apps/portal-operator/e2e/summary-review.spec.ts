@@ -278,7 +278,7 @@ test.describe('summary review', () => {
     await mockSummaryBackend(page, { failList: true })
     await openSummaryReview(page)
     await expect(page.getByText('Could not load summary review.')).toBeVisible()
-    await expect(page.getByText(/CivicCast database is connected/)).toBeVisible()
+    await expect(page.getByText(/check CivicCast server and database health/)).toBeVisible()
   })
 
   test('keeps summary review read-only without records clerk role', async ({ page }) => {

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Subscription gate (shown in place of the video on a Watch page when a paywall is on)
 
 Paths are under `civiccast/apps/portal-public/`. Line numbers are `src/PaywallGate.tsx` unless noted. The gate is off unless a setup administrator turns on the Paywall screen; then it shows on every recording (see Mismatches).

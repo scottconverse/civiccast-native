@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # First Setup (nav id: setup)
 
 Sidebar: Setup > **First Setup**. Page H1 reads "First setup". The same page is the station's only sign-in page (see `_shell-signin-and-session.md`). Verified against the code at HEAD 0b35aef6 (2026-10-03); manual authority: `docs/manual/src/11-signing-in.md`, `22-configuration.md`.

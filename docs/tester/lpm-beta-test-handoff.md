@@ -1,10 +1,16 @@
 # CivicCast Beta Test Handoff For Longmont Public Media
 
-## Current Release
+> **Archived Beta 10 handoff.** This document records the tester packet for
+> Beta 10 and is not a current release guide. Beta 11 is current; use the
+> [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
+> [tester start page](START-HERE.md), and [Beta 11 verification
+> record](../releases/v1.0.0-beta.11-verification.md) for present-day guidance.
 
-`v1.0.0-beta.10` is the current published release (published 2026-10-02),
-recorded as `current` in `release-truth.yaml`; do not treat a tester handoff or
-USB kit as a public release. For the current published beta.10 release,
+## Historical Beta 10 Release Record
+
+At the time this handoff was prepared, `v1.0.0-beta.10` was the current
+published release (published 2026-10-02); do not treat a tester handoff or USB
+kit as a public release. For that historical beta.10 release,
 `setup.exe`, the five per-pack runtime `.ccpack` assets, a
 `SHA256SUMS.txt` checksum file, and `setup.exe.sidecar.json` metadata are
 attached to the
@@ -24,7 +30,7 @@ downloadable release) are now superseded but still run; see "Upgrading from
 Beta.7 had exact-package upgrade proof from beta.5; that evidence does not
 certify beta.10. Upgrade paths were not run for beta.10.
 
-`v1.0.0-beta.10` is still a beta candidate. Gate A (automated station
+Beta 10 was a beta candidate. Gate A (automated station
 acceptance): the clean-install lane passed, 10 of 10 criteria, run locally in
 Windows Sandbox on 2026-10-02 against exactly this build; the cross-version
 (upgrade) lane and the download-only lane were not run (waived by the owner for
@@ -38,10 +44,8 @@ install is also superseded but still runs; see "Upgrading from
 `v1.0.0-beta.2` was **never published**: it exists only as an internal Gate A
 upgrade-baseline kit and is never sent to Sergio/LPM.
 
-**Check
-[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) before
-relying on this page -- it is the single source of truth for which tag is
-current, and this handoff may lag it.**
+Use the Beta 11 manual and install guide linked above instead of following this
+archived package procedure for a current installation.
 
 The installer itself is small; the large AI components (caption engine, local
 summary and translation model, and on capable hardware an optional
@@ -84,7 +88,7 @@ staff, and anyone observing the first real station-side CivicCast runs.
 Use only the release-matched installer and manifest for the package you were
 actually handed. For a GitHub release, also use its sidecar and checksum; a
 USB/LAN kit may have only its own hash-pinned delivery manifest and need not contain
-the GitHub sidecar. `v1.0.0-beta.10` is the current published release, a GitHub
+the GitHub sidecar. This handoff was written for the historical Beta 10 GitHub
 pre-release (`v1.0.0-beta.2`, `v1.0.0-beta.8` and `v1.0.0-beta.9` were never
 published and are never handed to a tester).
 Preserve all logs and report any failure.
@@ -109,7 +113,7 @@ The run is meant to answer:
 **Use the exact package named in your active handoff.** A USB/LAN field kit is
 verified against its own hash-pinned delivery manifest. A GitHub package is used
 only after its exact beta tag is published and is verified against that
-release's sidecar and checksum assets. The current published release is
+release's sidecar and checksum assets. This handoff's release was
 [`v1.0.0-beta.10`](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10)
 (a GitHub pre-release, published 2026-10-02); its `setup.exe` is 242,367,640
 bytes, to be checked against that release's `SHA256SUMS.txt` and sidecar.

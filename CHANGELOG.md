@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+- Align the current user manual, in-app help, and public setup guidance on
+  live-caption controls, screen navigation, and installer recovery. The
+  corrected documentation package is pending its own exact-source build.
+
 ## [1.0.0-beta.11] - 2026-10-08
 
-- Live captions use Whistle as the CPU primary, with Whisper fallback and optional NVIDIA CUDA selection. The first recognition is published without waiting for repeat transcription agreement; inference remains serialized across stations, and Needle telemetry is disabled.
+- Live captions use Whistle as the CPU primary, with Whisper fallback scoped to the affected channel and optional NVIDIA CUDA selection. The first recognition is published without waiting for repeat transcription agreement; Whistle primary inference is serialized across channels within each station runtime, fallback Whisper requests use a separate serialization lock, and Needle telemetry is disabled.
 - Failed Whisper fallback workers are closed before replacement. The service keeps one immediate replay and uses a serialized 30-second cooldown before creating another child, preventing repeated failures from causing an unbounded restart loop.
 - Supervisor startup/readiness is serialized with service ticks. A child is not accepted as ready based on another process's `/health` response. Disabled channels still drain explicit stop commands, while queued start/reload/takeover/handback commands cannot put a disabled channel back on air.
 - On Windows, replacing a playout worker now releases the old synchronous named-pipe accept before closing its handle, avoiding a per-channel restart hang.

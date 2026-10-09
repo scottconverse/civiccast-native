@@ -1,14 +1,15 @@
 # CivicCast Tester Packet - Start Here
 
-> **Historical: retired WSL2 tester packet, not native CivicCast guidance,
-> applies only to the appendix below.** `civiccast-native` ships the native
-> Windows service and no WSL2 runtime. The rc-numbered release references in
-> the "Historical" appendix at the bottom of this page belong to the retired
-> product line and are preserved only as historical evidence.
+> **Current native testers:** CivicCast `v1.0.0-beta.11` is the current
+> published release. Follow the [current User Manual](../USER-MANUAL.md),
+> [Windows install guide](../../INSTALL-WINDOWS.md), and exact package scope in
+> the [Beta 11 verification record](../releases/v1.0.0-beta.11-verification.md).
+> The Beta 10 test details below are historical and do not qualify Beta 11.
+> The rc-numbered appendix at the bottom describes the retired WSL2 product.
 
 ## Current Release
 
-`v1.0.0-beta.10` is the current published release (published 2026-10-02),
+`v1.0.0-beta.11` is the current published release (published 2026-10-08),
 recorded as `current` in the release-truth record. It is a GitHub
 **pre-release** (a "Beta Candidate"), not a production release. For a published
 GitHub release, use its `setup.exe`, runtime
@@ -16,7 +17,7 @@ GitHub release, use its `setup.exe`, runtime
 exact release page. For a USB/LAN field kit, use the complete kit's own hash-pinned
 delivery manifest and do not require a GitHub sidecar that is not present. The
 current published release is the
-[`v1.0.0-beta.10` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10)
+[`v1.0.0-beta.11` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11)
 -- watch
 <https://github.com/scottconverse/civiccast-native/releases>, not
 `scottconverse/civiccast` (the retired, separate WSL2-line repository) and
@@ -24,40 +25,39 @@ not any `v1.0.0-rcNN` tag, which belongs to that other repository. See
 [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
 authored release-state record.
 
-`v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first
+`v1.0.0-beta.10`, `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first
 downloadable release) are now superseded. `v1.0.0-beta.8` and `v1.0.0-beta.9`
 were never published; their work is inside beta.10.
 `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also superseded.
 `v1.0.0-beta.2` was never published -- it exists only as an internal Gate A
 upgrade-baseline kit, never a release a tester receives.
 
-**If you are reading this after the release owner has told you a new beta is
-available, check
-[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) first
--- it is the single source of truth for which tag is current, and this page
-may not have been updated yet.**
+The October 8 Beta 11 package (producer source `b7cc3e7c`, build
+`37827938199`) was refreshed on an existing Beta 11 host and had a brief
+three-channel output check. A clean install, repair, Beta 10 upgrade, and long
+capacity run were not performed for that exact package. Its 10-of-10 clean
+install result belongs to Beta 10 only. See the [Beta 11 verification
+record](../releases/v1.0.0-beta.11-verification.md) for the package boundary.
 
-`v1.0.0-beta.10` is still a beta candidate. Its automated clean-install check
-passed (10 of 10 criteria, run locally in Windows Sandbox on 2026-10-02 against
-exactly this build). The upgrade (dirty) and download-only lanes were not run
-for it, and the human/station acceptance pass is not done. See
+The superseded Beta 10 release passed its historical clean-install lane (10 of
+10 criteria, run in Windows Sandbox on 2026-10-02). Its upgrade and download-only
+lanes were not run. These are Beta 10 results, not Beta 11 qualification. See
 [`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md).
 
-The installer itself is small (`setup.exe` is about 242 MB); the large AI
-components (caption engine, local
-summary and translation model, and on capable hardware an optional
-higher-quality caption engine and GPU acceleration) are not inside it, and the
-roughly 21 GB AI-model `station\` bundle is not a release asset. During
-install the CivicCast Installer window explains each large component, uses a
-copy already on the computer (**Found locally - verified**, for example from a
-USB/LAN kit's `station\` folder or an earlier install), and downloads the rest
-with a progress display and a **Stop downloading** button. The complete signed
-USB/LAN kit (about 21 GB with its `station\` model bundle) is the offline
-alternative. A first install with no kit and no earlier install is not yet
-proven for beta.10: the setup step that activates the station fails closed
-when it cannot find the model packs, so use the kit your tester handoff
-names. **Upgrading from
-`v1.0.0-beta.1`:** copy the whole `beta.3` kit
+The October 8 `b7cc3e7c` Beta 11 package's `setup.exe` is about 249 MiB; the large AI
+components and roughly 21 GB `station\` model bundle are not release assets.
+During install the setup window explains each component, uses a copy already on
+the computer (**Found locally - verified**), and can download missing
+components with a progress display and **Stop downloading** button. The
+October 8 package was verified only as an in-place refresh of an existing Beta
+11 host and a brief three-channel output check. A clean first install and
+download-only first-install path were not run for that package. Use the complete
+signed USB/LAN kit for a first install; a completed download is not proof that
+station activation succeeded. See the [Beta 11 verification
+record](../releases/v1.0.0-beta.11-verification.md) for the package boundary.
+
+The following upgrade notes are historical and do not describe the current
+Beta 11 upgrade path. **Historical Beta 1 upgrade:** copy the whole `beta.3` kit
 (`setup.exe` plus the `station\` folder beside it) to the station and run
 `setup.exe` over the existing install -- recordings, settings, database, and
 AI models are kept and the schema migrates. Do not run `setup.exe` alone

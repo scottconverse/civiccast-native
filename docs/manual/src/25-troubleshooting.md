@@ -1,8 +1,8 @@
 # Troubleshooting matrix {#ch-troubleshooting}
 
-This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It lists what goes wrong in beta.10, how to tell which problem you have by looking at a screen, a log line or a command result, and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**. Where we could not find a fix in the code, the table says so instead of guessing.
+This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It lists what can go wrong in beta.11, how to tell which problem you have by looking at a screen, a log line or a command result, and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**. Where we could not find a fix in the code, the table says so instead of guessing.
 
-> **Note:** Beta.10 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Gate A, the formal acceptance run, passed for the clean-install lane only. The upgrade lane and the download-only lane were not run. A first install with neither the full kit nor an earlier install is not proven: setup needs the `packs` and `station` folders beside it. No human field-tester has signed it off. The 8-hour soak run was done on an earlier internal build (C16), not on the published files. Treat every fix in this chapter as advice for a beta, and expect to meet problems that are not listed here.
+> **Note:** Beta.11 is a published GitHub pre-release for testing, not a production release. The exact-package verification record describes an in-place refresh on an existing station and its brief output check; it does not establish clean installation, repair, upgrade or long-term capacity. Use it for package-specific proof status, and treat this chapter as current troubleshooting guidance rather than a guarantee that every failure is listed.
 
 ## Before you start
 
@@ -64,13 +64,13 @@ Setup returns a number when it fails. Interactive setup shows a dialog with word
 | Exit 125 | The service started but the station did not become ready to serve. The dialog names the database schema as the usual cause. | `install-progress.log` and `upgrade\upgrade-engine.log`; then `logs\control_plane.log`. | Fix the cause the logs name, then run setup again. Your data is untouched. |
 | Exit 126 | The service is registered but Windows could not start it. | Event Viewer, Application log; `logs\`. | Fix the start-up error it names, then run setup again. |
 
-> **Known issue (beta.10):** The exit-67 dialog tells you the failing self-test is named in `install-progress.log`. It is not. The child's error goes only to the setup details pane, and the log has only the line `step d4-activate-station: returned 67`. If the setup window has closed, the failing check is lost; run setup again and watch the details pane.
+> **Known issue (beta.11):** The exit-67 dialog says the failing check is named in `install-progress.log`, but the log contains only the activation return code. The child's detailed error appears in the setup details pane. If the setup window has closed, the failing check is lost; capture the details pane before closing it.
 
-> **Known issue (beta.10):** Exit 67 is also returned for "not enough disk space" and for unpacking failures, although the dialog says "NOT a missing-files problem". Check free disk space before you chase a self-test.
+> **Known issue (beta.11):** Exit 67 also covers insufficient disk space and extraction errors, although the dialog says "NOT a missing-files problem". Check free disk space and the details pane before you chase a self-test.
 
-> **Known issue (beta.10):** The dialogs never show the exit code, and 27 different codes exist (82 and 110 to 135). This chapter's table is the only place we know of that lists them.
+> **Known issue (beta.11):** Interactive failure dialogs explain the step but do not show its numeric exit code. Read `install-progress.log` for the code; the installer table in [Chapter 10](#ch-installing) lists the current codes.
 
-> **Known issue (beta.10):** On a fresh install, the playout engine's first packets can arrive more than 60 seconds after its first start, while the channel already reports its output as "connected" (which is true by design while it shows the fallback slate). Separately, the setup self-test's wait for its private AI runtime was raised from 60 to 300 seconds, because that runtime took 61 seconds to answer in the clean-install test. A slow first minute on a new install is not by itself a fault.
+> **Historical beta.10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict beta.11 startup. Use `/health`, the channel's output and the current [beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) to assess the exact package and station.
 
 ## Sign-in
 
@@ -134,8 +134,6 @@ A channel that shows **Showing slate** is on air with the "technical difficultie
 | The picture is frozen but the audio goes on | Video-only freeze. | `gst-worker.stderr.log` lines of the form `CTRL output: <total> buffers (+delta) since PLAYING [mux-in 5.0s: video=+0 audio=+235]`: `video=+0` with audio climbing. | The channel heals the web stream first. After that, see the next row. |
 | Log level CRITICAL: `channel <id>: the HLS live window is still frozen N.Ns after the relay self-heal replaced its ffmpeg child ... Freeze escalation budget exhausted (N worker restarts already spent in the last hour): NOT restarting the worker again ... this needs an operator` | The channel's live web stream stayed frozen for more than 30 seconds after the relay was healed, and 3 worker restarts in the last hour are already spent. | The CRITICAL line (repeated at most every 10 minutes). Earlier in the hour you see ERROR lines ending `restart N of at most 3 in the last hour`. | A person has to act. Stop and start the channel from **Channels**, or restart the service between programs. Keep the logs for the support request. |
 
-> **Known issue (beta.10):** A watchdog gap on one path (audit finding A-001) can leave a channel stuck with no one restarting it. If a channel is stuck in **Changing source** with nothing in the logs for more than half an hour (the stall watchdog's own bound is 690 plus 960 seconds, then a 300-second grace period, which is more than half an hour in all), stop and start the channel by hand.
-
 ## Program change problems
 
 A program change is the moment a channel moves from one scheduled item to the next. CivicCast tries to do it without a break: it prepares the next item ahead of time and swaps the source at the boundary (a "seamless reload"). If that fails it retries, and then falls back to a restart or to the slate. In the 8-hour run on build C16, 50 program changes happened with no holes. Those numbers come from an earlier internal build, not the published files.
@@ -151,11 +149,11 @@ A program change is the moment a channel moves from one scheduled item to the ne
 | A single dropped frame at a join between two pieces | A known single-frame drop. | `CTRL mux diagnostic: dropped future-dated video arrival`. | None. It is one frame. |
 | A change aired only the tail of the closing item | The plan was resolved against a short remainder. | `Plan for <channel> resolved to a N.Ns tail of the closing scheduled item`. | Check the schedule's times. Remember that times typed on schedule screens are UTC. |
 
-> **Known issue (beta.10):** In the 8-hour run on build C16, an unexplained rebuild at 07:53 was not resolved before the run ended. We cannot tell you its cause. Keep the logs if you see one.
+> **Historical beta.10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the beta.11 package. Keep the logs if you see an unexplained rebuild.
 
 ## No audio, low audio, loudness
 
-CivicCast conforms every program to a loudness target. There are three targets: streaming at -16 LUFS, ATSC A/85 at -24 LKFS (the cable headend standard in the United States) and EBU R128 at -23 LUFS. The headend presets use A/85. For speech, a "leveling ride" raises quiet stretches by up to 18 dB over 4-minute windows. The beta.10 bar for the public stream is -16 LUFS plus or minus 1.
+CivicCast conforms every program to a loudness target. There are three targets: streaming at -16 LUFS, ATSC A/85 at -24 LKFS (the cable headend standard in the United States) and EBU R128 at -23 LUFS. The headend presets use A/85. For speech, a "leveling ride" raises quiet stretches by up to 18 dB over 4-minute windows. The default public-stream target is -16 LUFS plus or minus 1.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
@@ -165,57 +163,28 @@ CivicCast conforms every program to a loudness target. There are three targets: 
 | Conform runs again and again for the same file | The conform cache is too small, so files are evicted and rebuilt. The cache size is `CIVICCAST_CONFORM_CACHE_GB`, default 60. The older default of 20 caused thrash: one 4.4-hour asset took about 11 GB. | `Conform-cache warm failed for '<name>' ... not retrying it for 6h` is the failure line. `0` turns the cache off. | Keep the setting at its default or raise it, and keep the disk free. In the 8-hour run 46 GB of the 60 GB was used. |
 | Silence on air, picture present | The source has no audio track, or the audio leg of the worker failed. | `gst-worker.stderr.log`: in the `CTRL output:` lines, `audio=+0`. | Check the source file or capture device. |
 
-> **Known issue (beta.10):** There is no check that stops the 60 GB cache from filling the disk (audit finding A-008). Watch free space. See "Disk full".
+> **Known issue (beta.11):** There is no free-space guard for the 60 GB conform cache. Watch free space. See "Disk full".
 
 ## Captions late or missing
 
-There are two different kinds of captions, and they fail in different ways.
+There are two separate caption paths. **Live captions** are off by default in beta.11. Enabling **Show live captions on air** in Station Profile starts speech recognition on the next tap-worker scan; stop and start each channel before expecting captions in its video. Turning the switch off stops recognition and drains queued audio on the next scan; caption routing is removed when each channel next starts. The service setting `CIVICCAST_CAPTION_TAP=off` overrides the profile and keeps the tap off. **Recorded captions** run after publication and use the separate review workflow; see the Publishing and Recording sections.
 
-- **Live captions on air** (the words burned onto the cable and web picture while a meeting is running) are **off by default in beta.10**. The Station Profile checkbox **Show live captions on air** is off, and the setting `CIVICCAST_CAPTION_TAP=off` forces them off whatever the checkbox says. The caption part of the encoder is built only when a channel starts, so changing the checkbox reaches the picture at that channel's next start, not at the next program change.
-- **Captions on recordings** are produced separately, after the fact, and are what viewers of a published recording get. Their failures are in the Publishing and Recording sections, not here.
+### Live captions and recovery
 
-### What happens to live caption audio under load
+The native live runtime uses Whistle on CPU by default. It publishes the first recognition without waiting for another reading to agree, and serializes primary inference across channels on the station. A Whistle request has a 10-second deadline. If it fails or times out, that channel switches to Whisper and remains there until the live runtime restarts. Whisper is also the recorded-caption engine. CUDA is optional acceleration for Whisper; it is not required for Whistle.
 
-When live captions are on, a "tap" copies the channel's audio in 5-second pieces and a worker turns each piece into text, one at a time. On a computer without a suitable graphics card the speech-to-text is done by the CPU, which has to share that CPU with the video encoder. **If the worker falls behind, the station throws the oldest audio away so that the channel stays on air.** Those words never become captions. That is deliberate: the program is more important than its captions. But it means a live caption stream can have holes, and this is the one place where beta.10 is known to lose caption content during a live meeting.
-
-In order of increasing severity, you will see three log lines in `control_plane-app.log`:
-
-1. **Falling behind** (INFO). The worker is catching up and live captions continue:
-
-   ```
-   Caption tap is behind for channel <id>: N settled segments is over the maximum 2 on scan N of 15. Transcribing the oldest N now and leaving the rest queued; live captions continue.
-   ```
-
-2. **Catch-up discard** (WARNING). The backlog stayed over the maximum for the whole scan window of 15 scans (about 30 seconds). The oldest audio was thrown away and the worker resumed at the newest:
-
-   ```
-   Caption tap catch-up for channel <id>: N settled segments stayed over the maximum 2 for the whole 15-scan window. Discarded the oldest N segment(s) (N.Ns of audio, indices N-N) and resumed at the newest N. Live captions continue; the pause is not engaged (shed N of 3 in 300s).
-   ```
-
-3. **Overload pause** (WARNING). Three discards inside 300 seconds engage a pause. Live captions stop for a time, any caption on screen is cleared, and the stale audio is discarded:
-
-   ```
-   Caption tap overload for channel <id>: N settled segments exceeds the maximum 2. Live captions are PAUSED for Ns (overload #N) so playout keeps the CPU; active captions were cleared and the stale audio was discarded.
-   ```
-
-   The pause starts at 120 seconds, doubles with each repeat, and is capped at 900 seconds.
-
-A fourth message looks alarming but is routine housekeeping: `Caption tap discarded N leftover segment(s) for channel <id> at <time>; they belonged to a finished broadcast`. Those segments belonged to a program that already ended. No audio was lost.
-
-How often does it happen? In the 8-hour run on build C16 there were 13 catch-up discard events. Seven small ones coincided with disk scans the lab was running at the time; leaving those out, about 160 seconds of audio was lost on a quiet machine. In the earlier C15 run about 75 seconds was lost. In a 30-minute run (C17) there were none. The discards cluster around the long preparation of a new item, when the CPU is busy. **This is not fixed in beta.10.** Captions can be a legal requirement for public meetings (accessibility rules such as ADA Title II apply to cities); ask your city attorney what applies to you. We cannot tell you that live captions in beta.10 meet any legal standard for completeness.
+Live caption audio is best-effort. The audio tap has bounded queues and can discard older working audio or pause caption recognition under sustained overload to keep playout responsive. Captions can therefore contain gaps even while the channel stays on air. The beta.10 eight-hour C16 run recorded 13 catch-up discard events and about 160 seconds of quiet-machine audio loss; these are historical beta.10 measurements, not measurements of the beta.11 package. The beta.11 package's two output observations were 41 seconds apart and do not prove caption completeness or capacity. Ask your city attorney what accessibility obligations apply to your station.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
-| No captions on the live picture at all | Live captions are off (the default). | Station Profile checkbox **Show live captions on air**; the caption status card on **Channels** reads "Captions off". | Turn the checkbox on, then stop and start the channel. Also check that `CIVICCAST_CAPTION_TAP` is not set to `off`. |
-| Captions have gaps, with lines reading "Caption tap catch-up ... Discarded" | The CPU could not keep up. | `Select-String -Path C:\ProgramData\CivicCast\logs\control_plane-app.log* -Pattern "Caption tap"` and count the `catch-up` lines. | Live GPU captioning needs an NVIDIA graphics card with at least 8 GB of video memory plus the CUDA pack (the cuBLAS and cuDNN libraries). Without that, expect discards when a heavy item is being prepared. Tuning knobs exist (see the next row), but we did not test other values. |
-| You want to change how aggressively it sheds | Defaults: maximum backlog 2 segments, a 15-scan persistence window, shed limit 3 within 300 seconds. | Environment variables `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS`, `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS`, `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT` (0 turns catch-up off), `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_WINDOW_SECONDS`, `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS`, `CIVICCAST_CAPTION_TAP_CPU_THREADS`. | Not recommended without testing. We have no measurement showing that any other value is better. |
-| The caption status card says "Not verified" or "Caption proof failed" | The proof that the captions actually reached the picture is missing or failed. The card is stale after 120 seconds. | The card on **Channels**. | Check the live captions rows above, then the channel's logs. |
-| `supervisor.log`: `Caption tier <tier> at <folder> is staged but has no valid activation self-test receipt ... Starting on the proven floor caption tier instead`, and an alert `caption-tier-degraded` ("Captions are running on the standard tier; the large caption model (...) needs re-validation -- open AI Models") | An optional larger caption model left over from an earlier install has no valid receipt, so the station started on the proven floor tier, the Medium model. | The log line and the alert. | The station works on the Medium caption model. The code says the larger one is to be re-validated from the console (the **AI Models** screen). |
+| No captions on the live picture at all | Live captions are off by default, the service override is `off`, or the current channel has not started since the switch was enabled. | Station Profile checkbox **Show live captions on air**; the **Channels** caption status card; confirm `CIVICCAST_CAPTION_TAP` is not `off`. | Enable the profile switch; recognition resumes on the next worker scan. Then stop and start the channel so its video includes captions. |
+| `Whistle failed for <channel>; switching to Whisper` appears | Whistle failed or missed its 10-second deadline; that channel is using sticky fallback. | Search `C:\ProgramData\CivicCast\logs\control_plane-app.log*` for `Whistle inference failed` and `switching to Whisper`. | Captions continue on Whisper when available. A failed Whisper child gets one immediate replay; after a repeated replacement failure, the runtime waits 30 seconds before trying again. Restart the CivicCast service outside a meeting to reset the primary engine to Whistle. |
+| Captions have gaps and the log says `Caption tap catch-up ... Discarded` | Recognition fell behind and the bounded tap shed old working audio to preserve playout. | `Select-String -Path C:\ProgramData\CivicCast\logs\control_plane-app.log* -Pattern "Caption tap"`. | Reduce other heavy work on the station and watch the output. An NVIDIA GPU is optional for Whisper and does not accelerate Whistle. Do not treat a gap-free run as established until it has been observed under your workload. |
+| The log says `Caption tap overload` or the status shows paused | Sustained backlog engaged the tap's overload pause for that channel. | Search the control-plane log for `Caption tap overload` and check the **Channels** caption status. | The pause protects playout. Reduce competing CPU/disk work; captioning resumes according to its backoff. Restart the channel only if its caption state does not recover. |
+| The caption status card says "Not verified" or "Caption proof failed" | The decode-back proof is absent, stale or failed. | Check the card on **Channels** and search the control-plane log around the same time. | Check the live-caption rows above and the channel logs. |
 | Captions on H.265 channels | The caption inserter is H.264 only on native Windows. | The log: "HEVC/H.265 cannot embed captions on native Windows -- the caption inserter is H.264-only...". | Use H.264 for channels that must carry captions. |
 
-> **Known issue (beta.10):** The Station Profile screen's help text describes channels being paused with their audio discarded. The code does something more specific: it first catches up by discarding the oldest pieces, and pauses only after three discards inside 300 seconds. The same screen text also warns that, with live captions on, the picture can freeze for 25 to 30 seconds and then catch up in a burst every minute or two, and that a channel can rarely restart itself; the code comments record this as the reason the setting is off by default in this beta. If you quote the screen to a board or an auditor, quote this section instead.
-
-> **Known issue (beta.10):** Caption data is never removed. Review rows, evidence recordings and the `active.vtt` file for each channel keep growing (audit findings B-003, B-004 and B-005). Over weeks this uses disk. See "Disk full".
+Ordinary live captioning does not create permanent per-cue review records or evidence WAVs. Temporary working audio is cleaned up as it is processed; bounded live cues are not a substitute for caption review of the original recording. Recorded-caption review continues to use the Review queue.
 
 ## Recording failures
 
@@ -235,9 +204,9 @@ Scheduled recording runs inside the station (`CIVICCAST_SCHEDULED_RECORDING`, `i
 | The schedule ran at the wrong hour | The time was typed as UTC. | Compare the time on the job with the computer's clock. | Re-enter the time in UTC. |
 | A recording alert, `scheduled-recording-failure` or `scheduled-recording-dropout` | A job failed, or the input dropped out during the job. | **Alerts** screen. | See the rows above. |
 
-> **Known issue (beta.10):** **Stop** is also offered on a recording job that is still in the `scheduled` state (not yet started). The station refuses it with HTTP 409 ("Cannot stop job ... only ['arming', 'finalizing', 'recording'] are stoppable"), and the screen does not show the error, so nothing seems to happen. **Stop** does work on a job that is arming, recording or finalizing. To stop a job that has not started from running, the usual way is to untick **Enabled** on its schedule; we did not confirm that this also cancels a job that already exists.
+> **Known issue (beta.11):** **Stop** is also offered on a recording job that is still in the `scheduled` state (not yet started). The station refuses it with HTTP 409 ("Cannot stop job ... only ['arming', 'finalizing', 'recording'] are stoppable"), and the screen does not show the error, so nothing seems to happen. **Stop** does work on a job that is arming, recording or finalizing. To stop a job that has not started from running, the usual way is to untick **Enabled** on its schedule; we did not confirm that this also cancels a job that already exists.
 
-> **Known issue (beta.10):** Creating a recording schedule gives no confirmation, and creating the same one again returns 409 "already exists". Check the list before you try again.
+> **Known issue (beta.11):** Creating a recording schedule gives no confirmation, and creating the same one again returns 409 "already exists". Check the list before you try again.
 
 ## Publishing problems
 
@@ -250,13 +219,13 @@ The Publish screen records "operator-dashboard" as the operator for every approv
 | A target shows a success message but nothing arrived at YouTube or the archive | Providers default to **mock**. Each of `CIVICCAST_PROVIDER_INTERNET_ARCHIVE`, `_LOCAL_NAS`, `_YOUTUBE`, `_MAIL` and `_WEBHOOK` is `mock` unless set to `real`. | Check the environment variables. | Set the variable to `real` and add the credentials listed in [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations). |
 | A target you did not tick was reset on a second approval | Approving again rebuilds the whole run and resets unticked targets. | The Publish screen. | Tick every target in one approval. |
 | The cable file package row says "not set up (optional)" | `CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR` is not set. | The row. | Set it (see Chapter 15) and approve again. |
-| A mailing list or fediverse follower did not hear about a new recording | Subscriber notifications are parked, and federation is off by default. | Nothing is sent by design. | None in beta.10. |
+| A mailing list or fediverse follower did not hear about a new recording | Automatic subscriber notifications are not connected to publishing, and federation is off by default. | Nothing is sent by design. | None automatically in beta.11. |
 
-> **Known issue (beta.10):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but the card's headline can still read "Archive verified" (HELP-02), and a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Before you rely on a publish target, send one test and look at the far end.
+> **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but the card's headline can still read "Archive verified" (HELP-02), and a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Before you rely on a publish target, send one test and look at the far end.
 
-> **Known issue (beta.10):** Approving a recording can announce it to federation followers as a hidden side effect when ActivityPub is on. See Chapter 15.
+> **Known issue (beta.11):** Approving a recording can announce it to federation followers as a hidden side effect when ActivityPub is on. See Chapter 15.
 
-> **Known issue (beta.10):** A second approval resets any target you left unticked (HELP-01). Tick everything in a single approval.
+> **Known issue (beta.11):** A second approval resets any target you left unticked (HELP-01). Tick everything in a single approval.
 
 ## The portal does not show video
 
@@ -267,10 +236,10 @@ Residents see the portal at `http://127.0.0.1:8000/`. That address works on the 
 | The live page says offline or "standing by" | `curl.exe http://127.0.0.1:8000/api/public/live/current` reports a state: `offline`, `on_air`, `on_air_no_web_output` or `standing_by`. | Read `state` and `reason` in the answer. The reasons are "no HLS output configured", "HLS output configured but not serving yet" and "fallback slate, no program on air". | The first needs an `hls` output on the channel (see Chapter 15). The second means the web stream has not started: see the HLS relay row. The third is the slate: see "Channels will not start". |
 | The channel is on air, but the web stream is empty | The HLS relay did not start or died. | Application log: `HLS relay up for <channel>`, `HLS relay could not start for <channel> ... ffmpeg is not available`, `HLS relay for <channel> ... restarting the relay child`. The relay's own log is `data\egress\<channel>\logs\hls-relay.<sink label>.stderr.log`. | Restore FFmpeg by running setup again; stop and start the channel. |
 | A recording page has no video | The recording has no `manifest_url`, so it was never packaged, or the web copy failed. | Assets screen status; finalization codes above. | Retry finalization. |
-| Recordings play on the station but are slow or missing for the public | The CDN selector is on and uploading failed (`cdn.upload_failed`). | Failure code in the finalization list. | Check the CDN settings in Chapter 15. The CDN paths were not exercised in Gate A or in the 8-hour run. |
+| Recordings play on the station but are slow or missing for the public | The CDN selector is on and uploading failed (`cdn.upload_failed`). | Failure code in the finalization list. | Check the CDN settings in Chapter 15. The current package checks do not include end-to-end CDN upload; test one recording and verify it at the CDN before relying on that path. |
 | Video is not found at all at `/media/live/<channel>/playlist.m3u8` | The channel has no HLS output, or is not running. | `curl.exe -I http://127.0.0.1:8000/media/live/<channel>/playlist.m3u8` | See above. |
 
-> **Known issue (beta.10):** The `finalization-worker-runbook` in the repository says the local media base address defaults to `http://127.0.0.1:8000`. In the code the default is empty, which means addresses relative to the site. We follow the code.
+> **Known issue (beta.11):** The `finalization-worker-runbook` in the repository says the local media base address defaults to `http://127.0.0.1:8000`. In the code the default is empty, which means addresses relative to the site. We follow the code.
 
 ## Disk full
 
@@ -279,9 +248,9 @@ Residents see the portal at `http://127.0.0.1:8000/`. That address works on the 
 | Alert `disk-low`: "Low free space: media X GB (min 20)" | Free space on the media or backup drive fell below the limit. The default thresholds are 20 GB for media and 20 GB for backup. | **Readiness** shows "Media space" and "Backup space" in GB free. | Free space. The conform cache (up to 60 GB), old recordings and caption data are the large items. |
 | Setup refuses with "Not enough free disk space to activate this station..." | Activation needs the total of the pack sizes plus 2 GB. | The setup details pane. | Free space. |
 | Uploads fail with HTTP 507 on the contribute page | The drive is full. | The response. | Free space. |
-| Disk fills slowly over weeks | Caption data is never pruned, and the conform cache can grow to 60 GB with no check on free space. | Folder sizes under `C:\ProgramData\CivicCast\data`. | Plan the disk size for the long term; see [Planning your station](#ch-planning). |
+| Disk fills slowly over weeks | Recordings and logs accumulate, and the conform cache can grow to 60 GB with no check on free space. Ordinary live captions do not create a permanent audio-evidence archive. | Folder sizes under `C:\ProgramData\CivicCast\data`. | Plan the disk size for the long term; see [Planning your station](#ch-planning). |
 
-> **Known issue (beta.10):** The anonymous contributor upload spools a file to disk before any size limit applies, and can fill the drive (audit finding B-001). If the contribute page is open to the public, watch free space closely.
+> **Known issue (beta.11):** The anonymous contributor upload spools a file to disk before any size limit applies, and can fill the drive (audit finding B-001). If the contribute page is open to the public, watch free space closely.
 
 ## Database problems (and why there is no NATS)
 
@@ -312,7 +281,7 @@ The default encoder path is GStreamer. On Windows, a hardware H.264 request is m
 
 ## Upgrade problems
 
-> **Warning:** In beta.10 the upgrade lane was not run in Gate A. An upgrade from an earlier build is unproven. Back up `C:\ProgramData\CivicCast` (with the service stopped) before you try one.
+> **Warning:** The current beta.11 package was not tested as an upgrade from an earlier build. Check the [beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for package-specific results. Back up `C:\ProgramData\CivicCast` before an upgrade.
 
 An upgrade is the same `setup.exe` run over an existing install. The service is stopped (its registration is kept), packs are re-verified, the engine backs up and migrates the database with a rollback, then the service is registered and started again. Setup refuses to put an older version over a newer one.
 
@@ -340,9 +309,9 @@ Collect these before you ask anyone for help. Together they answer most question
 7. **The support bundle**, if the console still loads: on **Readiness**, as a Support admin, create the support bundle. It is a JSON file named `<bundle id>.json` in a `support-bundles` folder next to `station-state.json` (the folder can be moved with `CIVICCAST_SUPPORT_BUNDLE_DIR`), and the console offers it for download. It holds the version, platform, which settings are present (without their values), setup, storage and health information, alerts, recent samples and the tail of some logs. Lines that contain a secret marker are dropped.
 8. **Command-line status**, if you can run it: `runtime\python.exe -m civiccast.cli runtime status` and `... doctor`, using the `runtime` folder in the install folder. We have not run these on a station; the code supports them. The command list is in [Appendix: command line](#app-cli).
 
-> **Known issue (beta.10):** The support bundle does not collect the logs you most need. It reads `%USERPROFILE%\.civiccast\runtime-host.log` and each channel's `ffmpeg.stdout.log` and `ffmpeg.stderr.log`. The default GStreamer engine writes `gst-worker.*` logs instead, and `supervisor.log` and `control_plane-app.log` are not included at all. Add them by hand (steps 2 and 4).
+> **Known issue (beta.11):** The support bundle does not collect the logs most useful for a GStreamer station. It reads `%USERPROFILE%\.civiccast\runtime-host.log` and each channel's `ffmpeg.stdout.log` and `ffmpeg.stderr.log`, while the default GStreamer engine writes `gst-worker.*` logs. `supervisor.log` and `control_plane-app.log` are not included; add them by hand (steps 2 and 4).
 
-> **Note:** No dialog, log line or screen in beta.10 names a support address, phone number or issue tracker. Send your collection to whoever supplied the beta to you, or to the project's page on GitHub.
+> **Note:** Use **Report a beta issue** for the project issue tracker, or follow the no-GitHub option in [Chapter 8](#ch-something-wrong). Do not post a support bundle publicly; wait for a maintainer to request it through a private channel.
 
 ## Reference tables {#reference-tables-ch14}
 

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Resident portal frame: header, menu, report link (route: every page; `index.html` + `#/...`)
 
 Paths below are relative to `civiccast/apps/portal-public/`. Beta.10 facts only. Severity: High = resident is misled or stuck, Medium = confusing or hard to use, Low = polish.

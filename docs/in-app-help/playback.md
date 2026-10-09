@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Playback policy (nav id: playback)
 
 Console group: Publish. Spec for the in-app help of the Playback policy screen. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`; line numbers are in `screens/PlaybackPolicyScreen.tsx` unless stated.

@@ -102,8 +102,8 @@ export const COMPONENT_CATALOG: readonly CatalogComponent[] = [
   },
   {
     id: "captions_medium",
-    name: "Caption engine — Medium (recommended)",
-    purpose: "Live captions for meetings as they happen. This is the standard engine and always installs.",
+    name: "Caption engine — Medium (required)",
+    purpose: "Required Whisper model for caption fallback and recording transcription. Native live captions use Whistle as the CPU primary.",
     placeholderSizeBytes: Math.round(1.5 * GB),
     required: true,
     deliverable: true
@@ -111,7 +111,7 @@ export const COMPONENT_CATALOG: readonly CatalogComponent[] = [
   {
     id: "captions_large",
     name: "Caption engine — Large (optional)",
-    purpose: "A higher-quality caption engine. On a capable graphics card it captions live; otherwise it captions recordings after the meeting.",
+    purpose: "Optional larger Whisper model for caption fallback and recording transcription. Supported NVIDIA graphics can accelerate Whisper; Whistle remains the live-caption CPU primary.",
     placeholderSizeBytes: Math.round(3.1 * GB),
     required: false,
     // Enrolled in production_catalog() 2026-08-15 (owner ruling: a
@@ -130,9 +130,9 @@ export const COMPONENT_CATALOG: readonly CatalogComponent[] = [
   },
   {
     id: "cuda_runtime",
-    name: "GPU caption acceleration (optional)",
+    name: "Whisper GPU acceleration (optional)",
     purpose:
-      "Lets the caption engine run on this computer's graphics card instead of its processor, so it can caption more meetings live.",
+      "Lets Whisper use supported NVIDIA graphics acceleration for live captions. Whistle remains CPU-only.",
     placeholderSizeBytes: Math.round(1.3 * GB),
     required: false,
     // Enrolled in production_catalog() 2026-08-16 (owner ruling, same day as

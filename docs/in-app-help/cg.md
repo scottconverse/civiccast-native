@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # CG Board (nav id: cg)
 
 Console group: Run Meeting. Spec written against beta.10. Paths are under `civiccast/apps/portal-operator/src/screens/` unless they start with `civiccast/`. Authority: `docs/manual/src/13-running-meeting.md` ("Show community bulletins between programs (CG Board)") and `ops/docs-sprint/inventory/screens/cg.md`. Line numbers re-checked in `CgBoardScreen.tsx`.

@@ -1,3 +1,5 @@
+> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
+
 # Downloading / Setting Up (Tauri window "CivicCast (Native) Setup", first-run screen 3)
 
 Paths relative to `civiccast/apps/installer/`. AF = `src/AcquisitionFlow.tsx`; AP = `src/acquisition-progress.ts`; API = `src/api.ts`; main = `src-tauri/src/main.rs`.
