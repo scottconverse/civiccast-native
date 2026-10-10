@@ -468,13 +468,14 @@ jobs:
         # go stale again the way 1429 did without failing that test first.
         # 2026-10-09 CI collection audit: 1959 pure tests; that checkpoint's
         # 50-test-margin floor was 1909.
-        # 2026-10-10 Beta 12 closure cases: the current collection is 1968;
-        # preserve the same 50-test margin with a floor of 1918.
+        # 2026-10-10 Beta 12 closure cases plus runtime-closure trace coverage:
+        # the current pure collection is 1984; preserve the same 50-test
+        # margin with a floor of 1934.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1918 \
+            --floor 1934 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -618,14 +619,15 @@ jobs:
         # that test first.
         # 2026-10-09 CI collection audit: 2165 Windows non-integration tests;
         # that checkpoint's 50-test-margin floor was 2115.
-        # 2026-10-10 Beta 12 closure cases: the current Windows non-integration
-        # collection is 2176; preserve the same margin with a floor of 2126.
+        # 2026-10-10 Beta 12 closure cases plus runtime-closure trace coverage:
+        # the current Windows non-integration collection is 2192; preserve the
+        # same 50-test margin with a floor of 2142.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 2126 \
+            --floor 2142 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit
