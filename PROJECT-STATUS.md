@@ -35,6 +35,13 @@ the development overlay. They are useful runtime evidence for that overlay,
 not installation or capacity proof for the corrected release package. See
 [soak results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md).
 
+A separate 48-hour observation of one host running Beta 11 recorded 635
+discarded caption-input seconds over 518,400 nominal channel-seconds across
+three channels: 99.877507716% (99.88% rounded) logged input coverage. This is
+runtime evidence, not transcript-word accuracy or installer/Beta 12
+qualification. See the [48-hour host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md)
+and its [milestone snapshot](docs/ops/evidence/beta11-host-48-hour-milestone-2026-10-10.json).
+
 ## Beta 12 work
 
 The owner authorized unattended-operation hardening and completion of existing

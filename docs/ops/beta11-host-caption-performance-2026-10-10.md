@@ -1,5 +1,7 @@
 # HOST live-caption performance report — 2026-10-10
 
+This is the approximately 45-hour snapshot. The later 48-hour window and its 99.88% rounded logged-coverage calculation are documented in the [48-hour report](beta11-host-caption-performance-48-hour-2026-10-10.md).
+
 This report records the observed HOST CivicCast run under the owner-defined reporting standard in
 [S11](../spec/3.0/sections/S11-captions-loudness-eas-compliance.md) and master §5.
 

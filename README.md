@@ -9,6 +9,8 @@ download until Beta 12 has been built and verified.
 
 The October 8 documentation/help download revision (producer `400cff08`, signed build `37857705750`) passed a fresh CPU-only Windows Sandbox installation, a five-minute single-channel caption/output check, and installed Help verification. Its manual, contextual instructions, PDF and Word editions are reconciled with the software. The published tag remains unchanged; the verification record identifies the revised source and keeps earlier package and development-soak results separate. See [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) for results and limits.
 
+A separate October 8–10 Beta 11 host observation recorded **99.877507716% (99.88% rounded) live caption-input audio coverage** over 48 hours and three channels: 635 discarded seconds out of 518,400 nominal channel-seconds. Late captions count as successful; this log-derived coverage measure is not transcript word accuracy or package/Beta 12 qualification. See the [48-hour host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) and [raw milestone snapshot](docs/ops/evidence/beta11-host-48-hour-milestone-2026-10-10.json).
+
 `v1.0.0-beta.10` was published on 2026-10-02 and is now superseded. Its
 historical Gate A clean-install lane passed 10 of 10 criteria; its upgrade and
 download-only lanes were not run. See the

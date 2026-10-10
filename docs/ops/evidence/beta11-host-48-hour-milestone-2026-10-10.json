@@ -1,0 +1,73 @@
+{
+  "checked_local": "2026-10-10T14:15:20.8201002-06:00",
+  "checked_utc": "2026-10-10T20:15:20.8201002Z",
+  "milestone": "48 hours of main-service uptime",
+  "service_state": "Running",
+  "service_pid": 6208,
+  "service_started_local": "2026-10-08T14:14:47.2947100-06:00",
+  "service_elapsed_hours": 48.00931260838889,
+  "app_pid": 5388,
+  "app_started_local": "2026-10-08T14:14:55.8243590-06:00",
+  "health": {
+    "status": "healthy",
+    "version": "1.0.0-beta.11",
+    "schema": "current",
+    "schema_db_revision": "0087_retention_terms",
+    "schema_expected_head": "0087_retention_terms",
+    "mode": "normal"
+  },
+  "channels": [
+    {
+      "channel": "public",
+      "state": "on_air",
+      "title": "City Council Regular Session - September 8, 2026.mp4",
+      "caption_runtime": {
+        "backlog_segments": 1,
+        "channel_id": "public",
+        "max_backlog_segments": 2,
+        "state": "within-capacity",
+        "updated_at": "2026-10-10T14:14:57.421373-06:00"
+      },
+      "vtt_modified_utc": "2026-10-10T20:15:17.1894610Z",
+      "vtt_age_seconds": 3.63,
+      "playlist_modified_utc": "2026-10-10T20:15:20.8953918Z",
+      "playlist_age_seconds": -0.08
+    },
+    {
+      "channel": "government",
+      "state": "on_air",
+      "title": "Senior Citizens Advisory Board - May 2026.mp4",
+      "caption_runtime": {
+        "backlog_segments": 1,
+        "channel_id": "government",
+        "max_backlog_segments": 2,
+        "state": "within-capacity",
+        "updated_at": "2026-10-10T14:15:19.177262-06:00"
+      },
+      "vtt_modified_utc": "2026-10-10T20:15:19.1763894Z",
+      "vtt_age_seconds": 1.64,
+      "playlist_modified_utc": "2026-10-10T20:15:20.6128802Z",
+      "playlist_age_seconds": 0.21
+    },
+    {
+      "channel": "education",
+      "state": "on_air",
+      "title": "Longmont Weather Report - August 6, 2026 to August 13, 2026.mp4",
+      "caption_runtime": {
+        "backlog_segments": 1,
+        "channel_id": "education",
+        "max_backlog_segments": 2,
+        "state": "within-capacity",
+        "updated_at": "2026-10-10T14:15:07.513451-06:00"
+      },
+      "vtt_modified_utc": "2026-10-10T20:15:17.6220231Z",
+      "vtt_age_seconds": 3.2,
+      "playlist_modified_utc": "2026-10-10T20:15:19.7551732Z",
+      "playlist_age_seconds": 1.06
+    }
+  ],
+  "free_ram_gib": 5.34,
+  "free_disk_gib": 232.32,
+  "host_modified": false,
+  "caption_coverage_percentage_measured_by_this_snapshot": null
+}

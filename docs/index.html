@@ -247,7 +247,7 @@
   <div class="wrap">
     <p class="eyebrow">Evidence and limits</p>
     <h2>What has been measured, and what has not.</h2>
-    <p class="lede">The table separates historical Beta 10 measurements from a later dev7 development soak. Neither is a qualification result for the October 8 Beta 11 installer; see its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">verification record</a> for the exact package scope.</p>
+    <p class="lede">The table separates historical Beta 10 measurements, a dev7 development soak and a later Beta 11 host-runtime observation. The host caption figure is log-derived runtime evidence, not a qualification result for the October 8 installer or Beta 12; see the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md">Beta 11 verification record</a> for package scope.</p>
     <div class="ev-grid">
       <div>
         <table class="ev-table">
@@ -259,9 +259,10 @@
             <tr><td>Loudness windows in range</td><td>16 of 16</td><td>Earlier Beta 10-era build, 8 hours</td></tr>
             <tr><td>Longest run, 2 channels</td><td>About 59 hours, no restart</td><td>Earlier build</td></tr>
             <tr><td>Caption soak, 36 hours, three channels</td><td>102 eligible checkpoints; 306 sampled channel checks</td><td>Earlier dev7 overlay on one development station, not the installer</td></tr>
+            <tr><td>Live caption-input coverage, 48 hours, three channels</td><td>99.877507716% (99.88% rounded); 635 / 518,400 nominal channel-seconds discarded</td><td>One Beta 11 host runtime; logged input coverage, not transcript accuracy or package qualification</td></tr>
           </tbody>
         </table>
-        <p class="fine" style="margin-top:1rem">The Beta 10 figures come from the project's own lab runs. Their full record is in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">Beta 10 verification file</a>. The separate <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md">36-hour dev7 soak report</a> records its exclusions and limits; it was development-station evidence, not a test of the October 8 installer.</p>
+        <p class="fine" style="margin-top:1rem">The Beta 10 figures come from the project's own lab runs. Their full record is in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.10-verification.md">Beta 10 verification file</a>. The separate <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md">36-hour dev7 soak report</a> records its exclusions and limits; it was development-station evidence, not a test of the October 8 installer. The <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md">48-hour host report</a> defines the logged coverage figure and its limits.</p>
       </div>
       <aside class="limits" aria-labelledby="limits-h">
         <h3 id="limits-h">Known limits of beta.10</h3>

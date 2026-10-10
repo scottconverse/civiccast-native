@@ -30,6 +30,10 @@ approval/export, administrator and Control Room recovery, remote media controls,
 alert routing and presentation, paywall settings, hardware operation, and
 documentation consistency. It is not yet released.
 
+The separate Beta 11 host observation recorded 99.877507716% (99.88% rounded)
+logged live caption-input coverage over 48 hours and three channels. This is
+not Beta 12 or installer qualification; see the [48-hour host report](ops/beta11-host-caption-performance-48-hour-2026-10-10.md).
+
 The longer-term plan below is retained as historical context. Its capability
 claims and old-platform evidence do not establish current native Windows
 package acceptance. See [project status](../PROJECT-STATUS.md) and the release

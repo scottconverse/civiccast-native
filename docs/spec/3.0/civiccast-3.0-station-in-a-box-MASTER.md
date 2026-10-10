@@ -276,8 +276,9 @@ transcript word accuracy.
 Neither falling below 98%, an observed gap, nor a demand for zero loss is an automatic caption
 release blocker. Consult Scott before treating any caption-performance result as a blocker. Scott
 decides whether to release, including when a result falls below 98%. The observed HOST run is
-recorded in `docs/ops/beta11-host-caption-performance-2026-10-10.md`; S11 defines its proof and
-reporting behavior.
+recorded in the approximately 45-hour snapshot `docs/ops/beta11-host-caption-performance-2026-10-10.md`
+and its 48-hour extension `docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md`; S11
+defines proof and reporting behavior.
 
 ---
 
