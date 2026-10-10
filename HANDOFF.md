@@ -1,4 +1,16 @@
-# Current continuation state - 2026-10-09 Beta 12
+# Current continuation state - 2026-10-10 Beta 12
+
+This section supersedes every older status entry below.
+
+- The full twelve-item Beta 12 implementation/build/release goal is active. Branch `codex/beta12-reliability`, draft [PR #236](https://github.com/scottconverse/civiccast-native/pull/236). Beta 11 remains published; Beta 12 is unpublished.
+- This integrated follow-up to `c6f0864becfb93444853c754cfc50f4226267209` adds lazy Whisper backup startup, due prearmed-recording starts and cancellation on schedule disable, canonical-sample-only local preflight, and truthful station-index/six-pack publication evidence. Sensitive regressions, affected checks and independent reviews are recorded in [Beta 12 verification](docs/releases/v1.0.0-beta.12-verification.md).
+- The c6 signed diagnostic producer `38031718156` succeeded and its 19-member kit was checked. Required c6 source checks passed; informational mutation was cancelled. That kit predates these follow-ups. Build one combined candidate and use the retained offline CPU-only guest's prepared Beta 11 baseline for upgrade/repair and preservation evidence. Do not recreate the baseline or claim historical F93 checks qualify the new package.
+- Manual chapters, in-app Help, Markdown, PDF, Word and the in-app manual are synchronized. Tracked-download, renderer currentness and release-identity checks passed for Beta 12.
+- The MSI i7/16GB/RTX4050 6GB Beta 11 field report arrived. Its fallback startup issue is addressed by lazy backup initialization; its short GPU decode and later three-channel captions are not a formal sustained soak. Scott cancelled the Ryzen/R7 report: none will arrive, and it is not a release requirement.
+- Caption percentages are reporting references only. Scott decides release acceptability even below 98%; consult him BEFORE treating caption performance as a release blocker. Accurate late captions count as successful. The separate host-run report records approximately 99.87% by discarded-input coverage, not transcript word accuracy.
+- Leave the running host station, credentials, models, GPU and settings untouched. Preserve untracked `ops/beta10-oversight/evidence/`. Detailed working state: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\beta11-documentation-sync\CURRENT-HANDOFF.md`.
+
+## Historical October 9 development checkpoint
 
 This section supersedes every older status entry below.
 

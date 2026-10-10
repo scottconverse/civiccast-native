@@ -349,7 +349,6 @@ class WhistleRuntime:
             self._guard.release()
 
     def prepare(self) -> None:
-        self._fallback_worker()
         for path, digest in ((self.weights, WEIGHTS_SHA256), (self.library, LIBRARY_SHA256)):
             if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
                 self._primary_error = f"Pinned Whistle asset missing or changed: {path}"

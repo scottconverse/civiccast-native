@@ -20,8 +20,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 import scripts.release.publish_beta_candidate as m
+from civiccast.installer.native_distribution import (
+    STATION_REQUIRED_COMPONENTS,
+    build_distribution_index,
+    verify_station_media,
+)
 from scripts.release.candidate_manual import (
     DOCX_FILENAME,
     MANIFEST_FILENAME,
@@ -332,16 +338,32 @@ def _write_direct_kit(
         (packs_dir / f"{name}.ccpack").write_bytes(name.encode())
     station_dir = kit_dir / "station"
     station_dir.mkdir()
-    for name in (
-        "captions-floor",
-        "captions-whistle",
-        "core",
-        "summary-gemma4-12b",
-        "summary-gemma4-e4b",
-        "translation-translategemma-4b",
-    ):
-        (station_dir / f"{name}.ccpack").write_bytes(name.encode())
-    (station_dir / "station-index.json").write_text("{}\n", encoding="utf-8")
+    station_packs = {name: station_dir / f"{name}.ccpack" for name in STATION_REQUIRED_COMPONENTS}
+    for name, path in station_packs.items():
+        path.write_bytes(name.encode())
+    station_index_path = station_dir / "station-index.json"
+    station_key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    station_key_id = "civiccast-production-test-key"
+    build_distribution_index(
+        output=station_index_path,
+        kind="station-index",
+        channel="beta",
+        product_version=candidate_version,
+        compatible_core=candidate_version,
+        packs=station_packs,
+        urls={component: [] for component in station_packs},
+        signing_private_key=station_key,
+        signing_key_id=station_key_id,
+        created_epoch=1_700_000_000,
+    )
+    verified_station_index = verify_station_media(
+        station_index_path,
+        public_key=station_key.public_key(),
+        expected_channel="beta",
+        expected_product_version=candidate_version,
+        expected_compatible_core=candidate_version,
+        expected_signing_key_id=station_key_id,
+    )
     (station_dir / "SHA256SUMS.txt").write_text("fixture\n", encoding="utf-8")
     manual_dir = kit_dir / "manual"
     manual_dir.mkdir()
@@ -402,10 +424,10 @@ def _write_direct_kit(
             "station_folder_present": True,
         },
         "station_index": {
-            "sha256": m.sha256_file(station_dir / "station-index.json"),
-            "signing_key_id": "civiccast-production-test-key",
-            "pack_count": 6,
-            "verified_against": 6,
+            "sha256": verified_station_index.sha256,
+            "signing_key_id": verified_station_index.signing_key_id,
+            "pack_count": len(verified_station_index.packs),
+            "verified_against": len(verified_station_index.packs),
             "signature_verification": (
                 {
                     "consumer_activation_verification": "pending exact signed host refresh and activation."
@@ -417,8 +439,8 @@ def _write_direct_kit(
                         "status": "passed",
                         "workflow_run_id": build_run_id,
                         "job_id": "114115463120",
-                        "step_name": "Verify the compiled bootstrap trusts the freshly signed packs",
-                        "method": "compiled candidate bootstrap trust verification",
+                        "step_name": "Local station-index and adjacent-pack verification",
+                        "method": "local canonical Ed25519 verification and exact six-pack size/SHA-256 comparison",
                     }
                     if sandbox_contract in {"beta12", "beta12-separate"}
                     else {
@@ -1328,6 +1350,29 @@ def test_beta12_direct_receipt_verifies_real_interrupted_upgrade_contract(tmp_pa
         "preservation": "PASS",
         "runtime": "PASS (five minutes, three channels)",
     }
+
+
+def test_beta12_station_signature_record_rejects_compiled_bootstrap_only_claim(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assembly_ref = receipt["artifact"]["assembly_receipt"]
+    assembly_path = Path(assembly_ref["path"])
+    assembly = json.loads(assembly_path.read_text(encoding="utf-8"))
+    assembly["station_index"]["signature_verification"]["method"] = (
+        "compiled candidate bootstrap trust verification"
+    )
+    assembly_ref.update(_write_bound_json(assembly_path, assembly))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(m.PublishError, match="passed signed six-pack index"):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
 
 
 def test_beta12_direct_receipt_verifies_separate_upgrade_and_d4_repair_contract(tmp_path):

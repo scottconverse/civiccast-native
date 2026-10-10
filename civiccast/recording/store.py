@@ -102,10 +102,11 @@ def _now() -> datetime:
 
 # Allowed state transitions. The forward path is
 # scheduled → arming → recording → finalizing → done. Terminal branches
-# are failed (from any active state) and skipped (only from scheduled).
+# are failed (from any active state) and skipped (from scheduled or
+# arming, when a schedule is disabled before capture starts).
 _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "scheduled": frozenset({"arming", "skipped", "failed"}),
-    "arming": frozenset({"recording", "failed"}),
+    "arming": frozenset({"recording", "skipped", "failed"}),
     "recording": frozenset({"finalizing", "failed"}),
     "finalizing": frozenset({"done", "failed"}),
     "done": frozenset(),

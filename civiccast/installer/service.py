@@ -2445,10 +2445,19 @@ def create_source_from_setup(
 _SAMPLE_REHEARSAL_SOURCE_ID = "civiccast-sample-test-source"
 _SAMPLE_REHEARSAL_SOURCE_ENDPOINT = "rtmp://127.0.0.1/live/civiccast-sample-rehearsal"
 
-# Public alias: civiccast.app wires ``build_sample_rehearsal_source_probe``
-# below into the real pre-flight evaluator (bug B1) and needs to recognize
-# this id from outside this module without importing a private name.
+# Public alias used by source setup callers and tests.
 SAMPLE_REHEARSAL_SOURCE_ID = _SAMPLE_REHEARSAL_SOURCE_ID
+
+
+def is_sample_rehearsal_source(source: Any) -> bool:
+    """Recognize only the unchanged bundled sample configuration."""
+    return (
+        getattr(source, "live_source_id", None) == _SAMPLE_REHEARSAL_SOURCE_ID
+        and getattr(source, "channel_id", None) == "government"
+        and getattr(source, "source_type", None) == "rtmp"
+        and getattr(source, "endpoint_url", None) == _SAMPLE_REHEARSAL_SOURCE_ENDPOINT
+        and getattr(source, "credentials_handle", None) is None
+    )
 
 
 def create_sample_rehearsal_upload(
@@ -2587,7 +2596,7 @@ def _probe_sample_rehearsal_media(
     asset_id: str,
     file_path: Path,
 ) -> tuple[bool, str | None]:
-    if getattr(source, "live_source_id", None) != _SAMPLE_REHEARSAL_SOURCE_ID:
+    if not is_sample_rehearsal_source(source):
         return False, "The selected source does not match the validated rehearsal sample."
     try:
         validate_ingest(run_ffprobe(file_path))
@@ -2616,15 +2625,16 @@ def build_sample_rehearsal_source_probe() -> Callable[[Any], tuple[bool, str | N
     private rehearsal already runs (``_probe_sample_rehearsal_media``) so
     ANY caller of the production pre-flight evaluator -- not just the
     installer's internal ``/rehearsal`` flow -- gets an honest, file-backed
-    answer for this one recognized source id. Zero network hop, zero
+    answer for the unchanged bundled sample configuration. Zero network hop, zero
     dependency on any ingest engine having started first. Every other
     source still goes through the real network probe;
     ``civiccast.app._resolve_preflight_evaluator`` only routes to this
-    probe when the selected source is the one CivicCast itself created.
+    probe when the selected source retains its original ID, channel, type,
+    placeholder endpoint and absent credentials. Edited sources use the network probe.
     """
 
     def _probe(source: Any) -> tuple[bool, str | None]:
-        if getattr(source, "live_source_id", None) != _SAMPLE_REHEARSAL_SOURCE_ID:
+        if not is_sample_rehearsal_source(source):
             return False, "This probe only validates CivicCast's bundled sample-rehearsal source."
         upload_dir_raw = os.environ.get("CIVICCAST_UPLOAD_DIR")
         if not upload_dir_raw:

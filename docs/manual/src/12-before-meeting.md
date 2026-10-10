@@ -346,6 +346,10 @@ By default, CivicCast adds a row for each planned capture to the **Recordings** 
 
 These labels appear in lower case on the screen.
 
+In beta.12, a job prepared ahead of time remains in `arming` until its planned start. The scheduler checks it again on later passes, moves it into `recording` when due, and finishes it at the planned end. A scheduled job should not remain in `arming` throughout its recording window.
+
+If you disable the schedule before capture starts, both scheduled and prearmed jobs become `skipped`; CivicCast also stops a prearmed capture process. Disabling the schedule leaves a recording that has already started running. Use **Stop** on that recording if you want to finish it early.
+
 ### Start a recording now
 
 **Record now** starts a capture from a saved schedule right away. There is no one-off capture without a schedule, so create a schedule first.

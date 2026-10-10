@@ -94,6 +94,8 @@ You should see the source's tag change to **Delivering** and text such as "Check
 
 > **Known issue (beta.11):** setup, or **Check broadcast readiness** on the Readiness screen, can add a source called "CivicCast sample test source" on the channel `government`. In the code we read, the **Run pre-flight** "Live source" row passes for that source by checking CivicCast's own sample video file, not a camera, so a pre-flight with that source selected proves nothing about your room. For a real meeting, choose your own camera or encoder source. **Check source** still tests that source over the network, and the code's own comments say nothing listens at its address, so it is not expected to pass.
 
+In beta.12, only the unchanged bundled sample source uses its validated local sample video for rehearsal. After changing that source's channel, type, address or credentials, pre-flight checks the configured live source instead. An edited source cannot pass by reusing an unrelated sample file. For a meeting, select a source on the session's channel and make sure its fresh check passes.
+
 If a Setup admin needs to change a source's address, they click **Edit source**, change the fields and click **Save source**. CivicCast warns: "Saving this change clears what CivicCast knows about this source. You will need to choose Check source again before it can take air." That warning appears only after you change the address, the type or the stored credential. Anyone else sees "Editing a source needs the setup admin role. Ask your station admin to change the address or type."
 
 ## Run a live session
@@ -210,6 +212,8 @@ What "Keep this channel on air" really does, from the code we read:
 Live captions are a station setting, not a control on the Live screen. On a new station, **Show live captions on air** is off. A Setup admin can enable it in **Station Profile**; see [Live captions: what the settings change](#live-captions-what-the-settings-change).
 
 Beta.11 uses Whistle on the CPU for live recognition and sends first-pass captions without waiting for a second recognition to agree. It serializes caption inference across channels on one station runtime to give playout priority. If Whistle fails or exceeds its 10-second request deadline, that channel uses Whisper until the live runtime restarts. Whisper is also used for recording transcription. NVIDIA CUDA is optional acceleration for Whisper, not a requirement for Whistle. Captions are best-effort and may have gaps under load.
+
+Beta.12 starts Whistle without loading the Whisper backup first. A backup that cannot load therefore does not prevent Whistle from starting. Whisper loads when a channel actually needs fallback; that first switch can take longer, and insufficient memory or a backup startup failure can still interrupt that channel's captions.
 
 When the switch is enabled, recognition resumes on the next worker scan, but the channel's caption route is added when the channel next starts. Stop and start each affected channel after enabling it. When switched off, recognition stops and queued audio drains on the next worker scan; the graph route is removed at the next channel start. The switch does not affect captions created later for recordings. For overload and fallback recovery steps, see [Captions late or missing](#captions-late-or-missing).
 

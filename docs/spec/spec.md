@@ -1,5 +1,13 @@
 # CivicCast — Unified Specification
 
+> **Current live-caption acceptance — owner decision, 2026-10-10:** the
+> [canonical S11 caption standard](3.0/sections/S11-captions-loudness-eas-compliance.md)
+> supersedes this historical document's caption gap, regression, and automatic
+> release-blocking requirements. The 99% and 98% benchmarks are reporting
+> references, not release minimums. Scott decides acceptability, including below
+> 98%; an agent must consult him before treating caption performance as a release
+> blocker. Accurate late captions are accepted.
+
 **Version:** 2.0 release specification (HISTORICAL -- pre-reset; superseded by the 2026-07-06 version reset)
 **Status:** Historical. Superseded by the current release line (now v1.0.0-rc18) and by the current spec at `docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md`. The v2.1.0 evidence this document cites predates the reset; see `docs/releases/archive/pre-reset/v2.1.0-scope-and-evidence.md`. Retained for historical reference only.
 **License:** Apache 2.0 (code) / CC BY 4.0 (documentation)

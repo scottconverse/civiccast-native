@@ -727,7 +727,8 @@ def verify_consumer_evidence_receipt(
             or signature_record.get("status") != "passed"
             or signature_record.get("conclusion") != "success"
             or str(signature_record.get("workflow_run_id")) != str(build_run_id)
-            or signature_record.get("method") != "compiled candidate bootstrap trust verification"
+            or signature_record.get("method")
+            != "local canonical Ed25519 verification and exact six-pack size/SHA-256 comparison"
             or not isinstance(station_index_sha256, str)
             or not re.fullmatch(r"[0-9a-fA-F]{64}", station_index_sha256)
             or not isinstance(station_index.get("signing_key_id"), str)

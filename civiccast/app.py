@@ -2817,7 +2817,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # probe via `source_probe_override` (civiccast/installer/service.py);
         # this is the probe every other caller -- i.e. a real station -- gets.
         #
-        # B1 fix: route the one source id CivicCast itself creates (the
+        # B1 fix: route the unchanged source configuration CivicCast creates (the
         # bundled sample-rehearsal source) to the same validated-local-file
         # probe the installer's rehearsal already uses, instead of the real
         # network probe -- the sample's placeholder RTMP endpoint has no
@@ -2829,15 +2829,15 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # answers its own "not probed" questions instead of depending on a
         # caller (the operator UI) that never actually probed.
         from civiccast.installer.service import (
-            SAMPLE_REHEARSAL_SOURCE_ID,
             build_sample_rehearsal_source_probe,
+            is_sample_rehearsal_source,
         )
 
         network_source_probe = build_source_probe()
         sample_source_probe = build_sample_rehearsal_source_probe()
 
         def _live_source_probe(source: Any) -> tuple[bool, str | None]:
-            if getattr(source, "live_source_id", None) == SAMPLE_REHEARSAL_SOURCE_ID:
+            if is_sample_rehearsal_source(source):
                 return sample_source_probe(source)
             return network_source_probe(source)
 

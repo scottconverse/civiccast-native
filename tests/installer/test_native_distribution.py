@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from pathlib import Path
 
@@ -12,8 +13,10 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from civiccast.installer.native_distribution import (
     REQUIRED_COMPONENTS,
+    STATION_REQUIRED_COMPONENTS,
     NativeDistributionError,
     build_distribution_index,
+    canonical_json,
     verify_distribution_index,
     verify_station_media,
 )
@@ -29,6 +32,15 @@ def _key() -> Ed25519PrivateKey:
 def _packs(root: Path) -> dict[str, Path]:
     packs: dict[str, Path] = {}
     for index, component in enumerate(REQUIRED_COMPONENTS, start=1):
+        pack = root / f"CivicCast-Native-{component}-{PRODUCT_VERSION}.ccpack"
+        pack.write_bytes((f"{component}\n".encode("ascii")) * index)
+        packs[component] = pack
+    return packs
+
+
+def _station_packs(root: Path) -> dict[str, Path]:
+    packs: dict[str, Path] = {}
+    for index, component in enumerate(STATION_REQUIRED_COMPONENTS, start=1):
         pack = root / f"CivicCast-Native-{component}-{PRODUCT_VERSION}.ccpack"
         pack.write_bytes((f"{component}\n".encode("ascii")) * index)
         packs[component] = pack
@@ -95,7 +107,7 @@ def test_station_index_has_no_network_locations_and_verifies_local_media(
     tmp_path: Path,
 ) -> None:
     key = _key()
-    packs = _packs(tmp_path)
+    packs = _station_packs(tmp_path)
     station = tmp_path / "CivicCast-Native-Station-Pack.ccstation"
 
     build_distribution_index(
@@ -105,7 +117,7 @@ def test_station_index_has_no_network_locations_and_verifies_local_media(
         product_version=PRODUCT_VERSION,
         compatible_core=PRODUCT_VERSION,
         packs=packs,
-        urls={component: [] for component in REQUIRED_COMPONENTS},
+        urls={component: [] for component in STATION_REQUIRED_COMPONENTS},
         signing_private_key=key,
         signing_key_id=KEY_ID,
         created_epoch=1_700_000_000,
@@ -119,8 +131,63 @@ def test_station_index_has_no_network_locations_and_verifies_local_media(
         expected_compatible_core=PRODUCT_VERSION,
         expected_signing_key_id=KEY_ID,
     )
-    assert tuple(pack.component for pack in result.packs) == REQUIRED_COMPONENTS
+    assert STATION_REQUIRED_COMPONENTS == (
+        "core",
+        "captions-floor",
+        "summary-gemma4-12b",
+        "summary-gemma4-e4b",
+        "translation-translategemma-4b",
+        "captions-whistle",
+    )
+    assert tuple(pack.component for pack in result.packs) == STATION_REQUIRED_COMPONENTS
     assert all(not pack.urls for pack in result.packs)
+
+
+@pytest.mark.parametrize("component", ("captions-floor", "captions-whistle"))
+def test_current_station_index_requires_floor_and_whistle(tmp_path: Path, component: str) -> None:
+    packs = _station_packs(tmp_path)
+    packs.pop(component)
+
+    with pytest.raises(
+        NativeDistributionError,
+        match=rf"required component set is incomplete: {component}",
+    ):
+        build_distribution_index(
+            output=tmp_path / "incomplete-station.ccindex",
+            kind="station-index",
+            channel="beta",
+            product_version=PRODUCT_VERSION,
+            compatible_core=PRODUCT_VERSION,
+            packs=packs,
+            urls={name: [] for name in packs},
+            signing_private_key=_key(),
+            signing_key_id=KEY_ID,
+            created_epoch=1_700_000_000,
+        )
+
+
+def test_current_station_index_rejects_a_tampered_signature(tmp_path: Path) -> None:
+    key = _key()
+    packs = _station_packs(tmp_path)
+    station = tmp_path / "tampered-station.ccindex"
+    build_distribution_index(
+        output=station,
+        kind="station-index",
+        channel="beta",
+        product_version=PRODUCT_VERSION,
+        compatible_core=PRODUCT_VERSION,
+        packs=packs,
+        urls={component: [] for component in STATION_REQUIRED_COMPONENTS},
+        signing_private_key=key,
+        signing_key_id=KEY_ID,
+        created_epoch=1_700_000_000,
+    )
+    envelope = json.loads(station.read_bytes())
+    envelope["signature"] = base64.b64encode(bytes(64)).decode("ascii")
+    station.write_bytes(canonical_json(envelope))
+
+    with pytest.raises(NativeDistributionError, match="signature"):
+        verify_station_media(station, public_key=key.public_key())
 
 
 def test_index_refuses_to_build_without_any_mandatory_component(tmp_path: Path) -> None:
@@ -222,8 +289,8 @@ def test_online_index_rejects_non_https_or_ambiguous_pack_locations(
 
 
 def test_station_index_rejects_any_network_location(tmp_path: Path) -> None:
-    packs = _packs(tmp_path)
-    urls = {component: [] for component in REQUIRED_COMPONENTS}
+    packs = _station_packs(tmp_path)
+    urls = {component: [] for component in STATION_REQUIRED_COMPONENTS}
     urls["core"] = ["https://downloads.civiccast.org/core.ccpack"]
 
     with pytest.raises(NativeDistributionError, match="must not contain network"):
@@ -275,7 +342,7 @@ def test_station_media_detects_missing_truncated_and_symlinked_pack(
     tmp_path: Path,
 ) -> None:
     key = _key()
-    packs = _packs(tmp_path)
+    packs = _station_packs(tmp_path)
     station = tmp_path / "station.ccstation"
     build_distribution_index(
         output=station,
@@ -284,7 +351,7 @@ def test_station_media_detects_missing_truncated_and_symlinked_pack(
         product_version=PRODUCT_VERSION,
         compatible_core=PRODUCT_VERSION,
         packs=packs,
-        urls={component: [] for component in REQUIRED_COMPONENTS},
+        urls={component: [] for component in STATION_REQUIRED_COMPONENTS},
         signing_private_key=key,
         signing_key_id=KEY_ID,
         created_epoch=1_700_000_000,
@@ -298,6 +365,10 @@ def test_station_media_detects_missing_truncated_and_symlinked_pack(
 
     core.write_bytes(original[:-1])
     with pytest.raises(NativeDistributionError, match=r"size|SHA-256"):
+        verify_station_media(station, public_key=key.public_key())
+
+    core.write_bytes(b"\x00" + original[1:])
+    with pytest.raises(NativeDistributionError, match="SHA-256 mismatch"):
         verify_station_media(station, public_key=key.public_key())
 
     core.unlink()

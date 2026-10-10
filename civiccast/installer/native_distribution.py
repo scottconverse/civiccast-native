@@ -40,7 +40,14 @@ REQUIRED_COMPONENTS = (
     "summary-gemma4-e4b",
     "translation-translategemma-4b",
 )
-_REQUIRED_COMPONENT_SET = frozenset(REQUIRED_COMPONENTS)
+STATION_REQUIRED_COMPONENTS = (
+    "core",
+    "captions-floor",
+    "summary-gemma4-12b",
+    "summary-gemma4-e4b",
+    "translation-translategemma-4b",
+    "captions-whistle",
+)
 _MAX_INDEX_BYTES = 4 * 1024 * 1024
 _ENVELOPE_FIELDS = {"manifest", "signature"}
 _MANIFEST_FIELDS = {
@@ -135,6 +142,7 @@ def build_distribution_index(
     signing_private_key: Ed25519PrivateKey,
     signing_key_id: str,
     created_epoch: int,
+    required_components: Sequence[str] | None = None,
 ) -> DistributionIndex:
     """Build and self-verify a deterministic signed distribution index."""
 
@@ -155,8 +163,11 @@ def build_distribution_index(
         raise NativeDistributionError("native distribution created_epoch is invalid")
     if not isinstance(packs, Mapping) or not packs:
         raise NativeDistributionError("native distribution has no component packs")
-    if set(packs) < _REQUIRED_COMPONENT_SET:
-        missing = sorted(_REQUIRED_COMPONENT_SET - set(packs))
+    required_components, required_component_set = _required_component_policy(
+        kind, required_components
+    )
+    if set(packs) < required_component_set:
+        missing = sorted(required_component_set - set(packs))
         raise NativeDistributionError(
             "native distribution required component set is incomplete: " + ", ".join(missing)
         )
@@ -167,7 +178,9 @@ def build_distribution_index(
 
     entries: list[dict[str, object]] = []
     seen_filenames: set[str] = set()
-    for raw_component in sorted(packs, key=_component_sort_key):
+    for raw_component in sorted(
+        packs, key=lambda component: _component_sort_key(component, required_components)
+    ):
         component = _require_component(raw_component)
         pack = Path(packs[component]).expanduser()
         _require_regular_file(pack, label=f"{component} component pack")
@@ -189,7 +202,7 @@ def build_distribution_index(
                 "filename": filename,
                 "bytes": size,
                 "sha256": digest,
-                "required": component in _REQUIRED_COMPONENT_SET,
+                "required": component in required_component_set,
                 "urls": locations,
             }
         )
@@ -237,6 +250,7 @@ def build_distribution_index(
             expected_product_version=product_version,
             expected_compatible_core=compatible_core,
             expected_signing_key_id=signing_key_id,
+            required_components=required_components,
         )
     finally:
         if temporary is not None:
@@ -252,6 +266,7 @@ def verify_distribution_index(
     expected_product_version: str | None = None,
     expected_compatible_core: str | None = None,
     expected_signing_key_id: str | None = None,
+    required_components: Sequence[str] | None = None,
 ) -> DistributionIndex:
     """Verify the signed index, all identities, and the complete pack set."""
 
@@ -287,6 +302,7 @@ def verify_distribution_index(
         expected_product_version=expected_product_version,
         expected_compatible_core=expected_compatible_core,
         expected_signing_key_id=expected_signing_key_id,
+        required_components=required_components,
     )
     return DistributionIndex(
         path=index_path,
@@ -309,6 +325,7 @@ def verify_station_media(
     expected_product_version: str | None = None,
     expected_compatible_core: str | None = None,
     expected_signing_key_id: str | None = None,
+    required_components: Sequence[str] = STATION_REQUIRED_COMPONENTS,
 ) -> DistributionIndex:
     """Verify an air-gapped index and every adjacent outer pack byte."""
 
@@ -320,6 +337,7 @@ def verify_station_media(
         expected_product_version=expected_product_version,
         expected_compatible_core=expected_compatible_core,
         expected_signing_key_id=expected_signing_key_id,
+        required_components=required_components,
     )
     root = result.path.parent.resolve(strict=True)
     for pack in result.packs:
@@ -346,6 +364,7 @@ def _validate_manifest(
     expected_product_version: str | None,
     expected_compatible_core: str | None,
     expected_signing_key_id: str | None,
+    required_components: Sequence[str] | None,
 ) -> dict[str, Any]:
     if not isinstance(manifest, dict) or set(manifest) != _MANIFEST_FIELDS:
         raise NativeDistributionError("native distribution manifest fields are invalid")
@@ -364,6 +383,9 @@ def _validate_manifest(
     kind = manifest["kind"]
     if kind not in DISTRIBUTION_KINDS:
         raise NativeDistributionError("native distribution kind is invalid")
+    required_components, required_component_set = _required_component_policy(
+        kind, required_components
+    )
     for field, expected in (
         ("kind", expected_kind),
         ("channel", expected_channel),
@@ -417,7 +439,7 @@ def _validate_manifest(
             raise NativeDistributionError(
                 f"native distribution required flag is invalid: {component}"
             )
-        if component in _REQUIRED_COMPONENT_SET and not required:
+        if component in required_component_set and not required:
             raise NativeDistributionError(
                 f"native distribution component must be required: {component}"
             )
@@ -433,13 +455,15 @@ def _validate_manifest(
             )
         )
 
-    missing = _REQUIRED_COMPONENT_SET - seen_components
+    missing = required_component_set - seen_components
     if missing:
         raise NativeDistributionError(
             "native distribution required component set is incomplete: "
             + ", ".join(sorted(missing))
         )
-    expected_order = sorted(seen_components, key=_component_sort_key)
+    expected_order = sorted(
+        seen_components, key=lambda component: _component_sort_key(component, required_components)
+    )
     if [pack.component for pack in packs] != expected_order:
         raise NativeDistributionError(
             "native distribution component entries are not in canonical order"
@@ -516,9 +540,28 @@ def _require_component(component: object) -> str:
     return component
 
 
-def _component_sort_key(component: str) -> tuple[int, int | str]:
+def _required_component_policy(
+    kind: str,
+    required_components: Sequence[str] | None,
+) -> tuple[tuple[str, ...], frozenset[str]]:
+    selected = tuple(
+        required_components
+        if required_components is not None
+        else (STATION_REQUIRED_COMPONENTS if kind == "station-index" else REQUIRED_COMPONENTS)
+    )
+    if not selected or len(set(selected)) != len(selected):
+        raise NativeDistributionError("native distribution required component policy is invalid")
+    for component in selected:
+        _require_component(component)
+    return selected, frozenset(selected)
+
+
+def _component_sort_key(
+    component: str,
+    required_components: Sequence[str] = REQUIRED_COMPONENTS,
+) -> tuple[int, int | str]:
     try:
-        return (0, REQUIRED_COMPONENTS.index(component))
+        return (0, required_components.index(component))
     except ValueError:
         return (1, component)
 
@@ -572,6 +615,7 @@ __all__ = [
     "DISTRIBUTION_PRODUCT",
     "DISTRIBUTION_SCHEMA_VERSION",
     "REQUIRED_COMPONENTS",
+    "STATION_REQUIRED_COMPONENTS",
     "DistributionIndex",
     "DistributionPack",
     "NativeDistributionError",

@@ -259,6 +259,26 @@ gated by the named dependency. **Hard public claim boundary preserved:** no app-
 hardware / legal-FCC / managed-service / live-device claims without separate rung-appropriate
 evidence.
 
+### Caption performance reporting and owner acceptance — October 10, 2026
+
+The CivicCast owner defines **99% successful live captioning** as the professional-level reporting
+benchmark and **98%** as the professional contractual reporting benchmark. These are the owner's
+benchmarks for CivicCast reports, not hard release minimums. The success metric is:
+
+`100 × (1 − discarded caption-input audio seconds ÷ total active channel-audio seconds)`
+
+Report each run's window and active-audio denominator by channel and in aggregate, along with
+discarded input seconds and the resulting percentage. Report failure and retry counts separately;
+retries of the same audio are attempts, not additional discarded audio seconds. Correct captions
+that arrive late count as successful coverage. This metric measures input-audio coverage, not
+transcript word accuracy.
+
+Neither falling below 98%, an observed gap, nor a demand for zero loss is an automatic caption
+release blocker. Consult Scott before treating any caption-performance result as a blocker. Scott
+decides whether to release, including when a result falls below 98%. The observed HOST run is
+recorded in `docs/ops/beta11-host-caption-performance-2026-10-10.md`; S11 defines its proof and
+reporting behavior.
+
 ---
 
 ## 6. Entity model (shared vocabulary)
@@ -488,6 +508,11 @@ UDP-TS profiles; failure scenarios (missing media, bad feed, failed live input, 
 drift, encoder crash, **unclean-restart relay reap**); Playwright walkthrough (installer, console,
 CG, force matrix, schedule commit, portal, OTT config, support bundle); `audit-lite` after fixes,
 full `audit-team`+`walkthrough` after major UI — **every audit reaches 0/0/0/0/0.**
+
+Caption performance is reported under §5 and S11. Caption percentages and loss observations are
+not hard release minimums; below-98% results, observed gaps, and zero-loss demands do not create an
+automatic release block. Consult Scott before treating caption performance as a blocker; release
+below 98% remains the owner's decision.
 
 **Station acceptance:** operator installs+commissions without terminal work; **runs the three PEG
 channels (public/education/government) concurrently to SDI**; schedules a day and commits to air;

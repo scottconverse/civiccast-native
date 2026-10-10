@@ -1,5 +1,13 @@
 # S11 — Captions (CEA-708), Per-Headend Loudness, and the EAS Software Layer
 
+> **Owner decision — October 10, 2026:** use the
+> [master's caption performance standard](../civiccast-3.0-station-in-a-box-MASTER.md#caption-performance-reporting-and-owner-acceptance--october-10-2026).
+> The 99% and 98% benchmarks are reporting references, not release minimums.
+> Scott decides whether to release, including below 98%; consult him before
+> treating caption performance as a blocker. Accurate late captions are accepted.
+> This supersedes earlier caption gap, percentage, and uninterrupted-soak release
+> requirements in this section and in historical specifications.
+
 > Status: **Built for v3.0.0-beta1; physical-headend proof remains external.**
 > Part of the CivicCast 3.0 layered spec set. Master:
 > `docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md`. This section owns master Gap 8
@@ -38,7 +46,8 @@ This section covers **three compliance subsystems** that share one honest-bounda
 ## 1. Goal & PEG automation rationale
 
 **Goal.** Make CivicCast's three "is-it-actually-correct-on-air" guarantees real and provable:
-(a) captions survive into the *emitted* stream and that fact is proven continuously while live;
+(a) captions reach the *emitted* stream and a live decode-back loop reports proof at the declared
+boundary; the soak records observed results, including interruptions and recovery;
 (b) audio loudness is normalized to the **correct standard for each output's destination** (cable
 vs. streaming have different legal/operational targets); (c) the station can ingest official
 public-safety alerts and put them on its own channel **as information**, while being scrupulously
@@ -370,7 +379,7 @@ Ladder per master §5 (0 Contract → 1 Lab → 2 Machine → 3 SDI → 4 Headen
 
 | Subsystem | Current rung (today) | Target after S11 | How to advance |
 |---|---|---|---|
-| (a) CEA-708 captions | **Partial / rung 0** — enum-declared, decode-proof CLI-only, `caption_status` always `not-verified` live | **Rung 1 (Lab)** then **rung 2 (Machine)** via soak | Implement embedder → run live decode loop against loopback/file emitted stream at `proof_boundary = egress-caption-embed-to-emitted-stream-decode-back` → soak proves it stays `on` unattended. Rung 3/4 (real DeckLink/headend caption survival) ride S1/S2 hardware. |
+| (a) CEA-708 captions | **Partial / rung 0** — enum-declared, decode-proof CLI-only, `caption_status` always `not-verified` live | **Rung 1 (Lab)** then **rung 2 (Machine)** via observed run evidence | Implement embedder → run live decode loop against loopback/file emitted stream at `proof_boundary = egress-caption-embed-to-emitted-stream-decode-back` → soak reports observed proof/status results and caption-input coverage, including interruptions and recovery. No uninterrupted-`on` soak requirement or numeric release minimum applies; see master §5. Rung 3/4 (real DeckLink/headend caption survival) ride S1/S2 hardware. |
 | (b) Per-sink loudness | **Rung 1 (Lab)** for −16 LUFS at conform | **Rung 1** for −24 LKFS path; **rung 2** via soak | Add regime, conform to −24 LKFS, measure emitted asset back to target within tolerance at a declared boundary; cable-correctness confirmed against a real headend = rung 4 (S2). |
 | (c) EAS display | **Net-new / rung 0** | **Rung 1 (Lab)** + **rung 2 (Machine)** | Ingest a CAP fixture (and a live IPAWS/NWS sample) → display through the existing overlay path → soak proves poll-loop survives unattended; SAME burst proven only as locally-generated audio at rung 1. |
 
@@ -415,9 +424,14 @@ Ladder per master §5 (0 Contract → 1 Lab → 2 Machine → 3 SDI → 4 Headen
 - (c) Feed a CAP fixture through ingest → confirm `EmergencyOverlay`/CG alert zone populated and the
   overlay egress proof READY; clear on expiry.
 
-**Machine (rung 2) — folds into the global soak (master §12):** caption_status stays `"on"`
-unattended on a captioned channel across midnight/reboot; EAS poll loop survives reboot and
-de-dups across restart; per-sink loudness target persists.
+**Machine (rung 2) — folds into the global soak (master §12):** record observed caption proof and
+`caption_status` results across the run, including any interruptions and recovery. Calculate
+successful caption-input coverage per channel and in aggregate using the active-audio denominators
+and discarded-input seconds defined in master §5; report failure and retry counts separately.
+Correct late captions count as successful coverage. This is performance reporting, not an
+uninterrupted-`on` requirement or a hard percentage floor; consult Scott before treating any
+caption-performance result as a blocker. The EAS poll loop still survives reboot and de-dups across
+restart; the per-sink loudness target persists.
 
 **Playwright walkthrough (master §12):** `EasScreen` (sources CRUD, display/clear, posture banner
 present and non-dismissible), caption-mode selector + proof drawer on `ChannelOpsScreen`, loudness
@@ -454,7 +468,9 @@ non-dismissible EAS posture banner.
 - [ ] Every alert/overlay artifact stamps `eas_claim="not_eas"`; the **non-dismissible EAS posture
       banner** is present; the honesty-guard test passes (zero overclaim strings).
 - [ ] Rung honesty: captions/loudness/EAS each tagged at their proven rung (master §5); no claim
-      above its proof; soak proves the live caption_status + EAS poll loop unattended.
+      above its proof; soak records live caption proof/status results and measured input coverage,
+      plus EAS poll-loop survival unattended. Caption performance is reported under master §5 and
+      is not an automatic release blocker.
 - [ ] Tests green at every tier; **0/0/0/0/0** on `/audit-lite` and the stage-completion
       `/walkthrough` + `/audit-team`.
 

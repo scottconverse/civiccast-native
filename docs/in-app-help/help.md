@@ -1,5 +1,19 @@
 # Contextual help and instruction inventory — Beta 11 source snapshot
 
+## Beta 12 follow-up — October 10, 2026
+
+The bundled manual now explains that Whistle starts independently of the Whisper
+backup, which loads only when fallback is needed. It also explains that a
+scheduled recording prepared early stays in `arming` until a later scheduler
+pass starts it when due. Disabling the schedule before capture starts skips
+prearmed jobs and stops their capture processes; an already recording job
+continues until its planned end or the operator presses Stop. The source audit below remains the dated Beta 11
+snapshot; these additions describe the Beta 12 changes.
+
+Live pre-flight uses the local rehearsal video only for the unchanged bundled
+sample source. Editing its channel, type, address or credentials switches the
+check to the configured live source; the sample file cannot stand in for it.
+
 Audited 2026-10-08 against the Beta.11 manual source and application code. This is a dated source audit, not a release-status statement; check the [project releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication and download status. [README.md](README.md) and its linked per-screen sheets are explicitly labeled historical beta.10 audit records.
 
 ## Source coverage
