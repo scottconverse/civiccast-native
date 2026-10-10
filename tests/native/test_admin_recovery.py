@@ -146,6 +146,7 @@ def test_reset_preserves_data_and_revokes_credentials(station, legacy):
     assert station_state.verify_station_operator_token(logged_in.operator_console_token) is not None
 
 
+@pytest.mark.windows_only
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL semantics")
 def test_restrict_state_file_maps_explicit_owner_rights_to_verified_owner(tmp_path):
     import ntsecuritycon
@@ -384,6 +385,7 @@ def test_acl_failure_writes_no_credentials_and_preserves_original(monkeypatch, s
     assert list(path.parent.iterdir()) == [path]
 
 
+@pytest.mark.windows_only
 @pytest.mark.skipif(sys.platform != "win32", reason="Real isolated Windows mutex")
 def test_offline_guard_excludes_another_windows_process_owner(monkeypatch, tmp_path):
     from concurrent.futures import ThreadPoolExecutor
