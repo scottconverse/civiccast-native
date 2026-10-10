@@ -377,7 +377,12 @@ class ContributionService:
         return self._store.save_session(guest.model_copy(update={"state": "muted"}))
 
     def take_off_air(self, session_id: str) -> RemoteGuestSession:
-        """Pull a guest off-air back to the admitted/connected pool."""
+        """Mark the guest record connected after an operator's off-air action.
+
+        This changes only CivicCast's session record. It does not send VDO.Ninja
+        media controls, disconnect the guest, or change the channel source or
+        schedule.
+        """
         guest = self._require_active_guest(session_id)
         if guest.state not in ("on_air", "muted"):
             raise InvalidGuestTransitionError(
@@ -386,10 +391,12 @@ class ContributionService:
         return self._store.save_session(guest.model_copy(update={"state": "connected"}))
 
     def drop_guest(self, session_id: str) -> RemoteGuestSession:
-        """Drop a guest from the room (terminal). Never takes the channel
-        off-air — the engine swaps back to program/filler (S17 §6). Dropping a
-        guest who was on-air raises an S8 alert so other staff see the on-air
-        change (the operator-visible alert the spec §6/§9 calls for)."""
+        """Mark a guest session dropped (terminal) and alert if it was on-air.
+
+        This updates CivicCast's session record; it does not disconnect the
+        VDO.Ninja guest, change guest media, or change the channel source or
+        schedule.
+        """
         guest = self._require_active_guest(session_id)
         was_on_air = guest.state in ("on_air", "muted")
         dropped = guest.model_copy(update={"state": "dropped", "ended_at": self._clock()})

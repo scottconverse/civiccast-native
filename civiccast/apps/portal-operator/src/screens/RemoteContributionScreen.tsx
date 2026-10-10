@@ -59,6 +59,19 @@ const OPERATE_ROLES = ['meeting_operator']
 const CREATE_ROLES = ['setup_admin']
 const DIAG_ROLES = ['support_admin']
 
+type GuestControlTarget = {
+  director: Pick<Window, 'postMessage'>
+  targetOrigin: string
+  streamId: string
+}
+
+type GuestControlAttempt = {
+  action: ContributionMediaControlAction
+  posted: boolean
+  recorded: boolean
+  error?: string
+}
+
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? fallback
   if (error instanceof Error) return error.message
@@ -280,31 +293,111 @@ export function RemoteContributionScreen() {
     onSuccess: () => setMediaControlNotice('Channel takeover started for its configured live source. This does not route a contribution guest into the channel.'),
   })
 
-  const requestGuestControl = async (sessionId: string, action: ContributionMediaControlAction) => {
-    setMediaControlPending(true)
+  const resolveGuestControlTarget = (sessionId: string): GuestControlTarget => {
+    const director = directorFrameRef.current?.contentWindow
+    if (!openResult?.director_url || !director || !directorReady) {
+      throw new Error('Open the room director before sending a guest media control.')
+    }
+    const session = detail?.sessions.find((item) => item.session_id === sessionId)
+    const invite = session && detail?.invites.find((item) => item.invite_id === session.invite_id)
+    if (!invite?.invite_token) throw new Error('Could not resolve this guest’s VDO.Ninja stream id.')
+    return {
+      director,
+      targetOrigin: new URL(openResult.director_url).origin,
+      streamId: invite.invite_token,
+    }
+  }
+
+  const attemptGuestControl = async (
+    sessionId: string,
+    target: GuestControlTarget,
+    action: ContributionMediaControlAction,
+  ): Promise<GuestControlAttempt> => {
     try {
-      const director = directorFrameRef.current?.contentWindow
-      if (!openResult?.director_url || !director || !directorReady) {
-        throw new Error('Open the room director before sending a guest media control.')
-      }
-      const session = detail?.sessions.find((item) => item.session_id === sessionId)
-      const invite = session && detail?.invites.find((item) => item.invite_id === session.invite_id)
-      if (!invite?.invite_token) throw new Error('Could not resolve this guest’s VDO.Ninja stream id.')
-      sendVdoDirectorControl(director, new URL(openResult.director_url).origin, invite.invite_token, action)
+      sendVdoDirectorControl(target.director, target.targetOrigin, target.streamId, action)
+    } catch (error) {
+      return { action, posted: false, recorded: false, error: apiMessage(error, 'send failed') }
+    }
+    try {
+      await recordContributionMediaControlRequest(sessionId, action)
+      return { action, posted: true, recorded: true }
+    } catch (error) {
+      return { action, posted: true, recorded: false, error: apiMessage(error, 'save failed') }
+    }
+  }
+
+  const requestGuestControls = async (
+    sessionId: string,
+    actions: ContributionMediaControlAction[],
+    offAirGuestName?: string,
+  ) => {
+    setMediaControlPending(true)
+    setMediaControlNotice(null)
+    try {
+      let target: GuestControlTarget
       try {
-        await recordContributionMediaControlRequest(sessionId, action)
+        target = resolveGuestControlTarget(sessionId)
       } catch (error) {
-        throw new Error(
-          `The command was sent to VDO.Ninja, but CivicCast could not save its unverified request: ${apiMessage(error, 'save failed')}`,
-          { cause: error },
+        const reason = apiMessage(error, 'The director control request could not be sent.')
+        setMediaControlNotice(
+          offAirGuestName
+            ? `Off-air requests for ${offAirGuestName} were not sent: ${reason} ${offAirGuestName} remains connected in the room; this does not return the channel to its schedule.`
+            : reason,
         )
+        return
       }
-      setMediaControlNotice(`${action.replaceAll('_', ' ')} command sent to the VDO.Ninja director; the provider did not acknowledge it. Check guest media in the director and compositor.`)
-      invalidate()
+
+      const attempts: GuestControlAttempt[] = []
+      for (const action of actions) {
+        attempts.push(await attemptGuestControl(sessionId, target, action))
+      }
+
+      const postedCount = attempts.filter((attempt) => attempt.posted).length
+      const recordedCount = attempts.filter((attempt) => attempt.recorded).length
+      const allRecorded = recordedCount === attempts.length
+      const actionLabels: Record<ContributionMediaControlAction, string> = {
+        audio_mute: 'audio mute',
+        audio_unmute: 'audio restore',
+        video_mute: 'camera mute',
+        video_unmute: 'camera restore',
+        disconnect: 'disconnect',
+      }
+      const attemptDescriptions = attempts.map((attempt) => {
+        const label = actionLabels[attempt.action]
+        if (!attempt.posted) return `${label} request was not sent${attempt.error ? ` (${attempt.error})` : ''}`
+        if (!attempt.recorded) return `${label} request was sent but could not be recorded${attempt.error ? ` (${attempt.error})` : ''}`
+        return `${label} request was sent and recorded as sent, not verified`
+      })
+      const lead = offAirGuestName
+        ? allRecorded
+          ? `Off-air requests for ${offAirGuestName}`
+          : postedCount > 0
+            ? `Off-air request pair for ${offAirGuestName} was partial`
+            : `Off-air requests for ${offAirGuestName} were not sent`
+        : 'Guest media control result'
+      const acknowledgement = postedCount > 0
+        ? offAirGuestName && postedCount === attempts.length
+          ? 'VDO.Ninja did not acknowledge either request, so their media effects are unverified.'
+          : `VDO.Ninja did not acknowledge ${offAirGuestName ? 'the sent request' : 'the request'}, so its media effect is unverified.`
+        : 'No provider acknowledgment is available because no request was sent.'
+      const latestRecorded = [...attempts].reverse().find((attempt) => attempt.recorded)
+      const latestRecord = offAirGuestName && latestRecorded
+        ? ` The guest record stores only the latest recorded request (${actionLabels[latestRecorded.action]}).`
+        : ''
+      const connection = offAirGuestName
+        ? ` ${offAirGuestName} remains connected in the room; this does not return the channel to its schedule.`
+        : ''
+      setMediaControlNotice(`${lead}: ${attemptDescriptions.join('; ')}. ${acknowledgement}${latestRecord}${connection} Check guest media in the director and compositor.`)
+      if (recordedCount > 0) invalidate()
+    } catch (error) {
+      setMediaControlNotice(apiMessage(error, 'The director control request could not be sent.'))
     } finally {
       setMediaControlPending(false)
     }
   }
+
+  const requestGuestControl = (sessionId: string, action: ContributionMediaControlAction) =>
+    requestGuestControls(sessionId, [action])
 
   if (identityQuery.isLoading) {
     return <p className="p-6 text-sm" style={{ color: 'var(--cc-ink-2)' }}>Loading…</p>
@@ -518,9 +611,10 @@ export function RemoteContributionScreen() {
                 pending={guestMutation.isPending || mediaControlPending}
                 onAdmit={(sessionId) => guestMutation.mutate({ sessionId, action: 'admit' })}
                 onControl={(sessionId, action) => {
-                  void requestGuestControl(sessionId, action).catch((error: unknown) =>
-                    setMediaControlNotice(apiMessage(error, 'The director control request could not be sent.')),
-                  )
+                  void requestGuestControl(sessionId, action)
+                }}
+                onOffAir={(sessionId, guestName) => {
+                  void requestGuestControls(sessionId, ['audio_mute', 'video_mute'], guestName)
                 }}
                 onDisconnect={(sessionId) => {
                   void requestGuestControl(sessionId, 'disconnect')
@@ -760,6 +854,7 @@ export function GuestTray({
   pending,
   onAdmit,
   onControl,
+  onOffAir,
   onDisconnect,
   onMarkLeft,
 }: {
@@ -769,6 +864,7 @@ export function GuestTray({
   pending: boolean
   onAdmit: (sessionId: string) => void
   onControl: (sessionId: string, action: ContributionMediaControlAction) => void
+  onOffAir: (sessionId: string, guestName: string) => void
   onDisconnect: (sessionId: string) => void
   onMarkLeft: (sessionId: string) => void
 }) {
@@ -814,13 +910,13 @@ export function GuestTray({
                     <GuestButton label="Admit" onClick={() => onAdmit(s.session_id)} pending={pending} />
                   )}
                   <GuestButton
-                    label="Mute audio in director"
+                    label="Mute guest audio"
                     onClick={() => onControl(s.session_id, 'audio_mute')}
                     pending={pending}
                     disabled={!directorReady}
                   />
                   <GuestButton
-                    label="Restore director audio"
+                    label="Restore guest audio"
                     onClick={() => onControl(s.session_id, 'audio_unmute')}
                     pending={pending}
                     disabled={!directorReady}
@@ -829,6 +925,20 @@ export function GuestTray({
                     label="Mute guest camera"
                     onClick={() => onControl(s.session_id, 'video_mute')}
                     pending={pending}
+                    disabled={!directorReady}
+                  />
+                  <GuestButton
+                    label="Off air"
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: `Take ${s.guest_display_name} off air?`,
+                        body: `This sends separate VDO.Ninja requests to mute ${s.guest_display_name}'s audio and camera. The director iframe does not acknowledge these requests, so their media effect is unverified. ${s.guest_display_name} stays connected to the room and the CivicCast session status stays unchanged. This does not return the channel to its schedule.`,
+                        confirmLabel: 'Send off-air requests',
+                        run: () => onOffAir(s.session_id, s.guest_display_name),
+                      })
+                    }
+                    pending={pending}
+                    tone="warn"
                     disabled={!directorReady}
                   />
                   <GuestButton

@@ -1577,10 +1577,11 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 1. When a guest opens their link, they appear under **Guests** with the tag **In waiting room**.
 2. Click **Admit** to mark them admitted in CivicCast. This does not put their media into the broadcast.
-3. Keep the embedded VDO.Ninja director open. **Mute audio in director** and **Restore director audio** send VDO.Ninja audio controls; **Mute guest camera** and **Restore guest camera** send camera controls to that guest.
+3. Keep the embedded VDO.Ninja director open. **Mute guest audio** and **Restore guest audio** send targeted audio requests for that guest; **Mute guest camera** and **Restore guest camera** send camera requests to the same guest.
 4. **Disconnect guest** asks for confirmation, then sends VDO.Ninja's targeted hangup command.
+5. **Off air** asks for confirmation, then sends separate requests to mute that guest's audio and camera. It leaves the guest connected and does not return the channel to its schedule.
 
-> **Important:** VDO.Ninja's director iframe does not confirm whether a mute, camera or hangup command succeeded. CivicCast records the latest browser-reported command as **sent, not verified** and keeps the guest's connection status unchanged. Check the director before treating a guest as disconnected. The audio control is for the director's audio path; it is not proof that the channel output is muted. Guest media composition into the channel is not implemented.
+> **Important:** VDO.Ninja's director iframe does not confirm whether an audio, camera or hangup request succeeded. CivicCast records the latest browser-reported request as **sent, not verified** and keeps the guest's connection status unchanged. The audio control targets the guest's audio; it does not control the director's own audio. Check the director and compositor before relying on a media change, and verify in the director before treating a guest as disconnected. Off air does not disconnect the guest or return the channel to its schedule.
 
 #### Take the channel live
 

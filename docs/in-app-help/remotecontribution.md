@@ -2,7 +2,7 @@
 
 ## Beta12 correction
 
-The current screen offers only configured, enabled egress channels when creating a room; the server rejects unknown or disabled channel ids as well. It embeds the VDO.Ninja director and sends targeted audio, camera and hangup commands. The iframe does not confirm completion; CivicCast records commands as **sent, not verified** and preserves the guest's connection state until an operator checks the director and marks them left. **Take channel live** is a separate confirmed action for the channel's configured source. Guest media composition into the channel remains unimplemented. Room closure stops new invites and keeps unverified guest sessions visible.
+The current screen offers only configured, enabled egress channels when creating a room; the server rejects unknown or disabled channel ids as well. It embeds the VDO.Ninja director and sends targeted audio, camera and hangup requests. **Mute guest audio** targets the guest's audio, not the director's own audio. **Off air** asks for confirmation, then sends separate audio-mute and camera-mute requests to the same guest. The iframe does not confirm completion; CivicCast records only the latest request as **sent, not verified** and preserves the guest's connection state. Off air leaves the guest connected and does not return the channel to its schedule. **Take channel live** is a separate confirmed action for the channel's configured source. Guest media composition into the channel remains unimplemented. Room closure stops new invites and keeps unverified guest sessions visible.
 
 # Remote Contribution (nav id: remotecontribution)
 

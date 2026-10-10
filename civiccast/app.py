@@ -3150,10 +3150,10 @@ def _wire_durable_stores(app: FastAPI) -> None:
             return config.enabled if config is not None else None
 
         def _take_channel_live(channel_id: str) -> None:
-            # Slice 3e: a guest on-air airs the channel's composited live feed via
-            # the proven S5 content-reload takeover (no internal live pad). An
-            # already-live channel is a silent no-op — the guest joins the live
-            # composition the compositor is already mixing.
+            # Legacy on-air hook retained for app-wiring compatibility.
+            # ContributionService.put_on_air currently records lifecycle state
+            # without invoking this callback; channel takeover remains a
+            # separate, confirmed operator action.
             with suppress(AlreadyLiveError):
                 _resolve_takeover_service().take(
                     channel_id=channel_id,
