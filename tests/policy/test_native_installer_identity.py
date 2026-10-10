@@ -462,8 +462,9 @@ def test_bootstrap_postinstall_activates_the_flat_station_and_fails_loud_on_erro
         line for line in postinstall.splitlines() if not line.strip().startswith(";")
     )
 
-    assert 'nsExec::ExecToStack \'"$INSTDIR\\CivicCast Native.exe" --civiccast-activate-station' in (
-        executable
+    assert (
+        'nsExec::ExecToStack \'"$INSTDIR\\CivicCast Native.exe" --civiccast-activate-station'
+        in (executable)
     ), "the activation CLI output must be captured for the durable failure breadcrumb"
     assert (
         '--install-root "$INSTDIR"'
@@ -485,12 +486,9 @@ def test_bootstrap_postinstall_activates_the_flat_station_and_fails_loud_on_erro
     assert activation_block.count("Pop $0\n  Pop $1") == 2, (
         "each activation call must pop its exit code and captured child output"
     )
-    nonzero_arm = activation_block.split("${If} $0 != 0", 1)[1].split(
-        "${EndIf}", 1
-    )[0]
+    nonzero_arm = activation_block.split("${If} $0 != 0", 1)[1].split("${EndIf}", 1)[0]
     assert (
-        '!insertmacro CIVICCAST_STEP "step d4-activate-station: child reported: $1"'
-        in nonzero_arm
+        '!insertmacro CIVICCAST_STEP "step d4-activate-station: child reported: $1"' in nonzero_arm
     ), "activation child detail must reach install-progress.log before failure routing"
     assert "${CIVICCAST_EXIT_D4_ACTIVATION}" in activation_block
     assert "!insertmacro CIVICCAST_FAIL" in activation_block, (
