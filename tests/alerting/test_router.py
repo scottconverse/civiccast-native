@@ -150,7 +150,7 @@ def test_runtime_safe_to_air_exposes_active_manual_caption_worker(
 
     assert response.status_code == 200, response.text
     channel = next(row for row in response.json()["channels"] if row["channel_id"] == "public")
-    assert channel["live_captions"]["processing_state"] == "waiting"
+    assert channel["live_captions"]["processing_state"] == "caught-up"
     assert channel["live_captions"]["provider_state"] == "whistle-primary"
     heartbeat = datetime.fromisoformat(
         channel["live_captions"]["worker_heartbeat_at"].replace("Z", "+00:00")

@@ -63,6 +63,7 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1635,8 +1636,8 @@ def _is_windows_cache_database(candidate: Path) -> bool:
 
 def _classify_traced_accesses(
     accessed: Iterable[str], loaded: Iterable[str], *, tree: Path
-) -> tuple[list[str], list[str], list[str]]:
-    """Split traced paths into (accounted for, outside everything, unreviewed OS).
+) -> tuple[list[str], list[str], list[str], list[str]]:
+    """Split traced paths into accounted, outside, unreviewed OS and reported resources.
 
     Only EXISTING absolute paths are judged. A trace records attempts, and a
     probe for a file that is not there ("does gstreamer live in C:/gstreamer?")
@@ -1644,17 +1645,45 @@ def _classify_traced_accesses(
     closure miss would make the check cry wolf until someone stopped reading it.
     """
     roots = _permitted_trace_roots(tree)
+    accessed_paths = tuple(dict.fromkeys(accessed))
+    loaded_paths = tuple(dict.fromkeys(loaded))
     inside: list[str] = []
     outside: list[str] = []
     unreviewed: list[str] = []
-    for raw in dict.fromkeys([*accessed, *loaded]):
+    package_resources: list[str] = []
+    loaded_path_keys: set[str] = set()
+    loaded_file_ids: set[tuple[int, int]] = set()
+    for raw in loaded_paths:
+        try:
+            loaded_path = Path(raw)
+            if not loaded_path.is_absolute() or not loaded_path.exists():
+                continue
+            loaded_resolved = loaded_path.resolve()
+            loaded_path_keys.add(os.path.normcase(str(loaded_resolved)))
+            file_id = _file_identity(loaded_resolved)
+            if file_id is not None:
+                loaded_file_ids.add(file_id)
+        except OSError:
+            continue
+
+    def classify(raw: str, *, access_only: bool) -> None:
         try:
             path = Path(raw)
             if not path.is_absolute() or not path.exists():
-                continue
+                return
             resolved = path.resolve()
         except OSError:
-            continue
+            return
+        resolved_key = os.path.normcase(str(resolved))
+        if (
+            access_only
+            and resolved_key not in loaded_path_keys
+            and _is_desktop_app_installer_resource_index(path, resolved)
+        ):
+            file_id = _file_identity(resolved)
+            if file_id is not None and file_id not in loaded_file_ids:
+                package_resources.append(str(resolved))
+                return
         # Both forms are tested. Package managers hardlink installed files out
         # of a shared cache, so a harness import that lives on the import path
         # can RESOLVE into a cache directory matching no root -- judging the
@@ -1663,10 +1692,10 @@ def _classify_traced_accesses(
         candidates = (path, resolved)
         if any(_is_windows_cache_database(candidate) for candidate in candidates):
             unreviewed.append(str(resolved))
-            continue
+            return
         if any(is_inside_tree(root, candidate) for root in roots for candidate in candidates):
             inside.append(str(resolved))
-            continue
+            return
         category = next(
             (c for c in (_classify_os_load(x) for x in candidates) if c is not None), None
         )
@@ -1676,7 +1705,17 @@ def _classify_traced_accesses(
             inside.append(str(resolved))
         else:
             outside.append(str(resolved))
-    return sorted(inside), sorted(outside), sorted(unreviewed)
+
+    for raw in accessed_paths:
+        classify(raw, access_only=True)
+    for raw in loaded_paths:
+        classify(raw, access_only=False)
+    return (
+        sorted(set(inside)),
+        sorted(set(outside)),
+        sorted(set(unreviewed)),
+        sorted(set(package_resources)),
+    )
 
 
 @dataclass(frozen=True)
@@ -1775,6 +1814,57 @@ def _match_declared_dependency(path: str) -> ExternalDependency | None:
     return None
 
 
+_APPINSTALLER_PACKAGE_COMPONENT = re.compile(
+    r"^Microsoft\.DesktopAppInstaller_\d+(?:\.\d+){3}_x64__8wekyb3d8bbwe$",
+    re.IGNORECASE,
+)
+_APPINSTALLER_RESOURCE_INDEX = re.compile(
+    r"^S-1-5-21-(?:\d+-){3}\d+-MergedResources-\d+\.pri$",
+    re.IGNORECASE,
+)
+
+
+def _is_desktop_app_installer_resource_index(path: Path, resolved: Path) -> bool:
+    """Match only the observed DesktopAppInstaller PRI data-resource layout.
+
+    This is intentionally not a WindowsApps or `.pri` allowlist. The original
+    and resolved existing file paths must both be canonical, contained directly
+    under the real package root, and have the same three-component relative
+    path. That rejects traversal, links/reparse points, nested lookalikes, and
+    aliases that resolve to a different package path.
+    """
+    if not path.is_absolute() or not resolved.is_absolute() or not path.is_file():
+        return False
+    try:
+        canonical = path.resolve(strict=True)
+        canonical_resolved = resolved.resolve(strict=True)
+        package_root = _STORE_PACKAGE_ROOT.resolve()
+        original_relative = path.relative_to(_STORE_PACKAGE_ROOT)
+        resolved_relative = canonical.relative_to(package_root)
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+    def normalized(value: Path) -> str:
+        return os.path.normcase(os.path.normpath(str(value)))
+
+    if normalized(path.absolute()) != normalized(canonical):
+        return False
+    if normalized(canonical_resolved) != normalized(canonical):
+        return False
+    if normalized(original_relative) != normalized(resolved_relative):
+        return False
+    if any(part in {".", ".."} for part in original_relative.parts):
+        return False
+    if len(original_relative.parts) != 3:
+        return False
+    package_name, metadata_directory, filename = original_relative.parts
+    return (
+        _APPINSTALLER_PACKAGE_COMPONENT.fullmatch(package_name) is not None
+        and metadata_directory.casefold() == "microsoft.system.package.metadata"
+        and _APPINSTALLER_RESOURCE_INDEX.fullmatch(filename) is not None
+    )
+
+
 def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
     """D2(d): fail on anything the run actually loaded from outside the tree."""
     accessed = payload.get("accessed_paths") or []
@@ -1834,7 +1924,7 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
     # held open is exactly as much a runtime dependency as one Python opened,
     # and folding it in here means it is subject to the SAME inside/outside
     # classification rather than a softer parallel rule.
-    inside, outside, unreviewed = _classify_traced_accesses(
+    inside, outside, unreviewed, package_resources = _classify_traced_accesses(
         [*accessed, *sampled], loaded, tree=tree
     )
 
@@ -1887,6 +1977,16 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
             + "\n".join(lines)
         )
 
+    package_resource_note = ""
+    if package_resources:
+        shown = "\n    ".join(package_resources)
+        package_resource_note = (
+            f"\n  {len(package_resources)} access-only DesktopAppInstaller package resource "
+            "index file(s) were observed outside the payload. This narrow reported-data "
+            "exception does not apply to mapped modules or any other WindowsApps path:\n    "
+            + shown
+        )
+
     return CheckResult(
         name="dynamic_trace",
         status="PASS",
@@ -1901,7 +2001,10 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
             "SAMPLED, so a file opened and closed entirely between two polls is not "
             "seen, and this covers only this process (a file opened by a spawned "
             "child would be missed). Closing both needs kernel ETW file-I/O tracing, "
-            "which requires administrator rights." + unreviewed_note + declared_note
+            "which requires administrator rights."
+            + unreviewed_note
+            + declared_note
+            + package_resource_note
         ),
     )
 

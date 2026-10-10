@@ -978,6 +978,149 @@ def test_the_trace_states_its_remaining_blind_spot_rather_than_claiming_complete
     assert "handle table" in result.detail
 
 
+def _appinstaller_resource_path(
+    package_root: Path,
+    *,
+    package: str = "Microsoft.DesktopAppInstaller_1.0.0.0_x64__8wekyb3d8bbwe",
+    relative: tuple[str, ...] = (
+        "microsoft.system.package.metadata",
+        "S-1-5-21-1-1-1-1-MergedResources-0.pri",
+    ),
+) -> Path:
+    path = package_root / package
+    for part in relative:
+        path /= part
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"resource index")
+    return path
+
+
+@pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles"))
+def test_desktop_app_installer_resource_access_is_reported_without_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trace_field: str
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _appinstaller_resource_path(package_root)
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload[trace_field] = [*payload[trace_field], str(resource)]
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "PASS"
+    assert "DesktopAppInstaller package resource" in trace.detail
+    assert str(resource.resolve()) in trace.detail
+
+
+def test_desktop_app_installer_resource_listed_as_module_still_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    resource = _appinstaller_resource_path(package_root)
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]
+    payload["loaded_modules"] = [*payload["loaded_modules"], str(resource)]
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "FAIL"
+    assert "NOT declared external dependencies" in trace.detail
+    assert str(resource.resolve()) in trace.detail
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ("dll", "exe", "publisher", "otherpackage", "nested", "lookalike", "escape"),
+)
+def test_desktop_app_installer_resource_exception_rejects_near_misses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str
+) -> None:
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    tree = tmp_path / "tree"
+    filename = "S-1-5-21-1-1-1-1-MergedResources-0.pri"
+    if shape == "dll":
+        resource = _appinstaller_resource_path(
+            package_root, relative=("microsoft.system.package.metadata", "resource.dll")
+        )
+    elif shape == "exe":
+        resource = _appinstaller_resource_path(
+            package_root, relative=("microsoft.system.package.metadata", "resource.exe")
+        )
+    elif shape == "publisher":
+        resource = _appinstaller_resource_path(
+            package_root,
+            package="Microsoft.DesktopAppInstaller_1.0.0.0_x64__8wekyb3d8bbbe",
+            relative=("microsoft.system.package.metadata", filename),
+        )
+    elif shape == "otherpackage":
+        resource = _appinstaller_resource_path(
+            package_root,
+            package="Microsoft.OtherPackage_1.0.0.0_x64__8wekyb3d8bbwe",
+            relative=("microsoft.system.package.metadata", filename),
+        )
+    elif shape == "nested":
+        resource = _appinstaller_resource_path(
+            package_root,
+            relative=("microsoft.system.package.metadata", "nested", filename),
+        )
+    elif shape == "lookalike":
+        resource = _appinstaller_resource_path(
+            package_root,
+            package="Microsoft.DesktopAppInstallerEvil_1.0.0.0_x64__8wekyb3d8bbwe",
+            relative=("microsoft.system.package.metadata", filename),
+        )
+    else:
+        outside = tmp_path / "o" / filename
+        outside.parent.mkdir(parents=True, exist_ok=True)
+        outside.write_bytes(b"resource index")
+        canonical_metadata = (
+            package_root
+            / "Microsoft.DesktopAppInstaller_1.0.0.0_x64__8wekyb3d8bbwe"
+            / "microsoft.system.package.metadata"
+        )
+        resource = canonical_metadata / Path(os.path.relpath(outside, start=canonical_metadata))
+        assert resource.exists()
+
+    payload = _with_traced_file(_clean_child_payload(), tree)
+    payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]
+    child = _fake_child(json.dumps(payload))
+
+    results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
+    trace = next(result for result in results if result.name == "dynamic_trace")
+
+    assert trace.status == "FAIL"
+    assert "NOT declared external dependencies" in trace.detail
+
+
+def test_loaded_module_generator_is_classified_once(tmp_path: Path) -> None:
+    outside_file = tmp_path / "outside" / "unexpected-module.dll"
+    outside_file.parent.mkdir()
+    outside_file.write_bytes(b"mapped module")
+
+    inside, outside, unreviewed, resources = _classify_traced_accesses(
+        [], iter((str(outside_file),)), tree=tmp_path / "tree"
+    )
+
+    assert inside == []
+    assert outside == [str(outside_file.resolve())]
+    assert unreviewed == []
+    assert resources == []
+
+
 @pytest.mark.windows_only
 @_WINDOWS_PATH_TEST
 @pytest.mark.parametrize("variable", ("LOCALAPPDATA", "PROGRAMDATA"))
@@ -995,11 +1138,12 @@ def test_exact_windows_cache_database_is_reported_as_os_activity(
     cache.parent.mkdir(parents=True)
     cache.write_bytes(b"windows-cache")
 
-    inside, outside, unreviewed = _classify_traced_accesses([str(cache)], [], tree=tree)
+    inside, outside, unreviewed, resources = _classify_traced_accesses([str(cache)], [], tree=tree)
 
     assert inside == []
     assert outside == []
     assert unreviewed == [str(cache.resolve())]
+    assert resources == []
 
 
 @pytest.mark.windows_only
@@ -1033,11 +1177,14 @@ def test_windows_cache_exception_rejects_non_database_and_lookalike_paths(
     candidate.parent.mkdir(parents=True)
     candidate.write_bytes(b"outside")
 
-    inside, outside, unreviewed = _classify_traced_accesses([str(candidate)], [], tree=tree)
+    inside, outside, unreviewed, resources = _classify_traced_accesses(
+        [str(candidate)], [], tree=tree
+    )
 
     assert inside == []
     assert unreviewed == []
     assert outside == [str(candidate.resolve())]
+    assert resources == []
 
 
 @pytest.mark.windows_only
