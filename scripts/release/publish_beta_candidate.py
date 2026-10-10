@@ -365,9 +365,7 @@ def _read_bound_text(receipt_dir: Path, reference: object, *, label: str) -> str
         raise PublishError(f"direct consumer evidence {label} is not UTF-8 text: {exc}") from exc
 
 
-def _beta12_health_advisory(
-    health: dict[str, Any], *, version: str, label: str
-) -> str | None:
+def _beta12_health_advisory(health: dict[str, Any], *, version: str, label: str) -> str | None:
     live_captions = health.get("live_captions")
     status = health.get("status")
     if (
@@ -447,7 +445,9 @@ def _beta12_caption_observation(
             or not isinstance(unavailable_reason, str)
             or not unavailable_reason.strip()
         ):
-            raise PublishError(f"direct consumer evidence {label} caption availability is malformed")
+            raise PublishError(
+                f"direct consumer evidence {label} caption availability is malformed"
+            )
         findings.add(f"{label} caption runtime status is unavailable")
 
     required_vtt_fields = {"vtt_available", "vtt_sha256", "vtt_cue_count"}
@@ -462,7 +462,9 @@ def _beta12_caption_observation(
         raise PublishError(f"direct consumer evidence {label} VTT availability is malformed")
     if vtt_available:
         if not isinstance(vtt_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash):
-            raise PublishError(f"direct consumer evidence {label} VTT availability/hash is malformed")
+            raise PublishError(
+                f"direct consumer evidence {label} VTT availability/hash is malformed"
+            )
         if not isinstance(cue_count, int) or isinstance(cue_count, bool) or cue_count < 0:
             raise PublishError(
                 f"direct consumer evidence {label} VTT availability/cue count is malformed"
@@ -473,7 +475,9 @@ def _beta12_caption_observation(
             vtt_text = channel["vtt_text_snapshot"]
             vtt_text_bytes = channel["vtt_text_snapshot_utf8_bytes"]
             try:
-                actual_vtt_text_bytes = len(vtt_text.encode("utf-8")) if isinstance(vtt_text, str) else -1
+                actual_vtt_text_bytes = (
+                    len(vtt_text.encode("utf-8")) if isinstance(vtt_text, str) else -1
+                )
             except UnicodeEncodeError as exc:
                 raise PublishError(
                     f"direct consumer evidence {label} VTT availability/sample is malformed"
@@ -497,9 +501,7 @@ def _beta12_caption_observation(
             absent_fields.update(
                 {
                     "vtt_text_snapshot": channel["vtt_text_snapshot"],
-                    "vtt_text_snapshot_utf8_bytes": channel[
-                        "vtt_text_snapshot_utf8_bytes"
-                    ],
+                    "vtt_text_snapshot_utf8_bytes": channel["vtt_text_snapshot_utf8_bytes"],
                 }
             )
         if any(value is not None for value in absent_fields.values()):
@@ -518,7 +520,9 @@ def _beta12_caption_observation(
             or not isinstance(observation, str)
             or observation not in {"observed", "unavailable"}
         ):
-            raise PublishError(f"direct consumer evidence {label} JFK word observation is malformed")
+            raise PublishError(
+                f"direct consumer evidence {label} JFK word observation is malformed"
+            )
         if observation == "unavailable":
             if vtt_available or any(words.values()):
                 raise PublishError(
@@ -537,9 +541,8 @@ def _beta12_caption_observation(
 def _caption_advisory(findings: set[str]) -> str:
     if not findings:
         return "No caption-performance findings observed; these observations are not an automatic publisher gate."
-    return (
-        "Caption-performance findings (advisory; not an automatic publisher gate): "
-        + "; ".join(sorted(findings))
+    return "Caption-performance findings (advisory; not an automatic publisher gate): " + "; ".join(
+        sorted(findings)
     )
 
 
@@ -620,9 +623,11 @@ def _verify_physical_host_consumer(
     ):
         before_schema = before_health.get("schema")
         before_live_captions = before_health.get("live_captions")
-        if (
-            before_schema not in (None, "current")
-            or before_live_captions not in (None, "healthy", "idle", "disabled")
+        if before_schema not in (None, "current") or before_live_captions not in (
+            None,
+            "healthy",
+            "idle",
+            "disabled",
         ):
             raise PublishError(
                 "direct consumer evidence physical-host pre-install health is inconsistent"
@@ -729,7 +734,9 @@ def _verify_physical_host_consumer(
         health = _record(snapshot.get("health"), label=f"host runtime observation {index} health")
         health_finding = (
             _beta12_health_advisory(
-                health, version=candidate_version, label=f"physical-host runtime observation {index}"
+                health,
+                version=candidate_version,
+                label=f"physical-host runtime observation {index}",
             )
             if beta12_candidate
             else None
@@ -792,7 +799,9 @@ def _verify_physical_host_consumer(
                     channel.get("caption_runtime_status"), label=f"{channel_id} caption status"
                 )
                 caption_status_ok = caption_status.get("state") == "within-capacity"
-                cue_count_ok = isinstance(cue_count, int) and not isinstance(cue_count, bool) and cue_count > 0
+                cue_count_ok = (
+                    isinstance(cue_count, int) and not isinstance(cue_count, bool) and cue_count > 0
+                )
                 vtt_hash_ok = isinstance(vtt_hash, str) and bool(
                     re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
                 )
@@ -1416,7 +1425,11 @@ def verify_consumer_evidence_receipt(
                 and set(guard_checks) == required_guard_checks
                 and all(
                     guard_checks.get(name)
-                    is (installed_before_health_finding is None if name == "health_status_healthy" else True)
+                    is (
+                        installed_before_health_finding is None
+                        if name == "health_status_healthy"
+                        else True
+                    )
                     for name in required_guard_checks
                 )
                 and isinstance(interruption.get("progress_log_path"), str)
@@ -1898,9 +1911,7 @@ def verify_consumer_evidence_receipt(
                         f"{runtime_proof_group} runtime observed Whistle inactive on a channel"
                     )
                 if any(value is not False for value in fallback_map.values()):
-                    caption_findings.add(
-                        f"{runtime_proof_group} runtime observed Whistle fallback"
-                    )
+                    caption_findings.add(f"{runtime_proof_group} runtime observed Whistle fallback")
             elif (
                 snapshot_health.get("status") != "healthy"
                 or snapshot.get("pinned_whistle_error_seen") is not False

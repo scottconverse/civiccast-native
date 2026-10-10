@@ -1391,9 +1391,7 @@ def test_beta12_direct_receipt_verifies_real_interrupted_upgrade_contract(tmp_pa
 
 
 @pytest.mark.parametrize("sandbox_contract", ("beta12", "beta12-separate"))
-def test_beta12_caption_performance_findings_are_advisory_and_reported(
-    tmp_path, sandbox_contract
-):
+def test_beta12_caption_performance_findings_are_advisory_and_reported(tmp_path, sandbox_contract):
     kit_dir = tmp_path / "direct-kit"
     receipt_path, _ = _write_direct_consumer_receipt(
         tmp_path, kit_dir, sandbox_contract=sandbox_contract
@@ -1620,9 +1618,10 @@ def test_beta12_d4_repair_accepts_caption_only_degraded_precondition_health(tmp_
         candidate_version=VERSION,
     )
 
-    assert "D4 repair installed-before health reports live_captions=unknown" in summary[
-        "caption_performance_advisory"
-    ]
+    assert (
+        "D4 repair installed-before health reports live_captions=unknown"
+        in summary["caption_performance_advisory"]
+    )
 
 
 def test_beta12_separate_contract_rejects_reused_pre_repair_runtime(tmp_path):
