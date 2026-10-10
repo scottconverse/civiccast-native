@@ -166,6 +166,12 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install media test prerequisites
+        # Mutated media tests may invoke real FFmpeg (for example, EAS render tests).
+        # Reuse the existing bounded setup shared by the Unit and randomized jobs.
+        timeout-minutes: 30
+        run: bash scripts/ci/install_media_test_prerequisites.sh
+
       - name: Install project (dev) + mutmut
         # --no-extra agenda-js-import: see the randomized-suite job's
         # "Install project (dev)" step above for why.
