@@ -509,14 +509,14 @@ class TestJobStateMachine:
             assert j.failure_reason is not None  # type: ignore[union-attr]
             assert j.state == "failed"  # type: ignore[union-attr]
 
-    def test_skipped_from_scheduled_only(self, store: RecordingStore) -> None:
+    def test_skipped_from_scheduled_or_arming(self, store: RecordingStore) -> None:
         store.create_job(_job())
         store.set_job_state("job-1", "skipped")
-        # Cannot skip from arming.
+        # A prearmed job can still be cancelled before capture starts.
         store.create_job(_job(job_id="j-b"))
         store.set_job_state("j-b", "arming")
-        with pytest.raises(RecordingJobStateError):
-            store.set_job_state("j-b", "skipped")
+        skipped = store.set_job_state("j-b", "skipped")
+        assert skipped.state == "skipped"
 
     def test_set_state_unknown_job(self, store: RecordingStore) -> None:
         with pytest.raises(RecordingJobNotFoundError):
