@@ -995,7 +995,7 @@ def _appinstaller_resource_path(
     return path
 
 
-@pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles"))
+@pytest.mark.parametrize("trace_field", ("accessed_paths", "sampled_handles", "mapped_data"))
 def test_desktop_app_installer_resource_access_is_reported_without_failing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, trace_field: str
 ) -> None:
@@ -1006,7 +1006,7 @@ def test_desktop_app_installer_resource_access_is_reported_without_failing(
     tree = tmp_path / "tree"
     resource = _appinstaller_resource_path(package_root)
     payload = _with_traced_file(_clean_child_payload(), tree)
-    payload[trace_field] = [*payload[trace_field], str(resource)]
+    payload.setdefault(trace_field, []).append(str(resource))
     child = _fake_child(json.dumps(payload))
 
     results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
@@ -1017,8 +1017,93 @@ def test_desktop_app_installer_resource_access_is_reported_without_failing(
     assert str(resource.resolve()) in trace.detail
 
 
-def test_desktop_app_installer_resource_listed_as_module_still_fails(
+@pytest.mark.parametrize(
+    ("permissions", "expected_module", "expected_data", "expected_unknown"),
+    (
+        (("r",), False, True, False),
+        (("xr",), True, False, False),
+        ((None,), False, False, True),
+        (("rr",), False, False, True),
+        (("r", "?"), False, False, True),
+        (("r", "xr"), True, False, False),
+    ),
+    ids=(
+        "read-only-data",
+        "executable",
+        "unknown-is-strict",
+        "malformed-is-strict",
+        "mixed-unknown-wins",
+        "mixed-executable-wins",
+    ),
+)
+def test_memory_maps_separate_data_from_executable_or_unknown_regions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    permissions: tuple[str | None, ...],
+    expected_module: bool,
+    expected_data: bool,
+    expected_unknown: bool,
+) -> None:
+    from types import SimpleNamespace
+
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    monkeypatch.setattr(verifier, "_STORE_PACKAGE_ROOT", package_root)
+    resource = _appinstaller_resource_path(package_root)
+    mappings = [SimpleNamespace(path=str(resource), perms=value) for value in permissions]
+
+    modules, data, unknown = verifier._split_memory_mapping_paths(mappings)
+
+    assert (str(resource) in modules) is expected_module
+    assert (str(resource) in data) is expected_data
+    assert (str(resource) in unknown) is expected_unknown
+
+
+def test_executable_mapping_classification_keeps_every_file_alias(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from types import SimpleNamespace
+
+    from scripts import verify_native_runtime_closure as verifier
+
+    package_root = tmp_path / "W"
+    resource = _appinstaller_resource_path(package_root)
+    alias = tmp_path / "alias" / resource.name
+    alias.parent.mkdir()
+    alias.write_bytes(resource.read_bytes())
+    real_file_identity = verifier._file_identity
+    shared_identity = real_file_identity(resource)
+    assert shared_identity is not None
+    monkeypatch.setattr(
+        verifier,
+        "_file_identity",
+        lambda path: shared_identity if path in (resource, alias) else real_file_identity(path),
+    )
+    mappings = [
+        SimpleNamespace(path=str(resource), perms="r"),
+        SimpleNamespace(path=str(alias), perms="xr"),
+    ]
+
+    modules, data, unknown = verifier._split_memory_mapping_paths(mappings)
+
+    assert modules == sorted((str(resource), str(alias)))
+    assert data == []
+    assert unknown == []
+
+
+@pytest.mark.parametrize(
+    ("strict_field", "expected_leg"),
+    (
+        ("loaded_modules", "executable mapping"),
+        ("unclassified_mappings", "unknown-protection mapping"),
+    ),
+)
+def test_desktop_app_installer_resource_listed_as_strict_mapping_still_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    strict_field: str,
+    expected_leg: str,
 ) -> None:
     from scripts import verify_native_runtime_closure as verifier
 
@@ -1028,7 +1113,7 @@ def test_desktop_app_installer_resource_listed_as_module_still_fails(
     resource = _appinstaller_resource_path(package_root)
     payload = _with_traced_file(_clean_child_payload(), tree)
     payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]
-    payload["loaded_modules"] = [*payload["loaded_modules"], str(resource)]
+    payload[strict_field] = [*payload.get(strict_field, []), str(resource)]
     child = _fake_child(json.dumps(payload))
 
     results = _interpret_child_output(child, present_gpl_files=(), tree=tree)
@@ -1036,6 +1121,7 @@ def test_desktop_app_installer_resource_listed_as_module_still_fails(
 
     assert trace.status == "FAIL"
     assert "NOT declared external dependencies" in trace.detail
+    assert expected_leg in trace.detail
     assert str(resource.resolve()) in trace.detail
 
 
@@ -1043,8 +1129,9 @@ def test_desktop_app_installer_resource_listed_as_module_still_fails(
     "shape",
     ("dll", "exe", "publisher", "otherpackage", "nested", "lookalike", "escape"),
 )
+@pytest.mark.parametrize("trace_field", ("accessed_paths", "mapped_data"))
 def test_desktop_app_installer_resource_exception_rejects_near_misses(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shape: str, trace_field: str
 ) -> None:
     from scripts import verify_native_runtime_closure as verifier
 
@@ -1097,7 +1184,7 @@ def test_desktop_app_installer_resource_exception_rejects_near_misses(
         assert resource.exists()
 
     payload = _with_traced_file(_clean_child_payload(), tree)
-    payload["accessed_paths"] = [*payload["accessed_paths"], str(resource)]
+    payload.setdefault(trace_field, []).append(str(resource))
     child = _fake_child(json.dumps(payload))
 
     results = _interpret_child_output(child, present_gpl_files=(), tree=tree)

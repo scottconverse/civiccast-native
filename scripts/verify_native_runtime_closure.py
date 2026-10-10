@@ -665,10 +665,17 @@ class _ChildPayload(TypedDict):
     caption_leg: _CaptionLegPayload
     gpl_factories: _GplFactoriesPayload
     #: D2(d) dynamic trace: every path the child was observed to open, and
-    #: every module mapped into it when the suite finished. The parent diffs
-    #: these against the tree.
+    #: every executable mapping observed when the suite finished. The parent
+    #: diffs these against the tree.
     accessed_paths: list[str]
     loaded_modules: list[str]
+    #: File-backed mappings with known non-executable permissions. Retained as
+    #: data-access evidence so a narrow data-resource exception cannot excuse
+    #: executable or unclassified mappings.
+    mapped_data: list[str]
+    #: Mappings whose permissions could not be classified. Kept on the strict
+    #: side of module closure rather than treated as harmless data.
+    unclassified_mappings: list[str]
     #: Third leg: file handles observed OPEN by sampling the process's own
     #: handle table. This is the only one of the three that can see a file
     #: opened by native code without going through Python. See
@@ -806,24 +813,23 @@ def _render_caption_probe_srt(probe_text: str) -> str:
 #
 # The spec suggests "procmon boot-log or equivalent". Procmon needs a kernel
 # driver and therefore Administrator, which this build path deliberately does
-# not have. This is the equivalent, built from two in-process mechanisms that
-# need no privilege:
+# not have. This is the equivalent, built from in-process mechanisms that need
+# no privilege:
 #
 #   1. A CPython audit hook (`sys.addaudithook`). Installed before ANY media
 #      code is imported, it sees `open`, `os.open`, `os.listdir`, `glob.glob`
 #      and -- critically -- `ctypes.dlopen`, which is how a native library gets
 #      pulled in dynamically.
-#   2. A loaded-module enumeration taken after the suite has run, which reports
-#      every module actually mapped into the process, whatever loaded it and
-#      whether or not Python ever saw the call.
+#   2. A mapped-file scan taken after the suite has run. Executable mappings
+#      remain strict module evidence; known non-executable mappings remain data
+#      access evidence; unknown protections remain strict.
 #
 # HONEST LIMITS, stated rather than papered over: (1) catches Python-mediated
 # access and dlopen but not a file opened purely inside native code via
-# CreateFileW; (2) catches every module still mapped at the end but would miss
-# one loaded and unloaded mid-run. Together they cover the dominant closure
-# risk -- a library resolved from outside the tree -- and neither is a
-# substitute for a kernel trace, which is why this says "equivalent", not
-# "procmon".
+# CreateFileW; (2) catches file mappings still present at the end but misses
+# files opened and unmapped mid-run. Together with the sampled-handle leg,
+# these cover the dominant closure risks without claiming kernel-trace
+# completeness.
 # ---------------------------------------------------------------------------
 
 _TRACE_AUDIT_EVENTS = frozenset(
@@ -922,20 +928,87 @@ def _install_access_trace() -> list[str]:
     return accessed
 
 
-def _loaded_module_paths() -> list[str]:
-    """Every module currently mapped into this process.
+def _split_memory_mapping_paths(
+    mappings: Iterable[Any],
+) -> tuple[list[str], list[str], list[str]]:
+    """Split backing files by the strongest protection seen for each file.
 
-    Corroborates the audit hook: a DLL pulled in by native code without any
-    Python-visible call still shows up here.
+    psutil reports mapped regions, not just executable modules. A path is a
+    module if ANY region has execute permission. A known non-executable map is
+    data; missing or unfamiliar protection evidence stays strict. File
+    identity groups hardlinks and path aliases before deciding, so an
+    executable region cannot be hidden by a second read-only map of the same
+    file.
     """
+    groups: dict[tuple[Any, ...], tuple[set[str], int]] = {}
+    windows_executable = frozenset(("x", "xr", "xrw", "xwc"))
+    windows_data = frozenset(("r", "rw", "wc"))
+    for mapping in mappings:
+        path = getattr(mapping, "path", None)
+        if not isinstance(path, str) or not path:
+            continue
+        permissions = getattr(mapping, "perms", None)
+        normalized_permissions = permissions.casefold() if isinstance(permissions, str) else ""
+        if normalized_permissions in windows_executable:
+            state = 3
+        elif normalized_permissions in windows_data:
+            state = 1
+        elif re.fullmatch(r"[r-][w-][x-][ps]", normalized_permissions):
+            state = 3 if normalized_permissions[2] == "x" else 1
+        else:
+            state = 2
+        identity = _file_identity(Path(path))
+        key = (
+            ("file", *identity)
+            if identity is not None
+            else (
+                "path",
+                os.path.normcase(os.path.normpath(path)),
+            )
+        )
+        previous = groups.get(key)
+        paths = {path} if previous is None else {*previous[0], path}
+        strongest_state = state if previous is None else max(state, previous[1])
+        groups[key] = (paths, strongest_state)
+
+    executable: list[str] = []
+    data: list[str] = []
+    unclassified: list[str] = []
+    for paths, state in groups.values():
+        destination = executable if state == 3 else unclassified if state == 2 else data
+        destination.extend(paths)
+    return sorted(executable), sorted(data), sorted(unclassified)
+
+
+def _mapped_file_paths() -> tuple[list[str], list[str], list[str]]:
+    """Return executable, known-data, and unknown file-backed mappings."""
     try:
         import psutil
     except ImportError:
-        return []
+        return [], [], []
     try:
-        return [m.path for m in psutil.Process().memory_maps() if m.path]
+        process = psutil.Process()
+        try:
+            mappings = process.memory_maps(grouped=False)
+        except TypeError:
+            # Older psutil builds may lack ungrouped protection details. Their
+            # paths remain strict because _split_memory_mapping_paths treats
+            # missing permissions as unclassified.
+            mappings = process.memory_maps()
+        return _split_memory_mapping_paths(mappings)
     except Exception:
-        return []
+        return [], [], []
+
+
+def _trace_path_key(raw: str) -> tuple[Any, ...]:
+    """Compare evidence paths by file identity where possible, then by path."""
+    path = Path(raw)
+    identity = _file_identity(path)
+    if identity is not None:
+        return ("file", *identity)
+    with contextlib.suppress(OSError, RuntimeError):
+        path = path.resolve()
+    return ("path", os.path.normcase(os.path.normpath(str(path))))
 
 
 class _OpenHandleSampler:
@@ -1442,6 +1515,7 @@ def _child_main(
         error_detail = f"GStreamer could not be initialized in the hostile environment: {type(exc).__name__}: {exc}"
         sampled, samples = sampler.stop()
         _close_native_canary(canary_handle)
+        mapped_modules, mapped_data, unclassified_mappings = _mapped_file_paths()
         return _ChildPayload(
             gst_init_ok=False,
             gst_init_detail=error_detail,
@@ -1452,7 +1526,9 @@ def _child_main(
             caption_leg=_CaptionLegPayload(ok=False, detail=error_detail),
             gpl_factories=_GplFactoriesPayload(present=[], detail=error_detail),
             accessed_paths=_drop_baseline(accessed, baseline),
-            loaded_modules=_drop_baseline(_loaded_module_paths(), baseline),
+            loaded_modules=_drop_baseline(mapped_modules, baseline),
+            mapped_data=_drop_baseline(mapped_data, baseline),
+            unclassified_mappings=_drop_baseline(unclassified_mappings, baseline),
             sampled_handles=_drop_baseline(sampled, baseline),
             handle_samples=samples,
             native_canary=canary_path,
@@ -1468,6 +1544,7 @@ def _child_main(
 
     # Snapshot AFTER the suite has run, so the trace reflects everything the
     # real pipelines pulled in, not just import-time.
+    mapped_modules, mapped_data, unclassified_mappings = _mapped_file_paths()
     return _ChildPayload(
         gst_init_ok=True,
         gst_init_detail=f"GStreamer initialized: {gst.version_string()}",
@@ -1476,7 +1553,9 @@ def _child_main(
         caption_leg=caption_leg,
         gpl_factories=gpl_factories,
         accessed_paths=_drop_baseline(accessed, baseline),
-        loaded_modules=_drop_baseline(_loaded_module_paths(), baseline),
+        loaded_modules=_drop_baseline(mapped_modules, baseline),
+        mapped_data=_drop_baseline(mapped_data, baseline),
+        unclassified_mappings=_drop_baseline(unclassified_mappings, baseline),
         sampled_handles=_drop_baseline(sampled, baseline),
         handle_samples=samples,
         native_canary=canary_path,
@@ -1869,10 +1948,12 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
     """D2(d): fail on anything the run actually loaded from outside the tree."""
     accessed = payload.get("accessed_paths") or []
     loaded = payload.get("loaded_modules") or []
+    mapped_data = payload.get("mapped_data") or []
+    unclassified_mappings = payload.get("unclassified_mappings") or []
     sampled = payload.get("sampled_handles") or []
     samples = payload.get("handle_samples") or 0
 
-    if not accessed and not loaded:
+    if not accessed and not loaded and not mapped_data and not unclassified_mappings:
         return CheckResult(
             name="dynamic_trace",
             status="FAIL",
@@ -1924,8 +2005,9 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
     # held open is exactly as much a runtime dependency as one Python opened,
     # and folding it in here means it is subject to the SAME inside/outside
     # classification rather than a softer parallel rule.
+    strict_mappings = [*loaded, *unclassified_mappings]
     inside, outside, unreviewed, package_resources = _classify_traced_accesses(
-        [*accessed, *sampled], loaded, tree=tree
+        [*accessed, *sampled, *mapped_data], strict_mappings, tree=tree
     )
 
     undeclared: list[str] = []
@@ -1938,13 +2020,26 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
             declared_hits[path] = declared
 
     if undeclared:
-        shown = "\n  ".join(undeclared[:20])
+        observed_legs = (
+            ("Python-mediated access", accessed),
+            ("executable mapping", loaded),
+            ("unknown-protection mapping", unclassified_mappings),
+            ("sampled open handle", sampled),
+            ("known non-executable mapping", mapped_data),
+        )
+        observed_keys = tuple(
+            (label, {_trace_path_key(raw) for raw in paths}) for label, paths in observed_legs
+        )
+        shown = "\n  ".join(
+            f"{path} [observed via {', '.join(label for label, keys in observed_keys if _trace_path_key(path) in keys) or 'unattributed trace path'}]"
+            for path in undeclared[:20]
+        )
         more = f"\n  ... and {len(undeclared) - 20} more" if len(undeclared) > 20 else ""
         return CheckResult(
             name="dynamic_trace",
             status="FAIL",
             detail=(
-                f"{len(undeclared)} path(s) were loaded or opened from OUTSIDE the packaged "
+                f"{len(undeclared)} path(s) were observed OUTSIDE the packaged "
                 f"tree, outside every permitted root, and are NOT declared external "
                 f"dependencies:\n  {shown}{more}"
             ),
@@ -1981,10 +2076,10 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
     if package_resources:
         shown = "\n    ".join(package_resources)
         package_resource_note = (
-            f"\n  {len(package_resources)} access-only DesktopAppInstaller package resource "
+            f"\n  {len(package_resources)} data-only DesktopAppInstaller package resource "
             "index file(s) were observed outside the payload. This narrow reported-data "
-            "exception does not apply to mapped modules or any other WindowsApps path:\n    "
-            + shown
+            "exception does not apply to executable or unknown-protection mappings, or "
+            "any other WindowsApps path:\n    " + shown
         )
 
     return CheckResult(
@@ -1992,9 +2087,11 @@ def _dynamic_trace_result(payload: _ChildPayload, tree: Path) -> CheckResult:
         status="PASS",
         detail=(
             f"{len(inside)} traced path(s) inside the tree or a permitted root, via "
-            f"THREE mechanisms: {len(accessed)} Python-mediated opens (audit hook, "
-            f"incl. ctypes.dlopen), {len(loaded)} modules still mapped at the end of "
-            f"the run, and {len(sampled)} file handle(s) caught open by "
+            f"the audit hook, mapped-file scan, and sampled open handles: "
+            f"{len(accessed)} Python-mediated opens (incl. ctypes.dlopen), "
+            f"{len(loaded)} executable mappings, {len(mapped_data)} known non-executable "
+            f"data mappings, {len(unclassified_mappings)} unknown-protection mappings, "
+            f"and {len(sampled)} file handle(s) caught open by "
             f"{samples} poll(s) of the process handle table -- the last of which is "
             "what observes native code opening files without going through Python. "
             "REMAINING BLIND SPOT, stated rather than glossed: handle polling is "

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Record bounded station-activation child error text in the installer progress log on failure. Existing failure containment and exit handling remain in place; the original transient activation failure remains unexplained.
+- Classify mapped files using region permissions: executable and unknown-protection mappings stay strict, while positively non-executable mappings remain data-access evidence subject only to the existing exact DesktopAppInstaller PRI exception. Failed producer `38086022740` logged the rejected path but not its trace leg or protection, so this correction addresses a proven collector-contract defect without claiming that it explains that run.
 
 Development candidate: `v1.0.0-beta.12` (unpublished).
 
