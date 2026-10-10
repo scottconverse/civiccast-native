@@ -116,3 +116,28 @@ Renewing the six workflow role hashes records only this reviewed workflow delta.
 It does not supply new backup/restore, release-producer, or hardware acceptance
 evidence. Existing claim definitions, historical proof references, controls,
 node IDs, tests, and verifier remain intact.
+
+## Follow-up floor renewal for the added native cases
+
+Randomized CI run `38017271224` on `f93beca07afc5605fb6c70a27fa16ac15d936210`
+collected 1,968 platform-independent native tests and 2,179 total native tests.
+A fresh local collection reproduced 1,968 with `-m "not windows_only"`, 2,179
+without a marker, and 2,176 with `-m "not integration"` (the Windows CI
+selection). The two existing policy checks failed against the stale 1,957/2,168
+exact assertion and the old 1,909 pure floor; the old Windows floor 2,115 was
+61 below its executed collection.
+
+The current-source correction pins the exact pure/total counts to 1,968/2,179
+and sets floors to 1,918/2,126, preserving the existing 50-test margin for
+both actual CI selections. The workflow comparison against the preceding
+reviewed version contains only those two floor increases and explanatory
+comments; jobs, selectors, permissions, commands, artifact paths, and claim
+controls are unchanged. The updated workflow blob is
+`60d1bc177bdb96b55649c282e2fb250061b68920`; all six existing workflow-role
+bindings in `docs/claims/claims.yaml` point to that exact blob. No historical
+evidence, controls, or acceptance claims were changed.
+
+The two existing policy tests were rerun after the correction and passed
+(`2 passed in 21.67s`). Raw RED and GREEN output is retained at
+`C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\beta12-native-count-policy-red.txt`
+and `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\beta12-native-count-policy-green.txt`.

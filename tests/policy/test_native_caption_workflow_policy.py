@@ -1188,11 +1188,13 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # the pure lane advances by one and the full lane advances by seven.
     # 2026-10-09 Beta 12 candidate follow-up: the two real Windows ACL/mutex
     # cases in test_admin_recovery.py now carry windows_only in addition to
-    # their runtime skip guards. The current tree collects 1957 pure and
-    # 2168 total tests. Floor 1909 remains within the 50-test pure-lane
-    # margin (48 below current); Windows non-integration stays 2165 with
-    # floor 2115 (50 below current).
-    assert (collect("not windows_only"), collect()) == (1957, 2168)
+    # their runtime skip guards. That checkpoint collected 1957 pure and
+    # 2168 total tests.
+    # 2026-10-10 Beta 12 closure cases add 11 native tests. The current tree
+    # collects 1968 pure and 2179 total; the Windows non-integration
+    # collection is 2176. ci-test.yml floors 1918 and 2126 preserve the
+    # existing 50-test margin for the two executed collections.
+    assert (collect("not windows_only"), collect()) == (1968, 2179)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

@@ -1203,7 +1203,7 @@ def test_captions_av_pending_selector_switches_confirm_before_old_tail_retiremen
     assert max(release_video, release_audio) < min(apply_video, apply_audio), calls
     assert max(apply_video, apply_audio) < first_fence < old_null, calls
     assert results == [(True, None)]
-    assert completed.is_set()
+    assert completed.wait(1.0), "commit watchdog did not finish after reload settlement"
     assert engine._pending_reload is None
     assert exit_calls == []
     assert calls.count("pipeline.remove:caption-av-old-leg") == 1
