@@ -159,11 +159,13 @@ def derive_live_caption_processing_status(
         return ChannelCaptionProcessingStatus(processing_state="stalled", **common)
     if pending:
         # A live source can keep delivering chunks while one ASR call is hung.
-        # Use completed progress, the first still-pending input, and the
-        # current batch start; the latest input time is not a progress signal.
+        # Use completed progress or the first still-pending input. Starting
+        # another batch after failure is not progress and must not reset the
+        # deadline. The batch start is only a fallback for older snapshots
+        # that do not carry either authoritative timestamp.
         progress_anchor = max(
-            (stamp for stamp in (last_processed, pending_since, inference_started) if stamp),
-            default=last_input,
+            (stamp for stamp in (last_processed, pending_since) if stamp),
+            default=inference_started or last_input,
         )
         if (
             progress_anchor is not None

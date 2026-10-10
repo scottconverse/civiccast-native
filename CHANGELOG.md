@@ -5,6 +5,7 @@
 Development candidate: `v1.0.0-beta.12` (unpublished).
 
 - Channel health reports caption-worker activity, stalled processing, silence and the active speech-engine/fallback state. Enabled on-air channels receive a startup allowance before missing worker activity raises an alert; detailed status remains staff-only.
+- Failed speech-engine retries no longer reset the caption progress timer. Channels with pending audio and no completed progress become degraded after the existing stall allowance instead of appearing healthy while retries continue.
 - Alert rules expose destination assignments in the console, preserve unchanged assignments and show unavailable destinations. Setup administrators can make changes; support administrators can inspect the configuration without write controls.
 - Alert notifications read committed event state, including recovery messages. Transport failures and retry results are saved so retries can work across separate background-worker sessions.
 - Configured emergency alerts render through the existing broadcast compositor and show channel-specific warning text on the resident page. Clearing removes the alert layer while retaining other graphics; forced slates retain explicit confirmation and unconfigured broadcast presentation is refused with setup guidance.

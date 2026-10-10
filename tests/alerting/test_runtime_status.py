@@ -92,6 +92,63 @@ def test_continuous_new_audio_does_not_mask_hung_inference(
     assert status.processing_state == "stalled"
 
 
+@pytest.mark.parametrize("prior_completion", [None, "2026-10-10T06:10:00+00:00"])
+def test_failed_batch_retries_do_not_reset_pending_progress_deadline(
+    tmp_path: Path, prior_completion: str | None
+) -> None:
+    """Replay the repaired guest: retries ran, but no input completed for minutes."""
+    now = datetime.fromisoformat("2026-10-10T06:25:23.6411683+00:00")
+    payload = {
+        "state": "within-capacity",
+        "worker_heartbeat_at": "2026-10-10T00:25:21.100786-06:00",
+        "last_input_at": "2026-10-10T00:25:21.100786-06:00",
+        "last_processed_at": prior_completion,
+        "pending_since_at": "2026-10-10T00:21:47.378625-06:00",
+        "inference_started_at": "2026-10-10T00:24:52.898708-06:00",
+        "inference_inflight": True,
+        "backlog_segments": 9,
+        "max_backlog_segments": 2,
+        "audio_signal": "unknown",
+        "provider_state": "whisper-fallback",
+    }
+    path = tmp_path / "public" / "captions" / "runtime-status.json"
+    path.parent.mkdir(parents=True)
+    store = _FakeStore([_config("public")], {"public": _state("public", "ON_AIR")}, {})
+    for retry_started in (payload["inference_started_at"], now.isoformat()):
+        payload["inference_started_at"] = retry_started
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        status = derive_live_caption_processing_status(
+            payload, egress_state="ON_AIR", captions_expected=True, now=now
+        )
+        assert status.processing_state == "stalled"
+        assert (
+            live_caption_readiness(store, captions_expected=True, work_dir=tmp_path, now=now)
+            == "degraded"
+        )
+
+
+@pytest.mark.parametrize("recent_anchor", ["last_processed_at", "pending_since_at"])
+def test_recent_completion_or_new_pending_work_keeps_processing_allowance(
+    recent_anchor: str,
+) -> None:
+    payload = {
+        "worker_heartbeat_at": _NOW.isoformat(),
+        "last_input_at": _NOW.isoformat(),
+        "last_processed_at": (_NOW - timedelta(seconds=600)).isoformat(),
+        "pending_since_at": (_NOW - timedelta(seconds=600)).isoformat(),
+        "inference_started_at": _NOW.isoformat(),
+        "inference_inflight": True,
+        "backlog_segments": 1,
+    }
+    payload[recent_anchor] = (_NOW - timedelta(seconds=20)).isoformat()
+    assert (
+        derive_live_caption_processing_status(
+            payload, egress_state="ON_AIR", captions_expected=True, now=_NOW
+        ).processing_state
+        == "processing"
+    )
+
+
 def test_recently_completed_audio_is_caught_up_and_readiness_healthy(tmp_path: Path) -> None:
     """A real guest probe briefly reported degraded after Whistle caught up."""
     now = datetime.fromisoformat("2026-10-10T01:40:52.034328+00:00")
