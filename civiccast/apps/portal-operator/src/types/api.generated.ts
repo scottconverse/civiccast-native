@@ -997,7 +997,7 @@ export interface ChannelBrandingUpdate {
 }
 
 export interface ChannelCaptionProcessingStatus {
-  processing_state?: 'disabled' | 'inactive' | 'waiting' | 'processing' | 'silent' | 'stalled' | 'failed' | 'unknown'
+  processing_state?: 'disabled' | 'inactive' | 'waiting' | 'processing' | 'caught-up' | 'silent' | 'stalled' | 'failed' | 'unknown'
   worker_heartbeat_at?: string | null
   last_input_at?: string | null
   last_processed_at?: string | null

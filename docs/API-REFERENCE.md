@@ -5521,7 +5521,7 @@ Read CivicCast local federation metadata.
 - `backlog_segments` (optional): `number`
 - `last_input_at` (optional): `string | null`
 - `last_processed_at` (optional): `string | null`
-- `processing_state` (optional): `'disabled' | 'inactive' | 'waiting' | 'processing' | 'silent' | 'stalled' | 'failed' | 'unknown'`
+- `processing_state` (optional): `'disabled' | 'inactive' | 'waiting' | 'processing' | 'caught-up' | 'silent' | 'stalled' | 'failed' | 'unknown'`
 - `provider_retry_in_seconds` (optional): `number | null`
 - `provider_state` (optional): `'whistle-primary' | 'whisper-primary' | 'whisper-fallback' | 'fallback-cooldown' | 'fallback-retry-ready' | 'unknown'`
 - `worker_heartbeat_at` (optional): `string | null`

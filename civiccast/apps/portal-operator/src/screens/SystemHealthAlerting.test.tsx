@@ -76,6 +76,24 @@ describe('RuntimeSafeToAirBanner', () => {
               },
               color: 'red',
             },
+            {
+              channel_id: 'education',
+              egress_state: 'ON_AIR',
+              on_air: true,
+              on_healthy_slate: false,
+              captions_expected: true,
+              captions_verified: false,
+              live_captions: {
+                processing_state: 'caught-up',
+                worker_heartbeat_at: '2026-06-15T12:00:00Z',
+                last_input_at: '2026-06-15T11:59:59Z',
+                last_processed_at: '2026-06-15T12:00:00Z',
+                audio_signal: 'audio-present',
+                provider_state: 'whistle-primary',
+                backlog_segments: 0,
+              },
+              color: 'green',
+            },
           ],
         }}
       />,
@@ -86,6 +104,7 @@ describe('RuntimeSafeToAirBanner', () => {
     expect(container.textContent).toContain('worker stalled')
     expect(container.textContent).toContain('Whisper fallback cooling down (7s)')
     expect(container.textContent).toContain('3 queued')
+    expect(container.textContent).toContain('caught up; waiting for new audio')
   })
 
   it('surfaces firing counts and a review-alerts action when alerts fire', () => {

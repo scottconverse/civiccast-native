@@ -187,6 +187,14 @@ def derive_live_caption_processing_status(
         processing_state = "silent"
     elif pending:
         processing_state = "processing"
+    elif (
+        audio_signal == "audio-present"
+        and last_input is not None
+        and last_processed is not None
+        and last_processed >= last_input
+        and (current - last_processed).total_seconds() <= _CAPTION_PROGRESS_STALE_SECONDS
+    ):
+        processing_state = "caught-up"
     else:
         processing_state = "waiting"
     return ChannelCaptionProcessingStatus(processing_state=processing_state, **common)

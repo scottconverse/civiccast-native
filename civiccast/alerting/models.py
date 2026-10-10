@@ -118,7 +118,15 @@ SelfTestKind = Literal["daily", "weekly"]
 SelfTestStatus = Literal["pass", "warn", "fail"]
 SafeToAirColor = Literal["green", "yellow", "red"]
 CaptionProcessingState = Literal[
-    "disabled", "inactive", "waiting", "processing", "silent", "stalled", "failed", "unknown"
+    "disabled",
+    "inactive",
+    "waiting",
+    "processing",
+    "caught-up",
+    "silent",
+    "stalled",
+    "failed",
+    "unknown",
 ]
 CaptionAudioSignal = Literal["digital-silence", "audio-present", "unknown"]
 CaptionProviderState = Literal[

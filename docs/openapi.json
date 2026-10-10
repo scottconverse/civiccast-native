@@ -37618,6 +37618,7 @@
               "inactive",
               "waiting",
               "processing",
+              "caught-up",
               "silent",
               "stalled",
               "failed",
