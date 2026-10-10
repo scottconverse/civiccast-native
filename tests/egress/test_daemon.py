@@ -7871,24 +7871,59 @@ def test_held_prepared_restart_plan_is_released_on_service_shutdown(
     assert run.daemon.live_prepared_plan_dirs("gov") == frozenset()
 
 
+@pytest.mark.parametrize("settle_fresh_handoff", [False, True])
 def test_held_prepared_restart_plan_is_released_when_the_exit_takes_no_pending_reload(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settle_fresh_handoff: bool
 ) -> None:
     """A worker exit that does NOT take the pending-reload restart (here: it
     crashes instead of being the deliberate reload kill) can never air the held
     plan, so it must be released. Ordinary crash recovery may restart on slate,
     but must not restart onto that unrelated held plan."""
     run = _hold_fallback_slate_restart_plan(tmp_path)
+    abandoned = run.daemon._prepared_restart_plans["gov"]
     # The exit arrives as a crash with no pending reload: drop both pieces of
     # bookkeeping the deliberate-kill path had set.
     run.daemon._pending_reloads.pop("gov", None)
     run.daemon._reload_kills.discard("gov")
     run.old_process.returncode = 1
 
+    poll_preparation = run.daemon._poll_preparation
+    fresh_preparations = []
+
+    def control_fresh_handoff(channel_id: str) -> None:
+        # Crash recovery airs slate first and queues a NEW program handoff.
+        # Either scheduling outcome is legitimate; do not rely on how quickly
+        # the executor finishes under instrumentation or CPU contention.
+        pending = run.daemon._preparations[channel_id]
+        report = pending.future.result(timeout=10)
+        fresh_preparations.append((pending, report))
+        if settle_fresh_handoff:
+            poll_preparation(channel_id)
+
+    monkeypatch.setattr(run.daemon, "_poll_preparation", control_fresh_handoff)
     run.daemon.process_once("gov")
 
+    # Assert outside the daemon's exception-isolating poll boundary.
+    assert len(fresh_preparations) == 1
+    pending, report = fresh_preparations[0]
+    assert pending.kind == "reload"
+    assert pending.slate_first is True
+    assert pending.process is run.new_process
+    assert report is not abandoned.report
+    assert report.plan_dir == tmp_path / "plan-2"
+    assert report.source_plan.segments[0].label == "Due program"
     assert run.released == [tmp_path / "plan-1"]
-    assert run.daemon._prepared_restart_plans == {}
+    assert tmp_path / "plan-1" not in run.daemon.live_prepared_plan_dirs("gov")
+    if settle_fresh_handoff:
+        fresh = run.daemon._prepared_restart_plans["gov"]
+        assert fresh is not abandoned
+        assert fresh.report.plan_dir == tmp_path / "plan-2"
+        assert fresh.target_state == "ON_AIR"
+        assert set(run.daemon._prepared_restart_plans) == {"gov"}
+    else:
+        assert run.daemon._prepared_restart_plans == {}
+    assert run.prepared_labels == ["Due program", "Due program"]
+    assert run.provider_calls == ["gov", "gov"]
     assert run.strategy.started_labels == ["Fallback slate"]
     assert run.started == [run.new_process]
 
