@@ -1186,22 +1186,33 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ; following D3/D4 steps, and $0-$9 are unusable inside a CIVICCAST_STEP
   ; breadcrumb argument. Two literals cost a duplicated line and cannot
   ; clobber anything.
+  ; Capture the activation CLI's output into $1 as well as its exit code in
+  ; $0. The 67 failure dialog points operators at install-progress.log for
+  ; the self-test reason, but ExecToLog only streams the child's text into
+  ; the wizard detail pane (which unattended installs do not have). ExecToStack
+  ; keeps the existing invocation arguments and records the bounded output
+  ; prefix on every nonzero result below; NSIS's stack-string limit means this
+  ; is not a promise to preserve arbitrarily long child stderr in full. The
+  ; activation CLI emits only its final JSON/error, so no running progress is
+  ; lost by switching from ExecToLog.
   !insertmacro CIVICCAST_STEP "step d4-activate-station: begin"
   DetailPrint "Activating the CivicCast (Native) station (K1)..."
   IfFileExists "$EXEDIR\station\station-index.json" civiccast_activate_station_from_exedir civiccast_activate_station_try_instdir
   civiccast_activate_station_from_exedir:
   !insertmacro CIVICCAST_STEP "step d4-activate-station: source EXEDIR (kit side-load $EXEDIR\station\station-index.json)"
   DetailPrint "CivicCast (Native): using the station bundle beside setup.exe ($EXEDIR\station)."
-  nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$EXEDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
+  nsExec::ExecToStack '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$EXEDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
   Pop $0
+  Pop $1
   Goto civiccast_activate_station_ran
   civiccast_activate_station_try_instdir:
   IfFileExists "$INSTDIR\station\station-index.json" civiccast_activate_station_from_instdir civiccast_activate_station_no_index
   civiccast_activate_station_from_instdir:
   !insertmacro CIVICCAST_STEP "step d4-activate-station: source INSTDIR (embedded $INSTDIR\station\station-index.json)"
   DetailPrint "CivicCast (Native): using the station index embedded in setup.exe ($INSTDIR\station)."
-  nsExec::ExecToLog '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$INSTDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
+  nsExec::ExecToStack '"$INSTDIR\CivicCast Native.exe" --civiccast-activate-station --install-root "$INSTDIR" --civiccast-import-station "$INSTDIR\station\station-index.json" --cache-root "$INSTDIR\packs\.station-cache"'
   Pop $0
+  Pop $1
   Goto civiccast_activate_station_ran
   civiccast_activate_station_no_index:
   !insertmacro CIVICCAST_STEP "step d4-activate-station: no station index at $EXEDIR\station or $INSTDIR\station"
@@ -1209,6 +1220,9 @@ Var CIVICCAST_POSTCLEAR_ARMED
   !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D4_ACTIVATION} "CivicCast (Native) setup could not activate the station: no signed station index (station-index.json) was found beside setup.exe at $EXEDIR\station, and this setup.exe does not carry the embedded copy it normally ships with. Download the CivicCast (Native) setup again from the official release page, or copy the full CivicCast kit folder (setup.exe together with its station folder) onto this machine and run setup from there. See the installer log above for details."
   civiccast_activate_station_ran:
   !insertmacro CIVICCAST_STEP "step d4-activate-station: returned $0"
+  ${If} $0 != 0
+    !insertmacro CIVICCAST_STEP "step d4-activate-station: child reported: $1"
+  ${EndIf}
   ; Installer-path audit MA-08: run_native_flat_activation_cli emits FIVE
   ; distinct exit codes -- 64 (arguments), 65 (render), 66 (acquisition), 67
   ; (activation / self-test), 78 (embedded pack trust) -- and this branch used

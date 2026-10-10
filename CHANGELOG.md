@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Record bounded station-activation child error text in the installer progress log on failure. Existing failure containment and exit handling remain in place; the original transient activation failure remains unexplained.
+
 Development candidate: `v1.0.0-beta.12` (unpublished).
 
 - Channel health reports caption-worker activity, stalled processing, silence and the active speech-engine/fallback state. Enabled on-air channels receive a startup allowance before missing worker activity raises an alert; detailed status remains staff-only.
