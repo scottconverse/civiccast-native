@@ -1092,6 +1092,7 @@ def test_desktop_app_installer_resource_exception_rejects_near_misses(
             / "Microsoft.DesktopAppInstaller_1.0.0.0_x64__8wekyb3d8bbwe"
             / "microsoft.system.package.metadata"
         )
+        canonical_metadata.mkdir(parents=True)
         resource = canonical_metadata / Path(os.path.relpath(outside, start=canonical_metadata))
         assert resource.exists()
 
