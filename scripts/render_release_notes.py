@@ -165,7 +165,7 @@ def render_native_beta_candidate_notes(
             raise ValueError("artifact_source_sha is required for direct-consumer notes.")
         consumer_mode = direct_verification.get("consumer_mode", "sandbox")
         if consumer_mode == "sandbox":
-            sandbox_proofs = {
+            legacy_sandbox_proofs = {
                 "fresh_install",
                 "failed_install_repair",
                 "repair_preservation",
@@ -173,11 +173,25 @@ def render_native_beta_candidate_notes(
                 "preservation",
                 "runtime",
             }
-            expected_proofs = sandbox_proofs | {"consumer_mode"}
-            if set(direct_verification) not in (sandbox_proofs, expected_proofs):
+            beta12_sandbox_proofs = {
+                "fresh_install",
+                "beta11_baseline_install",
+                "beta11_to_beta12_interrupted_upgrade",
+                "preservation",
+                "runtime",
+            }
+            legacy_expected = legacy_sandbox_proofs | {"consumer_mode"}
+            beta12_expected = beta12_sandbox_proofs | {"consumer_mode"}
+            if set(direct_verification) not in (
+                legacy_sandbox_proofs,
+                legacy_expected,
+                beta12_sandbox_proofs,
+                beta12_expected,
+            ):
                 raise ValueError(
                     "direct_verification must contain the validated direct Sandbox proof summary"
                 )
+            beta12_upgrade = "beta11_to_beta12_interrupted_upgrade" in direct_verification
             runtime_label = (
                 "One-channel install-smoke observation"
                 if "one-channel install-smoke" in direct_verification["runtime"].casefold()
@@ -200,10 +214,20 @@ def render_native_beta_candidate_notes(
                 "## Direct Sandbox consumer verification",
                 "",
                 f"- Fresh {tag.removeprefix('v')} install: {direct_verification['fresh_install']}",
-                f"- Failed fresh-install repair: {direct_verification['failed_install_repair']}",
-                f"- Existing account data after repair: {direct_verification['repair_preservation']}",
-                f"- Beta 10 to {tag.removeprefix('v')} setup-only upgrade: {direct_verification['beta10_to_beta11_upgrade']}",
-                f"- Existing account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
+                *(
+                    [
+                        f"- Beta 11 baseline install: {direct_verification['beta11_baseline_install']}",
+                        f"- Beta 11 to Beta 12 interrupted-upgrade recovery: {direct_verification['beta11_to_beta12_interrupted_upgrade']}",
+                        f"- Existing Beta 11 account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
+                    ]
+                    if beta12_upgrade
+                    else [
+                        f"- Failed fresh-install repair: {direct_verification['failed_install_repair']}",
+                        f"- Existing account data after repair: {direct_verification['repair_preservation']}",
+                        f"- Beta 10 to {tag.removeprefix('v')} setup-only upgrade: {direct_verification['beta10_to_beta11_upgrade']}",
+                        f"- Existing account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
+                    ]
+                ),
                 f"- {runtime_label}: {direct_verification['runtime']}",
                 "- Gate A workflow lanes: not run.",
                 "- Download-only network route: not tested.",

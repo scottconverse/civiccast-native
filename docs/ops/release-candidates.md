@@ -126,61 +126,63 @@ workflow-backed route, or `--consumer-evidence-receipt <file>` for direct
 evidence. Direct mode also requires an explicit `--artifact-source-sha`; it
 never downloads Gate A artifacts or manufactures lane verdicts.
 
-The default direct receipt is Sandbox evidence, with all install, repair,
-preservation and scoped runtime groups below. An explicit
-`consumer_mode: "physical-host"` is a separate, bounded in-place update route.
-It binds the exact signed setup to a healthy pre-install host, successful
-candidate install, verified installed app manifest and retained service-loop/schema
-state. Its runtime group contains at least two time-ordered snapshots covering
-public, government and education, spanning at least 30 seconds, with HLS no
-older than 30 seconds, advancing playlists/segments, H.264/AAC and changing
-nonempty caption output. It proves those sampled outputs on that
-host; it does not claim a clean Sandbox install, failed-install repair,
-cross-version Sandbox upgrade or simultaneous capacity.
+The Beta 12 direct Sandbox receipt uses the version-1 JSON kind
+`civiccast-native-beta-direct-consumer-evidence`, binds the exact
+`source_sha`, `build_run_id`, and assembly receipt, and declares
+`consumer_contract: "beta11-to-beta12-interrupted-upgrade-v1"`. Its `evidence`
+object contains exactly these groups:
 
-The Sandbox version-1 JSON receipt has `kind: "civiccast-native-beta-direct-consumer-evidence"`, an `artifact` object with
-the exact `source_sha`, `build_run_id`, and a hash-bound `assembly_receipt`,
-and an `evidence` object containing all of these named proof groups:
+- `fresh_install`: the candidate installer run, final install state, and
+  activation self-test.
+- `beta11_baseline_install`: the pinned Beta 11 installer run, healthy state,
+  activation self-test, and a `PrepareBaseline` marker containing the existing
+  asset ID and three schedule IDs.
+- `beta11_to_beta12_interrupted_upgrade`: the exact candidate installer run,
+  state and activation self-test after an observed nonempty, incomplete
+  `.ccpack.partial` during `stage-packs`; the interrupted file and recovery
+  result must bind the candidate source, workflow run, and installer hash.
+  The same installer must then repair the interrupted install, remove partial
+  packs, and pass post-upgrade verification.
+- `verify_after_upgrade`: the `PostUpgrade` marker and command log proving that
+  the Beta 11 asset and all three baseline schedules were preserved.
+- `three_channel_runtime`: the five-minute result, preservation marker, and
+  all five snapshots for public, government, and education.
 
-- `fresh_install`: installer run, final install state, and activation
-  self-test.
-- `failed_install_repair`: the missing-Whistle-field/removed-version-marker
-  fixture, installer run/state/self-test, repair and verification command
-  logs, and post-repair result/preservation marker.
-- `beta10_baseline_install`: the Beta 10 installer run and healthy state.
-- `beta10_to_beta11_upgrade`: the current candidate's installer run/state/self-test
-  and upgrade-engine log. This legacy field name is retained for receipt
-  compatibility; the validated installed version must match the candidate,
-  including Beta 12, rather than being accepted because the field says Beta 11.
-- `verify_after_upgrade`: the actual sign-in, existing asset and saved
-  schedule verification result plus its preservation marker.
-- A runtime proof group selected by the explicit scope below: its five-minute
-  result, preservation marker, and all five minute snapshots.
+Beta 12 direct Sandbox evidence requires the three-channel runtime scope; a
+one-channel install-smoke or the older Beta 10/failed-fresh-repair receipt
+cannot stand in for the Beta 11-to-Beta 12 interrupted-upgrade evidence.
+Legacy Sandbox receipt validation remains available for Beta 11 receipts:
+it uses the older `failed_install_repair`, `beta10_baseline_install`, and
+`beta10_to_beta11_upgrade` groups, and supports the historical one-channel
+install-smoke scope. That legacy shape is not accepted for Beta 12.
 
-Legacy receipts omit `runtime_proof_scope` and use `three_channel_runtime`
-for public, government, and education. A functional installation smoke
-instead sets the top-level `runtime_proof_scope` to
-`"one-channel-install-smoke"` and uses `one_channel_install_smoke` for exactly
-`["public"]`. Unknown scopes, mixed runtime groups and missing or different
-channels are rejected; missing channels never silently reduce the scope.
-Account, asset and three saved schedule preservation checks remain required
-regardless of the runtime scope.
+An explicit `consumer_mode: "physical-host"` is a separate, bounded in-place
+update route. It binds the exact signed setup to a healthy pre-install host,
+successful candidate install, verified installed app manifest, and retained
+service-loop/schema state. Its runtime group contains at least two
+time-ordered snapshots covering public, government, and education, spanning
+at least 30 seconds, with HLS no older than 30 seconds, advancing
+playlists/segments, H.264/AAC, and changing nonempty caption output. It proves
+those sampled outputs on that host; it does not claim a clean Sandbox install,
+failed-install repair, cross-version Sandbox upgrade, or simultaneous
+capacity.
 
-For those runtime snapshots, the publisher requires a time-ordered sample
-span of at least three minutes, HLS playlist age no greater than 30 seconds,
-and advancing playlist timestamps and newest segment names for each channel.
-It also requires audio/video HLS, at least three distinct VTT snapshots, and
-at least two accumulated JFK reference words per channel across the run. The
-bounded VTT text sample remains in the hash-bound evidence for human review;
-the publisher does not compare it to a transcript.
+For the Beta 11 legacy one-channel scope, the top-level
+`runtime_proof_scope` is `"one-channel-install-smoke"` and the proof group is
+`one_channel_install_smoke` for exactly `["public"]`. Unknown scopes, mixed
+runtime groups, and missing or different channels are rejected; missing
+channels never silently reduce the requested scope. Account, asset, and three
+saved-schedule preservation checks remain required for that legacy receipt.
 
-The one-channel scope proves installed caption functionality, not
-three-channel capacity. It is used while the owner's existing three-station
-host soak continues; adding three guest stations would test six simultaneous
-stations on the development machine. Release notes keep the accepted host
-soak, the failed three-channel guest run and its workload context separate.
-The new package's simultaneous three-channel capacity remains unproven;
-the single-channel result must never be described as a three-channel pass.
+The runtime snapshots require a time-ordered sample span of at least three
+minutes, HLS playlist age no greater than 30 seconds, and advancing playlist
+timestamps and newest segment names for each channel. They also require
+audio/video HLS, at least three distinct VTT snapshots, and at least two
+accumulated JFK reference words per channel across the run. The bounded VTT
+text sample remains in the hash-bound evidence for human review; the publisher
+does not compare it to a transcript. Historical Beta 11 one-channel evidence
+shows installed caption functionality only, not three-channel capacity, and
+cannot satisfy the Beta 12 direct Sandbox route.
 
 Every referenced file is a `{ "path": ..., "sha256": ... }` object. The
 publisher verifies each file hash and the semantics above, then checks all 19

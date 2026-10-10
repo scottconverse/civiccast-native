@@ -170,11 +170,27 @@ def verify_layout(
 
 
 DIRECT_CONSUMER_RECEIPT_KIND = "civiccast-native-beta-direct-consumer-evidence"
+DIRECT_BETA11_VERSION = "1.0.0-beta.11"
+DIRECT_BETA12_VERSION = "1.0.0-beta.12"
+DIRECT_BETA12_CONSUMER_CONTRACT = "beta11-to-beta12-interrupted-upgrade-v1"
+DIRECT_BETA11_BASELINE_INSTALLER_SHA256 = (
+    "c4dfb6a4a3b0495582bcf169f45af8b4bdae7025c822d1ea5782edf7442013a5"
+)
+DIRECT_BETA11_STATION_INDEX_SHA256 = (
+    "9f107d1fc2f141bdc7ebd1b46aaca3639e624e3f24a4a34a34cc9d7e51952e84"
+)
 DIRECT_CONSUMER_PROOFS = {
     "fresh_install",
     "failed_install_repair",
     "beta10_baseline_install",
     "beta10_to_beta11_upgrade",
+    "verify_after_upgrade",
+    "three_channel_runtime",
+}
+DIRECT_BETA12_CONSUMER_PROOFS = {
+    "fresh_install",
+    "beta11_baseline_install",
+    "beta11_to_beta12_interrupted_upgrade",
     "verify_after_upgrade",
     "three_channel_runtime",
 }
@@ -208,6 +224,26 @@ DIRECT_PROOF_FIELDS = {
         "upgrade_engine_log",
     },
     "verify_after_upgrade": {"result", "preserve_marker"},
+    "three_channel_runtime": {"result", "preserve_marker", "snapshots"},
+}
+DIRECT_BETA12_PROOF_FIELDS = {
+    "fresh_install": {"installer_run", "install_state", "activation_self_test"},
+    "beta11_baseline_install": {
+        "installer_run",
+        "install_state",
+        "activation_self_test",
+        "preserve_marker",
+    },
+    "beta11_to_beta12_interrupted_upgrade": {
+        "interrupted_install",
+        "installer_run",
+        "install_state",
+        "activation_self_test",
+        "repair_install_log",
+        "recovery_result",
+        "post_upgrade_command_log",
+    },
+    "verify_after_upgrade": {"preserve_marker", "command_log"},
     "three_channel_runtime": {"result", "preserve_marker", "snapshots"},
 }
 
@@ -254,7 +290,7 @@ def _bound_path(receipt_dir: Path, reference: object, *, label: str) -> Path:
 def _bound_json(receipt_dir: Path, reference: object, *, label: str) -> tuple[Path, dict[str, Any]]:
     path = _bound_path(receipt_dir, reference, label=label)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PublishError(
             f"direct consumer evidence {label} is not valid UTF-8 JSON: {exc}"
@@ -576,6 +612,8 @@ def verify_consumer_evidence_receipt(
         receipt_fields.add("runtime_proof_scope")
     if "consumer_mode" in doc:
         receipt_fields.add("consumer_mode")
+    if "consumer_contract" in doc:
+        receipt_fields.add("consumer_contract")
     _record_keys(doc, receipt_fields, label="receipt")
     if doc.get("schema_version") != 1 or doc.get("kind") != DIRECT_CONSUMER_RECEIPT_KIND:
         raise PublishError("direct consumer evidence receipt schema or kind is unsupported")
@@ -583,15 +621,36 @@ def verify_consumer_evidence_receipt(
     if consumer_mode not in {"sandbox", "physical-host"}:
         raise PublishError(f"unsupported direct consumer evidence mode: {consumer_mode!r}")
     runtime_proof_scope = doc.get("runtime_proof_scope", "three-channel-capacity")
+    beta12_sandbox = consumer_mode == "sandbox" and candidate_version == DIRECT_BETA12_VERSION
     if consumer_mode == "sandbox":
         if not isinstance(runtime_proof_scope, str) or runtime_proof_scope not in (
             DIRECT_RUNTIME_PROOF_SCOPES
         ):
             raise PublishError(f"unsupported direct runtime proof scope: {runtime_proof_scope!r}")
         runtime_proof_group, runtime_channels = DIRECT_RUNTIME_PROOF_SCOPES[runtime_proof_scope]
+        if beta12_sandbox:
+            if doc.get("consumer_contract") != DIRECT_BETA12_CONSUMER_CONTRACT:
+                raise PublishError(
+                    "Beta 12 direct Sandbox evidence must use the Beta 11 interrupted-upgrade contract"
+                )
+            if runtime_proof_scope != "three-channel-capacity":
+                raise PublishError(
+                    "Beta 12 direct Sandbox upgrade evidence requires the three-channel runtime proof"
+                )
+        elif candidate_version == DIRECT_BETA11_VERSION:
+            if "consumer_contract" in doc:
+                raise PublishError(
+                    "Beta 11 direct Sandbox evidence uses the legacy receipt contract"
+                )
+        else:
+            raise PublishError(
+                f"direct Sandbox evidence has no supported consumer contract for {candidate_version}"
+            )
     else:
         if "runtime_proof_scope" in doc:
             raise PublishError("physical-host evidence uses its own three-channel output scope")
+        if "consumer_contract" in doc:
+            raise PublishError("physical-host evidence does not use a Sandbox consumer contract")
         runtime_proof_group, runtime_channels = "host_three_channel_runtime", DIRECT_CHANNELS
 
     artifact = _record(doc.get("artifact"), label="artifact")
@@ -622,7 +681,25 @@ def verify_consumer_evidence_receipt(
         )
     except (KeyError, TypeError) as exc:
         raise PublishError("kit assembly receipt is missing its station signature record") from exc
-    if consumer_mode == "sandbox":
+    if beta12_sandbox:
+        station_index_sha256 = station_index.get("sha256")
+        if (
+            assembly.get("candidate_version") != candidate_version
+            or signature_record.get("status") != "passed"
+            or signature_record.get("conclusion") != "success"
+            or str(signature_record.get("workflow_run_id")) != str(build_run_id)
+            or signature_record.get("method") != "compiled candidate bootstrap trust verification"
+            or not isinstance(station_index_sha256, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", station_index_sha256)
+            or not isinstance(station_index.get("signing_key_id"), str)
+            or not station_index["signing_key_id"].strip()
+            or station_index.get("pack_count") != 6
+            or station_index.get("verified_against") != 6
+        ):
+            raise PublishError(
+                "Beta 12 kit assembly receipt does not bind the passed signed six-pack index"
+            )
+    elif consumer_mode == "sandbox":
         try:
             activation = _record(
                 signature_record["consumer_activation_verification"],
@@ -706,6 +783,14 @@ def verify_consumer_evidence_receipt(
     }
     if actual_members != set(members):
         raise PublishError("kit file inventory differs from the exact 19-member assembly receipt")
+    if beta12_sandbox:
+        station_index_member = members.get("station/station-index.json")
+        if (
+            station_index_member is None
+            or sha256_file(station_index_member).casefold()
+            != str(station_index.get("sha256", "")).casefold()
+        ):
+            raise PublishError("station-index bytes do not match the signed-index assembly receipt")
 
     installer = _record(assembly.get("installer"), label="kit installer")
     installer_sha256 = installer.get("sha256")
@@ -735,9 +820,11 @@ def verify_consumer_evidence_receipt(
         )
         return setup, packs, verification
 
-    expected_proofs = (DIRECT_CONSUMER_PROOFS - {"three_channel_runtime"}) | {runtime_proof_group}
+    proof_fields = DIRECT_BETA12_PROOF_FIELDS if beta12_sandbox else DIRECT_PROOF_FIELDS
+    proof_names = DIRECT_BETA12_CONSUMER_PROOFS if beta12_sandbox else DIRECT_CONSUMER_PROOFS
+    expected_proofs = (proof_names - {"three_channel_runtime"}) | {runtime_proof_group}
     _record_keys(evidence, expected_proofs, label="proof set")
-    for proof_name, fields in DIRECT_PROOF_FIELDS.items():
+    for proof_name, fields in proof_fields.items():
         if proof_name == "three_channel_runtime":
             continue
         _record_keys(_record(evidence.get(proof_name), label=proof_name), fields, label=proof_name)
@@ -752,6 +839,46 @@ def verify_consumer_evidence_receipt(
         _, value = _bound_json(receipt_dir, proof.get(file_name), label=f"{proof_name}.{file_name}")
         return value
 
+    def verify_activation_self_test(
+        activation: dict[str, Any],
+        *,
+        version: str,
+        label: str,
+        beta12_payload: bool,
+        expected_distribution_index_sha256: str | None = None,
+        expected_index_source: str = "the signed station index",
+    ) -> None:
+        if beta12_payload:
+            ai_result = _record(activation.get("ai_inference"), label=f"{label} AI inference")
+            caption_result = _record(
+                activation.get("caption_inference"), label=f"{label} caption inference"
+            )
+            distribution_sha256 = activation.get("distribution_index_sha256")
+            if (
+                activation.get("product") != "civiccast-native"
+                or activation.get("product_version") != version
+                or activation.get("schema_version") != 1
+                or not isinstance(distribution_sha256, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", distribution_sha256)
+                or ai_result.get("result") != "passed"
+                or caption_result.get("result") != "passed"
+            ):
+                raise PublishError(
+                    f"direct consumer evidence {label} activation self-test did not pass"
+                )
+            if (
+                expected_distribution_index_sha256 is None
+                or distribution_sha256.casefold() != expected_distribution_index_sha256.casefold()
+            ):
+                raise PublishError(
+                    f"direct consumer evidence {label} activation self-test distribution index "
+                    f"does not match {expected_index_source}"
+                )
+        elif activation.get("product_version") != version or activation.get("result") != "passed":
+            raise PublishError(
+                f"direct consumer evidence {label} activation self-test did not pass"
+            )
+
     def require_candidate_install(proof_name: str) -> None:
         run = read_json(proof_name, "installer_run")
         if (
@@ -764,130 +891,292 @@ def verify_consumer_evidence_receipt(
         _verify_install_state(
             read_json(proof_name, "install_state"), version=candidate_version, label=proof_name
         )
-        activation = read_json(proof_name, "activation_self_test")
-        if (
-            activation.get("product_version") != candidate_version
-            or activation.get("result") != "passed"
-        ):
-            raise PublishError(
-                f"direct consumer evidence {proof_name} activation self-test did not pass"
-            )
+        verify_activation_self_test(
+            read_json(proof_name, "activation_self_test"),
+            version=candidate_version,
+            label=proof_name,
+            beta12_payload=beta12_sandbox,
+            expected_distribution_index_sha256=(
+                station_index["sha256"] if beta12_sandbox else None
+            ),
+        )
 
     require_candidate_install("fresh_install")
 
-    require_candidate_install("failed_install_repair")
-    repair = _record(evidence.get("failed_install_repair"), label="failed_install_repair")
-    _, fixture = _bound_json(receipt_dir, repair.get("fixture"), label="failed-install fixture")
-    # This is a failed fresh install of the candidate being repaired. The
-    # independent Beta 10 baseline and physical-host before-version stay intact.
-    if (
-        fixture.get("previous_installed_version") != candidate_version
-        or fixture.get("missing_runtime_key") != "whistle_assets_root"
-        or fixture.get("installed_version_marker_removed") is not True
-        or fixture.get("upgrade_journal_exists") is not False
-        or fixture.get("service_status") != "Stopped"
-    ):
-        raise PublishError(
-            f"failed-install repair fixture does not record the known {candidate_version} broken state"
+    if beta12_sandbox:
+        baseline_run = read_json("beta11_baseline_install", "installer_run")
+        if (
+            baseline_run.get("exit_code") != 0
+            or baseline_run.get("expected_version") != DIRECT_BETA11_VERSION
+            or str(baseline_run.get("sha256", "")).casefold()
+            != DIRECT_BETA11_BASELINE_INSTALLER_SHA256
+            or DIRECT_BETA11_VERSION not in str(baseline_run.get("installer", ""))
+        ):
+            raise PublishError("Beta 11 baseline installer did not match the pinned package")
+        _verify_install_state(
+            read_json("beta11_baseline_install", "install_state"),
+            version=DIRECT_BETA11_VERSION,
+            label="Beta 11 baseline",
         )
-    repair_install_log = _read_bound_text(
-        receipt_dir, repair.get("repair_install_log"), label="repair install command log"
-    )
-    repair_verify_log = _read_bound_text(
-        receipt_dir, repair.get("repair_verify_log"), label="repair verification command log"
-    )
-    if "PASS" not in repair_install_log or "PASS" not in repair_verify_log:
-        raise PublishError(
-            "failed-install repair command and post-repair verification must both PASS"
-        )
-    repair_result = read_json("failed_install_repair", "post_repair_result")
-    repair_marker = read_json("failed_install_repair", "post_repair_marker")
-    repaired_schedules = repair_result.get("preserved_schedule_ids")
-    repair_health = repair_result.get("health")
-    repair_marker_runtime = repair_marker.get("runtime")
-    if (
-        repair_result.get("result") != "PASS"
-        or repair_result.get("login") != "PASS"
-        or repair_result.get("preserve_install_and_database") is not True
-        or repair_result.get("product_version") != candidate_version
-        or not isinstance(repair_health, dict)
-        or repair_health.get("status") != "healthy"
-        or not isinstance(repaired_schedules, list)
-        or len(repaired_schedules) != 3
-        or not all(isinstance(item, str) for item in repaired_schedules)
-        or len(set(repaired_schedules)) != 3
-        or repair_marker.get("schedule_ids") != repaired_schedules
-        or repair_result.get("preserved_asset_id")
-        != repair_marker.get("preserved_baseline_asset_id")
-        or not isinstance(repair_marker_runtime, dict)
-        or repair_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
-    ):
-        raise PublishError(
-            "failed-install repair verification does not prove restored account data and Whistle activation"
+        verify_activation_self_test(
+            read_json("beta11_baseline_install", "activation_self_test"),
+            version=DIRECT_BETA11_VERSION,
+            label="Beta 11 baseline",
+            beta12_payload=True,
+            expected_distribution_index_sha256=DIRECT_BETA11_STATION_INDEX_SHA256,
+            expected_index_source="its pinned station index",
         )
 
-    baseline_run = read_json("beta10_baseline_install", "installer_run")
-    if (
-        baseline_run.get("exit_code") != 0
-        or "beta.10" not in str(baseline_run.get("installer", "")).casefold()
-    ):
-        raise PublishError("Beta 10 baseline installer did not complete successfully")
-    _verify_install_state(
-        read_json("beta10_baseline_install", "install_state"),
-        version="1.0.0-beta.10",
-        label="Beta 10 baseline",
-    )
+        baseline_marker = read_json("beta11_baseline_install", "preserve_marker")
+        baseline_schedules = baseline_marker.get("schedule_ids")
+        baseline_asset = baseline_marker.get("asset_id")
+        if (
+            baseline_marker.get("mode") != "PrepareBaseline"
+            or baseline_marker.get("product_version") != DIRECT_BETA11_VERSION
+            or baseline_marker.get("preserve_install_and_database") is not True
+            or not isinstance(baseline_asset, str)
+            or not baseline_asset
+            or not isinstance(baseline_schedules, list)
+            or len(baseline_schedules) != 3
+            or not all(isinstance(item, str) and item for item in baseline_schedules)
+            or len(set(baseline_schedules)) != 3
+        ):
+            raise PublishError("Beta 11 baseline marker does not record its existing account data")
 
-    require_candidate_install("beta10_to_beta11_upgrade")
-    upgrade = _record(evidence.get("beta10_to_beta11_upgrade"), label="beta10_to_beta11_upgrade")
-    upgrade_log = _read_bound_text(
-        receipt_dir,
-        upgrade.get("upgrade_engine_log"),
-        label=f"Beta 10 to {candidate_version} upgrade log",
-    )
-    if (
-        f"old=1.0.0-beta.10 new={candidate_version}" not in upgrade_log
-        or "route: upgrade" not in upgrade_log
-    ):
-        raise PublishError(
-            f"upgrade log does not prove the Beta 10 to {candidate_version} upgrade path"
+        require_candidate_install("beta11_to_beta12_interrupted_upgrade")
+        upgrade = _record(
+            evidence.get("beta11_to_beta12_interrupted_upgrade"),
+            label="beta11_to_beta12_interrupted_upgrade",
+        )
+        interrupted = read_json("beta11_to_beta12_interrupted_upgrade", "interrupted_install")
+        recovery = read_json("beta11_to_beta12_interrupted_upgrade", "recovery_result")
+        observed = interrupted.get("bytes_before_kill")
+        partial_after = interrupted.get("partial_bytes_after_kill")
+        expected = interrupted.get("expected_bytes")
+        process_id = interrupted.get("process_id")
+        process_exit_code = interrupted.get("process_exit_code")
+        kill_exit_code = interrupted.get("kill_command_exit_code")
+        partial_path = str(interrupted.get("partial_path", "")).replace("/", "\\").casefold()
+        if (
+            interrupted.get("result") != "INTERRUPTED_CONFIRMED"
+            or str(interrupted.get("candidate_source_sha", "")).casefold()
+            != artifact_source_sha.casefold()
+            or str(interrupted.get("installer_sha256", "")).casefold()
+            != installer_sha256.casefold()
+            or interrupted.get("phase") != "stage-packs"
+            or interrupted.get("progress_marker") != "step stage-packs: begin"
+            or not isinstance(process_id, int)
+            or isinstance(process_id, bool)
+            or process_id <= 0
+            or not isinstance(process_exit_code, int)
+            or isinstance(process_exit_code, bool)
+            or not isinstance(kill_exit_code, int)
+            or isinstance(kill_exit_code, bool)
+            or kill_exit_code != 0
+            or not partial_path.endswith(".ccpack.partial")
+            or "\\packs\\" not in partial_path
+            or not isinstance(observed, int)
+            or isinstance(observed, bool)
+            or not isinstance(partial_after, int)
+            or isinstance(partial_after, bool)
+            or not isinstance(expected, int)
+            or isinstance(expected, bool)
+            or not (0 < observed < expected and 0 < partial_after < expected)
+            or recovery.get("result") != "PASS"
+            or str(recovery.get("candidate_source_sha", "")).casefold()
+            != artifact_source_sha.casefold()
+            or str(recovery.get("workflow_run_id")) != str(build_run_id)
+            or recovery.get("candidate_version") != candidate_version
+            or recovery.get("interrupted_stage") != "stage-packs"
+            or str(recovery.get("repair_installer_sha256", "")).casefold()
+            != installer_sha256.casefold()
+            or recovery.get("baseline_version") != DIRECT_BETA11_VERSION
+            or not isinstance(recovery.get("remaining_partial_pack_count"), int)
+            or isinstance(recovery.get("remaining_partial_pack_count"), bool)
+            or recovery.get("remaining_partial_pack_count") != 0
+            or not isinstance(recovery.get("interruption_bytes"), int)
+            or isinstance(recovery.get("interruption_bytes"), bool)
+            or recovery.get("interruption_bytes") != observed
+            or not isinstance(recovery.get("interruption_expected_bytes"), int)
+            or isinstance(recovery.get("interruption_expected_bytes"), bool)
+            or recovery.get("interruption_expected_bytes") != expected
+            or not str(recovery.get("preservation_result", ""))
+            .replace("/", "\\")
+            .casefold()
+            .endswith("\\beta12\\beta12postupgrade\\preserve-marker.json")
+        ):
+            raise PublishError(
+                "Beta 11 to Beta 12 receipt does not prove incomplete stage-packs interruption and same-candidate recovery"
+            )
+
+        repair_install_log = _read_bound_text(
+            receipt_dir, upgrade.get("repair_install_log"), label="interrupted repair install log"
+        )
+        post_upgrade_log = _read_bound_text(
+            receipt_dir,
+            upgrade.get("post_upgrade_command_log"),
+            label="post-upgrade preservation command log",
+        )
+        if "PASS" not in repair_install_log or "PASS" not in post_upgrade_log:
+            raise PublishError(
+                "same-candidate repair and post-upgrade verification commands must both PASS"
+            )
+    else:
+        require_candidate_install("failed_install_repair")
+        repair = _record(evidence.get("failed_install_repair"), label="failed_install_repair")
+        _, fixture = _bound_json(receipt_dir, repair.get("fixture"), label="failed-install fixture")
+        # This is a failed fresh install of the candidate being repaired. The
+        # independent Beta 10 baseline and physical-host before-version stay intact.
+        if (
+            fixture.get("previous_installed_version") != candidate_version
+            or fixture.get("missing_runtime_key") != "whistle_assets_root"
+            or fixture.get("installed_version_marker_removed") is not True
+            or fixture.get("upgrade_journal_exists") is not False
+            or fixture.get("service_status") != "Stopped"
+        ):
+            raise PublishError(
+                f"failed-install repair fixture does not record the known {candidate_version} broken state"
+            )
+        repair_install_log = _read_bound_text(
+            receipt_dir, repair.get("repair_install_log"), label="repair install command log"
+        )
+        repair_verify_log = _read_bound_text(
+            receipt_dir, repair.get("repair_verify_log"), label="repair verification command log"
+        )
+        if "PASS" not in repair_install_log or "PASS" not in repair_verify_log:
+            raise PublishError(
+                "failed-install repair command and post-repair verification must both PASS"
+            )
+        repair_result = read_json("failed_install_repair", "post_repair_result")
+        repair_marker = read_json("failed_install_repair", "post_repair_marker")
+        repaired_schedules = repair_result.get("preserved_schedule_ids")
+        repair_health = repair_result.get("health")
+        repair_marker_runtime = repair_marker.get("runtime")
+        if (
+            repair_result.get("result") != "PASS"
+            or repair_result.get("login") != "PASS"
+            or repair_result.get("preserve_install_and_database") is not True
+            or repair_result.get("product_version") != candidate_version
+            or not isinstance(repair_health, dict)
+            or repair_health.get("status") != "healthy"
+            or not isinstance(repaired_schedules, list)
+            or len(repaired_schedules) != 3
+            or not all(isinstance(item, str) for item in repaired_schedules)
+            or len(set(repaired_schedules)) != 3
+            or repair_marker.get("schedule_ids") != repaired_schedules
+            or repair_result.get("preserved_asset_id")
+            != repair_marker.get("preserved_baseline_asset_id")
+            or not isinstance(repair_marker_runtime, dict)
+            or repair_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
+        ):
+            raise PublishError(
+                "failed-install repair verification does not prove restored account data and Whistle activation"
+            )
+
+        baseline_run = read_json("beta10_baseline_install", "installer_run")
+        if (
+            baseline_run.get("exit_code") != 0
+            or "beta.10" not in str(baseline_run.get("installer", "")).casefold()
+        ):
+            raise PublishError("Beta 10 baseline installer did not complete successfully")
+        _verify_install_state(
+            read_json("beta10_baseline_install", "install_state"),
+            version="1.0.0-beta.10",
+            label="Beta 10 baseline",
         )
 
-    verify_result = read_json("verify_after_upgrade", "result")
+        require_candidate_install("beta10_to_beta11_upgrade")
+        upgrade = _record(
+            evidence.get("beta10_to_beta11_upgrade"), label="beta10_to_beta11_upgrade"
+        )
+        upgrade_log = _read_bound_text(
+            receipt_dir,
+            upgrade.get("upgrade_engine_log"),
+            label=f"Beta 10 to {candidate_version} upgrade log",
+        )
+        if (
+            f"old=1.0.0-beta.10 new={candidate_version}" not in upgrade_log
+            or "route: upgrade" not in upgrade_log
+        ):
+            raise PublishError(
+                f"upgrade log does not prove the Beta 10 to {candidate_version} upgrade path"
+            )
+
     verify_marker = read_json("verify_after_upgrade", "preserve_marker")
-    schedule_ids = verify_result.get("preserved_schedule_ids")
-    marker_schedules = verify_marker.get("baseline_schedule_ids")
-    verify_health = verify_result.get("health")
     verify_marker_runtime = verify_marker.get("runtime")
-    if (
-        verify_result.get("result") != "PASS"
-        or verify_result.get("login") != "PASS"
-        or verify_result.get("preserve_install_and_database") is not True
-        or verify_result.get("product_version") != candidate_version
-        or not isinstance(verify_health, dict)
-        or verify_health.get("status") != "healthy"
-        or not isinstance(schedule_ids, list)
-        or len(schedule_ids) != 3
-        or not all(isinstance(item, str) for item in schedule_ids)
-        or len(set(schedule_ids)) != 3
-        or marker_schedules != schedule_ids
-        or verify_result.get("preserved_asset_id")
-        != verify_marker.get("preserved_baseline_asset_id")
-        or not isinstance(verify_marker_runtime, dict)
-        or verify_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
-    ):
-        raise PublishError(
-            "post-upgrade verification does not prove the original account data was preserved"
+    if beta12_sandbox:
+        baseline_marker = read_json("beta11_baseline_install", "preserve_marker")
+        baseline_schedules = baseline_marker.get("schedule_ids")
+        verify_schedules = verify_marker.get("baseline_schedule_ids")
+        post_upgrade_log = _read_bound_text(
+            receipt_dir,
+            _record(evidence.get("verify_after_upgrade"), label="verify_after_upgrade").get(
+                "command_log"
+            ),
+            label="post-upgrade verification command log",
         )
+        if (
+            "PASS:" not in post_upgrade_log
+            or verify_marker.get("mode") != "PostUpgrade"
+            or verify_marker.get("product_version") != candidate_version
+            or verify_marker.get("preserve_install_and_database") is not True
+            or verify_marker.get("asset_id") != baseline_marker.get("asset_id")
+            or verify_marker.get("preserved_baseline_asset_id") != baseline_marker.get("asset_id")
+            or verify_schedules != baseline_schedules
+            or not isinstance(verify_schedules, list)
+            or len(verify_schedules) != 3
+            or not all(isinstance(item, str) and item for item in verify_schedules)
+            or len(set(verify_schedules)) != 3
+            or not isinstance(verify_marker_runtime, dict)
+            or verify_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
+        ):
+            raise PublishError(
+                "Beta 12 post-upgrade verification does not preserve the Beta 11 asset and schedules"
+            )
+    else:
+        verify_result = read_json("verify_after_upgrade", "result")
+        schedule_ids = verify_result.get("preserved_schedule_ids")
+        marker_schedules = verify_marker.get("baseline_schedule_ids")
+        verify_health = verify_result.get("health")
+        if (
+            verify_result.get("result") != "PASS"
+            or verify_result.get("login") != "PASS"
+            or verify_result.get("preserve_install_and_database") is not True
+            or verify_result.get("product_version") != candidate_version
+            or not isinstance(verify_health, dict)
+            or verify_health.get("status") != "healthy"
+            or not isinstance(schedule_ids, list)
+            or len(schedule_ids) != 3
+            or not all(isinstance(item, str) for item in schedule_ids)
+            or len(set(schedule_ids)) != 3
+            or marker_schedules != schedule_ids
+            or verify_result.get("preserved_asset_id")
+            != verify_marker.get("preserved_baseline_asset_id")
+            or not isinstance(verify_marker_runtime, dict)
+            or verify_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
+        ):
+            raise PublishError(
+                "post-upgrade verification does not prove the original account data was preserved"
+            )
 
     runtime_result = read_json(runtime_proof_group, "result")
     runtime_marker = read_json(runtime_proof_group, "preserve_marker")
-    if (
+    runtime_result_invalid = (
         runtime_result.get("result") != "PASS"
         or runtime_result.get("observed_minutes") != 5
         or runtime_result.get("channels") != list(runtime_channels)
         or runtime_result.get("preserve_install_and_database") is not True
-        or runtime_marker.get("preserve_install_and_database") is not True
+    )
+    if beta12_sandbox:
+        runtime_result_invalid = (
+            runtime_result_invalid or runtime_result.get("mode") != "PostUpgrade"
+        )
+    if runtime_result_invalid:
+        raise PublishError(
+            f"{runtime_proof_scope} runtime receipt does not record the five-minute {candidate_version} pass"
+        )
+    if (
+        runtime_marker.get("preserve_install_and_database") is not True
         or runtime_marker.get("product_version") != candidate_version
     ):
         raise PublishError(
@@ -1054,6 +1343,19 @@ def verify_consumer_evidence_receipt(
                 f"runtime channel {channel!r} recognized fewer than two JFK reference words"
             )
 
+    if beta12_sandbox:
+        return (
+            setup,
+            packs,
+            {
+                "consumer_mode": "sandbox",
+                "fresh_install": "PASS",
+                "beta11_baseline_install": "PASS",
+                "beta11_to_beta12_interrupted_upgrade": "PASS",
+                "preservation": "PASS",
+                "runtime": "PASS (five minutes, three channels)",
+            },
+        )
     return (
         setup,
         packs,

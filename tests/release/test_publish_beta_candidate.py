@@ -282,6 +282,14 @@ def _args(
 
 
 DIRECT_SOURCE_SHA = "b" * 40
+DIRECT_BETA11_BASELINE_INSTALLER_SHA256 = (
+    "c4dfb6a4a3b0495582bcf169f45af8b4bdae7025c822d1ea5782edf7442013a5"
+)
+DIRECT_BETA11_STATION_INDEX_SHA256 = (
+    "9f107d1fc2f141bdc7ebd1b46aaca3639e624e3f24a4a34a34cc9d7e51952e84"
+)
+DIRECT_BETA11_VERSION = "1.0.0-beta.11"
+DIRECT_BETA12_CONSUMER_CONTRACT = "beta11-to-beta12-interrupted-upgrade-v1"
 
 
 def _write_bound_json(path: Path, value: dict) -> dict[str, str]:
@@ -302,11 +310,15 @@ def _write_direct_kit(
     source_sha: str,
     build_run_id: str,
     consumer_mode: str = "sandbox",
+    candidate_version: str = VERSION,
+    sandbox_contract: str | None = None,
 ) -> tuple[Path, Path]:
     kit_dir.mkdir(parents=True)
-    setup = kit_dir / f"CivicCast (Native)_{VERSION}_x64-setup.exe"
-    setup.write_bytes(f"fake signed {VERSION} installer".encode())
-    (kit_dir / "QUICKSTART-OPERATOR.md").write_text(f"{VERSION} quickstart\n", encoding="utf-8")
+    setup = kit_dir / f"CivicCast (Native)_{candidate_version}_x64-setup.exe"
+    setup.write_bytes(f"fake signed {candidate_version} installer".encode())
+    (kit_dir / "QUICKSTART-OPERATOR.md").write_text(
+        f"{candidate_version} quickstart\n", encoding="utf-8"
+    )
     packs_dir = kit_dir / "packs"
     packs_dir.mkdir()
     for name in (
@@ -376,6 +388,7 @@ def _write_direct_kit(
         "schema_version": 1,
         "source_sha": source_sha,
         "workflow_run_id": int(build_run_id),
+        "candidate_version": candidate_version,
         "installer": {
             "path": setup.name,
             "size_bytes": setup.stat().st_size,
@@ -388,24 +401,41 @@ def _write_direct_kit(
             "station_folder_present": True,
         },
         "station_index": {
-            "signature_verification": {
-                "consumer_activation_verification": (
-                    "pending exact signed host refresh and activation."
-                    if consumer_mode == "physical-host"
-                    else {
+            "sha256": m.sha256_file(station_dir / "station-index.json"),
+            "signing_key_id": "civiccast-production-test-key",
+            "pack_count": 6,
+            "verified_against": 6,
+            "signature_verification": (
+                {
+                    "consumer_activation_verification": "pending exact signed host refresh and activation."
+                }
+                if consumer_mode == "physical-host"
+                else (
+                    {
+                        "conclusion": "success",
                         "status": "passed",
-                        "actual_sandbox_result": {
-                            "baseline_install": {"status": "passed", "exit_code": 0},
-                            "upgrade_install": {
-                                "status": "passed",
-                                "exit_code": 0,
-                                "payload": "setup.exe plus exactly five runtime packs; no station folder",
+                        "workflow_run_id": build_run_id,
+                        "job_id": "114115463120",
+                        "step_name": "Verify the compiled bootstrap trusts the freshly signed packs",
+                        "method": "compiled candidate bootstrap trust verification",
+                    }
+                    if sandbox_contract == "beta12"
+                    else {
+                        "consumer_activation_verification": {
+                            "status": "passed",
+                            "actual_sandbox_result": {
+                                "baseline_install": {"status": "passed", "exit_code": 0},
+                                "upgrade_install": {
+                                    "status": "passed",
+                                    "exit_code": 0,
+                                    "payload": "setup.exe plus exactly five runtime packs; no station folder",
+                                },
+                                "verify_after_upgrade": {"status": "passed", "exit_code": 0},
                             },
-                            "verify_after_upgrade": {"status": "passed", "exit_code": 0},
-                        },
+                        }
                     }
                 )
-            }
+            ),
         },
         "kit_members": members,
     }
@@ -422,12 +452,18 @@ def _write_direct_consumer_receipt(
     runtime_proof_scope: str | None = None,
     consumer_mode: str = "sandbox",
     previous_version: str = "1.0.0-beta.9",
+    candidate_version: str = VERSION,
+    sandbox_contract: str | None = None,
 ) -> tuple[Path, Path]:
+    if sandbox_contract is None and candidate_version == VERSION:
+        sandbox_contract = "beta12"
     setup, assembly_ref = _write_direct_kit(
         kit_dir,
         source_sha=source_sha,
         build_run_id=build_run_id,
         consumer_mode=consumer_mode,
+        candidate_version=candidate_version,
+        sandbox_contract=sandbox_contract,
     )
     evidence_dir = tmp_path / "consumer-evidence"
     installer_run = {"sha256": m.sha256_file(setup), "exit_code": 0}
@@ -566,14 +602,26 @@ def _write_direct_consumer_receipt(
         )
         return receipt_path, setup
 
+    if sandbox_contract == "beta12":
+        return _write_beta12_sandbox_receipt(
+            tmp_path,
+            setup,
+            assembly_ref,
+            evidence_dir,
+            source_sha=source_sha,
+            build_run_id=build_run_id,
+            candidate_version=candidate_version,
+            runtime_proof_scope=runtime_proof_scope,
+        )
+
     candidate_state = {
-        "installed_version": VERSION,
+        "installed_version": candidate_version,
         "service_state": "Running",
-        "health": {"status": "healthy", "version": VERSION},
-        "receipt": {"product_version": VERSION},
+        "health": {"status": "healthy", "version": candidate_version},
+        "receipt": {"product_version": candidate_version},
     }
     candidate_activation = {
-        "product_version": VERSION,
+        "product_version": candidate_version,
         "distribution_index_sha256": "c" * 64,
         "result": "passed",
     }
@@ -601,7 +649,7 @@ def _write_direct_consumer_receipt(
             "fixture": _write_bound_json(
                 evidence_dir / "repair-fixture.json",
                 {
-                    "previous_installed_version": VERSION,
+                    "previous_installed_version": candidate_version,
                     "missing_runtime_key": "whistle_assets_root",
                     "installed_version_marker_removed": True,
                     "upgrade_journal_exists": False,
@@ -621,8 +669,8 @@ def _write_direct_consumer_receipt(
                     "result": "PASS",
                     "login": "PASS",
                     "preserve_install_and_database": True,
-                    "product_version": VERSION,
-                    "health": {"status": "healthy", "version": VERSION},
+                    "product_version": candidate_version,
+                    "health": {"status": "healthy", "version": candidate_version},
                     "preserved_asset_id": "asset-repair-1",
                     "preserved_schedule_ids": schedule_ids,
                 },
@@ -631,7 +679,7 @@ def _write_direct_consumer_receipt(
                 evidence_dir / "Beta11" / "VerifyAfterRepair" / "preserve-marker.json",
                 {
                     "preserve_install_and_database": True,
-                    "product_version": VERSION,
+                    "product_version": candidate_version,
                     "preserved_baseline_asset_id": "asset-repair-1",
                     "schedule_ids": schedule_ids,
                     "runtime": {"whistle_assets_root": "packs/captions-whistle"},
@@ -665,7 +713,7 @@ def _write_direct_consumer_receipt(
         ),
         "upgrade_engine_log": _write_bound_text(
             evidence_dir / "Beta10ToBeta11Upgrade" / "upgrade-engine.log.tail.txt",
-            f"upgrade engine starting: old=1.0.0-beta.10 new={VERSION}\nroute: upgrade\n",
+            f"upgrade engine starting: old=1.0.0-beta.10 new={candidate_version}\nroute: upgrade\n",
         ),
     }
     verified = {
@@ -675,8 +723,8 @@ def _write_direct_consumer_receipt(
                 "result": "PASS",
                 "login": "PASS",
                 "preserve_install_and_database": True,
-                "product_version": VERSION,
-                "health": {"status": "healthy", "version": VERSION},
+                "product_version": candidate_version,
+                "health": {"status": "healthy", "version": candidate_version},
                 "preserved_asset_id": "asset-baseline-1",
                 "preserved_schedule_ids": schedule_ids,
             },
@@ -685,7 +733,7 @@ def _write_direct_consumer_receipt(
             evidence_dir / "VerifyAfterUpgrade" / "preserve-marker.json",
             {
                 "preserve_install_and_database": True,
-                "product_version": VERSION,
+                "product_version": candidate_version,
                 "preserved_baseline_asset_id": "asset-baseline-1",
                 "baseline_schedule_ids": schedule_ids,
                 "runtime": {"whistle_assets_root": "packs/captions-whistle"},
@@ -719,7 +767,7 @@ def _write_direct_consumer_receipt(
         ),
         "preserve_marker": _write_bound_json(
             runtime_root / "preserve-marker.json",
-            {"preserve_install_and_database": True, "product_version": VERSION},
+            {"preserve_install_and_database": True, "product_version": candidate_version},
         ),
         "snapshots": [],
     }
@@ -757,7 +805,7 @@ def _write_direct_consumer_receipt(
                 {
                     "utc": sampled_at_text,
                     "minute": minute,
-                    "health": {"status": "healthy", "version": VERSION},
+                    "health": {"status": "healthy", "version": candidate_version},
                     "pinned_whistle_error_seen": False,
                     "whistle_active_seen": dict.fromkeys(runtime_channels, True),
                     "whistle_fallback_seen": dict.fromkeys(runtime_channels, False),
@@ -781,6 +829,254 @@ def _write_direct_consumer_receipt(
             "beta10_to_beta11_upgrade": upgrade,
             "verify_after_upgrade": verified,
             runtime_group: runtime,
+        },
+    }
+    if runtime_proof_scope is not None:
+        receipt["runtime_proof_scope"] = runtime_proof_scope
+    receipt_path = tmp_path / "direct-consumer-evidence.json"
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    return receipt_path, setup
+
+
+def _write_beta12_sandbox_receipt(
+    tmp_path: Path,
+    setup: Path,
+    assembly_ref: dict[str, str],
+    evidence_dir: Path,
+    *,
+    source_sha: str,
+    build_run_id: str,
+    candidate_version: str,
+    runtime_proof_scope: str | None,
+) -> tuple[Path, Path]:
+    assembly = json.loads(Path(assembly_ref["path"]).read_text(encoding="utf-8"))
+    candidate_index_sha256 = assembly["station_index"]["sha256"]
+    installer_run = {
+        "installer": setup.name,
+        "sha256": m.sha256_file(setup),
+        "expected_version": candidate_version,
+        "exit_code": 0,
+        "install_root": "C:\\TestStore\\install",
+    }
+    candidate_state = {
+        "installed_version": candidate_version,
+        "service_state": "Running",
+        "health": {"status": "healthy", "version": candidate_version},
+        "receipt": {"product_version": candidate_version},
+    }
+    candidate_activation = {
+        "product": "civiccast-native",
+        "product_version": candidate_version,
+        "schema_version": 1,
+        "distribution_index_sha256": candidate_index_sha256,
+        "ai_inference": {"result": "passed", "offline_only": True},
+        "caption_inference": {"result": "passed", "device": "cpu"},
+    }
+
+    def install_proof(folder: str) -> dict[str, dict[str, str]]:
+        root = evidence_dir / folder
+        return {
+            "installer_run": _write_bound_json(root / "installer-run.json", installer_run),
+            "install_state": _write_bound_json(root / "install-state.json", candidate_state),
+            "activation_self_test": _write_bound_json(
+                root / "activation-self-test.json", candidate_activation
+            ),
+        }
+
+    fresh = install_proof("FreshInstall")
+    baseline_version = "1.0.0-beta.11"
+    baseline_install = {
+        "installer_run": _write_bound_json(
+            evidence_dir / "Beta11BaselineInstall" / "installer-run.json",
+            {
+                "installer": "CivicCast (Native)_1.0.0-beta.11_x64-setup.exe",
+                "sha256": DIRECT_BETA11_BASELINE_INSTALLER_SHA256,
+                "expected_version": baseline_version,
+                "exit_code": 0,
+            },
+        ),
+        "install_state": _write_bound_json(
+            evidence_dir / "Beta11BaselineInstall" / "install-state.json",
+            {
+                "installed_version": baseline_version,
+                "service_state": "Running",
+                "health": {"status": "healthy", "version": baseline_version},
+                "receipt": {"product_version": baseline_version},
+            },
+        ),
+        "activation_self_test": _write_bound_json(
+            evidence_dir / "Beta11BaselineInstall" / "activation-self-test.json",
+            {
+                "product": "civiccast-native",
+                "product_version": baseline_version,
+                "schema_version": 1,
+                "distribution_index_sha256": DIRECT_BETA11_STATION_INDEX_SHA256,
+                "ai_inference": {"result": "passed", "offline_only": True},
+                "caption_inference": {"result": "passed", "device": "cpu"},
+            },
+        ),
+    }
+    schedule_ids = ["beta11-schedule-1", "beta11-schedule-2", "beta11-schedule-3"]
+    asset_id = "beta11-existing-asset"
+    baseline_install["preserve_marker"] = _write_bound_json(
+        evidence_dir / "Beta11Baseline" / "preserve-marker.json",
+        {
+            "mode": "PrepareBaseline",
+            "product_version": baseline_version,
+            "preserve_install_and_database": True,
+            "asset_id": asset_id,
+            "schedule_ids": schedule_ids,
+        },
+    )
+
+    observed_bytes = 524_288
+    expected_bytes = 1_893_729_051
+    partial_after_kill = 528_384
+    interrupted = _write_bound_json(
+        evidence_dir / "interrupted-install.json",
+        {
+            "result": "INTERRUPTED_CONFIRMED",
+            "candidate_source_sha": source_sha,
+            "installer_sha256": m.sha256_file(setup),
+            "phase": "stage-packs",
+            "progress_marker": "step stage-packs: begin",
+            "process_id": 1204,
+            "process_exit_code": 1,
+            "kill_command_exit_code": 0,
+            "partial_path": "C:\\TestStore\\install\\packs\\native-cuda-runtime.ccpack.partial",
+            "bytes_before_kill": observed_bytes,
+            "expected_bytes": expected_bytes,
+            "partial_bytes_after_kill": partial_after_kill,
+            "baseline_health_after_interruption": {"result": "responded", "status": "healthy"},
+        },
+    )
+    recovery = _write_bound_json(
+        evidence_dir / "upgrade-recovery-result.json",
+        {
+            "result": "PASS",
+            "candidate_source_sha": source_sha,
+            "candidate_version": candidate_version,
+            "workflow_run_id": build_run_id,
+            "interrupted_stage": "stage-packs",
+            "repair_installer_sha256": m.sha256_file(setup),
+            "baseline_version": baseline_version,
+            "interruption_bytes": observed_bytes,
+            "interruption_expected_bytes": expected_bytes,
+            "remaining_partial_pack_count": 0,
+            "preservation_result": "C:\\TestEvidence\\Beta12\\Beta12PostUpgrade\\preserve-marker.json",
+        },
+    )
+    repair_log = _write_bound_text(
+        evidence_dir / "interrupted-repair-install-command.log",
+        "PASS: same candidate repaired partial pack.\n",
+    )
+    post_upgrade_log = _write_bound_text(
+        evidence_dir / "post-upgrade-preservation-command.log",
+        "PASS: three channels, Whistle-primary captions, and preserved baseline data.\n",
+    )
+    interrupted_upgrade = {
+        **install_proof("Beta12InterruptedRepair"),
+        "interrupted_install": interrupted,
+        "repair_install_log": repair_log,
+        "recovery_result": recovery,
+        "post_upgrade_command_log": post_upgrade_log,
+    }
+
+    marker_value = {
+        "mode": "PostUpgrade",
+        "product_version": candidate_version,
+        "preserve_install_and_database": True,
+        "asset_id": asset_id,
+        "preserved_baseline_asset_id": asset_id,
+        "baseline_schedule_ids": schedule_ids,
+        "schedule_ids": ["beta12-current-schedule-1", "beta12-current-schedule-2"],
+        "runtime": {"whistle_assets_root": "packs/captions-whistle"},
+    }
+    verify_marker = _write_bound_json(
+        evidence_dir / "Beta12PostUpgrade" / "preserve-marker.json", marker_value
+    )
+    runtime_result_value = {
+        "result": "PASS",
+        "mode": "PostUpgrade",
+        "observed_minutes": 5,
+        "channels": ["public", "government", "education"],
+        "preserve_install_and_database": True,
+        "fixture_sha256": hashlib.sha256(b"synthetic fixture").hexdigest(),
+    }
+    runtime_result = _write_bound_json(
+        evidence_dir / "Beta12PostUpgrade" / "result.json", runtime_result_value
+    )
+    verify_after_upgrade = {"preserve_marker": verify_marker, "command_log": post_upgrade_log}
+    runtime = {
+        "result": runtime_result,
+        "preserve_marker": verify_marker,
+        "snapshots": [],
+    }
+    sample_start = datetime(2026, 10, 9, 4, 0, tzinfo=UTC)
+    for minute in range(1, 6):
+        sampled_at = sample_start + timedelta(minutes=minute - 1)
+        playlist_mtime = (sampled_at - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+        channels = []
+        for channel_index, channel in enumerate(("public", "government", "education")):
+            vtt_text = f"WEBVTT\n\n{channel} fellow Americans\n"
+            channels.append(
+                {
+                    "id": channel,
+                    "vtt_sha256": hashlib.sha256(f"{channel}-{minute}".encode()).hexdigest(),
+                    "vtt_text_snapshot": vtt_text,
+                    "vtt_text_snapshot_utf8_bytes": len(vtt_text.encode()),
+                    "state": {"state": "ON_AIR"},
+                    "ffprobe_streams": [
+                        {"codec_type": "video", "codec_name": "h264"},
+                        {"codec_type": "audio", "codec_name": "aac"},
+                    ],
+                    "caption_runtime_status": {"state": "within-capacity"},
+                    "vtt_cue_count": 1,
+                    "playlist_age_seconds": 1.0,
+                    "playlist_mtime_utc": playlist_mtime,
+                    "segment_count": 6,
+                    "newest_segment": f"seg{minute:06d}{channel_index}.ts",
+                    "expected_jfk_words_seen": {
+                        "fellow": True,
+                        "americans": True,
+                        "country": False,
+                    },
+                }
+            )
+        runtime["snapshots"].append(
+            _write_bound_json(
+                evidence_dir / "Beta12PostUpgrade" / f"minute-{minute}.json",
+                {
+                    "utc": sampled_at.isoformat().replace("+00:00", "Z"),
+                    "minute": minute,
+                    "health": {"status": "healthy", "version": candidate_version},
+                    "pinned_whistle_error_seen": False,
+                    "whistle_active_seen": dict.fromkeys(
+                        ("public", "government", "education"), True
+                    ),
+                    "whistle_fallback_seen": dict.fromkeys(
+                        ("public", "government", "education"), False
+                    ),
+                    "channels": channels,
+                },
+            )
+        )
+
+    receipt = {
+        "schema_version": 1,
+        "kind": "civiccast-native-beta-direct-consumer-evidence",
+        "consumer_contract": DIRECT_BETA12_CONSUMER_CONTRACT,
+        "artifact": {
+            "source_sha": source_sha,
+            "build_run_id": build_run_id,
+            "assembly_receipt": assembly_ref,
+        },
+        "evidence": {
+            "fresh_install": fresh,
+            "beta11_baseline_install": baseline_install,
+            "beta11_to_beta12_interrupted_upgrade": interrupted_upgrade,
+            "verify_after_upgrade": verify_after_upgrade,
+            "three_channel_runtime": runtime,
         },
     }
     if runtime_proof_scope is not None:
@@ -816,6 +1112,216 @@ def _direct_args(
 # ---------------------------------------------------------------------------
 # (a) layout
 # ---------------------------------------------------------------------------
+def test_beta12_direct_receipt_verifies_real_interrupted_upgrade_contract(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    setup, packs, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    assert setup.is_file()
+    assert len(packs) == 5
+    assert set(receipt["evidence"]) == {
+        "fresh_install",
+        "beta11_baseline_install",
+        "beta11_to_beta12_interrupted_upgrade",
+        "verify_after_upgrade",
+        "three_channel_runtime",
+    }
+    assert "failed_install_repair" not in receipt["evidence"]
+    assert "beta10_baseline_install" not in receipt["evidence"]
+    assert summary == {
+        "consumer_mode": "sandbox",
+        "fresh_install": "PASS",
+        "beta11_baseline_install": "PASS",
+        "beta11_to_beta12_interrupted_upgrade": "PASS",
+        "preservation": "PASS",
+        "runtime": "PASS (five minutes, three channels)",
+    }
+
+
+@pytest.mark.parametrize("inference", ("ai_inference", "caption_inference"))
+def test_beta12_activation_self_test_requires_both_installed_inference_checks(tmp_path, inference):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    reference = receipt["evidence"]["fresh_install"]["activation_self_test"]
+    activation_path = Path(reference["path"])
+    activation = json.loads(activation_path.read_text(encoding="utf-8"))
+    activation[inference]["result"] = "failed"
+    reference.update(_write_bound_json(activation_path, activation))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(m.PublishError, match="fresh_install activation self-test did not pass"):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
+
+
+@pytest.mark.parametrize(
+    "proof_name",
+    ("fresh_install", "beta11_to_beta12_interrupted_upgrade"),
+)
+def test_beta12_candidate_activation_requires_signed_station_index_hash(tmp_path, proof_name):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    reference = receipt["evidence"][proof_name]["activation_self_test"]
+    activation_path = Path(reference["path"])
+    activation = json.loads(activation_path.read_text(encoding="utf-8"))
+    activation["distribution_index_sha256"] = "0" * 64
+    reference.update(_write_bound_json(activation_path, activation))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        m.PublishError,
+        match=f"{proof_name} activation self-test distribution index does not match the signed station index",
+    ):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
+
+
+def test_beta12_baseline_activation_requires_its_pinned_station_index_hash(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    reference = receipt["evidence"]["beta11_baseline_install"]["activation_self_test"]
+    activation_path = Path(reference["path"])
+    activation = json.loads(activation_path.read_text(encoding="utf-8"))
+    activation["distribution_index_sha256"] = "d" * 64
+    reference.update(_write_bound_json(activation_path, activation))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(
+        m.PublishError,
+        match="Beta 11 baseline activation self-test distribution index does not match its pinned station index",
+    ):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
+
+
+def test_beta12_direct_receipt_accepts_only_hash_bound_windows_powershell_json(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    bom = b"\xef\xbb\xbf"
+    records = (
+        ("fresh_install", "installer_run"),
+        ("fresh_install", "install_state"),
+        ("beta11_baseline_install", "preserve_marker"),
+    )
+    for proof_name, field in records:
+        reference = receipt["evidence"][proof_name][field]
+        path = Path(reference["path"])
+        value = json.loads(path.read_text(encoding="utf-8"))
+        path.write_bytes(bom + (json.dumps(value, indent=2) + "\n").encode("utf-8"))
+        reference["sha256"] = m.sha256_file(path)
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    _, _, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    assert summary["fresh_install"] == "PASS"
+    assert summary["beta11_baseline_install"] == "PASS"
+
+    installer_run = receipt["evidence"]["fresh_install"]["installer_run"]
+    installer_run_path = Path(installer_run["path"])
+    installer_run_path.write_bytes(installer_run_path.read_bytes() + b" ")
+    with pytest.raises(m.PublishError, match=r"fresh_install\.installer_run sha256 mismatch"):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    (
+        (
+            "completed-partial",
+            "does not prove incomplete stage-packs interruption",
+        ),
+        (
+            "wrong-repair-installer",
+            "does not prove incomplete stage-packs interruption",
+        ),
+        (
+            "baseline-schedule-mismatch",
+            "does not preserve the Beta 11 asset and schedules",
+        ),
+    ),
+)
+def test_beta12_interrupted_upgrade_receipt_rejects_incomplete_or_unpreserved_proofs(
+    tmp_path, tamper, message
+):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    evidence = receipt["evidence"]
+    upgrade = evidence["beta11_to_beta12_interrupted_upgrade"]
+    if tamper == "completed-partial":
+        reference = upgrade["interrupted_install"]
+        path = Path(reference["path"])
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["partial_bytes_after_kill"] = record["expected_bytes"]
+        reference.update(_write_bound_json(path, record))
+    elif tamper == "wrong-repair-installer":
+        reference = upgrade["recovery_result"]
+        path = Path(reference["path"])
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["repair_installer_sha256"] = "0" * 64
+        reference.update(_write_bound_json(path, record))
+    else:
+        references = (
+            evidence["verify_after_upgrade"]["preserve_marker"],
+            evidence["three_channel_runtime"]["preserve_marker"],
+        )
+        marker_path = Path(references[0]["path"])
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker["baseline_schedule_ids"][0] = "other-schedule"
+        replacement = _write_bound_json(marker_path, marker)
+        for reference in references:
+            reference.update(replacement)
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(m.PublishError, match=message):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
+
+
 def test_direct_consumer_evidence_dry_run_names_producer_and_tag_target(tmp_path, monkeypatch):
     repo_root = _base_repo_root(tmp_path)
     kit_dir = tmp_path / "direct-kit"
@@ -832,7 +1338,7 @@ def test_direct_consumer_evidence_dry_run_names_producer_and_tag_target(tmp_path
     assert f"Artifact producer commit: {DIRECT_SOURCE_SHA}" in notes
     assert f"Tag target commit: {SOURCE_SHA}" in notes
     assert f"fresh {VERSION} install" in notes.lower()
-    assert f"Beta 10 to {VERSION} setup-only upgrade" in notes
+    assert "Beta 11 to Beta 12 interrupted-upgrade recovery" in notes
     assert "three-channel" in notes.lower() and "five minutes" in notes.lower()
     assert "Gate A workflow lanes: not run" in notes
     assert "download-only network route: not tested" in notes.lower()
@@ -841,23 +1347,48 @@ def test_direct_consumer_evidence_dry_run_names_producer_and_tag_target(tmp_path
     assert (repo_root / "artifacts" / "release" / TAG / "assets" / "setup.exe").is_file()
 
 
-def test_direct_one_channel_install_smoke_is_explicit_and_does_not_claim_capacity(
-    tmp_path, monkeypatch
-):
-    repo_root = _base_repo_root(tmp_path)
+def test_beta11_legacy_one_channel_install_smoke_remains_supported(tmp_path):
     kit_dir = tmp_path / "direct-kit"
     receipt_path, _ = _write_direct_consumer_receipt(
-        tmp_path, kit_dir, runtime_proof_scope="one-channel-install-smoke"
+        tmp_path,
+        kit_dir,
+        runtime_proof_scope="one-channel-install-smoke",
+        candidate_version=DIRECT_BETA11_VERSION,
     )
-    monkeypatch.setattr(m, "run_command", _fake_command_factory())
 
-    assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, repo_root=repo_root)) == 0
-
-    notes = (repo_root / "artifacts" / "release" / TAG / "RELEASE-NOTES.md").read_text(
-        encoding="utf-8"
+    _, _, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=DIRECT_BETA11_VERSION,
     )
-    assert "one-channel install-smoke" in notes.lower()
-    assert "three-channel capacity unproven" in notes.lower()
+
+    assert summary["runtime"].startswith("PASS (five-minute one-channel install-smoke")
+    assert "three-channel capacity unproven" in summary["runtime"]
+
+
+@pytest.mark.parametrize("contract_issue", ("missing-contract", "one-channel-scope"))
+def test_beta12_direct_receipt_rejects_legacy_or_under_scoped_contract(tmp_path, contract_issue):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if contract_issue == "missing-contract":
+        receipt.pop("consumer_contract")
+        message = "must use the Beta 11 interrupted-upgrade contract"
+    else:
+        receipt["runtime_proof_scope"] = "one-channel-install-smoke"
+        message = "requires the three-channel runtime proof"
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(m.PublishError, match=message):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
 
 
 @pytest.mark.parametrize("previous_version", ("1.0.0-beta.9", VERSION))
@@ -971,13 +1502,13 @@ def test_direct_physical_host_refuses_unbound_or_stale_evidence(tmp_path, monkey
         "degraded-caption-runtime",
     ],
 )
-def test_direct_one_channel_install_smoke_refuses_incomplete_or_failed_evidence(
-    tmp_path, monkeypatch, tamper
-):
-    repo_root = _base_repo_root(tmp_path)
+def test_direct_one_channel_install_smoke_refuses_incomplete_or_failed_evidence(tmp_path, tamper):
     kit_dir = tmp_path / "direct-kit"
     receipt_path, _ = _write_direct_consumer_receipt(
-        tmp_path, kit_dir, runtime_proof_scope="one-channel-install-smoke"
+        tmp_path,
+        kit_dir,
+        runtime_proof_scope="one-channel-install-smoke",
+        candidate_version=DIRECT_BETA11_VERSION,
     )
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     if tamper == "unknown-scope":
@@ -1031,14 +1562,15 @@ def test_direct_one_channel_install_smoke_refuses_incomplete_or_failed_evidence(
                 snapshot_path.write_text(json.dumps(snapshot, indent=2) + "\n", encoding="utf-8")
                 ref["sha256"] = m.sha256_file(snapshot_path)
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
-    fake = _fake_command_factory(mirror_uploaded_assets=True)
-    monkeypatch.setattr(m, "run_command", fake)
 
-    assert (
-        m.main(_direct_args(tmp_path, kit_dir, receipt_path, dry_run=False, repo_root=repo_root))
-        == 1
-    )
-    assert not _gh_calls(fake.calls, "gh", "release")
+    with pytest.raises(m.PublishError):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=DIRECT_BETA11_VERSION,
+        )
 
 
 @pytest.mark.parametrize("tamper", ["source", "hash", "proof"])
@@ -1848,8 +2380,12 @@ def test_physical_host_refuses_stale_candidate_version_with_valid_hashes(
     "proof,member,field",
     (
         ("fresh_install", "activation_self_test", "product_version"),
-        ("failed_install_repair", "post_repair_result", "product_version"),
-        ("verify_after_upgrade", "result", "product_version"),
+        (
+            "beta11_to_beta12_interrupted_upgrade",
+            "activation_self_test",
+            "product_version",
+        ),
+        ("verify_after_upgrade", "preserve_marker", "product_version"),
         ("three_channel_runtime", "preserve_marker", "product_version"),
     ),
 )
