@@ -148,9 +148,37 @@ object contains exactly these groups:
 - `three_channel_runtime`: the five-minute result, preservation marker, and
   all five snapshots for public, government, and education.
 
+The separate contract
+`consumer_contract: "beta11-to-beta12-upgrade-and-d4-repair-v1"` proves a
+normal cross-version upgrade followed by an independently interrupted repair.
+It retains `fresh_install` and `beta11_baseline_install`, and uses:
+
+- `beta11_to_beta12_upgrade`: the bound launch receipt and actual installer
+  progress log showing the Beta 11 upgrade route and Beta 12 completion. It
+  does not manufacture an installer exit-code receipt that was not captured.
+- `verify_after_upgrade`: the actual `PostUpgrade` result and preservation
+  marker. Its result reference must be the same one used by
+  `three_channel_runtime`, which binds all five three-channel snapshots.
+- `beta12_interrupted_install_repair`: an observed, incomplete D4 activation
+  interrupted by terminating only the verified candidate setup process tree;
+  the same candidate's subsequent installer, state and activation receipts.
+  The raw interruption record retains its guest paths. A separate hash-bound
+  `progress_delta` reference locates the mapped evidence file on the publisher
+  machine without rewriting that record or relaxing path containment.
+- `verify_after_repair` and `repair_three_channel_runtime`: the same baseline
+  data and a second five-minute, three-channel observation after repair.
+
+The interruption record binds source, producer run, installer hash/signature,
+healthy installed-before state, the exact live executable/PID, successful
+process-tree termination, and a captured D4 begin with no return. Repair output
+must follow the repair installation; earlier upgrade snapshots cannot serve
+as post-repair evidence. Neither contract turns an invalid interception
+attempt into a successful recovery test.
+
 Beta 12 direct Sandbox evidence requires the three-channel runtime scope; a
 one-channel install-smoke or the older Beta 10/failed-fresh-repair receipt
-cannot stand in for the Beta 11-to-Beta 12 interrupted-upgrade evidence.
+cannot stand in for the cross-version upgrade and interrupted-install repair
+evidence required by either Beta 12 contract above.
 Legacy Sandbox receipt validation remains available for Beta 11 receipts:
 it uses the older `failed_install_repair`, `beta10_baseline_install`, and
 `beta10_to_beta11_upgrade` groups, and supports the historical one-channel

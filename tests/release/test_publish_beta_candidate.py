@@ -290,6 +290,7 @@ DIRECT_BETA11_STATION_INDEX_SHA256 = (
 )
 DIRECT_BETA11_VERSION = "1.0.0-beta.11"
 DIRECT_BETA12_CONSUMER_CONTRACT = "beta11-to-beta12-interrupted-upgrade-v1"
+DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT = "beta11-to-beta12-upgrade-and-d4-repair-v1"
 
 
 def _write_bound_json(path: Path, value: dict) -> dict[str, str]:
@@ -419,7 +420,7 @@ def _write_direct_kit(
                         "step_name": "Verify the compiled bootstrap trusts the freshly signed packs",
                         "method": "compiled candidate bootstrap trust verification",
                     }
-                    if sandbox_contract == "beta12"
+                    if sandbox_contract in {"beta12", "beta12-separate"}
                     else {
                         "consumer_activation_verification": {
                             "status": "passed",
@@ -602,8 +603,8 @@ def _write_direct_consumer_receipt(
         )
         return receipt_path, setup
 
-    if sandbox_contract == "beta12":
-        return _write_beta12_sandbox_receipt(
+    if sandbox_contract in {"beta12", "beta12-separate"}:
+        receipt_path, setup = _write_beta12_sandbox_receipt(
             tmp_path,
             setup,
             assembly_ref,
@@ -613,6 +614,17 @@ def _write_direct_consumer_receipt(
             candidate_version=candidate_version,
             runtime_proof_scope=runtime_proof_scope,
         )
+        if sandbox_contract == "beta12-separate":
+            _write_beta12_separate_upgrade_repair_contract(
+                receipt_path,
+                setup,
+                evidence_dir,
+                source_sha=source_sha,
+                build_run_id=build_run_id,
+                candidate_version=candidate_version,
+                assembly_ref=assembly_ref,
+            )
+        return receipt_path, setup
 
     candidate_state = {
         "installed_version": candidate_version,
@@ -1086,6 +1098,178 @@ def _write_beta12_sandbox_receipt(
     return receipt_path, setup
 
 
+def _write_beta12_separate_upgrade_repair_contract(
+    receipt_path: Path,
+    setup: Path,
+    evidence_dir: Path,
+    *,
+    source_sha: str,
+    build_run_id: str,
+    candidate_version: str,
+    assembly_ref: dict[str, str],
+) -> None:
+    """Use separate normal-upgrade and D4-repair records for current Beta 12 evidence."""
+
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    evidence = receipt["evidence"]
+    legacy_upgrade = evidence.pop("beta11_to_beta12_interrupted_upgrade")
+    assembly_sha256 = assembly_ref["sha256"]
+    installer_sha256 = m.sha256_file(setup)
+
+    launch = _write_bound_json(
+        evidence_dir / "upgrade-launch.json",
+        {
+            "source_sha": source_sha,
+            "workflow_run_id": build_run_id,
+            "kit_assembly_receipt_sha256": assembly_sha256,
+            "candidate_version": candidate_version,
+            "candidate_installer_sha256": installer_sha256,
+            "candidate_signature_status": "Valid",
+            "baseline_installer_sha256": DIRECT_BETA11_BASELINE_INSTALLER_SHA256,
+            "baseline_signature_status": "Valid",
+            "sandbox_ids": ["sandbox-beta12-upgrade"],
+            "registered_one_sandbox": True,
+        },
+    )
+    normal_progress = _write_bound_text(
+        evidence_dir / "normal-upgrade-install-progress-final.txt",
+        """[2026-10-09 05:20:00] step d3-engine: begin (old=1.0.0-beta.11)
+[2026-10-09 05:22:00] step d3-engine: evidence route=UPGRADE engine_exit=0
+[2026-10-09 05:25:00] step d4-provision: returned 0
+[2026-10-09 05:26:00] step d4-service-registration: returned 0
+[2026-10-09 05:27:00] step d4-firewall-rule: returned 0
+[2026-10-09 05:28:00] postinstall: SUCCESS (InstalledVersion 1.0.0-beta.12 recorded)
+""",
+    )
+    evidence["beta11_to_beta12_upgrade"] = {
+        "launch_receipt": launch,
+        "install_progress_log": normal_progress,
+    }
+
+    setup_path = r"C:\TestKit\CivicCast (Native)_1.0.0-beta.12_x64-setup.exe"
+    progress_log_path = r"C:\ProgramData\CivicCast\install-progress.log"
+    delta_path = evidence_dir / "d4-repair-progress-delta.txt"
+    delta = """[2026-10-09 06:00:00] step d4-activate-station: begin
+[2026-10-09 06:00:01] step d4-activate-station: source EXEDIR
+"""
+    delta_ref = _write_bound_text(delta_path, delta)
+    interruption = _write_bound_json(
+        evidence_dir / "d4-repair-interruption.json",
+        {
+            "result": "INTERRUPTED_CONFIRMED",
+            "candidate_source_sha": source_sha,
+            "workflow_run_id": build_run_id,
+            "candidate_version": candidate_version,
+            "installer_path": setup_path,
+            "installer_sha256": installer_sha256,
+            "started_utc": "2026-10-09T05:59:50Z",
+            "installed_before": {
+                "product_version": candidate_version,
+                "registry_version": candidate_version,
+                "service_state": "Running",
+                "health_status": "healthy",
+                "health_schema": "current",
+                "full_public_health": {"status": "healthy", "schema": "current"},
+                "station_set_sha256": "a" * 64,
+                "read_errors": {},
+            },
+            "precondition_guard_checks": {
+                "station_product_version_matches": True,
+                "registry_version_matches": True,
+                "service_running": True,
+                "health_status_healthy": True,
+                "health_schema_current": True,
+            },
+            "precondition_captured_utc": "2026-10-09T05:59:55Z",
+            "signature_status": "Valid",
+            "progress_log_path": progress_log_path,
+            "progress_offset_bytes": 4096,
+            "progress_delta_path": r"C:\TestEvidence\d4-repair-progress-delta.txt",
+            "phase": "observing-d4-activate-station",
+            "setup_pid": 1205,
+            "observation_started_utc": "2026-10-09T05:59:59Z",
+            "d4_begin_line": "step d4-activate-station: begin",
+            "d4_begin_observed_utc": "2026-10-09T06:00:00Z",
+            "d4_return_observed": False,
+            "setup_image_path": setup_path,
+            "setup_image_sha256": installer_sha256,
+            "setup_signature_status": "Valid",
+            "live_pid_verified_utc": "2026-10-09T06:00:00.500000Z",
+            "kill_target_pid": 1205,
+            "kill_tree": True,
+            "taskkill_exit_code": 0,
+            "process_exited": True,
+            "process_exit_code": 1,
+            "interrupted_utc": "2026-10-09T06:00:01Z",
+            "observation_ended_utc": "2026-10-09T06:00:02Z",
+            "progress_delta_sha256": delta_ref["sha256"],
+        },
+    )
+    repair_install = {
+        **legacy_upgrade,
+        "interruption": interruption,
+        "progress_delta": delta_ref,
+    }
+    repair_install.pop("interrupted_install", None)
+    repair_install.pop("repair_install_log", None)
+    repair_install.pop("recovery_result", None)
+    repair_install.pop("post_upgrade_command_log", None)
+    repair_run_ref = repair_install["installer_run"]
+    repair_run_path = Path(repair_run_ref["path"])
+    repair_run = json.loads(repair_run_path.read_text(encoding="utf-8"))
+    # install-corrected.ps1 records local timestamps with an explicit offset.
+    repair_run["finished"] = "2026-10-09T00:05:00-06:00"
+    repair_run_ref.update(_write_bound_json(repair_run_path, repair_run))
+    evidence["beta12_interrupted_install_repair"] = repair_install
+
+    normal_result_ref = evidence["three_channel_runtime"]["result"]
+    normal_marker_ref = evidence["verify_after_upgrade"]["preserve_marker"]
+    normal_result = json.loads(Path(normal_result_ref["path"]).read_text(encoding="utf-8"))
+    normal_marker = json.loads(Path(normal_marker_ref["path"]).read_text(encoding="utf-8"))
+    normal_marker["station_set_sha256"] = "a" * 64
+    normal_marker_ref.update(_write_bound_json(Path(normal_marker_ref["path"]), normal_marker))
+    evidence["three_channel_runtime"]["preserve_marker"].update(normal_marker_ref)
+    # The real manual PostUpgrade invocation saved JSON proof, not a command log.
+    evidence["verify_after_upgrade"] = {
+        "result": normal_result_ref,
+        "preserve_marker": normal_marker_ref,
+    }
+    repair_result = _write_bound_json(
+        evidence_dir / "Beta12InterruptedRepairPostUpgrade" / "result.json",
+        normal_result,
+    )
+    repair_marker = _write_bound_json(
+        evidence_dir / "Beta12InterruptedRepairPostUpgrade" / "preserve-marker.json",
+        normal_marker,
+    )
+    repair_snapshots = []
+    for index, snapshot_ref in enumerate(evidence["three_channel_runtime"]["snapshots"], start=1):
+        snapshot = json.loads(Path(snapshot_ref["path"]).read_text(encoding="utf-8"))
+        sampled_at = datetime.fromisoformat(snapshot["utc"].replace("Z", "+00:00")) + timedelta(
+            hours=3
+        )
+        snapshot["utc"] = sampled_at.isoformat().replace("+00:00", "Z")
+        for channel in snapshot["channels"]:
+            playlist_mtime = datetime.fromisoformat(
+                channel["playlist_mtime_utc"].replace("Z", "+00:00")
+            ) + timedelta(hours=3)
+            channel["playlist_mtime_utc"] = playlist_mtime.isoformat().replace("+00:00", "Z")
+        repair_snapshots.append(
+            _write_bound_json(
+                evidence_dir / "Beta12InterruptedRepairPostUpgrade" / f"minute-{index}.json",
+                snapshot,
+            )
+        )
+    evidence["verify_after_repair"] = {"result": repair_result, "preserve_marker": repair_marker}
+    evidence["repair_three_channel_runtime"] = {
+        "result": repair_result,
+        "preserve_marker": repair_marker,
+        "snapshots": repair_snapshots,
+    }
+    receipt["consumer_contract"] = DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+
 def _direct_args(
     tmp_path: Path,
     kit_dir: Path,
@@ -1144,6 +1328,260 @@ def test_beta12_direct_receipt_verifies_real_interrupted_upgrade_contract(tmp_pa
         "preservation": "PASS",
         "runtime": "PASS (five minutes, three channels)",
     }
+
+
+def test_beta12_direct_receipt_verifies_separate_upgrade_and_d4_repair_contract(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, sandbox_contract="beta12-separate"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    setup, packs, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    assert setup.is_file()
+    assert len(packs) == 5
+    assert receipt["consumer_contract"] == DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT
+    assert set(receipt["evidence"]) == {
+        "fresh_install",
+        "beta11_baseline_install",
+        "beta11_to_beta12_upgrade",
+        "beta12_interrupted_install_repair",
+        "verify_after_upgrade",
+        "three_channel_runtime",
+        "verify_after_repair",
+        "repair_three_channel_runtime",
+    }
+    assert "beta11_to_beta12_interrupted_upgrade" not in receipt["evidence"]
+    assert summary == {
+        "consumer_mode": "sandbox",
+        "fresh_install": "PASS",
+        "beta11_baseline_install": "PASS",
+        "beta11_to_beta12_upgrade": "PASS",
+        "beta12_interrupted_install_repair": "PASS",
+        "preservation": "PASS",
+        "repair_preservation": "PASS",
+        "runtime": "PASS (five minutes, three channels before and after repair)",
+    }
+
+
+def test_beta12_separate_contract_rejects_reused_pre_repair_runtime(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, sandbox_contract="beta12-separate"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    evidence = receipt["evidence"]
+    evidence["repair_three_channel_runtime"] = evidence["three_channel_runtime"].copy()
+    evidence["verify_after_repair"] = {
+        "result": evidence["three_channel_runtime"]["result"],
+        "preserve_marker": evidence["three_channel_runtime"]["preserve_marker"],
+    }
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(m.PublishError, match="repair runtime sample predates completed repair"):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
+
+
+@pytest.mark.parametrize("tamper", ("result", "mode", "preservation", "reference"))
+def test_beta12_separate_upgrade_requires_its_saved_postupgrade_result(tmp_path, tamper):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, sandbox_contract="beta12-separate"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    reference = receipt["evidence"]["verify_after_upgrade"]["result"]
+    path = Path(reference["path"])
+    result = json.loads(path.read_text(encoding="utf-8"))
+    if tamper == "reference":
+        path = tmp_path / "unrelated-result.json"
+    else:
+        field = {
+            "result": "result",
+            "mode": "mode",
+            "preservation": "preserve_install_and_database",
+        }[tamper]
+        result[field] = False if tamper == "preservation" else "FAIL"
+    reference.update(_write_bound_json(path, result))
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(m.PublishError, match="post-upgrade verification does not preserve"):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("health_schema", "0089_contribution_media_control_requests", "was not confirmed"),
+        ("read_errors", {"health": "TimeoutException"}, "was not confirmed"),
+        ("kill_target_pid", 9999, "was not confirmed"),
+        ("phase", "stage-packs", "was not confirmed"),
+        ("progress_delta_path", r"C:\TestEvidence\different.txt", "filenames differ"),
+        ("precondition_captured_utc", "2026-10-09T06:01:00Z", "timestamps are out of order"),
+        ("repair_finished", "2026-10-09T05:59:00Z", "finished before the confirmed interruption"),
+    ),
+)
+def test_beta12_separate_contract_rejects_false_d4_observation(tmp_path, field, value, message):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, sandbox_contract="beta12-separate"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    reference = receipt["evidence"]["beta12_interrupted_install_repair"][
+        "installer_run" if field == "repair_finished" else "interruption"
+    ]
+    path = Path(reference["path"])
+    record = json.loads(path.read_text(encoding="utf-8"))
+    if field == "repair_finished":
+        record["finished"] = value
+    elif field in {"health_schema", "read_errors"}:
+        record["installed_before"][field] = value
+    else:
+        record[field] = value
+    reference.update(_write_bound_json(path, record))
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    with pytest.raises(m.PublishError, match=message):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
+
+
+def test_beta12_separate_contract_release_notes_name_upgrade_and_repair_truthfully(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, sandbox_contract="beta12-separate"
+    )
+    _, _, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    notes = m.render_native_beta_candidate_notes(
+        tag=TAG,
+        source_sha=SOURCE_SHA,
+        build_run_url="https://github.com/example/run/333",
+        gate_a_run_url=None,
+        lane_verdicts=None,
+        changelog_unreleased="",
+        assets=[{"filename": "setup.exe", "bytes": 12, "sha256": "a" * 64}],
+        smartscreen_note="Verify the exact publisher and hash.",
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        direct_verification=summary,
+    )
+
+    assert "Beta 11 to Beta 12 normal in-place upgrade: PASS" in notes
+    assert "Separate Beta 12 D4 interrupted-install repair: PASS" in notes
+    assert "Beta 11 to Beta 12 interrupted-upgrade recovery" not in notes
+
+
+@pytest.mark.parametrize(
+    ("tamper", "message"),
+    (
+        ("launch-installer", "launch receipt does not bind this candidate"),
+        ("normal-engine-exit", "normal Beta 11 to Beta 12 upgrade log"),
+        ("d4-invalid-attempt", "D4 repair interruption was not confirmed"),
+        ("d4-return-observed", "D4 repair interruption was not confirmed"),
+        ("d4-delta-hash", "D4 repair progress delta sha256 mismatch"),
+        ("repair-installer", "did not run this 1.0.0-beta.12 installer successfully"),
+        ("repair-preservation", "does not preserve the Beta 11 asset and schedules"),
+    ),
+)
+def test_beta12_separate_contract_rejects_unproven_upgrade_or_repair(tmp_path, tamper, message):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, sandbox_contract="beta12-separate"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    evidence = receipt["evidence"]
+    if tamper == "launch-installer":
+        reference = evidence["beta11_to_beta12_upgrade"]["launch_receipt"]
+        path = Path(reference["path"])
+        launch = json.loads(path.read_text(encoding="utf-8"))
+        launch["candidate_installer_sha256"] = "0" * 64
+        reference.update(_write_bound_json(path, launch))
+    elif tamper == "normal-engine-exit":
+        reference = evidence["beta11_to_beta12_upgrade"]["install_progress_log"]
+        path = Path(reference["path"])
+        log = path.read_text(encoding="utf-8").replace("engine_exit=0", "engine_exit=1")
+        reference.update(_write_bound_text(path, log))
+    elif tamper == "d4-invalid-attempt":
+        reference = evidence["beta12_interrupted_install_repair"]["interruption"]
+        path = Path(reference["path"])
+        record = json.loads(path.read_text(encoding="utf-8"))
+        invalid = {
+            field: record[field]
+            for field in (
+                "candidate_source_sha",
+                "workflow_run_id",
+                "candidate_version",
+                "installer_path",
+                "installer_sha256",
+                "started_utc",
+                "observation_ended_utc",
+            )
+        }
+        invalid["result"] = "INVALID"
+        invalid["error"] = "Current installed Beta12 state is not healthy enough."
+        reference.update(_write_bound_json(path, invalid))
+    elif tamper == "d4-return-observed":
+        reference = evidence["beta12_interrupted_install_repair"]["interruption"]
+        path = Path(reference["path"])
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["d4_return_observed"] = True
+        reference.update(_write_bound_json(path, record))
+    elif tamper == "d4-delta-hash":
+        reference = evidence["beta12_interrupted_install_repair"]["interruption"]
+        path = Path(reference["path"])
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["progress_delta_sha256"] = "0" * 64
+        reference.update(_write_bound_json(path, record))
+    elif tamper == "repair-installer":
+        reference = evidence["beta12_interrupted_install_repair"]["installer_run"]
+        path = Path(reference["path"])
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["sha256"] = "0" * 64
+        reference.update(_write_bound_json(path, record))
+    else:
+        reference = evidence["repair_three_channel_runtime"]["preserve_marker"]
+        path = Path(reference["path"])
+        marker = json.loads(path.read_text(encoding="utf-8"))
+        marker["baseline_schedule_ids"][0] = "other-schedule"
+        replacement = _write_bound_json(path, marker)
+        reference.update(replacement)
+        evidence["verify_after_repair"]["preserve_marker"].update(replacement)
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(m.PublishError, match=message):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
 
 
 @pytest.mark.parametrize("inference", ("ai_inference", "caption_inference"))
