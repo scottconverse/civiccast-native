@@ -525,6 +525,7 @@ def _write_direct_consumer_receipt(
                     "status": "healthy",
                     "version": previous_version,
                     "schema": "current",
+                    "live_captions": "healthy",
                     # The published Beta 11 install is the pre-0088/0089
                     # baseline; only the candidate's after-state reaches 0089.
                     "schema_db_revision": "0087_retention_terms",
@@ -539,6 +540,7 @@ def _write_direct_consumer_receipt(
                     "status": "healthy",
                     "version": VERSION,
                     "schema": "current",
+                    "live_captions": "healthy",
                     "schema_db_revision": "0089_contribution_media_control_requests",
                 },
                 "app_payload_manifest_path": "C:/Program Files/CivicCast (Native)/runtime/app-payload-manifest.json",
@@ -564,6 +566,9 @@ def _write_direct_consumer_receipt(
                             {"codec_type": "audio", "codec_name": "aac"},
                         ],
                         "caption_runtime_status": {"state": "within-capacity"},
+                        "caption_runtime_available": True,
+                        "caption_runtime_unavailable_reason": None,
+                        "vtt_available": True,
                         "vtt_cue_count": 1 + sample_index,
                         "vtt_sha256": hashlib.sha256(
                             f"{channel}-{sample_index}".encode()
@@ -580,7 +585,12 @@ def _write_direct_consumer_receipt(
                     evidence_dir / f"host-runtime-{sample_index + 1}.json",
                     {
                         "utc": sample_at.isoformat().replace("+00:00", "Z"),
-                        "health": {"status": "healthy", "version": VERSION},
+                        "health": {
+                            "status": "healthy",
+                            "version": VERSION,
+                            "schema": "current",
+                            "live_captions": "healthy",
+                        },
                         "pinned_whistle_error_seen": False,
                         "whistle_active_seen": dict.fromkeys(
                             ("public", "government", "education"), True
@@ -651,7 +661,12 @@ def _write_direct_consumer_receipt(
     candidate_state = {
         "installed_version": candidate_version,
         "service_state": "Running",
-        "health": {"status": "healthy", "version": candidate_version},
+        "health": {
+            "status": "healthy",
+            "version": candidate_version,
+            "schema": "current",
+            "live_captions": "healthy",
+        },
         "receipt": {"product_version": candidate_version},
     }
     candidate_activation = {
@@ -816,6 +831,7 @@ def _write_direct_consumer_receipt(
             channels.append(
                 {
                     "id": channel,
+                    "vtt_available": True,
                     "vtt_sha256": hashlib.sha256(f"{channel}-{minute}".encode()).hexdigest(),
                     "vtt_text_snapshot": vtt_text,
                     "vtt_text_snapshot_utf8_bytes": len(vtt_text.encode("utf-8")),
@@ -825,6 +841,8 @@ def _write_direct_consumer_receipt(
                         {"codec_type": "audio", "codec_name": "aac"},
                     ],
                     "caption_runtime_status": {"state": "within-capacity"},
+                    "caption_runtime_available": True,
+                    "caption_runtime_unavailable_reason": None,
                     "vtt_cue_count": 1,
                     "playlist_age_seconds": 1.0,
                     "playlist_mtime_utc": playlist_mtime_text,
@@ -895,7 +913,12 @@ def _write_beta12_sandbox_receipt(
     candidate_state = {
         "installed_version": candidate_version,
         "service_state": "Running",
-        "health": {"status": "healthy", "version": candidate_version},
+        "health": {
+            "status": "healthy",
+            "version": candidate_version,
+            "schema": "current",
+            "live_captions": "healthy",
+        },
         "receipt": {"product_version": candidate_version},
     }
     candidate_activation = {
@@ -1056,6 +1079,7 @@ def _write_beta12_sandbox_receipt(
             channels.append(
                 {
                     "id": channel,
+                    "vtt_available": True,
                     "vtt_sha256": hashlib.sha256(f"{channel}-{minute}".encode()).hexdigest(),
                     "vtt_text_snapshot": vtt_text,
                     "vtt_text_snapshot_utf8_bytes": len(vtt_text.encode()),
@@ -1065,6 +1089,8 @@ def _write_beta12_sandbox_receipt(
                         {"codec_type": "audio", "codec_name": "aac"},
                     ],
                     "caption_runtime_status": {"state": "within-capacity"},
+                    "caption_runtime_available": True,
+                    "caption_runtime_unavailable_reason": None,
                     "vtt_cue_count": 1,
                     "playlist_age_seconds": 1.0,
                     "playlist_mtime_utc": playlist_mtime,
@@ -1075,6 +1101,7 @@ def _write_beta12_sandbox_receipt(
                         "americans": True,
                         "country": False,
                     },
+                    "expected_jfk_words_observation": "observed",
                 }
             )
         runtime["snapshots"].append(
@@ -1083,7 +1110,12 @@ def _write_beta12_sandbox_receipt(
                 {
                     "utc": sampled_at.isoformat().replace("+00:00", "Z"),
                     "minute": minute,
-                    "health": {"status": "healthy", "version": candidate_version},
+                    "health": {
+                        "status": "healthy",
+                        "version": candidate_version,
+                        "schema": "current",
+                        "live_captions": "healthy",
+                    },
                     "pinned_whistle_error_seen": False,
                     "whistle_active_seen": dict.fromkeys(
                         ("public", "government", "education"), True
@@ -1191,7 +1223,12 @@ def _write_beta12_separate_upgrade_repair_contract(
                 "service_state": "Running",
                 "health_status": "healthy",
                 "health_schema": "current",
-                "full_public_health": {"status": "healthy", "schema": "current"},
+                "full_public_health": {
+                    "status": "healthy",
+                    "version": candidate_version,
+                    "schema": "current",
+                    "live_captions": "healthy",
+                },
                 "station_set_sha256": "a" * 64,
                 "read_errors": {},
             },
@@ -1349,7 +1386,141 @@ def test_beta12_direct_receipt_verifies_real_interrupted_upgrade_contract(tmp_pa
         "beta11_to_beta12_interrupted_upgrade": "PASS",
         "preservation": "PASS",
         "runtime": "PASS (five minutes, three channels)",
+        "caption_performance_advisory": "No caption-performance findings observed; these observations are not an automatic publisher gate.",
     }
+
+
+@pytest.mark.parametrize("sandbox_contract", ("beta12", "beta12-separate"))
+def test_beta12_caption_performance_findings_are_advisory_and_reported(
+    tmp_path, sandbox_contract
+):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, sandbox_contract=sandbox_contract
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    runtime_groups = ["three_channel_runtime"]
+    if sandbox_contract == "beta12-separate":
+        runtime_groups.append("repair_three_channel_runtime")
+    unchanged_hash = hashlib.sha256(b"WEBVTT\n\n").hexdigest()
+    for group in runtime_groups:
+        for snapshot_ref in receipt["evidence"][group]["snapshots"]:
+            snapshot_path = Path(snapshot_ref["path"])
+            snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot["health"] = {
+                "status": "degraded",
+                "version": VERSION,
+                "schema": "current",
+                "live_captions": "degraded",
+            }
+            snapshot["pinned_whistle_error_seen"] = True
+            snapshot["whistle_active_seen"] = dict.fromkeys(
+                ("public", "government", "education"), False
+            )
+            snapshot["whistle_fallback_seen"] = dict.fromkeys(
+                ("public", "government", "education"), True
+            )
+            for channel in snapshot["channels"]:
+                channel["caption_runtime_status"] = {"state": "overloaded"}
+                channel["vtt_cue_count"] = 0
+                channel["vtt_sha256"] = unchanged_hash
+                channel["vtt_text_snapshot"] = "WEBVTT\n\n"
+                channel["vtt_text_snapshot_utf8_bytes"] = len(b"WEBVTT\n\n")
+                channel["expected_jfk_words_seen"] = {
+                    "fellow": False,
+                    "americans": False,
+                    "country": False,
+                }
+                channel["expected_jfk_words_observation"] = "observed"
+            snapshot_ref.update(_write_bound_json(snapshot_path, snapshot))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    _, _, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    advisory = summary["caption_performance_advisory"]
+    assert "not an automatic publisher gate" in advisory
+    assert "fallback" in advisory
+    assert "zero" in advisory
+    assert "JFK" in advisory
+    assert "distinct sample hashes" in advisory
+
+
+def test_beta12_unavailable_caption_files_are_bound_advisory_observations(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    for snapshot_ref in receipt["evidence"]["three_channel_runtime"]["snapshots"]:
+        snapshot_path = Path(snapshot_ref["path"])
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        snapshot["health"] = {
+            "status": "degraded",
+            "version": VERSION,
+            "schema": "current",
+            "live_captions": "unknown",
+        }
+        for channel in snapshot["channels"]:
+            channel.update(
+                {
+                    "vtt_available": False,
+                    "vtt_sha256": None,
+                    "vtt_text_snapshot": None,
+                    "vtt_text_snapshot_utf8_bytes": None,
+                    "vtt_cue_count": None,
+                    "caption_runtime_available": False,
+                    "caption_runtime_unavailable_reason": "caption runtime status was absent",
+                    "caption_runtime_status": None,
+                    "expected_jfk_words_observation": "unavailable",
+                    "expected_jfk_words_seen": {
+                        "fellow": False,
+                        "americans": False,
+                        "country": False,
+                    },
+                }
+            )
+        snapshot_ref.update(_write_bound_json(snapshot_path, snapshot))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    _, _, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    assert "unavailable" in summary["caption_performance_advisory"]
+
+
+@pytest.mark.parametrize("tamper", ("missing-availability", "unavailable-with-hash"))
+def test_beta12_malformed_caption_availability_still_refuses(tmp_path, tamper):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(tmp_path, kit_dir)
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    snapshot_ref = receipt["evidence"]["three_channel_runtime"]["snapshots"][0]
+    snapshot_path = Path(snapshot_ref["path"])
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    channel = snapshot["channels"][0]
+    if tamper == "missing-availability":
+        del channel["vtt_available"]
+    else:
+        channel["vtt_available"] = False
+    snapshot_ref.update(_write_bound_json(snapshot_path, snapshot))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    with pytest.raises(m.PublishError, match="VTT availability"):
+        m.verify_consumer_evidence_receipt(
+            receipt_path=receipt_path,
+            kit_dir=kit_dir,
+            artifact_source_sha=DIRECT_SOURCE_SHA,
+            build_run_id="333",
+            candidate_version=VERSION,
+        )
 
 
 def test_beta12_station_signature_record_rejects_compiled_bootstrap_only_claim(tmp_path):
@@ -1413,7 +1584,45 @@ def test_beta12_direct_receipt_verifies_separate_upgrade_and_d4_repair_contract(
         "preservation": "PASS",
         "repair_preservation": "PASS",
         "runtime": "PASS (five minutes, three channels before and after repair)",
+        "caption_performance_advisory": "No caption-performance findings observed; these observations are not an automatic publisher gate.",
     }
+
+
+def test_beta12_d4_repair_accepts_caption_only_degraded_precondition_health(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, sandbox_contract="beta12-separate"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    interruption_ref = receipt["evidence"]["beta12_interrupted_install_repair"]["interruption"]
+    interruption_path = Path(interruption_ref["path"])
+    interruption = json.loads(interruption_path.read_text(encoding="utf-8"))
+    interruption["installed_before"].update(
+        {
+            "health_status": "degraded",
+            "full_public_health": {
+                "status": "degraded",
+                "version": VERSION,
+                "schema": "current",
+                "live_captions": "unknown",
+            },
+        }
+    )
+    interruption["precondition_guard_checks"]["health_status_healthy"] = False
+    interruption_ref.update(_write_bound_json(interruption_path, interruption))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    _, _, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    assert "D4 repair installed-before health reports live_captions=unknown" in summary[
+        "caption_performance_advisory"
+    ]
 
 
 def test_beta12_separate_contract_rejects_reused_pre_repair_runtime(tmp_path):
@@ -1540,6 +1749,8 @@ def test_beta12_separate_contract_release_notes_name_upgrade_and_repair_truthful
     assert "Beta 11 to Beta 12 normal in-place upgrade: PASS" in notes
     assert "Separate Beta 12 D4 interrupted-install repair: PASS" in notes
     assert "Beta 11 to Beta 12 interrupted-upgrade recovery" not in notes
+    assert "Caption-performance observations:" in notes
+    assert "not an automatic publisher gate" in notes
 
 
 @pytest.mark.parametrize(
@@ -1897,6 +2108,8 @@ def test_direct_physical_host_install_uses_host_evidence_without_sandbox_claims(
     assert "direct sandbox consumer checks passed" not in notes.lower()
     assert "accepted development-station soak is reported separately" in notes.lower()
     assert "Three-channel Whistle/HLS/caption observation" not in notes
+    assert "Caption-performance observations:" in notes
+    assert "not an automatic publisher gate" in notes
 
 
 def test_direct_physical_host_accepts_runtime_status_without_channel_state(tmp_path, monkeypatch):
@@ -1906,6 +2119,12 @@ def test_direct_physical_host_accepts_runtime_status_without_channel_state(tmp_p
         tmp_path, kit_dir, consumer_mode="physical-host"
     )
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    install_ref = receipt["evidence"]["host_install"]["receipt"]
+    install_path = Path(install_ref["path"])
+    install = json.loads(install_path.read_text(encoding="utf-8"))
+    install["before"]["health"].pop("schema")
+    install["before"]["health"].pop("live_captions")
+    install_ref.update(_write_bound_json(install_path, install))
     for snapshot_ref in receipt["evidence"]["host_three_channel_runtime"]["snapshots"]:
         snapshot_path = Path(snapshot_ref["path"])
         snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -1919,8 +2138,95 @@ def test_direct_physical_host_accepts_runtime_status_without_channel_state(tmp_p
     assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, repo_root=repo_root)) == 0
 
 
+def test_beta12_physical_host_caption_performance_is_advisory(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, consumer_mode="physical-host"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    install_ref = receipt["evidence"]["host_install"]["receipt"]
+    install_path = Path(install_ref["path"])
+    install = json.loads(install_path.read_text(encoding="utf-8"))
+    install["before"]["health"].update(
+        {"status": "degraded", "schema": "current", "live_captions": "unknown"}
+    )
+    install["after"]["health"].update(
+        {"status": "degraded", "schema": "current", "live_captions": "degraded"}
+    )
+    install_ref.update(_write_bound_json(install_path, install))
+    repeated_hash = hashlib.sha256(b"same observed captions").hexdigest()
+    for snapshot_ref in receipt["evidence"]["host_three_channel_runtime"]["snapshots"]:
+        snapshot_path = Path(snapshot_ref["path"])
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        snapshot["health"].update(
+            {"status": "degraded", "schema": "current", "live_captions": "unknown"}
+        )
+        for channel in snapshot["channels"]:
+            channel.update(
+                {
+                    "caption_runtime_status": {"state": "overloaded"},
+                    "caption_runtime_available": True,
+                    "caption_runtime_unavailable_reason": None,
+                    "vtt_available": True,
+                    "vtt_sha256": repeated_hash,
+                    "vtt_cue_count": 0,
+                }
+            )
+        snapshot_ref.update(_write_bound_json(snapshot_path, snapshot))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    _, _, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    advisory = summary["caption_performance_advisory"]
+    assert "not an automatic publisher gate" in advisory
+    assert "overloaded" in advisory
+    assert "physical-host pre-install health reports live_captions=unknown" in advisory
+    assert "zero cues" in advisory
+    assert "VTT hash did not change" in advisory
+
+
+def test_beta12_physical_host_missing_captions_can_be_reported(tmp_path):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, consumer_mode="physical-host"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    for snapshot_ref in receipt["evidence"]["host_three_channel_runtime"]["snapshots"]:
+        snapshot_path = Path(snapshot_ref["path"])
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        for channel in snapshot["channels"]:
+            channel.update(
+                {
+                    "caption_runtime_status": None,
+                    "caption_runtime_available": False,
+                    "caption_runtime_unavailable_reason": "caption runtime status was absent",
+                    "vtt_available": False,
+                    "vtt_sha256": None,
+                    "vtt_cue_count": None,
+                }
+            )
+        snapshot_ref.update(_write_bound_json(snapshot_path, snapshot))
+    receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+
+    _, _, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=VERSION,
+    )
+
+    assert "unavailable" in summary["caption_performance_advisory"]
+
+
 @pytest.mark.parametrize(
-    "tamper", ["wrong-source", "wrong-manifest-source", "stale-output", "contradictory-state"]
+    "tamper", ["wrong-source", "wrong-manifest-source", "stale-hls-output", "contradictory-state"]
 )
 def test_direct_physical_host_refuses_unbound_or_stale_evidence(tmp_path, monkeypatch, tamper):
     kit_dir = tmp_path / "direct-kit"
@@ -1946,14 +2252,14 @@ def test_direct_physical_host_refuses_unbound_or_stale_evidence(tmp_path, monkey
         install["after"]["app_payload_manifest_sha256"] = manifest_ref["sha256"]
         install_path.write_text(json.dumps(install, indent=2) + "\n", encoding="utf-8")
         install_ref["sha256"] = m.sha256_file(install_path)
-    elif tamper == "stale-output":
+    elif tamper == "stale-hls-output":
         snapshots = evidence["host_three_channel_runtime"]["snapshots"]
         first_ref, second_ref = snapshots
         first_path = Path(first_ref["path"])
         second_path = Path(second_ref["path"])
         first = json.loads(first_path.read_text(encoding="utf-8"))
         second = json.loads(second_path.read_text(encoding="utf-8"))
-        second["channels"][0]["vtt_sha256"] = first["channels"][0]["vtt_sha256"]
+        second["channels"][0]["newest_segment"] = first["channels"][0]["newest_segment"]
         second_path.write_text(json.dumps(second, indent=2) + "\n", encoding="utf-8")
         second_ref["sha256"] = m.sha256_file(second_path)
     else:

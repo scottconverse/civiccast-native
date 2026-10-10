@@ -185,12 +185,14 @@ it uses the older `failed_install_repair`, `beta10_baseline_install`, and
 install-smoke scope. That legacy shape is not accepted for Beta 12.
 
 An explicit `consumer_mode: "physical-host"` is a separate, bounded in-place
-update route. It binds the exact signed setup to a healthy pre-install host,
+update route. It binds the exact signed setup to a running pre-install host,
 successful candidate install, verified installed app manifest, and retained
 service-loop/schema state. Its runtime group contains at least two
 time-ordered snapshots covering public, government, and education, spanning
 at least 30 seconds, with HLS no older than 30 seconds, advancing
-playlists/segments, H.264/AAC, and changing nonempty caption output. It proves
+playlists/segments and H.264/AAC. Beta 11 also requires changing nonempty
+caption output; Beta 12 records caption observations under the owner policy
+below, including caption-only degraded health. It proves
 those sampled outputs on that host; it does not claim a clean Sandbox install,
 failed-install repair, cross-version Sandbox upgrade, or simultaneous
 capacity.
@@ -205,12 +207,33 @@ saved-schedule preservation checks remain required for that legacy receipt.
 The runtime snapshots require a time-ordered sample span of at least three
 minutes, HLS playlist age no greater than 30 seconds, and advancing playlist
 timestamps and newest segment names for each channel. They also require
-audio/video HLS, at least three distinct VTT snapshots, and at least two
-accumulated JFK reference words per channel across the run. The bounded VTT
+audio/video HLS. Legacy Beta 11 requires at least three distinct VTT snapshots
+and at least two accumulated JFK reference words per channel across the run;
+Beta 12 reports those observations without a caption-performance gate. The bounded VTT
 text sample remains in the hash-bound evidence for human review; the publisher
 does not compare it to a transcript. Historical Beta 11 one-channel evidence
 shows installed caption functionality only, not three-channel capacity, and
 cannot satisfy the Beta 12 direct Sandbox route.
+
+**Beta 12 caption reporting:** 99% and 98% are the owner's reporting
+benchmarks, not release minimums. Accurate late captions count as successful.
+Fallback, degraded caption readiness, missing or empty captions, repeated
+VTT hashes and reference-word observations are recorded in the bound snapshots
+and summarized separately in console output and release notes. Scott decides
+release acceptability, including below 98%; consult him before treating any
+caption-performance observation as a blocker. No extra approval flag or
+override receipt is required.
+
+Beta 12 observations explicitly record `vtt_available` and
+`caption_runtime_available`. An unavailable file has null file/status data
+and a nonempty unavailable reason, rather than an invented digest or healthy
+state. VTT samples record the bounded text and its exact UTF-8 byte count;
+reference-word fields distinguish observed text from unavailable text.
+Missing, malformed, contradictory or incorrectly hash-bound evidence remains
+invalid. Installation/signature/asset/activation checks, current database
+schema, version identity, service operation, preserved station data and actual
+video/audio output retain their existing checks. Caption-only degraded health
+does not make those installation checks fail.
 
 Every referenced file is a `{ "path": ..., "sha256": ... }` object. The
 publisher verifies each file hash and the semantics above, then checks all 19

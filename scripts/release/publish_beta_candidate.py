@@ -216,6 +216,14 @@ DIRECT_PLAYLIST_MAX_AGE_SECONDS = 30.0
 DIRECT_RUNTIME_MIN_SPAN_SECONDS = 180.0
 DIRECT_VTT_SAMPLE_MAX_BYTES = 32 * 1024
 DIRECT_HOST_RUNTIME_MIN_SPAN_SECONDS = 30.0
+DIRECT_CAPTION_RUNTIME_STATES = {
+    "within-capacity",
+    "overloaded",
+    "storage-refused",
+    "paused",
+    "disabled",
+}
+DIRECT_LIVE_CAPTION_HEALTH_STATES = {"healthy", "degraded", "unknown", "idle", "disabled"}
 DIRECT_PROOF_FIELDS = {
     "fresh_install": {"installer_run", "install_state", "activation_self_test"},
     "failed_install_repair": {
@@ -357,18 +365,182 @@ def _read_bound_text(receipt_dir: Path, reference: object, *, label: str) -> str
         raise PublishError(f"direct consumer evidence {label} is not UTF-8 text: {exc}") from exc
 
 
-def _verify_install_state(state: dict[str, Any], *, version: str, label: str) -> None:
+def _beta12_health_advisory(
+    health: dict[str, Any], *, version: str, label: str
+) -> str | None:
+    live_captions = health.get("live_captions")
+    status = health.get("status")
+    if (
+        health.get("version") != version
+        or health.get("schema") != "current"
+        or not isinstance(live_captions, str)
+        or live_captions not in DIRECT_LIVE_CAPTION_HEALTH_STATES
+    ):
+        raise PublishError(
+            f"direct consumer evidence {label} health is missing the exact version, current schema, or live-caption readiness"
+        )
+    if status == "healthy" and live_captions in {"healthy", "idle", "disabled"}:
+        return None
+    if status == "degraded" and live_captions in {"degraded", "unknown"}:
+        return f"{label} health reports live_captions={live_captions}"
+    raise PublishError(
+        f"direct consumer evidence {label} health status is inconsistent with schema or live-caption readiness"
+    )
+
+
+def _verify_install_state(
+    state: dict[str, Any],
+    *,
+    version: str,
+    label: str,
+    beta12_candidate: bool = False,
+) -> str | None:
     health = state.get("health")
     if (
         state.get("installed_version") != version
         or state.get("service_state") != "Running"
         or not isinstance(health, dict)
-        or health.get("status") != "healthy"
-        or health.get("version") != version
     ):
         raise PublishError(
             f"direct consumer evidence {label} is not a running healthy {version} install"
         )
+    if beta12_candidate:
+        return _beta12_health_advisory(health, version=version, label=label)
+    if health.get("status") != "healthy" or health.get("version") != version:
+        raise PublishError(
+            f"direct consumer evidence {label} is not a running healthy {version} install"
+        )
+    return None
+
+
+def _beta12_caption_observation(
+    channel: dict[str, Any],
+    *,
+    label: str,
+    findings: set[str],
+    include_vtt_sample: bool,
+    include_jfk_words: bool,
+) -> tuple[bool, str | None]:
+    if "caption_runtime_available" not in channel or "caption_runtime_status" not in channel:
+        raise PublishError(f"direct consumer evidence {label} caption availability is missing")
+    runtime_available = channel["caption_runtime_available"]
+    runtime_status = channel["caption_runtime_status"]
+    unavailable_reason = channel.get("caption_runtime_unavailable_reason")
+    if "caption_runtime_unavailable_reason" not in channel or not isinstance(
+        runtime_available, bool
+    ):
+        raise PublishError(f"direct consumer evidence {label} caption availability is malformed")
+    if runtime_available:
+        runtime_status = _record(runtime_status, label=f"{label} caption status")
+        runtime_state = runtime_status.get("state")
+        if (
+            not isinstance(runtime_state, str)
+            or runtime_state not in DIRECT_CAPTION_RUNTIME_STATES
+            or unavailable_reason is not None
+        ):
+            raise PublishError(f"direct consumer evidence {label} caption status is malformed")
+        if runtime_state != "within-capacity":
+            findings.add(f"{label} caption runtime state is {runtime_state}")
+    else:
+        if (
+            runtime_status is not None
+            or not isinstance(unavailable_reason, str)
+            or not unavailable_reason.strip()
+        ):
+            raise PublishError(f"direct consumer evidence {label} caption availability is malformed")
+        findings.add(f"{label} caption runtime status is unavailable")
+
+    required_vtt_fields = {"vtt_available", "vtt_sha256", "vtt_cue_count"}
+    if include_vtt_sample:
+        required_vtt_fields.update({"vtt_text_snapshot", "vtt_text_snapshot_utf8_bytes"})
+    if not required_vtt_fields.issubset(channel):
+        raise PublishError(f"direct consumer evidence {label} VTT availability is missing")
+    vtt_available = channel["vtt_available"]
+    vtt_hash = channel["vtt_sha256"]
+    cue_count = channel["vtt_cue_count"]
+    if not isinstance(vtt_available, bool):
+        raise PublishError(f"direct consumer evidence {label} VTT availability is malformed")
+    if vtt_available:
+        if not isinstance(vtt_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash):
+            raise PublishError(f"direct consumer evidence {label} VTT availability/hash is malformed")
+        if not isinstance(cue_count, int) or isinstance(cue_count, bool) or cue_count < 0:
+            raise PublishError(
+                f"direct consumer evidence {label} VTT availability/cue count is malformed"
+            )
+        if cue_count == 0:
+            findings.add(f"{label} VTT has zero cues")
+        if include_vtt_sample:
+            vtt_text = channel["vtt_text_snapshot"]
+            vtt_text_bytes = channel["vtt_text_snapshot_utf8_bytes"]
+            try:
+                actual_vtt_text_bytes = len(vtt_text.encode("utf-8")) if isinstance(vtt_text, str) else -1
+            except UnicodeEncodeError as exc:
+                raise PublishError(
+                    f"direct consumer evidence {label} VTT availability/sample is malformed"
+                ) from exc
+            if (
+                not isinstance(vtt_text, str)
+                or not isinstance(vtt_text_bytes, int)
+                or isinstance(vtt_text_bytes, bool)
+                or vtt_text_bytes != actual_vtt_text_bytes
+                or vtt_text_bytes > DIRECT_VTT_SAMPLE_MAX_BYTES
+            ):
+                raise PublishError(
+                    f"direct consumer evidence {label} VTT availability/sample is malformed"
+                )
+    else:
+        absent_fields: dict[str, object] = {
+            "vtt_sha256": vtt_hash,
+            "vtt_cue_count": cue_count,
+        }
+        if include_vtt_sample:
+            absent_fields.update(
+                {
+                    "vtt_text_snapshot": channel["vtt_text_snapshot"],
+                    "vtt_text_snapshot_utf8_bytes": channel[
+                        "vtt_text_snapshot_utf8_bytes"
+                    ],
+                }
+            )
+        if any(value is not None for value in absent_fields.values()):
+            raise PublishError(
+                f"direct consumer evidence {label} VTT availability conflicts with recorded VTT data"
+            )
+        findings.add(f"{label} VTT file is unavailable")
+
+    if include_jfk_words:
+        words = channel.get("expected_jfk_words_seen")
+        observation = channel.get("expected_jfk_words_observation")
+        if (
+            not isinstance(words, dict)
+            or set(words) != set(DIRECT_JFK_WORDS)
+            or any(not isinstance(value, bool) for value in words.values())
+            or not isinstance(observation, str)
+            or observation not in {"observed", "unavailable"}
+        ):
+            raise PublishError(f"direct consumer evidence {label} JFK word observation is malformed")
+        if observation == "unavailable":
+            if vtt_available or any(words.values()):
+                raise PublishError(
+                    f"direct consumer evidence {label} unavailable JFK observation conflicts with VTT evidence"
+                )
+            findings.add(f"{label} JFK word observation is unavailable")
+        else:
+            if not vtt_available:
+                raise PublishError(
+                    f"direct consumer evidence {label} observed JFK words without an available VTT"
+                )
+            return vtt_available, vtt_hash
+    return vtt_available, vtt_hash
+
+
+def _caption_advisory(findings: set[str]) -> str:
+    if not findings:
+        return "No caption-performance findings observed; these observations are not an automatic publisher gate."
+    return (
+        "Caption-performance findings (advisory; not an automatic publisher gate): "
+        + "; ".join(sorted(findings))
+    )
 
 
 def _verify_physical_host_consumer(
@@ -380,6 +552,7 @@ def _verify_physical_host_consumer(
     setup: Path,
     installer_sha256: str,
     candidate_version: str,
+    beta12_candidate: bool,
 ) -> dict[str, str]:
     """Verify this exact installer on the already-running physical host.
 
@@ -436,17 +609,60 @@ def _verify_physical_host_consumer(
     after = _record(install.get("after"), label="host post-install state")
     before_health = _record(before.get("health"), label="host pre-install health")
     after_health = _record(after.get("health"), label="host post-install health")
+    caption_findings: set[str] = set()
+    before_version = before.get("display_version")
+    if (
+        beta12_candidate
+        and before_health.get("status") == "healthy"
+        and isinstance(before_version, str)
+        and before_version
+        and before_health.get("version") == before_version
+    ):
+        before_schema = before_health.get("schema")
+        before_live_captions = before_health.get("live_captions")
+        if (
+            before_schema not in (None, "current")
+            or before_live_captions not in (None, "healthy", "idle", "disabled")
+        ):
+            raise PublishError(
+                "direct consumer evidence physical-host pre-install health is inconsistent"
+            )
+        before_caption_finding = None
+    elif beta12_candidate:
+        before_caption_finding = _beta12_health_advisory(
+            before_health,
+            version=str(before_version or ""),
+            label="physical-host pre-install",
+        )
+    else:
+        before_caption_finding = None
+    if before_caption_finding is not None:
+        caption_findings.add(before_caption_finding)
+    after_caption_finding = (
+        _beta12_health_advisory(
+            after_health, version=candidate_version, label="physical-host post-install"
+        )
+        if beta12_candidate
+        else None
+    )
+    if after_caption_finding is not None:
+        caption_findings.add(after_caption_finding)
     if (
         before.get("service_state") != "Running"
-        or before_health.get("status") != "healthy"
+        or (not beta12_candidate and before_health.get("status") != "healthy")
         or not isinstance(before.get("display_version"), str)
         or not before.get("display_version")
         or before_health.get("version") != before.get("display_version")
         or after.get("service_state") != "Running"
         or after.get("display_version") != candidate_version
-        or after_health.get("status") != "healthy"
-        or after_health.get("version") != candidate_version
-        or after_health.get("schema") != "current"
+        or (
+            not beta12_candidate
+            and (
+                after_health.get("status") != "healthy"
+                or after_health.get("version") != candidate_version
+                or after_health.get("schema") != "current"
+            )
+        )
         or before.get("install_location") != after.get("install_location")
         or before.get("schedule_loop_enabled") is not True
         or after.get("schedule_loop_enabled") is not True
@@ -499,7 +715,7 @@ def _verify_physical_host_consumer(
         raise PublishError("physical-host runtime result does not cover all three live channels")
     previous_snapshot_at: datetime | None = None
     first_snapshot_at: datetime | None = None
-    previous_media: dict[str, tuple[datetime, str, str]] = {}
+    previous_media: dict[str, tuple[datetime, str, str | None]] = {}
     for index, snapshot_ref in enumerate(snapshots, start=1):
         _, snapshot = _bound_json(
             receipt_dir, snapshot_ref, label=f"physical-host runtime observation {index}"
@@ -511,7 +727,18 @@ def _verify_physical_host_consumer(
             first_snapshot_at = snapshot_at
         previous_snapshot_at = snapshot_at
         health = _record(snapshot.get("health"), label=f"host runtime observation {index} health")
-        if health.get("status") != "healthy" or health.get("version") != candidate_version:
+        health_finding = (
+            _beta12_health_advisory(
+                health, version=candidate_version, label=f"physical-host runtime observation {index}"
+            )
+            if beta12_candidate
+            else None
+        )
+        if health_finding is not None:
+            caption_findings.add(health_finding)
+        if not beta12_candidate and (
+            health.get("status") != "healthy" or health.get("version") != candidate_version
+        ):
             raise PublishError(
                 f"physical-host runtime observation {index} is not healthy {candidate_version}"
             )
@@ -549,13 +776,30 @@ def _verify_physical_host_consumer(
             newest_segment = channel.get("newest_segment")
             vtt_hash = channel.get("vtt_sha256")
             cue_count = channel.get("vtt_cue_count")
-            caption_status = _record(
-                channel.get("caption_runtime_status"), label=f"{channel_id} caption status"
-            )
+            if beta12_candidate:
+                _beta12_caption_observation(
+                    channel,
+                    label=f"physical-host {channel_id}",
+                    findings=caption_findings,
+                    include_vtt_sample=False,
+                    include_jfk_words=False,
+                )
+                caption_status_ok = True
+                cue_count_ok = True
+                vtt_hash_ok = True
+            else:
+                caption_status = _record(
+                    channel.get("caption_runtime_status"), label=f"{channel_id} caption status"
+                )
+                caption_status_ok = caption_status.get("state") == "within-capacity"
+                cue_count_ok = isinstance(cue_count, int) and not isinstance(cue_count, bool) and cue_count > 0
+                vtt_hash_ok = isinstance(vtt_hash, str) and bool(
+                    re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
+                )
             if (
                 not state_is_on_air
                 or codecs != {("video", "h264"), ("audio", "aac")}
-                or caption_status.get("state") != "within-capacity"
+                or not caption_status_ok
                 or not isinstance(playlist_age, (int, float))
                 or isinstance(playlist_age, bool)
                 or not math.isfinite(playlist_age)
@@ -565,25 +809,36 @@ def _verify_physical_host_consumer(
                 > DIRECT_PLAYLIST_MAX_AGE_SECONDS
                 or not isinstance(newest_segment, str)
                 or not newest_segment
-                or not isinstance(vtt_hash, str)
-                or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
-                or not isinstance(cue_count, int)
-                or isinstance(cue_count, bool)
-                or cue_count <= 0
+                or not vtt_hash_ok
+                or not cue_count_ok
             ):
                 raise PublishError(
-                    f"physical-host runtime observation {index} channel {channel_id!r} has no current audio/video/caption output"
+                    f"physical-host runtime observation {index} channel {channel_id!r} has no current audio/video/HLS output"
                 )
             previous = previous_media.get(channel_id)
+            if (
+                beta12_candidate
+                and previous is not None
+                and isinstance(vtt_hash, str)
+                and previous[2] is not None
+                and vtt_hash.casefold() == previous[2]
+            ):
+                caption_findings.add(
+                    f"physical-host {channel_id} VTT hash did not change between observations"
+                )
             if previous is not None and (
                 playlist_mtime <= previous[0]
                 or newest_segment == previous[1]
-                or vtt_hash == previous[2]
+                or (not beta12_candidate and vtt_hash == previous[2])
             ):
                 raise PublishError(
                     f"physical-host runtime channel {channel_id!r} output did not advance"
                 )
-            previous_media[channel_id] = (playlist_mtime, newest_segment, vtt_hash)
+            previous_media[channel_id] = (
+                playlist_mtime,
+                newest_segment,
+                vtt_hash.casefold() if isinstance(vtt_hash, str) else None,
+            )
 
     if (
         first_snapshot_at is None
@@ -595,7 +850,7 @@ def _verify_physical_host_consumer(
             "physical-host runtime observations do not show sustained output progress"
         )
 
-    return {
+    verification = {
         "consumer_mode": "physical-host",
         "host_install": (
             f"PASS (exact signed {candidate_version} installer; existing "
@@ -603,10 +858,13 @@ def _verify_physical_host_consumer(
         ),
         "host_preservation": "PASS (install location and service-loop setting retained; schema current)",
         "host_runtime": (
-            f"PASS ({len(snapshots)} observations of live HLS, H.264/AAC and changing captions; "
+            f"PASS ({len(snapshots)} observations of live HLS and H.264/AAC; "
             "not a three-channel capacity claim)"
         ),
     }
+    if beta12_candidate:
+        verification["caption_performance_advisory"] = _caption_advisory(caption_findings)
+    return verification
 
 
 def _utc_timestamp(value: object, *, label: str, allow_offset: bool = False) -> datetime:
@@ -654,6 +912,7 @@ def verify_consumer_evidence_receipt(
     if consumer_mode not in {"sandbox", "physical-host"}:
         raise PublishError(f"unsupported direct consumer evidence mode: {consumer_mode!r}")
     runtime_proof_scope = doc.get("runtime_proof_scope", "three-channel-capacity")
+    beta12_candidate = candidate_version == DIRECT_BETA12_VERSION
     beta12_sandbox = consumer_mode == "sandbox" and candidate_version == DIRECT_BETA12_VERSION
     beta12_separate_contract = (
         beta12_sandbox and doc.get("consumer_contract") == DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT
@@ -857,6 +1116,7 @@ def verify_consumer_evidence_receipt(
             setup=setup,
             installer_sha256=installer_sha256,
             candidate_version=candidate_version,
+            beta12_candidate=beta12_candidate,
         )
         return setup, packs, verification
 
@@ -935,6 +1195,8 @@ def verify_consumer_evidence_receipt(
                 f"direct consumer evidence {label} activation self-test did not pass"
             )
 
+    caption_findings: set[str] = set()
+
     def require_candidate_install(proof_name: str) -> None:
         run = read_json(proof_name, "installer_run")
         if (
@@ -944,9 +1206,14 @@ def verify_consumer_evidence_receipt(
             raise PublishError(
                 f"direct consumer evidence {proof_name} did not run this {candidate_version} installer successfully"
             )
-        _verify_install_state(
-            read_json(proof_name, "install_state"), version=candidate_version, label=proof_name
+        install_caption_finding = _verify_install_state(
+            read_json(proof_name, "install_state"),
+            version=candidate_version,
+            label=proof_name,
+            beta12_candidate=beta12_sandbox,
         )
+        if install_caption_finding is not None:
+            caption_findings.add(install_caption_finding)
         verify_activation_self_test(
             read_json(proof_name, "activation_self_test"),
             version=candidate_version,
@@ -1107,6 +1374,24 @@ def verify_consumer_evidence_receipt(
             taskkill_exit_code = interruption.get("taskkill_exit_code")
             installer_path = interruption.get("installer_path")
             setup_image_path = interruption.get("setup_image_path")
+            installed_before_health_finding: str | None = None
+            full_public_health = installed_before.get("full_public_health")
+            if beta12_sandbox:
+                full_public_health = _record(
+                    full_public_health, label="D4 repair full public health"
+                )
+                installed_before_health_finding = _beta12_health_advisory(
+                    full_public_health,
+                    version=candidate_version,
+                    label="D4 repair installed-before",
+                )
+                if installed_before_health_finding is not None:
+                    caption_findings.add(installed_before_health_finding)
+            installed_health_status = (
+                full_public_health.get("status")
+                if beta12_sandbox and isinstance(full_public_health, dict)
+                else "healthy"
+            )
             expected_interruption = (
                 interruption.get("result") == "INTERRUPTED_CONFIRMED"
                 and str(interruption.get("candidate_source_sha", "")).casefold()
@@ -1122,14 +1407,18 @@ def verify_consumer_evidence_receipt(
                 and installed_before.get("product_version") == candidate_version
                 and installed_before.get("registry_version") == candidate_version
                 and installed_before.get("service_state") == "Running"
-                and installed_before.get("health_status") == "healthy"
+                and installed_before.get("health_status") == installed_health_status
                 and installed_before.get("health_schema") == "current"
                 and installed_before.get("read_errors") == {}
                 and isinstance(installed_before.get("station_set_sha256"), str)
                 and re.fullmatch(r"[0-9a-fA-F]{64}", installed_before["station_set_sha256"])
                 is not None
                 and set(guard_checks) == required_guard_checks
-                and all(guard_checks.get(name) is True for name in required_guard_checks)
+                and all(
+                    guard_checks.get(name)
+                    is (installed_before_health_finding is None if name == "health_status_healthy" else True)
+                    for name in required_guard_checks
+                )
                 and isinstance(interruption.get("progress_log_path"), str)
                 and ntpath.isabs(interruption["progress_log_path"])
                 and ntpath.basename(interruption["progress_log_path"]).casefold()
@@ -1545,6 +1834,7 @@ def verify_consumer_evidence_receipt(
             )
         vtt_hashes: dict[str, set[str]] = {channel: set() for channel in runtime_channels}
         jfk_words_seen: dict[str, set[str]] = {channel: set() for channel in runtime_channels}
+        jfk_observed_channels: set[str] = set()
         previous_media: dict[str, tuple[datetime, str]] = {}
         first_snapshot_at: datetime | None = None
         previous_snapshot_at: datetime | None = None
@@ -1570,8 +1860,49 @@ def verify_consumer_evidence_receipt(
             if (
                 snapshot.get("minute") != expected_minute
                 or not isinstance(snapshot_health, dict)
-                or snapshot_health.get("status") != "healthy"
                 or snapshot_health.get("version") != candidate_version
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} does not identify the exact candidate"
+                )
+            if beta12_sandbox:
+                health_finding = _beta12_health_advisory(
+                    snapshot_health,
+                    version=candidate_version,
+                    label=f"{runtime_proof_group} runtime minute {expected_minute}",
+                )
+                if health_finding is not None:
+                    caption_findings.add(health_finding)
+                pinned_error = snapshot.get("pinned_whistle_error_seen")
+                active_map = snapshot.get("whistle_active_seen")
+                fallback_map = snapshot.get("whistle_fallback_seen")
+                expected_channel_set = set(runtime_channels)
+                if (
+                    not isinstance(pinned_error, bool)
+                    or not isinstance(active_map, dict)
+                    or set(active_map) != expected_channel_set
+                    or any(not isinstance(value, bool) for value in active_map.values())
+                    or not isinstance(fallback_map, dict)
+                    or set(fallback_map) != expected_channel_set
+                    or any(not isinstance(value, bool) for value in fallback_map.values())
+                ):
+                    raise PublishError(
+                        f"runtime minute {expected_minute} Whistle observations are malformed"
+                    )
+                if pinned_error:
+                    caption_findings.add(
+                        f"{runtime_proof_group} runtime observed a pinned Whistle error"
+                    )
+                if any(value is not True for value in active_map.values()):
+                    caption_findings.add(
+                        f"{runtime_proof_group} runtime observed Whistle inactive on a channel"
+                    )
+                if any(value is not False for value in fallback_map.values()):
+                    caption_findings.add(
+                        f"{runtime_proof_group} runtime observed Whistle fallback"
+                    )
+            elif (
+                snapshot_health.get("status") != "healthy"
                 or snapshot.get("pinned_whistle_error_seen") is not False
                 or snapshot.get("whistle_active_seen") != dict.fromkeys(runtime_channels, True)
                 or snapshot.get("whistle_fallback_seen") != dict.fromkeys(runtime_channels, False)
@@ -1601,12 +1932,7 @@ def verify_consumer_evidence_receipt(
                     else set()
                 )
                 expected_codecs = {("video", "h264"), ("audio", "aac")}
-                words = channel.get("expected_jfk_words_seen")
-                vtt_hash = channel.get("vtt_sha256")
-                vtt_text = channel.get("vtt_text_snapshot")
-                vtt_text_bytes = channel.get("vtt_text_snapshot_utf8_bytes")
                 channel_state = channel.get("state")
-                caption_status = channel.get("caption_runtime_status")
                 playlist_age = channel.get("playlist_age_seconds")
                 if (
                     not isinstance(playlist_age, (int, float))
@@ -1656,37 +1982,65 @@ def verify_consumer_evidence_receipt(
                         f"runtime minute {expected_minute} channel {channel_id!r} HLS media did not advance"
                     )
                 previous_media[channel_id] = (playlist_mtime, newest_segment)
-                if (
-                    not isinstance(vtt_text, str)
-                    or not vtt_text
-                    or not isinstance(vtt_text_bytes, int)
-                    or isinstance(vtt_text_bytes, bool)
-                    or vtt_text_bytes != len(vtt_text.encode("utf-8"))
-                    or vtt_text_bytes > DIRECT_VTT_SAMPLE_MAX_BYTES
-                ):
+                if not isinstance(channel_state, dict) or channel_state.get("state") != "ON_AIR":
                     raise PublishError(
-                        f"runtime minute {expected_minute} channel {channel_id!r} has no bounded VTT review sample"
+                        f"runtime minute {expected_minute} channel {channel_id!r} is not ON_AIR"
                     )
-                if isinstance(words, dict):
-                    jfk_words_seen[channel_id].update(
-                        word for word in DIRECT_JFK_WORDS if words.get(word) is True
-                    )
-                if (
-                    not isinstance(channel_state, dict)
-                    or channel_state.get("state") != "ON_AIR"
-                    or not isinstance(caption_status, dict)
-                    or caption_status.get("state") != "within-capacity"
-                    or not isinstance(channel.get("vtt_cue_count"), int)
-                    or channel["vtt_cue_count"] <= 0
-                    or not isinstance(words, dict)
-                    or codecs != expected_codecs
-                    or not isinstance(vtt_hash, str)
-                    or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
-                ):
+                if codecs != expected_codecs:
                     raise PublishError(
-                        f"runtime minute {expected_minute} channel {channel_id!r} failed media/caption checks"
+                        f"runtime minute {expected_minute} channel {channel_id!r} is missing H.264/AAC media"
                     )
-                vtt_hashes[channel_id].add(vtt_hash)
+                if beta12_sandbox:
+                    vtt_available, vtt_hash = _beta12_caption_observation(
+                        channel,
+                        label=f"{runtime_proof_group} runtime {channel_id}",
+                        findings=caption_findings,
+                        include_vtt_sample=True,
+                        include_jfk_words=True,
+                    )
+                    if vtt_available and vtt_hash is not None:
+                        vtt_hashes[channel_id].add(vtt_hash.casefold())
+                    words = channel["expected_jfk_words_seen"]
+                    if channel["expected_jfk_words_observation"] == "observed":
+                        jfk_observed_channels.add(channel_id)
+                        jfk_words_seen[channel_id].update(
+                            word for word in DIRECT_JFK_WORDS if words[word]
+                        )
+                else:
+                    words = channel.get("expected_jfk_words_seen")
+                    vtt_hash = channel.get("vtt_sha256")
+                    vtt_text = channel.get("vtt_text_snapshot")
+                    vtt_text_bytes = channel.get("vtt_text_snapshot_utf8_bytes")
+                    caption_status = channel.get("caption_runtime_status")
+                    if (
+                        not isinstance(vtt_text, str)
+                        or not vtt_text
+                        or not isinstance(vtt_text_bytes, int)
+                        or isinstance(vtt_text_bytes, bool)
+                        or vtt_text_bytes != len(vtt_text.encode("utf-8"))
+                        or vtt_text_bytes > DIRECT_VTT_SAMPLE_MAX_BYTES
+                    ):
+                        raise PublishError(
+                            f"runtime minute {expected_minute} channel {channel_id!r} has no bounded VTT review sample"
+                        )
+                    if isinstance(words, dict):
+                        jfk_words_seen[channel_id].update(
+                            word for word in DIRECT_JFK_WORDS if words.get(word) is True
+                        )
+                    if (
+                        not isinstance(caption_status, dict)
+                        or caption_status.get("state") != "within-capacity"
+                        or not isinstance(channel.get("vtt_cue_count"), int)
+                        or channel["vtt_cue_count"] <= 0
+                        or not isinstance(words, dict)
+                        or codecs != expected_codecs
+                        or not isinstance(vtt_hash, str)
+                        or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
+                    ):
+                        raise PublishError(
+                            f"runtime minute {expected_minute} channel {channel_id!r} failed media/caption checks"
+                        )
+                    vtt_hashes[channel_id].add(vtt_hash)
 
         if (
             first_snapshot_at is None
@@ -1696,14 +2050,24 @@ def verify_consumer_evidence_receipt(
         ):
             raise PublishError("five-minute runtime snapshots span less than three minutes")
         for channel in runtime_channels:
-            if len(vtt_hashes[channel]) < 3:
-                raise PublishError(
-                    f"runtime channel {channel!r} VTT did not progress in at least three samples"
-                )
-            if len(jfk_words_seen[channel]) < 2:
-                raise PublishError(
-                    f"runtime channel {channel!r} recognized fewer than two JFK reference words"
-                )
+            if beta12_sandbox:
+                if 0 < len(vtt_hashes[channel]) < 3:
+                    caption_findings.add(
+                        f"{runtime_proof_group} {channel} VTT changed in only {len(vtt_hashes[channel])} distinct sample hashes"
+                    )
+                if channel in jfk_observed_channels and len(jfk_words_seen[channel]) < 2:
+                    caption_findings.add(
+                        f"{runtime_proof_group} {channel} observed fewer than two JFK reference words"
+                    )
+            else:
+                if len(vtt_hashes[channel]) < 3:
+                    raise PublishError(
+                        f"runtime channel {channel!r} VTT did not progress in at least three samples"
+                    )
+                if len(jfk_words_seen[channel]) < 2:
+                    raise PublishError(
+                        f"runtime channel {channel!r} recognized fewer than two JFK reference words"
+                    )
 
     if beta12_separate_contract:
         return (
@@ -1718,6 +2082,7 @@ def verify_consumer_evidence_receipt(
                 "preservation": "PASS",
                 "repair_preservation": "PASS",
                 "runtime": "PASS (five minutes, three channels before and after repair)",
+                "caption_performance_advisory": _caption_advisory(caption_findings),
             },
         )
     if beta12_sandbox:
@@ -1731,6 +2096,7 @@ def verify_consumer_evidence_receipt(
                 "beta11_to_beta12_interrupted_upgrade": "PASS",
                 "preservation": "PASS",
                 "runtime": "PASS (five minutes, three channels)",
+                "caption_performance_advisory": _caption_advisory(caption_findings),
             },
         )
     return (
@@ -2318,6 +2684,9 @@ def _run(args: argparse.Namespace) -> None:
         print(
             "publish_beta_candidate: direct consumer evidence, assembly receipt, and all kit member hashes verified"
         )
+        caption_advisory = direct_verification.get("caption_performance_advisory")
+        if caption_advisory is not None:
+            print(f"publish_beta_candidate: {caption_advisory}")
     else:
         setup, packs = verify_layout(kit_dir)
 

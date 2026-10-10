@@ -192,13 +192,19 @@ def render_native_beta_candidate_notes(
             legacy_expected = legacy_sandbox_proofs | {"consumer_mode"}
             beta12_expected = beta12_sandbox_proofs | {"consumer_mode"}
             beta12_separate_expected = beta12_separate_sandbox_proofs | {"consumer_mode"}
+            beta12_advisory_expected = beta12_expected | {"caption_performance_advisory"}
+            beta12_separate_advisory_expected = beta12_separate_expected | {
+                "caption_performance_advisory"
+            }
             if set(direct_verification) not in (
                 legacy_sandbox_proofs,
                 legacy_expected,
                 beta12_sandbox_proofs,
                 beta12_expected,
+                beta12_advisory_expected,
                 beta12_separate_sandbox_proofs,
                 beta12_separate_expected,
+                beta12_separate_advisory_expected,
             ):
                 raise ValueError(
                     "direct_verification must contain the validated direct Sandbox proof summary"
@@ -252,12 +258,22 @@ def render_native_beta_candidate_notes(
                     )
                 ),
                 f"- {runtime_label}: {direct_verification['runtime']}",
+                *(
+                    [
+                        f"- Caption-performance observations: {direct_verification['caption_performance_advisory']}"
+                    ]
+                    if "caption_performance_advisory" in direct_verification
+                    else []
+                ),
                 "- Gate A workflow lanes: not run.",
                 "- Download-only network route: not tested.",
             ]
         elif consumer_mode == "physical-host":
             expected_proofs = {"consumer_mode", "host_install", "host_preservation", "host_runtime"}
-            if set(direct_verification) != expected_proofs:
+            if set(direct_verification) not in (
+                expected_proofs,
+                expected_proofs | {"caption_performance_advisory"},
+            ):
                 raise ValueError(
                     "direct_verification must contain the validated physical-host proof summary"
                 )
@@ -279,6 +295,13 @@ def render_native_beta_candidate_notes(
                 f"- Exact {tag.removeprefix('v')} installer and installed payload: {direct_verification['host_install']}",
                 f"- Existing host configuration and schema preservation: {direct_verification['host_preservation']}",
                 f"- Three-channel host output: {direct_verification['host_runtime']}",
+                *(
+                    [
+                        f"- Caption-performance observations: {direct_verification['caption_performance_advisory']}"
+                    ]
+                    if "caption_performance_advisory" in direct_verification
+                    else []
+                ),
                 "- This was an in-place update on an existing host; clean Sandbox install and repair checks are separate.",
                 "- The accepted development-station soak is reported separately from this install check.",
             ]
