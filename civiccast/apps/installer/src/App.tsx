@@ -375,7 +375,7 @@ function App() {
 
     let ignore = false;
     runtimeAutoStarted.current = true;
-    setStatusMessage("CivicCast is finishing setup. The dashboard will open when everything is ready.");
+    setStatusMessage("CivicCast is retrying this setup step. The dashboard opens only after station setup completes.");
     // Patch the runtime lane's own card in this same update so it can never render a
     // stale error/detail underneath the optimistic banner above (UX-2 / G-9a).
     setInstaller({
@@ -385,8 +385,9 @@ function App() {
           ? {
               ...lane,
               status: "progress",
-              detail: "Retrying automatically…",
-              nextStep: "Keep this window open while CivicCast retries this step."
+              detail: "Retrying this setup step…",
+              nextStep:
+                "Keep this window open for the retry. If the station remains Not ready, check the installer log; automatic retry cannot obtain missing signed station packs."
             }
           : lane
       )

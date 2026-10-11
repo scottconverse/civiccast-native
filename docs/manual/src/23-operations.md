@@ -1,6 +1,6 @@
 # Running it day to day: service, logs, backups, updates {#ch-operations}
 
-This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes beta.11, a GitHub pre-release for testing rather than a production release. Where the code and a convenient assumption disagree, a **Known issue (beta.11)** callout explains the current behavior.
+This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes Beta 12, a GitHub pre-release rather than a production release. Where the code and a convenient assumption disagree, a **Known issue** callout explains the current source behavior; package-specific observations remain limited to the verification record.
 
 ## Before you start
 
@@ -13,7 +13,7 @@ You need:
 
 > **Note:** Earlier descriptions of CivicCast mention a message bus called NATS. NATS JetStream was removed from the product and is not part of beta.11. Do not look for it, monitor it or open a firewall port for it.
 
-> **Note:** Package proof status is in the [beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). The published package was refreshed on an existing beta.11 station and observed twice 41 seconds apart; this was not a clean install, repair, earlier-version upgrade, or capacity test. Older beta.10 and development-station measurements are separated in [Appendix H](#app-evidence).
+> **Note:** Package status is in the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md). One normal upgrade from the pinned Beta 11 baseline exited 0 and recorded a healthy service/API and initial three-channel HLS/Whistle output. The post-upgrade recorder failed during its first JSON save; no five-snapshot PASS, fresh-install or repair result, or Beta 12 soak is claimed. Historical measurements are separated in [Appendix H](#app-evidence).
 
 ## What the service runs
 
@@ -170,7 +170,7 @@ The station runs its own checks on a schedule. By default (the code's default se
 
 A non-passing result raises a `self-test-fail` warning and clears itself on the next clean run. Staff can read results at `GET /api/staff/self-tests` and, with the Setup admin or Support admin role, start one with `POST /api/staff/self-tests/run?kind=daily` or `kind=weekly`.
 
-> **Note:** The weekly restore rehearsal is a rehearsal, not a backup. It does not replace the backup work later in this chapter.
+> **Note:** `civiccast dr run-drill` exercises a database backup/restore into a throwaway database; it is not a full station restore. The Setup/System Health backup-storage probe checks a small manifest round-trip, not restoration of the station database, media, configuration or provider state. Neither replaces the separate backup work later in this chapter.
 
 ### Command-line checks
 
@@ -232,7 +232,7 @@ The **conform cache** is a folder where CivicCast keeps ready-to-play copies of 
 - **Too small a cap:** if one video's conformed copy cannot fit in the budget, preparation of that video fails with: `Conform-cache budget too small to retain '<name>'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset.` Raise `CIVICCAST_CONFORM_CACHE_GB` in the service environment and restart.
 - **Failed background conforms:** after a failed or timed-out background (warm-up) conform the station waits 6 hours before trying that asset again. The time allowed for a background conform scales with the length of the asset and is capped at 7,200 seconds.
 
-Historical measurement: in an eight-hour lab run on an earlier development build (three channels), the cache reached 46 GB of the 60 GB cap on a drive with 810 GB free, and the longest single preparation took 389 seconds. That is not beta.11 package evidence or a sizing rule. Size the cap from your own library: it should hold the conformed copies of everything you expect to air in the next several days.
+Historical measurement: in an eight-hour lab run on an earlier development build (three channels), the cache reached 46 GB of the 60 GB cap on a drive with 810 GB free, and the longest single preparation took 389 seconds. That is not Beta 12 package evidence or a sizing rule. Size the cap from your own library: it should hold the conformed copies of everything you expect to air in the next several days.
 
 > **Known issue (beta.11):** There is no free-space guard on the conform cache. The 60 GB figure is a cap on the cache, not a promise that the disk has that much room. Make sure the drive has more free space than the cap plus the database, uploads and logs, and watch the **low disk** alert (which may have no destination).
 
@@ -335,7 +335,7 @@ Beta.11 has no supported command that restores into the live database. The only 
 
 The drill does not prove that you can rebuild a station from nothing. Plan on this order, and rehearse it:
 
-1. Install CivicCast on the replacement computer from the full kit (setup, `packs` and `station` folders together). Check [Chapter 10](#ch-installing) and the [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for the latest package's installation checks and limits.
+1. Prepare the replacement computer's kit with `scripts\download_windows_release_artifacts.ps1 -Install`. The helper verifies and assembles the signed station resources from the release manifest and archive parts before setup runs. The R9 field attempt used an earlier release asset set that lacked those resources and failed activation; see [Chapter 10](#ch-installing) and the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) for exact package scope.
 2. Stop the service.
 3. Restore the database from your off-computer copy using Postgres's tools, as above.
 4. Restore the registry values, `station-state.json`, `subscribe-secrets.json` and the alert credentials file.
@@ -367,7 +367,7 @@ It writes `upgrade-engine.log`, `upgrade-journal.json` and, if a rollback itself
 
 Related provisioning exits: 75 maps to setup exit 116, 87 to 135 (another CivicCast product or the WSL runtime is present), 85 to 127.
 
-> **Known issue (beta.11):** The exact published package has not been tested as an upgrade from an earlier release. Before you upgrade a station that is on the air, stop the service, copy the data folder, `HKLM\SOFTWARE\CivicCast` and the files listed in the backup table to another computer, and schedule a window in which you can reinstall if needed. See the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for package-specific results.
+> **Upgrade evidence (Beta 12):** One normal upgrade from the pinned Beta 11 baseline exited 0, left the service/API healthy with current schema 0089, saved the preservation marker, and showed initial HLS audio/video plus Whistle observations on three channels. The post-upgrade recorder failed during its first JSON save, so its five-snapshot check did not pass. Fresh-install and repair checks remain unrun, and no sustained-operation result is claimed. Before upgrading an on-air station, take a separate backup and schedule a window in which you can use the recovery path. See the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
 > **Warning:** Do not upgrade during a meeting. The upgrade stops the service and takes every channel off the air.
 
@@ -375,7 +375,7 @@ After any upgrade, run through the daily routine, then run the drill.
 
 ## Capacity guidance
 
-Historical measurements and current package checks have different scopes. The old eight-hour development run is not a beta.11 package measurement; the exact beta.11 package check is described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md).
+Historical measurements and current package checks have different scopes. The old eight-hour development run and the separate Beta 11 48-hour host observation are not Beta 12 package measurements. The Beta 12 upgrade observation and limits are described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
 - The cache cap default is 60 GB. A 3-channel, 8-hour lab run used 46 GB of it.
 - The longest conform in that run took 389 seconds.

@@ -1,4 +1,4 @@
-# portal-operator - Operator Console (Mode A)
+# portal-operator — Operator Console
 
 Sprint 0.3 introduced the operator-facing Vite app. v0.4 Slice 2 extended it
 with the Live Room for starting, monitoring, and ending a broadcast. The v0.5
@@ -72,18 +72,19 @@ uv run uvicorn civiccast.app:app --port 8000
 
 ## Routes
 
-v1.3 groups the same routes by operator job: Setup, Run Meeting, Review
-Records, Publish, and System Health. This is a navigation shell, not RBAC or
-SSO. Disabled nav items keep a release badge so operators can see what is
-queued without mistaking it for active functionality.
+The current sidebar groups routes by operator job. Entries with a required
+role are filtered by the signed-in operator's roles, and individual screens
+and actions enforce their own permissions. This is role-based access; it does
+not provide SSO.
 
-| Mode | Routes |
+| Sidebar section | Current routes |
 |---|---|
-| Setup | Channel & Settings |
-| Run Meeting | **Live**, Today, Schedule |
-| Review Records | **Assets**, **Review queue**, **Summary review**, Meetings Archive |
-| Publish | Publish, Subscribers |
-| System Health | Federation |
+| Help | Manual |
+| Setup | First Setup, Control Room Setup, Station Profile, Cable Commissioning, AI Models, Custom Fields, Paywall |
+| Run Meeting | Live, Facility, Control Room, Remote Contribution, Channels, CG Board, CG Designer, Schedule, Auto-schedule, Program Guide, Recording |
+| Review Records | Assets, Missing Media, Media Lifecycle Settings, Contributors, Review queue, Summary review, Agendas |
+| Publish | Publish, Playback policy, Analytics, Reports, EPG Export, Underwriting, App Admin |
+| System Health | Readiness, Alerts, Emergency Alerts, Federation |
 
 ## Keyboard Shortcuts
 

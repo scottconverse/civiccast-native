@@ -1,4 +1,6 @@
-# Contextual help and instruction inventory — Beta 11 source snapshot
+# Historical contextual help and instruction inventory — Beta 11 audit snapshot
+
+> **Current help:** Beta 12 operator Help serves the bundled current manual, generated from `docs/manual/src/`. Use the [Beta 12 User Manual](../USER-MANUAL.md) and its [package verification record](../releases/v1.0.0-beta.12-verification.md) for current operator guidance and release scope. The findings below record an October 8, 2026 Beta 11 source audit; they are not a current defect list. Read the current manual before applying any older audit note.
 
 ## Beta 12 follow-up — October 10, 2026
 
@@ -14,7 +16,7 @@ Live pre-flight uses the local rehearsal video only for the unchanged bundled
 sample source. Editing its channel, type, address or credentials switches the
 check to the configured live source; the sample file cannot stand in for it.
 
-Audited 2026-10-08 against the Beta.11 manual source and application code. This is a dated source audit, not a release-status statement; check the [project releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication and download status. [README.md](README.md) and its linked per-screen sheets are explicitly labeled historical beta.10 audit records.
+Audited 2026-10-08 against the Beta.11 manual source and application code. This is a dated source audit, not a release-status statement; check the [project releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication and download status. Its Beta 11 observations are retained as historical audit evidence. The linked per-screen sheets indexed by [README.md](README.md) are historical Beta 10 snapshots.
 
 ## Source coverage
 
@@ -26,7 +28,9 @@ The recursive production-source inventory includes shared components, routes, sh
 
 Across these areas, the audit covered visible labels and tooltips, placeholders and field descriptions, empty/error/confirmation/retry guidance, help links, and installer instructions. Runtime claims were checked against `civiccast/ai_models/runtime.py`, `civiccast/captions/whistle.py`, `civiccast/native/station_runtime.py`, and caption retention code.
 
-## Reconciled findings
+## Beta 11 audit findings (historical)
+
+The bullets below summarize what the October 8 audit found then. They do not establish that those conditions remain in Beta 12. For example, Beta 12 corrected canonical-sample pre-flight handling, blank signing-secret saves, and alert-rule permissions/routing; consult the current manual and Beta 12 release verification before applying an old finding.
 
 - Help links now target headings in the beta.11 manual: `app-glossary`, `configuration-storage`, `the-publishing-steps-surfaces`, `cdn-and-provider-options`, `publishing-providers`, `federation-activitypub`, `report-a-beta-issue`, `ch-before-meeting`, and `live-captions-what-the-settings-change`. `manual-link.ts` maps legacy provider and help IDs returned by the installer API to those current headings.
 - Internal fragment links in the manual body now receive a router-aware Help URL. This keeps a normal click in the manual and leaves the destination usable for copy-link and open-in-new-tab actions under HashRouter.

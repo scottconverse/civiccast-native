@@ -71,15 +71,13 @@ Before the first public meeting, confirm:
   meeting schedule.
 - Someone knows where backups live and how to test a restore.
 
-The setup flow creates the first-admin account and recovery kit. A full
-backup destination check is available in **Setup**, and **System Health** can
-run a restore rehearsal that writes a proof file to the backup destination,
-copies it into an isolated restore area, verifies the checksum, checks
-representative admin, portal, media, captions, records, publish, provider, and
-credential-metadata state, and cleans up temporary proof files. Treat that as a
-tester restore proof for the backup destination and representative station
-state, not as a substitute for a full disaster-recovery drill with real meeting
-archives.
+The setup flow creates the first-admin account and recovery kit. A
+backup-storage probe is available in **Setup** and **System Health**. It writes
+a small manifest to the destination, copies and checksums that file, and cleans
+up its temporary proof files. It does not restore the station database, media,
+configuration, captions, records, publish state, providers, or credentials.
+Treat it as a storage round-trip check only; a full station restore remains
+unproven and needs its own documented rehearsal.
 
 Use the explicit
 [restore, update, rollback, and observed beta proof protocol](ops/v1.4-restore-update-beta-proof.md)
@@ -141,9 +139,8 @@ R2 fields by hand instead, if you already have them.
 ## AI Models
 
 Each AI feature — captions, summary, and translation — runs a model you can
-choose in the operator console under **Settings -> AI Models**. Every feature
-ships on a **local** default: it runs on this machine, keeps meeting content
-private, and has no per-token cost. The summary default adapts to the hardware
+choose in the operator console under **Setup -> AI Models**. Every feature has
+a local default that runs on this machine. The summary default adapts to the hardware
 (the larger local model on a 16 GB-or-more box, the smaller one on a smaller
 box); the console shows which one this station got and lets you change it.
 
@@ -157,23 +154,27 @@ The AI Models console also offers **hosted cloud and frontier models** for
 **summary and translation** as an opt-in alternative to their local defaults.
 Captions have no hosted option. Live captions use Whistle as the on-station CPU
 primary, with Whisper fallback scoped to the affected channel. Recorded-media
-captions use Whisper, which can use optional NVIDIA CUDA acceleration.
+captions use Whisper. The installer shows Whisper Medium as required and Large
+as optional; Whistle is included with the signed station components, not a
+separate download choice. In the Beta 12 field attempt, Large downloaded while
+its optional checkbox was unchecked, so verify the active transfer rows.
 Treat a hosted selection as a deliberate cost-and-privacy decision, not a
 default:
 
-- **Default OFF.** Summary and translation stay on their private local models
-  until a setup_admin explicitly selects a hosted one. Nothing is sent to the
-  cloud and nothing is billed unless you opt in.
+- **Default OFF.** Summary and translation stay on their local models until a
+  setup_admin explicitly selects a hosted one. CivicCast sends content to a
+  hosted provider only after that selection; consult the provider's current
+  pricing and terms for possible charges.
 - **Content leaves the station.** Selecting a hosted model sends that feature's
   transcript text (for summary or translation) to a third-party provider
   (Ollama Cloud or OpenRouter). These models are not private and require
   network access.
-- **Billed per token in $USD.** The console shows the per-token cost on each
-  option. A hosted selection produces a real, recurring provider bill that
-  scales with how much you broadcast.
+- **Provider charges may apply.** CivicCast does not set or guarantee provider
+  rates. Review the provider's current pricing and your account terms before
+  enabling a hosted model.
 - **Consent is required.** Before a hosted selection is saved, the operator must
-  tick a checkbox accepting the provider's terms of service and the per-token
-  cost. CivicCast records who accepted and when alongside the selection.
+  tick a checkbox acknowledging the provider terms and costs. CivicCast records
+  who accepted and when alongside the selection.
 - **Who can enable it.** Only a **setup_admin** can turn a hosted model on. Make
   this an intentional station decision — confirm the budget and the privacy
   implication for your jurisdiction before enabling content egress to a paid

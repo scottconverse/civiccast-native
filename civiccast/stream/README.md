@@ -1,7 +1,8 @@
 # civiccast.stream — HLS Streaming Origin
 
-Sprint 0.2 module. Encodes source video to an adaptive HLS ladder and
-uploads segments to the configured CDN.
+This module packages recorded source video into an adaptive HLS ladder and
+can upload its segments through the configured CDN adapter. Live ingest and
+channel broadcast are handled by `civiccast.live` and `civiccast.egress`.
 
 ## What it does
 
@@ -26,15 +27,17 @@ uploads segments to the configured CDN.
 - Accepts caption sidecars from `civiccast.captions.hls`; caption tracks are
   emitted as segmented WebVTT playlists under `captions/{language}/` and
   advertised in the multivariant manifest as HLS `SUBTITLES` renditions.
-- Sprint 0.2 ships VOD only. Live ingest lands at Sprint 0.4.
+- This package owns VOD packaging; it is not the live-ingest or channel-egress
+  implementation.
 
 ## Architecture
 
 See [ADR 0007](../../docs/adr/0007-hls-packager-design.md) for design decisions
 (Python + ffmpeg subprocess, slate-as-variant, 4-rendition ABR ladder).
 
-See [ADR 0006](../../docs/adr/0006-cdn-provider.md) for CDN choice
-(BunnyCDN v1 default; Cloudflare R2 + CDN as DDoS-protection-mode alternate).
+See [ADR 0006](../../docs/adr/0006-cdn-provider.md) for provider design
+history. The current `CIVICCAST_CDN_PROVIDER` default is `off`; BunnyCDN and
+Cloudflare R2 are optional configured upload adapters, not the default provider.
 
 ## Quick start
 
@@ -111,7 +114,7 @@ civiccast/stream/
 ├── packager.py        # VOD packager: pack_vod_asset(), pack_slate_fallback()
 └── cdn/
     ├── __init__.py    # CDNAdapter protocol
-    ├── bunny.py       # BunnyCDNAdapter (v1 default)
+    ├── bunny.py       # optional BunnyCDNAdapter
     ├── cloudflare_r2.py # CloudflareR2Adapter (optional R2/CDN path)
     └── stub.py        # StubCDNAdapter (testing only)
 ```

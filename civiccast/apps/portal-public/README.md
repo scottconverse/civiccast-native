@@ -62,7 +62,19 @@ If a manifest parameter is present, it takes precedence over the live-status
 manifest. If no live manifest and no query manifest are available, the video
 area shows the offline state instead of loading a third-party demo stream.
 
-## v0.4 Resident Portal Scope
+## Current resident portal scope
+
+The current portal provides Home, Recordings, Watch, and Channel Guide
+surfaces. It shows live/on-air and upcoming information where available,
+browses published recordings, and plays HLS video with the advertised caption
+tracks. The Watch page can also show a published agenda and an access gate when
+the station enables the paywall. These routes are implemented in `src/App.tsx`
+and `src/router.ts`; residents do not need an operator account.
+
+## Historical v0.4 Resident Portal milestone
+
+The list below records the portal scope and evidence for the v0.4 development
+rung. It is not a complete current feature list.
 
 What is in this rung:
 

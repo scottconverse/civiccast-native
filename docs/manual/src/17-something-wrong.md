@@ -10,7 +10,7 @@ The four screens live in the left sidebar under **System Health**: **Readiness**
 
 > **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
-> **Note:** Beta.11 was published on 2026-10-08 as a GitHub pre-release. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package and its checks: its clean-install check passed, but upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
+> **Note:** These procedures describe Beta 12. A **Known issue (version)** identifies the version in which a behavior was checked. For installer identity and recorded package observations, see the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
 ## Check whether the station is ready (Readiness)
 
@@ -178,7 +178,7 @@ The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours en
 
 > **For IT staff:** A rule takes `channel_ids` (the ids of destinations) through `PUT /api/staff/alert-rules/{rule_id}`, with the Setup admin role. The 14 rules that exist come with ids like `default:off-air`. See [Chapter 14](#ch-troubleshooting) and [Chapter 15](#ch-integrations).
 
-> **Known issue (beta.11):** The page says Setup admin *or* Support admin can manage rules and destinations. The station accepts changes only from the Setup admin role. A Support admin sees the editors and gets a "requires one of these CivicCast roles" error on **Save**. Publish operators and Records clerks may also see the Alerts page but cannot read the alerts list.
+> **Role permissions (beta.12):** Active alerts are visible to every operator role. Setup admins and Support admins can view alert rules and destinations, but only Setup admins can change them. Publish operators and Records clerks can read active alerts but do not see the rule and destination editors.
 
 ## Understand emergency alerts (Emergency Alerts)
 
@@ -192,7 +192,7 @@ The feeds come from the National Weather Service (NWS), the federal alert system
 
 | Situation | What happens |
 | --- | --- |
-| A beta.11 station as installed | Nothing is polled and nothing airs by itself. The page says "No alert sources are configured. Ask your station administrator to configure an NWS, AMBER, or IPAWS (COG) feed." |
+| A Beta.12 station with default settings | Nothing is polled and nothing airs by itself. The page says "No alert sources are configured. Ask your station administrator to configure an NWS, AMBER, or IPAWS (COG) feed." |
 | IT staff turn on alert polling | CivicCast reads the configured feeds, by default once a minute, and lists active alerts under **Active alerts** |
 | IT staff also turn on automatic display | Every active **severe** alert goes on every channel that is on air as a **crawl**. Every active **extreme** alert goes on as an **overlay**. A full-screen takeover is never automatic |
 | An operator presses a button | The station queues a crawl, an overlay or (after a tick box) a full-screen takeover for the selected channel's next output update |
@@ -218,7 +218,7 @@ When an alert changes, CivicCast prepares the replacement before removing the pr
 3. Under **Active alerts**, read each alert: the event, a severity badge (extreme, severe, moderate, minor or unknown), a headline and the areas.
 4. Under **On-channel now**, see what is currently shown on the channel you picked in **Channel**. Each line gives the channel name and the display type (`crawl`, `overlay` or `forced_slate`), not the alert's name.
 
-> **Known issue (beta.11):** **polling** only means the source is switched on. A feed that is failing still says **polling**. A failing feed raises an alert, "eas source unavailable", on the Alerts screen. That alert has no alert rule in beta.11, so it can never notify anybody. It appears on the screen only.
+> **Known issue (beta.12):** **polling** only means the source is switched on; a feed that is failing can still say **polling**. A failing feed raises an **eas source unavailable** alert on the Alerts screen. Beta.12 includes a warning rule for this alert, but a notification is delivered only after an administrator assigns an enabled destination and the delivery service is configured and working.
 
 ### Show an alert on a channel
 
@@ -286,7 +286,7 @@ If you are not technical, this list is for you.
 **Do**
 
 - **Read the words, not only the colour.** Write down the exact message on the screen.
-- **Check Readiness and Alerts before every meeting**, and at the start of every shift. In beta.11 nothing tells you about a problem unless you look.
+- **Check Readiness and Alerts before every meeting**, and at the start of every shift. Alerts appear in the console; notification destinations are not configured by default.
 - **Click Acknowledge** on an alert you have seen, so your colleagues know someone has it.
 - **Take a screenshot** of anything odd, including the time shown on the screen.
 - **Note the time, the channel and what you were doing**, and write down whether the time is UTC or your local time.
@@ -296,11 +296,11 @@ If you are not technical, this list is for you.
 
 **Do not**
 
-- **Do not wait for an email or text.** In beta.11 alerts are probably not wired to send any.
+- **Do not rely on email or text alerts until they are configured and verified.** A Setup admin must assign an enabled destination to each rule you rely on, and the station's delivery service must be working. Local delivery checks do not prove that an external mail or SMS provider accepted a message.
 - **Do not rely on Emergency Alerts as your EAS.** CivicCast is not an EAS device.
 - **Do not press Stop, Restart feed, Repair, Update, Rollback or Restore buttons** unless you were trained to, or your IT person told you to.
 - **Do not click Block or Delete casually.** Neither can be undone from the console.
-- **Do not turn on the Paywall** in beta.11 (see [Chapter 7](#ch-station-business)).
+- **Do not use the Paywall for live paid access** while its resident purchase and account workflows remain incomplete (see [Chapter 7](#ch-station-business)).
 - **Do not type or paste passwords, recovery codes, staff passes (tokens) or private meeting material** into a report, an email or a public issue.
 - **Do not keep pressing a button that did nothing.** Some actions only queue a request, and the page does not refresh by itself. Reload the page and look again.
 
@@ -326,7 +326,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 ## Report a beta issue
 
-CivicCast is a beta. Beta.11 was published on 2026-10-08 as a GitHub pre-release; its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists its package checks and limits. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status. Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
+CivicCast is a beta. Beta.12 was published on 2026-10-10 as a GitHub pre-release; its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) lists the package checks and limits. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status. Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
 
 1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
@@ -334,7 +334,7 @@ CivicCast is a beta. Beta.11 was published on 2026-10-08 as a GitHub pre-release
 
 In every report, include:
 
-- The CivicCast version. It is shown at the top of the console, as `v1.0.0-beta.11`.
+- The CivicCast version. It is shown at the top of the console, for example `v1.0.0-beta.12`.
 - Your Windows version.
 - The screen where it happened.
 - The exact message.

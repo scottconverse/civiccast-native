@@ -1,5 +1,10 @@
 # sandbox-lab/
 
+This page describes existing developer lab tools. Their historical Beta 5
+verdict criteria are tool behavior, not automatic Beta 12 release requirements.
+Scott chooses the authorized check sequence and release acceptance. For the
+actual Beta 12 results, see [verification](../docs/releases/v1.0.0-beta.12-verification.md).
+
 Gate A — the automated station-acceptance release gate. Full documentation
 (what it proves, verdict criteria, how to run it, runner setup, promotion
 rule): **[`docs/ops/gate-a.md`](../docs/ops/gate-a.md)**.
@@ -191,29 +196,14 @@ single checkpoint with no budget at all, measured to project to roughly
 earlier fix) still let periodic checkpoints consume the whole thing before
 `final` ever ran.
 
-**What `-WorkerEnv` can and cannot change today.** Not every environment
-variable that reaches the CivicCastSupervisor service's own registry
-Environment survives all the way to the GStreamer worker unmodified.
-`civiccast/native/station_runtime.py` (the per-launch environment builder,
-lines 1362/1376) hardcodes `CIVICCAST_CAPTION_TAP_DIR` and
-`CIVICCAST_EGRESS_EMBED_CAPTIONS: "1"` **unconditionally** into `spec.env`
-on every launch, and `civiccast/native/supervisor/service.py`'s child-
-launch merge is `env = {**os.environ, **spec.env}` — `spec.env` applied
-**last** always wins over whatever the service's own inherited
-environment (including a `-WorkerEnv`-written registry entry) says. So
-today, **a `-WorkerEnv` removal of `CIVICCAST_CAPTION_TAP_DIR` (or any
-override of `CIVICCAST_EGRESS_EMBED_CAPTIONS`) is inert** by the time a
-downstream child (including the GStreamer worker, several process launches
-below the service) actually sees its environment — this harness's own
-`worker_env_verified` would still honestly report the *registry* write as
-verified (the service's own per-process environment really did change),
-but that is not the same claim as "the caption-tap leg is disabled",
-and this lane cannot currently make that stronger claim. Disabling the
-caption tap for real needs a product-level switch (tracked as item 91,
-in progress) — not an environment variable at the service-restart layer.
-`CIVICCAST_STALL_TIMEOUT_S`, `GST_DEBUG`, and `GST_DEBUG_FILE` are **not**
-in that hardcoded `spec.env` dict, so all three propagate through
-unmodified — they are safe to use today.
+**Caption-tap controls in Beta 12.** The native environment builder honors
+`CIVICCAST_CAPTION_TAP=off` and clears `CIVICCAST_CAPTION_TAP_DIR` in the child
+environment, including an inherited directory value. This disables the tap
+worker and audio tee. `CIVICCAST_EGRESS_EMBED_CAPTIONS` is still set by the
+native runtime; a registry write alone is not proof that every downstream
+setting changed. Use the operator's live-caption switch for normal station
+operation. See `civiccast/native/station_runtime.py` for the effective launch
+configuration.
 
 **The experiment this follow-up exists to run** (stall-timeout override
 and a targeted `GST_DEBUG` scope with its own debug-log file — the two

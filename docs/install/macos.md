@@ -1,7 +1,7 @@
 # macOS Installation Posture
 
 Date: 2026-05-22
-Last reviewed: 2026-07-23 (retired WSL2-line rc18); status unchanged for the native Windows line.
+Last reviewed: 2026-10-11; no supported public macOS package is available.
 
 Status: no supported public macOS package in the current beta.
 
@@ -26,11 +26,10 @@ that a package is safe.
 ## Approved Installation Sources
 
 **There is no approved macOS install source in this beta.** The beta line
-ships no macOS installer or package. The only supported install today is the
-native Windows station: `v1.0.0-beta.1` is the current release
-(USB-delivered), distributed from
-`https://github.com/scottconverse/civiccast-native` -- see
-[INSTALL-WINDOWS.md](../../INSTALL-WINDOWS.md) and
+ships no macOS installer or package. The current native Windows release is
+`v1.0.0-beta.12`, a published pre-release, not a macOS package. See its
+[release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12)
+and the [Windows install guide](../../INSTALL-WINDOWS.md) plus
 [Windows Release Trust And Verification](windows-release-trust.md).
 
 Technical users can still evaluate CivicCast from source on macOS (see

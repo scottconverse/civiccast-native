@@ -123,15 +123,18 @@ The publish dashboard may show many surfaces: resident portal, archive copies,
 YouTube, podcast, subscriber notifications, cable packages, and optional
 federation. Most records clerks should think in two levels:
 
-- **Required:** resident portal, and the archive surfaces — Internet Archive
-  and local NAS — for every public-record meeting, regardless of station
-  policy.
+- **Required for this asset:** the surfaces the station has configured and
+  marked required for the asset. That can include the resident portal,
+  Internet Archive, or a local archive destination. The required set depends
+  on station configuration and the asset's public-record status; this guide
+  does not determine legal retention or publication duties.
 - **Optional:** additional reach surfaces such as YouTube, podcast,
   subscribers, or ActivityPub (fediverse sharing, e.g. Mastodon). Station
   policy decides which of these you use.
 
-Do not hold the required public record only because an optional reach surface
-is not set up, unless your station policy says that surface is required.
+Do not infer that an unconfigured surface is optional or required. Follow your
+station's records policy and ask an administrator which destinations are
+required for the asset.
 
 > **Before you treat an archive approval as the legal archive — check it is real.**
 >
@@ -145,12 +148,13 @@ is not set up, unless your station policy says that surface is required.
 > with **SIMULATED**, and its target reads
 > `internet-archive.simulated.invalid/...` rather than a real `archive.org` link.
 >
-> If you see that, the meeting is **not** archived for the public record yet.
-> Ask your admin to enable the real providers (Admin Guide → Provider Setup;
+> A simulated result is not an upload or a file copy. If the station marks that
+> surface required for this asset, its simulated result does not satisfy that
+> requirement. Ask your admin to enable the real provider or storage path (Admin Guide → Provider Setup;
 > they set `CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real` and
 > `CIVICCAST_PROVIDER_LOCAL_NAS=real` with the station's credentials), then
-> publish again. Until then, treat the resident portal as the only surface that
-> actually holds the recording.
+> publish again. Confirm the actual result at each destination that station
+> policy requires.
 
 **Meeting body tags.** Each published recording can carry a meeting-body
 tag (set on the asset detail screen). The public portal's Browse filter and

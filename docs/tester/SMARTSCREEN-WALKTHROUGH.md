@@ -1,11 +1,13 @@
 # "Windows protected your PC" — what to expect, and what to do
 
-> **Current installers:** Beta 11 is the current release. Follow the
-> [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
-> and exact package handoff for present-day instructions. The release-specific
-> details below are historical Beta 10 context.
+> **Current native installer:** `v1.0.0-beta.12` is the current published
+> GitHub pre-release, not a production release. Follow the [current User
+> Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
+> [Windows release-trust guide](../install/windows-release-trust.md), and the
+> exact owner-authorized handoff. The Beta 10 release details below are a
+> historical snapshot and do not qualify Beta 12.
 
-## Release State
+## Historical Beta 10 release state (October 2, 2026 snapshot)
 
 `v1.0.0-beta.10` was the current published release when this page was written
 (published 2026-10-02), a

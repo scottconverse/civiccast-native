@@ -149,14 +149,14 @@ surfaces unless your station has assigned you the records-clerk job too.
 ## AI Models
 
 The captions, summary, and translation features run AI models you can view in
-the operator console under **Settings -> AI Models**. By default every feature
-uses a private model that runs on this computer at no per-token cost, so meeting
-content never leaves the station. Some stations also offer optional **cloud or
-frontier models**: these are off by default, send meeting content to a paid
-third-party provider, and bill per token in US dollars. Turning a cloud model on
-requires the station admin and a consent step accepting
-the per-token cost — as a meeting operator you can see the current model but
-should leave any switch to cloud to your admin.
+the operator console under **Setup -> AI Models**. Live captions use Whistle
+as the CPU primary with Whisper fallback; recorded-media captions use Whisper.
+These captions run locally. By default summary and translation also use local
+models. Some stations also offer optional hosted models
+for summary and translation. A hosted selection sends meeting text to a
+third-party provider and may incur charges under that provider's current terms;
+check its pricing before enabling it. Only the station admin can change the
+selection, and meeting operators can view the current model.
 
 ## Common Problems
 

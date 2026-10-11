@@ -135,7 +135,7 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
       toast.push({
         tone: 'success',
         message: 'Saved.',
-        detail: `Trim and chapters will apply at packaging time (Sprint 0.4). · ${asset.title}`,
+        detail: `Saved trim and chapter metadata. Live recordings are re-packaged when the finalization worker detects changed trims; other assets use their normal packaging flow. · ${asset.title}`,
       })
       onSaved()
     },
@@ -373,7 +373,7 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
                   Preview
                 </div>
                 <div className="mt-1 text-sm font-semibold">
-                  Packaged manifest lands at Sprint 0.4
+                  Video preview is not available in this editor
                 </div>
                 <div
                   className="cc-mono cc-tabular mt-3 text-2xl font-semibold"
@@ -397,8 +397,10 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
               }}
             >
               <strong style={{ color: 'var(--cc-ink)' }}>Non-destructive.</strong>
-              The original file is never modified. Trim and chapters are
-              applied at packaging time (Sprint 0.4).
+              The original file is never modified. This editor saves trim and
+              chapter metadata but does not package a preview. The live
+              finalization worker re-packages changed trims; other assets use
+              their normal packaging flow.
             </div>
           </section>
 

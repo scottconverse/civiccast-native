@@ -1,5 +1,10 @@
 # CivicCast overnight soak prompt (beta.5, kit 148c8d21)
 
+> **Historical prompt:** This is for the Beta 5 kit and its former ports and
+> interface. Do not use it as a current Beta 12 test procedure. Follow the
+> current owner-authorized handoff and [Beta 12 Field-Test Quick Start](QUICKSTART-OPERATOR.md).
+> The old run duration and instructions below are preserved as a dated artifact.
+
 Paste everything below the line into the AI agent on the station PC. One
 station per PC. Use the captions setting the owner tells you for that PC.
 

@@ -1,7 +1,7 @@
 # Screen inventory template (documentation sprint, 2026-10-03)
 
-One file per screen or surface, written by a read-only worker. These inventories are the *source of truth* for the
-user manual and for the in-app help files. They are built from the code, not from the old manual.
+One file per screen or surface, written by a read-only worker. These inventories record source observations at a specific revision.
+Current manual/help claims must be rechecked against the release source; the October 3 snapshots do not establish Beta 12 behavior. They are built from the code, not from the old manual.
 
 ## Rules for the worker
 1. **Read-only on the product.** Do not edit any file outside your own output files. Do not run the station, restart services,

@@ -172,13 +172,16 @@ Status codes:
 
 Nine checks in canonical order, defined at `civiccast/live/preflight.py`:
 
-1. `network` -- caller-supplied probe.
-2. `storage` -- caller-supplied probe; minimum default 50 GiB free.
+1. `network` -- injected probe; the normal app factory wires the station's
+   network probe.
+2. `storage` -- injected probe; the normal app factory wires the station's
+   storage probe, with a minimum default of 50 GiB free.
 3. `ai_runtime` -- caller-supplied probe; optional in Slice 1.
 4. `live_source` -- DB lookup: any `LiveSource` for the session's
    `channel_id`, then a real server-side media probe
    (`civiccast/live/source_probe.py`'s `probe_live_source`, ffprobe-backed,
-   bounded by `CIVICCAST_LIVE_SOURCE_PROBE_TIMEOUT_SECONDS`, default 8s)
+   wired by the normal app factory and bounded by
+   `CIVICCAST_LIVE_SOURCE_PROBE_TIMEOUT_SECONDS`, default 8s)
    confirming the source is actually delivering video or audio before
    go-on-air is allowed. No probe configured -> fails closed
    (`live_source.not_probed`), never a silent pass.
@@ -252,11 +255,12 @@ the file exists and its byte size is unchanged across two scans at least
 Worker status states are `pending`, `running`, `failed`, and `completed`.
 Failures persist `failure_reason`, increment `attempts`, and set
 `next_attempt_at` using bounded exponential backoff. The worker retries failed
-jobs until `max_attempts`; after that, the job is terminal `failed`. There is
-no operator retry endpoint yet — the runbook
-(`docs/ops/finalization-worker-runbook.md`) documents what a terminal failure
-means and the current recovery procedure; an operator repair surface is a
-tracked follow-up.
+jobs until `max_attempts`; after that, the job is terminal `failed`. A Meeting
+operator can request a fresh attempt for a failed job through
+`POST /api/staff/live/sessions/{live_session_id}/finalization/retry`; resolve
+the underlying cause first. The route rejects a running or completed job.
+The runbook (`docs/ops/finalization-worker-runbook.md`) documents the failure
+states and recovery procedure.
 
 ### Finalizer transaction
 
@@ -292,11 +296,11 @@ readiness.
 
 The worker passes persisted trim metadata (`trim_in_seconds`,
 `trim_out_seconds`) from the job row to `pack_vod_asset(...)`. Invalid trim
-windows fail before an asset row is written. **No production surface currently
-writes trim values onto a finalization job** — the propagation is exercised
-only by tests; operator-initiated trim that reaches the packaged output
-(repackage-on-trim-update) is a tracked follow-up story. The operator trim UI
-edits asset metadata after finalization and does not re-render the package.
+windows fail before an asset row is written. When a finalized live asset's
+trim changes, the worker detects that the packaged trim is stale, queues a new
+attempt, and renders the updated package. The operator Trim editor saves the
+asset metadata; this repackage-on-trim-update behavior is scoped to live
+finalization jobs, not a blanket promise for every non-live asset workflow.
 
 ## Layout
 
@@ -354,13 +358,16 @@ current numbers.)
   concurrency + two-thread finalization idempotency + finalization-jobs
   >2 GiB byte-size round-trip). Skip-gated by Docker availability.
 
-## Current gaps / planned work
+## Operational boundaries
 
-- Operator UI for live sessions and finalization status (Slice 2 "Operator
-  Live Room") — the status surface is API-only today.
-- Operator-reachable trim for live recordings (repackage-on-trim-update) —
-  tracked follow-up; see "Packaging and manifest URLs" above.
-- Operator retry/repair endpoint for terminal `failed` finalizations —
-  tracked follow-up; runbook documents the interim procedure.
-- Resident-facing portal display + Coming Up widget (Slice 3); sub-second
-  trim precision (Slice 4).
+- The normal app wires real network, storage, and live-source probes. A real
+  live source still must be configured, reachable, and pass fresh pre-flight.
+- A finalized recording receives a public `manifest_url` only when the worker
+  has a configured servable manifest base URL; otherwise the recording remains
+  visible to operators but is not ready for portal publishing.
+- Operators can inspect finalization status and retry a failed live
+  finalization after addressing its failure reason. The retry route is limited
+  to failed jobs.
+- Trim changes trigger re-packaging for live-finalization jobs as described
+  above. This does not establish automatic re-packaging for all other asset
+  workflows.

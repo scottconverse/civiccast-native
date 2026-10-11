@@ -1,17 +1,15 @@
 # CivicCast Architecture
 
-> **Current native release: `v1.0.0-beta.11`**, published 2026-10-08 as a
-> GitHub pre-release for testing. `setup.exe` and the runtime `.ccpack` packs
-> are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11).
-> This is a public beta, not a production release or an SLA-backed field
-> release. The [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md)
-> identifies the documentation/help revision (`400cff08`, signed build
-> `37857705750`): a fresh CPU-only Windows Sandbox installation, a five-minute
-> single-channel output check, and installed Help verification. It separately
-> preserves the original package's in-place host observations. The revision
-> does not inherit repair, Beta 10 upgrade, GPU, capacity, long-duration or field
-> acceptance results. See [BRANCHES.md](BRANCHES.md) for release identity and status.
+> **Current native release: `v1.0.0-beta.12`**, published 2026-10-10 as a
+> GitHub pre-release, not a production or SLA-backed field release. The
+> [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
+> binds package evidence to source `a0c98cb7367dc106042ec89d35a91905470d350c`.
+> A normal upgrade from Beta 11 exited 0 and left a healthy service at schema
+> 0089 with its preservation marker saved and initial output on three channels.
+> The post-upgrade recorder failed on its first JSON save, so no five-snapshot
+> PASS is claimed; exact-candidate fresh-install, interrupted-repair, and
+> sustained-operation checks were not run. See [BRANCHES.md](BRANCHES.md) for
+> release identity and status.
 >
 > **Historical Beta 10 evidence:** the published Beta 10 package passed its
 > Gate A clean-install lane (10 of 10 criteria in Windows Sandbox on
@@ -23,8 +21,8 @@
 >
 > Source behavior and package evidence have different scopes. The current
 > verification record is the authority for the published package; this
-> architecture describes the source tree. Neither the brief output check nor
-> the historical Beta 10 results establish broad field operation, external
+> architecture describes the source tree. Neither the initial upgrade output
+> observations nor historical Beta 10 results establish broad field operation, external
 > provider delivery, app-store acceptance, live hardware, cable-headend,
 > QAM, SDI/DeckLink, EAS, or CEA-708 broadcast acceptance.
 
@@ -117,8 +115,11 @@ flowchart LR
 | Cable | `civiccast.cable` | PEG/headend file packages and NDI planning/readiness. |
 | ActivityPub | `civiccast.activitypub` | Opt-in station actor with signed federation, durable follower/outbox state, and operator federation controls. |
 
-The stock build has no configured production media probe, so `civiccast.live`
-fails closed on live-start until an operator connects one.
+The normal app wires server-side source, network, and storage probes, including
+the `build_source_probe()` media probe. Live start still fails closed until a
+valid source is configured, reachable, and passes a fresh, source-bound
+pre-flight check; the unchanged bundled rehearsal source uses its local sample
+video only for rehearsal.
 
 ## Playout And Native Service
 
@@ -172,7 +173,7 @@ runtime restarts. Recorded-media captions use faster-whisper. Needle usage
 telemetry is disabled, and the speech models run locally. Live captions,
 SDI/NDI hardware paths, and cable-headend delivery are described with their
 evidence boundaries in the [User Manual](docs/USER-MANUAL.md) and the
-[Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md).
+  [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
 
 ## Data And Durability
 
@@ -284,7 +285,7 @@ supersedes ADR 0001's NATS JetStream choice).
 ## Current Source Contracts
 
 These describe current source behavior and test coverage. Package acceptance
-remains scoped to the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md):
+remains scoped to the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md):
 
 - Staff-write stores fail closed without managed durable storage or `DATABASE_URL` unless ephemeral mode
   is explicitly acknowledged for local development.

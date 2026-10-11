@@ -1,13 +1,11 @@
 # CivicCast FAQ
 
-> **Release state:** `v1.0.0-beta.11` is the current release, published
-> 2026-10-08 as a GitHub pre-release (a beta candidate, not a production
-> release). See the [Beta 11 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11),
-> [verification record](docs/releases/v1.0.0-beta.11-verification.md), and
-> [current User Manual](docs/USER-MANUAL.md). Published Beta 10 and earlier
-> releases are superseded. Beta 8 and beta 9 were never published; their work is
-> inside Beta 10. Beta 2 was never published and exists only as an internal
-> upgrade-baseline kit. See
+> **Release state:** `v1.0.0-beta.12` is the current public release, published
+> 2026-10-10 as a GitHub pre-release, not a production release. See the
+> [Beta 12 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12),
+> [verification record](docs/releases/v1.0.0-beta.12-verification.md), and
+> [current User Manual](docs/USER-MANUAL.md). Earlier package records remain
+> historical and apply only to their named release. See
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
 > the authored release-state record.
 
@@ -37,45 +35,11 @@ Optional cloud AI providers may charge for usage.
 
 ## How do I install it?
 
-`v1.0.0-beta.11` is the current release, published 2026-10-08 with a signed
-`setup.exe`, five runtime packs, `SHA256SUMS.txt`, and a sidecar. The October 8
-package (producer source `b7cc3e7c`, build `37827938199`) refreshed an existing
-Beta 11 host; a brief output
-check showed advancing HLS and changing captions on three channels. A clean
-install, failed-install repair, Beta 10 upgrade, and longer capacity run were
-not performed for this exact package. See
-[`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md)
-and [Install CivicCast On Windows](INSTALL-WINDOWS.md) for the tested scope and
-installation steps. Beta 10's 10-of-10 clean-install result is historical and
-does not apply to Beta 11. Verify the exact filename, SHA-256, and signature
-status from the release-specific files; do not use a generic "latest" link for
-a controlled beta unless the handoff explicitly says to do so.
+Follow [Install CivicCast on Windows](INSTALL-WINDOWS.md). The Beta 12 helper downloads the installer, five runtime packs and six required signed station packs, verifies them, creates the correct folders and runs setup. You do not need Git, Python, Docker, WSL or a separate Ollama installation. Open **CivicCast Operator Console** after setup completes and create the first administrator on the station computer.
 
-CivicCast's Windows product (this repository, [ADR 0021](docs/adr/0021-native-windows-runtime.md))
-runs its services as a native Windows service -- no WSL, no Ubuntu, no
-Linux runtime. The signed setup app is the guided entry point; it installs
-the bundled Python/GStreamer/FFmpeg runtime, prepares local storage and
-upload folders, registers the Windows service, and hands you to the
-operator console. (Earlier revisions of this FAQ described a retired
-WSL2/Ubuntu-hosted deployment; that lane's history lives in the separate,
-private `scottconverse/civiccast` repository -- see
-[BRANCHES.md](BRANCHES.md).)
+The original October 11 R9 attempt exposed an incomplete public distribution: activation exited 123 because four required signed packs were absent. The repaired download path supplies the complete bundle. Optional raw-model downloads in the separate acquisition screen cannot substitute for signed activation packs. See the [verification record](docs/releases/v1.0.0-beta.12-verification.md) for the actual observations and local repair check.
 
-The installer itself is small; the large AI components (caption engine, local
-summary and translation model, and on capable hardware an optional
-higher-quality caption engine and GPU acceleration) are not inside it. During
-install the CivicCast Installer window explains each large component, uses a
-copy already on the computer (**Found locally - verified**, for example from a
-USB/LAN kit's `station\` folder or an earlier install), and downloads the rest
-with a progress display and a **Stop downloading** button. The complete signed
-USB/LAN kit (about 21 GB with its `station\` model bundle) is the offline
-alternative. An online first install with no kit and no earlier install has
-not been proven for the October 8 Beta 11 package. Setup can download missing
-components, but downloading files and activating the station are separate
-steps; use the complete verified kit for a first install. You do not install
-Ollama yourself, and there is no further background download after setup; a
-technical admin can fetch or import models later with
-`civiccast model download` or `civiccast model import-offline`.
+Use the same complete kit for a new station or an existing installation. Back up a working station and plan the upgrade interruption. The installation guide includes supported local administrator-password recovery for previous test installs.
 
 ## How do I verify the installer download?
 
@@ -87,37 +51,34 @@ signing or attestation status is called out separately in each release.
 ## What do I need before the first real meeting?
 
 - A Windows 11 host that passes `civiccast doctor`.
-- Local durable storage prepared by the setup app, or Postgres 17+ with
-  `DATABASE_URL` configured by a technical admin.
+- The native station's installer-provisioned local PostgreSQL service and a
+  first local admin account with a saved recovery kit. Standalone app/setup
+  mode can use managed SQLite; that is not the native Windows service default.
 - A first local admin account and saved recovery kit from the Setup screen.
 - FFmpeg for packaging video.
-- Ollama and model bundles if you want local summaries or translation. The
-  Windows setup app provisions Ollama and delivers the model bundles during
-  install (from the USB/LAN kit or the installer's download screen; see
-  above). Bring your own API key instead if you choose a paid hosted model.
+- Ollama and model bundles if you want local summaries or translation. The complete station download includes the signed packs and local Ollama runtime. Bring your own API key instead if
+  you choose a paid hosted model.
 - The camera, encoder, or NDI/RTMP/RTSP/SRT source you plan to use.
 - Archive and notification credentials only if your station will use those
   providers during the test.
 
 ## Do I need Postgres?
 
-Not for the default beta path. CivicCast prepares local durable SQLite storage
-and applies migrations automatically when `DATABASE_URL` is not set. Technical
-admins can use Postgres by setting `DATABASE_URL`. By default, your data is
-always saved to durable storage; only a developer explicitly testing the
-software can turn on a throwaway, non-persistent mode.
+Yes, for the native Windows service: the installer provisions local PostgreSQL
+and configures the service to use it. A technical administrator can provide a
+different PostgreSQL `DATABASE_URL`. The standalone app/setup path can prepare
+a managed SQLite database when no database URL is set; that development/setup
+fallback is not the native service default. In-memory stores are for tests and
+explicitly enabled throwaway development.
 
 ## How do I connect a camera?
 
-The stock build cannot verify a live source because no production server-side media
-probe is configured. It shows **Source preview unavailable** and keeps live
-start disabled. An integrator can connect RTMP, RTSP, SRT, or NDI-style sources,
-but live instructions apply only after that integrator supplies and separately
-proves the media probe and station egress path.
-
-The stock acceptance path does not use a camera: create or upload recorded
-sample media, package it privately, explicitly approve Portal publication, and
-confirm resident playback.
+The normal app includes server-side source, network, and storage probes. Set up
+a valid, reachable camera or encoder source (for example RTSP, SRT, RTMP, or
+NDI), then run a fresh pre-flight check before taking it live. A configured
+source must pass that check; the bundled rehearsal sample is only a local
+rehearsal source. **Source preview unavailable** means the console has no video
+preview there; it does not mean the server cannot probe the source.
 
 ## Does CivicCast support NDI?
 
@@ -132,10 +93,11 @@ in **Run Meeting**.
 
 ## What happens if the network drops during a live meeting?
 
-The stock build does not claim a working live broadcast. Without an integrator-
-provided media probe, the live room shows **Source preview unavailable** and
-keeps live start disabled. The resident portal should show a clear unavailable
-state rather than a blank or simulated player.
+If the configured source or its network path drops during a meeting, check the
+Live and Readiness screens for the current source/session state and follow the
+station's recovery procedure. Live start requires a valid source to pass fresh
+pre-flight; this is not a guarantee that an outside source or network will stay
+available throughout a meeting.
 
 For a meeting that must be preserved, also record locally at the camera,
 encoder, or station machine. After the meeting, upload the local recording,
@@ -157,10 +119,9 @@ hash-verified.
 
 ## Where does the public watch the meeting?
 
-Residents use the public portal URL. In the stock acceptance path it shows
-recordings only after private packaging and explicit Portal approval. A current
-live broadcast requires the separately proven integrator media/egress path.
-Residents do not need an operator account.
+Residents use the public portal URL for live channels, schedules, and published
+recordings. Staff package and explicitly publish recordings before they appear
+there. Residents do not need an operator account.
 
 ## How do subscribers work?
 

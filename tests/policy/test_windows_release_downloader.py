@@ -4,8 +4,14 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import shutil
+import subprocess
+import zipfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -87,3 +93,102 @@ def test_native_candidate_mode_asset_names_match_the_publisher() -> None:
     assert "Assert-Sha256 -Path $setupPath -ExpectedHash $sums[$NativeSetupName]" in source
     assert "Assert-Sha256 -Path $packPath -ExpectedHash $sums[$packAsset.name]" in source
     assert "[string]$sidecar.sha256 -ne $sums[$NativeSetupName]" in source
+
+
+@pytest.mark.parametrize("scenario", ["complete", "traversal", "conflict", "index-mismatch"])
+def test_station_archive_verification_and_safe_extraction(tmp_path: Path, scenario: str) -> None:
+    """Execute the actual PS5.1 extraction path using a small six-pack ZIP."""
+    powershell = shutil.which("powershell")
+    if not powershell:
+        pytest.skip("Windows PowerShell is required for the Windows downloader")
+    files = {
+        f"station/{name}.ccpack": name.encode()
+        for name in (
+            "core",
+            "captions-floor",
+            "captions-whistle",
+            "summary-gemma4-12b",
+            "summary-gemma4-e4b",
+            "translation-translategemma-4b",
+        )
+    }
+    index = {
+        "manifest": {
+            "product_version": PUBLISHED_RELEASE_VERSION,
+            "packs": [
+                {
+                    "filename": Path(path).name,
+                    "bytes": len(data),
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "required": True,
+                }
+                for path, data in files.items()
+            ],
+        }
+    }
+    if scenario == "index-mismatch":
+        index["manifest"]["packs"][0]["sha256"] = "0" * 64
+    files["station/station-index.json"] = json.dumps(index).encode()
+    index_hash = hashlib.sha256(files["station/station-index.json"]).hexdigest()
+    files["station/SHA256SUMS.txt"] = "".join(
+        f"{hashlib.sha256(data).hexdigest()}  {Path(path).name}\n" for path, data in files.items()
+    ).encode()
+    manifest = {
+        "schema_version": 1,
+        "archive_format": "zip",
+        "archive_name": "station-models.zip",
+        "station_index_sha256": index_hash,
+        "unpacked_files": [
+            {"path": path, "size_bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
+            for path, data in files.items()
+        ],
+    }
+    archive = tmp_path / "station-models.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for path, data in files.items():
+            bundle.writestr(path, data)
+        if scenario == "traversal":
+            bundle.writestr("../escape.txt", b"unsafe")
+    manifest_path = tmp_path / "station-models.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    root = tmp_path / "kit"
+    root.mkdir()
+    if scenario == "conflict":
+        (root / "station").mkdir()
+        (root / "station/core.ccpack").write_bytes(b"existing data")
+    definitions = DOWNLOADER.read_text(encoding="utf-8").split(
+        "New-Item -ItemType Directory -Force -Path $Destination | Out-Null", 1
+    )[0]
+    runner = tmp_path / "run.ps1"
+    runner.write_text(
+        definitions + "\n$m = Get-Content -LiteralPath $args[0] -Raw | ConvertFrom-Json\n"
+        "Install-StationArchive -ArchivePath $args[1] -Root $args[2] -Manifest $m\n",
+        encoding="utf-8",
+    )
+    # The downloader has named parameters; use a separate invocation body so
+    # fixture paths cannot bind to the release downloader's positional options.
+    body = (
+        runner.read_text(encoding="utf-8")
+        .replace("$args[0]", "'" + str(manifest_path).replace("'", "''") + "'")
+        .replace("$args[1]", "'" + str(archive).replace("'", "''") + "'")
+        .replace("$args[2]", "'" + str(root).replace("'", "''") + "'")
+    )
+    runner.write_text(body, encoding="utf-8")
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(runner)],
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    if scenario == "complete":
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert {
+            str(p.relative_to(root)).replace("\\", "/"): p.read_bytes()
+            for p in root.rglob("*")
+            if p.is_file()
+        } == files
+    else:
+        assert result.returncode != 0, result.stdout + result.stderr
+        assert not (tmp_path / "escape.txt").exists()
+        if scenario == "conflict":
+            assert (root / "station/core.ccpack").read_bytes() == b"existing data"

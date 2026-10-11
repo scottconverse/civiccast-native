@@ -368,11 +368,14 @@ def render_native_beta_candidate_notes(
         "",
         "## Install / upgrade",
         "",
-        "Download `setup.exe`; if you already have CivicCast installed just "
-        "run it -- your recordings, database and AI models are kept. "
-        "First-time installs need the USB model bundle (the AI-model "
-        "runtime is not a download asset on this release -- see "
-        "INSTALL-WINDOWS.md).",
+        "Use the release-matched `scripts/download_windows_release_artifacts.ps1` "
+        "with `-Tag` and `-Version` set to this release and `-Install`. It "
+        "downloads and verifies the signed `setup.exe`, runtime packs, "
+        "multipart station-model bundle, checksums and sidecar, then runs setup "
+        "with `/S`. Do not install from `setup.exe` alone. Package availability "
+        "does not establish fresh-install, repair, upgrade-preservation or "
+        "sustained-operation acceptance; follow the current owner-authorized "
+        "handoff and INSTALL-WINDOWS.md.",
         "",
         "## SmartScreen note",
         "",

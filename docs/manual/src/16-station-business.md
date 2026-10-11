@@ -2,7 +2,7 @@
 
 This chapter covers the "business side" of a station: how many residents watched, what aired and when, the schedule file that outside TV-guide services read, sponsor messages, the resident apps, and the optional paid-access feature. A PEG station employee, a records clerk or a station manager normally uses these screens. You do not need any technical background, but a few steps need an IT person, and this chapter says so each time.
 
-Read the "Known issue" boxes. Several of these screens in beta.11 look finished but do less than their wording suggests.
+Read the "Known issue" boxes for their version scope. Some describe current Beta.12 limits; an older version label identifies an observation from that release, not automatically a current defect.
 
 ## Before you start
 
@@ -21,7 +21,7 @@ CivicCast gives each person one or more *roles*. A role is a named set of permis
 
 > **Note:** In a normal station, everyone signs in with the first administrator account made during First Setup. That account carries all five roles, so you will see every screen and every button. The limits in the table matter only if your IT person made narrower sign-in passes for some staff.
 
-> **Note:** Beta.11 was published on 2026-10-08 as a GitHub pre-release. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package and its checks: its clean-install check passed, but upgrade and download-only checks were not run, and no human field-tester has signed it off. We read the code behind every screen in this chapter, but could not run every feature against a live station. Where that matters, the text says "In testing we could not confirm". Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
+> **Note:** Beta.12 was published on 2026-10-10 as a GitHub pre-release. The [Beta.12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) identifies the package and its checks. A normal upgrade from Beta.11 completed and initially showed output on three channels; the post-upgrade recorder failed on its first JSON save, so no five-snapshot PASS is claimed. An October 11 first-install attempt using the exact public artifacts failed activation with setup exit 123 because four signed station packs required by the embedded index were missing from the public bundle; the index's URLs were empty. Raw-model acquisition does not satisfy those signed-pack requirements. Interrupted repair was not run. This chapter describes source-backed screen behavior; it does not claim that every feature was exercised on a live station. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
 
 > **Warning:** Several screens in this chapter ask you to type dates. CivicCast treats those dates as **UTC**, the world reference clock. In the United States UTC is several hours ahead of local time. Mountain daylight time is 6 hours behind UTC. A meeting that starts at 7 p.m. Mountain daylight time is already 1 a.m. UTC *the next day*. When a report looks one day off, this is almost always why.
 
@@ -311,11 +311,7 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
-> **Warning:** Leave the paywall **off** in beta.11. The code we read shows the feature is unfinished.
-
-> **Known issue (beta.11):** Saving the paywall settings can erase the stored signing secret. The screen never shows the secret, so the secret box is empty every time you open the page. A blank box is saved as "no secret". Changing any setting and clicking **Save** therefore wipes it, and sign-in links and payment confirmations stop working.
-
-> **Known issue (beta.11):** In the code we read, the email that carries a resident's sign-in link is not sent by default. No server code blocks the recording file itself; the check is a question the resident website asks. The website also asks for a tier-list route and a checkout route that we did not find on the station. The list of free passes (**Recently issued grants**) shows only passes issued in this browser session; you cannot see or cancel passes you issued earlier.
+> **Warning:** Do not use the paywall for live paid access in Beta.12. The operator can configure its gate, but resident purchase and account workflows are incomplete: the magic-link sender does not send email, the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The Beta.12 screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
 
 > **For IT staff:** See [Chapter 15](#ch-integrations) before enabling this on a live station.
 

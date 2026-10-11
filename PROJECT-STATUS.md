@@ -4,18 +4,30 @@
 > [`docs/handoff/CODER-HANDOFF-2026-10-02.md`](docs/handoff/CODER-HANDOFF-2026-10-02.md)**
 > (where everything is, current state, open work, history to avoid).
 >
-> Built-in help work (beta.11): start with
-> [`docs/handoff/CODER-HANDOFF-INAPP-HELP-2026-10-03.md`](docs/handoff/CODER-HANDOFF-INAPP-HELP-2026-10-03.md)
-> (63 per-screen specs in `docs/in-app-help/`, product-defect list, in-app manual regeneration).
+> Current operator Help serves the bundled manual generated from
+> [`docs/manual/src/`](docs/manual/src/) and [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md).
+> The 62 per-screen sheets indexed in [`docs/in-app-help/README.md`](docs/in-app-help/README.md)
+> are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
+> source audit, not the current defect list.
 
 > **Current published release: `v1.0.0-beta.12`**, a GitHub pre-release, not a
 > production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
 > The signed source is `a0c98cb7367dc106042ec89d35a91905470d350c`, producer
 > run [38097350705](https://github.com/scottconverse/civiccast-native/actions/runs/38097350705).
+> The release now has 26 assets: its original 12 plus 12 station-model ZIP parts,
+> `station-models.json`, and `download_windows_release_artifacts.ps1`. All 14
+> additions' published sizes and digests matched local files. The helper's
+> `-Install` downloads and verifies the complete bundle and runs setup with
+> `/S`, without Git, Python, or 7-Zip.
 > The normal Beta 11 upgrade setup exited 0 and returned a running, healthy
 > service at schema 0089. The post-upgrade five-snapshot recorder failed on its
-> first JSON save; no five-snapshot PASS is claimed. Repair and fresh-install
-> checks have not been run. See the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
+> first JSON save; no five-snapshot PASS is claimed. The complete public
+> download and all hashes verified; the fresh offline Sandbox install is running. The R9 exit-123
+> attempt predates this distribution repair and remains a failed pre-repair
+> attempt. The published installer SHA-256 remains
+> `2dbc982d07b66f5bc760dfc1c1a943e9a3e100d3c3c7421ace74d6a2c744ab12`; source
+> installer/operator corrections are not embedded in that EXE. See the
+> [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
 
 ## Historical Beta 11 package and evidence
 
@@ -66,9 +78,11 @@ observed HLS audio and video on all three channels and primary Whistle within
 capacity. At 20:31:16 MDT, the post-upgrade recorder wrapper failed during its
 first-minute JSON save with `Cannot convert value to type System.String.` No
 five-snapshot PASS was recorded. The owner deferred that wrapper issue as
-bookkeeping; interrupted repair, fresh install and sustained-operation checks
-have not been run. Actual synthetic VDO peers previously exercised camera mute,
-audio gain mute and disconnect; this does not establish guest routing into the
+bookkeeping; interrupted repair and sustained-operation checks have no result.
+The pre-repair R9 attempt exited 123; a new fresh-install run using the repaired
+public asset set is pending its current download and Windows Sandbox run. Actual
+synthetic VDO peers previously exercised camera mute, audio gain mute and
+disconnect; this does not establish guest routing into the
 native broadcast compositor. The [verification record](docs/releases/v1.0.0-beta.12-verification.md)
 links the published release, manual assets and exact evidence limits.
 

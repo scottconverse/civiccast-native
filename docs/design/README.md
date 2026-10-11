@@ -1,13 +1,23 @@
 # Native-Windows execution specs
 
+> **Status boundary (October 11, 2026):** This directory contains design and
+> recovery records whose decision states are dated in their individual files.
+> They describe design targets and owner decisions; they are not a report of
+> what the current Beta 12 package ships. Use the [Beta 12 verification
+> record](../releases/v1.0.0-beta.12-verification.md) and current source for
+> shipped behavior. Later dated amendments remain in force where explicitly
+> recorded; this notice does not reopen or replace owner decisions.
+
 ## 2026-07-25 recovery execution
 
 The owner-directed recovery is governed operationally by
 [`spec-native-beta-recovery.md`](spec-native-beta-recovery.md). It preserves the
 complete scope and sequences it into remotely checkpointed work packages.
-[`plan-sub-300mb-bootstrap.md`](plan-sub-300mb-bootstrap.md) is a proposed D2
-amendment that keeps the NSIS bootstrap below 300,000,000 bytes without removing
-the legally required offline caption model. The inherited 2026-07-24 coder
+[`plan-sub-300mb-bootstrap.md`](plan-sub-300mb-bootstrap.md) records an
+owner-approved D2 architecture amendment (2026-07-29) that keeps the NSIS
+bootstrap below 300,000,000 bytes without removing the legally required
+offline caption model. Its owner-approved design is not proof that the planned
+model-acquisition path is present in the Beta 12 public asset set. The inherited 2026-07-24 coder
 handoff, including its lessons learned, is preserved at
 [`docs/process/CODEX-NATIVE-BETA-HANDOFF-2026-07-24.md`](../../../docs/process/CODEX-NATIVE-BETA-HANDOFF-2026-07-24.md).
 
@@ -26,6 +36,15 @@ spec as the current best plan and surface conflicts rather than silently
 diverging — but "do not reopen" applies only to Owner-approved decisions.
 
 ### Owner-acceptance register (decisions the specs deliberately do NOT settle)
+
+This register preserves the dated owner-acceptance record; it is not a current
+claims-verification contract. In particular, the extra external authority-record
+resolution requirement for `ci_safe: false` claims was removed by owner decision
+on 2026-08-07. See the current note in
+[`claims-schema.json`](../claims/claims-schema.json) and the verifier's module
+documentation. Do not infer that removed requirement from the July design text.
+The WSL-line sunset row below was later resolved: the owner retired the WSL2
+lane on 2026-08-19. See the current repository policy in [`BRANCHES.md`](../../BRANCHES.md).
 
 | Item | Where | What the owner is accepting |
 |---|---|---|

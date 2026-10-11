@@ -8,11 +8,11 @@ releases going forward. Every green build gets tagged and published on the
 PUBLIC repo ``scottconverse/civiccast-native`` as a GitHub pre-release,
 because the beta tester (Sergio, "LPM") checks GitHub daily for new
 versions. The existing ``v1.0.0-beta.1`` release has NO assets (it was
-USB-delivered). GitHub release assets are capped at 2 GB/file; the ~21 GB
-AI-model bundle (the ``station\\`` directory in the kit) therefore never
-goes on a release -- with PRs #127/#126 merged, the installer reuses AI
-models already on the machine (upgrade case) or the USB bundle (first-install
-case). Runtime packs are each under 2 GB and DO go on the release.
+USB-delivered). GitHub release assets are capped at 2 GiB/file, so the large
+AI-model bundle in ``station\\`` is streamed into ZIP64 parts below that cap,
+with a manifest carrying part and unpacked-file hashes. Runtime packs and
+station-model parts and the release-matched PowerShell downloader are release
+assets.
 
 Every step below is fail-closed: any check failure refuses (raises
 ``PublishError``, printed and exit 1) before doing anything past that point.
@@ -68,6 +68,10 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
+from scripts.release.build_station_download_bundle import (  # noqa: E402
+    StationBundleError,
+    build_station_download_bundle,
+)
 from scripts.release.candidate_manual import (  # noqa: E402
     CandidateManualError,
     manual_required_for_version,
@@ -2762,7 +2766,16 @@ def _run(args: argparse.Namespace) -> None:
             raise PublishError("staged setup.exe alias does not match the signed installer bytes")
         temporary_setup.replace(setup_asset)
 
-    all_files = [setup_asset, *packs, *manual_files]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        station_assets = build_station_download_bundle(kit_dir / "station", out_dir)
+    except (OSError, StationBundleError) as exc:
+        raise PublishError(f"station-model download bundle creation failed: {exc}") from exc
+
+    helper_asset = repo_root / "scripts" / "download_windows_release_artifacts.ps1"
+    if not helper_asset.is_file():
+        raise PublishError(f"release-matched Windows downloader is missing: {helper_asset}")
+    all_files = [setup_asset, *packs, *manual_files, *station_assets, helper_asset]
     sha256sums = build_sha256sums(all_files)
     sidecar = build_sidecar(setup_asset, signed=True)
     sidecar_filename = f"{setup_asset.name}{SIDECAR_SUFFIX}"
@@ -2771,12 +2784,19 @@ def _run(args: argparse.Namespace) -> None:
     # local out_dir FIRST (local files only -- no remote state) so the asset
     # table below can carry their real bytes/hash, and so the pre-flight size
     # check covers the complete asset set. Same in dry-run and live mode.
-    out_dir.mkdir(parents=True, exist_ok=True)
     sidecar_path = out_dir / sidecar_filename
     sidecar_path.write_text(json.dumps(sidecar, indent=2) + "\n", encoding="utf-8", newline="\n")
     sha256sums_path = out_dir / SHA256SUMS_ASSET_NAME
     sha256sums_path.write_text(sha256sums, encoding="utf-8", newline="\n")
-    asset_paths = [setup_asset, *packs, *manual_files, sha256sums_path, sidecar_path]
+    asset_paths = [
+        setup_asset,
+        *packs,
+        *manual_files,
+        *station_assets,
+        helper_asset,
+        sha256sums_path,
+        sidecar_path,
+    ]
 
     # Pre-flight: every asset under GitHub's 2 GiB cap, full set listed --
     # BEFORE any remote mutation, in dry-run and live mode alike.

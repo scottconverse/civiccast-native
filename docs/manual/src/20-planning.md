@@ -9,36 +9,36 @@ You need three decisions and one fact:
 - **How many channels** the station will run at the same time (the lab station described below ran three).
 - **Whether live captions matter** on the air. Captions are the part of the system most sensitive to the computer you choose.
 - **Who will sit at the station computer** for first setup. The first administrator can only be created from a browser running on the station computer itself ([Chapter 10](#ch-installing), "First setup in the operator console").
-- **The fact that decides everything else:** the beta.11 installer needs the full kit (`setup.exe` plus its signed `packs` and `station` folders), not only `setup.exe`. The next section and [Chapter 10](#ch-installing) explain the package contents.
+- **The fact that decides everything else:** use the project's release helper to assemble a supported package with its station-model resources: `scripts\download_windows_release_artifacts.ps1 -Install`. It verifies `station-models.json` and all matching `station-models.zip.*` parts before starting setup with `/S`. The R9 field attempt used an earlier public asset set without those resources and failed activation with exit 123; see [Chapter 10](#ch-installing) for that historical boundary and the current procedure.
 
 ## Know what has and has not been proven
 
-CivicCast 1.0.0-beta.11 was published on 2026-10-08 as a **GitHub pre-release**, not a production release. An earlier beta.11 package was refreshed on an existing beta.11 host. Two observations 41 seconds apart showed advancing HLS and changing captions on all three channels; this was a brief output check. The [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists the latest package's checks and limits.
+CivicCast 1.0.0-beta.12 was published on 2026-10-10 as a **GitHub pre-release**, not a production release. Its exact source, package, observed upgrade and limits are in the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
 | What was tested | Result |
 | --- | --- |
-| Earlier published beta.11 package, refreshed on an existing beta.11 host | Two observations 41 seconds apart showed advancing HLS and changing captions on three channels; brief output check only |
-| Latest beta.11 package | See the current verification record for its source, hash, installation checks and limits |
-| Clean install, failed-install repair, upgrade from beta.10 | See the verification record for exact-package status; the earlier in-place refresh did not test these |
-| 48-hour live-caption host observation | A current beta.11 host ran three channels; all were on air at the endpoint, with 99.88% nominal caption-input coverage. See the [host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md). Runtime evidence, not package qualification or supported-capacity proof |
+| Normal Beta 11-to-Beta 12 upgrade | Setup exited 0; service/API were healthy and the preservation marker was saved. Initial HLS audio/video and Whistle observations were recorded on three channels. The post-upgrade recorder failed during its first JSON save; the five-snapshot check did not pass. See the verification record |
+| Beta 12 fresh-install attempt using the R9-fetched public assets | Failed activation with exit 123: four required signed station packs were missing; embedded download URLs were empty. The matching complete kit was not available in that field attempt |
+| Repair, five-snapshot completion, sustained Beta 12 operation | Not established; see the verification record for exact limits |
+| 48-hour live-caption host observation | A separate Beta 11 host ran three channels and reached 99.88% nominal caption-input coverage. See the [host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md). Historical runtime evidence, not Beta 12 qualification or supported-capacity proof |
 | Operation at a real station; physical SDI capture; real cable-operator acceptance | **Not established** |
 
-The exact scope is in the [beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). If a vendor, board or funder asks whether this is production ready, beta.11 is a pre-release and the answer is no.
+The exact scope is in the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md). Beta 12 is a pre-release, not a production release; the limited upgrade observation is not a clean-install, repair or soak result.
 
 > **Note:** The Gate A sandbox was configured without a virtual graphics card, but the project's own log records that the sandbox guest could still see the host computer's NVIDIA card. Do not read the Gate A pass as proof that a computer *without* a graphics card works. This chapter marks every place where we have no measurement.
 
 ```mermaid
 flowchart TB
-  A[Computer has no CivicCast yet] --> B{Do you have the full kit?<br/>setup.exe + packs + station}
-  B -- Yes --> C[Install from the kit<br/>see current verification record]
-  B -- No --> D[Get the kit first.<br/>setup.exe alone stops with exit 110]
+  A[Computer has no CivicCast yet] --> B{Do you have matching signed station resources?}
+  B -- Yes --> C[Follow the provider's install instructions<br/>see Beta 12 limits]
+  B -- No --> D[Ask the release provider<br/>for a supported matching package]
   E[Computer already runs CivicCast] --> F[Run the newer setup.exe over it]
   F --> G[Upgrade from existing station<br/>see current verification record]
 ```
 
-*Figure 9.1. Which delivery you need. The full kit is the installer input; see the current verification record for package-specific check results.*
+*Figure 9.1. The R9 public-asset fresh-install attempt failed activation because required signed station packs were missing; use the release helper for a complete package.*
 
-The left branch is a first install: it needs the full kit. The right branch is an upgrade of a machine that already runs CivicCast. Check the current verification record for the latest package's results; back up first and keep a recovery path available.
+The left branch is a first install: use the release helper to obtain and verify the matching signed station resources before setup. The earlier R9 asset set lacked those files and failed activation; do not use unsigned or substitute model files. The right branch is an upgrade of a machine that already runs CivicCast. Check the current Beta 12 verification record for the observed upgrade and its limits; back up first and keep a recovery path available.
 
 ## Choose the computer
 
@@ -92,7 +92,7 @@ These Whisper choices affect the fallback, recorded captions, or an explicitly s
 
 > **Note:** The rule uses video memory as a stand-in for card capability. The code records that an older NVIDIA card with enough memory but no tensor cores can be *slower* on the card than on the processor (one older card missed all 30 deadlines in testing). The station operator can override the device with the `CIVICCAST_WHISPER_DEVICE` environment variable; see [Chapter 11](#ch-configuration).
 
-> **Historical beta.10 behavior:** The older native live path selected the highest installed Whisper tier. Beta.11's native live path defaults to Whistle, with Whisper as its fallback. The first-run Large and CUDA checkboxes control those optional downloads; leaving them unchecked skips those downloads.
+> **Historical beta.10 behavior:** The older native live path selected the highest installed Whisper tier. Beta.12 defaults to Whistle with Whisper fallback. The October 11 R9 report found that the separate acquisition screen downloaded Large Whisper despite an unchecked option. Use the complete release helper and its supported silent setup path; it does not depend on that acquisition screen.
 
 The AI that writes summaries and translations is chosen by a second rule.
 
@@ -101,7 +101,7 @@ The AI that writes summaries and translations is chosen by a second rule.
 | Any NVIDIA graphics card detected **and** 16 GB of memory or more | `gemma4:12b` |
 | Anything else | `gemma4:e4b` |
 
-All three AI models (`gemma4:12b`, `gemma4:e4b` and the translation model `translategemma:4b`) are installed on every station; the rule only picks the default. The product's catalog lists a minimum of 16 GB of memory for the 12B model and 8 GB for the smaller one. The only measurement the project recorded without a graphics card was on a computer with 32 GB of memory and 16 cores (32 threads): the smaller model finished a summary in 94 seconds warm and 128 seconds cold, while the 12B model took 366 seconds once and then failed twice. We have no measurement on a smaller computer.
+Do not assume every model is present on every station. Silent setup does not launch the first-run GUI acquisition flow or automatically fetch its models; the GUI offers acquisition separately. A displayed download or completed transfer does not by itself prove that a model was activated. The installed runtime tags and the installer pack-component IDs are different identifiers; use the installed model/runtime status when troubleshooting. The product catalog lists a minimum of 16 GB of memory for the 12B model and 8 GB for the smaller one. A historical no-dedicated-GPU benchmark used a computer with 32 GB of memory and 16 cores (32 threads): the smaller model finished a summary in 94 seconds warm and 128 seconds cold, while the 12B model took 366 seconds once and then failed twice. We have no measurement on a smaller computer.
 
 **The default video encoder runs on the processor.** CivicCast uses OpenH264 software encoding by default. Compatible NVIDIA or Media Foundation hardware encoders can be configured when present; the channel profile and pre-flight determine whether one is used or a CPU fallback is allowed. The default output profile is 1280 x 720, 30 frames per second, H.264 at 6,000 kbps and AAC audio at 192 kbps. A three-channel, 48-hour observation on one beta.11 host is not a channel-capacity result; test the planned number of channels on the intended computer.
 
@@ -155,9 +155,9 @@ Do not open the internal ports on the firewall. If another program on the same c
 
 The station does not need the internet to run. The Gate A run had networking disabled, and its station installed, came up and passed its checks. The code even hides the built-in `/docs` page because "a council-chamber station is frequently firewalled outbound and sometimes air-gapped".
 
-The first-run window downloads only selected optional Large Whisper and CUDA components when they are not already present. Those downloads use the signed source configured for the installer; a full kit supplies the required station packs, including Whistle and Medium Whisper.
+The first-run GUI has a separate model-and-caption acquisition flow. Silent setup does not launch it or automatically fetch models, and GUI acquisition does not provide the signed station packs needed for activation. A Beta 12 field run downloaded Large Whisper even though its optional checkbox was unchecked; do not rely on the checkbox alone to stop that transfer. A completed GUI download is not proof that a model was activated.
 
-If a security appliance does TLS inspection or an allow-list, allow the three destinations above for the one-time first-run downloads, or run from the full kit and block them.
+If a security appliance does TLS inspection or an allow-list, allow the destinations above needed by the selected GUI acquisitions, or use a complete local kit where available and block outbound access.
 
 Two details matter if you control outbound traffic. A UDP transport stream to a headend leaves from a local port pinned 1,000 above the relay's listening port, so a firewall that filters by source port needs to know that. And the Gate A test harness added its own allow rules for `tsp.exe`, `ffmpeg.exe` and `ffprobe.exe`; the product does not add them. If a third-party firewall prompts on first use of those programs, allow them. The other outputs depend on what you configure ([Chapter 15](#ch-integrations)).
 
@@ -170,7 +170,7 @@ CivicCast keeps the program under the install folder (default `C:\Program Files\
 | Program, runtime, video tools, AI engine | `<install folder>` | Five signed runtime packs are staged here; check the beta.11 release checksum and package manifest for exact sizes |
 | Model packs: cached copy | `<install folder>\packs\.station-cache` | "about 21 GB" (the uninstall notice) |
 | Model packs: extracted copy | `<install folder>\packs\captions-floor`, `components\`, `models\ollama\` | Extraction is about 1 to 1 with the pack size (code constant). The cached copy stays on disk too, so models take about twice the pack size |
-| First-run downloads, if any | `C:\ProgramData\CivicCast\packs` and `components` | Selected optional Large Whisper and CUDA files; exact size depends on what is already installed and selected |
+| First-run downloads, if any | `C:\ProgramData\CivicCast\packs` and `components` | Caption and model files may be acquired separately; a Beta 12 field run downloaded Large Whisper while its optional checkbox was unchecked |
 | Database | `C:\ProgramData\CivicCast\data\pgdata` | Holds records, not video; grows with use. We have no measured figure |
 | Uploads and finished packages | `C:\ProgramData\CivicCast\data\uploads` | Operator-uploaded media |
 | Conform cache (ready-to-play copies of programs) and working files | `C:\ProgramData\CivicCast\data\egress` (cache in `conform-cache`) | Budget **60 GB** by default; set `CIVICCAST_CONFORM_CACHE_GB` to change it (zero or less turns the cache off). Another budget keeps the three newest plan folders and about 5 GB (`CIVICCAST_PREPARED_PLAN_DIR_BUDGET_GB`) |
@@ -179,7 +179,7 @@ CivicCast keeps the program under the install folder (default `C:\Program Files\
 | Logs | `C:\ProgramData\CivicCast\logs` | Supervisor, application and raw control-plane/PostgreSQL logs rotate at 10 MiB with 10 older copies. Older oversized raw logs may remain until rotation replaces them; `ollama.log` is not bounded. See [Chapter 12](#ch-operations) |
 | Backups | A folder you choose | You decide |
 
-Use the signed beta.11 package manifest and the installer's disk-space message for the kit you received; pack sizes can change between releases. Activation checks the staged station-pack sizes plus 2 GB of working room and reports "Not enough free disk space to activate this station..." when short. Add the conform cache budget (60 GB by default) and recording storage on top. These source-derived storage estimates are not measured requirements for the unpublished beta.12 candidate; the beta.11 clean-install results and their limits are recorded in its verification record.
+Use the checksums for the public Beta 12 assets and the delivery receipt for any local kit you received; pack sizes can change between releases. Activation checks staged station-pack sizes plus 2 GB of working room and reports "Not enough free disk space to activate this station..." when short. Add the conform cache budget (60 GB by default) and recording storage on top. These source-derived storage estimates are not measured Beta 12 package requirements, and a Beta 12 clean-install measurement was not recorded; see the verification record for the package's actual evidence.
 
 > **Tip:** Do not rely on the default 60 GB cache fitting on a small system drive. Either give the station a large drive, or lower `CIVICCAST_CONFORM_CACHE_GB` before the first busy week. A single prepared program larger than the whole budget cannot be kept. The station then refuses it with the error "Conform-cache budget too small to retain '&lt;file name&gt;'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
 
@@ -203,11 +203,11 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 ### What is on the release page
 
-The release is at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11> (marked pre-release). Use that page, not a draft or an older pre-release. Do not install from the source ZIP.
+The current release is at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12> (marked pre-release). The R9 field download included the installer, five runtime packs, manual files, checksums and sidecar, but not the signed station-model resources required for activation. Check the current release page for the station-model manifest and every archive part before installing.
 
-The beta.11 verification record lists the assembled package contents and hashes. It contains `setup.exe`, five signed runtime packs, six signed station packs (including `captions-whistle.ccpack`), the station index, checksum file, quick-start/manual files and the package receipt/render manifest. Check the release's `SHA256SUMS.txt` against every file you install. A `.ccpack` is a signed container; the installer checks its signature before using it.
+The producer recorded a complete 19-member offline kit locally for Beta 12; the R9 field install attempt could not obtain it. The supported release procedure uses `station-models.json` and the matching `station-models.zip.*` files with `scripts\download_windows_release_artifacts.ps1 -Install`. The earlier R9 installer embedded an index with empty URLs for four required station packs and failed activation with exit 123. The helper verifies and assembles the full kit before setup; do not substitute raw model downloads or unsigned files. Verify the remaining public release downloads against their checksums and sidecar.
 
-The full kit includes the station folder with its signed index and station packs. Whistle and Medium Whisper are in that signed set; the optional Large Whisper and CUDA downloads can be skipped. See [Chapter 10](#ch-installing) for the current install flow.
+The assembled kit includes the station folder with its signed index and station packs. Whistle and Medium Whisper are in that signed set. Large Whisper is marked optional in the GUI, but the Beta 12 field run downloaded it while unchecked; monitor actual transfer rows. See [Chapter 10](#ch-installing) for the install procedure and limitations.
 
 ### Check the files
 
@@ -239,7 +239,7 @@ Windows may show a blue **Windows protected your PC** screen. That screen is abo
 ### Pre-install checklist
 
 - [ ] I know this is a beta candidate and who in the city has accepted that.
-- [ ] I have the **full kit** (`setup.exe`, `packs\`, `station\`) on a local drive or USB drive, not only `setup.exe`.
+- [ ] For a first install, I have prepared the matching kit with `scripts\download_windows_release_artifacts.ps1 -Install`; the helper verifies and assembles runtime and signed station resources before setup runs. The R9 asset set failed activation because required station packs were missing.
 - [ ] I checked the installer's SHA-256 against two sources and its signature shows `Valid` for the expected signer.
 - [ ] The computer is 64-bit Windows, dedicated to CivicCast, and not running the older WSL-based CivicCast.
 - [ ] The install drive has about 55 GB free, plus room for the conform cache and recordings.
@@ -248,7 +248,7 @@ Windows may show a blue **Windows protected your PC** screen. That screen is abo
 - [ ] Security software will not quarantine `C:\Program Files\CivicCast (Native)` or `C:\ProgramData\CivicCast`.
 - [ ] I know the plan for backups ([Chapter 12](#ch-operations)) and where the recovery kit will be kept.
 - [ ] Someone will be at the station to create the first administrator in a browser on that computer.
-- [ ] If this is an upgrade, I have a backup, I accept that the station goes off air while setup runs, and I know beta.11 was not tested as an upgrade.
+- [ ] If this is an upgrade, I have a separate backup and recovery path. Beta 12 has one observed normal upgrade from Beta 11 with the recorder check incomplete; see its verification record for the exact result.
 - [ ] I have a way to copy text out of the setup window and out of `C:\ProgramData\CivicCast\install-progress.log` to send to support.
 
 ## If it did not work
