@@ -265,3 +265,23 @@ tests used actual downloaded bytes and Authenticode instead of a new harness;
 docs reconcile published truth, verification, PR and this ledger; QA preserves
 original failed checks, separates historical Beta 11 soak and deferred next-release
 marketing, and records no host cutover. Application and manual bytes unchanged.
+
+## Auxiliary current-release pointers reconciled
+
+CAPABILITIES, PROJECT-STATUS, ROADMAP, BRANCHES, HANDOFF, next-cleanup,
+release policy, installer-support prompt and the historical tester/soak entry
+notices now point to Beta 13 as current. Historical results remain historical;
+the existing 48-hour/99.88% measurements are unchanged. Focused current-release,
+field-installation and public-surface checks: 55 passed in 1.89 seconds.
+Release identity and whitespace checks passed. No runtime or manual change.
+Five-lens delta review: actual published source/build/assets and installed
+results support the pointers; installation language matches the complete-kit
+route; existing policy assertions passed; historical bodies remain dated;
+current handoff and project entry points agree.
+
+Minor manual-reference follow-up: some older internal verification links and
+version-specific prose remain in the frozen manual. They are recorded in the
+separate next-release documentation proposal alongside the owner-requested
+72-hour update. The Beta 13 recovery instructions and Whistle/Whisper roles
+are included in the shipped manual; this does not claim every old cross-reference
+was rewritten. Generated manual assets must be synchronized in that later release.

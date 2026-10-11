@@ -1,14 +1,13 @@
 # CivicCast — Capability Matrix and Evidence History
 
-> **Current release:** `v1.0.0-beta.12`, published 2026-10-10 as a GitHub
-> pre-release. Its [verification record](docs/releases/v1.0.0-beta.12-verification.md)
-> binds package evidence to source `a0c98cb7367dc106042ec89d35a91905470d350c`.
-> A normal Beta 11 upgrade setup exited 0, left a healthy service at schema
-> 0089, and saved the preservation marker; the first post-upgrade JSON snapshot
-> failed, so there is no five-snapshot PASS. Fresh-install, interrupted-repair,
-> and sustained-operation checks were not run. The record is the authority for
-> the current package boundary; see [`release-truth.yaml`](docs/releases/release-truth.yaml)
-> for current and historical release identities.
+> **Current release:** v1.0.0-beta.13, published 2026-10-11 as a GitHub
+> pre-release. Its [verification record](docs/releases/v1.0.0-beta.13-verification.md)
+> binds the signed package to source 8053fb1cf05b989fb1f23e650893cc6abfa659d4
+> and producer run 38160778457. The public release has 26 assets. The normal
+> Beta 11 upgrade, one repair after an interrupted install, and a fresh install
+> each passed a five-minute observation across all three channels. See
+> [release-truth.yaml](docs/releases/release-truth.yaml) for current and
+> historical release identities.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -23,7 +22,7 @@
 This matrix distinguishes implemented components, wired workflows, and the
 limits of the evidence available for them. It contains entries from different
 development and release dates; any row naming Beta 10, Beta 11, or an earlier
-milestone is historical evidence for that scope, not a Beta 12 measurement.
+milestone is historical evidence for that scope, not a Beta 13 measurement.
 Rows not tied to a current package or source check should be treated as
 engineering history until revalidated. Do not infer package qualification,
 station capacity, or external-provider acceptance from a component state.
