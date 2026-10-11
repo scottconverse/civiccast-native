@@ -146,10 +146,32 @@ def test_create_room_forbidden_for_meeting_operator() -> None:
 
 
 def test_create_room_allowed_for_setup_admin() -> None:
-    r = _client(scopes=("setup_admin",)).post(
-        "/api/staff/contribution/rooms", json={"channel_id": "ch", "name": "X"}
-    )
-    assert r.status_code == 201
+    client = _client(scopes=("setup_admin",))
+    created = client.post("/api/staff/contribution/rooms", json={"channel_id": "ch", "name": "X"})
+    assert created.status_code == 201
+    room_id = created.json()["room_id"]
+
+    rooms = client.get("/api/staff/contribution/rooms")
+    assert rooms.status_code == 200
+    assert [room["room_id"] for room in rooms.json()] == [room_id]
+
+    detail = client.get(f"/api/staff/contribution/rooms/{room_id}")
+    assert detail.status_code == 200
+    assert detail.json()["room"]["room_id"] == room_id
+    assert detail.json()["invites"] == []
+    assert detail.json()["sessions"] == []
+
+    invites = client.get(f"/api/staff/contribution/rooms/{room_id}/invites")
+    assert invites.status_code == 200
+    assert invites.json() == []
+
+    # Room commissioning reads do not grant standalone guest-session access.
+    sessions = client.get("/api/staff/contribution/sessions")
+    assert sessions.status_code == 403
+
+    # Commissioning access does not grant live-show operation authority.
+    opened = client.post(f"/api/staff/contribution/rooms/{room_id}/open")
+    assert opened.status_code == 403
 
 
 def test_create_room_rejects_unknown_egress_channel() -> None:

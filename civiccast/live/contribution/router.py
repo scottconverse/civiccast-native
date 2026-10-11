@@ -6,9 +6,11 @@ Two routers:
 
 * ``/api/staff/contribution`` — gated by the five real roles (``auth/roles.py``)
   via ``require_any_role`` per the S17 §4 table. Room *creation* is a
-  ``setup_admin`` (commissioning) act; the live show (open/close/invite/admit/
-  on-air/mute/off-air/drop) is ``meeting_operator``; read-only lists + diagnostics
-  add ``support_admin``.
+  ``setup_admin`` (commissioning) act; room list/detail/invite-list reads are
+  available to ``setup_admin``, ``meeting_operator`` and ``support_admin``.
+  Live-show actions (open/close/invite/admit/on-air/mute/off-air/drop) remain
+  ``meeting_operator``; standalone session reads are ``meeting_operator`` or
+  ``support_admin``, and diagnostics remain ``support_admin`` only.
 * ``/api/public/contribution`` — **token-gated, no auth role.** The opaque
   single-use invite token IS the capability; resolving it consumes it once and
   the guest join page never sees the compositor-facing ``push_url`` (the public
@@ -60,7 +62,7 @@ from civiccast.live.contribution.store import (
 _DB_NOT_READY = "Durable storage is not ready yet."
 
 _ROOM_WRITE = ("setup_admin",)
-_ROOM_READ = ("meeting_operator", "support_admin")
+_ROOM_READ = ("setup_admin", "meeting_operator", "support_admin")
 _OPERATE = ("meeting_operator",)
 _SESSION_READ = ("meeting_operator", "support_admin")
 _DIAG = ("support_admin",)
