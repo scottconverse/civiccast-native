@@ -51,7 +51,9 @@ def _recovery_retry_delay(retries: int) -> float:
     """After the initial 30s cooldown, use 60/120/240s and cap at five minutes."""
 
     exponent = min(max(retries - 1, 0), 3)
-    return min(
+    # The bounded nonnegative int exponent makes int power return int; mypy's
+    # general int-power result is Any. Float cooldown arithmetic returns float.
+    return min(  # type: ignore[no-any-return]
         _RECOVERY_INITIAL_COOLDOWN_SECONDS * 2 * (2**exponent),
         _RECOVERY_MAX_COOLDOWN_SECONDS,
     )

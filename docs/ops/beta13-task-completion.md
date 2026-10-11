@@ -70,3 +70,13 @@ Result: **127 passed in 15.91s**. Full output: workspace `outputs/beta13-publish
 Pre-push five-lens review: engineering — recovery ownership/backoff/serialization and finite queue policy independently reviewed, implementation checks pass; UX — fallback-selected wording avoids claiming delivery when unavailable; tests — previously failing recovery/backlog/status cases and historical publisher cases now pass in their recorded affected runs; docs — current manual, generated help, API types and candidate identity aligned, public downloads remain Beta 12 until publication; QA/artifact state — no Beta 13 installation, artifact, signature or publication pass claimed before execution. No dependencies, credentials or migrations were added. Existing untracked oversight evidence is excluded from the commit. `git diff --check` passed. The 210-second queue policy is finite and is not a worst-case delivery guarantee.
 
 The next step is one hosted signed candidate build, followed by the requested sequential installation scenarios against that exact package. No host cutover or soak is included.
+
+## Limited corrections clarification and CI bookkeeping
+
+Scott clarified October 11: limited necessary correction/check/rebuild cycles are allowed; the objection is repeated broad cycles consuming hours or days. Routine small corrections need no permission question. This supersedes the earlier blanket-cycle interpretation above.
+
+Signed candidate remains **8053fb1cf05b989fb1f23e650893cc6abfa659d4**, workflow **38160778457**, draft PR **239**. The exact-source manual job passed. Commit **912e9771** corrected only test-file wrapping; it did not trigger another signed build.
+
+Subsequent CI reached mypy and found its generic integer-power inference returning Any in the capped delay expression. Independent Sol review verified the exponent is clamped to 0..3 and float arithmetic returns float, added a documented suppression only for that return, and compared executable AST before/after: unchanged. Command `uv run mypy civiccast/captions/whistle.py`: **Success: no issues found in 1 source file**. No recovery tests, full-suite checks or installer build were repeated. This typing-comment follow-up does not change candidate runtime behavior; artifact provenance remains the original actual source SHA.
+
+Five-lens review of these follow-ups: engineering — no executable expression changed; UX — unchanged; tests — existing 127-pass publisher result still applies to whitespace-only fixture change, no verification weakened; docs — this record distinguishes frozen artifact source from later bookkeeping; QA/artifact state — no new build/signature/install pass claimed and original artifacts remain bound to their actual source/run.
