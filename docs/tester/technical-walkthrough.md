@@ -1,9 +1,9 @@
 # Technical Tester Walkthrough
 
 > **Historical Beta 10 walkthrough.** The procedure below describes Beta 10
-> only. For current Beta 12 guidance, use the [tester start page](START-HERE.md),
-> [Windows install guide](../../INSTALL-WINDOWS.md), and [Beta 12 verification
-> record](../releases/v1.0.0-beta.12-verification.md).
+> only. For current Beta 13 guidance, use the [tester start page](START-HERE.md),
+> [Windows install guide](../../INSTALL-WINDOWS.md), and [Beta 13 verification
+> record](../releases/v1.0.0-beta.13-verification.md).
 
 ## Release State
 

@@ -1,26 +1,31 @@
 # CivicCast
 
-**CivicCast `v1.0.0-beta.12` is the current public pre-release**, published October 10, 2026. It is a native Windows station-in-a-box for public-access and local-government media: record and broadcast meetings, review captions, prepare sourced summaries, schedule programs, and publish recordings to a resident portal. Optional cloud services may charge their own usage fees; CivicCast has no per-minute software fee.
+**CivicCast `v1.0.0-beta.13` is the current signed native Windows pre-release.** CivicCast is a station-in-a-box for public-access and local-government media: record and broadcast meetings, review captions, prepare sourced summaries, schedule programs, and publish recordings to a resident portal. Optional cloud services may charge their own usage fees; CivicCast has no per-minute software fee.
 
-The signed release source is `a0c98cb7367dc106042ec89d35a91905470d350c` (producer run [`38097350705`](https://github.com/scottconverse/civiccast-native/actions/runs/38097350705)). The [Beta 12 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12) provides the installer, runtime packs, complete signed station-model download, manuals, and checksums. Start with [Install CivicCast on Windows](INSTALL-WINDOWS.md), the [User Manual](docs/USER-MANUAL.md), or the [FAQ](FAQ.md).
+The [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) provides the signed installer, runtime packs, complete signed station-model download, manuals, and checksums. The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md) binds the package to its source and records what has and has not been observed. Start with [Install CivicCast on Windows](INSTALL-WINDOWS.md), the [User Manual](docs/USER-MANUAL.md), or the [FAQ](FAQ.md).
 
-A normal upgrade from Beta 11 to Beta 12 exited 0 and left a healthy service at schema 0089; the preservation marker was saved, and initial checks observed audio and video on all three channels. The post-upgrade recorder failed while saving its first JSON snapshot, so the five-snapshot check did not pass. An October 11 first-install attempt using the exact public artifacts failed activation with exit 123 because four required signed station packs were absent from the original public downloads; the October 11 distribution repair adds them. No interrupted-repair or sustained-operation result is claimed. The [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md) has the package identity, evidence, and limits.
+A normal Beta 11-to-Beta 13 upgrade exited 0 and preserved saved station state. The same signed installer also passed one controlled D4 interruption and repair, and a separate fresh installation exited 0. Five-minute observations after upgrade, repair and fresh setup each covered all three channels; the fresh run had Whistle primary and within capacity in all 15 samples, with five distinct caption samples per channel. See the [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md) and its [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json) for exact scope and limits.
 
-A separate **Beta 11 host** ran public, government, and education channels together for 48 hours and achieved **99.88% live caption-input coverage**. This is a positive operating result for that host and release; it is not a Beta 12 soak, general service-uptime percentage, transcript accuracy, or package qualification. See the [host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurement and method.
+A separate **Beta 11 host** ran public, government, and education channels together for 48 hours and achieved **99.88% live caption-input coverage**. This is a positive operating result for that host and release; it is not a Beta 13 soak, general service-uptime percentage, transcript accuracy, or package qualification. See the [host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurement and method.
 
-Beta 12 uses Whistle as the CPU live-caption primary, publishes first-pass recognition, and loads Whisper fallback only for the affected channel when needed. NVIDIA CUDA is an option for supported Whisper work; Whistle remains CPU-only. The native installer registers a Windows service and supervises the control plane, PostgreSQL, and media workers from the bundled runtime. This repository is the native Windows product line; it has no WSL, Docker, or Linux installation target. See [BRANCHES.md](BRANCHES.md) for project history.
+Beta 13 automatically retries Whistle while Whisper supplies backup captions. Whistle remains the CPU live-caption primary; supported NVIDIA CUDA applies to Whisper only. The native installer registers a Windows service and supervises the control plane, PostgreSQL, and media workers from the bundled runtime. This repository is the native Windows product line; it has no WSL, Docker, or Linux installation target. See [BRANCHES.md](BRANCHES.md) for project history.
 
 Current release state is recorded in [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml). Earlier package and lab evidence remains available in its release records, including the [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) and [Beta 10 verification](docs/releases/v1.0.0-beta.10-verification.md); those records apply only to their named releases.
 
 ## Install and run
 
-Download the complete Beta 12 station with the Windows helper. It obtains the signed installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
+Download the signed Beta 13 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
 
 ```powershell
-$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta12.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.12/download_windows_release_artifacts.ps1' -OutFile $installerScript
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta12"
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta13.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.13/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta13"
 ```
+
+Keep the PowerShell window open until it reports **Done**. During silent setup,
+the installer writes a timestamped progress heartbeat before and after each
+step to `C:\ProgramData\CivicCast\install-progress.log`; its latest line
+names the step in progress.
 
 See [Install CivicCast on Windows](INSTALL-WINDOWS.md) for first setup, existing installations, offline copies and password recovery. Open **CivicCast Operator Console** after setup finishes.
 
@@ -91,13 +96,13 @@ boundaries and security boundaries.
 
 The [3.0 Master Spec](docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md)
 describes CivicCast's full intended station-in-a-box scope — well beyond
-what this candidate has proven in the field — including 24/7 multi-channel
+what this release has proven in the field — including 24/7 multi-channel
 playout, underwriting/spot trafficking, franchise reporting, and native OTT
 apps. The [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml) is a
 repo-verified, fail-closed manifest that checks each spec item's claimed
 status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
-release. The Beta 12 verification record describes the current package
+release. The Beta 13 verification record describes the current package
 boundary, and the Beta 11 host report is separately scoped historical runtime
 evidence.
 

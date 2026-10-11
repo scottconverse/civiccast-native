@@ -1,15 +1,19 @@
 # CivicCast Architecture
 
-> **Current native release: `v1.0.0-beta.12`**, published 2026-10-10 as a
-> GitHub pre-release, not a production or SLA-backed field release. The
-> [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
-> binds package evidence to source `a0c98cb7367dc106042ec89d35a91905470d350c`.
-> A normal upgrade from Beta 11 exited 0 and left a healthy service at schema
-> 0089 with its preservation marker saved and initial output on three channels.
-> The post-upgrade recorder failed on its first JSON save, so no five-snapshot
-> PASS is claimed; exact-candidate fresh-install, interrupted-repair, and
-> sustained-operation checks were not run. See [BRANCHES.md](BRANCHES.md) for
-> release identity and status.
+> **Current native release: `v1.0.0-beta.13`**, a signed GitHub pre-release,
+> not a production or SLA-backed field release. Its signed source is
+> `8053fb1cf05b989fb1f23e650893cc6abfa659d4`, from producer run
+> [38160778457](https://github.com/scottconverse/civiccast-native/actions/runs/38160778457).
+> The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
+> binds the 19-member kit and installer to that source; the installer SHA-256
+> is `cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16`,
+> signed by Scott Converse. Normal upgrade, one-interruption repair and fresh
+> installation passed; each has a five-minute, three-channel observation. The
+> [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
+> describes the measured scope. Get the package from the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
+> The [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
+> remains available for historical package evidence. See [BRANCHES.md](BRANCHES.md)
+> for release identity and status.
 >
 > **Historical Beta 10 evidence:** the published Beta 10 package passed its
 > Gate A clean-install lane (10 of 10 criteria in Windows Sandbox on
@@ -173,7 +177,7 @@ runtime restarts. Recorded-media captions use faster-whisper. Needle usage
 telemetry is disabled, and the speech models run locally. Live captions,
 SDI/NDI hardware paths, and cable-headend delivery are described with their
 evidence boundaries in the [User Manual](docs/USER-MANUAL.md) and the
-  [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
+  [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
 
 ## Data And Durability
 
@@ -285,7 +289,7 @@ supersedes ADR 0001's NATS JetStream choice).
 ## Current Source Contracts
 
 These describe current source behavior and test coverage. Package acceptance
-remains scoped to the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md):
+remains scoped to the [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md):
 
 - Staff-write stores fail closed without managed durable storage or `DATABASE_URL` unless ephemeral mode
   is explicitly acknowledged for local development.

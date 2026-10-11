@@ -1,8 +1,8 @@
 # CivicCast project status
 
-> **Taking over coding? Start with
-> [`docs/handoff/CODER-HANDOFF-2026-10-02.md`](docs/handoff/CODER-HANDOFF-2026-10-02.md)**
-> (where everything is, current state, open work, history to avoid).
+> **Taking over coding? Start with [HANDOFF.md](HANDOFF.md)** for the
+> current continuation state. The [October 2 coder handoff](docs/handoff/CODER-HANDOFF-2026-10-02.md)
+> remains a dated layout and history reference, not current status.
 >
 > Current operator Help serves the bundled manual generated from
 > [`docs/manual/src/`](docs/manual/src/) and [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md).
@@ -10,28 +10,14 @@
 > are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
 > source audit, not the current defect list.
 
-> **Current published release: `v1.0.0-beta.12`**, a GitHub pre-release, not a
-> production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
-> The signed source is `a0c98cb7367dc106042ec89d35a91905470d350c`, producer
-> run [38097350705](https://github.com/scottconverse/civiccast-native/actions/runs/38097350705).
-> The release now has 26 assets: its original 12 plus 12 station-model ZIP parts,
-> `station-models.json`, and `download_windows_release_artifacts.ps1`. All 14
-> additions' published sizes and digests matched local files. The helper's
-> `-Install` downloads and verifies the complete bundle and runs setup with
-> `/S`, without Git, Python, or 7-Zip.
-> The normal Beta 11 upgrade setup exited 0 and returned a running, healthy
-> service at schema 0089. The post-upgrade five-snapshot recorder failed on its
-> first JSON save; no five-snapshot PASS is claimed. The complete public
-> download and all hashes verified. Fresh offline Sandbox setup and station
-> activation succeeded (setup exit 0, service `Running`, offline AI and CPU
-> caption self-tests passed); its follow-on first-admin/three-channel check
-> failed with only the first Python traceback line captured, so the cause is
-> unresolved and full UI/channel validation is not established. The R9 exit-123
-> attempt predates this distribution repair and remains a failed pre-repair
-> attempt. The published installer SHA-256 remains
-> `2dbc982d07b66f5bc760dfc1c1a943e9a3e100d3c3c7421ace74d6a2c744ab12`; source
-> installer/operator corrections are not embedded in that EXE. See the
-> [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
+> **Current published release: v1.0.0-beta.13**, a GitHub pre-release, not a
+> production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
+> The signed package is bound to source 8053fb1cf05b989fb1f23e650893cc6abfa659d4
+> and producer run [38160778457](https://github.com/scottconverse/civiccast-native/actions/runs/38160778457).
+> The release has 26 assets. The normal Beta 11-to-Beta 13 upgrade, one repair
+> after an interrupted install, and a fresh install each completed a five-minute
+> observation across all three channels. See the
+> [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
 
 ## Historical Beta 11 package and evidence
 

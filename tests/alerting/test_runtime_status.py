@@ -27,6 +27,24 @@ from civiccast.egress.models import (
 _NOW = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
 
 
+@pytest.mark.parametrize("provider", ["whistle-recovering", "whistle-recovery-cooldown"])
+def test_whistle_recovery_state_reaches_operator_status(provider: str) -> None:
+    status = derive_live_caption_processing_status(
+        {
+            "worker_heartbeat_at": _NOW.isoformat(),
+            "last_processed_at": _NOW.isoformat(),
+            "provider_state": provider,
+            "provider_retry_in_seconds": 30,
+        },
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+    )
+    assert status.provider_state == provider
+    assert status.provider_retry_in_seconds == 30
+    assert status.processing_state != "failed"
+
+
 def test_missing_or_stale_worker_is_unknown_during_startup_then_stalled() -> None:
     startup = derive_live_caption_processing_status(
         None,

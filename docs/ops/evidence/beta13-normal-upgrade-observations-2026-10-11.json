@@ -1,0 +1,777 @@
+{
+  "candidate_version": "1.0.0-beta.13",
+  "source_sha": "8053fb1cf05b989fb1f23e650893cc6abfa659d4",
+  "build_run_id": "38160778457",
+  "scope": "CPU-only Windows Sandbox normal Beta11 upgrade; five post-upgrade observations; not a soak or repair result",
+  "result": {
+    "mode": "PostUpgrade",
+    "hls_directory": "C:\\ProgramData\\CivicCast\\data\\egress\\live-hls",
+    "preserve_install_and_database": true,
+    "health_assessment": {
+      "schema_db_revision": "0089_contribution_media_control_requests",
+      "revision_pair_matches": true,
+      "version": "1.0.0-beta.13",
+      "classification": "healthy",
+      "schema_expected_head": "0089_contribution_media_control_requests",
+      "live_captions": "healthy",
+      "schema": "current",
+      "status": "healthy",
+      "caption_health_available": true
+    },
+    "channels": [
+      "public",
+      "government",
+      "education"
+    ],
+    "observation_started_utc": "2026-10-11T20:10:09.8822118Z",
+    "fixture_sha256": "3ff08c018d905537c2025812f1983c4765f64b129ef6f9682698e9f720babec5",
+    "observation_finished_utc": "2026-10-11T20:15:18.4984104Z",
+    "caption_observations": {
+      "channels": [
+        {
+          "id": "public",
+          "vtt_samples_available": 5,
+          "runtime_samples_available": 5,
+          "expected_jfk_words_observation": "observed",
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "vtt_samples_unavailable": 0,
+          "whistle_fallback_seen": false,
+          "unique_vtt_sha256_count": 5,
+          "whistle_primary_event_seen": true,
+          "runtime_states_observed": [
+            "within-capacity",
+            "within-capacity",
+            "within-capacity",
+            "within-capacity",
+            "within-capacity"
+          ]
+        },
+        {
+          "id": "government",
+          "vtt_samples_available": 5,
+          "runtime_samples_available": 5,
+          "expected_jfk_words_observation": "observed",
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "vtt_samples_unavailable": 0,
+          "whistle_fallback_seen": false,
+          "unique_vtt_sha256_count": 5,
+          "whistle_primary_event_seen": true,
+          "runtime_states_observed": [
+            "within-capacity",
+            "within-capacity",
+            "within-capacity",
+            "within-capacity",
+            "within-capacity"
+          ]
+        },
+        {
+          "id": "education",
+          "vtt_samples_available": 5,
+          "runtime_samples_available": 5,
+          "expected_jfk_words_observation": "observed",
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "vtt_samples_unavailable": 0,
+          "whistle_fallback_seen": false,
+          "unique_vtt_sha256_count": 5,
+          "whistle_primary_event_seen": true,
+          "runtime_states_observed": [
+            "within-capacity",
+            "within-capacity",
+            "within-capacity",
+            "within-capacity",
+            "within-capacity"
+          ]
+        }
+      ],
+      "observed_minutes": 5,
+      "assessment": "report-only"
+    },
+    "caption_directory": "C:\\ProgramData\\CivicCast\\data\\egress\\<channel>\\captions",
+    "result": "PASS",
+    "observed_minutes": 5
+  },
+  "snapshots": [
+    {
+      "original_file": "minute-1.json",
+      "original_sha256": "311bc42318514241fc56f1827bc45c584779a7abb81a919f427527cbf0bf2d6d",
+      "minute": 1,
+      "utc": "2026-10-11T20:11:11.2282932Z",
+      "health": {
+        "status": "healthy",
+        "version": "1.0.0-beta.13",
+        "schema": "current",
+        "live_captions": "healthy",
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "mode": "normal"
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.9,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "98b30cda6a8aac76c361d0e77e3b310f6a682c9f53d22174851d368e9997b378",
+          "vtt_mtime_utc": "2026-10-11T20:11:09.5298208Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 2,
+            "channel_id": "public",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:11:03.220314+00:00",
+            "last_input_at": "2026-10-11T20:11:09.275052+00:00",
+            "last_processed_at": "2026-10-11T20:11:09.526043+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:11:03.190731+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:11:09.529820+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:11:09.529820+00:00"
+          }
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 1.2,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "41ac9dd7b4b088f55e1ad163b7b184a80d7718eaca52fb87e6a51df37d769d10",
+          "vtt_mtime_utc": "2026-10-11T20:11:08.3624077Z",
+          "vtt_cue_count": 57,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 0,
+            "channel_id": "government",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:11:09.298012+00:00",
+            "last_input_at": "2026-10-11T20:11:09.275052+00:00",
+            "last_processed_at": "2026-10-11T20:11:08.360388+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:11:09.275052+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:11:11.304045+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:11:11.304045+00:00"
+          }
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.4,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "bbfac53e4217a71b81017585568a704cc7c5c38d04142739cd66a63d32f22b9d",
+          "vtt_mtime_utc": "2026-10-11T20:11:11.1297946Z",
+          "vtt_cue_count": 58,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 1,
+            "channel_id": "education",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:11:07.272662+00:00",
+            "last_input_at": "2026-10-11T20:11:09.275052+00:00",
+            "last_processed_at": "2026-10-11T20:11:11.129794+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:10:59.097421+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:11:11.129794+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:11:11.129794+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "original_file": "minute-2.json",
+      "original_sha256": "9ea04194aa76dd16333794d6aad0a780ce37d3f2b8575bdec059cf5dc2694b2c",
+      "minute": 2,
+      "utc": "2026-10-11T20:12:12.9162503Z",
+      "health": {
+        "status": "healthy",
+        "version": "1.0.0-beta.13",
+        "schema": "current",
+        "live_captions": "healthy",
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "mode": "normal"
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.6,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "9814d2eb0de0a562d3d5931c1a9f66aac8500723a65bc95eee3a2069b49b1c83",
+          "vtt_mtime_utc": "2026-10-11T20:12:11.2531090Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 2,
+            "channel_id": "public",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:12:06.335136+00:00",
+            "last_input_at": "2026-10-11T20:12:08.352900+00:00",
+            "last_processed_at": "2026-10-11T20:12:11.249324+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:11:43.917926+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:12:12.410816+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:12:12.410816+00:00"
+          }
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.6,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "8dcc8658e1b37503b7a3f0ad0848b04ad902bf086e34193c414d441a4ba31e01",
+          "vtt_mtime_utc": "2026-10-11T20:12:12.8826534Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 2,
+            "channel_id": "government",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:12:02.278382+00:00",
+            "last_input_at": "2026-10-11T20:12:08.350895+00:00",
+            "last_processed_at": "2026-10-11T20:12:12.882653+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:11:54.082638+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:12:12.882653+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:12:12.882653+00:00"
+          }
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 1.8,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "858d444be972fd3ad45abc146c9862286de8b4c3d3df2d706e3a976e5726a18b",
+          "vtt_mtime_utc": "2026-10-11T20:12:09.3171346Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 0,
+            "channel_id": "education",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:12:10.395122+00:00",
+            "last_input_at": "2026-10-11T20:12:08.348890+00:00",
+            "last_processed_at": "2026-10-11T20:12:09.306454+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:11:58.169360+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:12:12.406789+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:12:12.406789+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "original_file": "minute-3.json",
+      "original_sha256": "81c8f35456272b9cff7f3a644f6ee586ebf255657e9088316f5a04eacf01917b",
+      "minute": 3,
+      "utc": "2026-10-11T20:13:14.5876133Z",
+      "health": {
+        "status": "healthy",
+        "version": "1.0.0-beta.13",
+        "schema": "current",
+        "live_captions": "healthy",
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "mode": "normal"
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.1,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "d2e5b685367540ddf2c6a27955040a6ab3ac05ad997522ca2a936975a5abd00e",
+          "vtt_mtime_utc": "2026-10-11T20:13:09.9501715Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 3,
+            "channel_id": "public",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:13:05.271045+00:00",
+            "last_input_at": "2026-10-11T20:13:13.387862+00:00",
+            "last_processed_at": "2026-10-11T20:13:09.950171+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:12:59.138868+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:13:13.387862+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:13:13.387862+00:00"
+          }
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.4,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "78acf418b897a3bc76b7939de02a5b45a00113ff86be53c4410598e89b7bb342",
+          "vtt_mtime_utc": "2026-10-11T20:13:13.4845629Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 1,
+            "channel_id": "government",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:13:09.366097+00:00",
+            "last_input_at": "2026-10-11T20:13:13.387862+00:00",
+            "last_processed_at": "2026-10-11T20:13:08.220767+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:13:09.334476+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:13:13.387862+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:13:13.387862+00:00"
+          }
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 1.5,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "95ec0b151f2a5bd4b2134a421eb9cd9f349d5033365adb05947e633769cd1a24",
+          "vtt_mtime_utc": "2026-10-11T20:13:11.7344998Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 1,
+            "channel_id": "education",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:13:07.312763+00:00",
+            "last_input_at": "2026-10-11T20:13:09.328461+00:00",
+            "last_processed_at": "2026-10-11T20:13:11.732480+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:12:53.076562+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:13:11.736519+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:13:11.736519+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "original_file": "minute-4.json",
+      "original_sha256": "2463f327f4706881b3714908bfbcb2e267b1b0d046ba30c3d57893575785f441",
+      "minute": 4,
+      "utc": "2026-10-11T20:14:16.3147294Z",
+      "health": {
+        "status": "healthy",
+        "version": "1.0.0-beta.13",
+        "schema": "current",
+        "live_captions": "healthy",
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "mode": "normal"
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.2,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "cdadd19157a41d467d659c16fb6d74a41d21d1516ae10a871bb3522b94cf817c",
+          "vtt_mtime_utc": "2026-10-11T20:14:14.1994260Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 1,
+            "channel_id": "public",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:14:10.383399+00:00",
+            "last_input_at": "2026-10-11T20:14:14.433300+00:00",
+            "last_processed_at": "2026-10-11T20:14:14.197420+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:13:54.062118+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:14:14.433300+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:14:14.433300+00:00"
+          }
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.4,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "4e34349e99e8ca169d1ad0c9625f91c84559b089ab539d82ad78562b3bf82a81",
+          "vtt_mtime_utc": "2026-10-11T20:14:12.8262246Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 1,
+            "channel_id": "government",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:14:08.341486+00:00",
+            "last_input_at": "2026-10-11T20:14:12.397457+00:00",
+            "last_processed_at": "2026-10-11T20:14:12.826224+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:14:08.309810+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:14:14.431296+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:14:14.431296+00:00"
+          }
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 1,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "986d25d24819e3252544b04c4fb0a20e31ba13ccb5f25ba14ea9635bd6a13a66",
+          "vtt_mtime_utc": "2026-10-11T20:14:15.8419249Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 0,
+            "channel_id": "education",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:14:12.427423+00:00",
+            "last_input_at": "2026-10-11T20:14:12.397457+00:00",
+            "last_processed_at": "2026-10-11T20:14:15.838380+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:14:12.397457+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:14:16.444990+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:14:16.444990+00:00"
+          }
+        }
+      ]
+    },
+    {
+      "original_file": "minute-5.json",
+      "original_sha256": "cc6a0d539b032625fa0762ea8f7522b7370cd0b679a3bb0aa4a06e90094a0bbf",
+      "minute": 5,
+      "utc": "2026-10-11T20:15:18.0201725Z",
+      "health": {
+        "status": "healthy",
+        "version": "1.0.0-beta.13",
+        "schema": "current",
+        "live_captions": "healthy",
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "mode": "normal"
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 1.7,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "22ded564770ccce0daece27b626f602e1e21a54d3de8fd28c413a8dc0a74a316",
+          "vtt_mtime_utc": "2026-10-11T20:15:17.0126060Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 0,
+            "channel_id": "public",
+            "inference_inflight": false,
+            "inference_started_at": null,
+            "last_input_at": "2026-10-11T20:15:13.455275+00:00",
+            "last_processed_at": "2026-10-11T20:15:17.012606+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": null,
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:15:17.546482+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:15:17.546482+00:00"
+          }
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.3,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "8a327146ad736e59bdb6723d9b3ff3f3e29090c4cd48d875330b3b3378608647",
+          "vtt_mtime_utc": "2026-10-11T20:15:15.3638826Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 0,
+            "channel_id": "government",
+            "inference_inflight": false,
+            "inference_started_at": null,
+            "last_input_at": "2026-10-11T20:15:13.455275+00:00",
+            "last_processed_at": "2026-10-11T20:15:15.361862+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": null,
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:15:15.496083+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:15:15.496083+00:00"
+          }
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "playlist_age_seconds": 0.8,
+          "ffprobe_streams": [
+            {
+              "codec_name": "h264",
+              "codec_type": "video"
+            },
+            {
+              "codec_name": "aac",
+              "codec_type": "audio"
+            }
+          ],
+          "vtt_available": true,
+          "vtt_sha256": "758938284554e0736f1b4b67ae2c7fe9e2e87c4a6b7c7bcf22be4659879c6932",
+          "vtt_mtime_utc": "2026-10-11T20:15:14.1467263Z",
+          "vtt_cue_count": 60,
+          "expected_jfk_words_seen": {
+            "fellow": true,
+            "americans": true,
+            "country": true
+          },
+          "caption_runtime_status": {
+            "audio_signal": "audio-present",
+            "backlog_segments": 1,
+            "channel_id": "education",
+            "inference_inflight": true,
+            "inference_started_at": "2026-10-11T20:15:15.529706+00:00",
+            "last_input_at": "2026-10-11T20:15:17.544475+00:00",
+            "last_processed_at": "2026-10-11T20:15:14.144704+00:00",
+            "max_backlog_segments": 2,
+            "pending_since_at": "2026-10-11T20:14:59.128228+00:00",
+            "provider_state": "whistle-primary",
+            "state": "within-capacity",
+            "updated_at": "2026-10-11T20:15:17.544475+00:00",
+            "worker_heartbeat_at": "2026-10-11T20:15:17.544475+00:00"
+          }
+        }
+      ]
+    }
+  ]
+}

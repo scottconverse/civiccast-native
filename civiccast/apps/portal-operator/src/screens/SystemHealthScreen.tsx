@@ -295,6 +295,8 @@ function liveCaptionDetail(channel: ChannelRuntimeStatus): string | null {
     'whistle-primary': 'Whistle primary',
     'whisper-primary': 'Whisper primary',
     'whisper-fallback': 'Whisper fallback active',
+    'whistle-recovering': 'Whisper fallback selected; checking Whistle recovery',
+    'whistle-recovery-cooldown': `Whisper fallback selected; Whistle retry${live.provider_retry_in_seconds == null ? ' pending' : ` in ${live.provider_retry_in_seconds}s`}`,
     'fallback-cooldown': `Whisper fallback cooling down${live.provider_retry_in_seconds == null ? '' : ` (${live.provider_retry_in_seconds}s)`}`,
     'fallback-retry-ready': 'Whisper fallback retry ready',
     unknown: 'provider unknown',

@@ -1,22 +1,18 @@
 # CivicCast Release Policy
 
-> **Release state:** `v1.0.0-beta.12` is the current GitHub pre-release,
-> published October 10, 2026; its station-download distribution repair was
-> added October 11. The release assets include the signed installer, five
-> runtime packs, four manual assets, checksums, sidecar, release-matched
+> **Release state:** v1.0.0-beta.13 is the current GitHub pre-release,
+> published October 11, 2026. The 26-asset release includes the signed
+> installer, runtime packs, manual assets, checksums, sidecar, release-matched
 > downloader, station bundle manifest and multipart station archive. The
-> downloader stages the complete kit and runs setup with `/S`. The October 11
-> R9 attempt failed with exit 123 against the earlier incomplete asset set; it
-> is not an install result for the repaired distribution. No completed
-> installation or sustained-operation result for the repaired asset set is
-> recorded. The recorded upgrade preserved its initial-data marker but the
-> recorder snapshot failed. See the [Beta 12 verification
-> record](../releases/v1.0.0-beta.12-verification.md) and [GitHub
-> release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
-> `release-truth.yaml` is the authored release-state record. Earlier published
+> [verification record](../releases/v1.0.0-beta.13-verification.md) binds the
+> package to source 8053fb1cf05b989fb1f23e650893cc6abfa659d4 and producer run
+> 38160778457; normal upgrade, interrupted-install repair, and fresh-install
+> five-minute observations passed across all three channels. See the
+> [GitHub release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
+> release-truth.yaml is the authored release-state record. Earlier published
 > beta releases are superseded; Beta 8 and 9 were never published. Beta 2 was
 > never published and exists only as an internal upgrade-baseline kit. See
-> [`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
+> [docs/releases/release-truth.yaml](../releases/release-truth.yaml) for the
 > authored release-state record and current version.
 
 Status: current beta adoption guidance

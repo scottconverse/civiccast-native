@@ -97,7 +97,281 @@ def test_provider_status_reports_primary_then_fallback(tmp_path):
     status = getattr(r, "live_provider_status", lambda _channel: ("missing", None))
     assert status("public") == ("whistle-primary", None)
     list(r.transcribe([chunk()]))
-    assert status("public") == ("whisper-fallback", None)
+    assert status("public")[0] == "whistle-recovery-cooldown"
+
+
+def test_recovery_probe_promotes_primary_without_publishing_probe_result(tmp_path, monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    import civiccast.captions.whistle as whistle_module
+
+    now = [100.0]
+    monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    calls, workers = [], []
+    probe_started, finish_probe, probe_finished = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    whistle_creations = 0
+
+    def factory(engine):
+        nonlocal whistle_creations
+        if engine == "whistle":
+            whistle_creations += 1
+            worker = Worker(engine, calls, fail=whistle_creations == 1)
+            if whistle_creations == 2:
+                original_request = worker.request
+
+                def probe(audio, vocabulary):
+                    probe_started.set()
+                    assert finish_probe.wait(3)
+                    try:
+                        return original_request(audio, vocabulary)
+                    finally:
+                        probe_finished.set()
+
+                worker.request = probe
+        else:
+            worker = Worker(engine, calls)
+        workers.append(worker)
+        return worker
+
+    r = WhistleRuntime(
+        weights=tmp_path / "w", library=tmp_path / "l", fallback_config={}, worker_factory=factory
+    )
+    try:
+        results = list(r.transcribe([chunk(index=1)]))
+        assert results[0].text == "fallback words"
+        now[0] += 30
+
+        # The current chunk stays on Whisper while the background probe runs.
+        fallback_result = list(r.transcribe([chunk(index=2)]))
+        assert fallback_result[0].text == "fallback words"
+        assert probe_started.wait(2), "recovery probe did not start after cooldown"
+        assert r.live_provider_status("public") == ("whistle-recovering", None)
+
+        finish_probe.set()
+        assert probe_finished.wait(2), "recovery probe did not finish"
+        assert r._recovery_thread is not None
+        r._recovery_thread.join(timeout=2)
+        assert not r._recovery_thread.is_alive()
+        assert r.live_provider_status("public") == ("whistle-primary", None)
+
+        # Probe output is discarded; only a later chunk is sent to primary.
+        results = list(r.transcribe([chunk(index=3)]))
+        assert results[0].text == "five to two"
+        assert [call[1] for call in calls if call[0] == "whistle"] == [
+            "public-tap-000001",
+            "public-tap-000002",
+            "public-tap-000003",
+        ]
+        assert len(fallback_result) == 1
+    finally:
+        finish_probe.set()
+        r.close()
+
+
+def test_valid_silence_recovery_probe_promotes_primary(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import civiccast.captions.whistle as whistle_module
+
+    now = [0.0]
+    monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    calls, workers = [], []
+    whistle_creations = 0
+
+    def factory(engine):
+        nonlocal whistle_creations
+        if engine == "whistle":
+            whistle_creations += 1
+            worker = Worker(engine, calls, fail=whistle_creations == 1)
+            if whistle_creations == 2:
+                original_request = worker.request
+
+                def silence_probe(audio, vocabulary):
+                    result = original_request(audio, vocabulary)
+                    if audio.chunk_id == "public-tap-000002":
+                        return {"text": "", "words": []}
+                    return result
+
+                worker.request = silence_probe
+        else:
+            worker = Worker(engine, calls)
+        workers.append(worker)
+        return worker
+
+    r = WhistleRuntime(
+        weights=tmp_path / "w", library=tmp_path / "l", fallback_config={}, worker_factory=factory
+    )
+    results = list(r.transcribe([chunk(index=1)]))
+    assert results[0].text == "fallback words"
+    now[0] = 30
+    results = list(r.transcribe([chunk(index=2)]))
+    assert results[0].text == "fallback words"
+    assert r._recovery_thread is not None
+    r._recovery_thread.join(timeout=2)
+    assert not r._recovery_thread.is_alive()
+    assert r.live_provider_status("public") == ("whistle-primary", None)
+    results = list(r.transcribe([chunk(index=3)]))
+    assert results[0].text == "five to two"
+    assert [call[0] for call in calls if call[0] == "whistle"] == [
+        "whistle",
+        "whistle",
+        "whistle",
+    ]
+    r.close()
+    assert all(worker.closed for worker in workers)
+
+
+def test_failed_recovery_probe_uses_exponential_backoff_capped_at_five_minutes(
+    tmp_path, monkeypatch
+):
+    from types import SimpleNamespace
+
+    import civiccast.captions.whistle as whistle_module
+
+    now = [100.0]
+    monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    calls, workers = [], []
+
+    def factory(engine):
+        worker = Worker(engine, calls, fail=engine == "whistle")
+        workers.append(worker)
+        return worker
+
+    r = WhistleRuntime(
+        weights=tmp_path / "w", library=tmp_path / "l", fallback_config={}, worker_factory=factory
+    )
+    results = list(r.transcribe([chunk(index=1)]))
+    assert results[0].text == "fallback words"
+    assert r._recoveries["public"].next_attempt_at == 130.0
+
+    for index, retry_delay in enumerate((60, 120, 240, 300, 300), start=2):
+        now[0] = r._recoveries["public"].next_attempt_at
+        results = list(r.transcribe([chunk(index=index)]))
+        assert results[0].text == "fallback words"
+        assert r._recovery_thread is not None
+        r._recovery_thread.join(timeout=2)
+        assert not r._recovery_thread.is_alive()
+        recovery = r._recoveries["public"]
+        assert recovery.next_attempt_at - now[0] == retry_delay
+
+    r.close()
+    assert all(worker.closed for worker in workers)
+
+
+def test_only_one_channel_recovery_probe_runs_stationwide(tmp_path, monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    import civiccast.captions.whistle as whistle_module
+
+    now = [0.0]
+    monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    calls, workers = [], []
+    probe_started, release_probe = threading.Event(), threading.Event()
+    whistle_creations = 0
+
+    def factory(engine):
+        nonlocal whistle_creations
+        if engine == "whistle":
+            whistle_creations += 1
+            worker = Worker(engine, calls, fail=whistle_creations <= 2)
+            if whistle_creations == 3:
+                original_request = worker.request
+
+                def blocked_probe(audio, vocabulary):
+                    probe_started.set()
+                    assert release_probe.wait(3)
+                    return original_request(audio, vocabulary)
+
+                worker.request = blocked_probe
+        else:
+            worker = Worker(engine, calls)
+        workers.append(worker)
+        return worker
+
+    r = WhistleRuntime(
+        weights=tmp_path / "w", library=tmp_path / "l", fallback_config={}, worker_factory=factory
+    )
+    try:
+        results = list(r.transcribe([chunk("public", 1)]))
+        assert results[0].text == "fallback words"
+        results = list(r.transcribe([chunk("government", 1)]))
+        assert results[0].text == "fallback words"
+        now[0] = 30
+        results = list(r.transcribe([chunk("public", 2)]))
+        assert results[0].text == "fallback words"
+        assert probe_started.wait(2)
+        results = list(r.transcribe([chunk("government", 2)]))
+        assert results[0].text == "fallback words"
+        assert whistle_creations == 3
+    finally:
+        release_probe.set()
+        thread = r._recovery_thread
+        if thread is not None:
+            thread.join(timeout=2)
+        r.close()
+
+
+def test_close_during_recovery_cancels_late_promotion_and_closes_probe(tmp_path, monkeypatch):
+    import threading
+    from types import SimpleNamespace
+
+    import civiccast.captions.whistle as whistle_module
+
+    now = [0.0]
+    monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    calls, workers = [], []
+    probe_started, release_probe = threading.Event(), threading.Event()
+    whistle_creations = 0
+
+    def factory(engine):
+        nonlocal whistle_creations
+        if engine == "whistle":
+            whistle_creations += 1
+            worker = Worker(engine, calls, fail=whistle_creations == 1)
+            if whistle_creations == 2:
+                original_request = worker.request
+
+                def blocked_probe(audio, vocabulary):
+                    probe_started.set()
+                    assert release_probe.wait(3)
+                    return original_request(audio, vocabulary)
+
+                worker.request = blocked_probe
+                original_close = worker.close
+
+                def close_probe():
+                    original_close()
+                    release_probe.set()
+
+                worker.close = close_probe
+        else:
+            worker = Worker(engine, calls)
+        workers.append(worker)
+        return worker
+
+    r = WhistleRuntime(
+        weights=tmp_path / "w", library=tmp_path / "l", fallback_config={}, worker_factory=factory
+    )
+    results = list(r.transcribe([chunk(index=1)]))
+    assert results[0].text == "fallback words"
+    now[0] = 30
+    results = list(r.transcribe([chunk(index=2)]))
+    assert results[0].text == "fallback words"
+    assert probe_started.wait(2)
+    probe = workers[-1]
+    r.close()
+    assert probe.closed
+    assert r._recovery_thread is not None
+    r._recovery_thread.join(timeout=2)
+    assert not r._recovery_thread.is_alive()
+    assert "public" not in r._primaries
+    assert not r._recoveries
 
 
 def test_provider_status_does_not_wait_for_fallback_initialization_lock(tmp_path):
@@ -224,10 +498,44 @@ def test_primary_failure_still_attempts_and_surfaces_unavailable_backup(tmp_path
         list(r.transcribe([chunk()]))
     assert attempts == ["whistle", "whisper", "whisper"]
     assert workers[0].closed
-    assert r.live_provider_status("public")[0] == "fallback-cooldown"
+    assert r.live_provider_status("public")[0] == "unknown"
     with pytest.raises(RuntimeError, match="cooldown"):
         list(r.transcribe([chunk(index=2)]))
     assert attempts == ["whistle", "whisper", "whisper"]
+    r.close()
+
+
+def test_runtime_primary_and_fallback_errors_redact_local_paths(tmp_path, caplog):
+    import pytest
+
+    from civiccast.captions.whistle import WhistleRuntime
+
+    calls = []
+    local_path = r"C:\private\audio.wav"
+
+    class FailingWorker:
+        def __init__(self, engine):
+            self.engine = engine
+
+        def request(self, audio, vocabulary):
+            calls.append((self.engine, audio.chunk_id))
+            raise RuntimeError(local_path)
+
+        def close(self):
+            return None
+
+    r = WhistleRuntime(
+        weights=tmp_path / "w",
+        library=tmp_path / "l",
+        fallback_config={},
+        worker_factory=FailingWorker,
+    )
+    with pytest.raises(RuntimeError):
+        list(r.transcribe([chunk()]))
+    assert [engine for engine, _chunk_id in calls] == ["whistle", "whisper", "whisper"]
+    assert local_path not in caplog.text
+    assert "switching to Whisper: <path>" in caplog.text
+    assert "message=<path>" in caplog.text
     r.close()
 
 
@@ -333,6 +641,7 @@ def test_failed_fallback_replacement_recovers_after_cooldown(tmp_path, monkeypat
     r = WhistleRuntime(
         weights=tmp_path / "w", library=tmp_path / "l", fallback_config={}, worker_factory=factory
     )
+    monkeypatch.setattr(r, "_start_recovery_if_due", lambda *_args: None)
 
     with pytest.raises(TimeoutError, match="blocked native call"):
         list(r.transcribe([chunk(index=1)]))
@@ -484,6 +793,171 @@ def test_audio_send_to_blocked_child_is_deadline_bounded():
     assert released.is_set()
 
 
+def test_whistle_request_warns_at_ten_seconds_and_expires_at_thirty_without_model(
+    monkeypatch, caplog
+):
+    import queue
+    import threading
+    from types import SimpleNamespace
+
+    import pytest
+
+    import civiccast.captions.whistle as whistle_module
+    from civiccast.captions.whistle import _SpeechProcess
+
+    assert whistle_module._speech_request_timeout("whistle") == 30
+    assert whistle_module._speech_request_timeout("whisper") == 10
+    now = [0.0]
+    monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+
+    class Input:
+        def write(self, _value):
+            return None
+
+        def flush(self):
+            return None
+
+    class SlowThenReady:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, timeout):
+            self.calls.append(timeout)
+            if len(self.calls) == 1:
+                now[0] += timeout
+                raise queue.Empty
+            now[0] += 0.1
+            return {"id": 1, "result": []}
+
+    def bare_child(responses):
+        child = object.__new__(_SpeechProcess)
+        child._engine = "whistle"
+        child._lock = threading.Lock()
+        child._closed = False
+        child._sequence = 0
+        child._timeout = 30.0
+        child._responses = responses
+        child._process = SimpleNamespace(stdin=Input(), pid=None, poll=lambda: None)
+        child._stderr_tail = bytearray()
+        child._stderr_tail_lock = threading.Lock()
+        child.close = lambda: setattr(child, "_closed", True)
+        return child
+
+    slow = SlowThenReady()
+    assert bare_child(slow).request(chunk(), None) == []
+    assert slow.calls == [10.0, 20.0]
+    assert "Whistle request is slow" in caplog.text
+    assert "phase=response elapsed_s=10.000" in caplog.text
+
+    class NeverReady:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, timeout):
+            self.calls.append(timeout)
+            now[0] += timeout
+            raise queue.Empty
+
+    now[0] = 0.0
+    never = NeverReady()
+    with pytest.raises(TimeoutError, match="missed its deadline"):
+        bare_child(never).request(chunk(), None)
+    assert never.calls == [10.0, 20.0]
+
+
+def test_failed_child_diagnostics_are_bounded_sanitized_and_pre_kill(monkeypatch, caplog):
+    import queue
+    import sys
+    import threading
+    from types import ModuleType, SimpleNamespace
+
+    import pytest
+
+    import civiccast.captions.whistle as whistle_module
+    from civiccast.captions.whistle import _SpeechProcess
+
+    now = [0.0]
+    monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    events = []
+
+    class Input:
+        def write(self, _value):
+            return None
+
+        def flush(self):
+            return None
+
+    class NeverReady:
+        def get(self, timeout):
+            now[0] += timeout
+            raise queue.Empty
+
+    class FakeStderr:
+        def __init__(self):
+            self.buffer = self
+            self.chunks = iter([b"x" * 4096 for _ in range(4)] + [b"C:\\private\\native.dll"])
+
+        def read1(self, _size):
+            return next(self.chunks, b"")
+
+        def read(self, size):
+            return self.read1(size)
+
+    class SnapshotProcess:
+        pid = 7654
+        stdin = Input()
+        returncode = 17
+
+        def poll(self):
+            events.append("exit-status")
+            return self.returncode
+
+    fake_psutil = ModuleType("psutil")
+
+    class Snapshot:
+        def cpu_times(self):
+            events.append("cpu")
+            return SimpleNamespace(user=0.25, system=0.125)
+
+        def memory_info(self):
+            events.append("memory")
+            return SimpleNamespace(private=4096)
+
+    def process_snapshot(_pid):
+        return Snapshot()
+
+    fake_psutil.Process = process_snapshot
+    monkeypatch.setitem(sys.modules, "psutil", fake_psutil)
+    child = object.__new__(_SpeechProcess)
+    child._engine = "whistle"
+    child._lock = threading.Lock()
+    child._closed = False
+    child._sequence = 0
+    child._timeout = 0.05
+    child._responses = NeverReady()
+    child._process = SnapshotProcess()
+    child._stderr = FakeStderr()
+    child._stderr_tail = bytearray()
+    child._stderr_tail_lock = threading.Lock()
+    child._drain_stderr()
+    assert len(child._stderr_tail) == whistle_module._STDERR_RING_BYTES
+
+    def terminate_after_snapshot():
+        events.append("terminate")
+        child._process.returncode = 99
+        child._closed = True
+
+    child.close = terminate_after_snapshot
+    with pytest.raises(TimeoutError, match="missed its deadline"):
+        child.request(chunk(), None)
+
+    assert events == ["exit-status", "cpu", "memory", "terminate"]
+    assert "exit_status=17" in caplog.text
+    assert "cpu_user_s=0.25" in caplog.text
+    assert "private_bytes=4096" in caplog.text
+    assert "C:\\private" not in caplog.text
+
+
 def test_station_serializes_all_three_native_primaries(tmp_path):
     import threading
     from concurrent.futures import ThreadPoolExecutor
@@ -536,7 +1010,7 @@ def test_overlap_or_silence_does_not_demote_healthy_whistle(tmp_path):
             update={"start_seconds": 100 + index * 5, "end_seconds": 110 + index * 5}
         )
         assert next(iter(r.transcribe([audio]))).text == "five to two"
-    assert not r._failed
+    assert not r._recoveries
     assert all(call[0] == "whistle" for call in calls)
     assert not workers[0].closed
     assert not hasattr(r, "prepare_stabilization")
@@ -552,7 +1026,7 @@ def test_pipeline_publishes_first_whistle_result_without_waiting(tmp_path):
     result = pipeline.process([chunk()], asset_id="public")
     assert [c.text for c in result.committed_cues] == ["five to two"]
     assert not pipeline.process([chunk()], asset_id="public").committed_cues
-    assert not r._failed
+    assert not r._recoveries
     r.close()
 
 

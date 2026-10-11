@@ -177,6 +177,7 @@ def verify_layout(
 DIRECT_CONSUMER_RECEIPT_KIND = "civiccast-native-beta-direct-consumer-evidence"
 DIRECT_BETA11_VERSION = "1.0.0-beta.11"
 DIRECT_BETA12_VERSION = "1.0.0-beta.12"
+DIRECT_BETA13_VERSION = "1.0.0-beta.13"
 DIRECT_BETA12_CONSUMER_CONTRACT = "beta11-to-beta12-interrupted-upgrade-v1"
 DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT = "beta11-to-beta12-upgrade-and-d4-repair-v1"
 DIRECT_BETA11_BASELINE_INSTALLER_SHA256 = (
@@ -925,8 +926,11 @@ def verify_consumer_evidence_receipt(
     if consumer_mode not in {"sandbox", "physical-host"}:
         raise PublishError(f"unsupported direct consumer evidence mode: {consumer_mode!r}")
     runtime_proof_scope = doc.get("runtime_proof_scope", "three-channel-capacity")
-    beta12_candidate = candidate_version == DIRECT_BETA12_VERSION
-    beta12_sandbox = consumer_mode == "sandbox" and candidate_version == DIRECT_BETA12_VERSION
+    beta12_candidate = candidate_version in {DIRECT_BETA12_VERSION, DIRECT_BETA13_VERSION}
+    beta12_sandbox = consumer_mode == "sandbox" and candidate_version in {
+        DIRECT_BETA12_VERSION,
+        DIRECT_BETA13_VERSION,
+    }
     beta12_separate_contract = (
         beta12_sandbox and doc.get("consumer_contract") == DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT
     )
@@ -937,16 +941,25 @@ def verify_consumer_evidence_receipt(
             raise PublishError(f"unsupported direct runtime proof scope: {runtime_proof_scope!r}")
         runtime_proof_group, runtime_channels = DIRECT_RUNTIME_PROOF_SCOPES[runtime_proof_scope]
         if beta12_sandbox:
-            if doc.get("consumer_contract") not in {
-                DIRECT_BETA12_CONSUMER_CONTRACT,
-                DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT,
-            }:
+            allowed_contracts = (
+                {DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT}
+                if candidate_version == DIRECT_BETA13_VERSION
+                else {
+                    DIRECT_BETA12_CONSUMER_CONTRACT,
+                    DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT,
+                }
+            )
+            if doc.get("consumer_contract") not in allowed_contracts:
+                if candidate_version == DIRECT_BETA13_VERSION:
+                    raise PublishError(
+                        "Beta 13 direct Sandbox evidence must use the existing separate upgrade-and-repair contract"
+                    )
                 raise PublishError(
                     "Beta 12 direct Sandbox evidence must use the Beta 11 interrupted-upgrade contract"
                 )
             if runtime_proof_scope != "three-channel-capacity":
                 raise PublishError(
-                    "Beta 12 direct Sandbox upgrade evidence requires the three-channel runtime proof"
+                    f"{candidate_version} direct Sandbox upgrade evidence requires the three-channel runtime proof"
                 )
         elif candidate_version == DIRECT_BETA11_VERSION:
             if "consumer_contract" in doc:
@@ -1366,6 +1379,8 @@ def verify_consumer_evidence_receipt(
                 "observation_ended_utc",
                 "progress_delta_sha256",
             }
+            if "precondition_health_assessment" in interruption:
+                interruption_fields.add("precondition_health_assessment")
             _record_keys(interruption, interruption_fields, label="D4 repair interruption")
             installed_before = _record(
                 interruption.get("installed_before"), label="D4 repair installed-before state"
@@ -1400,6 +1415,23 @@ def verify_consumer_evidence_receipt(
                 )
                 if installed_before_health_finding is not None:
                     caption_findings.add(installed_before_health_finding)
+                health_assessment = interruption.get("precondition_health_assessment")
+                if health_assessment is not None:
+                    health_assessment = _record(
+                        health_assessment, label="D4 repair precondition health assessment"
+                    )
+                    if (
+                        health_assessment.get("accepted") is not True
+                        or health_assessment.get("health_status_consistent") is not True
+                        or health_assessment.get("schema_revision_pair_matches") is not True
+                        or health_assessment.get("live_captions_state")
+                        != full_public_health.get("live_captions")
+                        or health_assessment.get("health_status_caption_only_degraded_advisory")
+                        is not (installed_before_health_finding is not None)
+                    ):
+                        raise PublishError(
+                            "D4 repair precondition health assessment is inconsistent with the checked public health"
+                        )
             installed_health_status = (
                 full_public_health.get("status")
                 if beta12_sandbox and isinstance(full_public_health, dict)

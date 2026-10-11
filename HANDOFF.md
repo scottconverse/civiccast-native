@@ -1,22 +1,11 @@
 # Current continuation state
 
-The current published release is Beta 12. For its package identity, evidence,
-and limits, use [PROJECT-STATUS.md](PROJECT-STATUS.md) and the [Beta 12
-verification record](docs/releases/v1.0.0-beta.12-verification.md). The
-October 10 checkpoint below predates publication and is retained only as
-history; its candidate, pending-work, and authorization statements are not
-current status.
-
-The release's public distribution was repaired on October 11: all 14 added
-station-bundle/helper assets match their local sizes and digests. The complete
-public kit was downloaded and verified. Fresh offline Sandbox setup exited 0,
-station activation and offline model self-tests passed, and the service was
-`Running`. A follow-on first-admin/three-channel check failed with only the
-first Python traceback line captured; its cause is unresolved and full
-first-admin/channel validation is not established. See the [captured result](docs/ops/evidence/beta12-public-fresh-install-2026-10-11.json).
-The original R9 exit-123
-attempt predates the repair and remains a failure. The published EXE is
-unchanged; later source installer/operator corrections are not embedded in it.
+The current published release is Beta 13. For its package identity and
+recorded evidence, use [PROJECT-STATUS.md](PROJECT-STATUS.md) and the
+[Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
+The normal Beta 11 upgrade, one repair after an interrupted install, and a
+fresh install each passed a five-minute observation across all three channels.
+The October 10 checkpoint below predates publication and remains history only.
 
 ## Historical October 10 Beta 12 pre-publication checkpoint
 

@@ -47,14 +47,17 @@ REQUIRED_DOCS: dict[Path, tuple[str, ...]] = {
     Path("docs/index.html"): (
         PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
-        "SDI capture cards have not been tested",
+        "A CivicCast Beta 11 station ran public, government and education programming together",
+        "48-hour soak",
     ),
     Path("docs/install-windows.html"): (
         PUBLISHED_RELEASE_TAG,
         PUBLISHED_RELEASE_LINK,
-        "SHA-256",
-        "Authenticode",
-        "Physical DeckLink",
+        "Windows installation guide",
+        "INSTALL-WINDOWS.md",
+        "signed installer",
+        "complete signed station model bundle",
+        "verifies them",
     ),
 }
 

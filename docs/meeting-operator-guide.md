@@ -155,8 +155,10 @@ These captions run locally. By default summary and translation also use local
 models. Some stations also offer optional hosted models
 for summary and translation. A hosted selection sends meeting text to a
 third-party provider and may incur charges under that provider's current terms;
-check its pricing before enabling it. Only the station admin can change the
-selection, and meeting operators can view the current model.
+pricing may be per-token or use another provider-specific billing model, so
+check current rates and account terms before enabling it. Only the station
+admin can change the selection, and meeting operators can view the current
+model.
 
 ## Common Problems
 

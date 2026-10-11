@@ -1,27 +1,14 @@
 # CivicCast Native installation support prompt
 
 Use this guide only for an owner-authorized Windows beta field test. It is
-candidate-neutral: the tester handoff and the release verification record
-identify the approved installer and procedure. Beta 12 is the current public
-pre-release, from source `a0c98cb7367dc106042ec89d35a91905470d350c`, producer
-run `38097350705`. Its full public download now includes the Windows helper,
-five runtime packs and a multipart station bundle alongside the signed
-installer, manuals, checksums and sidecar. The helper's `-Install` option
-verifies and stages the complete kit, then runs setup with `/S`; this skips
-the interactive model-selection window. The package path is available, but no
-completed fresh install or sustained-operation result for the repaired Beta 12
-asset set is recorded.
-
-The October 11 R9 first-install attempt predates the station-bundle
-distribution repair. It failed activation with actual installer exit 123
-because four signed station packs were missing and their embedded URLs were
-empty. It ran on a previously used machine with residual files and model caches;
-no service or first-admin account was created. The result is not clean-machine
-proof and is not a test of the repaired download. The separate Beta 11-to-Beta
-12 CPU-only Sandbox upgrade exited 0 and preserved its initial-data marker,
-but the recorder failed at the first JSON save; no five-snapshot PASS was
-recorded. This guide does not authorize an installation, upgrade, release or
-station cutover.
+candidate-neutral: the tester handoff and release verification record identify
+the approved installer and procedure. Beta 13 is the current public pre-release,
+bound to source 8053fb1cf05b989fb1f23e650893cc6abfa659d4 and producer run
+38160778457. Its 26-asset release includes the signed installer, five runtime
+packs, manual assets, checksums, sidecar, release-matched helper and station
+bundle. The normal upgrade, one interrupted-install repair, and fresh install
+each passed a five-minute observation across all three channels. This guide
+does not itself authorize an installation, upgrade, release or station cutover.
 
 Give the instructions below to an assistant helping the operator. Proceed one
 step at a time, explain what the operator should see, and ask for a screenshot
@@ -31,7 +18,7 @@ only when the screen is needed to diagnose the next step.
 
 You are helping with a CivicCast Native Windows field test. Follow the exact
 owner-approved tester handoff and the current
-[Field-Test Quick Start](QUICKSTART-OPERATOR.md). Do not guess a version, choose
+[tester start page](tester/START-HERE.md). Do not guess a version, choose
 a generic/latest download, or substitute another candidate's test results.
 
 Never ask the operator to disclose a password, recovery code, API token or
@@ -62,15 +49,13 @@ signed station bundle in `station\`, and the rendered manual in
 exact handoff identifies this kit layout. `station\SHA256SUMS.txt` covers the
 station bundle; it does not verify the setup executable or runtime packs.
 
-For a Beta 12 field test, follow the owner-authorized handoff and current
-[release verification record](releases/v1.0.0-beta.12-verification.md). The
+For a Beta 13 field test, follow the owner-authorized handoff and current
+[release verification record](releases/v1.0.0-beta.13-verification.md). The
 release-matched helper is the public asset
-`download_windows_release_artifacts.ps1`; its `-Install` option downloads and
+<code>download_windows_release_artifacts.ps1</code>; its <code>-Install</code> option downloads and
 validates the installer, runtime packs and multipart station bundle before
-running setup with `/S`. The [Windows release-trust guide](install/windows-release-trust.md)
-shows how to verify the helper's hash before running it. The October 11 R9
-failure described above used the earlier incomplete public asset set. No
-completed fresh-install result for the repaired download is recorded.
+running setup with <code>/S</code>. The [Windows release-trust guide](install/windows-release-trust.md)
+shows how to verify the helper's hash before running it.
 
 ## Run the assigned install procedure
 

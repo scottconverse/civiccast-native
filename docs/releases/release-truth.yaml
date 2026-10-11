@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.12
+current: v1.0.0-beta.13
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,13 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.12
+  - tag: v1.0.0-beta.13
     status: current
+    notes: >-
+      Published by publish_beta_candidate.py, artifact source 8053fb1cf05b989fb1f23e650893cc6abfa659d4, tag target 38011c645c64863aeb435b28c05e8afb3f6529e6, build run 38160778457, direct Sandbox consumer receipt C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\beta13-candidate-8053fb1c\direct-consumer-receipt.json; Gate A not run.
+  - tag: v1.0.0-beta.12
+    status: superseded
+    superseded_by: v1.0.0-beta.13
     notes: >-
       Owner-directed publication of verified signed source a0c98cb7367dc106042ec89d35a91905470d350c, build 38097350705. Actual Beta11-to-Beta12 CPU-only Sandbox upgrade exit0/healthy/current; initial three-channel output/Whistle within capacity. Observation recorder failed JSON serialization; five-snapshot completion and exact-candidate fresh/repair not claimed. Owner directed shipment and deferred evidence bookkeeping; no fabricated consumer receipt.
   - tag: v1.0.0-beta.11

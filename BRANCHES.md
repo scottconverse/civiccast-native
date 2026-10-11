@@ -50,17 +50,15 @@ not scratch.
 
 ## Release identity
 
-`v1.0.0-beta.12` is the current public release, published 2026-10-10 as a
-GitHub pre-release (not a production release). The signed installer, runtime
-packs, manuals, checksums, and installer sidecar are attached to the
-[Beta 12 GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
-Its [verification record](docs/releases/v1.0.0-beta.12-verification.md)
-reports a normal Beta 11 upgrade setup that exited 0 with a healthy service at
-schema 0089 and a saved preservation marker. The first post-upgrade JSON
-snapshot failed; the five-snapshot check did not pass. Exact-candidate fresh
-install, interrupted repair, and sustained operation were not run.
+v1.0.0-beta.13 is the current public release, published 2026-10-11 as a
+GitHub pre-release (not a production release). Its 26 assets include the
+signed installer, runtime packs, manuals, checksums, installer sidecar and
+station bundle. The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
+binds it to source 8053fb1cf05b989fb1f23e650893cc6abfa659d4 and producer
+run 38160778457. The normal upgrade, one interrupted-install repair, and
+fresh install each passed a five-minute observation across all three channels.
 
-Beta 11 and earlier releases are superseded; Beta 8 and Beta 9 were never
+Beta 12 and earlier releases are superseded; Beta 8 and Beta 9 were never
 published, and Beta 2 exists only as an internal upgrade-baseline kit. See
 [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for the
 authored state of each tag and [`docs/releases/`](docs/releases/) for

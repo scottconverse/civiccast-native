@@ -15,6 +15,8 @@ import re
 from html import unescape
 from pathlib import Path
 
+from scripts.policy.check_v17_adoption_gate import PUBLISHED_RELEASE_LINK
+
 ROOT = Path(__file__).resolve().parents[2]
 FIELD_DELIVERY_DOCUMENTS = (
     ROOT / "README.md",
@@ -72,35 +74,38 @@ def test_field_delivery_docs_do_not_claim_plain_metadata_is_signed() -> None:
     assert not offenders, f"Plain sidecar/delivery metadata is described as signed: {offenders}"
 
 
-def test_readme_separates_merged_caption_repairs_from_candidate_acceptance() -> None:
+def test_readme_separates_published_downloads_from_field_evidence() -> None:
     readme = _normalized_plaintext(ROOT / "README.md")
-    assert "caption-tap overload fix itself has no merged pr yet" not in readme
-    for repair in ("/pull/172", "/pull/182", "/pull/190", "/pull/191"):
-        assert repair in readme
-    assert "merged code is not a completed two-hour candidate soak" in readme
+    assert PUBLISHED_RELEASE_LINK in readme
+    assert "99.88% live caption-input coverage" in readme
+    assert "separate beta 11 host" in readme
+    assert "it is not a beta 13 soak, general service-uptime percentage" in readme
+    assert "package qualification" in readme
 
 
-def test_quickstart_verifies_hash_and_authenticode_before_running_installer() -> None:
+def test_quickstart_uses_the_release_helper_and_verifies_its_exact_inputs() -> None:
     quickstart = _normalized_plaintext(ROOT / "docs/QUICKSTART-OPERATOR.md")
-    hash_check = quickstart.index("sha-256 against the trusted handoff")
-    authenticode_check = quickstart.index("valid authenticode signature")
-    run_installer = quickstart.index("run its branded")
-
-    assert hash_check < run_installer
-    assert authenticode_check < run_installer
-    assert "matching hash alone is not proof of publisher identity" in quickstart
+    # Check the literal filename before plaintext normalization removes underscores.
+    source = (ROOT / "docs/QUICKSTART-OPERATOR.md").read_text(encoding="utf-8")
+    assert "download_windows_release_artifacts.ps1" in source
+    assert "-install" in quickstart
+    assert "before running the helper, compare its sha-256" in quickstart
+    assert "same-release sha256sums.txt" in quickstart
+    assert "the helper then verifies the setup signature and hash, sidecar" in quickstart
+    assert "runtime-pack hashes" in quickstart
+    assert "multipart station parts and extracted file hashes" in quickstart
+    assert "stop if any value differs" in quickstart
 
 
 def test_quickstart_keeps_smartscreen_conditional_and_installation_distinct_from_cutover() -> None:
     quickstart = _normalized_plaintext(ROOT / "docs/QUICKSTART-OPERATOR.md")
 
     conditional_warning = quickstart.index("if windows shows windows protected your pc")
-    verify_publisher = quickstart.index("verify that the publisher is scott converse")
-    reject_mismatch = quickstart.index("choose don t run")
-    proceed_after_checks = quickstart.index(
-        "if the checks match the approved test kit, choose run anyway"
+    verify_publisher = quickstart.index("confirm the publisher is scott converse")
+    reject_mismatch = quickstart.index(
+        "if the publisher, filename or hash is wrong, choose don t run"
     )
-    assert conditional_warning < verify_publisher < reject_mismatch < proceed_after_checks
+    assert conditional_warning < verify_publisher < reject_mismatch
 
     assert "on the station itself" in quickstart
     assert "recovery codes" in quickstart
@@ -108,6 +113,7 @@ def test_quickstart_keeps_smartscreen_conditional_and_installation_distinct_from
     assert "installation check, not yet a beta release or production-readiness claim" in quickstart
     assert "not a production cutover instruction" in quickstart
     assert "wait for the station owner s cutover decision" in quickstart
+    assert "successful setup exit alone does not prove" in quickstart
     _assert_no_false_completion_claims(quickstart)
 
 
