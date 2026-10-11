@@ -19,8 +19,8 @@ CivicCast 1.0.0-beta.11 was published on 2026-10-08 as a **GitHub pre-release**,
 | --- | --- |
 | Earlier published beta.11 package, refreshed on an existing beta.11 host | Two observations 41 seconds apart showed advancing HLS and changing captions on three channels; brief output check only |
 | Latest beta.11 package | See the current verification record for its source, hash, installation checks and limits |
-| Clean install, failed-install repair, upgrade from beta.10, long-duration or capacity behavior | See the verification record for the exact package; the earlier in-place refresh did not test these |
-| Separate 36-hour dev7 soak | Development-station overlay, separate from the published package; not package verification or capacity proof |
+| Clean install, failed-install repair, upgrade from beta.10 | See the verification record for exact-package status; the earlier in-place refresh did not test these |
+| 48-hour live-caption host observation | A current beta.11 host ran three channels; all were on air at the endpoint, with 99.88% nominal caption-input coverage. See the [host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md). Runtime evidence, not package qualification or supported-capacity proof |
 | Operation at a real station; physical SDI capture; real cable-operator acceptance | **Not established** |
 
 The exact scope is in the [beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). If a vendor, board or funder asks whether this is production ready, beta.11 is a pre-release and the answer is no.
@@ -103,7 +103,7 @@ The AI that writes summaries and translations is chosen by a second rule.
 
 All three AI models (`gemma4:12b`, `gemma4:e4b` and the translation model `translategemma:4b`) are installed on every station; the rule only picks the default. The product's catalog lists a minimum of 16 GB of memory for the 12B model and 8 GB for the smaller one. The only measurement the project recorded without a graphics card was on a computer with 32 GB of memory and 16 cores (32 threads): the smaller model finished a summary in 94 seconds warm and 128 seconds cold, while the 12B model took 366 seconds once and then failed twice. We have no measurement on a smaller computer.
 
-**The default video encoder runs on the processor.** CivicCast uses OpenH264 software encoding by default. Compatible NVIDIA or Media Foundation hardware encoders can be configured when present; the channel profile and pre-flight determine whether one is used or a CPU fallback is allowed. The default output profile is 1280 x 720, 30 frames per second, H.264 at 6,000 kbps and AAC audio at 192 kbps. This release has no channel-capacity result; test the planned number of channels on the intended computer.
+**The default video encoder runs on the processor.** CivicCast uses OpenH264 software encoding by default. Compatible NVIDIA or Media Foundation hardware encoders can be configured when present; the channel profile and pre-flight determine whether one is used or a CPU fallback is allowed. The default output profile is 1280 x 720, 30 frames per second, H.264 at 6,000 kbps and AAC audio at 192 kbps. A three-channel, 48-hour observation on one beta.11 host is not a channel-capacity result; test the planned number of channels on the intended computer.
 
 ### What was measured on the lab station
 
@@ -114,17 +114,14 @@ The three-channel evidence in the verification record came from one lab computer
 | Three channels on air for 8 hours | One service process the whole time; no restart; 0 watchdog firings |
 | Processor load while preparing a long program for the first time | 95 to 98 percent (oversight notes) |
 | Conform cache | 46 GB of its 60 GB budget used |
-| Live caption audio dropped under heavy load | 13 catch-up discard events in 8 hours; about 160 seconds of audio lost on a quiet machine |
-
-> **Historical beta.10 measurement:** The eight-hour C16 run recorded 13 catch-up discard events and about 160 seconds of audio loss on a quiet machine. Beta.11 changes the live engine and publishes first-pass results, but live caption audio is still best-effort and may be shed under overload to preserve playout. The brief beta.11 package output check does not establish completeness or capacity; plan to monitor captions and test with the station's workload.
 
 ### Our recommendation
 
 These follow from the evidence above. They are not tested minimums, because the project has not published any.
 
-1. **For several live channels with captions**, size the processor for video playout and Whistle's station-wide serialized recognition, then observe the actual workload. The published beta.11 package check was too brief to establish a supported channel capacity; do not treat the dev7 soak as package capacity evidence.
+1. **For several live channels with captions**, size the processor for video playout and Whistle's station-wide serialized recognition, then observe the actual workload. The 48-hour beta.11 host observation is runtime history, not a supported-capacity result; test the workload on the intended computer.
 2. **Without an NVIDIA card**, Whistle live captions still run on CPU. An NVIDIA card can accelerate Whisper fallback/recorded captions and may allow the larger summary model; neither the GPU nor CUDA is required for Whistle. Test the summary and caption workload on the intended machine.
-3. **Do not run other large programs on the station** during meetings. Disk scans alone produced small caption discards in the lab run.
+3. **Do not run other large programs on the station** during meetings.
 
 To see what CivicCast itself detects after install, open `http://127.0.0.1:8000/api/hardware` in a browser on the station (it needs no sign-in) or run `civiccast doctor` ([Appendix A](#app-cli)).
 

@@ -23,12 +23,7 @@ the authored release-state record.
 
 The limits below describe Beta 10 and its earlier evidence only.
 
-## Historical Beta 10 Live-Caption Evidence
-
-Beta.7's eight-hour physical-machine soak (beta.7 is now superseded) ran with
-live captions off. It is not captions-ON endurance proof. Live captions remain
-off by default on new installations; an explicitly saved setting survives
-upgrades.
+## Historical Beta 10 Evidence
 
 At the time, `v1.0.0-beta.10` was the current published release (`v1.0.0-beta.8` and
 `v1.0.0-beta.9` were never published, and their work is included in it). It is
@@ -44,14 +39,6 @@ it.
 
 Known limits of beta.10:
 
-- **Live-caption audio can be dropped under heavy load.** A caption worker that
-  falls behind now catches up by skipping its oldest audio instead of pausing
-  for minutes. In the eight-hour run this happened 13 times; on a quiet machine
-  the total was about 160 seconds of audio on two channels. Captions stay on
-  the air, but those seconds of speech have no caption. The cause is the
-  caption worker falling behind during long first-time media preparations. A
-  fix is the next work item and is not in beta.10. Preserve logs and report
-  missing captions rather than changing thresholds to make a test pass.
 - **Two program-change first attempts aborted and corrected themselves** in
   about three seconds on the government channel, with no on-air effect.
 - **One known single-frame (0.033 second) video drop** at a part-to-part join

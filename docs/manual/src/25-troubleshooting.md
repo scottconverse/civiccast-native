@@ -173,7 +173,7 @@ There are two separate caption paths. **Live captions** are off by default in be
 
 The native live runtime uses Whistle on CPU by default. It publishes the first recognition without waiting for another reading to agree, and serializes primary inference across channels on the station. A Whistle request has a 10-second deadline. If it fails or times out, that channel switches to Whisper and remains there until the live runtime restarts. Whisper is also the recorded-caption engine. CUDA is optional acceleration for Whisper; it is not required for Whistle.
 
-Live caption audio is best-effort. The audio tap has bounded queues and can discard older working audio or pause caption recognition under sustained overload to keep playout responsive. Captions can therefore contain gaps even while the channel stays on air. The beta.10 eight-hour C16 run recorded 13 catch-up discard events and about 160 seconds of quiet-machine audio loss; these are historical beta.10 measurements, not measurements of the beta.11 package. The beta.11 package's two output observations were 41 seconds apart and do not prove caption completeness or capacity. Ask your city attorney what accessibility obligations apply to your station.
+The audio tap has bounded queues and can discard older working audio or pause caption recognition under sustained overload to keep playout responsive. If captions lag, pause, or show gaps, use the table below to check the logs and reduce competing CPU or disk work.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|

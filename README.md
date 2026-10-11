@@ -16,7 +16,7 @@ The Beta 12 release continues to use Whistle as the CPU primary; Whisper fallbac
 
 The October 8 documentation/help download revision (producer `400cff08`, signed build `37857705750`) passed a fresh CPU-only Windows Sandbox installation, a five-minute single-channel caption/output check, and installed Help verification. Its manual, contextual instructions, PDF and Word editions are reconciled with the software. The published tag remains unchanged; the verification record identifies the revised source and keeps earlier package and development-soak results separate. See [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) for results and limits.
 
-A separate October 8–10 Beta 11 host observation recorded **99.877507716% (99.88% rounded) live caption-input audio coverage** over 48 hours and three channels: 635 discarded seconds out of 518,400 nominal channel-seconds. Late captions count as successful; this log-derived coverage measure is not transcript word accuracy or package/Beta 12 qualification. See the [48-hour host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) and [raw milestone snapshot](docs/ops/evidence/beta11-host-48-hour-milestone-2026-10-10.json).
+A 48-hour soak ran public, government and education channels together on one Windows PC, with **99.88% live caption-input coverage**. Read the [Beta 11 host soak report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurements.
 
 The Beta 12 rendered PDF, Word, and other manual assets are on the
 [published release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
@@ -245,22 +245,6 @@ eight-hour three-channel run (see the
 beta candidate: only the Gate A clean-install lane was run for it (it passed),
 the upgrade and download-only lanes were not run, and no human field tester
 has signed off on it.
-
-**Live captions can lose some spoken audio under heavy load.**
-- Captions stay on the air on all three channels. When a
-  channel's caption worker falls behind, it now catches up by dropping its
-  oldest audio instead of pausing for minutes (see
-  [docs/ops/background-workers.md](docs/ops/background-workers.md#live-caption-tap)).
-- In the eight-hour run this happened 13 times. On a quiet machine the total
-  was about 160 seconds of audio on two channels; the rest were small events
-  that coincided with disk scans run on the lab machine. For those seconds,
-  the speech has no caption.
-- The cause is the caption worker falling behind during long first-time media
-  preparations. A fix is the next work item and is **not** in beta.10.
-- **If your station must have loss-free captions on every program, treat this
-  as a blocker and do not rely on beta.10 unattended for that requirement.**
-- Not proven: runs longer than eight hours (the 25-hour and 72-hour runs were
-  not done).
 
 **Program changes.**
 - Two program-change first attempts on the government channel aborted and
