@@ -54,6 +54,7 @@ import argparse
 import hashlib
 import json
 import math
+import ntpath
 import os
 import re
 import shutil
@@ -170,6 +171,16 @@ def verify_layout(
 
 
 DIRECT_CONSUMER_RECEIPT_KIND = "civiccast-native-beta-direct-consumer-evidence"
+DIRECT_BETA11_VERSION = "1.0.0-beta.11"
+DIRECT_BETA12_VERSION = "1.0.0-beta.12"
+DIRECT_BETA12_CONSUMER_CONTRACT = "beta11-to-beta12-interrupted-upgrade-v1"
+DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT = "beta11-to-beta12-upgrade-and-d4-repair-v1"
+DIRECT_BETA11_BASELINE_INSTALLER_SHA256 = (
+    "c4dfb6a4a3b0495582bcf169f45af8b4bdae7025c822d1ea5782edf7442013a5"
+)
+DIRECT_BETA11_STATION_INDEX_SHA256 = (
+    "9f107d1fc2f141bdc7ebd1b46aaca3639e624e3f24a4a34a34cc9d7e51952e84"
+)
 DIRECT_CONSUMER_PROOFS = {
     "fresh_install",
     "failed_install_repair",
@@ -177,6 +188,23 @@ DIRECT_CONSUMER_PROOFS = {
     "beta10_to_beta11_upgrade",
     "verify_after_upgrade",
     "three_channel_runtime",
+}
+DIRECT_BETA12_CONSUMER_PROOFS = {
+    "fresh_install",
+    "beta11_baseline_install",
+    "beta11_to_beta12_interrupted_upgrade",
+    "verify_after_upgrade",
+    "three_channel_runtime",
+}
+DIRECT_BETA12_SEPARATE_CONSUMER_PROOFS = {
+    "fresh_install",
+    "beta11_baseline_install",
+    "beta11_to_beta12_upgrade",
+    "beta12_interrupted_install_repair",
+    "verify_after_upgrade",
+    "three_channel_runtime",
+    "verify_after_repair",
+    "repair_three_channel_runtime",
 }
 DIRECT_CHANNELS = ("public", "government", "education")
 DIRECT_RUNTIME_PROOF_SCOPES: dict[str, tuple[str, tuple[str, ...]]] = {
@@ -188,6 +216,14 @@ DIRECT_PLAYLIST_MAX_AGE_SECONDS = 30.0
 DIRECT_RUNTIME_MIN_SPAN_SECONDS = 180.0
 DIRECT_VTT_SAMPLE_MAX_BYTES = 32 * 1024
 DIRECT_HOST_RUNTIME_MIN_SPAN_SECONDS = 30.0
+DIRECT_CAPTION_RUNTIME_STATES = {
+    "within-capacity",
+    "overloaded",
+    "storage-refused",
+    "paused",
+    "disabled",
+}
+DIRECT_LIVE_CAPTION_HEALTH_STATES = {"healthy", "degraded", "unknown", "idle", "disabled"}
 DIRECT_PROOF_FIELDS = {
     "fresh_install": {"installer_run", "install_state", "activation_self_test"},
     "failed_install_repair": {
@@ -209,6 +245,47 @@ DIRECT_PROOF_FIELDS = {
     },
     "verify_after_upgrade": {"result", "preserve_marker"},
     "three_channel_runtime": {"result", "preserve_marker", "snapshots"},
+}
+DIRECT_BETA12_PROOF_FIELDS = {
+    "fresh_install": {"installer_run", "install_state", "activation_self_test"},
+    "beta11_baseline_install": {
+        "installer_run",
+        "install_state",
+        "activation_self_test",
+        "preserve_marker",
+    },
+    "beta11_to_beta12_interrupted_upgrade": {
+        "interrupted_install",
+        "installer_run",
+        "install_state",
+        "activation_self_test",
+        "repair_install_log",
+        "recovery_result",
+        "post_upgrade_command_log",
+    },
+    "verify_after_upgrade": {"preserve_marker", "command_log"},
+    "three_channel_runtime": {"result", "preserve_marker", "snapshots"},
+}
+DIRECT_BETA12_SEPARATE_PROOF_FIELDS = {
+    "fresh_install": {"installer_run", "install_state", "activation_self_test"},
+    "beta11_baseline_install": {
+        "installer_run",
+        "install_state",
+        "activation_self_test",
+        "preserve_marker",
+    },
+    "beta11_to_beta12_upgrade": {"launch_receipt", "install_progress_log"},
+    "beta12_interrupted_install_repair": {
+        "interruption",
+        "progress_delta",
+        "installer_run",
+        "install_state",
+        "activation_self_test",
+    },
+    "verify_after_upgrade": {"result", "preserve_marker"},
+    "three_channel_runtime": {"result", "preserve_marker", "snapshots"},
+    "verify_after_repair": {"result", "preserve_marker"},
+    "repair_three_channel_runtime": {"result", "preserve_marker", "snapshots"},
 }
 
 
@@ -254,7 +331,7 @@ def _bound_path(receipt_dir: Path, reference: object, *, label: str) -> Path:
 def _bound_json(receipt_dir: Path, reference: object, *, label: str) -> tuple[Path, dict[str, Any]]:
     path = _bound_path(receipt_dir, reference, label=label)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise PublishError(
             f"direct consumer evidence {label} is not valid UTF-8 JSON: {exc}"
@@ -288,18 +365,185 @@ def _read_bound_text(receipt_dir: Path, reference: object, *, label: str) -> str
         raise PublishError(f"direct consumer evidence {label} is not UTF-8 text: {exc}") from exc
 
 
-def _verify_install_state(state: dict[str, Any], *, version: str, label: str) -> None:
+def _beta12_health_advisory(health: dict[str, Any], *, version: str, label: str) -> str | None:
+    live_captions = health.get("live_captions")
+    status = health.get("status")
+    if (
+        health.get("version") != version
+        or health.get("schema") != "current"
+        or not isinstance(live_captions, str)
+        or live_captions not in DIRECT_LIVE_CAPTION_HEALTH_STATES
+    ):
+        raise PublishError(
+            f"direct consumer evidence {label} health is missing the exact version, current schema, or live-caption readiness"
+        )
+    if status == "healthy" and live_captions in {"healthy", "idle", "disabled"}:
+        return None
+    if status == "degraded" and live_captions in {"degraded", "unknown"}:
+        return f"{label} health reports live_captions={live_captions}"
+    raise PublishError(
+        f"direct consumer evidence {label} health status is inconsistent with schema or live-caption readiness"
+    )
+
+
+def _verify_install_state(
+    state: dict[str, Any],
+    *,
+    version: str,
+    label: str,
+    beta12_candidate: bool = False,
+) -> str | None:
     health = state.get("health")
     if (
         state.get("installed_version") != version
         or state.get("service_state") != "Running"
         or not isinstance(health, dict)
-        or health.get("status") != "healthy"
-        or health.get("version") != version
     ):
         raise PublishError(
             f"direct consumer evidence {label} is not a running healthy {version} install"
         )
+    if beta12_candidate:
+        return _beta12_health_advisory(health, version=version, label=label)
+    if health.get("status") != "healthy" or health.get("version") != version:
+        raise PublishError(
+            f"direct consumer evidence {label} is not a running healthy {version} install"
+        )
+    return None
+
+
+def _beta12_caption_observation(
+    channel: dict[str, Any],
+    *,
+    label: str,
+    findings: set[str],
+    include_vtt_sample: bool,
+    include_jfk_words: bool,
+) -> tuple[bool, str | None]:
+    if "caption_runtime_available" not in channel or "caption_runtime_status" not in channel:
+        raise PublishError(f"direct consumer evidence {label} caption availability is missing")
+    runtime_available = channel["caption_runtime_available"]
+    runtime_status = channel["caption_runtime_status"]
+    unavailable_reason = channel.get("caption_runtime_unavailable_reason")
+    if "caption_runtime_unavailable_reason" not in channel or not isinstance(
+        runtime_available, bool
+    ):
+        raise PublishError(f"direct consumer evidence {label} caption availability is malformed")
+    if runtime_available:
+        runtime_status = _record(runtime_status, label=f"{label} caption status")
+        runtime_state = runtime_status.get("state")
+        if (
+            not isinstance(runtime_state, str)
+            or runtime_state not in DIRECT_CAPTION_RUNTIME_STATES
+            or unavailable_reason is not None
+        ):
+            raise PublishError(f"direct consumer evidence {label} caption status is malformed")
+        if runtime_state != "within-capacity":
+            findings.add(f"{label} caption runtime state is {runtime_state}")
+    else:
+        if (
+            runtime_status is not None
+            or not isinstance(unavailable_reason, str)
+            or not unavailable_reason.strip()
+        ):
+            raise PublishError(
+                f"direct consumer evidence {label} caption availability is malformed"
+            )
+        findings.add(f"{label} caption runtime status is unavailable")
+
+    required_vtt_fields = {"vtt_available", "vtt_sha256", "vtt_cue_count"}
+    if include_vtt_sample:
+        required_vtt_fields.update({"vtt_text_snapshot", "vtt_text_snapshot_utf8_bytes"})
+    if not required_vtt_fields.issubset(channel):
+        raise PublishError(f"direct consumer evidence {label} VTT availability is missing")
+    vtt_available = channel["vtt_available"]
+    vtt_hash = channel["vtt_sha256"]
+    cue_count = channel["vtt_cue_count"]
+    if not isinstance(vtt_available, bool):
+        raise PublishError(f"direct consumer evidence {label} VTT availability is malformed")
+    if vtt_available:
+        if not isinstance(vtt_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash):
+            raise PublishError(
+                f"direct consumer evidence {label} VTT availability/hash is malformed"
+            )
+        if not isinstance(cue_count, int) or isinstance(cue_count, bool) or cue_count < 0:
+            raise PublishError(
+                f"direct consumer evidence {label} VTT availability/cue count is malformed"
+            )
+        if cue_count == 0:
+            findings.add(f"{label} VTT has zero cues")
+        if include_vtt_sample:
+            vtt_text = channel["vtt_text_snapshot"]
+            vtt_text_bytes = channel["vtt_text_snapshot_utf8_bytes"]
+            try:
+                actual_vtt_text_bytes = (
+                    len(vtt_text.encode("utf-8")) if isinstance(vtt_text, str) else -1
+                )
+            except UnicodeEncodeError as exc:
+                raise PublishError(
+                    f"direct consumer evidence {label} VTT availability/sample is malformed"
+                ) from exc
+            if (
+                not isinstance(vtt_text, str)
+                or not isinstance(vtt_text_bytes, int)
+                or isinstance(vtt_text_bytes, bool)
+                or vtt_text_bytes != actual_vtt_text_bytes
+                or vtt_text_bytes > DIRECT_VTT_SAMPLE_MAX_BYTES
+            ):
+                raise PublishError(
+                    f"direct consumer evidence {label} VTT availability/sample is malformed"
+                )
+    else:
+        absent_fields: dict[str, object] = {
+            "vtt_sha256": vtt_hash,
+            "vtt_cue_count": cue_count,
+        }
+        if include_vtt_sample:
+            absent_fields.update(
+                {
+                    "vtt_text_snapshot": channel["vtt_text_snapshot"],
+                    "vtt_text_snapshot_utf8_bytes": channel["vtt_text_snapshot_utf8_bytes"],
+                }
+            )
+        if any(value is not None for value in absent_fields.values()):
+            raise PublishError(
+                f"direct consumer evidence {label} VTT availability conflicts with recorded VTT data"
+            )
+        findings.add(f"{label} VTT file is unavailable")
+
+    if include_jfk_words:
+        words = channel.get("expected_jfk_words_seen")
+        observation = channel.get("expected_jfk_words_observation")
+        if (
+            not isinstance(words, dict)
+            or set(words) != set(DIRECT_JFK_WORDS)
+            or any(not isinstance(value, bool) for value in words.values())
+            or not isinstance(observation, str)
+            or observation not in {"observed", "unavailable"}
+        ):
+            raise PublishError(
+                f"direct consumer evidence {label} JFK word observation is malformed"
+            )
+        if observation == "unavailable":
+            if vtt_available or any(words.values()):
+                raise PublishError(
+                    f"direct consumer evidence {label} unavailable JFK observation conflicts with VTT evidence"
+                )
+            findings.add(f"{label} JFK word observation is unavailable")
+        else:
+            if not vtt_available:
+                raise PublishError(
+                    f"direct consumer evidence {label} observed JFK words without an available VTT"
+                )
+            return vtt_available, vtt_hash
+    return vtt_available, vtt_hash
+
+
+def _caption_advisory(findings: set[str]) -> str:
+    if not findings:
+        return "No caption-performance findings observed; these observations are not an automatic publisher gate."
+    return "Caption-performance findings (advisory; not an automatic publisher gate): " + "; ".join(
+        sorted(findings)
+    )
 
 
 def _verify_physical_host_consumer(
@@ -310,6 +554,8 @@ def _verify_physical_host_consumer(
     build_run_id: str,
     setup: Path,
     installer_sha256: str,
+    candidate_version: str,
+    beta12_candidate: bool,
 ) -> dict[str, str]:
     """Verify this exact installer on the already-running physical host.
 
@@ -329,8 +575,14 @@ def _verify_physical_host_consumer(
     manifest_path, manifest = _bound_json(
         receipt_dir, install_proof.get("installed_manifest"), label="installed app payload manifest"
     )
+    # The historical kind identifies the receipt contract, not its installed
+    # version. Every candidate identity field below must still match this release.
+    supported_kinds = {"beta11-exact-host-install", "civiccast-native-exact-host-install"}
+    beta = re.fullmatch(r"\d+\.\d+\.\d+-beta\.(\d+)", candidate_version)
+    if beta is not None:
+        supported_kinds.add(f"beta{beta[1]}-exact-host-install")
     if (
-        install.get("kind") != "beta11-exact-host-install"
+        install.get("kind") not in supported_kinds
         or install.get("stage") != "completed"
         or install.get("status") != "passed"
         or str(install.get("source_sha", "")).casefold() != artifact_source_sha.casefold()
@@ -349,34 +601,79 @@ def _verify_physical_host_consumer(
     setup_signature = _record(install.get("setup_authenticode"), label="host setup Authenticode")
     if (
         setup_signature.get("status") != "Valid"
-        or setup_signature.get("file_version") != "1.0.0-beta.11"
+        or setup_signature.get("file_version") != candidate_version
         or "CN=Scott Converse" not in str(setup_signature.get("signer_subject", ""))
     ):
         raise PublishError(
-            "physical-host receipt does not record the expected signed Beta 11 setup"
+            f"physical-host receipt does not record the expected signed {candidate_version} setup"
         )
 
     before = _record(install.get("before"), label="host pre-install state")
     after = _record(install.get("after"), label="host post-install state")
     before_health = _record(before.get("health"), label="host pre-install health")
     after_health = _record(after.get("health"), label="host post-install health")
+    caption_findings: set[str] = set()
+    before_version = before.get("display_version")
+    if (
+        beta12_candidate
+        and before_health.get("status") == "healthy"
+        and isinstance(before_version, str)
+        and before_version
+        and before_health.get("version") == before_version
+    ):
+        before_schema = before_health.get("schema")
+        before_live_captions = before_health.get("live_captions")
+        if before_schema not in (None, "current") or before_live_captions not in (
+            None,
+            "healthy",
+            "idle",
+            "disabled",
+        ):
+            raise PublishError(
+                "direct consumer evidence physical-host pre-install health is inconsistent"
+            )
+        before_caption_finding = None
+    elif beta12_candidate:
+        before_caption_finding = _beta12_health_advisory(
+            before_health,
+            version=str(before_version or ""),
+            label="physical-host pre-install",
+        )
+    else:
+        before_caption_finding = None
+    if before_caption_finding is not None:
+        caption_findings.add(before_caption_finding)
+    after_caption_finding = (
+        _beta12_health_advisory(
+            after_health, version=candidate_version, label="physical-host post-install"
+        )
+        if beta12_candidate
+        else None
+    )
+    if after_caption_finding is not None:
+        caption_findings.add(after_caption_finding)
     if (
         before.get("service_state") != "Running"
-        or before_health.get("status") != "healthy"
+        or (not beta12_candidate and before_health.get("status") != "healthy")
         or not isinstance(before.get("display_version"), str)
         or not before.get("display_version")
         or before_health.get("version") != before.get("display_version")
         or after.get("service_state") != "Running"
-        or after.get("display_version") != "1.0.0-beta.11"
-        or after_health.get("status") != "healthy"
-        or after_health.get("version") != "1.0.0-beta.11"
-        or after_health.get("schema") != "current"
+        or after.get("display_version") != candidate_version
+        or (
+            not beta12_candidate
+            and (
+                after_health.get("status") != "healthy"
+                or after_health.get("version") != candidate_version
+                or after_health.get("schema") != "current"
+            )
+        )
         or before.get("install_location") != after.get("install_location")
         or before.get("schedule_loop_enabled") is not True
         or after.get("schedule_loop_enabled") is not True
     ):
         raise PublishError(
-            "physical-host receipt does not prove a healthy in-place Beta 11 install"
+            f"physical-host receipt does not prove a healthy in-place {candidate_version} install"
         )
 
     reported_manifest_path = after.get("app_payload_manifest_path")
@@ -398,12 +695,12 @@ def _verify_physical_host_consumer(
         civiccast.get("source_state"), label="installed manifest source identity"
     )
     if (
-        civiccast.get("version") != "1.0.0b11"
+        civiccast.get("version") != re.sub(r"-beta\.(\d+)$", r"b\1", candidate_version)
         or str(source_state.get("head", "")).casefold() != artifact_source_sha.casefold()
         or source_state.get("dirty") is not False
     ):
         raise PublishError(
-            "installed app payload manifest does not identify the exact clean Beta 11 source"
+            f"installed app payload manifest does not identify the exact clean {candidate_version} source"
         )
 
     runtime_proof = _record(
@@ -423,7 +720,7 @@ def _verify_physical_host_consumer(
         raise PublishError("physical-host runtime result does not cover all three live channels")
     previous_snapshot_at: datetime | None = None
     first_snapshot_at: datetime | None = None
-    previous_media: dict[str, tuple[datetime, str, str]] = {}
+    previous_media: dict[str, tuple[datetime, str, str | None]] = {}
     for index, snapshot_ref in enumerate(snapshots, start=1):
         _, snapshot = _bound_json(
             receipt_dir, snapshot_ref, label=f"physical-host runtime observation {index}"
@@ -435,8 +732,23 @@ def _verify_physical_host_consumer(
             first_snapshot_at = snapshot_at
         previous_snapshot_at = snapshot_at
         health = _record(snapshot.get("health"), label=f"host runtime observation {index} health")
-        if health.get("status") != "healthy" or health.get("version") != "1.0.0-beta.11":
-            raise PublishError(f"physical-host runtime observation {index} is not healthy Beta 11")
+        health_finding = (
+            _beta12_health_advisory(
+                health,
+                version=candidate_version,
+                label=f"physical-host runtime observation {index}",
+            )
+            if beta12_candidate
+            else None
+        )
+        if health_finding is not None:
+            caption_findings.add(health_finding)
+        if not beta12_candidate and (
+            health.get("status") != "healthy" or health.get("version") != candidate_version
+        ):
+            raise PublishError(
+                f"physical-host runtime observation {index} is not healthy {candidate_version}"
+            )
         channels = snapshot.get("channels")
         if (
             not isinstance(channels, list)
@@ -471,13 +783,32 @@ def _verify_physical_host_consumer(
             newest_segment = channel.get("newest_segment")
             vtt_hash = channel.get("vtt_sha256")
             cue_count = channel.get("vtt_cue_count")
-            caption_status = _record(
-                channel.get("caption_runtime_status"), label=f"{channel_id} caption status"
-            )
+            if beta12_candidate:
+                _beta12_caption_observation(
+                    channel,
+                    label=f"physical-host {channel_id}",
+                    findings=caption_findings,
+                    include_vtt_sample=False,
+                    include_jfk_words=False,
+                )
+                caption_status_ok = True
+                cue_count_ok = True
+                vtt_hash_ok = True
+            else:
+                caption_status = _record(
+                    channel.get("caption_runtime_status"), label=f"{channel_id} caption status"
+                )
+                caption_status_ok = caption_status.get("state") == "within-capacity"
+                cue_count_ok = (
+                    isinstance(cue_count, int) and not isinstance(cue_count, bool) and cue_count > 0
+                )
+                vtt_hash_ok = isinstance(vtt_hash, str) and bool(
+                    re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
+                )
             if (
                 not state_is_on_air
                 or codecs != {("video", "h264"), ("audio", "aac")}
-                or caption_status.get("state") != "within-capacity"
+                or not caption_status_ok
                 or not isinstance(playlist_age, (int, float))
                 or isinstance(playlist_age, bool)
                 or not math.isfinite(playlist_age)
@@ -487,25 +818,36 @@ def _verify_physical_host_consumer(
                 > DIRECT_PLAYLIST_MAX_AGE_SECONDS
                 or not isinstance(newest_segment, str)
                 or not newest_segment
-                or not isinstance(vtt_hash, str)
-                or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
-                or not isinstance(cue_count, int)
-                or isinstance(cue_count, bool)
-                or cue_count <= 0
+                or not vtt_hash_ok
+                or not cue_count_ok
             ):
                 raise PublishError(
-                    f"physical-host runtime observation {index} channel {channel_id!r} has no current audio/video/caption output"
+                    f"physical-host runtime observation {index} channel {channel_id!r} has no current audio/video/HLS output"
                 )
             previous = previous_media.get(channel_id)
+            if (
+                beta12_candidate
+                and previous is not None
+                and isinstance(vtt_hash, str)
+                and previous[2] is not None
+                and vtt_hash.casefold() == previous[2]
+            ):
+                caption_findings.add(
+                    f"physical-host {channel_id} VTT hash did not change between observations"
+                )
             if previous is not None and (
                 playlist_mtime <= previous[0]
                 or newest_segment == previous[1]
-                or vtt_hash == previous[2]
+                or (not beta12_candidate and vtt_hash == previous[2])
             ):
                 raise PublishError(
                     f"physical-host runtime channel {channel_id!r} output did not advance"
                 )
-            previous_media[channel_id] = (playlist_mtime, newest_segment, vtt_hash)
+            previous_media[channel_id] = (
+                playlist_mtime,
+                newest_segment,
+                vtt_hash.casefold() if isinstance(vtt_hash, str) else None,
+            )
 
     if (
         first_snapshot_at is None
@@ -517,21 +859,24 @@ def _verify_physical_host_consumer(
             "physical-host runtime observations do not show sustained output progress"
         )
 
-    return {
+    verification = {
         "consumer_mode": "physical-host",
         "host_install": (
-            "PASS (exact signed Beta 11 installer; existing "
+            f"PASS (exact signed {candidate_version} installer; existing "
             f"{before['display_version']} host updated in place)"
         ),
         "host_preservation": "PASS (install location and service-loop setting retained; schema current)",
         "host_runtime": (
-            f"PASS ({len(snapshots)} observations of live HLS, H.264/AAC and changing captions; "
+            f"PASS ({len(snapshots)} observations of live HLS and H.264/AAC; "
             "not a three-channel capacity claim)"
         ),
     }
+    if beta12_candidate:
+        verification["caption_performance_advisory"] = _caption_advisory(caption_findings)
+    return verification
 
 
-def _utc_timestamp(value: object, *, label: str) -> datetime:
+def _utc_timestamp(value: object, *, label: str, allow_offset: bool = False) -> datetime:
     if not isinstance(value, str) or not value.strip():
         raise PublishError(f"direct consumer evidence {label} UTC timestamp is missing")
     try:
@@ -540,7 +885,7 @@ def _utc_timestamp(value: object, *, label: str) -> datetime:
         raise PublishError(
             f"direct consumer evidence {label} has an invalid UTC timestamp"
         ) from exc
-    if parsed.tzinfo is None or parsed.utcoffset() != timedelta(0):
+    if parsed.tzinfo is None or (not allow_offset and parsed.utcoffset() != timedelta(0)):
         raise PublishError(f"direct consumer evidence {label} timestamp must be UTC")
     return parsed.astimezone(UTC)
 
@@ -551,6 +896,7 @@ def verify_consumer_evidence_receipt(
     kit_dir: Path,
     artifact_source_sha: str,
     build_run_id: str,
+    candidate_version: str,
 ) -> tuple[Path, list[Path], dict[str, str]]:
     """Verify a bounded receipt over the assembled kit and executed Sandbox evidence."""
 
@@ -566,6 +912,8 @@ def verify_consumer_evidence_receipt(
         receipt_fields.add("runtime_proof_scope")
     if "consumer_mode" in doc:
         receipt_fields.add("consumer_mode")
+    if "consumer_contract" in doc:
+        receipt_fields.add("consumer_contract")
     _record_keys(doc, receipt_fields, label="receipt")
     if doc.get("schema_version") != 1 or doc.get("kind") != DIRECT_CONSUMER_RECEIPT_KIND:
         raise PublishError("direct consumer evidence receipt schema or kind is unsupported")
@@ -573,15 +921,43 @@ def verify_consumer_evidence_receipt(
     if consumer_mode not in {"sandbox", "physical-host"}:
         raise PublishError(f"unsupported direct consumer evidence mode: {consumer_mode!r}")
     runtime_proof_scope = doc.get("runtime_proof_scope", "three-channel-capacity")
+    beta12_candidate = candidate_version == DIRECT_BETA12_VERSION
+    beta12_sandbox = consumer_mode == "sandbox" and candidate_version == DIRECT_BETA12_VERSION
+    beta12_separate_contract = (
+        beta12_sandbox and doc.get("consumer_contract") == DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT
+    )
     if consumer_mode == "sandbox":
         if not isinstance(runtime_proof_scope, str) or runtime_proof_scope not in (
             DIRECT_RUNTIME_PROOF_SCOPES
         ):
             raise PublishError(f"unsupported direct runtime proof scope: {runtime_proof_scope!r}")
         runtime_proof_group, runtime_channels = DIRECT_RUNTIME_PROOF_SCOPES[runtime_proof_scope]
+        if beta12_sandbox:
+            if doc.get("consumer_contract") not in {
+                DIRECT_BETA12_CONSUMER_CONTRACT,
+                DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT,
+            }:
+                raise PublishError(
+                    "Beta 12 direct Sandbox evidence must use the Beta 11 interrupted-upgrade contract"
+                )
+            if runtime_proof_scope != "three-channel-capacity":
+                raise PublishError(
+                    "Beta 12 direct Sandbox upgrade evidence requires the three-channel runtime proof"
+                )
+        elif candidate_version == DIRECT_BETA11_VERSION:
+            if "consumer_contract" in doc:
+                raise PublishError(
+                    "Beta 11 direct Sandbox evidence uses the legacy receipt contract"
+                )
+        else:
+            raise PublishError(
+                f"direct Sandbox evidence has no supported consumer contract for {candidate_version}"
+            )
     else:
         if "runtime_proof_scope" in doc:
             raise PublishError("physical-host evidence uses its own three-channel output scope")
+        if "consumer_contract" in doc:
+            raise PublishError("physical-host evidence does not use a Sandbox consumer contract")
         runtime_proof_group, runtime_channels = "host_three_channel_runtime", DIRECT_CHANNELS
 
     artifact = _record(doc.get("artifact"), label="artifact")
@@ -612,7 +988,26 @@ def verify_consumer_evidence_receipt(
         )
     except (KeyError, TypeError) as exc:
         raise PublishError("kit assembly receipt is missing its station signature record") from exc
-    if consumer_mode == "sandbox":
+    if beta12_sandbox:
+        station_index_sha256 = station_index.get("sha256")
+        if (
+            assembly.get("candidate_version") != candidate_version
+            or signature_record.get("status") != "passed"
+            or signature_record.get("conclusion") != "success"
+            or str(signature_record.get("workflow_run_id")) != str(build_run_id)
+            or signature_record.get("method")
+            != "local canonical Ed25519 verification and exact six-pack size/SHA-256 comparison"
+            or not isinstance(station_index_sha256, str)
+            or not re.fullmatch(r"[0-9a-fA-F]{64}", station_index_sha256)
+            or not isinstance(station_index.get("signing_key_id"), str)
+            or not station_index["signing_key_id"].strip()
+            or station_index.get("pack_count") != 6
+            or station_index.get("verified_against") != 6
+        ):
+            raise PublishError(
+                "Beta 12 kit assembly receipt does not bind the passed signed six-pack index"
+            )
+    elif consumer_mode == "sandbox":
         try:
             activation = _record(
                 signature_record["consumer_activation_verification"],
@@ -654,7 +1049,7 @@ def verify_consumer_evidence_receipt(
         or membership.get("station_folder_present") is not True
     ):
         raise PublishError(
-            "kit assembly receipt does not describe the complete 19-file Beta 11 kit"
+            "kit assembly receipt does not describe the complete 19-file candidate kit"
         )
 
     raw_members = assembly.get("kit_members")
@@ -696,6 +1091,14 @@ def verify_consumer_evidence_receipt(
     }
     if actual_members != set(members):
         raise PublishError("kit file inventory differs from the exact 19-member assembly receipt")
+    if beta12_sandbox:
+        station_index_member = members.get("station/station-index.json")
+        if (
+            station_index_member is None
+            or sha256_file(station_index_member).casefold()
+            != str(station_index.get("sha256", "")).casefold()
+        ):
+            raise PublishError("station-index bytes do not match the signed-index assembly receipt")
 
     installer = _record(assembly.get("installer"), label="kit installer")
     installer_sha256 = installer.get("sha256")
@@ -721,13 +1124,25 @@ def verify_consumer_evidence_receipt(
             build_run_id=build_run_id,
             setup=setup,
             installer_sha256=installer_sha256,
+            candidate_version=candidate_version,
+            beta12_candidate=beta12_candidate,
         )
         return setup, packs, verification
 
-    expected_proofs = (DIRECT_CONSUMER_PROOFS - {"three_channel_runtime"}) | {runtime_proof_group}
+    if beta12_separate_contract:
+        proof_fields = DIRECT_BETA12_SEPARATE_PROOF_FIELDS
+        proof_names = DIRECT_BETA12_SEPARATE_CONSUMER_PROOFS
+        runtime_group_names = {"three_channel_runtime", "repair_three_channel_runtime"}
+    else:
+        proof_fields = DIRECT_BETA12_PROOF_FIELDS if beta12_sandbox else DIRECT_PROOF_FIELDS
+        proof_names = DIRECT_BETA12_CONSUMER_PROOFS if beta12_sandbox else DIRECT_CONSUMER_PROOFS
+        runtime_group_names = {"three_channel_runtime"}
+    expected_proofs = (proof_names - runtime_group_names) | {runtime_proof_group}
+    if beta12_separate_contract:
+        expected_proofs.add("repair_three_channel_runtime")
     _record_keys(evidence, expected_proofs, label="proof set")
-    for proof_name, fields in DIRECT_PROOF_FIELDS.items():
-        if proof_name == "three_channel_runtime":
+    for proof_name, fields in proof_fields.items():
+        if proof_name in runtime_group_names:
             continue
         _record_keys(_record(evidence.get(proof_name), label=proof_name), fields, label=proof_name)
     _record_keys(
@@ -735,308 +1150,966 @@ def verify_consumer_evidence_receipt(
         {"result", "preserve_marker", "snapshots"},
         label=runtime_proof_group,
     )
+    if beta12_separate_contract:
+        _record_keys(
+            _record(
+                evidence.get("repair_three_channel_runtime"), label="repair_three_channel_runtime"
+            ),
+            {"result", "preserve_marker", "snapshots"},
+            label="repair_three_channel_runtime",
+        )
 
     def read_json(proof_name: str, file_name: str) -> dict[str, Any]:
         proof = _record(evidence.get(proof_name), label=proof_name)
         _, value = _bound_json(receipt_dir, proof.get(file_name), label=f"{proof_name}.{file_name}")
         return value
 
-    def require_beta11_install(proof_name: str) -> None:
+    def verify_activation_self_test(
+        activation: dict[str, Any],
+        *,
+        version: str,
+        label: str,
+        beta12_payload: bool,
+        expected_distribution_index_sha256: str | None = None,
+        expected_index_source: str = "the signed station index",
+    ) -> None:
+        if beta12_payload:
+            ai_result = _record(activation.get("ai_inference"), label=f"{label} AI inference")
+            caption_result = _record(
+                activation.get("caption_inference"), label=f"{label} caption inference"
+            )
+            distribution_sha256 = activation.get("distribution_index_sha256")
+            if (
+                activation.get("product") != "civiccast-native"
+                or activation.get("product_version") != version
+                or activation.get("schema_version") != 1
+                or not isinstance(distribution_sha256, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", distribution_sha256)
+                or ai_result.get("result") != "passed"
+                or caption_result.get("result") != "passed"
+            ):
+                raise PublishError(
+                    f"direct consumer evidence {label} activation self-test did not pass"
+                )
+            if (
+                expected_distribution_index_sha256 is None
+                or distribution_sha256.casefold() != expected_distribution_index_sha256.casefold()
+            ):
+                raise PublishError(
+                    f"direct consumer evidence {label} activation self-test distribution index "
+                    f"does not match {expected_index_source}"
+                )
+        elif activation.get("product_version") != version or activation.get("result") != "passed":
+            raise PublishError(
+                f"direct consumer evidence {label} activation self-test did not pass"
+            )
+
+    caption_findings: set[str] = set()
+
+    def require_candidate_install(proof_name: str) -> None:
         run = read_json(proof_name, "installer_run")
         if (
             run.get("exit_code") != 0
             or str(run.get("sha256", "")).casefold() != installer_sha256.casefold()
         ):
             raise PublishError(
-                f"direct consumer evidence {proof_name} did not run this Beta 11 installer successfully"
+                f"direct consumer evidence {proof_name} did not run this {candidate_version} installer successfully"
             )
+        install_caption_finding = _verify_install_state(
+            read_json(proof_name, "install_state"),
+            version=candidate_version,
+            label=proof_name,
+            beta12_candidate=beta12_sandbox,
+        )
+        if install_caption_finding is not None:
+            caption_findings.add(install_caption_finding)
+        verify_activation_self_test(
+            read_json(proof_name, "activation_self_test"),
+            version=candidate_version,
+            label=proof_name,
+            beta12_payload=beta12_sandbox,
+            expected_distribution_index_sha256=(
+                station_index["sha256"] if beta12_sandbox else None
+            ),
+        )
+
+    require_candidate_install("fresh_install")
+
+    if beta12_sandbox:
+        baseline_run = read_json("beta11_baseline_install", "installer_run")
+        if (
+            baseline_run.get("exit_code") != 0
+            or baseline_run.get("expected_version") != DIRECT_BETA11_VERSION
+            or str(baseline_run.get("sha256", "")).casefold()
+            != DIRECT_BETA11_BASELINE_INSTALLER_SHA256
+            or DIRECT_BETA11_VERSION not in str(baseline_run.get("installer", ""))
+        ):
+            raise PublishError("Beta 11 baseline installer did not match the pinned package")
         _verify_install_state(
-            read_json(proof_name, "install_state"), version="1.0.0-beta.11", label=proof_name
+            read_json("beta11_baseline_install", "install_state"),
+            version=DIRECT_BETA11_VERSION,
+            label="Beta 11 baseline",
         )
-        activation = read_json(proof_name, "activation_self_test")
+        verify_activation_self_test(
+            read_json("beta11_baseline_install", "activation_self_test"),
+            version=DIRECT_BETA11_VERSION,
+            label="Beta 11 baseline",
+            beta12_payload=True,
+            expected_distribution_index_sha256=DIRECT_BETA11_STATION_INDEX_SHA256,
+            expected_index_source="its pinned station index",
+        )
+
+        baseline_marker = read_json("beta11_baseline_install", "preserve_marker")
+        baseline_schedules = baseline_marker.get("schedule_ids")
+        baseline_asset = baseline_marker.get("asset_id")
         if (
-            activation.get("product_version") != "1.0.0-beta.11"
-            or activation.get("result") != "passed"
+            baseline_marker.get("mode") != "PrepareBaseline"
+            or baseline_marker.get("product_version") != DIRECT_BETA11_VERSION
+            or baseline_marker.get("preserve_install_and_database") is not True
+            or not isinstance(baseline_asset, str)
+            or not baseline_asset
+            or not isinstance(baseline_schedules, list)
+            or len(baseline_schedules) != 3
+            or not all(isinstance(item, str) and item for item in baseline_schedules)
+            or len(set(baseline_schedules)) != 3
+        ):
+            raise PublishError("Beta 11 baseline marker does not record its existing account data")
+
+        if beta12_separate_contract:
+            upgrade = _record(
+                evidence.get("beta11_to_beta12_upgrade"), label="beta11_to_beta12_upgrade"
+            )
+            launch = read_json("beta11_to_beta12_upgrade", "launch_receipt")
+            launch_sandboxes = launch.get("sandbox_ids")
+            if (
+                str(launch.get("source_sha", "")).casefold() != artifact_source_sha.casefold()
+                or str(launch.get("workflow_run_id")) != str(build_run_id)
+                or str(launch.get("kit_assembly_receipt_sha256", "")).casefold()
+                != str(artifact.get("assembly_receipt", {}).get("sha256", "")).casefold()
+                or launch.get("candidate_version") != candidate_version
+                or str(launch.get("candidate_installer_sha256", "")).casefold()
+                != installer_sha256.casefold()
+                or launch.get("candidate_signature_status") != "Valid"
+                or str(launch.get("baseline_installer_sha256", "")).casefold()
+                != DIRECT_BETA11_BASELINE_INSTALLER_SHA256
+                or launch.get("baseline_signature_status") != "Valid"
+                or launch.get("registered_one_sandbox") is not True
+                or not isinstance(launch_sandboxes, list)
+                or len(launch_sandboxes) != 1
+                or not isinstance(launch_sandboxes[0], str)
+                or not launch_sandboxes[0]
+            ):
+                raise PublishError(
+                    "Beta 11 to Beta 12 launch receipt does not bind this candidate, baseline and Sandbox run"
+                )
+
+            progress_log = _read_bound_text(
+                receipt_dir,
+                upgrade.get("install_progress_log"),
+                label="normal Beta 11 to Beta 12 install progress log",
+            )
+            required_progress_markers = (
+                f"step d3-engine: begin (old={DIRECT_BETA11_VERSION})",
+                "step d3-engine: evidence route=UPGRADE engine_exit=0",
+                "step d4-provision: returned 0",
+                "step d4-service-registration: returned 0",
+                "step d4-firewall-rule: returned 0",
+                f"postinstall: SUCCESS (InstalledVersion {candidate_version} recorded)",
+            )
+            marker_positions = [progress_log.find(marker) for marker in required_progress_markers]
+            if any(position < 0 for position in marker_positions) or marker_positions != sorted(
+                marker_positions
+            ):
+                raise PublishError(
+                    "normal Beta 11 to Beta 12 upgrade log does not prove the successful upgrade route and completion"
+                )
+
+            require_candidate_install("beta12_interrupted_install_repair")
+            interruption = read_json("beta12_interrupted_install_repair", "interruption")
+            if interruption.get("result") != "INTERRUPTED_CONFIRMED":
+                raise PublishError("D4 repair interruption was not confirmed for this candidate")
+            interruption_fields = {
+                "result",
+                "candidate_source_sha",
+                "workflow_run_id",
+                "candidate_version",
+                "installer_path",
+                "installer_sha256",
+                "started_utc",
+                "installed_before",
+                "precondition_guard_checks",
+                "precondition_captured_utc",
+                "signature_status",
+                "progress_log_path",
+                "progress_offset_bytes",
+                "progress_delta_path",
+                "phase",
+                "setup_pid",
+                "observation_started_utc",
+                "d4_begin_line",
+                "d4_begin_observed_utc",
+                "d4_return_observed",
+                "setup_image_path",
+                "setup_image_sha256",
+                "setup_signature_status",
+                "live_pid_verified_utc",
+                "kill_target_pid",
+                "kill_tree",
+                "taskkill_exit_code",
+                "process_exited",
+                "process_exit_code",
+                "interrupted_utc",
+                "observation_ended_utc",
+                "progress_delta_sha256",
+            }
+            _record_keys(interruption, interruption_fields, label="D4 repair interruption")
+            installed_before = _record(
+                interruption.get("installed_before"), label="D4 repair installed-before state"
+            )
+            guard_checks = _record(
+                interruption.get("precondition_guard_checks"), label="D4 repair precondition checks"
+            )
+            required_guard_checks = {
+                "station_product_version_matches",
+                "registry_version_matches",
+                "service_running",
+                "health_status_healthy",
+                "health_schema_current",
+            }
+            setup_pid = interruption.get("setup_pid")
+            kill_target_pid = interruption.get("kill_target_pid")
+            progress_offset = interruption.get("progress_offset_bytes")
+            process_exit_code = interruption.get("process_exit_code")
+            taskkill_exit_code = interruption.get("taskkill_exit_code")
+            installer_path = interruption.get("installer_path")
+            setup_image_path = interruption.get("setup_image_path")
+            installed_before_health_finding: str | None = None
+            full_public_health = installed_before.get("full_public_health")
+            if beta12_sandbox:
+                full_public_health = _record(
+                    full_public_health, label="D4 repair full public health"
+                )
+                installed_before_health_finding = _beta12_health_advisory(
+                    full_public_health,
+                    version=candidate_version,
+                    label="D4 repair installed-before",
+                )
+                if installed_before_health_finding is not None:
+                    caption_findings.add(installed_before_health_finding)
+            installed_health_status = (
+                full_public_health.get("status")
+                if beta12_sandbox and isinstance(full_public_health, dict)
+                else "healthy"
+            )
+            expected_interruption = (
+                interruption.get("result") == "INTERRUPTED_CONFIRMED"
+                and str(interruption.get("candidate_source_sha", "")).casefold()
+                == artifact_source_sha.casefold()
+                and str(interruption.get("workflow_run_id")) == str(build_run_id)
+                and interruption.get("candidate_version") == candidate_version
+                and isinstance(installer_path, str)
+                and ntpath.isabs(installer_path)
+                and installer_path.casefold().endswith(".exe")
+                and str(interruption.get("installer_sha256", "")).casefold()
+                == installer_sha256.casefold()
+                and interruption.get("signature_status") == "Valid"
+                and installed_before.get("product_version") == candidate_version
+                and installed_before.get("registry_version") == candidate_version
+                and installed_before.get("service_state") == "Running"
+                and installed_before.get("health_status") == installed_health_status
+                and installed_before.get("health_schema") == "current"
+                and installed_before.get("read_errors") == {}
+                and isinstance(installed_before.get("station_set_sha256"), str)
+                and re.fullmatch(r"[0-9a-fA-F]{64}", installed_before["station_set_sha256"])
+                is not None
+                and set(guard_checks) == required_guard_checks
+                and all(
+                    guard_checks.get(name)
+                    is (
+                        installed_before_health_finding is None
+                        if name == "health_status_healthy"
+                        else True
+                    )
+                    for name in required_guard_checks
+                )
+                and isinstance(interruption.get("progress_log_path"), str)
+                and ntpath.isabs(interruption["progress_log_path"])
+                and ntpath.basename(interruption["progress_log_path"]).casefold()
+                == "install-progress.log"
+                and isinstance(progress_offset, int)
+                and not isinstance(progress_offset, bool)
+                and progress_offset >= 0
+                and interruption.get("phase") == "observing-d4-activate-station"
+                and isinstance(setup_pid, int)
+                and not isinstance(setup_pid, bool)
+                and setup_pid > 0
+                and isinstance(interruption.get("d4_begin_line"), str)
+                and "step d4-activate-station: begin" in interruption["d4_begin_line"]
+                and interruption.get("d4_return_observed") is False
+                and isinstance(setup_image_path, str)
+                and ntpath.isabs(setup_image_path)
+                and ntpath.normcase(ntpath.normpath(setup_image_path))
+                == ntpath.normcase(ntpath.normpath(installer_path))
+                and str(interruption.get("setup_image_sha256", "")).casefold()
+                == installer_sha256.casefold()
+                and interruption.get("setup_signature_status") == "Valid"
+                and isinstance(interruption.get("live_pid_verified_utc"), str)
+                and kill_target_pid == setup_pid
+                and interruption.get("kill_tree") is True
+                and isinstance(taskkill_exit_code, int)
+                and not isinstance(taskkill_exit_code, bool)
+                and taskkill_exit_code == 0
+                and interruption.get("process_exited") is True
+                and isinstance(process_exit_code, int)
+                and not isinstance(process_exit_code, bool)
+            )
+            if not expected_interruption:
+                raise PublishError("D4 repair interruption was not confirmed for this candidate")
+
+            timeline = [
+                _utc_timestamp(interruption.get(field), label=f"D4 interruption {field}")
+                for field in (
+                    "started_utc",
+                    "precondition_captured_utc",
+                    "observation_started_utc",
+                    "d4_begin_observed_utc",
+                    "live_pid_verified_utc",
+                    "interrupted_utc",
+                    "observation_ended_utc",
+                )
+            ]
+            if timeline != sorted(timeline):
+                raise PublishError("D4 repair interruption timestamps are out of order")
+            repair_finished_at = _utc_timestamp(
+                read_json("beta12_interrupted_install_repair", "installer_run").get("finished"),
+                label="repair installer finished",
+                allow_offset=True,
+            )
+            if repair_finished_at < timeline[-2]:
+                raise PublishError("repair installer finished before the confirmed interruption")
+            normal_runtime_proof = _record(
+                evidence.get("three_channel_runtime"), label="three_channel_runtime"
+            )
+            normal_snapshots = normal_runtime_proof.get("snapshots")
+            if not isinstance(normal_snapshots, list) or len(normal_snapshots) != 5:
+                raise PublishError("normal Beta 12 upgrade is missing its five runtime snapshots")
+            _, normal_last_snapshot = _bound_json(
+                receipt_dir, normal_snapshots[-1], label="normal post-upgrade final runtime minute"
+            )
+            normal_runtime_ended = _utc_timestamp(
+                normal_last_snapshot.get("utc"), label="normal post-upgrade final runtime minute"
+            )
+            if timeline[0] <= normal_runtime_ended:
+                raise PublishError(
+                    "separate D4 repair did not start after the normal Beta 11 to Beta 12 runtime check"
+                )
+
+            # The producer records a guest path; the receipt separately binds
+            # the unchanged mapped file on the publisher's filesystem.
+            delta_ref = _record(
+                _record(
+                    evidence.get("beta12_interrupted_install_repair"),
+                    label="beta12_interrupted_install_repair",
+                ).get("progress_delta"),
+                label="D4 repair progress delta",
+            )
+            if (
+                str(delta_ref.get("sha256", "")).casefold()
+                != str(interruption.get("progress_delta_sha256", "")).casefold()
+            ):
+                raise PublishError("D4 repair progress delta sha256 mismatch with interruption")
+            guest_delta_path = interruption.get("progress_delta_path")
+            if (
+                not isinstance(guest_delta_path, str)
+                or not ntpath.isabs(guest_delta_path)
+                or ntpath.basename(guest_delta_path).casefold()
+                != Path(str(delta_ref.get("path", ""))).name.casefold()
+            ):
+                raise PublishError("D4 repair progress delta guest and mapped filenames differ")
+            delta = _read_bound_text(receipt_dir, delta_ref, label="D4 repair progress delta")
+            begin_marker = "step d4-activate-station: begin"
+            if (
+                interruption["d4_begin_line"] not in delta
+                and not any(interruption["d4_begin_line"] in line for line in delta.splitlines())
+            ) or begin_marker not in delta:
+                raise PublishError(
+                    "D4 repair progress delta does not contain the observed begin line"
+                )
+            if "step d4-activate-station: returned" in delta:
+                raise PublishError(
+                    "D4 repair progress delta records that the interrupted step returned"
+                )
+        else:
+            require_candidate_install("beta11_to_beta12_interrupted_upgrade")
+            upgrade = _record(
+                evidence.get("beta11_to_beta12_interrupted_upgrade"),
+                label="beta11_to_beta12_interrupted_upgrade",
+            )
+            interrupted = read_json("beta11_to_beta12_interrupted_upgrade", "interrupted_install")
+            recovery = read_json("beta11_to_beta12_interrupted_upgrade", "recovery_result")
+            observed = interrupted.get("bytes_before_kill")
+            partial_after = interrupted.get("partial_bytes_after_kill")
+            expected = interrupted.get("expected_bytes")
+            process_id = interrupted.get("process_id")
+            process_exit_code = interrupted.get("process_exit_code")
+            kill_exit_code = interrupted.get("kill_command_exit_code")
+            partial_path = str(interrupted.get("partial_path", "")).replace("/", "\\").casefold()
+            if (
+                interrupted.get("result") != "INTERRUPTED_CONFIRMED"
+                or str(interrupted.get("candidate_source_sha", "")).casefold()
+                != artifact_source_sha.casefold()
+                or str(interrupted.get("installer_sha256", "")).casefold()
+                != installer_sha256.casefold()
+                or interrupted.get("phase") != "stage-packs"
+                or interrupted.get("progress_marker") != "step stage-packs: begin"
+                or not isinstance(process_id, int)
+                or isinstance(process_id, bool)
+                or process_id <= 0
+                or not isinstance(process_exit_code, int)
+                or isinstance(process_exit_code, bool)
+                or not isinstance(kill_exit_code, int)
+                or isinstance(kill_exit_code, bool)
+                or kill_exit_code != 0
+                or not partial_path.endswith(".ccpack.partial")
+                or "\\packs\\" not in partial_path
+                or not isinstance(observed, int)
+                or isinstance(observed, bool)
+                or not isinstance(partial_after, int)
+                or isinstance(partial_after, bool)
+                or not isinstance(expected, int)
+                or isinstance(expected, bool)
+                or not (0 < observed < expected and 0 < partial_after < expected)
+                or recovery.get("result") != "PASS"
+                or str(recovery.get("candidate_source_sha", "")).casefold()
+                != artifact_source_sha.casefold()
+                or str(recovery.get("workflow_run_id")) != str(build_run_id)
+                or recovery.get("candidate_version") != candidate_version
+                or recovery.get("interrupted_stage") != "stage-packs"
+                or str(recovery.get("repair_installer_sha256", "")).casefold()
+                != installer_sha256.casefold()
+                or recovery.get("baseline_version") != DIRECT_BETA11_VERSION
+                or not isinstance(recovery.get("remaining_partial_pack_count"), int)
+                or isinstance(recovery.get("remaining_partial_pack_count"), bool)
+                or recovery.get("remaining_partial_pack_count") != 0
+                or not isinstance(recovery.get("interruption_bytes"), int)
+                or isinstance(recovery.get("interruption_bytes"), bool)
+                or recovery.get("interruption_bytes") != observed
+                or not isinstance(recovery.get("interruption_expected_bytes"), int)
+                or isinstance(recovery.get("interruption_expected_bytes"), bool)
+                or recovery.get("interruption_expected_bytes") != expected
+                or not str(recovery.get("preservation_result", ""))
+                .replace("/", "\\")
+                .casefold()
+                .endswith("\\beta12\\beta12postupgrade\\preserve-marker.json")
+            ):
+                raise PublishError(
+                    "Beta 11 to Beta 12 receipt does not prove incomplete stage-packs interruption and same-candidate recovery"
+                )
+
+            repair_install_log = _read_bound_text(
+                receipt_dir,
+                upgrade.get("repair_install_log"),
+                label="interrupted repair install log",
+            )
+            post_upgrade_log = _read_bound_text(
+                receipt_dir,
+                upgrade.get("post_upgrade_command_log"),
+                label="post-upgrade preservation command log",
+            )
+            if "PASS" not in repair_install_log or "PASS" not in post_upgrade_log:
+                raise PublishError(
+                    "same-candidate repair and post-upgrade verification commands must both PASS"
+                )
+    else:
+        require_candidate_install("failed_install_repair")
+        repair = _record(evidence.get("failed_install_repair"), label="failed_install_repair")
+        _, fixture = _bound_json(receipt_dir, repair.get("fixture"), label="failed-install fixture")
+        # This is a failed fresh install of the candidate being repaired. The
+        # independent Beta 10 baseline and physical-host before-version stay intact.
+        if (
+            fixture.get("previous_installed_version") != candidate_version
+            or fixture.get("missing_runtime_key") != "whistle_assets_root"
+            or fixture.get("installed_version_marker_removed") is not True
+            or fixture.get("upgrade_journal_exists") is not False
+            or fixture.get("service_status") != "Stopped"
         ):
             raise PublishError(
-                f"direct consumer evidence {proof_name} activation self-test did not pass"
+                f"failed-install repair fixture does not record the known {candidate_version} broken state"
+            )
+        repair_install_log = _read_bound_text(
+            receipt_dir, repair.get("repair_install_log"), label="repair install command log"
+        )
+        repair_verify_log = _read_bound_text(
+            receipt_dir, repair.get("repair_verify_log"), label="repair verification command log"
+        )
+        if "PASS" not in repair_install_log or "PASS" not in repair_verify_log:
+            raise PublishError(
+                "failed-install repair command and post-repair verification must both PASS"
+            )
+        repair_result = read_json("failed_install_repair", "post_repair_result")
+        repair_marker = read_json("failed_install_repair", "post_repair_marker")
+        repaired_schedules = repair_result.get("preserved_schedule_ids")
+        repair_health = repair_result.get("health")
+        repair_marker_runtime = repair_marker.get("runtime")
+        if (
+            repair_result.get("result") != "PASS"
+            or repair_result.get("login") != "PASS"
+            or repair_result.get("preserve_install_and_database") is not True
+            or repair_result.get("product_version") != candidate_version
+            or not isinstance(repair_health, dict)
+            or repair_health.get("status") != "healthy"
+            or not isinstance(repaired_schedules, list)
+            or len(repaired_schedules) != 3
+            or not all(isinstance(item, str) for item in repaired_schedules)
+            or len(set(repaired_schedules)) != 3
+            or repair_marker.get("schedule_ids") != repaired_schedules
+            or repair_result.get("preserved_asset_id")
+            != repair_marker.get("preserved_baseline_asset_id")
+            or not isinstance(repair_marker_runtime, dict)
+            or repair_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
+        ):
+            raise PublishError(
+                "failed-install repair verification does not prove restored account data and Whistle activation"
             )
 
-    require_beta11_install("fresh_install")
-
-    require_beta11_install("failed_install_repair")
-    repair = _record(evidence.get("failed_install_repair"), label="failed_install_repair")
-    _, fixture = _bound_json(receipt_dir, repair.get("fixture"), label="failed-install fixture")
-    if (
-        fixture.get("previous_installed_version") != "1.0.0-beta.11"
-        or fixture.get("missing_runtime_key") != "whistle_assets_root"
-        or fixture.get("installed_version_marker_removed") is not True
-        or fixture.get("upgrade_journal_exists") is not False
-        or fixture.get("service_status") != "Stopped"
-    ):
-        raise PublishError(
-            "failed-install repair fixture does not record the known Beta 11 broken state"
-        )
-    repair_install_log = _read_bound_text(
-        receipt_dir, repair.get("repair_install_log"), label="repair install command log"
-    )
-    repair_verify_log = _read_bound_text(
-        receipt_dir, repair.get("repair_verify_log"), label="repair verification command log"
-    )
-    if "PASS" not in repair_install_log or "PASS" not in repair_verify_log:
-        raise PublishError(
-            "failed-install repair command and post-repair verification must both PASS"
-        )
-    repair_result = read_json("failed_install_repair", "post_repair_result")
-    repair_marker = read_json("failed_install_repair", "post_repair_marker")
-    repaired_schedules = repair_result.get("preserved_schedule_ids")
-    repair_health = repair_result.get("health")
-    repair_marker_runtime = repair_marker.get("runtime")
-    if (
-        repair_result.get("result") != "PASS"
-        or repair_result.get("login") != "PASS"
-        or repair_result.get("preserve_install_and_database") is not True
-        or repair_result.get("product_version") != "1.0.0-beta.11"
-        or not isinstance(repair_health, dict)
-        or repair_health.get("status") != "healthy"
-        or not isinstance(repaired_schedules, list)
-        or len(repaired_schedules) != 3
-        or not all(isinstance(item, str) for item in repaired_schedules)
-        or len(set(repaired_schedules)) != 3
-        or repair_marker.get("schedule_ids") != repaired_schedules
-        or repair_result.get("preserved_asset_id")
-        != repair_marker.get("preserved_baseline_asset_id")
-        or not isinstance(repair_marker_runtime, dict)
-        or repair_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
-    ):
-        raise PublishError(
-            "failed-install repair verification does not prove restored account data and Whistle activation"
+        baseline_run = read_json("beta10_baseline_install", "installer_run")
+        if (
+            baseline_run.get("exit_code") != 0
+            or "beta.10" not in str(baseline_run.get("installer", "")).casefold()
+        ):
+            raise PublishError("Beta 10 baseline installer did not complete successfully")
+        _verify_install_state(
+            read_json("beta10_baseline_install", "install_state"),
+            version="1.0.0-beta.10",
+            label="Beta 10 baseline",
         )
 
-    baseline_run = read_json("beta10_baseline_install", "installer_run")
-    if (
-        baseline_run.get("exit_code") != 0
-        or "beta.10" not in str(baseline_run.get("installer", "")).casefold()
-    ):
-        raise PublishError("Beta 10 baseline installer did not complete successfully")
-    _verify_install_state(
-        read_json("beta10_baseline_install", "install_state"),
-        version="1.0.0-beta.10",
-        label="Beta 10 baseline",
-    )
+        require_candidate_install("beta10_to_beta11_upgrade")
+        upgrade = _record(
+            evidence.get("beta10_to_beta11_upgrade"), label="beta10_to_beta11_upgrade"
+        )
+        upgrade_log = _read_bound_text(
+            receipt_dir,
+            upgrade.get("upgrade_engine_log"),
+            label=f"Beta 10 to {candidate_version} upgrade log",
+        )
+        if (
+            f"old=1.0.0-beta.10 new={candidate_version}" not in upgrade_log
+            or "route: upgrade" not in upgrade_log
+        ):
+            raise PublishError(
+                f"upgrade log does not prove the Beta 10 to {candidate_version} upgrade path"
+            )
 
-    require_beta11_install("beta10_to_beta11_upgrade")
-    upgrade = _record(evidence.get("beta10_to_beta11_upgrade"), label="beta10_to_beta11_upgrade")
-    upgrade_log = _read_bound_text(
-        receipt_dir, upgrade.get("upgrade_engine_log"), label="Beta 10 to Beta 11 upgrade log"
-    )
-    if (
-        "old=1.0.0-beta.10 new=1.0.0-beta.11" not in upgrade_log
-        or "route: upgrade" not in upgrade_log
-    ):
-        raise PublishError("upgrade log does not prove the Beta 10 to Beta 11 upgrade path")
-
-    verify_result = read_json("verify_after_upgrade", "result")
     verify_marker = read_json("verify_after_upgrade", "preserve_marker")
-    schedule_ids = verify_result.get("preserved_schedule_ids")
-    marker_schedules = verify_marker.get("baseline_schedule_ids")
-    verify_health = verify_result.get("health")
     verify_marker_runtime = verify_marker.get("runtime")
-    if (
-        verify_result.get("result") != "PASS"
-        or verify_result.get("login") != "PASS"
-        or verify_result.get("preserve_install_and_database") is not True
-        or verify_result.get("product_version") != "1.0.0-beta.11"
-        or not isinstance(verify_health, dict)
-        or verify_health.get("status") != "healthy"
-        or not isinstance(schedule_ids, list)
-        or len(schedule_ids) != 3
-        or not all(isinstance(item, str) for item in schedule_ids)
-        or len(set(schedule_ids)) != 3
-        or marker_schedules != schedule_ids
-        or verify_result.get("preserved_asset_id")
-        != verify_marker.get("preserved_baseline_asset_id")
-        or not isinstance(verify_marker_runtime, dict)
-        or verify_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
-    ):
-        raise PublishError(
-            "post-upgrade verification does not prove the original account data was preserved"
+    if beta12_sandbox:
+        baseline_marker = read_json("beta11_baseline_install", "preserve_marker")
+        baseline_schedules = baseline_marker.get("schedule_ids")
+        verify_schedules = verify_marker.get("baseline_schedule_ids")
+        upgrade_verification = _record(
+            evidence.get("verify_after_upgrade"), label="verify_after_upgrade"
         )
-
-    runtime_result = read_json(runtime_proof_group, "result")
-    runtime_marker = read_json(runtime_proof_group, "preserve_marker")
-    if (
-        runtime_result.get("result") != "PASS"
-        or runtime_result.get("observed_minutes") != 5
-        or runtime_result.get("channels") != list(runtime_channels)
-        or runtime_result.get("preserve_install_and_database") is not True
-        or runtime_marker.get("preserve_install_and_database") is not True
-        or runtime_marker.get("product_version") != "1.0.0-beta.11"
-    ):
-        raise PublishError(
-            f"{runtime_proof_scope} runtime receipt does not record the five-minute Beta 11 pass"
-        )
-
-    runtime_proof = _record(evidence.get(runtime_proof_group), label=runtime_proof_group)
-    snapshots = runtime_proof.get("snapshots")
-    if not isinstance(snapshots, list) or len(snapshots) != 5:
-        raise PublishError(
-            f"{runtime_proof_scope} runtime proof must bind all five minute snapshots"
-        )
-    vtt_hashes: dict[str, set[str]] = {channel: set() for channel in runtime_channels}
-    jfk_words_seen: dict[str, set[str]] = {channel: set() for channel in runtime_channels}
-    previous_media: dict[str, tuple[datetime, str]] = {}
-    first_snapshot_at: datetime | None = None
-    previous_snapshot_at: datetime | None = None
-    for expected_minute, snapshot_ref in enumerate(snapshots, start=1):
-        _, snapshot = _bound_json(
-            receipt_dir, snapshot_ref, label=f"runtime minute {expected_minute}"
-        )
-        snapshot_at = _utc_timestamp(snapshot.get("utc"), label=f"runtime minute {expected_minute}")
-        if previous_snapshot_at is not None and snapshot_at <= previous_snapshot_at:
-            raise PublishError("runtime snapshot UTC times must increase")
-        if first_snapshot_at is None:
-            first_snapshot_at = snapshot_at
-        previous_snapshot_at = snapshot_at
-        snapshot_health = snapshot.get("health")
+        if beta12_separate_contract:
+            upgrade_result = read_json("verify_after_upgrade", "result")
+            normal_runtime = _record(
+                evidence.get("three_channel_runtime"), label="three_channel_runtime"
+            )
+            post_upgrade_passed = (
+                upgrade_verification.get("result") == normal_runtime.get("result")
+                and upgrade_result.get("result") == "PASS"
+                and upgrade_result.get("mode") == "PostUpgrade"
+                and upgrade_result.get("preserve_install_and_database") is True
+            )
+        else:
+            post_upgrade_log = _read_bound_text(
+                receipt_dir,
+                upgrade_verification.get("command_log"),
+                label="post-upgrade verification command log",
+            )
+            post_upgrade_passed = "PASS:" in post_upgrade_log
         if (
-            snapshot.get("minute") != expected_minute
-            or not isinstance(snapshot_health, dict)
-            or snapshot_health.get("status") != "healthy"
-            or snapshot_health.get("version") != "1.0.0-beta.11"
-            or snapshot.get("pinned_whistle_error_seen") is not False
-            or snapshot.get("whistle_active_seen") != dict.fromkeys(runtime_channels, True)
-            or snapshot.get("whistle_fallback_seen") != dict.fromkeys(runtime_channels, False)
+            not post_upgrade_passed
+            or verify_marker.get("mode") != "PostUpgrade"
+            or verify_marker.get("product_version") != candidate_version
+            or verify_marker.get("preserve_install_and_database") is not True
+            or verify_marker.get("asset_id") != baseline_marker.get("asset_id")
+            or verify_marker.get("preserved_baseline_asset_id") != baseline_marker.get("asset_id")
+            or (
+                beta12_separate_contract
+                and verify_marker.get("station_set_sha256")
+                != interruption["installed_before"].get("station_set_sha256")
+            )
+            or verify_schedules != baseline_schedules
+            or not isinstance(verify_schedules, list)
+            or len(verify_schedules) != 3
+            or not all(isinstance(item, str) and item for item in verify_schedules)
+            or len(set(verify_schedules)) != 3
+            or not isinstance(verify_marker_runtime, dict)
+            or verify_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
         ):
             raise PublishError(
-                f"runtime minute {expected_minute} does not show healthy Whistle primary operation"
+                "Beta 12 post-upgrade verification does not preserve the Beta 11 asset and schedules"
             )
-        channels = snapshot.get("channels")
+    else:
+        verify_result = read_json("verify_after_upgrade", "result")
+        schedule_ids = verify_result.get("preserved_schedule_ids")
+        marker_schedules = verify_marker.get("baseline_schedule_ids")
+        verify_health = verify_result.get("health")
         if (
-            not isinstance(channels, list)
-            or not all(isinstance(channel, dict) for channel in channels)
-            or [channel.get("id") for channel in channels] != list(runtime_channels)
+            verify_result.get("result") != "PASS"
+            or verify_result.get("login") != "PASS"
+            or verify_result.get("preserve_install_and_database") is not True
+            or verify_result.get("product_version") != candidate_version
+            or not isinstance(verify_health, dict)
+            or verify_health.get("status") != "healthy"
+            or not isinstance(schedule_ids, list)
+            or len(schedule_ids) != 3
+            or not all(isinstance(item, str) for item in schedule_ids)
+            or len(set(schedule_ids)) != 3
+            or marker_schedules != schedule_ids
+            or verify_result.get("preserved_asset_id")
+            != verify_marker.get("preserved_baseline_asset_id")
+            or not isinstance(verify_marker_runtime, dict)
+            or verify_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
         ):
             raise PublishError(
-                f"runtime minute {expected_minute} is missing one or more expected channels"
-            )
-        for channel in channels:
-            channel_id = channel["id"]
-            streams = channel.get("ffprobe_streams")
-            codecs = (
-                {
-                    (stream.get("codec_type"), stream.get("codec_name"))
-                    for stream in streams
-                    if isinstance(stream, dict)
-                }
-                if isinstance(streams, list)
-                else set()
-            )
-            expected_codecs = {("video", "h264"), ("audio", "aac")}
-            words = channel.get("expected_jfk_words_seen")
-            vtt_hash = channel.get("vtt_sha256")
-            vtt_text = channel.get("vtt_text_snapshot")
-            vtt_text_bytes = channel.get("vtt_text_snapshot_utf8_bytes")
-            channel_state = channel.get("state")
-            caption_status = channel.get("caption_runtime_status")
-            playlist_age = channel.get("playlist_age_seconds")
-            if (
-                not isinstance(playlist_age, (int, float))
-                or isinstance(playlist_age, bool)
-                or playlist_age < 0
-                or playlist_age > DIRECT_PLAYLIST_MAX_AGE_SECONDS
-                or not math.isfinite(playlist_age)
-            ):
-                raise PublishError(
-                    f"runtime minute {expected_minute} channel {channel_id!r} HLS playlist is stale"
-                )
-            playlist_mtime = _utc_timestamp(
-                channel.get("playlist_mtime_utc"),
-                label=f"runtime minute {expected_minute} channel {channel_id} playlist mtime",
-            )
-            if (
-                abs((snapshot_at - playlist_mtime).total_seconds())
-                > DIRECT_PLAYLIST_MAX_AGE_SECONDS
-            ):
-                raise PublishError(
-                    f"runtime minute {expected_minute} channel {channel_id!r} playlist mtime is stale"
-                )
-            timestamp_age = max(0.0, (snapshot_at - playlist_mtime).total_seconds())
-            if abs(playlist_age - timestamp_age) > 10.0:
-                raise PublishError(
-                    f"runtime minute {expected_minute} channel {channel_id!r} playlist age and mtime disagree"
-                )
-            newest_segment = channel.get("newest_segment")
-            if not isinstance(newest_segment, str) or not newest_segment.strip():
-                raise PublishError(
-                    f"runtime minute {expected_minute} channel {channel_id!r} has no newest HLS segment"
-                )
-            segment_count = channel.get("segment_count")
-            if (
-                not isinstance(segment_count, int)
-                or isinstance(segment_count, bool)
-                or segment_count <= 0
-            ):
-                raise PublishError(
-                    f"runtime minute {expected_minute} channel {channel_id!r} has no HLS segments"
-                )
-            previous = previous_media.get(channel_id)
-            if previous is not None and (
-                playlist_mtime <= previous[0] or newest_segment == previous[1]
-            ):
-                raise PublishError(
-                    f"runtime minute {expected_minute} channel {channel_id!r} HLS media did not advance"
-                )
-            previous_media[channel_id] = (playlist_mtime, newest_segment)
-            if (
-                not isinstance(vtt_text, str)
-                or not vtt_text
-                or not isinstance(vtt_text_bytes, int)
-                or isinstance(vtt_text_bytes, bool)
-                or vtt_text_bytes != len(vtt_text.encode("utf-8"))
-                or vtt_text_bytes > DIRECT_VTT_SAMPLE_MAX_BYTES
-            ):
-                raise PublishError(
-                    f"runtime minute {expected_minute} channel {channel_id!r} has no bounded VTT review sample"
-                )
-            if isinstance(words, dict):
-                jfk_words_seen[channel_id].update(
-                    word for word in DIRECT_JFK_WORDS if words.get(word) is True
-                )
-            if (
-                not isinstance(channel_state, dict)
-                or channel_state.get("state") != "ON_AIR"
-                or not isinstance(caption_status, dict)
-                or caption_status.get("state") != "within-capacity"
-                or not isinstance(channel.get("vtt_cue_count"), int)
-                or channel["vtt_cue_count"] <= 0
-                or not isinstance(words, dict)
-                or codecs != expected_codecs
-                or not isinstance(vtt_hash, str)
-                or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
-            ):
-                raise PublishError(
-                    f"runtime minute {expected_minute} channel {channel_id!r} failed media/caption checks"
-                )
-            vtt_hashes[channel_id].add(vtt_hash)
-
-    if (
-        first_snapshot_at is None
-        or previous_snapshot_at is None
-        or (previous_snapshot_at - first_snapshot_at).total_seconds()
-        < DIRECT_RUNTIME_MIN_SPAN_SECONDS
-    ):
-        raise PublishError("five-minute runtime snapshots span less than three minutes")
-    for channel in runtime_channels:
-        if len(vtt_hashes[channel]) < 3:
-            raise PublishError(
-                f"runtime channel {channel!r} VTT did not progress in at least three samples"
-            )
-        if len(jfk_words_seen[channel]) < 2:
-            raise PublishError(
-                f"runtime channel {channel!r} recognized fewer than two JFK reference words"
+                "post-upgrade verification does not prove the original account data was preserved"
             )
 
+    if beta12_separate_contract:
+        repair_verification = _record(
+            evidence.get("verify_after_repair"), label="verify_after_repair"
+        )
+        repair_result = read_json("verify_after_repair", "result")
+        repair_marker = read_json("verify_after_repair", "preserve_marker")
+        repair_runtime = _record(
+            evidence.get("repair_three_channel_runtime"), label="repair_three_channel_runtime"
+        )
+        repair_marker_runtime = repair_marker.get("runtime")
+        repair_baseline_schedules = repair_marker.get("baseline_schedule_ids")
+        if (
+            repair_runtime.get("result") != repair_verification.get("result")
+            or repair_runtime.get("preserve_marker") != repair_verification.get("preserve_marker")
+            or repair_result.get("result") != "PASS"
+            or repair_result.get("mode") != "PostUpgrade"
+            or repair_result.get("preserve_install_and_database") is not True
+            or repair_marker.get("mode") != "PostUpgrade"
+            or repair_marker.get("product_version") != candidate_version
+            or repair_marker.get("preserve_install_and_database") is not True
+            or repair_marker.get("asset_id") != baseline_marker.get("asset_id")
+            or repair_marker.get("preserved_baseline_asset_id") != baseline_marker.get("asset_id")
+            or repair_baseline_schedules != baseline_schedules
+            or not isinstance(repair_baseline_schedules, list)
+            or len(repair_baseline_schedules) != 3
+            or not all(isinstance(item, str) and item for item in repair_baseline_schedules)
+            or len(set(repair_baseline_schedules)) != 3
+            or not isinstance(repair_marker_runtime, dict)
+            or repair_marker_runtime.get("whistle_assets_root") != "packs/captions-whistle"
+        ):
+            raise PublishError(
+                "post-repair verification does not preserve the Beta 11 asset and schedules"
+            )
+
+    runtime_group_names = [runtime_proof_group]
+    if beta12_separate_contract:
+        runtime_group_names.append("repair_three_channel_runtime")
+    for runtime_proof_group in runtime_group_names:
+        runtime_result = read_json(runtime_proof_group, "result")
+        runtime_marker = read_json(runtime_proof_group, "preserve_marker")
+        runtime_result_invalid = (
+            runtime_result.get("result") != "PASS"
+            or runtime_result.get("observed_minutes") != 5
+            or runtime_result.get("channels") != list(runtime_channels)
+            or runtime_result.get("preserve_install_and_database") is not True
+        )
+        if beta12_sandbox:
+            runtime_result_invalid = (
+                runtime_result_invalid or runtime_result.get("mode") != "PostUpgrade"
+            )
+        if runtime_result_invalid:
+            raise PublishError(
+                f"{runtime_proof_scope} runtime receipt does not record the five-minute {candidate_version} pass"
+            )
+        if (
+            runtime_marker.get("preserve_install_and_database") is not True
+            or runtime_marker.get("product_version") != candidate_version
+        ):
+            raise PublishError(
+                f"{runtime_proof_scope} runtime receipt does not record the five-minute {candidate_version} pass"
+            )
+
+        runtime_proof = _record(evidence.get(runtime_proof_group), label=runtime_proof_group)
+        snapshots = runtime_proof.get("snapshots")
+        if not isinstance(snapshots, list) or len(snapshots) != 5:
+            raise PublishError(
+                f"{runtime_proof_scope} runtime proof must bind all five minute snapshots"
+            )
+        vtt_hashes: dict[str, set[str]] = {channel: set() for channel in runtime_channels}
+        jfk_words_seen: dict[str, set[str]] = {channel: set() for channel in runtime_channels}
+        jfk_observed_channels: set[str] = set()
+        previous_media: dict[str, tuple[datetime, str]] = {}
+        first_snapshot_at: datetime | None = None
+        previous_snapshot_at: datetime | None = None
+        for expected_minute, snapshot_ref in enumerate(snapshots, start=1):
+            _, snapshot = _bound_json(
+                receipt_dir, snapshot_ref, label=f"runtime minute {expected_minute}"
+            )
+            snapshot_at = _utc_timestamp(
+                snapshot.get("utc"), label=f"runtime minute {expected_minute}"
+            )
+            if (
+                beta12_separate_contract
+                and runtime_proof_group == "repair_three_channel_runtime"
+                and snapshot_at <= repair_finished_at
+            ):
+                raise PublishError("repair runtime sample predates completed repair")
+            if previous_snapshot_at is not None and snapshot_at <= previous_snapshot_at:
+                raise PublishError("runtime snapshot UTC times must increase")
+            if first_snapshot_at is None:
+                first_snapshot_at = snapshot_at
+            previous_snapshot_at = snapshot_at
+            snapshot_health = snapshot.get("health")
+            if (
+                snapshot.get("minute") != expected_minute
+                or not isinstance(snapshot_health, dict)
+                or snapshot_health.get("version") != candidate_version
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} does not identify the exact candidate"
+                )
+            if beta12_sandbox:
+                health_finding = _beta12_health_advisory(
+                    snapshot_health,
+                    version=candidate_version,
+                    label=f"{runtime_proof_group} runtime minute {expected_minute}",
+                )
+                if health_finding is not None:
+                    caption_findings.add(health_finding)
+                pinned_error = snapshot.get("pinned_whistle_error_seen")
+                active_map = snapshot.get("whistle_active_seen")
+                fallback_map = snapshot.get("whistle_fallback_seen")
+                expected_channel_set = set(runtime_channels)
+                if (
+                    not isinstance(pinned_error, bool)
+                    or not isinstance(active_map, dict)
+                    or set(active_map) != expected_channel_set
+                    or any(not isinstance(value, bool) for value in active_map.values())
+                    or not isinstance(fallback_map, dict)
+                    or set(fallback_map) != expected_channel_set
+                    or any(not isinstance(value, bool) for value in fallback_map.values())
+                ):
+                    raise PublishError(
+                        f"runtime minute {expected_minute} Whistle observations are malformed"
+                    )
+                if pinned_error:
+                    caption_findings.add(
+                        f"{runtime_proof_group} runtime observed a pinned Whistle error"
+                    )
+                if any(value is not True for value in active_map.values()):
+                    caption_findings.add(
+                        f"{runtime_proof_group} runtime observed Whistle inactive on a channel"
+                    )
+                if any(value is not False for value in fallback_map.values()):
+                    caption_findings.add(f"{runtime_proof_group} runtime observed Whistle fallback")
+            elif (
+                snapshot_health.get("status") != "healthy"
+                or snapshot.get("pinned_whistle_error_seen") is not False
+                or snapshot.get("whistle_active_seen") != dict.fromkeys(runtime_channels, True)
+                or snapshot.get("whistle_fallback_seen") != dict.fromkeys(runtime_channels, False)
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} does not show healthy Whistle primary operation"
+                )
+            channels = snapshot.get("channels")
+            if (
+                not isinstance(channels, list)
+                or not all(isinstance(channel, dict) for channel in channels)
+                or [channel.get("id") for channel in channels] != list(runtime_channels)
+            ):
+                raise PublishError(
+                    f"runtime minute {expected_minute} is missing one or more expected channels"
+                )
+            for channel in channels:
+                channel_id = channel["id"]
+                streams = channel.get("ffprobe_streams")
+                codecs = (
+                    {
+                        (stream.get("codec_type"), stream.get("codec_name"))
+                        for stream in streams
+                        if isinstance(stream, dict)
+                    }
+                    if isinstance(streams, list)
+                    else set()
+                )
+                expected_codecs = {("video", "h264"), ("audio", "aac")}
+                channel_state = channel.get("state")
+                playlist_age = channel.get("playlist_age_seconds")
+                if (
+                    not isinstance(playlist_age, (int, float))
+                    or isinstance(playlist_age, bool)
+                    or playlist_age < 0
+                    or playlist_age > DIRECT_PLAYLIST_MAX_AGE_SECONDS
+                    or not math.isfinite(playlist_age)
+                ):
+                    raise PublishError(
+                        f"runtime minute {expected_minute} channel {channel_id!r} HLS playlist is stale"
+                    )
+                playlist_mtime = _utc_timestamp(
+                    channel.get("playlist_mtime_utc"),
+                    label=f"runtime minute {expected_minute} channel {channel_id} playlist mtime",
+                )
+                if (
+                    abs((snapshot_at - playlist_mtime).total_seconds())
+                    > DIRECT_PLAYLIST_MAX_AGE_SECONDS
+                ):
+                    raise PublishError(
+                        f"runtime minute {expected_minute} channel {channel_id!r} playlist mtime is stale"
+                    )
+                timestamp_age = max(0.0, (snapshot_at - playlist_mtime).total_seconds())
+                if abs(playlist_age - timestamp_age) > 10.0:
+                    raise PublishError(
+                        f"runtime minute {expected_minute} channel {channel_id!r} playlist age and mtime disagree"
+                    )
+                newest_segment = channel.get("newest_segment")
+                if not isinstance(newest_segment, str) or not newest_segment.strip():
+                    raise PublishError(
+                        f"runtime minute {expected_minute} channel {channel_id!r} has no newest HLS segment"
+                    )
+                segment_count = channel.get("segment_count")
+                if (
+                    not isinstance(segment_count, int)
+                    or isinstance(segment_count, bool)
+                    or segment_count <= 0
+                ):
+                    raise PublishError(
+                        f"runtime minute {expected_minute} channel {channel_id!r} has no HLS segments"
+                    )
+                previous = previous_media.get(channel_id)
+                if previous is not None and (
+                    playlist_mtime <= previous[0] or newest_segment == previous[1]
+                ):
+                    raise PublishError(
+                        f"runtime minute {expected_minute} channel {channel_id!r} HLS media did not advance"
+                    )
+                previous_media[channel_id] = (playlist_mtime, newest_segment)
+                if not isinstance(channel_state, dict) or channel_state.get("state") != "ON_AIR":
+                    raise PublishError(
+                        f"runtime minute {expected_minute} channel {channel_id!r} is not ON_AIR"
+                    )
+                if codecs != expected_codecs:
+                    raise PublishError(
+                        f"runtime minute {expected_minute} channel {channel_id!r} is missing H.264/AAC media"
+                    )
+                if beta12_sandbox:
+                    vtt_available, vtt_hash = _beta12_caption_observation(
+                        channel,
+                        label=f"{runtime_proof_group} runtime {channel_id}",
+                        findings=caption_findings,
+                        include_vtt_sample=True,
+                        include_jfk_words=True,
+                    )
+                    if vtt_available and vtt_hash is not None:
+                        vtt_hashes[channel_id].add(vtt_hash.casefold())
+                    words = channel["expected_jfk_words_seen"]
+                    if channel["expected_jfk_words_observation"] == "observed":
+                        jfk_observed_channels.add(channel_id)
+                        jfk_words_seen[channel_id].update(
+                            word for word in DIRECT_JFK_WORDS if words[word]
+                        )
+                else:
+                    words = channel.get("expected_jfk_words_seen")
+                    vtt_hash = channel.get("vtt_sha256")
+                    vtt_text = channel.get("vtt_text_snapshot")
+                    vtt_text_bytes = channel.get("vtt_text_snapshot_utf8_bytes")
+                    caption_status = channel.get("caption_runtime_status")
+                    if (
+                        not isinstance(vtt_text, str)
+                        or not vtt_text
+                        or not isinstance(vtt_text_bytes, int)
+                        or isinstance(vtt_text_bytes, bool)
+                        or vtt_text_bytes != len(vtt_text.encode("utf-8"))
+                        or vtt_text_bytes > DIRECT_VTT_SAMPLE_MAX_BYTES
+                    ):
+                        raise PublishError(
+                            f"runtime minute {expected_minute} channel {channel_id!r} has no bounded VTT review sample"
+                        )
+                    if isinstance(words, dict):
+                        jfk_words_seen[channel_id].update(
+                            word for word in DIRECT_JFK_WORDS if words.get(word) is True
+                        )
+                    if (
+                        not isinstance(caption_status, dict)
+                        or caption_status.get("state") != "within-capacity"
+                        or not isinstance(channel.get("vtt_cue_count"), int)
+                        or channel["vtt_cue_count"] <= 0
+                        or not isinstance(words, dict)
+                        or codecs != expected_codecs
+                        or not isinstance(vtt_hash, str)
+                        or not re.fullmatch(r"[0-9a-fA-F]{64}", vtt_hash)
+                    ):
+                        raise PublishError(
+                            f"runtime minute {expected_minute} channel {channel_id!r} failed media/caption checks"
+                        )
+                    vtt_hashes[channel_id].add(vtt_hash)
+
+        if (
+            first_snapshot_at is None
+            or previous_snapshot_at is None
+            or (previous_snapshot_at - first_snapshot_at).total_seconds()
+            < DIRECT_RUNTIME_MIN_SPAN_SECONDS
+        ):
+            raise PublishError("five-minute runtime snapshots span less than three minutes")
+        for channel in runtime_channels:
+            if beta12_sandbox:
+                if 0 < len(vtt_hashes[channel]) < 3:
+                    caption_findings.add(
+                        f"{runtime_proof_group} {channel} VTT changed in only {len(vtt_hashes[channel])} distinct sample hashes"
+                    )
+                if channel in jfk_observed_channels and len(jfk_words_seen[channel]) < 2:
+                    caption_findings.add(
+                        f"{runtime_proof_group} {channel} observed fewer than two JFK reference words"
+                    )
+            else:
+                if len(vtt_hashes[channel]) < 3:
+                    raise PublishError(
+                        f"runtime channel {channel!r} VTT did not progress in at least three samples"
+                    )
+                if len(jfk_words_seen[channel]) < 2:
+                    raise PublishError(
+                        f"runtime channel {channel!r} recognized fewer than two JFK reference words"
+                    )
+
+    if beta12_separate_contract:
+        return (
+            setup,
+            packs,
+            {
+                "consumer_mode": "sandbox",
+                "fresh_install": "PASS",
+                "beta11_baseline_install": "PASS",
+                "beta11_to_beta12_upgrade": "PASS",
+                "beta12_interrupted_install_repair": "PASS",
+                "preservation": "PASS",
+                "repair_preservation": "PASS",
+                "runtime": "PASS (five minutes, three channels before and after repair)",
+                "caption_performance_advisory": _caption_advisory(caption_findings),
+            },
+        )
+    if beta12_sandbox:
+        return (
+            setup,
+            packs,
+            {
+                "consumer_mode": "sandbox",
+                "fresh_install": "PASS",
+                "beta11_baseline_install": "PASS",
+                "beta11_to_beta12_interrupted_upgrade": "PASS",
+                "preservation": "PASS",
+                "runtime": "PASS (five minutes, three channels)",
+                "caption_performance_advisory": _caption_advisory(caption_findings),
+            },
+        )
     return (
         setup,
         packs,
@@ -1603,6 +2676,12 @@ def _run(args: argparse.Namespace) -> None:
     print("publish_beta_candidate: verifying gh authentication")
     verify_gh_auth()
 
+    if not tag.startswith("v"):
+        raise PublishError(f"--tag must start with 'v': {tag!r}")
+    candidate_version = tag[1:]
+    if candidate_version != get_native_source_version():
+        raise PublishError(f"civiccast._native_version.__version__ does not match tag {tag!r}")
+
     print(f"publish_beta_candidate: verifying kit layout at {kit_dir}")
     direct_verification: dict[str, str] | None = None
     if direct_receipt is not None:
@@ -1611,10 +2690,14 @@ def _run(args: argparse.Namespace) -> None:
             kit_dir=kit_dir,
             artifact_source_sha=artifact_source_sha,
             build_run_id=args.build_run_id,
+            candidate_version=candidate_version,
         )
         print(
             "publish_beta_candidate: direct consumer evidence, assembly receipt, and all kit member hashes verified"
         )
+        caption_advisory = direct_verification.get("caption_performance_advisory")
+        if caption_advisory is not None:
+            print(f"publish_beta_candidate: {caption_advisory}")
     else:
         setup, packs = verify_layout(kit_dir)
 

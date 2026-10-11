@@ -1,8 +1,28 @@
 # CivicCast
 
-**CivicCast `v1.0.0-beta.11` is the current release**, published 2026-10-08 as a GitHub pre-release. Live captions use Whistle as the CPU primary; Whisper fallback is scoped to the affected channel, and operators can select NVIDIA CUDA for Whisper or recorded-media captions. The first recognition is published without repeat-agreement gating. Whistle primary inference is serialized across channels within each station runtime; fallback Whisper requests use a separate serialization lock.
+**CivicCast `v1.0.0-beta.12` is the current public pre-release**, published
+October 10, 2026. Its signed source is
+`a0c98cb7367dc106042ec89d35a91905470d350c`, producer run
+[`38097350705`](https://github.com/scottconverse/civiccast-native/actions/runs/38097350705).
+The [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12)
+has the standard installer, runtime packs, manuals and checksum assets. A normal
+Beta 11-to-Beta 12 setup run exited 0 and returned a running, healthy service at
+schema 0089; the post-upgrade five-snapshot recorder then failed while saving
+JSON, so that five-minute check did not pass. Repair and fresh-install checks
+have not been run. See the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
+for the exact evidence and limits.
+
+The Beta 12 release continues to use Whistle as the CPU primary; Whisper fallback is scoped to the affected channel, and operators can select NVIDIA CUDA for Whisper or recorded-media captions. The first recognition is published without repeat-agreement gating. Whistle primary inference is serialized across channels within each station runtime; fallback Whisper requests use a separate serialization lock.
 
 The October 8 documentation/help download revision (producer `400cff08`, signed build `37857705750`) passed a fresh CPU-only Windows Sandbox installation, a five-minute single-channel caption/output check, and installed Help verification. Its manual, contextual instructions, PDF and Word editions are reconciled with the software. The published tag remains unchanged; the verification record identifies the revised source and keeps earlier package and development-soak results separate. See [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) for results and limits.
+
+A separate October 8–10 Beta 11 host observation recorded **99.877507716% (99.88% rounded) live caption-input audio coverage** over 48 hours and three channels: 635 discarded seconds out of 518,400 nominal channel-seconds. Late captions count as successful; this log-derived coverage measure is not transcript word accuracy or package/Beta 12 qualification. See the [48-hour host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) and [raw milestone snapshot](docs/ops/evidence/beta11-host-48-hour-milestone-2026-10-10.json).
+
+The Beta 12 rendered PDF, Word, and other manual assets are on the
+[published release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+The checked-in [manual source](docs/USER-MANUAL.md) and its PDF/Word editions
+are separate repository downloads. The historical 48-hour Beta 11 observation
+above does not establish Beta 12 installation acceptance.
 
 `v1.0.0-beta.10` was published on 2026-10-02 and is now superseded. Its
 historical Gate A clean-install lane passed 10 of 10 criteria; its upgrade and
@@ -26,14 +46,14 @@ See [BRANCHES.md](BRANCHES.md) for the full explanation, including where an
 earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
 repository, not this one).
 
-**Current version: `v1.0.0-beta.11`** (published 2026-10-08) -- a GitHub
-pre-release, not a production release. `setup.exe`, five runtime `.ccpack`
-packs, the checksum file, installer sidecar and manuals are attached to the
-[`v1.0.0-beta.11` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11),
-with `SHA256SUMS.txt` and installer sidecar metadata for checksum checks;
-the installer itself carries the Authenticode signature. The ~21 GB AI-model
-`station\` bundle (the offline alternative to the installer's own download
-screen) is deliberately not a release asset (see "Install and run" below). `v1.0.0-beta.10`, `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable public
+**Current version: `v1.0.0-beta.12`** (published 2026-10-10) -- a GitHub
+pre-release, not a production release. Its release page carries the signed
+installer, five runtime `.ccpack` packs, four manual assets, checksum manifest
+and installer sidecar. The ~21 GB AI-model `station\` bundle (the offline
+alternative to the installer's own download screen) is in the locally verified
+19-member kit; see the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
+for package and upgrade evidence. `v1.0.0-beta.11` is superseded as the public
+release; its 48-hour host metric above remains historical. `v1.0.0-beta.10`, `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable public
 release) are now superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable
 assets) is also superseded; `v1.0.0-beta.2` was never published -- it exists
 only as an internal Gate A upgrade-baseline kit (see
@@ -41,9 +61,11 @@ only as an internal Gate A upgrade-baseline kit (see
 See [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml)
 for the authored release-state record,
 [`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md)
-for the current release's verification record.
+for Beta 11's historical verification record, and
+[`docs/releases/v1.0.0-beta.12-verification.md`](docs/releases/v1.0.0-beta.12-verification.md)
+for the current release's identity, verification evidence and remaining limits.
 
-**Previous release: `v1.0.0-beta.10`** (published 2026-10-02) is superseded;
+**Earlier release: `v1.0.0-beta.10`** (published 2026-10-02) is superseded;
 its [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10)
 and [verification record](docs/releases/v1.0.0-beta.10-verification.md) remain
 available as history. Beta.8 and beta.9 were never published; their work was
@@ -52,7 +74,7 @@ included in beta.10.
 ### Beta 10 history
 
 The following changes and measurements describe the superseded Beta 10 release.
-They are not qualification results for Beta 11.
+They are not qualification results for Beta 11 or Beta 12.
 
 Compared with the published beta.7, beta.10 changed the following:
 
@@ -382,10 +404,10 @@ has signed off on it.
   see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
   [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
   for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.11` is the current release (published 2026-10-08, a
-  GitHub pre-release): `setup.exe`, the five runtime `.ccpack` packs,
-  `SHA256SUMS.txt`, installer sidecar metadata, and manuals are attached to
-  the [`v1.0.0-beta.11` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11).
+  model. `v1.0.0-beta.12` is the current public GitHub pre-release (published
+  2026-10-10): the signed installer, five runtime `.ccpack` packs, four manual
+  assets, checksum manifest and installer sidecar are attached to the
+  [`v1.0.0-beta.12` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
   `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first **downloadable** release)
   are superseded.
   `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
@@ -394,9 +416,8 @@ has signed off on it.
   A **first-time install** brings its large AI components either in the
   USB/LAN-delivered model bundle (~21 GB, the offline alternative) or, for
   components the installer can download, through the installer window's
-  download screen -- the GitHub download alone does not include them. A first
-  install that relies only on downloads was not run for the exact beta.11
-  package; see
+  download screen -- the GitHub download alone does not include them. A fresh
+  install has not been run for the exact Beta 12 release; see
   [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md).
   **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
   (`setup.exe` + packs + `station\` folder) to the station and run

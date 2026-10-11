@@ -146,7 +146,16 @@ class TakeoverService:
         duration_seconds: float = 3600.0,
     ) -> TakeoverSession:
         """Begin a live takeover. Raises AlreadyLiveError (409) if one is open,
-        TakeoverNotReadyError (422) if no ready live source can be prepared."""
+        TakeoverNotReadyError (422) if the channel is missing/disabled or no
+        ready live source can be prepared."""
+        config = self._egress.get_config(channel_id)
+        if config is None:
+            raise TakeoverNotReadyError(f"Channel {channel_id!r} has no configured egress channel.")
+        if not config.enabled:
+            raise TakeoverNotReadyError(
+                f"Channel {channel_id!r} is disabled and cannot be taken live."
+            )
+
         if self._audit.get_active(channel_id) is not None:
             raise AlreadyLiveError(f"Channel {channel_id!r} is already under live takeover.")
 

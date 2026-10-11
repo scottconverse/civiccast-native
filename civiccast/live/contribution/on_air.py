@@ -1,26 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""S17 guest on-air → channel live seam (build step 9 slice 3e).
+"""Legacy S17 guest on-air callback kept for app-wiring compatibility.
 
-When the operator puts a remote guest on-air, CivicCast must be airing the
-channel's **live (composited) feed**. There is **no internal live pad** (slice 1
-design): the compositor (GStreamer ``wpesrc`` / OBS, S17 §6 step 3) mixes the
-guest into the channel's live source, and the engine airs it through the proven
-**S5 content-reload takeover** (``swap_role('live')`` was routed there in slice
-1). So this seam reuses ``go_on_air`` / the takeover path rather than inventing a
-new pad:
-
-* The **first** guest on-air triggers the channel's live takeover.
-* **Subsequent** guests are already inside the live composition — the takeover is
-  idempotent (an already-live channel is a silent no-op, handled by the caller
-  swallowing ``AlreadyLiveError``).
-
-The actual frame compositing (wpesrc rendering the guest's solo-view URL into the
-program) runs on the egress box and is the LPM rung-1 proof (S17 §8 item 2); this
-module is the wiring that fires the takeover. ``AlreadyLiveError`` is swallowed
-(idempotent: a second guest on-air in an already-live room). Any other hook failure
-propagates to the service layer, which reverts guest/room state and raises a
-``TakeoverHookError`` → the router returns 503.
+The current ``ContributionService.put_on_air`` implementation only marks its
+CivicCast session and room records; it does not invoke this callback. Constructing
+the helper below therefore does not take a channel live, route guest media, or
+establish a compositor connection. Any external OBS/GStreamer composition and
+channel routing must be commissioned and operated separately.
 """
 
 from __future__ import annotations
@@ -33,16 +19,15 @@ from civiccast.live.contribution.models import ContributionRoom, RemoteGuestSess
 
 _LOG = logging.getLogger(__name__)
 
-# (channel_id) -> None: bring the channel's live (composited) feed on-air. Wired
-# to the S5 takeover path in the app factory; None when no engine is wired (the
-# operator then airs the composited feed manually).
+# Legacy callback type. If explicitly invoked, this requests channel-live
+# takeover; the current ContributionService does not invoke its on-air hook.
 ChannelGoLive = Callable[[str], None]
 
 
 def build_contribution_on_air_hook(
     take_live: ChannelGoLive | None,
 ) -> Callable[[RemoteGuestSession, ContributionRoom], None]:
-    """Build the ContributionService ``on_air_hook`` (see module docstring)."""
+    """Build the legacy callback; current ``put_on_air`` does not call it."""
 
     def _hook(session: RemoteGuestSession, room: ContributionRoom) -> None:
         if take_live is None:

@@ -9,28 +9,27 @@
 
 ## Current Release
 
-`v1.0.0-beta.11` is the current release (published 2026-10-08), a GitHub
-pre-release, not a production release. The release includes the signed
-`setup.exe`, five runtime `.ccpack` assets, `SHA256SUMS.txt`, installer
-sidecar metadata, and manuals:
-<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>.
-The October 8 documentation/help revision (producer `400cff08`, signed build
-`37857705750`) passed a fresh Windows Sandbox installation using the complete
-local kit, with networking and virtual GPU disabled and 9 GiB guest RAM. Setup
-exited successfully after about 30 minutes, including offline model self-tests.
-A five-minute single-channel observation showed advancing HLS and Whistle
-captions, and installed Help matched the exact package. Failed-install repair,
-Beta 10 upgrade, GPU acceleration and longer capacity tests were not performed
-for this revision. See
-[`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md)
-for its tested scope and limits.
+`v1.0.0-beta.12` is the current signed GitHub pre-release, published
+October 10, 2026. Download the installer, five runtime packs, manuals,
+checksums and installer sidecar from the
+[Beta 12 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+
+A normal offline CPU-only Windows Sandbox upgrade from Beta 11 completed
+with installer exit 0, a running service and healthy API with the current
+database schema. Preservation assertions reached their saved marker, and
+initial observations found audio/video and Whistle primary on all three
+channels. The observation recorder then failed while writing JSON; its
+five-snapshot check did not complete. Fresh-install and interrupted-repair
+checks were not run for this exact package. See the
+[Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
+Beta 11 and its recorded package/host observations remain historical.
 
 `v1.0.0-beta.10` (published 2026-10-02) is superseded. Its historical Gate A
 clean-install lane passed 10 of 10 criteria; the upgrade and download-only
 lanes were not run. `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published;
 their work was included in beta.10. See
 [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md)
-for that release's record. Watch the Beta 11 release page, not
+for that release's record. Watch the Beta 12 release page, not
 `scottconverse/civiccast` (the retired, separate WSL2-line repository) and not
 any `v1.0.0-rcNN` tag, which belongs to that other repository. See
 [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
@@ -66,8 +65,8 @@ never a release a station receives.
   The complete signed USB/LAN kit (installer, runtime packs, and the
   `station\` model bundle, about 21 GB) is the offline alternative for a
   station without a reliable internet connection. **Not proven for this Beta
-  11 package:** a first install on a clean machine that has neither a kit nor an
-  earlier install. The exact Beta 11 package has not passed a clean first-install
+  12 package:** a first install on a clean machine that has neither a kit nor an
+  earlier install. The exact Beta 12 package has not passed a clean first-install
   check using downloads alone. If a required runtime pack is missing, staging
   stops with exit 110; station activation and self-test failures occur later
   and are reported at the activation step (overall setup exit 123, with the

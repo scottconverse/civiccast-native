@@ -275,6 +275,39 @@ function runtimeChannelLabel(channel: ChannelRuntimeStatus): string {
   return channel.on_air ? 'On air' : 'Ready'
 }
 
+function liveCaptionDetail(channel: ChannelRuntimeStatus): string | null {
+  if (channel.captions_expected === false) return null
+  const live = channel.live_captions
+  if (!live) return 'Live captions: worker status unavailable'
+
+  const processingLabels = {
+    disabled: 'switched off',
+    inactive: 'not processing while channel is stopped',
+    waiting: 'waiting for audio',
+    processing: 'processing audio',
+    'caught-up': 'caught up; waiting for new audio',
+    silent: 'digital silence in latest processed audio',
+    stalled: 'worker stalled',
+    failed: 'worker failed or paused',
+    unknown: 'worker status unknown',
+  } as const
+  const providerLabels = {
+    'whistle-primary': 'Whistle primary',
+    'whisper-primary': 'Whisper primary',
+    'whisper-fallback': 'Whisper fallback active',
+    'fallback-cooldown': `Whisper fallback cooling down${live.provider_retry_in_seconds == null ? '' : ` (${live.provider_retry_in_seconds}s)`}`,
+    'fallback-retry-ready': 'Whisper fallback retry ready',
+    unknown: 'provider unknown',
+  } as const
+  const processing = processingLabels[live.processing_state ?? 'unknown']
+  const provider = providerLabels[live.provider_state ?? 'unknown']
+  const heartbeat = live.worker_heartbeat_at
+    ? new Date(live.worker_heartbeat_at).toLocaleTimeString()
+    : 'not received'
+  const backlog = live.backlog_segments ? ` · ${live.backlog_segments} queued` : ''
+  return `Captions: ${processing} · ${provider} · worker heartbeat ${heartbeat}${backlog}`
+}
+
 function udpSinkLabel(
   channel: ChannelProfile,
   sink: string,
@@ -353,23 +386,31 @@ export function RuntimeSafeToAirBanner({
         </p>
       ) : (
         <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-          {channels.map((channel) => (
-            <div
-              key={channel.channel_id}
-              className="flex items-center justify-between gap-2 rounded-md p-2"
-              style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
-            >
-              <div className="min-w-0">
-                <div className="cc-truncate text-sm font-semibold">{channel.channel_id}</div>
-                <div className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-                  {stateLabel(channel.egress_state)}
-                  {channel.on_healthy_slate ? ' · on safety slate' : ''}
-                  {channel.captions_expected === false ? ' · live captions off' : ''}
+          {channels.map((channel) => {
+            const captionDetail = liveCaptionDetail(channel)
+            return (
+              <div
+                key={channel.channel_id}
+                className="flex items-center justify-between gap-2 rounded-md p-2"
+                style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+              >
+                <div className="min-w-0">
+                  <div className="cc-truncate text-sm font-semibold">{channel.channel_id}</div>
+                  <div className="text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+                    {stateLabel(channel.egress_state)}
+                    {channel.on_healthy_slate ? ' · on safety slate' : ''}
+                    {channel.captions_expected === false ? ' · live captions off' : ''}
+                  </div>
+                  {captionDetail && (
+                    <div className="mt-1 text-[11px]" style={{ color: 'var(--cc-ink-2)' }}>
+                      {captionDetail}
+                    </div>
+                  )}
                 </div>
+                <StatusPill label={runtimeChannelLabel(channel)} tone={runtimeChannelTone(channel.color)} />
               </div>
-              <StatusPill label={runtimeChannelLabel(channel)} tone={runtimeChannelTone(channel.color)} />
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
       <p className="m-0 text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>

@@ -2296,20 +2296,21 @@ def test_v12_first_run_api_does_not_report_ok_from_placeholder_configuration(
     assert gates["Subscriber notifications"]["status"] == "credential_or_secret_required"
 
 
-def test_cg_public_api_exposes_idle_and_emergency_states() -> None:
+def test_cg_public_api_exposes_idle_and_requires_a_real_emergency_overlay() -> None:
     client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
 
     idle = client.get("/api/public/cg/idle", params={"channel_id": "gov-ch12"})
-    overlay = client.get(
+    missing_channel = client.get(
         "/api/public/cg/emergency-overlay",
         params={"overlay_id": "storm-warning", "severity": "emergency"},
     )
+    inactive = client.get("/api/public/cg/emergency-overlay", params={"channel_id": "gov-ch12"})
 
     assert idle.status_code == 200
     assert idle.json()["channel_id"] == "gov-ch12"
-    assert overlay.status_code == 200
-    assert overlay.json()["severity"] == "emergency"
-    assert overlay.json()["cellular_fallback_enabled"] is True
+    assert missing_channel.status_code == 422
+    assert inactive.status_code == 404
+    assert inactive.json()["detail"] == "No emergency overlay is active for this channel."
 
 
 def test_tsduck_status_endpoint_reports_install_state() -> None:

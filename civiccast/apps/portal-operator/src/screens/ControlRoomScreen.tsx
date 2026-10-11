@@ -8,13 +8,14 @@
 // the S16->S5 boundary visible, and an append-only fired-cue audit drawer. The
 // console degrades honestly when the TSR control service is unavailable.
 
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ApiError,
   closeControlRoomSession,
   createSupportBundle,
   fireControlRoomCue,
+  getOpenControlRoomSession,
   getControlRoomReadiness,
   getControlRoomSessionAudit,
   getControlSurface,
@@ -48,7 +49,31 @@ import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { EmptyState } from '../components/EmptyState'
 
 const READ_ROLES = ['setup_admin', 'support_admin', 'meeting_operator']
+const SELECTED_SURFACE_STORAGE_KEY = 'civiccast.controlRoom.selectedSurface'
 type SessionMode = NonNullable<ControlRoomSession['mode']>
+
+function readSelectedSurface(): string | null {
+  try {
+    return window.sessionStorage.getItem(SELECTED_SURFACE_STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+function writeSelectedSurface(surfaceId: string | null): void {
+  try {
+    if (surfaceId) window.sessionStorage.setItem(SELECTED_SURFACE_STORAGE_KEY, surfaceId)
+    else window.sessionStorage.removeItem(SELECTED_SURFACE_STORAGE_KEY)
+  } catch {
+    // The selected surface is only a refresh convenience; the backend remains authoritative.
+  }
+}
+
+function formatRemaining(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  const remainder = seconds % 60
+  return `${minutes}:${String(remainder).padStart(2, '0')}`
+}
 
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? fallback
@@ -278,6 +303,41 @@ export function SessionModeBanner({ session }: { session: ControlRoomSession }) 
   )
 }
 
+function SessionExpiryStatus({
+  expiresAt,
+  now,
+  canPanic,
+}: {
+  expiresAt: string | null | undefined
+  now: number
+  canPanic: boolean
+}) {
+  const expiryMs = expiresAt ? Date.parse(expiresAt) : Number.NaN
+  if (!Number.isFinite(expiryMs)) {
+    return (
+      <Banner tone="warn">
+        This On-Air session has no valid expiry time. Normal cues are paused; {canPanic ? 'use Panic only if needed, then end the session and open a new one.' : 'the session owner should use Panic only if needed, then end the session and open a new one.'}
+      </Banner>
+    )
+  }
+
+  const remainingSeconds = Math.max(0, Math.ceil((expiryMs - now) / 1000))
+  const expiryTime = new Date(expiryMs).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+  })
+  return remainingSeconds === 0 ? (
+    <Banner tone="warn">
+      On-Air session expired at {expiryTime}. Normal cues are paused. {canPanic ? 'Panic can still run the safe-state cue; end this session to release the surface.' : 'The session owner can still run Panic; an authorized admin can release this lock.'}
+    </Banner>
+  ) : (
+    <Banner tone={remainingSeconds <= 300 ? 'warn' : 'info'}>
+      On-Air session expires in {formatRemaining(remainingSeconds)} at {expiryTime}.
+    </Banner>
+  )
+}
+
 export function SafeStatePanel({
   session,
   cues,
@@ -286,6 +346,7 @@ export function SafeStatePanel({
   planError,
   onPlan,
   onFire,
+  onPanic,
 }: {
   session: ControlRoomSession
   cues: TimelineCue[]
@@ -294,6 +355,7 @@ export function SafeStatePanel({
   planError?: string | null
   onPlan: (cueId: string) => void
   onFire: (cueId: string) => void
+  onPanic?: () => void
 }) {
   const safeCue = cues.find((cue) => cue.cue_id === session.safe_state_cue_id)
   const plannedSafe = safeCue && planned?.cue_id === safeCue.cue_id ? planned : null
@@ -319,8 +381,9 @@ export function SafeStatePanel({
               style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
               Dry Run Safe State
             </button>
-            <button type="button" onClick={() => onFire(safeCue.cue_id)}
-              disabled={busy || !plannedSafe?.ready_to_send}
+            <button type="button"
+              onClick={() => isOnAir ? onPanic?.() : onFire(safeCue.cue_id)}
+              disabled={busy || (isOnAir ? !onPanic : !plannedSafe?.ready_to_send)}
               className="rounded-md px-3 py-1.5 text-xs font-semibold"
               style={{ background: 'var(--cc-warn)', color: 'var(--cc-warn-ink)' }}>
               {isOnAir ? 'Panic: Run Safe State' : 'Record Safe State Test'}
@@ -328,9 +391,14 @@ export function SafeStatePanel({
           </div>
           {plannedSafe && <CuePlanPreview plan={plannedSafe} />}
           {planError && <Banner tone="err">{planError}</Banner>}
-          {!plannedSafe && (
-            <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          {!plannedSafe && !isOnAir && (
+            <div className="text-xs" style={{ color: 'var(--cc-ink)' }}>
               Dry Run checks the current device and cue state before this recovery cue can be sent.
+            </div>
+          )}
+          {!plannedSafe && isOnAir && (
+            <div className="text-xs" style={{ color: 'var(--cc-ink)' }}>
+              Panic sends the configured safe-state cue immediately, including after the On-Air deadline.
             </div>
           )}
         </>
@@ -429,8 +497,7 @@ export function ControlRoomScreen() {
   const canProbe = roles.includes('setup_admin') || roles.includes('support_admin')
   const canCreateSupportBundle = roles.includes('support_admin')
 
-  const [surfaceId, setSurfaceId] = useState<string | null>(null)
-  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [surfaceId, setSurfaceId] = useState<string | null>(readSelectedSurface)
   const [sessionMode, setSessionMode] = useState<SessionMode>('test')
   const [safeStateCueId, setSafeStateCueId] = useState<string>('')
   const [confirmOnAir, setConfirmOnAir] = useState(false)
@@ -440,6 +507,8 @@ export function ControlRoomScreen() {
   const [unavailable, setUnavailable] = useState(false)
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
 
+  useEffect(() => writeSelectedSurface(surfaceId), [surfaceId])
+
   const devicesQuery = useQuery({ queryKey: ['cr-devices'], queryFn: listProductionDevices, enabled: canRead })
   const readinessQuery = useQuery({ queryKey: ['cr-readiness'], queryFn: getControlRoomReadiness, enabled: canRead })
   const surfacesQuery = useQuery({ queryKey: ['cr-surfaces'], queryFn: listControlSurfaces, enabled: canRead })
@@ -448,13 +517,34 @@ export function ControlRoomScreen() {
     queryFn: () => getControlSurface(surfaceId as string),
     enabled: canRead && surfaceId != null,
   })
+  const surfaceSessionQuery = useQuery({
+    queryKey: ['cr-surface-session', surfaceId],
+    queryFn: () => getOpenControlRoomSession(surfaceId as string),
+    enabled: canRead && surfaceId != null,
+    refetchInterval: surfaceId ? 15_000 : false,
+  })
+  const activeSession = surfaceSessionQuery.data ?? null
+  const isSessionOwner = Boolean(
+    activeSession && activeSession.operator_id === identityQuery.data?.operator_id,
+  )
+  const sessionId = isSessionOwner ? activeSession?.session_id ?? null : null
+  const canOverrideSessionLock = roles.includes('setup_admin') || roles.includes('support_admin')
+  const [clockNow, setClockNow] = useState(() => Date.now())
+  const onAirExpiresAt = activeSession?.mode === 'on_air' ? activeSession.on_air_expires_at : null
+  useEffect(() => {
+    if (!onAirExpiresAt) return
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [onAirExpiresAt])
+  const expiryMs = onAirExpiresAt ? Date.parse(onAirExpiresAt) : Number.NaN
+  const onAirExpired = activeSession?.mode === 'on_air'
+    && (!Number.isFinite(expiryMs) || clockNow >= expiryMs)
   const auditQuery = useQuery({
     queryKey: ['cr-audit', sessionId],
     queryFn: () => getControlRoomSessionAudit(sessionId as string),
     enabled: sessionId != null,
   })
 
-  const [activeSession, setActiveSession] = useState<ControlRoomSession | null>(null)
   const invReadiness = () => qc.invalidateQueries({ queryKey: ['cr-readiness'] })
 
   const probeMut = useMutation({
@@ -469,11 +559,22 @@ export function ControlRoomScreen() {
       safe_state_cue_id: sessionMode === 'on_air' ? safeStateCueId : null,
       confirm_on_air: sessionMode === 'on_air' ? confirmOnAir : false,
     }),
-    onSuccess: (s) => { setSessionId(s.session_id); setActiveSession(s); setPlanned(null); invReadiness() },
+    onSuccess: (s) => {
+      qc.setQueryData(['cr-surface-session', s.surface_id], s)
+      setPlanned(null)
+      invReadiness()
+    },
+    onError: () => qc.invalidateQueries({ queryKey: ['cr-surface-session', surfaceId] }),
   })
   const closeMut = useMutation({
-    mutationFn: () => closeControlRoomSession(sessionId as string),
-    onSuccess: () => { setSessionId(null); setActiveSession(null); setPlanned(null); invReadiness() },
+    mutationFn: (params: { sessionId: string; surfaceId: string }) =>
+      closeControlRoomSession(params.sessionId),
+    onSuccess: (_s, params) => {
+      qc.invalidateQueries({ queryKey: ['cr-surface-session', params.surfaceId] })
+      qc.invalidateQueries({ queryKey: ['cr-audit', params.sessionId] })
+      setPlanned(null)
+      invReadiness()
+    },
   })
   const planMut = useMutation({
     mutationFn: (cueId: string) => planControlRoomCue(sessionId as string, cueId),
@@ -502,6 +603,7 @@ export function ControlRoomScreen() {
       setConfirmingCueId(null)
       if (isUnavailable(err)) setUnavailable(true)
       qc.invalidateQueries({ queryKey: ['cr-audit', sessionId] })
+      qc.invalidateQueries({ queryKey: ['cr-surface-session', surfaceId] })
       invReadiness()
     },
   })
@@ -601,7 +703,46 @@ export function ControlRoomScreen() {
         <section className="space-y-2">
           {surfaceQuery.isLoading && <Banner tone="info">Loading cues for this surface...</Banner>}
           {surfaceQuery.isError && <Banner tone="err">Could not load this surface. {apiMessage(surfaceQuery.error, '')}</Banner>}
-          {!surfaceQuery.isSuccess ? null : !canOperate ? (
+          {!surfaceQuery.isSuccess ? null : surfaceSessionQuery.isLoading ? (
+            <Banner tone="info">Checking the current session and operator lock...</Banner>
+          ) : surfaceSessionQuery.isError ? (
+            <Banner tone="err">
+              Could not verify the current session. Cue controls are paused. {apiMessage(surfaceSessionQuery.error, '')}
+            </Banner>
+          ) : activeSession && !isSessionOwner ? (
+            <div className="space-y-2 rounded-md p-3" style={{ background: 'var(--cc-warn-soft)', border: '1px solid var(--cc-warn)' }}>
+              <Banner tone="warn">
+                {activeSession.operator_name ?? 'Another operator'} owns this surface's active {activeSession.mode === 'on_air' ? 'On-Air' : 'Test'} session. It is read-only to you; cues already sent are not undone by releasing the lock.
+              </Banner>
+              {activeSession.mode === 'on_air' && (
+                <SessionExpiryStatus expiresAt={activeSession.on_air_expires_at} now={clockNow} canPanic={false} />
+              )}
+              {canOverrideSessionLock ? (
+                <button
+                  type="button"
+                  onClick={() => setPendingConfirm({
+                    title: 'Force-close this control-room session?',
+                    body: `This will release ${activeSession.operator_name ?? 'the other operator'}'s ${activeSession.mode === 'on_air' ? 'On-Air' : 'Test'} operator lock on this control surface. It does not undo cues already sent.`,
+                    confirmLabel: 'Confirm force-close',
+                    run: () => closeMut.mutate({
+                      sessionId: activeSession.session_id,
+                      surfaceId: activeSession.surface_id,
+                    }),
+                  })}
+                  disabled={closeMut.isPending}
+                  className="rounded-md px-3 py-1.5 text-xs font-semibold"
+                  style={{ background: 'var(--cc-warn)', color: 'var(--cc-warn-ink)' }}
+                >
+                  {closeMut.isPending ? 'Releasing lock...' : 'Force-close session'}
+                </button>
+              ) : (
+                <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                  Ask a Setup admin or Support admin to release this lock if the owner is unavailable.
+                </p>
+              )}
+              {closeMut.isError && <Banner tone="err">{apiMessage(closeMut.error, 'Could not release the session lock.')}</Banner>}
+            </div>
+          ) : !canOperate && !(activeSession && isSessionOwner && canOverrideSessionLock) ? (
             <Banner tone="info">Read-only — opening a session and firing cues requires the meeting operator role.</Banner>
           ) : !sessionId ? (
             <div className="space-y-2 rounded-md p-3" style={{ background: 'var(--cc-surface-2)', border: '1px solid var(--cc-line)' }}>
@@ -665,38 +806,47 @@ export function ControlRoomScreen() {
           ) : (
             <div className="flex items-center gap-3">
               <Pill label={activeSession?.mode === 'on_air' ? 'On-Air session open' : 'Test session open'} tone={activeSession?.mode === 'on_air' ? 'warn' : 'info'} />
-              <button type="button"
-                onClick={() =>
-                  setPendingConfirm({
-                    title: 'End the control room session?',
-                    body:
-                      activeSession?.mode === 'on_air'
-                        ? 'This releases the operator lock on this control surface while the session is On-Air. Any cue mid-fire is not rolled back, and no operator can fire cues on this surface until a new session is opened.'
-                        : 'This releases the operator lock on this control surface. No operator can fire cues on this surface until a new session is opened.',
-                    confirmLabel: 'End session',
-                    run: () => closeMut.mutate(),
-                  })
-                }
-                disabled={closeMut.isPending}
-                className="rounded-md px-3 py-1 text-xs font-semibold"
-                style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
-                {closeMut.isPending ? 'Ending...' : 'End session'}
-              </button>
+              {canOperate || canOverrideSessionLock ? (
+                <button type="button"
+                  onClick={() =>
+                    setPendingConfirm({
+                      title: 'End the control room session?',
+                      body: activeSession?.mode === 'on_air'
+                        ? 'This releases your operator lock on this control surface. Any cue already sent is not undone. Panic can still run the safe-state cue until you end the session.'
+                        : 'This releases your operator lock on this control surface. No operator can fire cues on it until a new session is opened.',
+                      confirmLabel: 'End session',
+                      run: () => activeSession && closeMut.mutate({
+                        sessionId: activeSession.session_id,
+                        surfaceId: activeSession.surface_id,
+                      }),
+                    })
+                  }
+                  disabled={closeMut.isPending}
+                  className="rounded-md px-3 py-1 text-xs font-semibold"
+                  style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
+                  {closeMut.isPending ? 'Ending...' : 'End session'}
+                </button>
+              ) : null}
             </div>
           )}
           {openMut.isError && <Banner tone="err">{apiMessage(openMut.error, 'Could not open the session.')}</Banner>}
+          {closeMut.isError && <Banner tone="err">{apiMessage(closeMut.error, 'Could not end the session.')}</Banner>}
 
-          {activeSession && (
+          {activeSession && sessionId && (
             <div className="space-y-2">
               <SessionModeBanner session={activeSession} />
+              {activeSession.mode === 'on_air' && (
+                <SessionExpiryStatus expiresAt={activeSession.on_air_expires_at} now={clockNow} canPanic={canOperate} />
+              )}
               <ProgramFeedBanner session={activeSession} />
               <SafeStatePanel session={activeSession} cues={cues} planned={planned}
-                busy={planMut.isPending || fireMut.isPending}
+                busy={planMut.isPending || fireMut.isPending || rollbackMut.isPending}
                 planError={planMut.isError && planMut.variables === activeSession.safe_state_cue_id
                   ? `Safe State dry run failed: ${apiMessage(planMut.error, 'Could not dry run the safe-state cue.')}`
                   : null}
-                onPlan={(cueId) => planMut.mutate(cueId)}
-                onFire={(cueId) => fireMut.mutate(cueId)} />
+                onPlan={(cueId) => { if (canOperate && !surfaceSessionQuery.isError) planMut.mutate(cueId) }}
+                onFire={(cueId) => { if (canOperate && !onAirExpired && !surfaceSessionQuery.isError) fireMut.mutate(cueId) }}
+                onPanic={canOperate && !surfaceSessionQuery.isError ? () => rollbackMut.mutate() : undefined} />
             </div>
           )}
 
@@ -704,12 +854,13 @@ export function ControlRoomScreen() {
             <>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {cues.map((cue) => (
-                  <CueButton key={cue.cue_id} cue={cue} canFire={Boolean(sessionId) && canOperate}
+                  <CueButton key={cue.cue_id} cue={cue} canFire={Boolean(sessionId) && canOperate && !onAirExpired && !surfaceSessionQuery.isError}
                     sessionMode={activeSession?.mode ?? null}
-                    planned={planned} busy={planMut.isPending || fireMut.isPending}
+                    planned={planned}
+                    busy={planMut.isPending || fireMut.isPending || !sessionId || surfaceSessionQuery.isError || onAirExpired}
                     confirming={confirmingCueId === cue.cue_id}
-                    onPlan={() => { if (sessionId) planMut.mutate(cue.cue_id) }}
-                    onFire={() => fireMut.mutate(cue.cue_id)}
+                    onPlan={() => { if (sessionId && canOperate && !surfaceSessionQuery.isError) planMut.mutate(cue.cue_id) }}
+                    onFire={() => { if (sessionId && canOperate && !onAirExpired && !surfaceSessionQuery.isError) fireMut.mutate(cue.cue_id) }}
                     onConfirmToggle={(on) => setConfirmingCueId(on ? cue.cue_id : null)} />
                 ))}
               </div>
@@ -721,15 +872,6 @@ export function ControlRoomScreen() {
           )}
           {fireMut.isError && !unavailable && (
             <Banner tone="err">{apiMessage(fireMut.error, 'Could not fire the cue.')}</Banner>
-          )}
-          {fireMut.isError && activeSession?.mode === 'on_air' && activeSession.safe_state_cue_id && (
-            <div className="flex justify-start">
-              <button type="button" onClick={() => rollbackMut.mutate()} disabled={rollbackMut.isPending}
-                className="rounded-md px-3 py-1.5 text-xs font-semibold"
-                style={{ background: 'var(--cc-warn)', color: 'var(--cc-warn-ink)' }}>
-                {rollbackMut.isPending ? 'Rolling back...' : 'Roll back to Safe State'}
-              </button>
-            </div>
           )}
           {rollbackMut.isError && (
             <Banner tone="err">{apiMessage(rollbackMut.error, 'Could not roll back to Safe State.')}</Banner>

@@ -27,6 +27,7 @@ ALEMBIC_INI = REPO_ROOT / "alembic.ini"
 
 _PARENT_REVISION = "0086_live_source_probe_state"
 _REVISION = "0087_retention_terms"
+_CURRENT_HEAD = "0089_contribution_media_control_requests"
 
 _NEW_COLUMNS = ("retention_term_unit", "retention_term_value", "retention_anchor_at")
 
@@ -74,13 +75,10 @@ def _seed_minimal_assets_table(url: str) -> None:
 
 
 def test_single_head() -> None:
-    """WP-08's own head must be the ONLY head reachable from this
-    worktree's migration set (finalization plan section 7's "single-head
-    assertion" gate). The chain is 0086_live_source_probe_state -> 0087,
-    per the migration's own docstring."""
+    """The complete migration set must resolve to the current single head."""
     script = ScriptDirectory.from_config(_cfg("sqlite:///:memory:"))
     heads = script.get_heads()
-    assert heads == [_REVISION], f"expected a single head {_REVISION!r}, got {heads}"
+    assert heads == [_CURRENT_HEAD], f"expected current head {_CURRENT_HEAD!r}, got {heads}"
 
 
 def test_upgrade_adds_the_three_columns(tmp_path: Path) -> None:

@@ -28,7 +28,7 @@ class _FixedUuid:
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     summary_store = InMemorySummaryStore()
-    summary = _summary().model_copy(update={"status": "approved"})
+    summary = _summary().model_copy(update={"status": "pending_review"})
     summary_store.create_summary(summary)
     summary_store.approve_summary(
         OperatorApproval(
@@ -37,7 +37,8 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
             operator_display_name="Token Identity A",
             approved_at=datetime(2026, 5, 16, 12, 0, tzinfo=UTC),
             approval_note="Approved by authenticated token identity.",
-        )
+        ),
+        expected_audit_fingerprint=summary.audit_fingerprint,
     )
     monkeypatch.setattr(exporter_module, "uuid4", lambda: _FixedUuid())
 

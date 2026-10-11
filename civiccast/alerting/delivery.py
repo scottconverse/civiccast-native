@@ -4,9 +4,11 @@
 
 Design (OD-4 / OD-7):
 - AlertDeliveryDispatch is the concrete DispatchHook injected into AlertEvaluator.
-  After the evaluator optimistically writes a "sent" delivery row, it calls the
-  hook to do the actual transport. On failure the hook marks the row "failed" so
-  the AlertRetryWorker can reattempt with bounded exponential backoff.
+  After the evaluator commits an optimistic "sent" delivery row, it calls the
+  hook outside that transaction to do the actual transport. On failure the hook
+  commits "failed" so AlertRetryWorker can reattempt with bounded backoff.
+  This is not a transactional outbox: a process crash between that first commit
+  and the transport can still leave an optimistic "sent" row without a send.
 - Dead-letter after max_attempts surfaces a "service-down" condition so the
   operator sees the persistent failure on the S8 dashboard.
 - Credentials (SMTP password, webhook secret) are never stored in the DB; they
@@ -363,12 +365,19 @@ def _send_by_kind(
     sms: AlertSmsSender,
 ) -> bool:
     """Route to the right sender by channel.kind; return True on success."""
-    if channel.kind == "email":
-        return smtp.send(event, channel, get_credential)
-    if channel.kind == "webhook":
-        return webhook.send(event, channel, get_credential)
-    if channel.kind == "sms":
-        return sms.send(event, channel, get_credential)
+    try:
+        if channel.kind == "email":
+            return smtp.send(event, channel, get_credential)
+        if channel.kind == "webhook":
+            return webhook.send(event, channel, get_credential)
+        if channel.kind == "sms":
+            return sms.send(event, channel, get_credential)
+    except Exception:
+        # Credential providers and injected senders may raise before the
+        # concrete sender's transport guard. Persist a retry without logging
+        # an exception message that could contain a credential or destination.
+        _LOG.warning("alert transport raised for channel %s", channel.channel_id)
+        return False
     _LOG.warning(  # type: ignore[unreachable]
         "unknown channel kind %r for channel %s", channel.kind, channel.channel_id
     )
@@ -422,11 +431,13 @@ class AlertDeliveryDispatch:
             channel = get_alert_channel(session, channel_id)
             if event is None or channel is None:
                 _LOG.warning(
-                    "dispatch: event %s or channel %s not found; skipping delivery %s",
+                    "dispatch: event %s or channel %s not found; dead-lettering delivery %s",
                     event_id,
                     channel_id,
                     delivery_id,
                 )
+                dead_letter_delivery(session, delivery_id)
+                session.commit()
                 return
             ok = _send_by_kind(
                 event,
@@ -441,6 +452,9 @@ class AlertDeliveryDispatch:
                 fail_delivery(
                     session, delivery_id, error="transport error", next_attempt_at=next_attempt
                 )
+            else:
+                succeed_delivery(session, delivery_id)
+            session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +498,7 @@ class AlertRetryWorker:
             due = due_retry_deliveries(session, now)
             for delivery in due:
                 self._retry_one(session, delivery, now)
+                session.commit()
                 processed += 1
         return processed
 

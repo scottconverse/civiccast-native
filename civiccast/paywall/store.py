@@ -157,12 +157,21 @@ class PaywallStore:
     # PaywallConfig
     # ------------------------------------------------------------------
 
-    def upsert_config(self, config: PaywallConfig) -> PaywallConfig:
+    def upsert_config(
+        self,
+        config: PaywallConfig,
+        *,
+        preserve_signing_secret_if_missing: bool = False,
+    ) -> PaywallConfig:
         """Insert or update a paywall config.
 
         Raises ``PaywallStationConfigConflictError`` if a different
         ``config_id`` already exists for ``station_id`` (the unique index
-        on ``station_id`` enforces "one config per station").
+        on ``station_id`` enforces "one config per station"). When
+        ``preserve_signing_secret_if_missing`` is true, an existing row's
+        secret column is left untouched in this same transaction. This
+        avoids a stale read in the API layer overwriting a concurrent
+        rotation during an ordinary settings save.
         """
         now = _now()
         with self._session_factory() as session:
@@ -195,7 +204,8 @@ class PaywallStore:
                 existing.enabled = config.enabled
                 existing.provider = config.provider
                 existing.tiers = [_tier_to_dict(t) for t in config.tiers]
-                existing.signing_secret = config.signing_secret
+                if not preserve_signing_secret_if_missing:
+                    existing.signing_secret = config.signing_secret
                 existing.updated_at = now
             try:
                 session.commit()

@@ -2,21 +2,20 @@
 // Copyright (c) The CivicCast Authors
 //
 // S17 Remote Contribution operator console (build step 9 slice 3f).
-// Brings remote humans onto a channel over the browser via self-hosted
-// VDO.Ninja: create/open/close a contribution room (the director view embeds
-// VDO.Ninja's own IFRAME UI), mint single-use guest invites to send out, and
-// run a guest tray with a waiting-room admit gate + On-Air / Mute / Off-Air /
-// Drop. The diagnostics drawer (support_admin) shows TURN reachability +
-// VDO/coturn co-process health, and states honestly when the tier is not
-// configured. No WebRTC client code lives here — the guest opens VDO.Ninja's
-// own page; CivicCast only orchestrates rooms, invites, and sessions.
+// Manages contribution rooms, guest invites and waiting-room admission, then
+// sends supported targeted guest controls through the embedded VDO.Ninja
+// director iframe. Control requests are recorded as unverified because the
+// iframe has no completion callback; guest-to-channel composition remains a
+// separate, unimplemented path. The diagnostics drawer (support_admin) shows
+// TURN/VDO/coturn status and when the tier is not configured.
 
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import {
   ApiError,
   admitContributionGuest,
+  beginTakeover,
   closeContributionRoom,
   contributionDiagnostics,
   createContributionRoom,
@@ -24,12 +23,11 @@ import {
   getContributionRoom,
   getRemoteContributionInstallStatus,
   getStaffIdentity,
+  listEgressChannels,
   listContributionRooms,
   mintGuestInvite,
-  muteContributionGuest,
   openContributionRoom,
-  putContributionGuestOnAir,
-  takeContributionGuestOffAir,
+  recordContributionMediaControlRequest,
   testTurnConnectivity,
 } from '../api/client'
 import type {
@@ -38,14 +36,16 @@ import type {
   GuestInvite,
   RemoteGuestSession,
   RoomOpened,
+  StaffEgressChannelSummary,
   VdoDiagnostics,
 } from '../types/api.generated'
+import type { ContributionMediaControlAction } from '../api/client'
+import { sendVdoDirectorControl } from './remote-contribution-vdo'
 import {
   type Tone,
   connectionQualityLabel,
   connectionQualityTone,
   contributionRoleLabel,
-  guestCanGoOnAir,
   guestStateLabel,
   guestStateTone,
   hasRole,
@@ -58,6 +58,19 @@ const READ_ROLES = ['setup_admin', 'support_admin', 'meeting_operator']
 const OPERATE_ROLES = ['meeting_operator']
 const CREATE_ROLES = ['setup_admin']
 const DIAG_ROLES = ['support_admin']
+
+type GuestControlTarget = {
+  director: Pick<Window, 'postMessage'>
+  targetOrigin: string
+  streamId: string
+}
+
+type GuestControlAttempt = {
+  action: ContributionMediaControlAction
+  posted: boolean
+  recorded: boolean
+  error?: string
+}
 
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? fallback
@@ -137,11 +150,14 @@ function CopyableUrl({ label, url }: { label: string; url: string }) {
   )
 }
 
-
 export function RemoteContributionScreen() {
   const qc = useQueryClient()
+  const directorFrameRef = useRef<HTMLIFrameElement>(null)
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
+  const [mediaControlNotice, setMediaControlNotice] = useState<string | null>(null)
+  const [directorReady, setDirectorReady] = useState(false)
+  const [mediaControlPending, setMediaControlPending] = useState(false)
 
   const identityQuery = useQuery({ queryKey: ['staff-identity'], queryFn: getStaffIdentity })
   const identity = identityQuery.data
@@ -154,6 +170,12 @@ export function RemoteContributionScreen() {
     queryKey: ['contribution-rooms'],
     queryFn: () => listContributionRooms(),
     enabled: canRead,
+  })
+
+  const egressChannelsQuery = useQuery({
+    queryKey: ['egress-channels'],
+    queryFn: listEgressChannels,
+    enabled: canCreate,
   })
 
   const detailQuery = useQuery({
@@ -204,15 +226,45 @@ export function RemoteContributionScreen() {
     mutationFn: openContributionRoom,
     onSuccess: (result) => {
       setOpenResult(result)
+      setDirectorReady(false)
       invalidate()
     },
   })
   const closeMutation = useMutation({
-    mutationFn: closeContributionRoom,
+    mutationFn: async (roomId: string) => {
+      const active = detail?.sessions.filter((session) => session.state !== 'ended' && session.state !== 'dropped') ?? []
+      let disconnectRequestsSent = 0
+      if (active.length > 0) {
+        const director = directorFrameRef.current?.contentWindow
+        if (!openResult?.director_url || !director || !directorReady) {
+          throw new Error('Room remains open. Open the room director before closing so active guest disconnect requests can be sent.')
+        }
+        const targetOrigin = new URL(openResult.director_url).origin
+        try {
+          for (const session of active) {
+            const invite = detail?.invites.find((item) => item.invite_id === session.invite_id)
+            if (!invite?.invite_token) throw new Error(`Could not resolve the director stream for ${session.guest_display_name}.`)
+            sendVdoDirectorControl(director, targetOrigin, invite.invite_token, 'disconnect')
+            disconnectRequestsSent += 1
+            await recordContributionMediaControlRequest(session.session_id, 'disconnect')
+          }
+        } catch (error) {
+          const partial = disconnectRequestsSent > 0
+            ? ` ${disconnectRequestsSent} request(s) may already have been sent; none were acknowledged.`
+            : ''
+          throw new Error(
+            `Room remains open.${partial} ${apiMessage(error, 'Could not record a guest disconnect request.')}`,
+            { cause: error },
+          )
+        }
+      }
+      return closeContributionRoom(roomId)
+    },
     onSuccess: () => {
-      setOpenResult(null)
+      setMediaControlNotice('Room record closed. Disconnect requests were sent where the director was open; VDO.Ninja did not acknowledge them. Verify guest media in the director and compositor.')
       invalidate()
     },
+    onError: invalidate,
   })
   const mintMutation = useMutation({
     mutationFn: (vars: { roomId: string; name: string; role: string }) =>
@@ -229,9 +281,6 @@ export function RemoteContributionScreen() {
     mutationFn: (vars: { sessionId: string; action: string }) => {
       const fns: Record<string, (id: string) => Promise<RemoteGuestSession>> = {
         admit: admitContributionGuest,
-        'on-air': putContributionGuestOnAir,
-        mute: muteContributionGuest,
-        'off-air': takeContributionGuestOffAir,
         drop: dropContributionGuest,
       }
       return fns[vars.action](vars.sessionId)
@@ -239,6 +288,116 @@ export function RemoteContributionScreen() {
     onSuccess: invalidate,
     onError: () => {},
   })
+  const takeoverMutation = useMutation({
+    mutationFn: (channelId: string) => beginTakeover(channelId, { reason: 'Operator selected live takeover from Remote Contribution.' }),
+    onSuccess: () => setMediaControlNotice('Channel takeover started for its configured live source. This does not route a contribution guest into the channel.'),
+  })
+
+  const resolveGuestControlTarget = (sessionId: string): GuestControlTarget => {
+    const director = directorFrameRef.current?.contentWindow
+    if (!openResult?.director_url || !director || !directorReady) {
+      throw new Error('Open the room director before sending a guest media control.')
+    }
+    const session = detail?.sessions.find((item) => item.session_id === sessionId)
+    const invite = session && detail?.invites.find((item) => item.invite_id === session.invite_id)
+    if (!invite?.invite_token) throw new Error('Could not resolve this guest’s VDO.Ninja stream id.')
+    return {
+      director,
+      targetOrigin: new URL(openResult.director_url).origin,
+      streamId: invite.invite_token,
+    }
+  }
+
+  const attemptGuestControl = async (
+    sessionId: string,
+    target: GuestControlTarget,
+    action: ContributionMediaControlAction,
+  ): Promise<GuestControlAttempt> => {
+    try {
+      sendVdoDirectorControl(target.director, target.targetOrigin, target.streamId, action)
+    } catch (error) {
+      return { action, posted: false, recorded: false, error: apiMessage(error, 'send failed') }
+    }
+    try {
+      await recordContributionMediaControlRequest(sessionId, action)
+      return { action, posted: true, recorded: true }
+    } catch (error) {
+      return { action, posted: true, recorded: false, error: apiMessage(error, 'save failed') }
+    }
+  }
+
+  const requestGuestControls = async (
+    sessionId: string,
+    actions: ContributionMediaControlAction[],
+    offAirGuestName?: string,
+  ) => {
+    setMediaControlPending(true)
+    setMediaControlNotice(null)
+    try {
+      let target: GuestControlTarget
+      try {
+        target = resolveGuestControlTarget(sessionId)
+      } catch (error) {
+        const reason = apiMessage(error, 'The director control request could not be sent.')
+        setMediaControlNotice(
+          offAirGuestName
+            ? `Off-air requests for ${offAirGuestName} were not sent: ${reason} ${offAirGuestName} remains connected in the room; this does not return the channel to its schedule.`
+            : reason,
+        )
+        return
+      }
+
+      const attempts: GuestControlAttempt[] = []
+      for (const action of actions) {
+        attempts.push(await attemptGuestControl(sessionId, target, action))
+      }
+
+      const postedCount = attempts.filter((attempt) => attempt.posted).length
+      const recordedCount = attempts.filter((attempt) => attempt.recorded).length
+      const allRecorded = recordedCount === attempts.length
+      const actionLabels: Record<ContributionMediaControlAction, string> = {
+        audio_mute: 'audio mute',
+        audio_unmute: 'audio restore',
+        video_mute: 'camera mute',
+        video_unmute: 'camera restore',
+        disconnect: 'disconnect',
+      }
+      const attemptDescriptions = attempts.map((attempt) => {
+        const label = actionLabels[attempt.action]
+        if (!attempt.posted) return `${label} request was not sent${attempt.error ? ` (${attempt.error})` : ''}`
+        if (!attempt.recorded) return `${label} request was sent but could not be recorded${attempt.error ? ` (${attempt.error})` : ''}`
+        return `${label} request was sent and recorded as sent, not verified`
+      })
+      const lead = offAirGuestName
+        ? allRecorded
+          ? `Off-air requests for ${offAirGuestName}`
+          : postedCount > 0
+            ? `Off-air request pair for ${offAirGuestName} was partial`
+            : `Off-air requests for ${offAirGuestName} were not sent`
+        : 'Guest media control result'
+      const acknowledgement = postedCount > 0
+        ? offAirGuestName && postedCount === attempts.length
+          ? 'VDO.Ninja did not acknowledge either request, so their media effects are unverified.'
+          : `VDO.Ninja did not acknowledge ${offAirGuestName ? 'the sent request' : 'the request'}, so its media effect is unverified.`
+        : 'No provider acknowledgment is available because no request was sent.'
+      const latestRecorded = [...attempts].reverse().find((attempt) => attempt.recorded)
+      const latestRecord = offAirGuestName && latestRecorded
+        ? ` The guest record stores only the latest recorded request (${actionLabels[latestRecorded.action]}).`
+        : ''
+      const connection = offAirGuestName
+        ? ` ${offAirGuestName} remains connected in the room; this does not return the channel to its schedule.`
+        : ''
+      setMediaControlNotice(`${lead}: ${attemptDescriptions.join('; ')}. ${acknowledgement}${latestRecord}${connection} Check guest media in the director and compositor.`)
+      if (recordedCount > 0) invalidate()
+    } catch (error) {
+      setMediaControlNotice(apiMessage(error, 'The director control request could not be sent.'))
+    } finally {
+      setMediaControlPending(false)
+    }
+  }
+
+  const requestGuestControl = (sessionId: string, action: ContributionMediaControlAction) =>
+    requestGuestControls(sessionId, [action])
 
   if (identityQuery.isLoading) {
     return <p className="p-6 text-sm" style={{ color: 'var(--cc-ink-2)' }}>Loading…</p>
@@ -268,8 +427,9 @@ export function RemoteContributionScreen() {
           Remote Contribution
         </h2>
         <p className="mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
-          Bring remote council members, presenters, and public comment onto the channel
-          over the browser via self-hosted VDO.Ninja — no install for the guest.
+          Invite council members, presenters, and public commenters into a self-hosted
+          VDO.Ninja room. Guest media composition into the broadcast channel requires a
+          separate commissioned compositor path.
         </p>
       </header>
 
@@ -279,9 +439,9 @@ export function RemoteContributionScreen() {
           className="rounded-lg border px-3 py-2 text-sm"
           style={{ borderColor: 'var(--cc-warn)', background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)' }}
         >
-          Remote contribution isn’t configured yet. A compositor (the GStreamer wpesrc
-          engine or OBS) plus self-hosted VDO.Ninja and coturn must be commissioned before
-          guests can reach the channel. See the diagnostics drawer for status.
+          Remote guest connections aren’t configured yet. Self-hosted VDO.Ninja and a
+          reachable TURN service are required for guests to join. Guest media composition
+          into the broadcast channel is not integrated. See the diagnostics drawer for status.
         </div>
       )}
 
@@ -291,7 +451,15 @@ export function RemoteContributionScreen() {
           title="Rooms"
           aside={canCreate ? <Pill label="setup admin can create" tone="neutral" /> : undefined}
         >
-          {canCreate && <CreateRoomForm onCreate={(p) => createMutation.mutate(p)} pending={createMutation.isPending} />}
+          {canCreate && (
+            <CreateRoomForm
+              onCreate={(p) => createMutation.mutate(p)}
+              pending={createMutation.isPending}
+              channels={egressChannelsQuery.data ?? []}
+              channelsLoading={egressChannelsQuery.isLoading}
+              channelsError={egressChannelsQuery.isError}
+            />
+          )}
           {createMutation.isError && (
             <p className="mt-2 text-xs" style={{ color: 'var(--cc-warn)' }}>
               {apiMessage(createMutation.error, 'Could not create the room.')}
@@ -304,7 +472,7 @@ export function RemoteContributionScreen() {
           ) : rooms.length === 0 ? (
             <EmptyState
               headline="No contribution rooms yet."
-              body="Contribution rooms let remote presenters send live video into this station from a web browser — no studio visit needed. Create a room above and its invite links appear here."
+              body="Contribution rooms manage browser guest invites and CivicCast session records. Create a room above; guest media composition into the broadcast channel requires a separate integration."
             />
           ) : (
             <ul className="mt-3 flex flex-col gap-2">
@@ -316,6 +484,7 @@ export function RemoteContributionScreen() {
                   onSelect={() => {
                     setSelectedRoomId(room.room_id)
                     setOpenResult(null)
+                    setDirectorReady(false)
                     setMintedInvite(null)
                   }}
                 />
@@ -338,6 +507,9 @@ export function RemoteContributionScreen() {
                   channel {detail.room.channel_id} · up to {detail.room.max_guests} guests
                 </span>
               </div>
+              <p className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>
+                Room and guest tags describe CivicCast records. They do not prove that media is in the broadcast.
+              </p>
 
               {canOperate && (
                 <div className="flex gap-2">
@@ -354,8 +526,24 @@ export function RemoteContributionScreen() {
                     type="button"
                     onClick={() =>
                       setPendingConfirm({
+                        title: `Take ${detail.room.channel_id} live?`,
+                        body: 'This overrides the channel schedule and takes its configured live source. It does not route a contribution guest into the channel.',
+                        confirmLabel: 'Take channel live',
+                        run: () => takeoverMutation.mutate(detail.room.channel_id),
+                      })
+                    }
+                    disabled={takeoverMutation.isPending}
+                    className="rounded px-3 py-1 text-xs font-semibold"
+                    style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-warn)' }}
+                  >
+                    Take channel live
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPendingConfirm({
                         title: `Close "${detail.room.name}"?`,
-                        body: 'This closes the CivicCast room record and stops accepting contributions; it does not remove guest video or audio from the broadcast. Remove or mute the guest in the VDO.Ninja director view and check the channel monitor. When the meeting ends, use Channels → Return to schedule. You can reopen the room and send new invites afterward.',
+                        body: 'This records disconnect requests for active guests through the open VDO.Ninja director, then closes the CivicCast room record. The director API does not acknowledge those requests, so check the director and compositor to verify media ended. This does not return the channel to its schedule.',
                         confirmLabel: 'Close room now',
                         run: () => closeMutation.mutate(detail.room.room_id),
                       })
@@ -368,9 +556,33 @@ export function RemoteContributionScreen() {
                   </button>
                 </div>
               )}
+              {closeMutation.isError && (
+                <p role="alert" className="text-xs" style={{ color: 'var(--cc-err)' }}>
+                  {apiMessage(closeMutation.error, 'Room close failed.')}
+                </p>
+              )}
+              {takeoverMutation.isError && (
+                <p role="alert" className="text-xs" style={{ color: 'var(--cc-err)' }}>
+                  {apiMessage(takeoverMutation.error, 'Channel takeover failed.')}
+                </p>
+              )}
 
-              {openResult && detail?.room.state !== 'closed' && (
-                <CopyableUrl label="Director view (embed in your switcher)" url={openResult.director_url} />
+              {openResult && (
+                <div className="flex flex-col gap-2">
+                  <CopyableUrl label="VDO.Ninja director view" url={openResult.director_url} />
+                  <p className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+                    The director iframe can send supported guest controls. A sent command is not provider confirmation; this integration cannot verify guest mute state or compositor output.
+                  </p>
+                  <iframe
+                    ref={directorFrameRef}
+                    title="VDO.Ninja guest director"
+                    src={openResult.director_url}
+                    allow="autoplay; fullscreen; picture-in-picture"
+                    onLoad={() => setDirectorReady(true)}
+                    className="h-[560px] w-full rounded border"
+                    style={{ borderColor: 'var(--cc-line)', background: 'var(--cc-surface)' }}
+                  />
+                </div>
               )}
 
               {canOperate && (
@@ -395,12 +607,31 @@ export function RemoteContributionScreen() {
               <GuestTray
                 sessions={detail.sessions}
                 canOperate={canOperate}
-                pending={guestMutation.isPending}
-                onAction={(sessionId, action) => guestMutation.mutate({ sessionId, action })}
+                directorReady={directorReady}
+                pending={guestMutation.isPending || mediaControlPending}
+                onAdmit={(sessionId) => guestMutation.mutate({ sessionId, action: 'admit' })}
+                onControl={(sessionId, action) => {
+                  void requestGuestControl(sessionId, action)
+                }}
+                onOffAir={(sessionId, guestName) => {
+                  void requestGuestControls(sessionId, ['audio_mute', 'video_mute'], guestName)
+                }}
+                onDisconnect={(sessionId) => {
+                  void requestGuestControl(sessionId, 'disconnect')
+                    .catch((error: unknown) =>
+                      setMediaControlNotice(apiMessage(error, 'The guest disconnect request could not be completed.')),
+                    )
+                }}
+                onMarkLeft={(sessionId) => guestMutation.mutate({ sessionId, action: 'drop' })}
               />
               {guestMutation.isError && (
                 <p className="mt-1 text-xs" style={{ color: 'var(--cc-err)' }}>
                   {apiMessage(guestMutation.error, 'Action failed — please retry.')}
+                </p>
+              )}
+              {mediaControlNotice && (
+                <p role="status" className="text-xs" style={{ color: 'var(--cc-warn)' }}>
+                  {mediaControlNotice}
                 </p>
               )}
             </div>
@@ -477,13 +708,21 @@ export function RoomRow({
 export function CreateRoomForm({
   onCreate,
   pending,
+  channels,
+  channelsLoading = false,
+  channelsError = false,
 }: {
   onCreate: (p: { channel_id: string; name: string }) => void
   pending: boolean
+  channels: StaffEgressChannelSummary[]
+  channelsLoading?: boolean
+  channelsError?: boolean
 }) {
   const [channelId, setChannelId] = useState('')
   const [name, setName] = useState('')
-  const ready = channelId.trim() !== '' && name.trim() !== ''
+  const enabledChannels = channels.filter((channel) => channel.enabled)
+  const selectedChannelIsEnabled = enabledChannels.some((channel) => channel.channel_id === channelId)
+  const ready = selectedChannelIsEnabled && name.trim() !== ''
   return (
     <form
       className="flex flex-col gap-2"
@@ -500,14 +739,24 @@ export function CreateRoomForm({
         className="rounded border px-2 py-1 text-sm"
         style={{ borderColor: 'var(--cc-line)', background: 'var(--cc-surface)', color: 'var(--cc-ink)' }}
       />
-      <input
+      <select
         value={channelId}
         onChange={(e) => setChannelId(e.target.value)}
-        placeholder="Channel id (e.g. gov-ch-1)"
-        aria-label="Channel id"
+        aria-label="Configured channel"
+        disabled={channelsLoading || channelsError || enabledChannels.length === 0}
         className="rounded border px-2 py-1 text-sm"
         style={{ borderColor: 'var(--cc-line)', background: 'var(--cc-surface)', color: 'var(--cc-ink)' }}
-      />
+      >
+        <option value="">Select an enabled channel</option>
+        {enabledChannels.map((channel) => (
+          <option key={channel.channel_id} value={channel.channel_id}>{channel.channel_id}</option>
+        ))}
+      </select>
+      {channelsLoading && <p className="text-xs" style={{ color: 'var(--cc-ink-2)' }}>Loading configured channels…</p>}
+      {channelsError && <p role="alert" className="text-xs" style={{ color: 'var(--cc-warn)' }}>Could not load configured channels. Reload this screen to try again.</p>}
+      {!channelsLoading && !channelsError && enabledChannels.length === 0 && (
+        <p className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>No enabled egress channels are available. Enable a channel before creating a room.</p>
+      )}
       <button
         type="submit"
         disabled={!ready || pending}
@@ -601,13 +850,23 @@ export function InviteList({ invites }: { invites: GuestInvite[] }) {
 export function GuestTray({
   sessions,
   canOperate,
+  directorReady,
   pending,
-  onAction,
+  onAdmit,
+  onControl,
+  onOffAir,
+  onDisconnect,
+  onMarkLeft,
 }: {
   sessions: RemoteGuestSession[]
   canOperate: boolean
+  directorReady: boolean
   pending: boolean
-  onAction: (sessionId: string, action: string) => void
+  onAdmit: (sessionId: string) => void
+  onControl: (sessionId: string, action: ContributionMediaControlAction) => void
+  onOffAir: (sessionId: string, guestName: string) => void
+  onDisconnect: (sessionId: string) => void
+  onMarkLeft: (sessionId: string) => void
 }) {
   const active = sessions.filter((s) => s.state !== 'ended' && s.state !== 'dropped')
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
@@ -640,38 +899,80 @@ export function GuestTray({
                   />
                 </span>
               </div>
+              {(s as RemoteGuestSession & { media_control_state?: string; media_control_action?: string | null }).media_control_state === 'sent_unverified' && (
+                <p className="mt-1 text-[11px]" style={{ color: 'var(--cc-warn)' }}>
+                  Last director command: {(s as RemoteGuestSession & { media_control_action?: string | null }).media_control_action?.replaceAll('_', ' ') ?? 'unknown'}; sent, not verified.
+                </p>
+              )}
               {canOperate && (
                 <div className="mt-2 flex flex-wrap gap-1">
                   {s.admitted_at === null && (
-                    <GuestButton label="Admit" onClick={() => onAction(s.session_id, 'admit')} pending={pending} />
+                    <GuestButton label="Admit" onClick={() => onAdmit(s.session_id)} pending={pending} />
                   )}
                   <GuestButton
-                    label="On air"
-                    onClick={() => onAction(s.session_id, 'on-air')}
+                    label="Mute guest audio"
+                    onClick={() => onControl(s.session_id, 'audio_mute')}
                     pending={pending}
-                    disabled={!guestCanGoOnAir(s.state, s.admitted_at)}
+                    disabled={!directorReady}
                   />
-                  {s.state === 'on_air' && (
-                    <GuestButton label="Mute" onClick={() => onAction(s.session_id, 'mute')} pending={pending} />
-                  )}
-                  {s.state === 'on_air' && (
-                    <GuestButton label="Off air" onClick={() => onAction(s.session_id, 'off-air')} pending={pending} />
-                  )}
                   <GuestButton
-                    label="Drop"
+                    label="Restore guest audio"
+                    onClick={() => onControl(s.session_id, 'audio_unmute')}
+                    pending={pending}
+                    disabled={!directorReady}
+                  />
+                  <GuestButton
+                    label="Mute guest camera"
+                    onClick={() => onControl(s.session_id, 'video_mute')}
+                    pending={pending}
+                    disabled={!directorReady}
+                  />
+                  <GuestButton
+                    label="Off air"
                     onClick={() =>
                       setPendingConfirm({
-                        title: `Drop ${s.guest_display_name}?`,
-                        body:
-                          s.state === 'on_air'
-                            ? `${s.guest_display_name} is on air right now. Dropping updates the CivicCast room record but does not remove their video or audio from the broadcast. Remove or mute them in the VDO.Ninja director view and check the channel monitor. They would need a new invite to rejoin.`
-                            : `Marks ${s.guest_display_name} as dropped in the CivicCast room record; it does not end the VDO.Ninja connection or remove media from the broadcast. Remove them in the VDO.Ninja director view and check the channel monitor. They would need a new invite to rejoin.`,
-                        confirmLabel: 'Drop guest',
-                        run: () => onAction(s.session_id, 'drop'),
+                        title: `Take ${s.guest_display_name} off air?`,
+                        body: `This sends separate VDO.Ninja requests to mute ${s.guest_display_name}'s audio and camera. The director iframe does not acknowledge these requests, so their media effect is unverified. ${s.guest_display_name} stays connected to the room and the CivicCast session status stays unchanged. This does not return the channel to its schedule.`,
+                        confirmLabel: 'Send off-air requests',
+                        run: () => onOffAir(s.session_id, s.guest_display_name),
                       })
                     }
                     pending={pending}
                     tone="warn"
+                    disabled={!directorReady}
+                  />
+                  <GuestButton
+                    label="Restore guest camera"
+                    onClick={() => onControl(s.session_id, 'video_unmute')}
+                    pending={pending}
+                    disabled={!directorReady}
+                  />
+                  <GuestButton
+                    label="Disconnect guest"
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: `Disconnect ${s.guest_display_name}?`,
+                        body: 'This sends VDO.Ninja’s targeted hangup command. The iframe does not acknowledge completion, so CivicCast keeps the session active until you verify the guest left.',
+                        confirmLabel: 'Send disconnect request',
+                        run: () => onDisconnect(s.session_id),
+                      })
+                    }
+                    pending={pending}
+                    tone="warn"
+                    disabled={!directorReady}
+                  />
+                  <GuestButton
+                    label="Mark left after checking"
+                    onClick={() =>
+                      setPendingConfirm({
+                        title: `Record ${s.guest_display_name} as disconnected?`,
+                        body: 'Use this only after you verify in the director that the guest is gone. It updates the CivicCast session record and does not send a provider command.',
+                        confirmLabel: 'Mark guest left',
+                        run: () => onMarkLeft(s.session_id),
+                      })
+                    }
+                    pending={pending}
+                    disabled={!directorReady}
                   />
                 </div>
               )}
@@ -682,9 +983,7 @@ export function GuestTray({
 
       {active.some((session) => session.state === 'on_air' || session.state === 'muted') && (
         <p className="mt-2 text-xs" style={{ color: 'var(--cc-warn-text)' }}>
-          Mute and Off air update CivicCast&apos;s guest status; they do not mute or remove
-          VDO.Ninja media from the channel. Use the VDO.Ninja director view and check the
-          channel monitor.
+          These lifecycle tags came from an earlier CivicCast workflow. They do not prove guest media routing or broadcast output.
         </p>
       )}
 
@@ -750,13 +1049,10 @@ export function DiagnosticsView({
   const turnReachable = diag.turn_reachable ?? false
   const vdoUp = diag.vdo_process_up ?? false
   const coturnUp = diag.coturn_process_up ?? false
-  // Honest per PR #9: on the documented-external-TURN posture (coturn has no
-  // native Windows build), coturn's LOCAL process is never up by design.
-  // TURN reachability — not the local coturn process — is what actually
-  // determines whether a guest behind NAT can connect, so commissioning
-  // reads as satisfied on that signal even when coturn_process_up is false.
+  // On the documented-external-TURN posture, a local coturn process is not
+  // required; use TURN reachability as the guest-connectivity signal.
   const turnCommissioned = coturnUp || turnReachable
-  const noCompositor = !vdoUp || !turnCommissioned
+  const guestConnectivityUnavailable = !vdoUp || !turnCommissioned
   const externalTurnLikely = !coturnUp && turnReachable
   return (
     <div className="flex flex-col gap-2 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
@@ -777,12 +1073,11 @@ export function DiagnosticsView({
         </p>
       )}
       {diag.ice_summary && <p>ICE: {diag.ice_summary}</p>}
-      {noCompositor && (
+      {guestConnectivityUnavailable && (
         <p role="status" style={{ color: 'var(--cc-warn)' }}>
-          Remote contribution requires a compositor (the GStreamer engine or OBS) plus
-          self-hosted VDO.Ninja and a reachable TURN server (local coturn, or a
-          documented external one) — guests cannot reach the channel until they are
-          commissioned. {diag.detail}
+          Browser guest connectivity needs self-hosted VDO.Ninja and a reachable TURN
+          server (local coturn, or a documented external one). This status checks those
+          services; it does not verify guest media composition into a channel. {diag.detail}
         </p>
       )}
       {onTestConnectivity && (

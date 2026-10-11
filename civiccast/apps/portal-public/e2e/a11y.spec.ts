@@ -177,17 +177,17 @@ async function mockPortal(
       }),
     })
   })
-  await page.route('**/api/public/cg/emergency-overlay', async (route) => {
+  await page.route('**/api/public/cg/emergency-overlay?channel_id=gov-ch12', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         overlay_id: 'test-emergency-overlay',
         severity: 'warning',
-        title: 'Emergency notice',
-        message: 'An emergency notice is active for this broadcast area.',
-        instructions: 'Follow local emergency guidance and check official updates.',
-        cellular_fallback_enabled: true,
+        title: 'TEST FLOOD WARNING',
+        message: 'River Road is closed.',
+        instructions: 'Move to higher ground.',
+        cellular_fallback_enabled: false,
         aria_live: 'assertive',
       }),
     })
@@ -452,14 +452,19 @@ test.describe('public portal accessibility', () => {
       schedule: [],
       assets: [],
     })
-    await page.goto('/?emergency=1')
+    await page.goto('/')
 
-    await expect(page.getByRole('alert')).toContainText('Emergency notice')
-    await expect(page.getByText('Cellular fallback is enabled')).toBeVisible()
+    await expect(page.getByRole('alert')).toContainText('TEST FLOOD WARNING')
+    await expect(page.getByRole('alert')).toContainText('Move to higher ground.')
+    await expect(page.getByText('Cellular fallback is enabled')).not.toBeVisible()
     await expect(page.getByRole('region', { name: 'Between-streams idle page' })).toBeVisible()
     await expect(page.getByRole('link', { name: 'View published recordings' })).toBeVisible()
     await expectNoWcagAxeViolations(page)
     await page.screenshot({ path: `${evidenceDir}/v0.10-public-portal-idle-emergency-desktop.png`, fullPage: true })
+    await page.route('**/api/public/cg/emergency-overlay?channel_id=gov-ch12', async (route) => {
+      await route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ detail: 'No emergency overlay is active for this channel.' }) })
+    })
+    await expect(page.getByRole('alert')).not.toBeVisible({ timeout: 8000 })
   })
 
   test('partial state keeps available sections visible', async ({ page }) => {

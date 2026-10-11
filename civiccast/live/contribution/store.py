@@ -101,6 +101,9 @@ def _session_to_model(row: RemoteGuestSessionDb) -> RemoteGuestSession:
         joined_at=row.joined_at,
         on_air_at=row.on_air_at,
         ended_at=row.ended_at,
+        media_control_state=row.media_control_state,  # type: ignore[arg-type]
+        media_control_action=row.media_control_action,  # type: ignore[arg-type]
+        media_control_requested_at=row.media_control_requested_at,
         proof_boundary=row.proof_boundary,
     )
 
@@ -273,6 +276,9 @@ class ContributionStore:
                 joined_at=guest_session.joined_at,
                 on_air_at=guest_session.on_air_at,
                 ended_at=guest_session.ended_at,
+                media_control_state=guest_session.media_control_state,
+                media_control_action=guest_session.media_control_action,
+                media_control_requested_at=guest_session.media_control_requested_at,
                 proof_boundary=guest_session.proof_boundary,
             )
             session.add(row)
@@ -323,6 +329,9 @@ class ContributionStore:
             row.joined_at = guest_session.joined_at
             row.on_air_at = guest_session.on_air_at
             row.ended_at = guest_session.ended_at
+            row.media_control_state = guest_session.media_control_state
+            row.media_control_action = guest_session.media_control_action
+            row.media_control_requested_at = guest_session.media_control_requested_at
             session.commit()
             return _session_to_model(row)
 

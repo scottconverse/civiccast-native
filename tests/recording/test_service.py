@@ -843,6 +843,51 @@ class TestReconcileOrphans:
 
 
 class TestTick:
+    def test_prearmed_job_starts_and_finalizes_on_later_ticks(self, store: RecordingStore):
+        now = _FROZEN_NOW
+        planned_start = now + timedelta(seconds=10)
+        sched = _schedule(
+            recurrence=_oneshot(planned_start),
+            duration_seconds=60,
+        )
+        store.upsert_schedule(sched)
+        pipeline = StubCapturePipeline()
+        finalizer = StubFinalizer()
+        svc = _build_service(
+            store,
+            pipeline=pipeline,
+            finalizer=finalizer,
+            clock=lambda: now,
+            arm_lead=timedelta(seconds=30),
+        )
+
+        armed = svc.tick(_STATION, horizon=timedelta(hours=1))
+        job = store.list_jobs(_STATION)[0]
+        assert armed.armed == 1
+        assert armed.started == 0
+        assert job.state == "arming"
+        assert pipeline.start_calls == []
+
+        now = planned_start
+        started = svc.tick(_STATION, horizon=timedelta(hours=1))
+        job = store.get_job(job.job_id)
+        assert started.started == 1
+        assert job is not None
+        assert job.state == "recording"
+        assert job.started_at == planned_start
+        assert pipeline.start_calls == [job.job_id]
+
+        now = job.planned_end + timedelta(seconds=1)
+        finalized = svc.tick(_STATION, horizon=timedelta(hours=1))
+        job = store.get_job(job.job_id)
+        assert finalized.finalized == 1
+        assert job is not None
+        assert job.state == "done"
+        assert job.ended_at == now
+        assert job.asset_id == "asset-1"
+        assert pipeline.finalize_calls == [job.job_id]
+        assert len(finalizer.calls) == 1
+
     def test_expand_and_arm_imminent(self, store: RecordingStore):
         sched = _schedule(recurrence=_oneshot(_FROZEN_NOW + timedelta(seconds=10)))
         store.upsert_schedule(sched)
@@ -1123,6 +1168,46 @@ class TestE11CancelScheduledOnDisable:
         assert cancelled is not None
         assert cancelled.state == "skipped"
         assert (cancelled.failure_reason or "").startswith("schedule disabled")
+
+    def test_cancel_schedule_stops_prearmed_job_before_later_tick(self, store: RecordingStore):
+        now = _FROZEN_NOW
+        planned_start = now + timedelta(seconds=10)
+        sched = _schedule(recurrence=_oneshot(planned_start), duration_seconds=60)
+        store.upsert_schedule(sched)
+
+        class StubPipelineWithArmingStop(StubCapturePipeline):
+            def __init__(self) -> None:
+                super().__init__()
+                self.stop_arming_calls: list[str] = []
+
+            def stop_arming(self, job_id: str) -> None:
+                self.stop_arming_calls.append(job_id)
+
+        pipeline = StubPipelineWithArmingStop()
+        svc = _build_service(
+            store,
+            pipeline=pipeline,
+            clock=lambda: now,
+            arm_lead=timedelta(seconds=30),
+        )
+
+        armed = svc.tick(_STATION, horizon=timedelta(hours=1))
+        job = store.list_jobs(_STATION)[0]
+        assert armed.armed == 1
+        assert job.state == "arming"
+
+        store.upsert_schedule(sched.model_copy(update={"enabled": False}))
+        assert svc.cancel_scheduled_jobs_for_schedule(sched.schedule_id) == 1
+
+        now = planned_start
+        later = svc.tick(_STATION, horizon=timedelta(hours=1))
+        cancelled = store.get_job(job.job_id)
+        assert later.started == 0
+        assert cancelled is not None
+        assert cancelled.state == "skipped"
+        assert (cancelled.failure_reason or "").startswith("schedule disabled")
+        assert pipeline.stop_arming_calls == [job.job_id]
+        assert pipeline.start_calls == []
 
     def test_cancel_unknown_schedule_returns_zero(self, store: RecordingStore):
         svc = _build_service(store)

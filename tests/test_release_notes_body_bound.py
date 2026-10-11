@@ -63,4 +63,4 @@ def test_legacy_direct_sandbox_summary_remains_supported() -> None:
     )
 
     assert "Direct Sandbox consumer verification" in body
-    assert "Fresh Beta 11 install: PASS" in body
+    assert "Fresh 1.0.0-beta.11 install: PASS" in body

@@ -6,9 +6,11 @@ Two routers:
 
 * ``/api/staff/contribution`` — gated by the five real roles (``auth/roles.py``)
   via ``require_any_role`` per the S17 §4 table. Room *creation* is a
-  ``setup_admin`` (commissioning) act; the live show (open/close/invite/admit/
-  on-air/mute/off-air/drop) is ``meeting_operator``; read-only lists + diagnostics
-  add ``support_admin``.
+  ``setup_admin`` (commissioning) act; room list/detail/invite-list reads are
+  available to ``setup_admin``, ``meeting_operator`` and ``support_admin``.
+  Live-show actions (open/close/invite/admit/on-air/mute/off-air/drop) remain
+  ``meeting_operator``; standalone session reads are ``meeting_operator`` or
+  ``support_admin``, and diagnostics remain ``support_admin`` only.
 * ``/api/public/contribution`` — **token-gated, no auth role.** The opaque
   single-use invite token IS the capability; resolving it consumes it once and
   the guest join page never sees the compositor-facing ``push_url`` (the public
@@ -24,7 +26,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.auth.roles import require_any_role
 from civiccast.live.contribution.bridge import VdoBridgeError, VdoDiagnostics
@@ -33,9 +35,12 @@ from civiccast.live.contribution.models import (
     ContributionRole,
     ContributionRoom,
     GuestInvite,
+    MediaControlAction,
     RemoteGuestSession,
 )
 from civiccast.live.contribution.service import (
+    ChannelDisabledError,
+    ChannelNotConfiguredError,
     ContributionService,
     GuestNotAdmittedError,
     InvalidGuestTransitionError,
@@ -57,7 +62,7 @@ from civiccast.live.contribution.store import (
 _DB_NOT_READY = "Durable storage is not ready yet."
 
 _ROOM_WRITE = ("setup_admin",)
-_ROOM_READ = ("meeting_operator", "support_admin")
+_ROOM_READ = ("setup_admin", "meeting_operator", "support_admin")
 _OPERATE = ("meeting_operator",)
 _SESSION_READ = ("meeting_operator", "support_admin")
 _DIAG = ("support_admin",)
@@ -82,7 +87,7 @@ def _require_service(svc: ContributionService | None) -> ContributionService:
 class CreateRoomInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    channel_id: str
+    channel_id: Annotated[str, Field(min_length=1, max_length=80)]
     name: str
     max_guests: int = 6
     compositor_target: CompositorTarget = "gst_compositor"
@@ -93,6 +98,12 @@ class MintInviteInput(BaseModel):
 
     guest_display_name: str
     role: ContributionRole
+
+
+class MediaControlRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action: MediaControlAction
 
 
 class RoomOpened(BaseModel):
@@ -125,6 +136,8 @@ public_router = APIRouter(prefix="/api/public/contribution", tags=["public", "co
 
 
 def _translate(exc: ContributionStoreError) -> HTTPException:
+    if isinstance(exc, (ChannelDisabledError, ChannelNotConfiguredError)):
+        return HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc))
     if isinstance(exc, (RoomNotFoundError, InviteNotFoundError, GuestSessionNotFoundError)):
         return HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc))
     if isinstance(exc, (InviteExpiredError, InviteConsumedError)):
@@ -163,12 +176,15 @@ def create_room(
     payload: CreateRoomInput,
     svc: ContributionService | None = Depends(get_contribution_service),
 ) -> ContributionRoom:
-    return _require_service(svc).create_room(
-        channel_id=payload.channel_id,
-        name=payload.name,
-        max_guests=payload.max_guests,
-        compositor_target=payload.compositor_target,
-    )
+    try:
+        return _require_service(svc).create_room(
+            channel_id=payload.channel_id,
+            name=payload.name,
+            max_guests=payload.max_guests,
+            compositor_target=payload.compositor_target,
+        )
+    except ContributionStoreError as exc:
+        raise _translate(exc) from exc
 
 
 @staff_router.get(
@@ -225,6 +241,7 @@ def open_room(
 @staff_router.post(
     "/rooms/{room_id}/close",
     response_model=ContributionRoom,
+    summary="Close the CivicCast room record (does not disconnect provider guests)",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def close_room(
@@ -312,6 +329,7 @@ def admit_guest(
 @staff_router.post(
     "/sessions/{session_id}/on-air",
     response_model=RemoteGuestSession,
+    summary="Mark the CivicCast guest lifecycle record on-air (does not route media or take the channel live)",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def put_on_air(
@@ -323,6 +341,7 @@ def put_on_air(
 @staff_router.post(
     "/sessions/{session_id}/mute",
     response_model=RemoteGuestSession,
+    summary="Mark the CivicCast guest lifecycle record muted (does not send a provider media command)",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def mute_guest(
@@ -334,6 +353,7 @@ def mute_guest(
 @staff_router.post(
     "/sessions/{session_id}/off-air",
     response_model=RemoteGuestSession,
+    summary="Mark the CivicCast guest lifecycle record connected (does not remove provider media)",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def off_air_guest(
@@ -345,12 +365,30 @@ def off_air_guest(
 @staff_router.post(
     "/sessions/{session_id}/drop",
     response_model=RemoteGuestSession,
+    summary="Mark the CivicCast guest lifecycle record dropped (does not disconnect provider media)",
     dependencies=[Depends(require_any_role(*_OPERATE))],
 )
 def drop_guest(
     session_id: str, svc: ContributionService | None = Depends(get_contribution_service)
 ) -> RemoteGuestSession:
     return _guest_action(svc, session_id, "drop")
+
+
+@staff_router.post(
+    "/sessions/{session_id}/media-control-request",
+    response_model=RemoteGuestSession,
+    dependencies=[Depends(require_any_role(*_OPERATE))],
+)
+def record_media_control_request(
+    session_id: str,
+    body: MediaControlRequest,
+    svc: ContributionService | None = Depends(get_contribution_service),
+) -> RemoteGuestSession:
+    """Record a browser-sent provider command as unverified, never completed."""
+    try:
+        return _require_service(svc).record_media_control_request(session_id, body.action)
+    except ContributionStoreError as exc:
+        raise _translate(exc) from exc
 
 
 @staff_router.get(

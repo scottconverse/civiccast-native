@@ -92,6 +92,26 @@ def test_failure_replays_exact_audio_once_then_stays_on_fallback(tmp_path):
     assert workers[0].closed
 
 
+def test_provider_status_reports_primary_then_fallback(tmp_path):
+    r, _calls, _workers = runtime(tmp_path, fail=True)
+    status = getattr(r, "live_provider_status", lambda _channel: ("missing", None))
+    assert status("public") == ("whistle-primary", None)
+    list(r.transcribe([chunk()]))
+    assert status("public") == ("whisper-fallback", None)
+
+
+def test_provider_status_does_not_wait_for_fallback_initialization_lock(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    r, _calls, _workers = runtime(tmp_path)
+    with r._guard, ThreadPoolExecutor(max_workers=1) as pool:
+        assert pool.submit(r.live_provider_status, "public").result(timeout=2) == (
+            "unknown",
+            None,
+        )
+    r.close()
+
+
 def test_a_failed_channel_does_not_disable_another_channel(tmp_path):
     r, calls, _workers = runtime(tmp_path, fail=True)
     list(r.transcribe([chunk()]))
@@ -171,13 +191,78 @@ def test_native_live_factory_selects_whistle_but_batch_stays_whisper(tmp_path, m
     assert isinstance(build_caption_runtime(service), FasterWhisperRuntime)
 
 
-def test_unavailable_primary_assets_still_prewarm_and_use_fallback(tmp_path):
-    r, calls, _workers = runtime(tmp_path)
+def test_unavailable_primary_assets_still_use_lazy_fallback(tmp_path):
+    r, calls, workers = runtime(tmp_path)
     r.prepare()
+    assert workers == []
+    assert r._primary_error is not None
     result = list(r.transcribe([chunk()]))
     assert result[0].text == "fallback words"
     assert [c[0] for c in calls] == ["whisper"]
     r.close()
+
+
+def test_valid_primary_does_not_require_available_backup(tmp_path, monkeypatch):
+    r, attempts, workers = _runtime_with_unavailable_backup(tmp_path, monkeypatch)
+    r.prepare()
+    assert attempts == []
+    assert next(iter(r.transcribe([chunk()]))).text == "five to two"
+    assert attempts == ["whistle"]
+    assert r.live_provider_status("public") == ("whistle-primary", None)
+    r.close()
+    assert all(w.closed for w in workers)
+
+
+def test_primary_failure_still_attempts_and_surfaces_unavailable_backup(tmp_path, monkeypatch):
+    import pytest
+
+    r, attempts, workers = _runtime_with_unavailable_backup(
+        tmp_path, monkeypatch, fail_primary=True
+    )
+    r.prepare()
+    with pytest.raises(RuntimeError, match="backup unavailable"):
+        list(r.transcribe([chunk()]))
+    assert attempts == ["whistle", "whisper", "whisper"]
+    assert workers[0].closed
+    assert r.live_provider_status("public")[0] == "fallback-cooldown"
+    with pytest.raises(RuntimeError, match="cooldown"):
+        list(r.transcribe([chunk(index=2)]))
+    assert attempts == ["whistle", "whisper", "whisper"]
+    r.close()
+
+
+def _runtime_with_unavailable_backup(tmp_path, monkeypatch, *, fail_primary=False):
+    import hashlib
+
+    import civiccast.captions.whistle as whistle
+
+    for name, constant in (
+        ("whistle.cact", "WEIGHTS_SHA256"),
+        ("libneedle.dll", "LIBRARY_SHA256"),
+    ):
+        data = name.encode()
+        (tmp_path / name).write_bytes(data)
+        monkeypatch.setattr(whistle, constant, hashlib.sha256(data).hexdigest())
+    attempts, workers = [], []
+
+    def factory(engine):
+        attempts.append(engine)
+        if engine == "whisper":
+            raise RuntimeError("backup unavailable")
+        worker = Worker(engine, [], fail=fail_primary)
+        workers.append(worker)
+        return worker
+
+    return (
+        WhistleRuntime(
+            weights=tmp_path / "whistle.cact",
+            library=tmp_path / "libneedle.dll",
+            fallback_config={},
+            worker_factory=factory,
+        ),
+        attempts,
+        workers,
+    )
 
 
 def test_close_during_primary_request_refuses_late_results(tmp_path):

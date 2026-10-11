@@ -1,23 +1,23 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.11 (native Windows line)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.12 (native Windows line)
 author: The CivicCast Authors
-date: 2026-10-08
+date: 2026-10-09
 urlcolor: blue
 toccolor: black
 ---
 
 # About this manual {#about}
 
-This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.11**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.12**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
-Beta.11 was published on 8 October 2026 as a GitHub pre-release for testing, not as a production release. This manual describes the current beta.11 operating instructions. The [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package revision and its installation checks. An earlier beta.11 package was refreshed on an existing station and showed output on all three channels in two observations 41 seconds apart; that result applies only to that earlier package. A separate 36-hour soak belongs to an earlier dev7 development overlay, not a published package. Beta.10 measurements are preserved as historical evidence in [Appendix H](#app-evidence).
+The version this manual describes is printed on its cover. Publication and download status can change; check the project's releases page for the current release. Each verification record identifies a specific package and the checks performed on it, and results for one package do not qualify another. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) documents that package's checks and limits. The separate 36-hour soak belongs to an earlier dev7 development overlay. Beta.10 measurements are historical evidence in [Appendix H](#app-evidence).
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
 
-A **historical beta.10 observation** describes behavior or evidence from the superseded release. A **Known issue (beta.11)** describes current behavior checked against beta.11 sources. If either conflicts with the screen, follow the concrete steps in the relevant chapter and use the stated version scope.
+A **historical beta.10 observation** describes behavior or evidence from the superseded release. A **Known issue** names the version in which that behavior was observed. Retained Beta.11 findings are not Beta.12 verification results; affected chapters describe the fixes as they are implemented. If a note conflicts with the screen, follow the concrete steps in the relevant chapter and check its version scope.
 
 ## Who Reads What
 
@@ -64,7 +64,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Where to get help and report problems
 
-Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. The beta.11 release and its downloads are at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>. The [beta.11 package verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) describes the checked package and its limits.
+Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. The [Beta.11 package verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) remains available for that package's checks and limits.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.11-verification.md; docs/releases/v1.0.0-beta.10-verification.md (historical appendix only); docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->
 
@@ -874,6 +874,10 @@ By default, CivicCast adds a row for each planned capture to the **Recordings** 
 
 These labels appear in lower case on the screen.
 
+In beta.12, a job prepared ahead of time remains in `arming` until its planned start. The scheduler checks it again on later passes, moves it into `recording` when due, and finishes it at the planned end. A scheduled job should not remain in `arming` throughout its recording window.
+
+If you disable the schedule before capture starts, both scheduled and prearmed jobs become `skipped`; CivicCast also stops a prearmed capture process. Disabling the schedule leaves a recording that has already started running. Use **Stop** on that recording if you want to finish it early.
+
 #### Start a recording now
 
 **Record now** starts a capture from a saved schedule right away. There is no one-off capture without a schedule, so create a schedule first.
@@ -1169,7 +1173,7 @@ The most important idea in this chapter: CivicCast has several separate controls
 | **Channels** > **Start**, **Stop**, **Restart feed**, **Finish current item, then stop** | Sends a command to the channel's feed program. This is what starts and stops the channel's actual video. |
 | **Channels** > **Take live** | Switches the channel from its schedule to a camera or encoder source right now. |
 | **Channels** > **Approve & put on air** | Approves one scheduled program so it plays at its scheduled time. It does not play it at the moment you click. |
-| **Remote Contribution** > guest **On air** | Marks the guest on air and also switches the whole channel to its live source (the same thing as **Take live**). |
+| **Remote Contribution** > **Take channel live** | Switches the channel to its configured live source after confirmation. It does not route a contribution guest into that source. |
 | **Control Room** > **Fire cue** | Sends a command to your production gear (OBS, vMix, a camera, a router). It does not put anything on a channel. |
 
 #### A few words used here
@@ -1213,6 +1217,8 @@ You should see the source's tag change to **Delivering** and text such as "Check
 > **Known issue (beta.11):** The **On-air preview** never shows video. In the code we read, nothing draws a picture there. It always says "Source preview unavailable" and "No simulated preview or audio meter is shown." Watch your own monitor or the channel output for the picture.
 
 > **Known issue (beta.11):** setup, or **Check broadcast readiness** on the Readiness screen, can add a source called "CivicCast sample test source" on the channel `government`. In the code we read, the **Run pre-flight** "Live source" row passes for that source by checking CivicCast's own sample video file, not a camera, so a pre-flight with that source selected proves nothing about your room. For a real meeting, choose your own camera or encoder source. **Check source** still tests that source over the network, and the code's own comments say nothing listens at its address, so it is not expected to pass.
+
+In beta.12, only the unchanged bundled sample source uses its validated local sample video for rehearsal. After changing that source's channel, type, address or credentials, pre-flight checks the configured live source instead. An edited source cannot pass by reusing an unrelated sample file. For a meeting, select a source on the session's channel and make sure its fresh check passes.
 
 If a Setup admin needs to change a source's address, they click **Edit source**, change the fields and click **Save source**. CivicCast warns: "Saving this change clears what CivicCast knows about this source. You will need to choose Check source again before it can take air." That warning appears only after you change the address, the type or the stored credential. Anyone else sees "Editing a source needs the setup admin role. Ask your station admin to change the address or type."
 
@@ -1330,6 +1336,8 @@ What "Keep this channel on air" really does, from the code we read:
 Live captions are a station setting, not a control on the Live screen. On a new station, **Show live captions on air** is off. A Setup admin can enable it in **Station Profile**; see [Live captions: what the settings change](#live-captions-what-the-settings-change).
 
 Beta.11 uses Whistle on the CPU for live recognition and sends first-pass captions without waiting for a second recognition to agree. It serializes caption inference across channels on one station runtime to give playout priority. If Whistle fails or exceeds its 10-second request deadline, that channel uses Whisper until the live runtime restarts. Whisper is also used for recording transcription. NVIDIA CUDA is optional acceleration for Whisper, not a requirement for Whistle. Captions are best-effort and may have gaps under load.
+
+Beta.12 starts Whistle without loading the Whisper backup first. A backup that cannot load therefore does not prevent Whistle from starting. Whisper loads when a channel actually needs fallback; that first switch can take longer, and insufficient memory or a backup startup failure can still interrupt that channel's captions.
 
 When the switch is enabled, recognition resumes on the next worker scan, but the channel's caption route is added when the channel next starts. Stop and start each affected channel after enabling it. When switched off, recognition stops and queued audio drains on the next worker scan; the graph route is removed at the next channel start. The switch does not affect captions created later for recordings. For overload and fallback recovery steps, see [Captions late or missing](#captions-late-or-missing).
 
@@ -1451,13 +1459,13 @@ You should see the banner "Test action recorded." Test Mode never touches your e
 5. Tick the box "I understand On-Air cue actions may be sent to production devices".
 6. A list called "On-Air prerequisites" shows "Ready:" or "Needs attention:" for **Control-room readiness**, **Safe-state cue selected** and **On-Air responsibility acknowledged**. When all three are ready, click **Open On-Air Session**.
 
-You should see an amber banner: "ON-AIR MODE - cue actions can be sent to production devices. Safe-state cue: &lt;cue id&gt;." The banner shows the cue's internal id, not its name. The **Safe State** panel under it shows the name.
+You should see an amber banner: "ON-AIR MODE - cue actions can be sent to production devices. Safe-state cue: &lt;cue id&gt;." The banner shows the cue's internal id, not its name. The **Safe State** panel under it shows the name. While the session is open, the screen shows the time remaining and the exact deadline.
 
 > **Warning:** in an On-Air session a cue really is sent to your equipment, and that can change the picture going to the channel. Always click the cue first (the dry run) and read the plan card.
 
 If someone else already has the surface open, you see: "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;. A setup admin or support admin can force-close it to release the lock."
 
-> **Known issue (beta.11):** an On-Air session expires **30 minutes** after you open it, and the screen never shows how much time is left. After that, the next attempt to fire a cue is refused ("On-Air Mode expired before this cue could fire. Open a new On-Air session to continue.") and the session is closed. Council meetings often run longer than 30 minutes. Write down the time you opened the session, and open a new On-Air session before 30 minutes pass. Any cue the session had already sent is not undone.
+An On-Air session expires **30 minutes** after it opens. The countdown warns you as the deadline approaches. At expiry, ordinary cue controls pause. The session owner can still use **Panic: Run Safe State** while the session remains open; end the session to release the surface, then open a new one to continue. If a normal cue request reaches the server after expiry, CivicCast refuses that cue and leaves the session open, so the owner can still run Panic or end the session. Cues already sent are not undone. After a page refresh, CivicCast restores the selected surface and its open session, but not an earlier dry-run result; dry-run a cue again before firing it.
 
 #### Fire a cue
 
@@ -1473,20 +1481,18 @@ If someone else already has the surface open, you see: "A session is already ope
 The **Safe State** panel appears once a session is open. In an On-Air session it names the recovery cue and has two buttons. In a Test Mode session it reads "No safe-state cue is configured for this session." and has no buttons, because Test Mode does not ask you to pick one.
 
 * **Dry Run Safe State** previews the recovery cue.
-* **Panic: Run Safe State** fires it.
+* **Panic: Run Safe State** sends the configured safe-state cue immediately through the recovery action. It does not wait for a dry run and remains available to the session owner after the On-Air deadline, while that session remains open.
 
-If a cue fails in an On-Air session, a button **Roll back to Safe State** appears. Click it to fire the safe-state cue. A good result reads "Rolled back to Safe State."
+If a cue fails in an On-Air session, use **Panic: Run Safe State** in the Safe State panel. A good result reads "Rolled back to Safe State."
 
-> **Warning:** **Panic: Run Safe State** and **Roll back to Safe State** have no confirmation box. They send the recovery cue to your equipment at once.
-
-> **Known issue (beta.11):** **Panic: Run Safe State** is grey until you have clicked **Dry Run Safe State**, and clicking any other cue's dry run makes it grey again. In an emergency it needs two clicks. After you open a session, dry-run the safe-state cue so the Panic button is ready, and dry-run it again after you dry-run any other cue. If the On-Air session has expired, **Panic: Run Safe State** is refused and the refusal closes the session, so **Roll back to Safe State** is refused after that too.
+> **Warning:** **Panic: Run Safe State** has no confirmation box. It sends the recovery cue to your equipment at once.
 
 #### End a session
 
 1. Click **End session**.
-2. A box titled "End the control room session?" appears. For an On-Air session it says "This releases the operator lock on this control surface while the session is On-Air. Any cue mid-fire is not rolled back, and no operator can fire cues on this surface until a new session is opened." Click **End session**, or **Cancel**.
+2. A box titled "End the control room session?" appears. For an On-Air session it says "This releases your operator lock on this control surface. Any cue already sent is not undone. Panic can still run the safe-state cue until you end the session." For Test Mode it says "This releases your operator lock on this control surface. No operator can fire cues on it until a new session is opened." Click **End session**, or **Cancel**.
 
-> **Known issue (beta.11):** the Control Room remembers your session only in the open page. If you refresh it, close the tab, or click to another screen in the same tab, you lose your handle on the session. Keep the Control Room in its own browser tab. The surface stays locked, and the screen has no button that releases someone else's lock, even though the lock message says a Setup admin or Support admin can do it. Ask IT how to release a stuck lock.
+The selected surface is remembered in this browser tab. Refreshing the page restores the open session for its owner without opening a duplicate; dry-run results are temporary, so repeat a dry run before firing. Another operator sees the active session as read-only. A Setup admin or Support admin can release that lock after confirming; releasing a lock does not undo cues already sent. An operator can end their own session after confirming. Ending a session releases its surface lock.
 
 A Support admin can also type a note in **Operator note** and click **Create support bundle**. This builds a troubleshooting file with private details removed, and shows its location. Everyone else sees "Support bundles require support admin."
 
@@ -1557,42 +1563,38 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 #### Set up a room and send invites
 
-1. In the left menu, under **Run Meeting**, click **Remote Contribution**. A Setup admin first creates a room: type a **Room name** (the example is "Council Chamber Guests") and a **Channel id** (the example is "gov-ch-1"), then click **Create room**.
+1. In the left menu, under **Run Meeting**, click **Remote Contribution**. A Setup admin first creates a room: type a **Room name** (the example is "Council Chamber Guests"), choose an enabled channel from **Configured channel**, then click **Create room**.
 2. Click the room in the **Rooms** list.
-3. Click **Open room**. A box titled "Director view (embed in your switcher)" shows a link. This is the page you keep open to see and arrange the guests. Click **Copy**. The link is shown only right after you click **Open room**. If you reload the page it is gone, so click **Open room** again.
+3. Click **Open room**. The room's VDO.Ninja director opens in an embedded panel; use it to inspect guests and keep it open while sending guest controls. You can copy its link for use in a separate switcher. If you reload the page, click **Open room** again.
 4. Under "Invite a guest", type the **Guest name**, choose a **Contribution role** (**Council member**, **Presenter** or **Public comment**), and click **Generate invite link**.
 5. Copy the box labelled "Guest link for &lt;name&gt; — send this", and send it to that guest. Like the director link, this box is shown only right after you generate the link. If you reload the page or select another room it is gone, and the invite list shows only the guest's name, role and **Used** or **Pending**. Generate a new link if you did not copy it.
 
 > **Note:** each guest link works for one guest, once, and expires after 4 hours. The screen says "single-use" but does not mention the 4 hours. Guests who join as **Public comment** must first accept terms before they can join. "Sent invites" lists each link as **Used** or **Pending**. A room holds up to 6 guests by default.
 
-> **Known issue (beta.11):** the **Channel id** box is free text. It must be the channel's exact id, for example `government`, not an example like "gov-ch-1". A typo makes **On air** fail later. Copy the id from the **Channels** screen. Also, a sign-in with only the Setup admin role can create a room but cannot see it: the server lets only a Meeting operator or Support admin read rooms, so the Rooms box shows the refusal "This action requires one of these CivicCast roles: meeting_operator, support_admin." instead of the list. If your station has not been set up for guests, an amber note says "Remote contribution isn't configured yet. A compositor (the GStreamer wpesrc engine or OBS) plus self-hosted VDO.Ninja and coturn must be commissioned before guests can reach the channel. See the diagnostics drawer for status."
+> **Current limitation:** the channel menu shows only configured, enabled egress channels. If none are available, ask a Setup admin to configure and enable a channel first; unknown or disabled channel ids cannot be used to create a room or take a channel live. Room-list and detail reads currently require Meeting operator or Support admin access. A Setup admin working alone cannot manage a room they created. Guest media composition into the channel is not connected in CivicCast; commissioning VDO.Ninja alone does not put a guest on air.
 
-#### Admit a guest and put them on air
+#### Admit and control a guest
 
 1. When a guest opens their link, they appear under **Guests** with the tag **In waiting room**.
-2. Click **Admit** to let them in. The **Admit** button disappears and **On air** turns on, but the guest's tag still reads **In waiting room**.
-3. Click **On air** to put them on air. The tag changes to **On air**.
+2. Click **Admit** to mark them admitted in CivicCast. This does not put their media into the broadcast.
+3. Keep the embedded VDO.Ninja director open. **Mute guest audio** and **Restore guest audio** send targeted audio requests for that guest; **Mute guest camera** and **Restore guest camera** send camera requests to the same guest.
+4. **Disconnect guest** asks for confirmation, then sends VDO.Ninja's targeted hangup command.
+5. **Off air** asks for confirmation, then sends separate requests to mute that guest's audio and camera. It leaves the guest connected and does not return the channel to its schedule.
 
-> **Warning:** the guest's **On air** button does **more than show that guest**. It also switches the *whole channel* to its live source, exactly like **Take live** on Channels, for up to an hour. There is no confirmation box. CivicCast records the change under the name "remote-contribution", not your name. If the channel cannot be taken live (for example, no source passes its check), you get "Channel takeover failed; guest &lt;id&gt; not placed on-air." and the guest goes back to the waiting room. If the channel is already under takeover, nothing more happens and the guest joins the live picture.
+> **Important:** VDO.Ninja's director iframe does not confirm whether an audio, camera or hangup request succeeded. CivicCast records the latest browser-reported request as **sent, not verified** and keeps the guest's connection status unchanged. The audio control targets the guest's audio; it does not control the director's own audio. Check the director and compositor before relying on a media change, and verify in the director before treating a guest as disconnected. Off air does not disconnect the guest or return the channel to its schedule.
 
-#### Mute, take off the air, or drop a guest
+#### Take the channel live
 
-While a guest is **On air**, two more buttons appear next to them.
+**Take channel live** is a separate, confirmed action. It switches the channel to its configured live source and can override the schedule. It does not route a contribution guest into the channel. To resume the schedule, use **Return to schedule** on **Channels**.
 
-* **Mute** changes the guest's tag to **Muted**. A muted guest has only **On air** (which un-mutes) and **Drop**.
-* **Off air** returns the guest's tag to **In waiting room**. The guest stays admitted, so **On air** is still available.
-* **Drop** opens a confirmation box. For an on-air guest, it says "&lt;name&gt; is on air right now. Dropping updates the CivicCast room record but does not remove their video or audio from the broadcast. Remove or mute them in the VDO.Ninja director view and check the channel monitor. They would need a new invite to rejoin." For other guest states, it says dropping marks the room record but does not end the VDO.Ninja connection or remove broadcast media. Click **Drop guest**, or **Cancel**.
-
-> **Warning:** **Mute** and **Off air** have no confirmation box. **Drop** and **Close room** ask first, and a dropped guest needs a new invite.
-
-> **Note:** **Mute** and **Off air** update CivicCast's guest status; they do not mute or remove VDO.Ninja media from the channel. Use the VDO.Ninja director view and check the channel monitor. **Drop** and **Close room** also update the CivicCast record without cutting guest media. After the last guest is dropped or the room is closed, nothing hands the channel back to its schedule. Use **Return to schedule** on **Channels** (see "Take a channel live from a camera").
+After checking in the director that a guest has left, click **Mark left after checking** and confirm. This changes only the CivicCast session record; it does not send a provider command.
 
 #### Close the room
 
 1. Select the room and click **Close room**.
-2. A box titled `Close "<room>"?` appears. It says this closes the CivicCast room record and stops accepting contributions, but does not remove guest video or audio from the broadcast. Remove or mute the guest in the VDO.Ninja director view and check the channel monitor. Click **Close room now**, or **Cancel**.
+2. Confirm to send hangup requests for active guest sessions and close the CivicCast room record. The provider does not acknowledge those requests; active guests remain visible so you can inspect or retry controls. Mark each guest left only after verifying the director shows they have disconnected. Closing the room stops new invites; it does not return the channel to its schedule.
 
-You can open the room again and send new invites afterwards.
+You can reopen the room and send new invites afterwards.
 
 #### Test guest connections (Support admins)
 
@@ -1623,13 +1625,13 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 
 12. Keep **Live** and the Control Room page open in their own tabs. Do not refresh them.
 13. If you use an On-Air Control Room session, open a new one before 30 minutes have passed.
-14. Admit remote guests one at a time. Remember that **On air** for the first guest takes the whole channel live.
+14. Admit remote guests one at a time. Keep the VDO.Ninja director open and verify each guest there. Guest controls do not compose them into the broadcast; use **Take channel live** separately only for the channel's configured live source.
 15. Watch the channel's own output, not the screen's tags. After **Stop**, **Restart feed** or **Return to schedule**, the tag can take up to 30 seconds to change.
 
 **At the end**
 
 16. Return the channel: **Return to schedule**, **Confirm return to schedule**.
-17. Drop any remaining guests and click **Close room**.
+17. Send disconnect requests for remaining guests, verify they left in the director, mark them left, then click **Close room**.
 18. End any Control Room session: click **End session**.
 19. If you want the channel off the air, click **Finish current item, then stop** (or **Stop**) and confirm. If **Keep this channel on air** is ticked, ask your Setup admin to untick it first.
 20. On **Live**, click **End Live Stream**, confirm, and watch **Recording finalization** until it says "Recording saved as asset &lt;id&gt;." Then follow [After the meeting](#ch-after-meeting).
@@ -1654,7 +1656,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 | "The cue preview is stale ... Dry Run the cue again before Live Fire." | The cue or device changed after your dry run. Click the cue again. |
 | "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;." | Someone, maybe you before a refresh, has the surface open. Ask IT. |
 | "Remote contribution isn't configured yet." | Guest video software has not been set up. Tell IT. |
-| "Channel takeover failed; guest &lt;id&gt; not placed on-air." | The channel had no ready live source. Run **Check source** on Live and click **On air** again. |
+| A guest-control notice says **sent, not verified** | The director iframe does not report command completion. Check the guest in the embedded director; use **Mark left after checking** only after verifying they have disconnected. |
 | "Durable storage is not ready. Open Setup and choose Prepare storage ..." | The station's database is not ready. Tell IT. |
 | "This action requires one of these CivicCast roles: ..." | Your sign-in lacks a role for that button. The names listed are the role names in short form. |
 
@@ -1910,7 +1912,7 @@ Everyone can read the queue and play audio. Only a records clerk can approve, ed
 
 ### Review an AI summary
 
-CivicCast can write a draft summary of a meeting from its approved caption lines. The summary is saved for a records clerk to check. Treat approval and signed-record export as unfinished in beta.11.
+CivicCast can write a draft summary of a meeting from its approved caption lines. A records clerk checks and approves the draft, then exports a signed-record PDF for station records.
 
 #### Make a summary
 
@@ -1925,29 +1927,25 @@ If there are no approved cues the card says "No committed transcript cues yet. A
 
 1. In the left menu, click **Summary review** (page heading "Summary review", label "Summary + signed records").
 2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are buttons labeled with a cue ID and its time range.
-3. Click a cue button. The **Inline transcript player** box highlights that range.
+3. Click a cue button. The **Inline transcript player** box highlights that range. It shows cue IDs and times only; to read the caption text, open the recording or Review queue.
 
-The statuses are **Pending review**, **Approved**, **Rejected** and **Needs evidence**. A **Needs evidence** card has an empty paragraph and a red message: the model's output could not be tied to caption cues with timestamps. A yellow bar counts the summaries that need more evidence. The only list shown is Pending review and Needs evidence.
+The page shows **Pending review**, **Approved** and **Needs evidence** items. Approved summaries remain on the page so you can export or revisit their signed records. A **Needs evidence** card has a message explaining that the model's output could not be tied to caption cues with timestamps. A yellow bar counts items that need more evidence.
 
 If nothing is waiting, the page says "No summaries need review." and tells you to use **Generate summary** on a recording's detail page.
 
-> **Known issue (beta.11):** The **Inline transcript player** does not show the caption text and does not play audio. It shows only cue IDs and times. You cannot check a claim against the words from this page. Open the **Review queue** or the recording to read the cues.
+#### Edit, approve and export
 
-#### What Approve summary can and cannot do
+1. For a **Pending review** item, click **Edit summary** to revise its narrative. Click **Save changes** to keep the edit or **Cancel edit** to discard it. Sourced claims and their transcript references remain unchanged; compare the narrative with those claims before approval.
+2. Click **Approve summary** only after checking the summary against its source cues. Approval is recorded with the identity from your signed-in staff account. After approval the card stays available with its status set to **Approved**.
+3. On an approved card, click **Export signed record**. CivicCast creates a PDF/A-3B record and shows its record ID and digest. The timestamp is a deterministic test timestamp unless the station has configured a real timestamp authority.
+4. Click **Download signed record** to save the PDF. Click **Verify signed record** to ask CivicCast to check its stored artifact and timestamp proof.
+5. To return to an earlier export after leaving or refreshing the page, open the approved card and click **Load saved records**. CivicCast lists up to 10 recent exports for that summary; use each row's **Download** or **Verify** action.
 
-> **Known issue (beta.11):** **Approve summary** is wired to fail. The button is enabled only for a Pending review summary that has at least one sourced claim, and only for a records clerk. When clicked, it sends the server three fields: an operator ID, an operator name and a note. The server accepts only the note and rejects the other fields, so the request fails with HTTP 422 and the page shows a red error box. Do not rely on this approval path.
+Only a records clerk can edit, approve, export, download or verify. If an action fails, the page shows an error and a recovery step. Stale edits and approvals are rejected; reload and review the updated summary before trying again.
 
-A second problem sits behind the first. If **Approve summary** did succeed, the summary would become **Approved** and disappear from this page, because the page lists only Pending review and Needs evidence. **Export signed record** is enabled only for Approved summaries, so it could no longer be reached. Nothing in the console lists, downloads or checks signed records.
+The summary review page does not provide a reject or regenerate action. To generate another draft, update the caption review as needed and use **Generate summary** on the recording's detail page.
 
-What is possible today:
-
-- You can generate a summary and read it on the Summary review page.
-- You cannot reject a summary, regenerate one from this page, download a signed record, or check one. There are no buttons for them.
-- Yellow-bar and refusal messages tell you to "regenerate". The AI summary card does not offer a second **Generate summary** once a job exists.
-
-> **Warning:** Do not tell your records officer that summaries are approved or signed records can be exported from this screen in beta.11.
-
-> **For IT staff:** The approve route is `POST /api/staff/summaries/{id}/approve`, which accepts `{"approval_note": ...}` only. The signed-record export is `POST /api/staff/records`, with download and verify routes under `/api/staff/records/{id}`. The signing timestamp is a deterministic test timestamp unless a real timestamp authority is configured. See the API appendix.
+> **For IT staff:** The approve route is `POST /api/staff/summaries/{id}/approve`; the request requires the displayed draft's `expected_audit_fingerprint`, and the server takes operator identity from the signed-in staff session. Approval atomically checks that the draft is still pending and unchanged; otherwise it returns 409 with reload guidance. Edits use `PATCH /api/staff/summaries/{id}` with the draft's expected audit fingerprint. Signed-record metadata is available from the records-clerk-only `GET /api/staff/records?summary_id={id}&limit=10` route; export, download and verify routes remain under `/api/staff/records`. See the API appendix.
 
 ### Check for videos that are missing before a meeting
 
@@ -2280,7 +2278,7 @@ CivicCast gives each person one or more *roles*. A role is a named set of permis
 
 > **Note:** In a normal station, everyone signs in with the first administrator account made during First Setup. That account carries all five roles, so you will see every screen and every button. The limits in the table matter only if your IT person made narrower sign-in passes for some staff.
 
-> **Note:** Beta.11 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. We read the code behind every screen in this chapter. We could not run every feature against a live station. Where that matters, the text says "In testing we could not confirm".
+> **Note:** Beta.11 was published on 2026-10-08 as a GitHub pre-release. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package and its checks: its clean-install check passed, but upgrade and download-only checks were not run, and no human field-tester has signed it off. We read the code behind every screen in this chapter, but could not run every feature against a live station. Where that matters, the text says "In testing we could not confirm". Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
 
 > **Warning:** Several screens in this chapter ask you to type dates. CivicCast treats those dates as **UTC**, the world reference clock. In the United States UTC is several hours ahead of local time. Mountain daylight time is 6 hours behind UTC. A meeting that starts at 7 p.m. Mountain daylight time is already 1 a.m. UTC *the next day*. When a report looks one day off, this is almost always why.
 
@@ -2620,7 +2618,7 @@ The four screens live in the left sidebar under **System Health**: **Readiness**
 
 > **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
-> **Note:** Beta.11 was published on 2026-10-02 as a GitHub pre-release (a beta candidate). Its clean-install check passed. The upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how.
+> **Note:** Beta.11 was published on 2026-10-08 as a GitHub pre-release. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) identifies the package and its checks: its clean-install check passed, but upgrade and download-only checks were not run, and no human field-tester has signed it off. Some of the warnings and alerts in this chapter work differently from what the screens suggest; each Known issue says how. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
 
 ### Check whether the station is ready (Readiness)
 
@@ -2649,6 +2647,10 @@ A channel tile uses these words:
 - **Needs attention** (red).
 
 After the word you may see "on safety slate" (the channel is showing its fallback card) or "live captions off".
+
+When live captions are enabled, the channel tile also reports the caption worker state, its last heartbeat, and which recognition provider is selected. **Digital silence in latest processed audio** means the latest processed audio chunk contained zero-valued samples; it does not claim that speech was recognized. **Worker stalled** means the expected worker has stopped reporting fresh progress. A missing or stale worker heartbeat remains unknown during the first 180 seconds after a channel goes on air; after that, a heartbeat older than 90 seconds is stalled. If audio remains pending for more than 120 seconds without a chunk completing, the worker is stalled; starting another batch retry does not reset this clock. A recent heartbeat with no pending audio is not a failure. Channels that are stopped or have live captions switched off are not caption failures.
+
+The public `/health` probe continues to return HTTP 200 while the process answers. Its `status` is **degraded** when the schema is not current or live-caption readiness is failed, stalled, or not yet known. Its `live_captions` value is only a station-wide state; it never includes channel names. Signed-in staff see the per-channel worker details in **On air right now**.
 
 > **Known issue (beta.11):** A yellow station can show two different verdicts at once. The small pill at the top says **Check before meeting**, while the card below can say **Ready with optional items**. Both mean the required checks passed and an optional item needs a look. The second wording is not one of the five standard phrases.
 
@@ -2752,6 +2754,7 @@ The alert titles you may see are:
 - Database unreachable
 - CivicCast service is down
 - Automatic self-check did not pass
+- Live caption worker failed or stalled
 
 Some alerts show a plain code with the dashes turned into spaces, for example "eas source unavailable", "asrun outbox degraded" or "caption tier degraded". "eas source unavailable" means an emergency-alert feed could not be reached. "asrun outbox degraded" concerns the on-air log that Reports reads.
 
@@ -2759,25 +2762,27 @@ Some alerts show a plain code with the dashes turned into spaces, for example "e
 
 Under the list are two sections for administrators.
 
-- **Alert rules** has one card for each of the 14 kinds of alert that come with a rule. Alert kinds added later have no card (see the Known issue below). On a card you can switch **Enabled** on or off, set **Severity** to Critical, Warning or Info, set **Re-alert after (minutes)** (how long CivicCast waits before warning you again while the problem continues), and tick **Notify on resolve**. Click **Save** to keep your changes.
+- **Alert rules** has cards for alert kinds with a rule, including **Live caption worker failed or stalled** and **EAS source unavailable**. On a card you can switch **Enabled** on or off, set **Severity** to Critical, Warning or Info, set **Re-alert after (minutes)** (how long CivicCast waits before warning you again while the problem continues), tick **Notify on resolve**, and choose destinations. Tick each email, text-message or webhook destination that should receive this alert, then click **Save**.
 - **Where alerts go** lists *destinations*: an email address, a text-message number or a webhook (a web address that receives a message). Click **Add destination**, choose a **Type**, give it a **Name**, type the address in **Where to send (email, phone, or webhook URL)**, and click **Create destination**.
 
-The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours end (UTC, HH:MM)**. These are in UTC, not local time. A quiet-hours window holds back WARNING and INFO alerts. CRITICAL alerts ignore quiet hours and are always sent.
+> **Beta.12 routing update:** A rule card's **Destinations** list shows the saved assignments. If an assigned destination no longer exists, it stays checked as **Unavailable destination** with its id; leave it checked to preserve the saved id, or uncheck it to remove it. Saving another rule setting without changing the destination checkboxes keeps its assignments.
+
+The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours end (UTC, HH:MM)**. These are in UTC, not local time. A quiet-hours window holds back WARNING and INFO alerts. CRITICAL alerts ignore quiet hours. Sending still requires an enabled, assigned destination and a working delivery service.
 
 > **Warning:** Do not click **Delete** on a destination unless you mean it. The first click turns the button into **Confirm delete?**, and a second click deletes right away. There is no cancel and no timeout.
 
-#### What happens in beta.11 when no destination is wired
+#### What happens in beta.12 when no destination is wired
 
-> **Known issue (beta.11):** **You can follow the Alerts screen exactly and still never receive an email, text or webhook message.** This is the most important thing to know about alerts in beta.11.
+> **Known issue (beta.12):** A rule with no enabled destination assigned cannot deliver its alert. Set up routing on the rule card before relying on email, text or webhook notifications.
 >
 > - A new install ships every alert rule with *no destinations attached*.
-> - Adding a destination on this screen creates it, but does not attach it to any rule. The rule card has no way to choose destinations.
+> - Adding a destination on this screen does not attach it automatically. In each rule card's **Destinations** list, tick one or more destinations and click **Save** to attach them.
 > - When an alert fires and its rule has no live destination, CivicCast writes a "suppressed" delivery note that reads "No enabled alert channel is configured for condition ...". No screen shows that note.
 > - The alert itself does still appear on the **Alerts** screen and in the red and yellow counts on **Readiness**.
 > - There is no **Send test alert** button, so you cannot check a destination by pressing a button.
-> - Some kinds of alert have no rule at all: "Automatic self-check did not pass", "eas source unavailable", "asrun outbox degraded" and "caption tier degraded" are among them. They show on the **Alerts** screen as warnings, have no card under **Alert rules**, and can never be sent to a destination in beta.11, even by IT staff.
+> - Some kinds of alert still have no rule, including "Automatic self-check did not pass", "asrun outbox degraded" and "caption tier degraded". They show on the **Alerts** screen as warnings but cannot be routed from **Alert rules**. **Live caption worker failed or stalled** and **eas source unavailable** now have warning rules; destinations still need to be attached by an administrator before those alerts can be delivered.
 >
-> Until an IT person attaches destinations to rules, nobody is told about a problem unless somebody looks at the screen. Check **Readiness** and **Alerts** before every meeting and at the start of every shift.
+> Until a Setup admin assigns at least one enabled destination to each rule you rely on, those rules cannot notify anyone. Check **Readiness** and **Alerts** before every meeting and at the start of every shift.
 
 > **For IT staff:** A rule takes `channel_ids` (the ids of destinations) through `PUT /api/staff/alert-rules/{rule_id}`, with the Setup admin role. The 14 rules that exist come with ids like `default:off-air`. See [Chapter 14](#ch-troubleshooting) and [Chapter 15](#ch-integrations).
 
@@ -2798,7 +2803,7 @@ The feeds come from the National Weather Service (NWS), the federal alert system
 | A beta.11 station as installed | Nothing is polled and nothing airs by itself. The page says "No alert sources are configured. Ask your station administrator to configure an NWS, AMBER, or IPAWS (COG) feed." |
 | IT staff turn on alert polling | CivicCast reads the configured feeds, by default once a minute, and lists active alerts under **Active alerts** |
 | IT staff also turn on automatic display | Every active **severe** alert goes on every channel that is on air as a **crawl**. Every active **extreme** alert goes on as an **overlay**. A full-screen takeover is never automatic |
-| An operator presses a button | The alert is shown at once, as a crawl, an overlay or (after a tick box) a full-screen takeover |
+| An operator presses a button | The station queues a crawl, an overlay or (after a tick box) a full-screen takeover for the selected channel's next output update |
 
 A *crawl* is a line of text that scrolls across the screen. An *overlay* is a message box placed over the picture. A *forced slate* is a full-screen message that replaces the programming.
 
@@ -2806,9 +2811,13 @@ A *crawl* is a line of text that scrolls across the screen. An *overlay* is a me
 
 > **Known issue (beta.11):** Nothing on the page says that severe and extreme alerts go on air by themselves once IT turns on automatic display. The banner says only that CivicCast "never automatically pre-empts programming". Once automatic display is on, use **Clear** to take an alert down.
 
-> **Known issue (beta.11):** In testing we could not confirm that a crawl, overlay or slate is drawn onto the picture that goes out to cable or the stream. The station records a decision for the channel and makes it available at a public data address for that channel (`/api/public/cg/emergency-overlay?channel_id=` followed by the channel id) and in the channel's graphics data. We found no code that draws it into the playout engine's picture. The resident website's own emergency box does not use that data address by channel: it appears only when the page address ends in `?emergency=1`, and it then shows a generic "Emergency notice" placeholder, not your real alert. Before you tell the city or the board that CivicCast shows alerts on air, test it on your own channel output.
+CivicCast draws the selected alert into the channel's GStreamer output: a scrolling crawl, a lower-half message panel, or an operator-confirmed full-screen slate. The resident home page also reads the real alert for its current channel automatically, without a special page link, and refreshes it every five seconds. Clear, CAP cancellation, replacement and expiration update the presentation on the next successful delivery; clearing also prevents the same alert from being automatically shown again. If several alerts are active, the highest severity is shown. Other channel graphics remain in place when an alert changes or clears. Very long broadcast text is shortened; the resident notice carries the full public alert text. No cellular fallback is configured by this feature.
+
+When an alert changes, CivicCast prepares the replacement before removing the previous warning. A failed render leaves that warning in place while a later update retries. Delivery failures can delay replacement or clearing. If Windows prevents deletion of a retired image after clearing succeeds, the warning can be absent until cleanup retries succeed. Watch the actual output when making changes. Temporary alert images are bounded during retries; this is not a cleanup of files left by older runs or a crashed process.
 
 > **For IT staff:** The two settings are `CIVICCAST_EAS` and `CIVICCAST_EAS_AUTO_SURFACE`. `CIVICCAST_EAS` defaults to `off`; any other value (the code's own comment uses `inline`) starts the polling. `CIVICCAST_EAS_AUTO_SURFACE` is off unless set to `1`, `true`, `yes` or `on`, and it is read only when `CIVICCAST_EAS` is on. `CIVICCAST_EAS_POLL_SECONDS` sets the polling interval and defaults to 60. Polling skips any source that is disabled, is of the `manual` type or has no endpoint address. Sources are added with `PUT /api/staff/eas/sources/{id}`. See [Chapter 15](#ch-integrations).
+
+> **Output setup:** Keep emergency presentation off unless the station intends to use it. IT must enable `CIVICCAST_EAS=inline` with the GStreamer egress engine before starting the channel, so its graphics compositor is reserved. A display request is refused when emergency presentation or GStreamer is off. The installed runtime supports a CPU `compositor` fallback when D3D11 is unavailable; neither path requires a discrete GPU. Isolated MPEG-TS checks proved alert pixels and clearing on both CPU and D3D11 paths. This does not certify a cable headend or any live feed: verify the station's actual downstream output before relying on it.
 
 #### Check the feeds and active alerts
 
@@ -2925,7 +2934,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 ### Report a beta issue
 
-CivicCast is a beta (beta.11 was published as a GitHub pre-release on 2026-10-02). Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
+CivicCast is a beta. Beta.11 was published on 2026-10-08 as a GitHub pre-release; its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists its package checks and limits. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status. Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
 
 1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
@@ -3154,10 +3163,10 @@ CivicCast keeps the program under the install folder (default `C:\Program Files\
 | Conform cache (ready-to-play copies of programs) and working files | `C:\ProgramData\CivicCast\data\egress` (cache in `conform-cache`) | Budget **60 GB** by default; set `CIVICCAST_CONFORM_CACHE_GB` to change it (zero or less turns the cache off). Another budget keeps the three newest plan folders and about 5 GB (`CIVICCAST_PREPARED_PLAN_DIR_BUDGET_GB`) |
 | Temporary live-caption work | `C:\ProgramData\CivicCast\data\caption-tap` | Short working audio is removed during normal processing; ordinary beta.11 live captioning does not create permanent per-cue review rows or evidence WAVs |
 | Scheduled recordings | In a `scheduled-recordings` folder under the recording target you set in the console | One program-hour is about 2 GB by the Setup screen's planning figure; the default output profile works out to about 2.8 GB per hour (6,192 kbps x 3,600 s, our arithmetic) |
-| Logs | `C:\ProgramData\CivicCast\logs` | `supervisor.log` rotates at 10 MiB, 10 files. Rotation of the other logs is not documented |
+| Logs | `C:\ProgramData\CivicCast\logs` | Supervisor, application and raw control-plane/PostgreSQL logs rotate at 10 MiB with 10 older copies. Older oversized raw logs may remain until rotation replaces them; `ollama.log` is not bounded. See [Chapter 12](#ch-operations) |
 | Backups | A folder you choose | You decide |
 
-Use the signed beta.11 package manifest and the installer's disk-space message for the kit you received; pack sizes can change between releases. Activation checks the staged station-pack sizes plus 2 GB of working room and reports "Not enough free disk space to activate this station..." when short. Add the conform cache budget (60 GB by default) and recording storage on top. The beta.11 package was not clean-installed, so this source-derived estimate is not a measured installation requirement.
+Use the signed beta.11 package manifest and the installer's disk-space message for the kit you received; pack sizes can change between releases. Activation checks the staged station-pack sizes plus 2 GB of working room and reports "Not enough free disk space to activate this station..." when short. Add the conform cache budget (60 GB by default) and recording storage on top. These source-derived storage estimates are not measured requirements for the unpublished beta.12 candidate; the beta.11 clean-install results and their limits are recorded in its verification record.
 
 > **Tip:** Do not rely on the default 60 GB cache fitting on a small system drive. Either give the station a large drive, or lower `CIVICCAST_CONFORM_CACHE_GB` before the first busy week. A single prepared program larger than the whole budget cannot be kept. The station then refuses it with the error "Conform-cache budget too small to retain '&lt;file name&gt;'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
 
@@ -3536,7 +3545,7 @@ The log records each step's own code ("step X: returned N"). You may see: 64 arg
 | Which pack was missing? | The "step stage-packs: child reported:" line, and `install-manifest-report-<pid>-<time>.json` |
 | Why an upgrade rolled back | `upgrade\upgrade-engine.log`, `upgrade\upgrade-journal.json`, `upgrade\UPGRADE-RECOVERY.md` |
 | Database creation or ownership | `provision\PROVISION-RECOVERY.md`, `provision\OWNERSHIP-RECOVERY.md`, `provision\ownership-observation.txt` |
-| Why the station will not run | `logs\supervisor.log` (the service; 10 MiB, 10 files, flushed each record), `logs\control_plane.log`, `logs\control_plane-app.log`, `logs\postgres.log`, `logs\postgres-launcher.log`, `logs\ollama.log` |
+| Why the station will not run | `logs\supervisor.log` (10 MiB, 10 older files, flushed each record), `logs\control_plane.log`, `logs\control_plane-app.log`, `logs\postgres.log`, `logs\ollama.log` |
 | First-run window | `%USERPROFILE%\.civiccast\runtime-host.log` and `installer-state.json` |
 | Which self-test failed | The setup window's details list (not the log; see the Known issue above) |
 
@@ -3555,11 +3564,11 @@ Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
 ```
 
 - The service is **CivicCast Native Supervisor**, `Status` **Running**, `StartType` **Automatic**.
-- `/health` answers `status: healthy`, `schema: current` and `version: 1.0.0-beta.11`. The web status is always 200 while the process answers; the `status` field is what tells you whether it is ready (`degraded` means the database schema is not confirmed current: behind the program, not configured or unreadable).
+- `/health` answers `status: healthy`, `schema: current` and `version: 1.0.0-beta.12`. The HTTP status is always 200 while the process answers. A `degraded` body means database readiness or live-caption processing needs attention; inspect `schema` and `live_captions`, then authenticated System Health for details.
 - The firewall rule exists.
 - Both `station-set.json` and `activation-self-test.json` exist in the install folder.
-- The last log lines include "postinstall: SUCCESS (InstalledVersion 1.0.0-beta.11 recorded)".
-- Settings, Apps shows **CivicCast (Native)**, version 1.0.0-beta.11.
+- The last log lines include "postinstall: SUCCESS (InstalledVersion 1.0.0-beta.12 recorded)".
+- Settings, Apps shows **CivicCast (Native)**, version 1.0.0-beta.12.
 - The operator console and the resident portal at `http://127.0.0.1:8000/` both load on the station.
 
 Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station; the [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists installation checks and results for its specific package revision.
@@ -4051,13 +4060,13 @@ The paywall (Setup group; `setup_admin`) is optional paid access to recordings t
 
 > **Known issue (beta.11):** Do not rely on the paywall for live use. The screen says tier-based gating is active when the box is ticked. The magic-link email sender is a no-op, the public site's calls for tiers and checkout (`/api/public/paywall/tiers`, `/api/public/paywall/checkout`) have no matching server routes, and we found no server code that blocks the media file itself. Whether HLS and download routes enforce the paywall is unconfirmed. The access check trusts the email address passed to it; the code does not prove the caller owns it.
 
-> **Warning:** **Save** sends the whole form, including the signing secret. The secret box is always empty after you reload the page (the server never returns it), and a blank box is saved as an empty secret, which erases any stored one. After that, magic links and Stripe webhook signature checks stop working. Every time you save this page, paste the secret again.
+> **Signing secret:** The server never returns the saved value, so the field stays blank after you open or reload this page. If a secret is saved, leave the field blank to keep it during an ordinary **Save**. To replace it, enter a new secret of at least 32 characters or generate one. Confirm the exact value currently in the field, then **Save**; editing the value clears confirmation, so confirm again. **Cancel** discards the pending replacement. To remove the saved secret, choose **Clear saved secret**, confirm, then **Save**. Clearing stops magic-link signing and Stripe webhook verification until you save a new one.
 
 If you still want to look at it on a lab station:
 
 1. Create the monthly or yearly prices in the Stripe website first. CivicCast never creates a price.
 2. Tick **Enable paywall**. Provider **stripe** is the live one; **mock** is for tests and has no warning on a live station.
-3. Click **Generate new secret** (32 random bytes, 44 characters, filled in the box), or paste your own of at least 32 characters. The Stripe webhook is `/api/webhooks/stripe`, and the code checks its `Stripe-Signature` header with this same secret. Stripe creates its own `whsec_` value for each endpoint, so whether Generate is the right value to give Stripe is not confirmed.
+3. Click **Generate new secret** (32 random bytes, 44 characters, filled in the box), or paste your own of at least 32 characters. When replacing a saved secret, confirm the value currently in the box before **Save**; any edit requires a fresh confirmation. **Cancel** discards the pending replacement. Leave the field blank to keep the saved value when you save other settings. To remove it, choose **Clear saved secret**, confirm, and save. The Stripe webhook is `/api/webhooks/stripe`, and the code checks its `Stripe-Signature` header with this same secret. Stripe creates its own `whsec_` value for each endpoint, so whether Generate is the right value to give Stripe is not confirmed.
 4. Add a tier for each price (**Tier ID** such as `basic`: lowercase letters, digits, `_` and `-`; **Display name**; **Stripe price id** starting `price_`; **Monthly** or **Yearly**) and click **Add tier**. Tier changes are local until you click **Save**.
 5. Click **Save**.
 
@@ -4372,12 +4381,13 @@ All logs are in `C:\ProgramData\CivicCast\logs`.
 
 | File | What is in it | Rotation |
 | --- | --- | --- |
-| `supervisor.log` | The supervisor: state changes, child starts, exits, restarts, readiness checks, the stop watchdog. The first line is `supervisor logging initialized` with the process id and the log destinations. | 10 MiB per file, 10 files kept. Each record is flushed to disk. |
-| `control_plane-app.log` | The CivicCast application's own log (playout, schedule, captions, alerts). | 10 MiB per file, 10 files kept. Written only when the control plane runs under the supervisor. |
-| `control_plane.log` | Raw standard output and error of the control plane, including the web server's access log (one line per request). | None. The file is opened for append and grows without limit. |
-| `postgres.log` | Postgres server messages. | None (the Postgres log collector is switched off). |
-| `postgres-launcher.log` | Short-lived output from starting Postgres. | None. |
+| `supervisor.log` | The supervisor: state changes, child starts, exits, restarts, readiness checks, the stop watchdog. The first line is `supervisor logging initialized` with the process id and the log destinations. | 10 MiB per file; keeps 10 older files (up to 11 files total). Each record is flushed to disk. |
+| `control_plane-app.log` | The CivicCast application's own log (playout, schedule, captions, alerts). | 10 MiB per file; keeps 10 older files (up to 11 files total). Written only when the control plane runs under the supervisor. |
+| `control_plane.log` | Raw standard output and error of the control plane, including the web server's access log (one line per request). | 10 MiB per file; keeps 10 older files (up to 11 files total). |
+| `postgres.log` | PostgreSQL startup and server messages. The supervisor drains the inherited standard-output pipe after `pg_ctl` exits. | 10 MiB per file; keeps 10 older files (up to 11 files total). |
 | `ollama.log` | Output of the Ollama child, when it runs. | None. |
+
+After upgrading, an existing `control_plane.log` or `postgres.log` larger than 10 MiB rotates into an older copy without being shortened. That copy can exceed the normal size limit until later rotations replace it. New output follows the limits above; upgrading does not immediately reclaim space used by older logs.
 
 The supervisor also writes some failures (for example the stop watchdog) to the Windows **Application** event log. In testing we could not confirm the source name Windows displays for them.
 
@@ -4385,8 +4395,6 @@ Other logs you may need:
 
 - `C:\ProgramData\CivicCast\install-progress.log`: the installer's record of a first install.
 - `C:\ProgramData\CivicCast\upgrade\upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md`: the upgrade engine, described below.
-
-> **Known issue (beta.11):** `control_plane.log` (every web request) and `postgres.log` are not rotated. Check their size weekly and, when the service is stopped, move or truncate them; do not assume Windows or the installer trims them.
 
 To follow a log live:
 
@@ -4408,9 +4416,10 @@ The HTTP status is 200 whenever the control plane is alive, even if it is unheal
 
 | Field | Values | Meaning |
 | --- | --- | --- |
-| `status` | `healthy`, `degraded` | `healthy` only when the database schema is current. |
+| `status` | `healthy`, `degraded` | `healthy` requires a current database schema and no degraded or unknown live-caption verdict. This is not proof of every output or device. |
 | `version` | text | The running CivicCast version. |
 | `schema` | `current`, `behind`, `not-configured`, `unknown` | Whether the database matches this version of the program. |
+| `live_captions` | `disabled`, `idle`, `unknown`, `degraded`, `healthy` | Coarse caption readiness; authenticated System Health identifies affected channels. Disabled captions and channels that are not on air do not themselves make readiness degraded. |
 | `schema_db_revision`, `schema_expected_head` | text | The database's schema revision and the one this version expects. They differ when `schema` is `behind`. |
 | `mode` | `normal`, `maintenance` | In `maintenance` the body also shows `workers_started: false` and `mutating_disabled: true`. |
 
@@ -4426,7 +4435,7 @@ Signed in, open **Readiness** (page heading **Safe to broadcast**, section **Sys
 
 The station raises alerts for conditions including: off-air, encoder death, server crash, schema drift, relay blocked, compliance probe failure, missing media, commit failure, takeover stuck for 2 hours, AI runtime down, low disk, clock skew, database unreachable, service down, self-test failure, scheduled-recording failure or dropout, as-run outbox degraded, channel-automation failure, caption tier degraded, remote-contribution problems, and emergency-alert source unavailable.
 
-> **Known issue (beta.11):** A fresh install seeds every alert rule with no destinations attached. With no destination, the evaluator records a "suppressed" delivery row and sends nothing. The rule editor in the console does not send destinations. To make an e-mail or SMS alert arrive, a Setup admin must create a destination with `POST /api/staff/alert-channels` and attach it to each rule with `PUT /api/staff/alert-rules/{rule_id}` (field `channel_ids`). Until you have done that and tested it, assume no alert will reach you and monitor from outside the station as well: poll `/health` and the Windows service state with your own monitoring tool.
+> **Known issue (beta.11; destination editor updated in beta.12):** A fresh install seeds every alert rule with no destinations attached. With no destination, the evaluator records a "suppressed" delivery row and sends nothing. In beta.11 the rule editor could not set destinations; beta.12 adds a **Destinations** checklist to each rule card. To make an e-mail or SMS alert arrive, a Setup admin must create a destination with `POST /api/staff/alert-channels` and attach it to each rule with `PUT /api/staff/alert-rules/{rule_id}` (field `channel_ids`) or use the rule card. There is no **Send test alert** button. Until you have assigned at least one enabled destination to each rule you rely on, assume it cannot notify you and monitor from outside the station as well: poll `/health` and the Windows service state with your own monitoring tool.
 
 #### Self-tests
 
@@ -4471,7 +4480,7 @@ This routine uses checks that exist in beta.11.
 #### Each week
 
 1. Read the result of the Sunday weekly self-test.
-2. Check the size of `control_plane.log`, `postgres.log` and `ollama.log` (they are not rotated).
+2. Check the size of `ollama.log`; it is not rotated. The control-plane and PostgreSQL raw output logs rotate at 10 MiB and retain ten older files.
 3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The native beta.11 live-caption work area is bounded automatically and does not require weekly audio cleanup.
 4. Run `civiccast egress trim-health --older-than-days 30 --dry-run` and decide whether to trim (see the next section).
 5. Run the disaster-recovery drill (see below) at least when you have changed anything, and keep the report.
@@ -4803,7 +4812,26 @@ Routine sign-in uses the admin username and password on the `/setup` page (**Adm
 - **Sign-in and setup only work from the station computer.** The routes under `/api/setup/*` check that the request came from the loopback address. A request from another computer gets HTTP 403 and the console shows **First setup can only be done from the station computer itself**. After setup is complete, most of these routes also require a staff token; only the signed-out view of the station state, sign-in (`login`) and recovery (`recover`) stay open to a request from the station computer.
 - The station keeps up to **20** console sessions at once and evicts the oldest when a 21st is created. The evicted browser sees **You were signed out**. In testing we could not confirm that sessions expire by time.
 - The two API calls `POST /api/staff/installer/sessions/revoke-others` and `POST /api/staff/installer/recovery-kit/regenerate` (Setup admin) end the other console sessions and make a new kit (new codes; the old codes stop working at once). The console has buttons for both: **Sign out other sessions** and **Regenerate recovery kit** in the Security card of the Station Profile screen, visible to the Setup admin role.
-- To reset the first admin on purpose, the code requires `CIVICCAST_ALLOW_FIRST_ADMIN_RESET=1` in the service environment. Remove it afterward.
+- For a lost password with no usable recovery codes, use the local administrator procedure below. Do not use `CIVICCAST_ALLOW_FIRST_ADMIN_RESET`: it reruns setup and can replace station settings.
+
+#### Administrator password reset
+
+The computer's owner or an authorized local Windows administrator can reset the existing first administrator without the old password or recovery codes. This is an offline maintenance operation, not a web API. It preserves the administrator's username, station settings, PostgreSQL database, recordings and other media. It revokes every first-admin console session and all old recovery codes. Separately issued staff API tokens are unchanged; retire those separately if compromise is suspected.
+
+1. Schedule a short outage and close any manually launched CivicCast server. On the station computer, open **PowerShell > Run as administrator**.
+2. Stop the supervisor and run the installed command (replace `<INSTDIR>` with your installation folder):
+
+   ```powershell
+   Stop-Service CivicCastSupervisor
+   & "<INSTDIR>\runtime\python.exe" -I -m civiccast.cli admin reset-password
+   ```
+
+3. Enter the new password twice at the hidden prompts (12–256 characters). Never put it in command arguments, environment variables, a script or a ticket. Cancelling or mismatching the prompts changes nothing.
+4. After success, run `Start-Service CivicCastSupervisor`, sign in with the displayed existing username and new password, then open **Station Profile > Security > Regenerate recovery kit**. Save the new kit safely; all previous recovery codes are invalid.
+
+The command checks the actual elevated Windows token, the stopped supervisor's LocalSystem identity, and its registered environment. It holds the supervisor's exclusive Windows mutex throughout recovery, so service starts and another recovery cannot write concurrently. It targets LocalSystem's protected `station-state.json`, or an absolute local `CIVICCAST_STATION_STATE_PATH` configured for the service or machine; the invoking user's profile and environment are ignored. Relative, network, linked and junction paths are refused. Nonstandard service identities need IT support rather than guessing a state file.
+
+Before changing credentials it creates an ACL-protected `*.before-admin-reset.bak` beside the state file, then replaces the state atomically. The backup contains old credential hashes and session hashes: keep it restricted, do not attach it to support requests, and remove it after confirming access and your normal station backup. Restoring it also restores the old credentials and sessions. A missing or corrupt state file is refused, not reinitialized. If recovery reports a failure, retain the backup, correct the reported condition and retry; restart the supervisor when maintenance is complete. No database password or DPAPI secret is read; the new password is never echoed, logged or stored in plaintext.
 
 > **Known issue (beta.11):** The loopback test looks only at the address the connection came from. If you put a reverse proxy **on the same computer**, every request it forwards arrives from `127.0.0.1` and passes the test, including requests from the internet, unless the proxy sends an `X-Forwarded-For` header (the web server then substitutes that address; see "Failed attempts are limited"). Do not rely on that: many proxies send no such header unless told to. The code's own comment warns about this. If you use a proxy, it must refuse every path that begins with `/api/setup/`. Also, the loopback routes do not check the `Host` or `Origin` of a request (audit finding E-006), so a web page opened in a browser on the station computer could in principle talk to them through a DNS-rebinding trick during first setup. Do not browse the web from the station computer, and complete first setup before the computer is used for anything else.
 
@@ -5011,7 +5039,7 @@ Everything below `C:\ProgramData\CivicCast` survives an uninstall and survives a
 | Did the Windows service start, restart or give up? | `C:\ProgramData\CivicCast\logs\supervisor.log` | The service itself. Rotates at 10 MiB, keeps 10 old files, and is written to disk on every record. |
 | The application's own log (channels, captions, publishing, recording) | `C:\ProgramData\CivicCast\logs\control_plane-app.log` | Most of the log lines quoted in this chapter are here. Old files are named `control_plane-app.log.1` and up. |
 | Raw output of the web server process | `C:\ProgramData\CivicCast\logs\control_plane.log` | Crashes before the application logger starts land here. |
-| The database server | `C:\ProgramData\CivicCast\logs\postgres.log`, `postgres-launcher.log` | `postgres-launcher.log` is the short-lived start-up output. |
+| The database server | `C:\ProgramData\CivicCast\logs\postgres.log` | Contains startup and server output; rotates at 10 MiB and keeps 10 older files. |
 | Why the supervisor stopped trying to start | `C:\ProgramData\CivicCast\STATION-START-FAILED.md` | Written after 3 failed starts in a row with the same error. Removed after the next successful start. |
 | What setup did, step by step | `C:\ProgramData\CivicCast\install-progress.log` | Read it from the bottom. Find the last "begin" with no matching "returned". |
 | Which pack was missing or untrusted | `C:\ProgramData\CivicCast\install-manifest-report-<pid>-<time>.json` | One per setup run. |
@@ -5033,7 +5061,7 @@ And one to ask the running station how it is:
 curl.exe http://127.0.0.1:8000/health
 ```
 
-The answer is a short JSON document with `status` (`healthy` or `degraded`), `version`, and `schema` (`current`, `behind`, `not-configured` or `unknown`), plus `schema_db_revision`, `schema_expected_head` and `mode`. `status` is `healthy` only when `schema` is `current`; any other schema state reads `degraded`. The HTTP status is 200 whenever the web server process is alive, so read the words in the body, not the number.
+The answer is a short JSON document with `status` (`healthy` or `degraded`), `version`, `schema` (`current`, `behind`, `not-configured` or `unknown`), `live_captions`, `schema_db_revision`, `schema_expected_head` and `mode`. `status` is `healthy` only when the schema is current and live captions are neither degraded nor unknown. Disabled captions or no active channel do not themselves make readiness degraded. For caption failures, open authenticated System Health for channel details. The HTTP status is 200 whenever the web server process is alive, so read the words in the body, not the number.
 
 ### Install and activation (setup exit codes)
 
@@ -5087,7 +5115,7 @@ The service is `CivicCastSupervisor` ("CivicCast Native Supervisor"). It runs as
 | The marker file's reason is "Native station activation self-test receipt does not match this distribution" | `station-set.json` or `activation-self-test.json` in the install folder is missing, stale or from another build. The service will not start without them. | The reason text. | Run setup again so activation re-creates them. Do not edit either file by hand. |
 | `supervisor.log` says `singleton not acquired (<status>): <detail> -- another supervisor owns the station` | A second copy of the supervisor is running. | The line itself. | Stop the other copy. Check `Get-Service` and Task Manager for a second `CivicCast` process. |
 | State is `blocked_wsl_active` or `blocked_probe_unavailable` | The older WSL edition is active, or the check for it could not run. | `supervisor.log`. | Remove or cut over the WSL edition (see exit 135 above). |
-| `curl.exe http://127.0.0.1:8000/health` returns `"status":"degraded"` | The database schema is not `current`: it is `behind` (older than the program), `not-configured` or `unknown` (the database could not be read). This field says nothing about the other parts of the station. | The `schema` value in the answer, and `supervisor.log`. | `behind`: see "Upgrade problems". `unknown` or `not-configured`: see "Database problems". The next rows cover other faults. |
+| `curl.exe http://127.0.0.1:8000/health` returns `"status":"degraded"` | Database readiness or live-caption processing needs attention; captions can degrade readiness even with a current schema. | Read `schema` and `live_captions`; authenticated System Health shows channel details. | For `behind`, see "Upgrade problems"; for schema `unknown` or `not-configured`, see "Database problems". For caption `unknown` or `degraded`, inspect the affected enabled on-air channel's worker activity and fallback state. This probe does not certify every output or device. |
 | `supervisor.log`: `ffmpeg/ffprobe not staged at ... (degraded media handling, ...)` | FFmpeg is missing from the install folder. The station runs, but media preparation is degraded. | The line. | Run setup again to restore the files. |
 | `supervisor.log`: `ollama child skipped (degraded AI, service healthy): ...` | The AI engine could not start. Summaries and translation are unavailable; the station is otherwise healthy. | The line. Port 11434 belongs to CivicCast's own Ollama. | Check that another program is not holding `127.0.0.1:11434`. Run setup again if the files are damaged. |
 | `supervisor.log` (level ERROR): `... degrading egress to the FFmpeg concat engine (CIVICCAST_EGRESS_ENGINE=ffmpeg-concat) so the channel keeps airing.` | The GStreamer files are damaged. The station tried an in-place self-repair, it did not restore them, and the station switched to the older FFmpeg concat engine. | The line. | On **Readiness**, press **Repair GStreamer runtime & restore full egress** (Setup admin or Support admin). If that fails, run setup again. |
@@ -5249,7 +5277,7 @@ PostgreSQL listens on `127.0.0.1` on the first free port of 5432, 5433, 5434, 54
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
-| **Readiness** machine health row says the database is **Unreachable**, or alert `db-unreachable`: "Database is not reachable from the host." | PostgreSQL stopped or cannot be reached. | `logs\postgres.log` and `logs\postgres-launcher.log`. | Restart the service. If it fails again, read the PostgreSQL log for the cause (disk full, damaged files). |
+| **Readiness** machine health row says the database is **Unreachable**, or alert `db-unreachable`: "Database is not reachable from the host." | PostgreSQL stopped or cannot be reached. | `logs\postgres.log`. | Restart the service. If it fails again, read the PostgreSQL log for the cause (disk full, damaged files). |
 | Alert `service-down`: "The CivicCast egress service is not running." | The egress engine is not running. | The alert. | Check `supervisor.log`. |
 | Log: `DATABASE_URL source: environment override ...` or `... registry (HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl)` | This is an informational line that says which source won. | The line. | If an old `DATABASE_URL` machine variable points at a database that is gone, remove it. |
 | A command-line tool says "DATABASE_URL must point at the CivicCast database before running staff token lifecycle commands." | The `civiccast` command line did not find the database address. | The message. | In an Administrator PowerShell, set `$env:DATABASE_URL` from the registry value for that shell only. |
@@ -5290,7 +5318,7 @@ An upgrade is the same `setup.exe` run over an existing install. The service is 
 Collect these before you ask anyone for help. Together they answer most questions.
 
 1. **The time and what you saw.** Write down the clock time with its zone, the channel, and the words on screen. Say whether anyone changed a setting just before.
-2. **The whole `C:\ProgramData\CivicCast\logs` folder** (`supervisor.log`, `control_plane-app.log` and its numbered copies, `control_plane.log`, `postgres.log`), copied while the problem is fresh. Rotation can overwrite old lines.
+2. **The whole `C:\ProgramData\CivicCast\logs` folder** (`supervisor.log`, `control_plane-app.log`, `control_plane.log` and `postgres.log`, including numbered rotated copies), copied while the problem is fresh. Rotation can overwrite old lines.
 3. **`C:\ProgramData\CivicCast\install-progress.log`**, the `upgrade` and `provision` folders, and any `STATION-START-FAILED.md` or `install-manifest-report-*.json`, for install and upgrade problems.
 4. **The channel's own logs**: everything in `C:\ProgramData\CivicCast\data\egress\<channel>\logs\`.
 5. **The health answer**: the output of `curl.exe http://127.0.0.1:8000/health` and of `Get-Service CivicCastSupervisor`.
@@ -5391,6 +5419,12 @@ This chapter is for the IT person who connects CivicCast to the outside world: t
 - **Environment variables.** Most switches here are environment variables. The code comments name the service's `Environment` registry value as the place to set them, and the station's processes inherit the supervisor's environment; the steps are in [Running it day to day](#ch-operations), under "Set environment variables for the service". Restart the service afterwards with `Restart-Service CivicCastSupervisor` in an Administrator PowerShell. We did not run that on a station. Restarting the service stops every channel; do it between programs.
 - **Times you type.** Several console screens treat a time you type as UTC, not local time (Recording, Program Guide, Schedule). Log lines are in local time. Keep that in mind whenever you compare a schedule with a log.
 - **Beta status of the interfaces.** Nothing in the code or in the repository's documents promises that any interface in this chapter will stay the same from one release to the next. Treat all of them as beta.
+
+### Remote Contribution controls
+
+Remote Contribution creates rooms only for configured, enabled egress channels. The server rejects missing or disabled channels even if a caller bypasses the menu. It embeds the self-hosted VDO.Ninja director and can send targeted guest audio, camera and hangup commands from the browser. The director iframe does not acknowledge command completion. CivicCast records the latest browser-reported command as **sent, not verified**; the guest's connection record remains active until an operator checks the director and marks the guest left.
+
+The audio controls act on the director's audio path; they do not establish that channel output is muted. Camera and hangup commands are sent to the targeted guest, but CivicCast does not receive an authoritative result. Guest media composition into the channel is not implemented. **Take channel live** is a separate confirmed action that switches to the channel's configured live source; it does not route a remote guest into that source. Closing a room stops new invitations but leaves any unverified guest sessions visible for inspection or retry.
 
 ### Cable headend: UDP transport streams
 
@@ -5618,7 +5652,7 @@ When a subscriber webhook is delivered, the station sends a JSON body with `asse
 
 The **Alerts** screen can hold destinations of three kinds: email, text message and webhook. A webhook destination receives a JSON body with `event_id`, `condition`, `severity`, `state`, `resource_ref`, `summary`, `detail`, `first_observed_at` and `last_observed_at`. The body is signed with the destination's `secret` using HMAC-SHA256, and the header `X-CivicCast-Signature` carries the hex digest with no `sha256=` prefix. The timeout is 10 seconds. A failed delivery is retried after 120, 240, 480 and 960 seconds and then given up on after 5 attempts.
 
-> **Known issue (beta.11):** On a new install every alert rule is created with no destination attached, the rule editor cannot attach one, and adding a destination does not connect it to any rule. Alerts may never be delivered. Check by sending a test and watching for it.
+> **Known issue (beta.11; editor limitation fixed in beta.12):** On a new install every alert rule is created with no destination attached, so alerts may never be delivered until a Setup admin assigns destinations. In beta.11 the rule editor could not attach them; beta.12 adds a **Destinations** list to each rule card. There is no **Send test alert** button.
 
 #### Payments (inbound)
 
@@ -5777,7 +5811,7 @@ This part explains how the system is put together, with diagrams, for IT staff, 
 
 This chapter explains how CivicCast is put together: which programs run on the station computer, what each one is responsible for, how a meeting recording and a 24-hour channel move through the system, and what the software does when something fails. It is written for the IT person at a city or station, for an integrator connecting CivicCast to other equipment, and for a technical reviewer who wants to check the design. You do not need to read it to run a station. The earlier chapters tell you what to click.
 
-Each figure has a caption, and a plain-English paragraph under it. Names, ports and numbers were checked against beta.11 sources. Where a value is a default that a setting can change, the text says so. Source inspection is not the same as observing every behavior on an installed station.
+Each figure has a caption, and a plain-English paragraph under it. The beta.11 architecture remains the baseline; the beta.12 candidate updates caption health, bounded raw logs, local administrator recovery, meeting controls, remote guest controls and emergency presentation. Where a value is a default that a setting can change, the text says so. Source inspection is not the same as observing every behavior on an installed station.
 
 > **Note (proof status of beta.11):** beta.11 was published on 2026-10-08 as a GitHub pre-release for testing. See the [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for package-specific checks and limits. A separate 36-hour dev7 overlay soak is development history, not package verification. This chapter describes source behavior; it does not claim that every recovery path was observed on a station.
 
@@ -5797,6 +5831,8 @@ Figure 16-1 shows what talks to CivicCast. CivicCast runs on one Windows compute
 **What this shows.** Staff open the operator console in a browser at `/operator/` on the station. Residents open the resident portal at `/`. Both are served by the same CivicCast web server. The station can record from capture cards and network streams, pick up files from watch folders, and accept uploads. It plays out channels as a continuous video stream to downstream equipment, and it can publish finished recordings to the Internet Archive, a network storage location, YouTube and a federated social network (ActivityPub). Those outside publish surfaces run in a simulated mode until an administrator sets the provider to real and supplies its credentials, ActivityPub is off until it is enabled with a public address and a key, and subscriber-notification and podcast surfaces are not active in beta.11 (see [Chapter 15](#ch-integrations)). A content delivery network (CDN) is off by default; when a station turns one on, finished recordings are copied to it so that residents' video requests go there instead of to the station. Emergency and weather feeds are read and shown on screen; CivicCast is not an EAS device and does not relay the legally required Emergency Alert System signal (see [Chapter 15](#ch-integrations)). Most of the time the station needs no internet connection. The first-run wizard downloads selected optional Large Whisper and CUDA components only when they are not already on the computer; Whistle is supplied in the signed station pack. The web server does not serve its own API documentation pages on a station because those pages would need the internet.
 
 > **Known issue (beta.11):** The control plane listens on `127.0.0.1` only, so as shipped, the resident portal and operator console are reachable from the station computer itself. The installer also adds a Windows firewall rule that allows inbound TCP 8000. We found no setting that changes the listening address. Do not describe the portal as reachable from other computers on the network until this is confirmed on a real station. See [Chapter 9](#ch-planning) and the troubleshooting matrix.
+
+**Emergency presentation in the beta.12 candidate.** When an administrator enables `CIVICCAST_EAS` before starting a channel, the channel reserves an emergency layer in its existing video compositor. Channel health ticks select the applicable alert and send its presentation to the video worker. Clearing or expiring an alert removes only that emergency layer, preserving ordinary graphics. A forced full-screen slate requires explicit confirmation. The resident page separately polls the channel-specific emergency endpoint and removes its notice when that endpoint returns no active alert. Isolated CPU and D3D11 video captures and a browser check exercised these paths; this does not establish real CAP-feed reception or acceptance by a cable headend. See [Emergency alerts](#ch-integrations).
 
 ### The programs that run on the station {#arch-deployment}
 
@@ -5901,7 +5937,7 @@ CivicCast keeps its data in a database, in folders of files, in a few small file
 | Uploads and recordings | `C:\ProgramData\CivicCast\data\uploads` | uploaded and captured media, finished recordings (in a `recordings` folder), and the packaged VOD copies (HLS playlists and segments, in a hidden `.civiccast-packages` folder, one per asset) |
 | Channel work folder | `C:\ProgramData\CivicCast\data\egress` | the conform cache; for each channel the prepared plan folders, its worker logs and relay logs, the reload status file, generated slates and bulletin slides, and (for a channel that serves live HLS) its rolling segments; and the HLS relay's log files (5 MiB each, two kept) |
 | Caption tap | `C:\ProgramData\CivicCast\data\caption-tap` | Temporary five-second audio chunks, deleted after processing; at most 12 queued completed segments per channel plus in-flight inputs and the segment being written |
-| Logs | `C:\ProgramData\CivicCast\logs` | `supervisor.log` (rotates at 10 MiB; ten older files are kept besides the current one), `control_plane.log`, the application's own log, `postgres.log` and `postgres-launcher.log` |
+| Logs | `C:\ProgramData\CivicCast\logs` | `supervisor.log`, `control_plane-app.log`, `control_plane.log` and `postgres.log` rotate at 10 MiB and retain 10 older files (up to 11 files each); the application log is written by the control plane, while the raw child logs are drained by the supervisor. |
 | Installer records | `C:\ProgramData\CivicCast` | `install-progress.log`, the upgrade engine's journal, backups and recovery document under `upgrade`, and the database provisioning journal and recovery documents under `provision` |
 | Downloaded components | `C:\ProgramData\CivicCast\packs` and `components` | optional Whisper and AI model files that the first-run wizard downloaded, because the installer window cannot write to the Program Files folder |
 | Program files | the install folder, `C:\Program Files\CivicCast (Native)` by default | the embedded Python and the CivicCast program (`runtime`), PostgreSQL tools, ffmpeg, Ollama and optional GPU libraries (`packs`, `dependencies`), the AI model store (`models\ollama`), and the station records that prove activation passed |
@@ -6891,7 +6927,7 @@ In total the beta.11 server exposes 488 operations on 405 paths in 81 groups.
 
 The 13 "other" operations are: ten at the root level (`/health`, the two federation discovery routes `/.well-known/nodeinfo` and `/.well-known/webfinger`, `/nodeinfo/2.0`, the four ActivityPub routes `/ap/actor`, `/ap/followers`, `/ap/inbox`, `/ap/outbox`, and the media file routes `/media/live/...` and `/media/vod/...`), plus `/api/hardware`, `/api/version` and the signed Stripe webhook `/api/webhooks/stripe`. None of these is covered by the staff-token check.
 
-> **Note:** `GET /health` always answers with HTTP 200 while the program is running. Read the `status` field instead: `healthy` means the database layout matches the program; `degraded` means it does not. `schema` is one of `current`, `behind`, `not-configured` or `unknown`.
+> **Note:** `GET /health` always answers with HTTP 200 while the program is running. Read `status`: `healthy` requires a current database schema and no degraded or unknown live-caption verdict. Inspect both `schema` and `live_captions`; detailed caption status is available only to signed-in staff. This probe does not certify every station output or device.
 
 ### How a caller proves who it is (the auth model)
 
@@ -8401,9 +8437,8 @@ All service logs are in `C:\ProgramData\CivicCast\logs`.
 | --- | --- |
 | `supervisor.log` | The Windows service itself: starts, stops, restarts of the child programs, watchdog messages. Rotates at 10 MiB, keeps 10 old files, written to disk on every line. |
 | `control_plane-app.log` | The CivicCast program's own log: the one to read first when something on a screen fails. |
-| `control_plane.log` | Raw console output of the control plane. |
-| `postgres.log` | The PostgreSQL server. |
-| `postgres-launcher.log` | Short-lived output from starting PostgreSQL. |
+| `control_plane.log` | Raw console output of the control plane. Rotates at 10 MiB and keeps 10 older files. |
+| `postgres.log` | PostgreSQL startup and server output. Rotates at 10 MiB and keeps 10 older files. |
 | `ollama.log` | The AI engine, when it is running (by the same naming rule: one log per child program). |
 
 The Windows Event Log also receives service messages under the source `CivicCastSupervisor`. Setup problems are in `install-progress.log` (read it from the bottom up; find the last "begin" that has no matching "returned").
@@ -8576,7 +8611,7 @@ Raw API words: `STOPPED`, `STARTING`, `ON_AIR`, `TRANSITIONING`, `FALLBACK_SLATE
 
 ### The station service (the supervisor's own state names)
 
-These are the state names inside the Windows service. They are not what `GET /health` reports: that is a separate `healthy` or `degraded` answer about the database layout (see the end of this section). We could not confirm which of these names `supervisor.log` prints.
+These are the state names inside the Windows service. They are not what `GET /health` reports: that is a separate `healthy` or `degraded` answer about database and live-caption readiness. Read `schema` and the coarse `live_captions` field; authenticated System Health shows channel details. We could not confirm which of these names `supervisor.log` prints.
 
 | State | Meaning |
 | --- | --- |
@@ -8643,7 +8678,7 @@ Code 123 hides a second number from the activation step: 66 (pack or index missi
 | Live | LiveSession already exists: council-live-room | The Live screen uses one fixed session id, so a second session cannot be created until IT resets it. |
 | Live | Go on air blocked: a fresh source-bound server-side pre-flight did not pass. No broadcast was started. Correct the failed checks and run pre-flight again. | Fix the red pre-flight items. |
 | Remote Contribution | Remote contribution is not configured (no self-hosted VDO.Ninja URL). A compositor + VDO.Ninja + coturn must be commissioned before guests can join. | Those services are not set up. |
-| Remote Contribution | Channel takeover failed; guest ... not placed on-air. | There was no ready live source to take over to. |
+| Remote Contribution | A guest-control notice says **sent, not verified**. | The director iframe does not report command completion. Check the guest in the director and mark them left only after verifying they disconnected. |
 | Emergency Alerts | A forced full-screen slate must be confirmed by an operator... | Tick the confirmation box before choosing a forced slate. |
 | Control Room | On-Air Mode expired before this cue could fire. Open a new On-Air session to continue. | The On-Air session lasts 30 minutes; open a new one. |
 | Agendas | Another agenda item already occupies (agenda_id=..., order=0) | Two items cannot share an Order number; use the next number. |
@@ -9117,7 +9152,7 @@ Bearer token
 :   The secret a tool sends in the `Authorization: Bearer` header to prove who it is to the API.
 
 Beta candidate
-:   A published release labeled by GitHub as a *pre-release* for testing, not a production release. Beta.11 is the current native-line pre-release.
+:   A release labeled by GitHub as a *pre-release* for testing, not a production release. Check the project's releases page for the current native-line version and its publication status.
 
 Board (community board)
 :   The between-programs picture a channel shows: zones for a ticker, schedule, logo, sponsor and approved *bulletins*.
@@ -9211,7 +9246,7 @@ Decode-back proof
 :   A check that reads captions back out of what was actually sent, to prove they are in the picture.
 
 Degraded
-:   Working, but not fully healthy. For the service it means five restarts in ten minutes. For `/health` it means the database layout does not match the program.
+:   Working, but not fully healthy. For the service it means five restarts in ten minutes. For `/health` it means the database schema is not confirmed current or live-caption readiness is degraded or unknown. Read `schema` and `live_captions`; this probe does not certify every output or device.
 
 Director view
 :   A link, shown right after you open a Remote Contribution room, that you embed in your video switcher.
@@ -9721,11 +9756,11 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 Published releases of the native Windows line of CivicCast, newest first. The authored source for this list is the project's release-truth file, checked against GitHub's release page. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** **v1.0.0-beta.11** is the current GitHub pre-release. Its exact source, package hash, observations and limitations are in the [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
+> **Note:** **v1.0.0-beta.11** was published as a GitHub pre-release on 2026-10-08. Its exact source, package hash, observations and limitations are in the [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). Check the project's releases page for current publication status. An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.11** | 2026-10-08 | Current. GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the current verification record for this package's source and exact evidence. |
+| **v1.0.0-beta.11** | 2026-10-08 | Published GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the Beta.11 verification record for this package's source and exact evidence. |
 | v1.0.0-beta.10 | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Superseded by beta.11 | Added program-change, loudness, looping and relay/reload work. Its eight-hour lab run used an earlier internal build; its clean-install result belongs to the beta.10 package. See Appendix H for historical evidence and limits. |
 | v1.0.0-beta.9 | 2026-09-18 (changelog date) | Never published | A version bump and an installer rebuild; its work is in beta.10. |
 | v1.0.0-beta.8 | none | Never published | Its work is in beta.10. |

@@ -301,7 +301,7 @@ The log records each step's own code ("step X: returned N"). You may see: 64 arg
 | Which pack was missing? | The "step stage-packs: child reported:" line, and `install-manifest-report-<pid>-<time>.json` |
 | Why an upgrade rolled back | `upgrade\upgrade-engine.log`, `upgrade\upgrade-journal.json`, `upgrade\UPGRADE-RECOVERY.md` |
 | Database creation or ownership | `provision\PROVISION-RECOVERY.md`, `provision\OWNERSHIP-RECOVERY.md`, `provision\ownership-observation.txt` |
-| Why the station will not run | `logs\supervisor.log` (the service; 10 MiB, 10 files, flushed each record), `logs\control_plane.log`, `logs\control_plane-app.log`, `logs\postgres.log`, `logs\postgres-launcher.log`, `logs\ollama.log` |
+| Why the station will not run | `logs\supervisor.log` (10 MiB, 10 older files, flushed each record), `logs\control_plane.log`, `logs\control_plane-app.log`, `logs\postgres.log`, `logs\ollama.log` |
 | First-run window | `%USERPROFILE%\.civiccast\runtime-host.log` and `installer-state.json` |
 | Which self-test failed | The setup window's details list (not the log; see the Known issue above) |
 
@@ -320,11 +320,11 @@ Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
 ```
 
 - The service is **CivicCast Native Supervisor**, `Status` **Running**, `StartType` **Automatic**.
-- `/health` answers `status: healthy`, `schema: current` and `version: 1.0.0-beta.11`. The web status is always 200 while the process answers; the `status` field is what tells you whether it is ready (`degraded` means the database schema is not confirmed current: behind the program, not configured or unreadable).
+- `/health` answers `status: healthy`, `schema: current` and `version: 1.0.0-beta.12`. The HTTP status is always 200 while the process answers. A `degraded` body means database readiness or live-caption processing needs attention; inspect `schema` and `live_captions`, then authenticated System Health for details.
 - The firewall rule exists.
 - Both `station-set.json` and `activation-self-test.json` exist in the install folder.
-- The last log lines include "postinstall: SUCCESS (InstalledVersion 1.0.0-beta.11 recorded)".
-- Settings, Apps shows **CivicCast (Native)**, version 1.0.0-beta.11.
+- The last log lines include "postinstall: SUCCESS (InstalledVersion 1.0.0-beta.12 recorded)".
+- Settings, Apps shows **CivicCast (Native)**, version 1.0.0-beta.12.
 - The operator console and the resident portal at `http://127.0.0.1:8000/` both load on the station.
 
 Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station; the [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists installation checks and results for its specific package revision.

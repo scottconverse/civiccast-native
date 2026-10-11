@@ -8,6 +8,7 @@ import contextlib
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi import FastAPI, Request, Response
@@ -30,7 +31,7 @@ _ENGINES_TO_DISPOSE: list = []
 
 
 @pytest.fixture(autouse=True)
-def _dispose_test_engines() -> Iterator[None]:
+def _dispose_test_engines(monkeypatch) -> Iterator[None]:
     """Dispose throwaway SQLite engines at each test's end.
 
     Each _build() call traps a fresh engine in a closure; undisposed, its
@@ -39,6 +40,8 @@ def _dispose_test_engines() -> Iterator[None]:
     filterwarnings=error policy turns into a failure pinned to a random
     unrelated test. Disposing here closes them deterministically.
     """
+    monkeypatch.setenv("CIVICCAST_EAS", "inline")
+    monkeypatch.setenv("CIVICCAST_EGRESS_ENGINE", "gstreamer")
     yield
     while _ENGINES_TO_DISPOSE:
         _ENGINES_TO_DISPOSE.pop().dispose()
@@ -69,6 +72,7 @@ def _build(scopes: tuple[str, ...] | None = ("setup_admin",), *, wire: bool = Tr
     store = EasStore(factory)
     service = EasDisplayService(store, clock=lambda: _T0)
     app = FastAPI()
+    app.state.egress_daemon = SimpleNamespace(emergency_presentation_ready=lambda channel_id: True)
 
     @app.middleware("http")
     async def _ident(
@@ -242,3 +246,29 @@ def test_manual_alert_rejects_non_manual_source() -> None:
 
 def test_list_sources_503_when_unwired() -> None:
     assert _client(wire=False).get("/api/staff/eas/sources").status_code == 503
+
+
+def test_display_disabled_rejects_without_recording(monkeypatch):
+    app, store = _build()
+    _ingest_alert(store)
+    monkeypatch.setenv("CIVICCAST_EAS", "off")
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/staff/eas/alerts/a1/display", json={"channel_id": "gov", "mode": "overlay"}
+        )
+    assert response.status_code == 409
+    assert "enable" in response.json()["detail"]
+    assert store.list_decisions(channel_id="gov") == []
+
+
+def test_display_without_channel_compositor_rejects_without_recording():
+    app, store = _build()
+    _ingest_alert(store)
+    app.state.egress_daemon = SimpleNamespace(emergency_presentation_ready=lambda channel_id: False)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/staff/eas/alerts/a1/display", json={"channel_id": "gov", "mode": "overlay"}
+        )
+    assert response.status_code == 409
+    assert "compositor" in response.json()["detail"]
+    assert store.list_decisions(channel_id="gov") == []

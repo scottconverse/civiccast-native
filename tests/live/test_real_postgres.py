@@ -410,11 +410,10 @@ class TestSingleAlembicHead:
         # ``0083_caption_review_language`` -- WP-05's ``0085`` is parked by
         # owner decision and will not land, and ``0084`` never materialized,
         # so 0083 was the sole other head when this branch re-parented onto
-        # it. Updated to ``0087_retention_terms`` (WP-08: value/unit/forever
-        # retention-term authoring on assets), chained after
-        # ``0086_live_source_probe_state`` and is the current head.
-        assert heads[0] == "0087_retention_terms", (
-            f"Expected head '0087_retention_terms'; got {heads[0]!r}."
+        # it. 0087 added retention-term authoring; 0088 seeds live-caption health.
+        # 0089 adds unverified remote-guest media-control request state.
+        assert heads[0] == "0089_contribution_media_control_requests", (
+            f"Expected head '0089_contribution_media_control_requests'; got {heads[0]!r}."
         )
 
 
@@ -544,7 +543,9 @@ class TestRealPostgresSummaryRecordsPersistence:
                 approval_note="Checked source cue timestamps.",
             )
 
-            approved = store.approve_summary(approval)
+            approved = store.approve_summary(
+                approval, expected_audit_fingerprint=summary.audit_fingerprint
+            )
 
             reloaded = store.get_summary(summary_id)
             assert reloaded is not None
@@ -604,7 +605,8 @@ class TestRealPostgresSummaryRecordsPersistence:
                     operator_display_name="Real PG Operator",
                     approved_at=datetime(2026, 5, 14, 12, 30, tzinfo=UTC),
                     approval_note="Checked source cue timestamps.",
-                )
+                ),
+                expected_audit_fingerprint=base_summary.audit_fingerprint,
             )
             record = SignedRecordExporter(summary_store=summary_store).export(
                 summary_id=summary_id,
@@ -1145,6 +1147,24 @@ class TestRealPostgresFullMigrationChain:
         script = ScriptDirectory.from_config(cfg)
         expected_head = script.get_current_head()
         eng = create_engine(postgres_url, future=True)
+
+        def media_control_columns() -> set[str]:
+            with eng.connect() as conn:
+                return set(
+                    conn.execute(
+                        text(
+                            "SELECT column_name FROM information_schema.columns "
+                            "WHERE table_schema = 'civiccast' "
+                            "AND table_name = 'remote_guest_sessions' "
+                            "AND column_name IN ("
+                            "'media_control_state', 'media_control_action', "
+                            "'media_control_requested_at')"
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
         try:
             with eng.connect() as conn:
                 db_rev = conn.execute(
@@ -1161,6 +1181,25 @@ class TestRealPostgresFullMigrationChain:
             assert seeded > 0, (
                 "alert_rules default-rule seed did not land on real Postgres "
                 "(0039 seed regression)."
+            )
+            expected_media_control_columns = {
+                "media_control_state",
+                "media_control_action",
+                "media_control_requested_at",
+            }
+            assert media_control_columns() == expected_media_control_columns, (
+                "0089 media-control columns did not land in civiccast.remote_guest_sessions"
+            )
+
+            command.downgrade(cfg, "0088_live_caption_health_alert_rules")
+            assert media_control_columns() == set(), (
+                "0089 downgrade left media-control columns behind in "
+                "civiccast.remote_guest_sessions"
+            )
+            command.upgrade(cfg, "head")
+            assert media_control_columns() == expected_media_control_columns, (
+                "0089 re-upgrade did not restore media-control columns in "
+                "civiccast.remote_guest_sessions"
             )
         finally:
             eng.dispose()

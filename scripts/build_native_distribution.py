@@ -433,6 +433,7 @@ def build_native_distribution(
             signing_private_key=signing_private_key,
             signing_key_id=signing_key_id,
             created_epoch=created_epoch,
+            required_components=REQUIRED_COMPONENTS,
         )
 
         report_packs: dict[str, dict[str, Any]] = {

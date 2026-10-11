@@ -1,10 +1,10 @@
 # Historical in-app help audit: beta.10 snapshot
 
-This is the archived documentation-sprint index from 2026-10-03. It describes beta.10 screens and proposed copy from before the current beta.11 work. The 62 linked per-screen audit files are retained for traceability and each is marked as a historical snapshot. Do not apply their proposed strings as current guidance. The current beta.11 surface inventory and reconciled findings are in [help.md](help.md).
+This is the archived documentation-sprint index from 2026-10-03. It describes beta.10 screens and proposed copy from before the Beta.11 audit. The 62 linked per-screen audit files are retained for traceability and each is marked as a historical snapshot. Do not apply their proposed strings as current guidance. The separate Beta.11 source inventory and its reconciled findings are in [help.md](help.md).
 
 ## How to use these files
 
-The tables below are the historical beta.10 audit index, not a current implementation checklist. Their mismatch counts, source lines, and proposed copy record what that audit found at the time. Nothing in those archived tables establishes current beta.11 behavior; use [help.md](help.md) for the current code coverage and findings.
+The tables below are the historical beta.10 audit index, not a current implementation checklist. Their mismatch counts, source lines, and proposed copy record what that audit found at the time. Nothing in those archived tables establishes later behavior; use [help.md](help.md) for the dated source-audit scope and findings.
 
 ## Operator console: Run Meeting
 
@@ -102,7 +102,7 @@ These came from the manual writers, the fact-checkers and the help-file writers.
 
 | Area | Problem | Where documented |
 | --- | --- | --- |
-| Summary review | Approve sends extra fields the server refuses (expected HTTP 422); approved summaries drop off the list so Export signed record cannot be reached | `summary.md`, manual ch. 5 |
+| Summary review | Corrected in beta.12 source: approval uses the reviewed draft fingerprint; approved summaries remain available for signed-record export and history. Package checks are recorded with the matching release | `summary.md`, manual ch. 5 |
 | Contributors | Send to schedule likely fails for any submission with a requested air date (no time zone on the producer's date); producers never see operator notes | `contribute.md`, manual ch. 3 |
 | Program Guide | Skipped airings are never retried by Refresh guide; the Channel schedule page lists unpublished airings | `guide.md`, manual ch. 3 |
 | Auto-schedule | The screen says items need an operator commit; they are created Published and compiled hourly | `autoschedule.md`, manual ch. 3 |
@@ -122,7 +122,7 @@ These came from the manual writers, the fact-checkers and the help-file writers.
 | Backup and restore | No `civiccast backup` or `restore` command exists; the DR drill calls the Postgres tools by bare name and most likely fails on native Windows | manual ch. 12 |
 | Service configuration | No installer code writes the service `Environment` registry value that the manual's environment-variable recipe relies on | manual ch. 11 and 12 |
 | Control Room | The sidecar service has no installer; the effect of Mute, Drop and Close room on a guest's sound was not found in code | manual ch. 4 and 11 |
-| Logs | `control_plane.log` and `postgres.log` are never rotated; the support bundle omits worker and control-plane logs | manual ch. 12 and 14 |
+| Logs | Corrected in beta.12 source: raw control-plane and PostgreSQL logs rotate; old oversized copies age out through rotation. Support-bundle coverage remains a separate limitation | manual ch. 12 and 14 |
 | Health | `/health` shows `degraded` only for a non-current database schema | manual ch. 14 |
 | Live CDN publisher | `civiccast/live/cdn_publisher.py` is not covered in the architecture; unclear whether it is wired into the shipped app | manual ch. 16 |
 | In-app manual | `civiccast/docsite/manual.json` is generated from `docs/USER-MANUAL.md` and must be regenerated; the generator keeps only about 2.8% of the new manual's text, 50 screenshots are missing, and internal links may land on Page not found | `help.md` |

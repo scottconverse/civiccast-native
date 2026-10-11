@@ -208,11 +208,12 @@ class CapturePipelineProtocol(Protocol):
       transitioned to ``failed``.
 
     Implementations MAY optionally expose ``stop_arming(job_id)`` — when
-    present the service calls it when the operator stops a job from the
-    ``arming`` state (pre-recording-phase abort). When absent the
-    service short-circuits the ``arming``-state stop to ``failed``
-    without invoking ``stop`` (which would have no live mux to halt).
-    E-4 fix.
+    present the service calls it when the operator stops an ``arming``
+    job or when schedule disable cancels it. On operator stop, absence of
+    the hook short-circuits the job to ``failed`` without invoking
+    ``stop`` (which would have no live mux to halt). On schedule disable,
+    the job is still marked ``skipped`` but pipeline-specific arming
+    cleanup is unavailable. E-4 fix.
 
     Implementations MAY optionally expose
     ``check_dropout(job_id) -> DropoutCheckResult`` — when present the
@@ -794,14 +795,15 @@ class RecordingService:
         *,
         reason: str = "schedule disabled",
     ) -> int:
-        """Cancel every ``state='scheduled'`` job for ``schedule_id``.
+        """Cancel every scheduled or prearmed job for ``schedule_id``.
 
         E-11 fix: disabling a schedule mid-window used to be a no-op for
         already-materialized jobs — they would fire anyway against the
         operator's expectation that disabling stops future captures. The
         router's PATCH endpoint now calls this whenever ``enabled`` is
         flipped from ``True`` to ``False``; returns the number of jobs
-        transitioned to ``skipped``.
+        transitioned to ``skipped``. A prearmed job is stopped through the
+        pipeline's optional ``stop_arming`` hook before cancellation returns.
         """
         cancelled = 0
         # Use the station's pending-scheduled list, then filter by
@@ -837,6 +839,51 @@ class RecordingService:
                 # FUTURE captures" intent is satisfied by the ones we did
                 # cancel.
                 pass
+
+        prearmed = self._store.list_jobs(
+            sched.station_id,
+            state="arming",
+            schedule_id=schedule_id,
+            limit=self._max_jobs_per_tick,
+        )
+        for job in prearmed:
+            try:
+                # Persist the cancellation first so a later scheduler pass
+                # sees a terminal job instead of starting it.
+                self._store.set_job_state(
+                    job.job_id,
+                    "skipped",
+                    ended_at=self._clock(),
+                    failure_reason=reason,
+                )
+            except RecordingJobStateError:
+                # It advanced to recording while disable was being applied;
+                # leave the already-started capture alone.
+                continue
+
+            stop_arming = getattr(self._pipeline, "stop_arming", None)
+            if callable(stop_arming):
+                try:
+                    stop_arming(job.job_id)
+                except Exception as exc:
+                    logger.exception(
+                        "recording.cancel_prearmed.cleanup_failed job_id=%s schedule_id=%s",
+                        job.job_id,
+                        schedule_id,
+                    )
+                    self._emit_alert(
+                        severity="critical",
+                        source="recording.cancel",
+                        message="Could not stop the prearmed capture after its schedule was disabled.",
+                        context={
+                            "job_id": job.job_id,
+                            "schedule_id": schedule_id,
+                            "station_id": job.station_id,
+                            "phase": "cancel_arming",
+                            "exception_type": type(exc).__name__,
+                        },
+                    )
+            cancelled += 1
         return cancelled
 
     def reconcile_orphans(self) -> int:
@@ -1041,16 +1088,21 @@ class RecordingService:
                 failed_count += 1
                 continue
             armed_count += 1
-            # E-8 fix: read the post-arm model's planned_start instead of
-            # the stale pre-arm ``pending_job`` row. The two are equal
-            # today (``planned_start`` is immutable) but the rename
-            # forecloses the stale-shadow bug class on future refactors.
-            if armed.planned_start <= now:
-                started = self.start_job(pending_job.job_id)
-                if started.state == "recording":
-                    started_count += 1
-                elif started.state == "failed":
-                    failed_count += 1
+        # Jobs are armed up to ``arm_lead`` before the window, so later
+        # ticks must revisit that durable state and start it at the
+        # planned time. Starting newly-armed and previously-armed jobs in
+        # one pass also keeps a late tick from missing the start entirely.
+        ready_to_start = self._store.list_jobs(
+            station_id, state="arming", limit=self._max_jobs_per_tick
+        )
+        for arming_job in ready_to_start:
+            if arming_job.planned_start > now:
+                continue
+            started = self.start_job(arming_job.job_id)
+            if started.state == "recording":
+                started_count += 1
+            elif started.state == "failed":
+                failed_count += 1
         # Item 6: poll every still-recording job for a source dropout BEFORE
         # the window-end finalize sweep below, so a dropout is observed and
         # reconnected within this tick rather than only surfacing once the

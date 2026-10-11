@@ -509,14 +509,14 @@ class TestJobStateMachine:
             assert j.failure_reason is not None  # type: ignore[union-attr]
             assert j.state == "failed"  # type: ignore[union-attr]
 
-    def test_skipped_from_scheduled_only(self, store: RecordingStore) -> None:
+    def test_skipped_from_scheduled_or_arming(self, store: RecordingStore) -> None:
         store.create_job(_job())
         store.set_job_state("job-1", "skipped")
-        # Cannot skip from arming.
+        # A prearmed job can still be cancelled before capture starts.
         store.create_job(_job(job_id="j-b"))
         store.set_job_state("j-b", "arming")
-        with pytest.raises(RecordingJobStateError):
-            store.set_job_state("j-b", "skipped")
+        skipped = store.set_job_state("j-b", "skipped")
+        assert skipped.state == "skipped"
 
     def test_set_state_unknown_job(self, store: RecordingStore) -> None:
         with pytest.raises(RecordingJobNotFoundError):
@@ -853,11 +853,11 @@ class TestMigration0056AndMerge:
         # 0083_caption_review_language -- WP-05's 0085 is parked by owner
         # decision and will not land, and 0084 never materialized, so 0083
         # was the sole other head when this branch re-parented onto it.
-        # Updated to 0087_retention_terms (WP-08: value/unit/forever
-        # retention-term authoring on assets), chained after
-        # 0086_live_source_probe_state and is the current head.
-        assert list(heads) == ["0087_retention_terms"], (
-            f"Expected single head 0087_retention_terms, got {heads!r}"
+        # 0087_retention_terms added asset retention terms, 0088 added the
+        # caption-health alert defaults, and 0089 records unverified remote
+        # guest media-control requests as the current head.
+        assert list(heads) == ["0089_contribution_media_control_requests"], (
+            f"Expected single head 0089_contribution_media_control_requests, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:

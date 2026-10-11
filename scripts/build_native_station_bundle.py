@@ -22,19 +22,14 @@ This script is that builder.
 Read straight from ``native_distribution.rs`` (``verify_distribution_bytes``,
 ``component_sort_key``, ``validate_urls``, ``safe_pack_filename``,
 ``canonical_json``) and ``native_activation.rs``
-(``REQUIRED_COMPONENTS``/``OPTIONAL_COMPONENTS``/``staged_component_root``),
-never from the STALE five-pack builder (``scripts/build_native_distribution.py``,
-``civiccast.installer.native_distribution.REQUIRED_COMPONENTS``) -- that
-module still pins ``captions-large-v3`` as the mandatory caption pack and
-carries no ``captions-floor`` component at all, predating the owner's
-2026-08-07 ratified floor-tier-mandatory / large-v3-optional swap that
-``native_distribution.rs``/``native_activation.rs`` already made. Reusing it
-here would build a bundle the CURRENT Rust verifier rejects outright
-(``"Native distribution required component set is incomplete: captions-floor"``).
-Reconciling that stale module is real, separate work this script
-deliberately does not attempt -- see this slice's report.
+(``REQUIRED_COMPONENTS``/``OPTIONAL_COMPONENTS``/``staged_component_root``).
+The Python reference verifier has separate channel and station component
+profiles: its legacy ``REQUIRED_COMPONENTS`` remains for the older channel
+builder, while ``STATION_REQUIRED_COMPONENTS`` matches the current six-pack
+station contract. This script keeps the station profile explicit alongside
+the Rust source of truth.
 
-What IS safely reused, because it has zero coupling to that stale constant:
+What IS safely reused:
 ``civiccast.installer.native_packs.build_native_pack`` (the generic signed
 ``.ccpack`` builder -- manifest.json + manifest.sig + payload/*, ed25519 over
 canonical JSON, byte-identical to what ``native_packs.rs::open_and_verify_pack``
@@ -79,17 +74,14 @@ entire required root is missing, empty, or not a real directory -- see
 
 ## Reuse, not a fork
 
-The index-signing shape (``build_distribution_index``,
-``civiccast.installer.native_distribution``) is ALSO not reused: it shares
-the same stale ``REQUIRED_COMPONENTS`` coupling (a hard membership check, a
-per-pack ``required`` flag derived from it, and its own sort key). This
-script's own :func:`_build_station_index` is a small, self-contained,
-schema-faithful builder instead -- same envelope shape
+The index-signing shape is kept in this script's :func:`_build_station_index`
+so its required flags and ordering stay tied to the explicit station set --
+the same profile the reference verifier now uses by default. It remains
+schema-faithful to the generic helper: same envelope shape
 (``{"manifest": ..., "signature": ...}``), same manifest fields, same
 canonical-JSON signing, same station-index URL-emptiness rule
 (``native_distribution.rs::validate_urls``: a station (air-gapped) index
-carries NO network locations, ever), just parameterized on THIS script's own
-(correct, current) component set rather than the stale one.
+carries NO network locations, ever).
 
 ## Two identities, deliberately
 
@@ -444,12 +436,7 @@ def _build_station_index(
     packs: dict[str, Path],
     signing_private_key: Ed25519PrivateKey,
 ) -> dict[str, object]:
-    """Build and sign ``station-index.json`` -- schema-faithful to
-    ``native_distribution.rs::DistributionManifest``/``DistributionEnvelope``,
-    parameterized on THIS script's (current, correct) component set rather
-    than the stale ``civiccast.installer.native_distribution.
-    build_distribution_index``. See the module doc's "Reuse, not a fork"
-    section."""
+    """Build and sign ``station-index.json`` using this script's station profile."""
 
     entries: list[dict[str, object]] = []
     for component in sorted(packs, key=_station_component_sort_key):

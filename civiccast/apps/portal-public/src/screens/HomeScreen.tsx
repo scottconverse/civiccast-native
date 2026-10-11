@@ -56,16 +56,12 @@ function getSubscriptionAction(): { action: 'confirm' | 'unsubscribe'; token: st
   return null
 }
 
-function shouldShowEmergencyOverlay(): boolean {
-  return new URLSearchParams(window.location.search).get('emergency') === '1'
-}
-
 export function HomeScreen() {
   const [state, setState] = useState<LoadState>('loading')
   const [data, setData] = useState<PortalData>(EMPTY_DATA)
   const [errors, setErrors] = useState<LoadError[]>([])
   const [idlePage, setIdlePage] = useState<IdlePage | null>(null)
-  const [emergencyOverlay, setEmergencyOverlay] = useState<EmergencyOverlay | null>(null)
+  const [emergencyNotice, setEmergencyNotice] = useState<{ channelId: string; overlay: EmergencyOverlay } | null>(null)
   const [email, setEmail] = useState('')
   const [subscriptionState, setSubscriptionState] = useState<SubscriptionState>('idle')
   const [subscriptionMessage, setSubscriptionMessage] = useState('')
@@ -104,15 +100,6 @@ export function HomeScreen() {
         .catch(() => {
           if (!cancelled) setIdlePage(null)
         })
-      if (shouldShowEmergencyOverlay()) {
-        fetchJson<EmergencyOverlay>('/api/public/cg/emergency-overlay')
-          .then((result) => {
-            if (!cancelled) setEmergencyOverlay(result)
-          })
-          .catch(() => {
-            if (!cancelled) setEmergencyOverlay(null)
-          })
-      }
       fetchJson<SubmissionAgreementCatalog>('/api/public/contribute/agreements/current')
         .then((result) => {
           if (!cancelled) setSubmissionAgreement(result)
@@ -168,6 +155,32 @@ export function HomeScreen() {
       cancelled = true
     }
   }, [])
+
+  const emergencyChannelId = data.live?.channel_id ?? idlePage?.channel_id
+  const emergencyOverlay = emergencyNotice?.channelId === emergencyChannelId ? emergencyNotice?.overlay : null
+  useEffect(() => {
+    let cancelled = false
+    let pending = false
+    if (!emergencyChannelId) return
+    const channelId = emergencyChannelId
+    async function pollEmergency() {
+      if (pending) return
+      pending = true
+      try {
+        const overlay = await fetchJson<EmergencyOverlay>(`/api/public/cg/emergency-overlay?channel_id=${encodeURIComponent(channelId)}`)
+        if (!cancelled) setEmergencyNotice({ channelId, overlay })
+      } catch (error) {
+        if (!cancelled && error && typeof error === 'object' && 'status' in error && error.status === 404) {
+          setEmergencyNotice(null)
+        }
+      } finally {
+        pending = false
+      }
+    }
+    void pollEmergency()
+    const timer = window.setInterval(() => { void pollEmergency() }, 5000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [emergencyChannelId])
 
   // Follow the live stream while the page is open: re-resolve /current on an
   // interval so (1) a mid-broadcast source switch — the surge switch hands

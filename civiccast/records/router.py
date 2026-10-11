@@ -8,7 +8,7 @@ import hashlib
 from datetime import UTC, datetime
 from typing import cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict
 
 from civiccast.auth.roles import require_any_role
@@ -34,6 +34,25 @@ def get_disposition_review_reader() -> object | None:
     """DI seam for the retention disposition queue; wired with durable storage."""
 
     return None
+
+
+@staff_router.get(
+    "",
+    response_model=list[RecordExportResponse],
+    summary="List recent signed-record metadata",
+    dependencies=[Depends(require_any_role("records_clerk"))],
+    responses={
+        200: {"description": "Metadata only; PDF artifact bytes are never included."},
+    },
+)
+def list_records(
+    summary_id: str | None = Query(default=None, min_length=1, max_length=160),
+    limit: int = Query(default=50, ge=1, le=100),
+    store: RecordStore = Depends(get_record_store),
+) -> list[RecordExportResponse]:
+    """List a bounded record window, optionally for one approved summary."""
+
+    return store.list_records(summary_id=summary_id, limit=limit)
 
 
 @staff_router.get(
@@ -135,6 +154,7 @@ def export_record(
 @staff_router.get(
     "/{record_id}/download",
     summary="Download a PDF/A-3B signed-record artifact",
+    dependencies=[Depends(require_any_role("records_clerk"))],
     responses={404: {"description": "Record not found"}},
 )
 def download_record(
@@ -154,6 +174,7 @@ def download_record(
     "/{record_id}/verify",
     response_model=RecordExportResponse,
     summary="Verify timestamp and audit metadata for a signed record",
+    dependencies=[Depends(require_any_role("records_clerk"))],
 )
 def verify_record(
     record_id: str,

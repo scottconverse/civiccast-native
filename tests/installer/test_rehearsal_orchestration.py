@@ -362,7 +362,13 @@ def test_sample_rehearsal_source_probe_fails_closed_without_upload_dir(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CIVICCAST_UPLOAD_DIR", raising=False)
-    fake_source = SimpleNamespace(live_source_id=SAMPLE_REHEARSAL_SOURCE_ID)
+    fake_source = SimpleNamespace(
+        live_source_id=SAMPLE_REHEARSAL_SOURCE_ID,
+        channel_id="government",
+        source_type="rtmp",
+        endpoint_url="rtmp://127.0.0.1/live/civiccast-sample-rehearsal",
+        credentials_handle=None,
+    )
 
     probe = build_sample_rehearsal_source_probe()
     ready, message = probe(fake_source)
@@ -377,7 +383,13 @@ def test_sample_rehearsal_source_probe_fails_closed_without_a_created_sample(
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
     monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(upload_dir))
-    fake_source = SimpleNamespace(live_source_id=SAMPLE_REHEARSAL_SOURCE_ID)
+    fake_source = SimpleNamespace(
+        live_source_id=SAMPLE_REHEARSAL_SOURCE_ID,
+        channel_id="government",
+        source_type="rtmp",
+        endpoint_url="rtmp://127.0.0.1/live/civiccast-sample-rehearsal",
+        credentials_handle=None,
+    )
 
     probe = build_sample_rehearsal_source_probe()
     ready, message = probe(fake_source)

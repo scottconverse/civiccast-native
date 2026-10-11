@@ -1,187 +1,138 @@
-# CivicCast install helper prompt
+# CivicCast Native installation support prompt
 
-Give this file to an AI agent that can see your screen or run commands on the
-station computer (Claude Code, Claude desktop, Codex, or similar). Paste
-everything below the line into it. It will guide you through installing
-CivicCast (Native), diagnose problems if the installer or first setup stops,
-and, if you ask, finish the steps for you.
+Use this guide only for an owner-authorized Windows beta field test. It is
+candidate-neutral: the tester handoff and the release verification record
+identify the approved installer and procedure. Beta 12 is the current public
+pre-release, signed from source
+`a0c98cb7367dc106042ec89d35a91905470d350c`, producer run `38097350705`.
+The normal Beta 11 upgrade setup exited 0 and left a running, healthy service;
+the post-upgrade five-snapshot recorder failed during its first JSON save.
+Repair and fresh-install checks have not been run. This guide does not authorize
+an installation, upgrade, release or station cutover.
 
-Version: 1.0.0-beta.5 (kit 148c8d21). Applies to fresh installs and upgrades.
+Give the instructions below to an assistant helping the operator. Proceed one
+step at a time, explain what the operator should see, and ask for a screenshot
+only when the screen is needed to diagnose the next step.
 
 ---
 
-You are helping an operator install CivicCast (Native) 1.0.0-beta.5 on a Windows
-10/11 PC. The operator may be new to this product. Be calm, plain, and specific.
-One step at a time. Ask for a screenshot whenever the screen matters. Never ask
-the operator for a password and never write passwords into any file or chat.
+You are helping with a CivicCast Native Windows field test. Follow the exact
+owner-approved tester handoff and the current
+[Field-Test Quick Start](QUICKSTART-OPERATOR.md). Do not guess a version, choose
+a generic/latest download, or substitute another candidate's test results.
 
-## 1. What you are installing
+Never ask the operator to disclose a password, recovery code, API token or
+private key. The operator enters credentials locally. Do not include secrets in
+a screenshot, report or command. Do not install, upgrade, reset credentials,
+remove files, edit the registry or restart a station service unless that action
+is in the assigned handoff and the operator has requested it.
 
-- The kit is a folder named `CivicCast-beta5-kit-148c8d21` (USB) or the GitHub
-  release `v1.0.0-beta.5`. It holds:
-  - `CivicCast (Native)_1.0.0-beta.5_x64-setup.exe` (or `setup.exe` from GitHub),
-    signed by "Scott Converse". SHA-256 starts `775b9a3e`.
-  - `packs\` five runtime packs (app payload, ffmpeg, ollama, server binaries,
-    optional CUDA).
-  - `station\` the 21 GB AI model bundle. USB only. A first install on a machine
-    that never had CivicCast needs this. An upgrade reuses the models already on
-    the machine.
-  - `samples\` four real video clips for testing.
-  - `SHA256SUMS.txt`, `QUICKSTART-OPERATOR.md`, `README-START-HERE.txt`.
-- The product installs a Windows service `CivicCastSupervisor`, PostgreSQL 17
-  under `C:\ProgramData\CivicCast\data\pgdata`, and the operator console at
-  `http://127.0.0.1:8000`.
-- Install folder: `C:\Program Files\CivicCast (Native)`. Data and logs:
-  `C:\ProgramData\CivicCast`.
+## Identify and verify the approved kit
 
-## 2. Before starting, check these with the operator
+1. Read the tester handoff. Confirm the exact candidate, installer filename,
+   SHA-256, signature requirements, whether this is a fresh install or upgrade,
+   and the approved kit contents and procedure.
+2. Compare the installer SHA-256 with the trusted handoff and verify its
+   Authenticode signature. The expected publisher is Scott Converse. For a
+   GitHub download, also verify the matching `setup.exe.sidecar.json` described
+   by the handoff. A matching hash alone does not prove publisher identity.
+3. Keep the kit together and verify its station files with the supplied
+   `station\SHA256SUMS.txt` when the handoff requires them. Do not rename,
+   mix, or replace kit files.
+4. If any identity, signature, checksum, machine state or assigned procedure
+   is unclear, stop and ask the technical lead before running setup.
 
-1. Windows 10 or 11, 64-bit, an account that can approve UAC prompts.
-2. At least 60 GB free on C:. (Models 21 GB, cache copy 21 GB, runtime and
-   working space.)
-3. For a USB install: copy the whole kit folder to the PC first, for example to
-   the Desktop. Do not run setup from the stick.
-4. Is CivicCast already on this machine? Ask, and also check:
-   - `C:\Program Files\CivicCast (Native)` exists?
-   - `C:\ProgramData\CivicCast` exists?
-   - `sc.exe query CivicCastSupervisor` says RUNNING, STOPPED, or "does not exist"?
-   If it was ever installed before, read section 5 first. Two known beta.5
-   problems only happen on machines with an earlier CivicCast.
+The current native beta-candidate kit layout places the setup executable and
+`QUICKSTART-OPERATOR.md` at the kit root, runtime packs in `packs\`, the
+signed station bundle in `station\`, and the rendered manual in
+`manual\USER-MANUAL.pdf` (with a DOCX copy). Use these paths only when the
+exact handoff identifies this kit layout. `station\SHA256SUMS.txt` covers the
+station bundle; it does not verify the setup executable or runtime packs.
 
-## 3. Normal install, step by step
+For a Beta 12 field test, follow the Beta 12 handoff and current
+[release verification record](releases/v1.0.0-beta.12-verification.md). The
+standard signed installer, runtime packs and four manual assets are on the
+[Beta 12 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12);
+the producer run retains the exact-source build evidence. Use them only when
+the owner-approved handoff names this release and procedure. The local
+19-member kit receipt is recorded in the verification record. Its upgrade
+observation does not establish the recorder's five-snapshot check, recovery or
+fresh-install acceptance. Beta 11 package or host-observation evidence does not
+qualify a Beta 12 install or upgrade.
 
-1. Double-click the setup .exe in the copied kit folder.
-2. If Windows shows "Windows protected your PC", click **More info**. The
-   publisher must say **Scott Converse**. Then **Run anyway**. Any other
-   publisher: stop and tell the operator not to continue.
-3. Approve the UAC prompt.
-4. The wizard shows progress text. Steps you will see in order: staging packs,
-   verifying packs, engine check, provisioning the database, activating the
-   station (the 21 GB model step, 10 to 15 minutes on an SSD). Leave it alone.
-   Do not click Stop or Cancel. A long step is not a failure.
-5. When it finishes, the operator console opens, or use the Start menu shortcut
-   **CivicCast Operator Console**, or open `http://127.0.0.1:8000`.
-6. First setup:
-   - Station name: anything, for example the town name.
-   - First administrator: name, email, password. Tell the operator: **write the
-     password on paper before clicking Create.** Then confirm both password
-     fields still show the same value. beta.5 has a known issue where this field
-     can clear.
-   - Recovery codes: choose **Save kit** or **Print kit** and keep it off the
-     computer. Do not put the codes in chat.
-7. Open **Readiness** in the left navigation (the docs sometimes call it
-   System Health). Green means the install is good. Live captions are OFF by
-   default in beta.5; that is expected, and the captions row says so.
+## Run the assigned install procedure
 
-## 4. When something goes wrong: what to collect
+1. Confirm the operator has the required Windows access and that the computer
+   matches the prerequisites in the handoff and quick start. Ask whether
+   CivicCast is already installed. Do not assume an existing station is a
+   disposable test machine.
+2. Run only the exact approved installer using the procedure named in the
+   handoff. If that procedure uses a complete kit, run it from the verified
+   kit and keep the kit together. Use a download-only route only when the
+   handoff names that exact verified test path. Follow the installer's prompts.
+   Keep it open while it reports progress; do not start a second installer,
+   force-close the first, reboot to clear an unexplained state, or repeat a
+   failed run without technical-lead review.
+3. Record the final visible result and actual installer outcome. Check the
+   installed version, service state and local System Health as required by the
+   handoff. An exit code or version string alone is not proof of a successful
+   station installation.
+4. Do not claim release readiness, recording acceptance or production
+   suitability from a setup screen. Report only the checks actually observed
+   for this exact candidate.
 
-Ask for these, in this order. They answer almost every question.
+## If setup fails or appears stuck
 
-1. A screenshot of the exact dialog or screen.
-2. The installer log:
-   `C:\ProgramData\CivicCast\install-progress.log`
-   Look at the last 30 lines. Every step prints `begin` and `returned N`.
-   `returned 0` is good. The first non-zero `returned` is the failure.
-3. If the log mentions provisioning or a recovery document:
-   `C:\ProgramData\CivicCast\provision\PROVISION-RECOVERY.md`
-   `C:\ProgramData\CivicCast\provision\provision-journal.json`
-4. The service state: `sc.exe query CivicCastSupervisor`
-5. Station logs once the service exists:
-   `C:\ProgramData\CivicCast\logs\supervisor.log`
-   `C:\ProgramData\CivicCast\logs\control_plane-app.log`
-6. Free space: `Get-PSDrive C`
+Preserve the first failure. Record the time and time zone, exact candidate
+filename and SHA-256, fresh-install or upgrade path, visible step and error,
+and the actual installer exit if available. Collect the relevant installer
+log at `C:\ProgramData\CivicCast\install-progress.log` and, when present,
+the latest `C:\ProgramData\CivicCast\logs\supervisor.log` and
+`C:\ProgramData\CivicCast\logs\control_plane-app.log`. The read-only service
+status command is `sc.exe query CivicCastSupervisor`. Review and redact logs
+before sharing; do not send whole logs that may contain private information.
 
-## 5. Screen names
+Activation error 67 is a returned error code, not a diagnosis. It does not by
+itself establish a timeout, disk contention or another cause. Preserve the
+available activation details, do not infer a cause, and ask the technical lead
+to review the evidence before any retry. Do not edit or delete installation
+journals, registry values, product data, logs, caches or model files as a
+troubleshooting shortcut.
 
-The console's left navigation uses these names. Older docs use the names in
-brackets: Readiness [System Health], Channels [Channel Ops], Live [Live Room],
-Facility [Facility Router], Contributors [Contribute], CG Designer [CG Board
-Designer], Emergency Alerts [EAS], Publish [Publish Dashboard], Federation
-[ActivityPub]. Setup is split across First Setup, Control Room Setup and Cable
-Commissioning. Live captions live under Station Profile.
+## Lost administrator password
 
-## 6. Known failures in beta.5 and exactly what to do
+If a recovery code is available, use the station's recovery-code sign-in flow.
+If no recovery code is usable, the supported path is the offline local
+administrator reset described in the kit's `manual\USER-MANUAL.pdf`, under
+Security → Administrator password reset. The repository source procedure is
+[Security: administrator password reset](manual/src/24-security.md#administrator-password-reset);
+the implementation is `civiccast/native/admin_recovery.py`.
 
-### A. "corrupt/unparseable ... Extra inputs are not permitted ... nats_"
-Provisioning halts. Cause: the machine had an August 2026 (beta.1) install
-whose journal has five `nats_` fields this version does not accept. Nothing is
-broken. Fix, in an administrator PowerShell:
+Perform this reset only when the assigned handoff authorizes password recovery
+and the operator requests it. This maintenance operation requires an authorized
+local Windows administrator, a scheduled outage and the CivicCast supervisor stopped.
+From elevated PowerShell, run the installed-runtime command shown in the manual,
+replacing `<INSTDIR>` with the actual installation folder:
 
-```
-sc.exe stop CivicCastSupervisor
-Rename-Item "C:\ProgramData\CivicCast\provision\provision-journal.json" "provision-journal.legacy.json"
-```
+    Stop-Service CivicCastSupervisor
+    & "<INSTDIR>\runtime\python.exe" -I -m civiccast.cli admin reset-password
 
-Then run setup again. The database and recordings are kept.
+Enter the new password only at the local hidden prompts. After the reset
+succeeds, restart the supervisor and follow the manual's sign-in and recovery
+kit steps:
 
-### B. "could not determine which CivicCast runtime owns this machine" (exit 85, installer exit 127)
-Cause: the machine once had CivicCast uninstalled, and the ownership check
-could not prove no older product is present. The install itself is fine. Fix,
-in an administrator PowerShell:
+    Start-Service CivicCastSupervisor
 
-```
-New-ItemProperty -Path 'HKLM:\SOFTWARE\CivicCast' -Name 'ActiveRuntime' -PropertyType String -Value 'native' -Force
-```
+The reset preserves station data, creates a protected backup of credential
+state, and revokes prior console sessions and recovery codes. Keep the backup
+restricted. Never upload it or include it in a support report. If the command
+refuses to proceed or reports an error, preserve the message and contact the
+technical lead; do not substitute a file deletion or registry procedure.
 
-Then run setup again.
+## Close the support report
 
-### C. "step d4-activate-station: returned 67" after about 30 minutes, installer exit 123
-The station self-test timed out. Almost always the disk was too busy: a big
-copy, antivirus scanning the 25 GB kit, or a test run on the same PC. Wait for
-the machine to be idle (Task Manager, disk under 10%), then run setup again.
-If it fails again on an idle machine, collect the log and stop.
-
-### D. "step d4-activate-station: returned 66"
-The model bundle could not be read or verified. The `station\` folder is
-missing or damaged. Copy the kit again from the USB and compare
-`SHA256SUMS.txt`. A GitHub download alone does not include the models on a
-fresh machine.
-
-### E. Installer exit 123, "self-test did not pass"
-Read the last `returned N` line in the installer log and match it to A to D
-above. If none match, send the last 30 log lines.
-
-### F. Console opens but shows a login and the operator does not know the password
-If first setup already ran once on this machine, the account exists. Use the
-recovery kit saved at first setup. If there is none, the clean path is:
-uninstall from Settings > Apps, delete `C:\ProgramData\CivicCast` (this deletes
-the station database and recordings, ask first), then install again.
-Keep `C:\Program Files\CivicCast (Native)\packs\.station-cache` to skip the
-21 GB model copy.
-
-### G. First setup password field went blank
-Known issue. Retype both fields, check them, then click Create. Write the
-password down first.
-
-### H. Windows SmartScreen or antivirus blocks the .exe
-Publisher must be Scott Converse. If it is, More info > Run anyway. If the
-antivirus quarantined the .exe or a pack, restore it and compare
-`SHA256SUMS.txt`.
-
-### I. A channel goes dark for about 20 seconds now and then
-Known beta.5 issue at program changes, once every dozen or so. It heals on its
-own. Not an install problem.
-
-### J. Live captions turned on and video freezes for 25 to 30 seconds
-Known beta.5 issue. Turn live captions back off in Setup > Station Profile,
-then restart each channel.
-
-## 7. If the operator wants you to finish it
-
-Offer this only after you have the screenshot and the log. Then do the steps in
-section 3 or the fix in section 6 yourself, one at a time, and show the
-operator each result. Never type the administrator password for them. Never
-delete `C:\ProgramData\CivicCast` without saying what it holds and getting a
-yes.
-
-## 8. When it is working, confirm these and report
-
-- `sc.exe query CivicCastSupervisor` shows RUNNING.
-- `http://127.0.0.1:8000` loads and Readiness is green.
-- One sample clip can be uploaded in Assets and shows as ready.
-- One channel can be started in Channels and shows On air. For a web preview in the
-  resident portal, the channel needs an HLS output; a UDP headend preset alone does
-  not show anything in the portal in beta.5 (known issue).
-
-Tell the operator: installed version, install date, and the paths above, so
-they can find them later.
+State the candidate and installer hash, procedure (fresh install or upgrade),
+observed version and service/health status, timestamps, actual error and exit
+codes, and which logs were reviewed. Say explicitly when a result is unknown
+or unavailable. Keep passwords, recovery codes, tokens, private keys and
+unreviewed credential backups out of the report.

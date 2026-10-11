@@ -28,7 +28,7 @@ from datetime import UTC, datetime, tzinfo
 from pathlib import Path
 from typing import Any, cast
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi import status as http_status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -1364,15 +1364,53 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
     app.dependency_overrides[get_credential_writer] = lambda: alert_credential_store.put
     alert_dispatch = AlertDeliveryDispatch(session_factory, alert_credentials)
     alert_evaluator = AlertEvaluator(session_factory, dispatch=alert_dispatch)
+    from civiccast.egress.store import PostgresEgressStore
+
+    caption_health_egress_store = PostgresEgressStore(session_factory)
 
     def _alert_evaluator_hook(
         channel_id: str, state: str, encoder_fps: float | None, encoder_bitrate_kbps: float | None
     ) -> None:
+        from civiccast.alerting.runtime_status import read_live_caption_processing_status
+        from civiccast.egress.automation import default_egress_work_dir
+        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
+
+        captions_expected = resolve_live_captions_enabled_or_default()
+        try:
+            state_row = caption_health_egress_store.read_state(channel_id)
+        except Exception:
+            _LOG.debug("Could not read channel state for caption alert evaluation", exc_info=True)
+            state_row = None
+        status = read_live_caption_processing_status(
+            default_egress_work_dir(),
+            channel_id,
+            egress_state=state,
+            captions_expected=captions_expected,
+            now=datetime.now(UTC),
+            on_air_since=(
+                state_row.updated_at
+                if state == "ON_AIR" and state_row is not None and state_row.state == "ON_AIR"
+                else None
+            ),
+        )
+        additional_conditions = []
+        if (
+            state == "ON_AIR"
+            and captions_expected
+            and status.processing_state in {"failed", "stalled"}
+        ):
+            additional_conditions.append(
+                (
+                    "live-caption-failure",
+                    f"{channel_id} live-caption worker {status.processing_state}",
+                )
+            )
         alert_evaluator.evaluate_channel(
             channel_id,
             state,
             encoder_fps=encoder_fps,
             encoder_bitrate_kbps=encoder_bitrate_kbps,
+            additional_conditions=additional_conditions,
         )
 
     def _db_reachable() -> bool:
@@ -2375,7 +2413,9 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health", include_in_schema=False)
     @app.get("/health", tags=["platform"], summary="Liveness plus station readiness")
-    def health() -> dict[str, str | bool | int]:
+    def health(
+        egress_store: Any = Depends(get_egress_store),  # noqa: B008
+    ) -> dict[str, str | bool | int]:
         """Liveness probe carrying a readiness verdict; no auth required.
 
         Spec §5.4 names this as the standard CivicSuite-shaped liveness path.
@@ -2388,7 +2428,8 @@ def create_app() -> FastAPI:
           every schema state. Restart-on-failure supervisors and the installer's
           own probe key on this; a station mid-setup is alive by design.
         * **``status`` is readiness.** ``healthy`` only when the schema matches
-          the running code; otherwise ``degraded``. Uptime monitors should alert
+          the running code and live-caption readiness is neither ``degraded``
+          nor ``unknown``; otherwise ``degraded``. Uptime monitors should alert
           on this field, not on the status code -- a station with no database
           cannot serve a recording, and reporting "healthy" for it told an
           operator the opposite of the truth.
@@ -2413,6 +2454,17 @@ def create_app() -> FastAPI:
             app.state, "schema_status", SchemaStatus(state="unknown")
         )
         readiness = "healthy" if schema_status.state == "current" else "degraded"
+        from civiccast.alerting.runtime_status import live_caption_readiness
+        from civiccast.egress.automation import default_egress_work_dir
+        from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
+
+        live_captions = live_caption_readiness(
+            egress_store,
+            captions_expected=resolve_live_captions_enabled_or_default(),
+            work_dir=default_egress_work_dir(),
+        )
+        if live_captions in {"degraded", "unknown"}:
+            readiness = "degraded"
         # Annotated to match the declared return type. Inferred from this
         # literal alone it is dict[str, str], which then rejects the bool and
         # int fields the maintenance branch adds below -- and dict is
@@ -2422,6 +2474,7 @@ def create_app() -> FastAPI:
             "status": readiness,
             "version": _reported_version(),
             "schema": schema_status.state,
+            "live_captions": live_captions,
         }
         bootstrap_instance_id = os.environ.get("CIVICCAST_BOOTSTRAP_INSTANCE_ID")
         if bootstrap_instance_id:
@@ -2764,7 +2817,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # probe via `source_probe_override` (civiccast/installer/service.py);
         # this is the probe every other caller -- i.e. a real station -- gets.
         #
-        # B1 fix: route the one source id CivicCast itself creates (the
+        # B1 fix: route the unchanged source configuration CivicCast creates (the
         # bundled sample-rehearsal source) to the same validated-local-file
         # probe the installer's rehearsal already uses, instead of the real
         # network probe -- the sample's placeholder RTMP endpoint has no
@@ -2776,15 +2829,15 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # answers its own "not probed" questions instead of depending on a
         # caller (the operator UI) that never actually probed.
         from civiccast.installer.service import (
-            SAMPLE_REHEARSAL_SOURCE_ID,
             build_sample_rehearsal_source_probe,
+            is_sample_rehearsal_source,
         )
 
         network_source_probe = build_source_probe()
         sample_source_probe = build_sample_rehearsal_source_probe()
 
         def _live_source_probe(source: Any) -> tuple[bool, str | None]:
-            if getattr(source, "live_source_id", None) == SAMPLE_REHEARSAL_SOURCE_ID:
+            if is_sample_rehearsal_source(source):
                 return sample_source_probe(source)
             return network_source_probe(source)
 
@@ -3090,12 +3143,17 @@ def _wire_durable_stores(app: FastAPI) -> None:
             if vdo_url
             else NullVdoNinjaBridge()
         )
+        egress_store = PostgresEgressStore(_session_factory)
+
+        def _channel_enabled(channel_id: str) -> bool | None:
+            config = egress_store.get_config(channel_id)
+            return config.enabled if config is not None else None
 
         def _take_channel_live(channel_id: str) -> None:
-            # Slice 3e: a guest on-air airs the channel's composited live feed via
-            # the proven S5 content-reload takeover (no internal live pad). An
-            # already-live channel is a silent no-op — the guest joins the live
-            # composition the compositor is already mixing.
+            # Legacy on-air hook retained for app-wiring compatibility.
+            # ContributionService.put_on_air currently records lifecycle state
+            # without invoking this callback; channel takeover remains a
+            # separate, confirmed operator action.
             with suppress(AlreadyLiveError):
                 _resolve_takeover_service().take(
                     channel_id=channel_id,
@@ -3106,6 +3164,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
         return ContributionService(
             ContributionStore(_session_factory),
             bridge,
+            channel_enabled=_channel_enabled,
             on_air_hook=build_contribution_on_air_hook(_take_channel_live),
             alert_hook=_build_contribution_alert_hook(_session_factory),
         )

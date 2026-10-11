@@ -3146,3 +3146,69 @@ def test_superseding_a_held_deferred_reload_keeps_the_current_program_on_air(
     assert "CTRL reload: commit did not finish" not in text, text
     assert "not-linked" not in text, text
     _assert_continuous(out_ts, text, require_audio_pid=True)
+
+
+@pytest.mark.parametrize("compositor", ["compositor", "d3d11compositor"])
+def test_emergency_late_image_reaches_pixels_and_clear_preserves_logo(tmp_path, compositor):
+    """Late still-image PTS must be rebased; a commit marker alone is insufficient."""
+    import shutil
+
+    from civiccast.cg.models import EmergencyOverlay
+    from civiccast.eas.presentation import render_presentation
+    from civiccast.egress.gst.graphics_overlay import write_rgba_png
+
+    logo = tmp_path / "station-logo.png"
+    write_rgba_png(logo, 64, 64, bytes((0, 0, 255, 255)) * 64 * 64)
+    graph = replace(
+        graphmod.demo_test_graph(out=str(tmp_path / "out.ts"), nsrc=1),
+        sinks=(
+            (
+                _E("queue"),
+                _E("filesink", props={"location": str(tmp_path / "out.ts"), "buffer-mode": 4}),
+            ),
+        ),
+        graphics_overlay=graphmod.GraphicsOverlayLeg(
+            layers=(
+                graphmod.GraphicsOverlayLayer(
+                    name="station-logo", image_path=str(logo), width=64, height=64
+                ),
+            ),
+            compositor=_E(compositor),
+        ),
+    )
+    alert = EmergencyOverlay(
+        overlay_id="test",
+        severity="emergency",
+        title="TEST FLOOD WARNING",
+        message="River Road closed.",
+        instructions="Move to higher ground.",
+        cellular_fallback_enabled=False,
+    )
+    payload = render_presentation("overlay", alert, tmp_path, width=640, height=360)
+    out_ts = tmp_path / "out.ts"
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        time.sleep(1.5)
+        encoded = base64.b64encode(json.dumps(payload).encode()).decode()
+        _send(control, f"emergency {encoded}")
+        _wait_for_log(log, "CTRL graphics-overlay layer 'emergency' reload committed")
+        time.sleep(1.5)
+        snapshot = tmp_path / "displayed.ts"
+        shutil.copyfile(out_ts, snapshot)
+        raw = _ffmpeg_last_frame_rgb24(snapshot, tmp_path / "displayed.raw", width=640, height=360)
+        assert raw is not None, "FFmpeg is required for the actual-pixel claim"
+        offset = (340 * 640 + 600) * 3
+        r, g, b = raw[offset : offset + 3]
+        assert r > 90 and r > 2 * g and r > 2 * b, (r, g, b)
+        _send(control, "emergency bnVsbA==")
+        time.sleep(1.5)
+        _send(control, "stop")
+        assert proc.wait(timeout=25) == 0
+    finally:
+        _reap(proc)
+    raw = _ffmpeg_last_frame_rgb24(out_ts, tmp_path / "cleared.raw", width=640, height=360)
+    assert raw is not None
+    r, g, b = raw[(30 * 640 + 30) * 3 : (30 * 640 + 30) * 3 + 3]
+    assert b > 150 and b > r and b > g, "station logo must survive emergency clear"
+    r, g, b = raw[(340 * 640 + 100) * 3 : (340 * 640 + 100) * 3 + 3]
+    assert not (r > 90 and r > 2 * g and r > 2 * b), "emergency panel must be removed"

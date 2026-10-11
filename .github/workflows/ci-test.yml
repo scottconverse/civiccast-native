@@ -466,13 +466,16 @@ jobs:
         # enforces this floor stays within that margin of a FRESH collection
         # on every run (not a second hardcoded number), so this pin cannot
         # go stale again the way 1429 did without failing that test first.
-        # 2026-10-08 CI collection audit: 1938 pure tests; keep the same
-        # 50-test margin, yielding a floor of 1888.
+        # 2026-10-09 CI collection audit: 1959 pure tests; that checkpoint's
+        # 50-test-margin floor was 1909.
+        # 2026-10-10 Beta 12 closure cases plus runtime-closure trace coverage:
+        # the current pure collection is 1984; preserve the same 50-test
+        # margin with a floor of 1934.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1888 \
+            --floor 1934 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -614,14 +617,17 @@ jobs:
         # and fails if this floor drifts more than the margin below it, so
         # this pin cannot go stale again the way 1565 did without failing
         # that test first.
-        # 2026-10-08 CI collection audit: 2144 Windows non-integration tests;
-        # the existing floor of 2096 is 48 tests below that collection.
+        # 2026-10-09 CI collection audit: 2165 Windows non-integration tests;
+        # that checkpoint's 50-test-margin floor was 2115.
+        # 2026-10-10 Beta 12 closure cases plus runtime-closure trace coverage:
+        # the current Windows non-integration collection is 2192; preserve the
+        # same 50-test margin with a floor of 2142.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 2096 \
+            --floor 2142 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit

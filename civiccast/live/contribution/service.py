@@ -6,16 +6,15 @@ Owns the room / invite / guest-session lifecycle on top of the data layer
 (slice 3a) and the VDO.Ninja URL bridge:
 
 * **Rooms** — create (idle) -> open (mints the director URL) -> live (a guest
-  on-air) -> closed (drops every active guest).
+  lifecycle tag) -> closed. Closing a room does not imply provider disconnect.
 * **Invites** — mint a single-use, expiring ``GuestInvite`` with guest publish +
   compositor view URLs; public token-gated resolution that consumes the token
   exactly once (race-safe) and creates a HELD guest session.
 * **Waiting room** (Scott decision S17 §10.6) — every guest lands HELD
   (``admitted_at`` null) on join; the operator must ``admit`` before ``on_air``.
   Public-comment-from-home guests must accept terms before the token resolves.
-* **On-air seam** — putting a guest on-air invokes an injected ``on_air_hook``
-  (the GStreamer compositor -> LiveSource bridge wires it in slice 3e; default
-  no-op so the contract is testable now).
+* **Media controls** — targeted browser commands are recorded as unverified;
+  the VDO.Ninja director iframe does not acknowledge command completion.
 
 All cross-entity refs are soft strings; the legality of every guest-session
 transition is enforced here (the store just writes the resolved row).
@@ -41,6 +40,7 @@ from civiccast.live.contribution.models import (
     ContributionRole,
     ContributionRoom,
     GuestInvite,
+    MediaControlAction,
     RemoteGuestSession,
 )
 from civiccast.live.contribution.store import (
@@ -56,8 +56,8 @@ from civiccast.live.contribution.store import (
 CONTRIBUTION_TERMS_VERSION = "2026-06-remote-contribution-v1"
 _DEFAULT_INVITE_TTL = timedelta(hours=4)
 _JOIN_PROOF_BOUNDARY = (
-    "Guest session created from a consumed single-use invite; media flow + "
-    "connection quality are observed in the operator console, not asserted here."
+    "Guest session created from a consumed single-use invite; CivicCast does "
+    "not authoritatively observe VDO connection state or media flow."
 )
 
 # Rooms a guest may still join through.
@@ -78,6 +78,14 @@ class RoomNotOpenError(ContributionServiceError):
 
 class RoomClosedError(ContributionServiceError):
     """Raised when minting an invite against a closing/closed room."""
+
+
+class ChannelNotConfiguredError(ContributionServiceError):
+    """Raised when a contribution room references no configured egress channel."""
+
+
+class ChannelDisabledError(ContributionServiceError):
+    """Raised when a contribution room references a disabled egress channel."""
 
 
 class InviteExpiredError(ContributionServiceError):
@@ -145,6 +153,7 @@ class ContributionService:
         token_factory: Callable[[], str] | None = None,
         on_air_hook: Callable[[RemoteGuestSession, ContributionRoom], None] | None = None,
         alert_hook: Callable[[str, str], None] | None = None,
+        channel_enabled: Callable[[str], bool | None] | None = None,
         invite_ttl: timedelta = _DEFAULT_INVITE_TTL,
         terms_version: str = CONTRIBUTION_TERMS_VERSION,
     ) -> None:
@@ -155,6 +164,10 @@ class ContributionService:
         # 32 bytes -> ~43 url-safe chars, comfortably over the ≥32 floor.
         self._token = token_factory or (lambda: secrets.token_urlsafe(32))
         self._on_air_hook = on_air_hook
+        # ``None`` means no matching configured channel. Failing closed when
+        # the app has not wired the validator prevents free-text ids from
+        # creating rooms that can never be switched live.
+        self._channel_enabled = channel_enabled or (lambda _channel_id: None)
         # (kind, detail) -> S8; emitted when an ON-AIR guest is dropped (S17 §6).
         self._alert_hook = alert_hook
         self._invite_ttl = invite_ttl
@@ -172,6 +185,16 @@ class ContributionService:
         room_id: str | None = None,
         vdo_room_name: str | None = None,
     ) -> ContributionRoom:
+        enabled = self._channel_enabled(channel_id)
+        if enabled is None:
+            raise ChannelNotConfiguredError(
+                f"Channel {channel_id!r} has no configured egress channel."
+            )
+        if not enabled:
+            raise ChannelDisabledError(
+                f"Channel {channel_id!r} is disabled and cannot host a contribution room."
+            )
+
         now = self._clock()
         room = ContributionRoom(
             room_id=room_id or f"room_{self._id()}",
@@ -205,12 +228,14 @@ class ContributionService:
         return room, director_url
 
     def close_room(self, room_id: str) -> ContributionRoom:
-        """Close a room and end every still-active guest session."""
+        """Close the room record without inferring provider disconnection.
+
+        VDO.Ninja currently exposes no authoritative disconnect observation to
+        this service. Active guest lifecycle rows remain visible until a
+        separate observed/manual lifecycle update changes them.
+        """
         self._require_room(room_id)
         now = self._clock()
-        for guest in self._store.list_sessions(room_id=room_id, active_only=True):
-            ended = guest.model_copy(update={"state": "ended", "ended_at": now})
-            self._store.save_session(ended)
         return self._store.set_room_state(room_id, "closed", updated_at=now)
 
     # --- invites ---------------------------------------------------------
@@ -321,11 +346,14 @@ class ContributionService:
         return self._store.save_session(admitted)
 
     def put_on_air(self, session_id: str) -> RemoteGuestSession:
-        """Put an admitted guest on-air and route them into the composition.
+        """Mark an admitted guest's CivicCast lifecycle record as on-air.
 
-        Refuses an un-admitted guest (waiting-room gate). Marks the room ``live``
-        and invokes the engine on-air hook (the compositor->LiveSource seam wires
-        it in slice 3e)."""
+        This does not route guest media or take the channel live. The pinned
+        VDO director controls are browser-side, and guest composition is not
+        wired to the channel source here. The legacy hook parameter remains
+        accepted for app wiring compatibility but is intentionally not called;
+        channel takeover is a separate, confirmed operator action.
+        """
         guest = self._require_active_guest(session_id)
         if guest.admitted_at is None:
             raise GuestNotAdmittedError(session_id)
@@ -338,29 +366,8 @@ class ContributionService:
         )
         saved = self._store.save_session(on_air)
         room = self._store.get_room(guest.room_id)
-        room_was_already_live = room is not None and room.state == "live"
         if room is not None and room.state != "live":
-            room = self._store.set_room_state(room.room_id, "live", updated_at=now)
-        if self._on_air_hook is not None and room is not None:
-            try:
-                self._on_air_hook(saved, room)
-            except Exception as exc:
-                self._store.save_session(guest)
-                # Return the room to "open" only when THIS call is the one that
-                # made it live AND no other guest is currently on-air. Re-derive
-                # from the live session set instead of trusting the pre-call
-                # snapshot, so a concurrently on-air guest is never dropped back
-                # to "open" by this guest's failed takeover.
-                if not room_was_already_live:
-                    others_on_air = any(
-                        s.session_id != session_id and s.state in ("on_air", "muted")
-                        for s in self._store.list_sessions(room_id=room.room_id, active_only=True)
-                    )
-                    if not others_on_air:
-                        self._store.set_room_state(room.room_id, "open", updated_at=self._clock())
-                raise TakeoverHookError(
-                    f"Channel takeover failed; guest {session_id} not placed on-air."
-                ) from exc
+            self._store.set_room_state(room.room_id, "live", updated_at=now)
         return saved
 
     def mute_guest(self, session_id: str) -> RemoteGuestSession:
@@ -370,7 +377,12 @@ class ContributionService:
         return self._store.save_session(guest.model_copy(update={"state": "muted"}))
 
     def take_off_air(self, session_id: str) -> RemoteGuestSession:
-        """Pull a guest off-air back to the admitted/connected pool."""
+        """Mark the guest record connected after an operator's off-air action.
+
+        This changes only CivicCast's session record. It does not send VDO.Ninja
+        media controls, disconnect the guest, or change the channel source or
+        schedule.
+        """
         guest = self._require_active_guest(session_id)
         if guest.state not in ("on_air", "muted"):
             raise InvalidGuestTransitionError(
@@ -379,10 +391,12 @@ class ContributionService:
         return self._store.save_session(guest.model_copy(update={"state": "connected"}))
 
     def drop_guest(self, session_id: str) -> RemoteGuestSession:
-        """Drop a guest from the room (terminal). Never takes the channel
-        off-air — the engine swaps back to program/filler (S17 §6). Dropping a
-        guest who was on-air raises an S8 alert so other staff see the on-air
-        change (the operator-visible alert the spec §6/§9 calls for)."""
+        """Mark a guest session dropped (terminal) and alert if it was on-air.
+
+        This updates CivicCast's session record; it does not disconnect the
+        VDO.Ninja guest, change guest media, or change the channel source or
+        schedule.
+        """
         guest = self._require_active_guest(session_id)
         was_on_air = guest.state in ("on_air", "muted")
         dropped = guest.model_copy(update={"state": "dropped", "ended_at": self._clock()})
@@ -398,6 +412,25 @@ class ContributionService:
         """Record an advisory connection-quality reading (never gates anything)."""
         guest = self._require_active_guest(session_id)
         return self._store.save_session(guest.model_copy(update={"connection_quality": quality}))
+
+    def record_media_control_request(
+        self, session_id: str, action: MediaControlAction
+    ) -> RemoteGuestSession:
+        """Record that the operator browser sent a control request to VDO.
+
+        The VDO.Ninja v30.2 iframe API has no callback for these commands, so
+        this intentionally records only an unverified request.
+        """
+        guest = self._require_active_guest(session_id)
+        return self._store.save_session(
+            guest.model_copy(
+                update={
+                    "media_control_state": "sent_unverified",
+                    "media_control_action": action,
+                    "media_control_requested_at": self._clock(),
+                }
+            )
+        )
 
     def list_sessions(
         self, *, room_id: str | None = None, active_only: bool = False
@@ -454,6 +487,8 @@ class ContributionService:
 
 __all__ = [
     "CONTRIBUTION_TERMS_VERSION",
+    "ChannelDisabledError",
+    "ChannelNotConfiguredError",
     "ContributionService",
     "ContributionServiceError",
     "GuestNotAdmittedError",

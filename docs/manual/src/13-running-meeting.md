@@ -49,7 +49,7 @@ The most important idea in this chapter: CivicCast has several separate controls
 | **Channels** > **Start**, **Stop**, **Restart feed**, **Finish current item, then stop** | Sends a command to the channel's feed program. This is what starts and stops the channel's actual video. |
 | **Channels** > **Take live** | Switches the channel from its schedule to a camera or encoder source right now. |
 | **Channels** > **Approve & put on air** | Approves one scheduled program so it plays at its scheduled time. It does not play it at the moment you click. |
-| **Remote Contribution** > guest **On air** | Marks the guest on air and also switches the whole channel to its live source (the same thing as **Take live**). |
+| **Remote Contribution** > **Take channel live** | Switches the channel to its configured live source after confirmation. It does not route a contribution guest into that source. |
 | **Control Room** > **Fire cue** | Sends a command to your production gear (OBS, vMix, a camera, a router). It does not put anything on a channel. |
 
 ### A few words used here
@@ -93,6 +93,8 @@ You should see the source's tag change to **Delivering** and text such as "Check
 > **Known issue (beta.11):** The **On-air preview** never shows video. In the code we read, nothing draws a picture there. It always says "Source preview unavailable" and "No simulated preview or audio meter is shown." Watch your own monitor or the channel output for the picture.
 
 > **Known issue (beta.11):** setup, or **Check broadcast readiness** on the Readiness screen, can add a source called "CivicCast sample test source" on the channel `government`. In the code we read, the **Run pre-flight** "Live source" row passes for that source by checking CivicCast's own sample video file, not a camera, so a pre-flight with that source selected proves nothing about your room. For a real meeting, choose your own camera or encoder source. **Check source** still tests that source over the network, and the code's own comments say nothing listens at its address, so it is not expected to pass.
+
+In beta.12, only the unchanged bundled sample source uses its validated local sample video for rehearsal. After changing that source's channel, type, address or credentials, pre-flight checks the configured live source instead. An edited source cannot pass by reusing an unrelated sample file. For a meeting, select a source on the session's channel and make sure its fresh check passes.
 
 If a Setup admin needs to change a source's address, they click **Edit source**, change the fields and click **Save source**. CivicCast warns: "Saving this change clears what CivicCast knows about this source. You will need to choose Check source again before it can take air." That warning appears only after you change the address, the type or the stored credential. Anyone else sees "Editing a source needs the setup admin role. Ask your station admin to change the address or type."
 
@@ -210,6 +212,8 @@ What "Keep this channel on air" really does, from the code we read:
 Live captions are a station setting, not a control on the Live screen. On a new station, **Show live captions on air** is off. A Setup admin can enable it in **Station Profile**; see [Live captions: what the settings change](#live-captions-what-the-settings-change).
 
 Beta.11 uses Whistle on the CPU for live recognition and sends first-pass captions without waiting for a second recognition to agree. It serializes caption inference across channels on one station runtime to give playout priority. If Whistle fails or exceeds its 10-second request deadline, that channel uses Whisper until the live runtime restarts. Whisper is also used for recording transcription. NVIDIA CUDA is optional acceleration for Whisper, not a requirement for Whistle. Captions are best-effort and may have gaps under load.
+
+Beta.12 starts Whistle without loading the Whisper backup first. A backup that cannot load therefore does not prevent Whistle from starting. Whisper loads when a channel actually needs fallback; that first switch can take longer, and insufficient memory or a backup startup failure can still interrupt that channel's captions.
 
 When the switch is enabled, recognition resumes on the next worker scan, but the channel's caption route is added when the channel next starts. Stop and start each affected channel after enabling it. When switched off, recognition stops and queued audio drains on the next worker scan; the graph route is removed at the next channel start. The switch does not affect captions created later for recordings. For overload and fallback recovery steps, see [Captions late or missing](#captions-late-or-missing).
 
@@ -331,13 +335,13 @@ You should see the banner "Test action recorded." Test Mode never touches your e
 5. Tick the box "I understand On-Air cue actions may be sent to production devices".
 6. A list called "On-Air prerequisites" shows "Ready:" or "Needs attention:" for **Control-room readiness**, **Safe-state cue selected** and **On-Air responsibility acknowledged**. When all three are ready, click **Open On-Air Session**.
 
-You should see an amber banner: "ON-AIR MODE - cue actions can be sent to production devices. Safe-state cue: &lt;cue id&gt;." The banner shows the cue's internal id, not its name. The **Safe State** panel under it shows the name.
+You should see an amber banner: "ON-AIR MODE - cue actions can be sent to production devices. Safe-state cue: &lt;cue id&gt;." The banner shows the cue's internal id, not its name. The **Safe State** panel under it shows the name. While the session is open, the screen shows the time remaining and the exact deadline.
 
 > **Warning:** in an On-Air session a cue really is sent to your equipment, and that can change the picture going to the channel. Always click the cue first (the dry run) and read the plan card.
 
 If someone else already has the surface open, you see: "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;. A setup admin or support admin can force-close it to release the lock."
 
-> **Known issue (beta.11):** an On-Air session expires **30 minutes** after you open it, and the screen never shows how much time is left. After that, the next attempt to fire a cue is refused ("On-Air Mode expired before this cue could fire. Open a new On-Air session to continue.") and the session is closed. Council meetings often run longer than 30 minutes. Write down the time you opened the session, and open a new On-Air session before 30 minutes pass. Any cue the session had already sent is not undone.
+An On-Air session expires **30 minutes** after it opens. The countdown warns you as the deadline approaches. At expiry, ordinary cue controls pause. The session owner can still use **Panic: Run Safe State** while the session remains open; end the session to release the surface, then open a new one to continue. If a normal cue request reaches the server after expiry, CivicCast refuses that cue and leaves the session open, so the owner can still run Panic or end the session. Cues already sent are not undone. After a page refresh, CivicCast restores the selected surface and its open session, but not an earlier dry-run result; dry-run a cue again before firing it.
 
 ### Fire a cue
 
@@ -353,20 +357,18 @@ If someone else already has the surface open, you see: "A session is already ope
 The **Safe State** panel appears once a session is open. In an On-Air session it names the recovery cue and has two buttons. In a Test Mode session it reads "No safe-state cue is configured for this session." and has no buttons, because Test Mode does not ask you to pick one.
 
 * **Dry Run Safe State** previews the recovery cue.
-* **Panic: Run Safe State** fires it.
+* **Panic: Run Safe State** sends the configured safe-state cue immediately through the recovery action. It does not wait for a dry run and remains available to the session owner after the On-Air deadline, while that session remains open.
 
-If a cue fails in an On-Air session, a button **Roll back to Safe State** appears. Click it to fire the safe-state cue. A good result reads "Rolled back to Safe State."
+If a cue fails in an On-Air session, use **Panic: Run Safe State** in the Safe State panel. A good result reads "Rolled back to Safe State."
 
-> **Warning:** **Panic: Run Safe State** and **Roll back to Safe State** have no confirmation box. They send the recovery cue to your equipment at once.
-
-> **Known issue (beta.11):** **Panic: Run Safe State** is grey until you have clicked **Dry Run Safe State**, and clicking any other cue's dry run makes it grey again. In an emergency it needs two clicks. After you open a session, dry-run the safe-state cue so the Panic button is ready, and dry-run it again after you dry-run any other cue. If the On-Air session has expired, **Panic: Run Safe State** is refused and the refusal closes the session, so **Roll back to Safe State** is refused after that too.
+> **Warning:** **Panic: Run Safe State** has no confirmation box. It sends the recovery cue to your equipment at once.
 
 ### End a session
 
 1. Click **End session**.
-2. A box titled "End the control room session?" appears. For an On-Air session it says "This releases the operator lock on this control surface while the session is On-Air. Any cue mid-fire is not rolled back, and no operator can fire cues on this surface until a new session is opened." Click **End session**, or **Cancel**.
+2. A box titled "End the control room session?" appears. For an On-Air session it says "This releases your operator lock on this control surface. Any cue already sent is not undone. Panic can still run the safe-state cue until you end the session." For Test Mode it says "This releases your operator lock on this control surface. No operator can fire cues on it until a new session is opened." Click **End session**, or **Cancel**.
 
-> **Known issue (beta.11):** the Control Room remembers your session only in the open page. If you refresh it, close the tab, or click to another screen in the same tab, you lose your handle on the session. Keep the Control Room in its own browser tab. The surface stays locked, and the screen has no button that releases someone else's lock, even though the lock message says a Setup admin or Support admin can do it. Ask IT how to release a stuck lock.
+The selected surface is remembered in this browser tab. Refreshing the page restores the open session for its owner without opening a duplicate; dry-run results are temporary, so repeat a dry run before firing. Another operator sees the active session as read-only. A Setup admin or Support admin can release that lock after confirming; releasing a lock does not undo cues already sent. An operator can end their own session after confirming. Ending a session releases its surface lock.
 
 A Support admin can also type a note in **Operator note** and click **Create support bundle**. This builds a troubleshooting file with private details removed, and shows its location. Everyone else sees "Support bundles require support admin."
 
@@ -437,42 +439,38 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 ### Set up a room and send invites
 
-1. In the left menu, under **Run Meeting**, click **Remote Contribution**. A Setup admin first creates a room: type a **Room name** (the example is "Council Chamber Guests") and a **Channel id** (the example is "gov-ch-1"), then click **Create room**.
+1. In the left menu, under **Run Meeting**, click **Remote Contribution**. A Setup admin first creates a room: type a **Room name** (the example is "Council Chamber Guests"), choose an enabled channel from **Configured channel**, then click **Create room**.
 2. Click the room in the **Rooms** list.
-3. Click **Open room**. A box titled "Director view (embed in your switcher)" shows a link. This is the page you keep open to see and arrange the guests. Click **Copy**. The link is shown only right after you click **Open room**. If you reload the page it is gone, so click **Open room** again.
+3. Click **Open room**. The room's VDO.Ninja director opens in an embedded panel; use it to inspect guests and keep it open while sending guest controls. You can copy its link for use in a separate switcher. If you reload the page, click **Open room** again.
 4. Under "Invite a guest", type the **Guest name**, choose a **Contribution role** (**Council member**, **Presenter** or **Public comment**), and click **Generate invite link**.
 5. Copy the box labelled "Guest link for &lt;name&gt; — send this", and send it to that guest. Like the director link, this box is shown only right after you generate the link. If you reload the page or select another room it is gone, and the invite list shows only the guest's name, role and **Used** or **Pending**. Generate a new link if you did not copy it.
 
 > **Note:** each guest link works for one guest, once, and expires after 4 hours. The screen says "single-use" but does not mention the 4 hours. Guests who join as **Public comment** must first accept terms before they can join. "Sent invites" lists each link as **Used** or **Pending**. A room holds up to 6 guests by default.
 
-> **Known issue (beta.11):** the **Channel id** box is free text. It must be the channel's exact id, for example `government`, not an example like "gov-ch-1". A typo makes **On air** fail later. Copy the id from the **Channels** screen. Also, a sign-in with only the Setup admin role can create a room but cannot see it: the server lets only a Meeting operator or Support admin read rooms, so the Rooms box shows the refusal "This action requires one of these CivicCast roles: meeting_operator, support_admin." instead of the list. If your station has not been set up for guests, an amber note says "Remote contribution isn't configured yet. A compositor (the GStreamer wpesrc engine or OBS) plus self-hosted VDO.Ninja and coturn must be commissioned before guests can reach the channel. See the diagnostics drawer for status."
+> **Current limitation:** the channel menu shows only configured, enabled egress channels. If none are available, ask a Setup admin to configure and enable a channel first; unknown or disabled channel ids cannot be used to create a room or take a channel live. Room-list and detail reads currently require Meeting operator or Support admin access. A Setup admin working alone cannot manage a room they created. Guest media composition into the channel is not connected in CivicCast; commissioning VDO.Ninja alone does not put a guest on air.
 
-### Admit a guest and put them on air
+### Admit and control a guest
 
 1. When a guest opens their link, they appear under **Guests** with the tag **In waiting room**.
-2. Click **Admit** to let them in. The **Admit** button disappears and **On air** turns on, but the guest's tag still reads **In waiting room**.
-3. Click **On air** to put them on air. The tag changes to **On air**.
+2. Click **Admit** to mark them admitted in CivicCast. This does not put their media into the broadcast.
+3. Keep the embedded VDO.Ninja director open. **Mute guest audio** and **Restore guest audio** send targeted audio requests for that guest; **Mute guest camera** and **Restore guest camera** send camera requests to the same guest.
+4. **Disconnect guest** asks for confirmation, then sends VDO.Ninja's targeted hangup command.
+5. **Off air** asks for confirmation, then sends separate requests to mute that guest's audio and camera. It leaves the guest connected and does not return the channel to its schedule.
 
-> **Warning:** the guest's **On air** button does **more than show that guest**. It also switches the *whole channel* to its live source, exactly like **Take live** on Channels, for up to an hour. There is no confirmation box. CivicCast records the change under the name "remote-contribution", not your name. If the channel cannot be taken live (for example, no source passes its check), you get "Channel takeover failed; guest &lt;id&gt; not placed on-air." and the guest goes back to the waiting room. If the channel is already under takeover, nothing more happens and the guest joins the live picture.
+> **Important:** VDO.Ninja's director iframe does not confirm whether an audio, camera or hangup request succeeded. CivicCast records the latest browser-reported request as **sent, not verified** and keeps the guest's connection status unchanged. The audio control targets the guest's audio; it does not control the director's own audio. Check the director and compositor before relying on a media change, and verify in the director before treating a guest as disconnected. Off air does not disconnect the guest or return the channel to its schedule.
 
-### Mute, take off the air, or drop a guest
+### Take the channel live
 
-While a guest is **On air**, two more buttons appear next to them.
+**Take channel live** is a separate, confirmed action. It switches the channel to its configured live source and can override the schedule. It does not route a contribution guest into the channel. To resume the schedule, use **Return to schedule** on **Channels**.
 
-* **Mute** changes the guest's tag to **Muted**. A muted guest has only **On air** (which un-mutes) and **Drop**.
-* **Off air** returns the guest's tag to **In waiting room**. The guest stays admitted, so **On air** is still available.
-* **Drop** opens a confirmation box. For an on-air guest, it says "&lt;name&gt; is on air right now. Dropping updates the CivicCast room record but does not remove their video or audio from the broadcast. Remove or mute them in the VDO.Ninja director view and check the channel monitor. They would need a new invite to rejoin." For other guest states, it says dropping marks the room record but does not end the VDO.Ninja connection or remove broadcast media. Click **Drop guest**, or **Cancel**.
-
-> **Warning:** **Mute** and **Off air** have no confirmation box. **Drop** and **Close room** ask first, and a dropped guest needs a new invite.
-
-> **Note:** **Mute** and **Off air** update CivicCast's guest status; they do not mute or remove VDO.Ninja media from the channel. Use the VDO.Ninja director view and check the channel monitor. **Drop** and **Close room** also update the CivicCast record without cutting guest media. After the last guest is dropped or the room is closed, nothing hands the channel back to its schedule. Use **Return to schedule** on **Channels** (see "Take a channel live from a camera").
+After checking in the director that a guest has left, click **Mark left after checking** and confirm. This changes only the CivicCast session record; it does not send a provider command.
 
 ### Close the room
 
 1. Select the room and click **Close room**.
-2. A box titled `Close "<room>"?` appears. It says this closes the CivicCast room record and stops accepting contributions, but does not remove guest video or audio from the broadcast. Remove or mute the guest in the VDO.Ninja director view and check the channel monitor. Click **Close room now**, or **Cancel**.
+2. Confirm to send hangup requests for active guest sessions and close the CivicCast room record. The provider does not acknowledge those requests; active guests remain visible so you can inspect or retry controls. Mark each guest left only after verifying the director shows they have disconnected. Closing the room stops new invites; it does not return the channel to its schedule.
 
-You can open the room again and send new invites afterwards.
+You can reopen the room and send new invites afterwards.
 
 ### Test guest connections (Support admins)
 
@@ -503,13 +501,13 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 
 12. Keep **Live** and the Control Room page open in their own tabs. Do not refresh them.
 13. If you use an On-Air Control Room session, open a new one before 30 minutes have passed.
-14. Admit remote guests one at a time. Remember that **On air** for the first guest takes the whole channel live.
+14. Admit remote guests one at a time. Keep the VDO.Ninja director open and verify each guest there. Guest controls do not compose them into the broadcast; use **Take channel live** separately only for the channel's configured live source.
 15. Watch the channel's own output, not the screen's tags. After **Stop**, **Restart feed** or **Return to schedule**, the tag can take up to 30 seconds to change.
 
 **At the end**
 
 16. Return the channel: **Return to schedule**, **Confirm return to schedule**.
-17. Drop any remaining guests and click **Close room**.
+17. Send disconnect requests for remaining guests, verify they left in the director, mark them left, then click **Close room**.
 18. End any Control Room session: click **End session**.
 19. If you want the channel off the air, click **Finish current item, then stop** (or **Stop**) and confirm. If **Keep this channel on air** is ticked, ask your Setup admin to untick it first.
 20. On **Live**, click **End Live Stream**, confirm, and watch **Recording finalization** until it says "Recording saved as asset &lt;id&gt;." Then follow [After the meeting](#ch-after-meeting).
@@ -534,7 +532,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 | "The cue preview is stale ... Dry Run the cue again before Live Fire." | The cue or device changed after your dry run. Click the cue again. |
 | "A session is already open on this surface, locked by &lt;name&gt; since &lt;time&gt;." | Someone, maybe you before a refresh, has the surface open. Ask IT. |
 | "Remote contribution isn't configured yet." | Guest video software has not been set up. Tell IT. |
-| "Channel takeover failed; guest &lt;id&gt; not placed on-air." | The channel had no ready live source. Run **Check source** on Live and click **On air** again. |
+| A guest-control notice says **sent, not verified** | The director iframe does not report command completion. Check the guest in the embedded director; use **Mark left after checking** only after verifying they have disconnected. |
 | "Durable storage is not ready. Open Setup and choose Prepare storage ..." | The station's database is not ready. Tell IT. |
 | "This action requires one of these CivicCast roles: ..." | Your sign-in lacks a role for that button. The names listed are the role names in short form. |
 

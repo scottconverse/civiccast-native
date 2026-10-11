@@ -2,6 +2,9 @@
 # Copyright (c) The CivicCast Authors
 """Policy contract for the informational deterministic-detector workflow."""
 
+import runpy
+import shlex
+import shutil
 from pathlib import Path
 
 import yaml
@@ -114,3 +117,26 @@ def test_mutation_execution_cannot_fail_open() -> None:
     assert "exit 0" not in mutation
     assert 'test "$run_status" -eq 0' in mutation
     assert 'test "$results_status" -eq 0' in mutation
+
+
+def test_mutation_copy_retains_committed_ollama_manifest_bytes(tmp_path: Path) -> None:
+    text, _ = _workflow()
+    also_copy = shlex.split(text.split('ALSO_COPY="$(keep_existing ', 1)[1].split(')"', 1)[0])
+    root = WORKFLOW.resolve().parents[2]
+    # Exercise the unchanged byte-for-byte assertion from the isolated layout,
+    # copying only its test, provisioner, lock, and configured manifest fixture.
+    for relative in (
+        "tests/native/test_ollama_model_provisioner.py",
+        "scripts/provision_native_ollama_models.py",
+        "native-windows-ollama-models.lock.json",
+    ):
+        target = tmp_path / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(root / relative, target)
+    manifest_dir = "native-windows-ollama-manifests"
+    if manifest_dir in also_copy:
+        shutil.copytree(root / manifest_dir, tmp_path / manifest_dir)
+    copied_test = runpy.run_path(str(tmp_path / "tests/native/test_ollama_model_provisioner.py"))
+    copied_test["test_committed_pinned_manifests_match_the_lock_byte_for_byte"](
+        copied_test["_load"]()
+    )

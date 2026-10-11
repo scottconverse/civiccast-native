@@ -8,46 +8,69 @@
 > [`docs/handoff/CODER-HANDOFF-INAPP-HELP-2026-10-03.md`](docs/handoff/CODER-HANDOFF-INAPP-HELP-2026-10-03.md)
 > (63 per-screen specs in `docs/in-app-help/`, product-defect list, in-app manual regeneration).
 
-> **2026-10-02 current: `v1.0.0-beta.10` is the current published release,
-> published 2026-10-02** as a GitHub pre-release (a beta candidate), not a
-> production release. This is the one current status page.
-> [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10);
-> the tag points at commit `b652084707367d45913807ed2a525f15a9a1e4a4` (build
-> run 37039304786). `v1.0.0-beta.7` (published 2026-09-15) is superseded;
-> `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published and their work is
-> inside beta.10. Source is branch `release/beta10`.
->
-> Push, merge, tag and release are owner actions; the owner (Scott) authorized
-> them for beta.10 on 2026-10-02, and nothing in this file publishes anything.
-> The coordinator's working handoff, with the current decisions and rules, is
-> [`ops/beta10-oversight/HANDOFF-2026-10-01.md`](ops/beta10-oversight/HANDOFF-2026-10-01.md).
->
-> Evidence that exists: an eight-hour watched run on a three-channel lab
-> station (2026-10-01 16:30 to 2026-10-02 00:30): one service process for the
-> whole run, no slate or filler after startup, 40 of 41 verify checks OK (one
-> raw FAIL adjudicated as a sampling blip), loudness 16 of 16 windows, 50
-> program changes scored with no holes. See
-> [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md)
-> and `ops/beta10-oversight/verdicts/`.
->
-> Known limits: live-caption audio can be dropped under heavy load (13
-> catch-up discard events in the run, about 160 seconds of audio on a quiet
-> machine; the fix is the next work item); two aborted program-change first
-> attempts that recovered in about 3 seconds; one single-frame video drop.
->
-> Release assets: a signed `setup.exe` (242,367,640 bytes), five runtime packs,
-> `SHA256SUMS.txt` and `setup.exe.sidecar.json`. The roughly 21 GB AI-model
-> `station\` bundle is not a release asset; the installer finds or downloads
-> the large AI components during installation.
->
-> Gate A (automated station acceptance) for beta.10: the clean-install lane
-> passed, 10 of 10 criteria, run locally in Windows Sandbox on 2026-10-02
-> against exactly this build. The cross-version (upgrade) lane and the
-> download-only lane were not run; the owner waived them for this publication,
-> so upgrade over beta.7 is not proven for beta.10. The human/station
-> acceptance pass has not been done; beta.10 is still a beta candidate and no
-> human field tester has signed off.
-> Required next: the caption-priority fix and a whole-repo audit.
+> **Current published release: `v1.0.0-beta.12`**, a GitHub pre-release, not a
+> production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+> The signed source is `a0c98cb7367dc106042ec89d35a91905470d350c`, producer
+> run [38097350705](https://github.com/scottconverse/civiccast-native/actions/runs/38097350705).
+> The normal Beta 11 upgrade setup exited 0 and returned a running, healthy
+> service at schema 0089. The post-upgrade five-snapshot recorder failed on its
+> first JSON save; no five-snapshot PASS is claimed. Repair and fresh-install
+> checks have not been run. See the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
+
+## Historical Beta 11 package and evidence
+
+The historical Beta 11 installer and bundled manual were built from
+`400cff08f72a4555f9de57e790a298ecefdb0cce` in signed build `37857705750`.
+The original published tag remains at
+`79e6431dfea248b11b079cff69408192ef22816a`; the release page discloses the
+replacement package source. There are 12 public release assets. Use the
+complete USB/LAN kit, including the runtime packs and signed `station\`
+model bundle, for an offline installation.
+
+That exact package passed a fresh, offline, CPU-only Windows Sandbox install,
+installed Help verification, and a five-minute single-channel Whistle output
+check. Public installer/manual downloads and release asset digests were
+verified. Upgrade from Beta 10, repair, GPU operation, and sustained
+three-channel capacity remain unverified for that package. See
+[Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md).
+
+The accepted 24-hour and 36-hour three-channel caption milestones came from
+the development overlay. They are useful runtime evidence for that overlay,
+not installation or capacity proof for the corrected release package. See
+[soak results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md).
+
+A separate 48-hour observation of one host running Beta 11 recorded 635
+discarded caption-input seconds over 518,400 nominal channel-seconds across
+three channels: 99.877507716% (99.88% rounded) logged input coverage. This is
+runtime evidence, not transcript-word accuracy or installer/Beta 12
+qualification. See the [48-hour host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md)
+and its [milestone snapshot](docs/ops/evidence/beta11-host-48-hour-milestone-2026-10-10.json).
+
+## Beta 12 release and upgrade observation
+
+The owner authorized unattended-operation hardening and completion of existing
+operator workflows: upgrade preservation and recovery; caption health and
+notifications; bounded logs; summary approval/export; local administrator
+recovery; Control Room session recovery; remote contribution media controls;
+alert routing and emergency presentation; paywall secret preservation;
+target-machine operation; and documentation/release identity consistency.
+The current published release is source
+`a0c98cb7367dc106042ec89d35a91905470d350c` from producer run `38097350705`.
+Its asset job and 19-member local kit completed with exact-run checksums,
+signature and station-index evidence. The release's separate randomized-suite
+run `38097353468` failed; that recorded CI failure is distinct from the actual
+installer outcome. The normal Beta 11-to-Beta 12 setup ran from 20:07:13 to
+20:25:15 MDT, exited 0, and left the service running and healthy at schema
+0089. The preservation assertion reached and saved its marker. Initial checks
+observed HLS audio and video on all three channels and primary Whistle within
+capacity. At 20:31:16 MDT, the post-upgrade recorder wrapper failed during its
+first-minute JSON save with `Cannot convert value to type System.String.` No
+five-snapshot PASS was recorded. The owner deferred that wrapper issue as
+bookkeeping; interrupted repair, fresh install and sustained-operation checks
+have not been run. Actual synthetic VDO peers previously exercised camera mute,
+audio gain mute and disconnect; this does not establish guest routing into the
+native broadcast compositor. The [verification record](docs/releases/v1.0.0-beta.12-verification.md)
+links the published release, manual assets and exact evidence limits.
 
 ## Where the history went
 

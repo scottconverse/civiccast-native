@@ -232,3 +232,64 @@ def test_go_on_air_still_fails_closed_when_ffprobe_itself_is_missing(
     assert check.status == PREFLIGHT_STATUS_FAIL
     assert check.message is not None
     assert "ffprobe is not installed" in check.message
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {},
+        {"endpoint_url": "rtmp://offline.example/live"},
+        {"channel_id": "public"},
+        {"source_type": "srt"},
+        {"credentials_handle": "station-source"},
+        {"live_source_id": "another-source"},
+    ],
+)
+def test_only_unchanged_sample_source_uses_local_rehearsal_probe(
+    durable_app_env: Path, monkeypatch: pytest.MonkeyPatch, changes: dict[str, str]
+) -> None:
+    from civiccast.app import create_app
+
+    engine = _engine_over_db()
+    _seed_session_source_and_target(engine)
+    with Session(bind=engine) as sess:
+        source = sess.get(LiveSource, "room-a-rtmp")
+        assert source is not None
+        source.live_source_id = "civiccast-sample-test-source"
+        source.channel_id = "government"
+        source.endpoint_url = "rtmp://127.0.0.1/live/civiccast-sample-rehearsal"
+        for field, value in changes.items():
+            setattr(source, field, value)
+        session = sess.get(LiveSession, "council-2026-05-15")
+        assert session is not None
+        session.channel_id = source.channel_id
+        selected_id = source.live_source_id
+        sess.commit()
+
+    probed: list[str] = []
+
+    def network_probe(source: Any) -> tuple[bool, str]:
+        probed.append("network")
+        return False, "Selected source is not answering."
+
+    def sample_probe(source: Any) -> tuple[bool, str]:
+        probed.append("sample")
+        return True, "Validated recorded sample asset passed the media probe."
+
+    monkeypatch.setattr("civiccast.app.build_source_probe", lambda: network_probe)
+    monkeypatch.setattr(
+        "civiccast.installer.service.build_sample_rehearsal_source_probe", lambda: sample_probe
+    )
+    app = create_app()
+    evaluator = app.dependency_overrides[get_preflight_evaluator]()
+    inputs = _inputs()
+    inputs.live_source_id = selected_id
+    result = evaluator.evaluate(inputs)
+    check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_LIVE_SOURCE]
+    if changes:
+        assert check.status == PREFLIGHT_STATUS_FAIL
+        assert result.ready is False
+        assert probed == ["network"]
+    else:
+        assert check.status == PREFLIGHT_STATUS_PASS
+        assert probed == ["sample"]

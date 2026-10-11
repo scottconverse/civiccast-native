@@ -16,7 +16,7 @@ import contextlib
 import itertools
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -635,6 +635,28 @@ def test_open_session_conflict_names_the_lock_holder() -> None:
     assert "force-close" in r.text
 
 
+def test_surface_session_lookup_returns_the_current_lock_and_requires_a_control_room_role() -> None:
+    app, store, _fake, _ = _build(scopes=("meeting_operator",), operator_id="op_dana")
+    _seed(store)
+    client = TestClient(app)
+
+    empty = client.get("/api/staff/control-room/surfaces/srf/session")
+    assert empty.status_code == 200
+    assert empty.json() is None
+
+    session_id = _open_session(client)
+    current = client.get("/api/staff/control-room/surfaces/srf/session")
+    assert current.status_code == 200
+    assert current.json()["session_id"] == session_id
+    assert current.json()["operator_id"] == "op_dana"
+
+    outsider_app, _store, _other_fake, _ = _build(
+        scopes=("records_clerk",), store=store, operator_id="op_clerk"
+    )
+    denied = TestClient(outsider_app).get("/api/staff/control-room/surfaces/srf/session")
+    assert denied.status_code == 403
+
+
 def test_close_session_forbidden_for_another_operator_without_admin_role() -> None:
     app, store, _fake, _ = _build(scopes=("meeting_operator",), operator_id="op_dana")
     _seed(store)
@@ -646,6 +668,25 @@ def test_close_session_forbidden_for_another_operator_without_admin_role() -> No
     )
     r = TestClient(app2).delete(f"/api/staff/control-room/sessions/{sid}")
     assert r.status_code == 403
+
+
+def test_another_meeting_operator_cannot_fire_or_panic_in_a_locked_session() -> None:
+    app, store, fake, _ = _build(scopes=("meeting_operator",), operator_id="op_dana")
+    _seed(store, confirm=True)
+    session_id = _open_on_air_session(TestClient(app))
+
+    other_app, _store, _other_fake, _ = _build(
+        scopes=("meeting_operator",), store=store, operator_id="op_other"
+    )
+    response = TestClient(other_app).post(
+        f"/api/staff/control-room/sessions/{session_id}/cues/cue_1/fire"
+    )
+    panic = TestClient(other_app).post(f"/api/staff/control-room/sessions/{session_id}/rollback")
+
+    assert response.status_code == 403
+    assert panic.status_code == 403
+    assert store.list_cue_events(session_id) == []
+    assert fake.applied == []
 
 
 def test_close_session_lock_override_by_setup_admin_succeeds() -> None:
@@ -669,6 +710,37 @@ def test_rollback_fires_the_safe_state_cue() -> None:
     assert r.status_code == 200, r.text
     assert r.json()["result"] == "fired"
     assert r.json()["cue_id"] == "cue_1"
+    assert len(fake.applied) == 1
+
+
+def test_expired_normal_fire_is_rejected_without_losing_panic_recovery() -> None:
+    app, store, fake, _ = _build(scopes=("meeting_operator",))
+    _seed(store, confirm=True)
+    now = _T0
+    counter = itertools.count(1)
+    service = ControlRoomService(
+        store,
+        fake,
+        clock=lambda: now,
+        id_factory=lambda: f"exp{next(counter)}",
+    )
+    app.dependency_overrides[get_control_room_service] = lambda: service
+    client = TestClient(app)
+    session_id = _open_on_air_session(client)
+
+    now = _T0 + timedelta(minutes=31)
+    refused = client.post(f"/api/staff/control-room/sessions/{session_id}/cues/cue_1/fire")
+    assert refused.status_code == 409
+    assert store.get_session(session_id).state == "open"  # type: ignore[union-attr]
+
+    current = client.get("/api/staff/control-room/surfaces/srf/session")
+    assert current.status_code == 200
+    assert current.json()["session_id"] == session_id
+
+    panic = client.post(f"/api/staff/control-room/sessions/{session_id}/rollback")
+    assert panic.status_code == 200, panic.text
+    assert panic.json()["result"] == "fired"
+    assert [event.cue_id for event in store.list_cue_events(session_id)] == ["cue_1"]
     assert len(fake.applied) == 1
 
 

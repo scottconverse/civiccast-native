@@ -207,6 +207,7 @@ def test_builder_emits_exact_required_pack_set_and_both_signed_indexes(
         expected_channel="beta",
         expected_product_version="1.0.0-rc15",
         expected_signing_key_id="development-test-key",
+        required_components=REQUIRED_COMPONENTS,
     )
     assert [pack.component for pack in channel_index.packs] == list(REQUIRED_COMPONENTS)
     assert all(pack.required and len(pack.urls) == 1 for pack in channel_index.packs)

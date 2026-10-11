@@ -163,7 +163,12 @@ class PaywallConfigPublic(BaseModel):
 
 
 class PaywallConfigInput(BaseModel):
-    """Create/replace config request body."""
+    """Create/replace config request body.
+
+    On PUT, an absent or null ``signing_secret`` preserves the current
+    value. The explicit empty-string sentinel clears it; a non-empty value
+    rotates it and must meet the 32-character floor.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -172,7 +177,10 @@ class PaywallConfigInput(BaseModel):
     enabled: bool = False
     provider: PaywallProvider = "stripe"
     tiers: list[PaywallTier] = Field(default_factory=list)
-    signing_secret: Annotated[str | None, Field(default=None, min_length=32, max_length=200)] = None
+    # Allow the empty-string clear sentinel here; the router normalizes it to
+    # None before constructing PaywallConfig and conditionally enforces the
+    # minimum for non-empty replacement values.
+    signing_secret: Annotated[str | None, Field(default=None, max_length=200)] = None
 
 
 class PaywallConfigUpdate(BaseModel):

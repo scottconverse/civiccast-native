@@ -555,7 +555,7 @@ def test_fire_gap8_router_take_transport_failure_records_device_command_failed(
     assert cmds[0].issued_at is not None
 
 
-def test_expired_on_air_session_closes_and_refuses_before_device_call(
+def test_expired_on_air_session_stays_open_and_refuses_before_device_call(
     store: ControlRoomStore,
 ) -> None:
     _seed(store, confirm=True)
@@ -578,7 +578,7 @@ def test_expired_on_air_session_closes_and_refuses_before_device_call(
     with pytest.raises(OnAirSessionExpiredError):
         svc.fire_cue(session_id=session.session_id, cue_id="cue_1", operator_id="op")
     assert tsr.applied == []
-    assert store.get_session(session.session_id).state == "closed"  # type: ignore[union-attr]
+    assert store.get_session(session.session_id).state == "open"  # type: ignore[union-attr]
 
 
 def test_rollback_session_bypasses_on_air_expiry_and_still_fires_safe_state_cue(
@@ -587,7 +587,7 @@ def test_rollback_session_bypasses_on_air_expiry_and_still_fires_safe_state_cue(
     """rollback_session (the panic/safe-state cue) must still reach the
     device on an expired on-air session -- that is precisely when it is
     needed most. A normal fire_cue on the same expired session must still
-    be refused (see test_expired_on_air_session_closes_and_refuses_before_device_call)."""
+    be refused (see test_expired_on_air_session_stays_open_and_refuses_before_device_call)."""
     _seed(store, confirm=True)
     tsr = _FakeTsr(ok=True)
     now = _T0

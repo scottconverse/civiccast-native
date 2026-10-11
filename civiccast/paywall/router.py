@@ -37,10 +37,15 @@ import logging
 import os
 import time
 from collections import deque
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
-from typing import Literal, Protocol
+from typing import Any, Literal, Protocol
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.auth.roles import require_any_role
@@ -257,7 +262,49 @@ def get_magic_link_email_sender() -> MagicLinkEmailSender:
 
 # --- routers -----------------------------------------------------------------
 
-staff_router = APIRouter(prefix="/api/staff", tags=["staff", "paywall"])
+
+class _PaywallStaffRoute(APIRoute):
+    """Keep FastAPI validation errors from echoing signing-secret input."""
+
+    def get_route_handler(self) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        original_handler = super().get_route_handler()
+
+        async def handler(request: Request) -> Response:
+            try:
+                return await original_handler(request)
+            except RequestValidationError as exc:
+                errors = []
+                for error in exc.errors():
+                    safe_error = dict(error)
+                    if "signing_secret" in safe_error.get("loc", ()):
+                        safe_error.pop("input", None)
+                    elif "input" in safe_error:
+                        safe_error["input"] = _redact_signing_secret_values(safe_error["input"])
+                    errors.append(safe_error)
+                return JSONResponse(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    content={"detail": jsonable_encoder(errors)},
+                )
+
+        return handler
+
+
+def _redact_signing_secret_values(value: object) -> object:
+    """Preserve validation context while redacting nested secret fields."""
+
+    if isinstance(value, dict):
+        return {
+            key: "[redacted]" if key == "signing_secret" else _redact_signing_secret_values(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_signing_secret_values(item) for item in value]
+    return value
+
+
+staff_router = APIRouter(
+    prefix="/api/staff", tags=["staff", "paywall"], route_class=_PaywallStaffRoute
+)
 public_router = APIRouter(prefix="/api/public", tags=["public", "paywall"])
 webhook_router = APIRouter(prefix="/api/webhooks", tags=["webhook", "paywall"])
 
@@ -312,12 +359,35 @@ def put_config(
 ) -> PaywallConfigPublic:
     """Create or replace the paywall config. A PUT against a different
     ``config_id`` for the SAME ``station_id`` is a 409 — the store's
-    unique index enforces "one config per station". Response is the
-    public projection (Q-2)."""
+    unique index enforces "one config per station". An absent or null
+    signing secret preserves an existing value; ``""`` explicitly clears
+    it, while a valid non-empty value rotates it. Response is the public
+    projection (Q-2)."""
     resolved = _require_store(store)
-    config = PaywallConfig(**payload.model_dump())
+    values = payload.model_dump()
+    secret_value = payload.signing_secret
+    preserve_existing_secret = secret_value is None
+    if secret_value is None:
+        # The UI keeps secrets write-only. Its ordinary full-form PUT omits
+        # the value (or sends null), which must not erase the stored secret.
+        # Pass this intent to the store so it skips the secret column inside
+        # the same transaction as the other config fields.
+        values["signing_secret"] = None
+    elif secret_value == "":
+        # Match PATCH's explicit clear sentinel. Blank is never an implicit
+        # clear; only an explicit empty value asks to remove the secret.
+        values["signing_secret"] = None
+    elif len(secret_value) < 32:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=("signing_secret must be at least 32 characters; use a random 32+ byte string."),
+        )
+    config = PaywallConfig(**values)
     try:
-        stored = resolved.upsert_config(config)
+        stored = resolved.upsert_config(
+            config,
+            preserve_signing_secret_if_missing=preserve_existing_secret,
+        )
     except PaywallStationConfigConflictError as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     return PaywallConfigPublic.from_config(stored)

@@ -264,7 +264,10 @@ def test_v14_role_restricted_workflows_reject_unrelated_role(
         ("/api/staff/captions/review-items/review-1/approve", {"reviewer_note": "ok"}),
         ("/api/staff/captions/review-items/review-1/edit", {"text": "corrected"}),
         ("/api/staff/captions/review-items/review-1/reject", {"reviewer_note": "bad cue"}),
-        ("/api/staff/summaries/summary-1/approve", {"approval_note": "checked"}),
+        (
+            "/api/staff/summaries/summary-1/approve",
+            {"approval_note": "checked", "expected_audit_fingerprint": "sha256:" + "0" * 64},
+        ),
         ("/api/staff/records", {"summary_id": "summary-1", "summary_status": "approved"}),
     ],
 )

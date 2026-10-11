@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +14,8 @@ from civiccast.alerting.models import AlertEvent
 from civiccast.alerting.runtime_status import (
     compute_channel_runtime_status,
     compute_runtime_safe_to_air,
+    derive_live_caption_processing_status,
+    live_caption_readiness,
 )
 from civiccast.egress.models import (
     EgressConfig,
@@ -21,6 +25,309 @@ from civiccast.egress.models import (
 )
 
 _NOW = datetime(2026, 6, 15, 12, 0, 0, tzinfo=UTC)
+
+
+def test_missing_or_stale_worker_is_unknown_during_startup_then_stalled() -> None:
+    startup = derive_live_caption_processing_status(
+        None,
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+        on_air_since=_NOW - timedelta(seconds=60),
+    )
+    assert startup.processing_state == "unknown"
+
+    missing_worker = derive_live_caption_processing_status(
+        None,
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+        on_air_since=_NOW - timedelta(seconds=181),
+    )
+    assert missing_worker.processing_state == "stalled"
+
+    stale_heartbeat = derive_live_caption_processing_status(
+        {"worker_heartbeat_at": (_NOW - timedelta(seconds=91)).isoformat()},
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+        on_air_since=_NOW - timedelta(seconds=300),
+    )
+    assert stale_heartbeat.processing_state == "stalled"
+
+    recently_started = derive_live_caption_processing_status(
+        {"worker_heartbeat_at": (_NOW - timedelta(seconds=91)).isoformat()},
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+        on_air_since=_NOW - timedelta(seconds=30),
+    )
+    assert recently_started.processing_state == "unknown"
+
+
+@pytest.mark.parametrize(
+    "last_processed_at",
+    [None, (_NOW - timedelta(seconds=600)).isoformat()],
+    ids=["no-prior-completion", "prior-progress"],
+)
+def test_continuous_new_audio_does_not_mask_hung_inference(
+    last_processed_at: str | None,
+) -> None:
+    """A fresh input timestamp cannot make a batch stalled for 10 minutes look healthy."""
+    status = derive_live_caption_processing_status(
+        {
+            "worker_heartbeat_at": _NOW.isoformat(),
+            "last_input_at": (_NOW - timedelta(seconds=5)).isoformat(),
+            "last_processed_at": last_processed_at,
+            "pending_since_at": (_NOW - timedelta(seconds=600)).isoformat(),
+            "inference_started_at": (_NOW - timedelta(seconds=590)).isoformat(),
+            "inference_inflight": True,
+            "backlog_segments": 10,
+        },
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+    )
+
+    assert status.processing_state == "stalled"
+
+
+@pytest.mark.parametrize("prior_completion", [None, "2026-10-10T06:10:00+00:00"])
+def test_failed_batch_retries_do_not_reset_pending_progress_deadline(
+    tmp_path: Path, prior_completion: str | None
+) -> None:
+    """Replay the repaired guest: retries ran, but no input completed for minutes."""
+    now = datetime.fromisoformat("2026-10-10T06:25:23.6411683+00:00")
+    payload = {
+        "state": "within-capacity",
+        "worker_heartbeat_at": "2026-10-10T00:25:21.100786-06:00",
+        "last_input_at": "2026-10-10T00:25:21.100786-06:00",
+        "last_processed_at": prior_completion,
+        "pending_since_at": "2026-10-10T00:21:47.378625-06:00",
+        "inference_started_at": "2026-10-10T00:24:52.898708-06:00",
+        "inference_inflight": True,
+        "backlog_segments": 9,
+        "max_backlog_segments": 2,
+        "audio_signal": "unknown",
+        "provider_state": "whisper-fallback",
+    }
+    path = tmp_path / "public" / "captions" / "runtime-status.json"
+    path.parent.mkdir(parents=True)
+    store = _FakeStore([_config("public")], {"public": _state("public", "ON_AIR")}, {})
+    for retry_started in (payload["inference_started_at"], now.isoformat()):
+        payload["inference_started_at"] = retry_started
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        status = derive_live_caption_processing_status(
+            payload, egress_state="ON_AIR", captions_expected=True, now=now
+        )
+        assert status.processing_state == "stalled"
+        assert (
+            live_caption_readiness(store, captions_expected=True, work_dir=tmp_path, now=now)
+            == "degraded"
+        )
+
+
+@pytest.mark.parametrize("recent_anchor", ["last_processed_at", "pending_since_at"])
+def test_recent_completion_or_new_pending_work_keeps_processing_allowance(
+    recent_anchor: str,
+) -> None:
+    payload = {
+        "worker_heartbeat_at": _NOW.isoformat(),
+        "last_input_at": _NOW.isoformat(),
+        "last_processed_at": (_NOW - timedelta(seconds=600)).isoformat(),
+        "pending_since_at": (_NOW - timedelta(seconds=600)).isoformat(),
+        "inference_started_at": _NOW.isoformat(),
+        "inference_inflight": True,
+        "backlog_segments": 1,
+    }
+    payload[recent_anchor] = (_NOW - timedelta(seconds=20)).isoformat()
+    assert (
+        derive_live_caption_processing_status(
+            payload, egress_state="ON_AIR", captions_expected=True, now=_NOW
+        ).processing_state
+        == "processing"
+    )
+
+
+def test_recently_completed_audio_is_caught_up_and_readiness_healthy(tmp_path: Path) -> None:
+    """A real guest probe briefly reported degraded after Whistle caught up."""
+    now = datetime.fromisoformat("2026-10-10T01:40:52.034328+00:00")
+    snapshot = {
+        "state": "within-capacity",
+        "worker_heartbeat_at": "2026-10-10T01:40:52.034328+00:00",
+        "updated_at": "2026-10-10T01:40:52.034328+00:00",
+        "last_input_at": "2026-10-10T01:40:47.977404+00:00",
+        "last_processed_at": "2026-10-10T01:40:50.275040+00:00",
+        "audio_signal": "audio-present",
+        "provider_state": "whistle-primary",
+        "inference_inflight": False,
+        "inference_started_at": None,
+        "backlog_segments": 0,
+        "pending_since_at": None,
+        "max_backlog_segments": 2,
+    }
+
+    status = derive_live_caption_processing_status(
+        snapshot,
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=now,
+        on_air_since=now - timedelta(seconds=30),
+    )
+    assert status.processing_state == "caught-up"
+
+    status_path = tmp_path / "public" / "captions" / "runtime-status.json"
+    status_path.parent.mkdir(parents=True)
+    status_path.write_text(json.dumps(snapshot), encoding="utf-8")
+    store = _FakeStore(
+        [_config("public")],
+        {
+            "public": _state("public", "ON_AIR").model_copy(
+                update={"updated_at": now - timedelta(seconds=30)}
+            )
+        },
+        {},
+    )
+    assert (
+        live_caption_readiness(
+            store,
+            captions_expected=True,
+            work_dir=tmp_path,
+            now=now,
+        )
+        == "healthy"
+    )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"last_input_at": None}, "waiting"),
+        ({"last_processed_at": None}, "waiting"),
+        (
+            {
+                "last_input_at": (_NOW - timedelta(seconds=130)).isoformat(),
+                "last_processed_at": (_NOW - timedelta(seconds=121)).isoformat(),
+            },
+            "waiting",
+        ),
+        (
+            {
+                "last_input_at": (_NOW - timedelta(seconds=1)).isoformat(),
+                "last_processed_at": (_NOW - timedelta(seconds=2)).isoformat(),
+            },
+            "waiting",
+        ),
+        ({"inference_inflight": True}, "processing"),
+        ({"backlog_segments": 1}, "processing"),
+        ({"state": "overloaded"}, "failed"),
+    ],
+    ids=[
+        "no-input",
+        "never-completed",
+        "stale-completion",
+        "newer-unprocessed-input",
+        "inference-pending",
+        "backlog-pending",
+        "capacity-failure",
+    ],
+)
+def test_caught_up_requires_recent_completed_audio_without_failure_or_pending_work(
+    overrides: dict[str, object], expected: str
+) -> None:
+    payload: dict[str, object] = {
+        "state": "within-capacity",
+        "worker_heartbeat_at": _NOW.isoformat(),
+        "last_input_at": (_NOW - timedelta(seconds=5)).isoformat(),
+        "last_processed_at": (_NOW - timedelta(seconds=1)).isoformat(),
+        "audio_signal": "audio-present",
+        "inference_inflight": False,
+        "backlog_segments": 0,
+    }
+    payload.update(overrides)
+
+    status = derive_live_caption_processing_status(
+        payload,
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+    )
+
+    assert status.processing_state == expected
+
+
+def test_digital_silence_is_not_caption_failure_and_disabled_or_stopped_is_inactive() -> None:
+    silent = derive_live_caption_processing_status(
+        {
+            "state": "within-capacity",
+            "worker_heartbeat_at": _NOW.isoformat(),
+            "last_input_at": (_NOW - timedelta(seconds=5)).isoformat(),
+            "last_processed_at": (_NOW - timedelta(seconds=1)).isoformat(),
+            "audio_signal": "digital-silence",
+            "inference_inflight": False,
+            "backlog_segments": 0,
+        },
+        egress_state="ON_AIR",
+        captions_expected=True,
+        now=_NOW,
+    )
+    assert silent.processing_state == "silent"
+    assert silent.audio_signal == "digital-silence"
+    status = compute_channel_runtime_status(
+        _config(),
+        _state("public", "ON_AIR"),
+        _sample("public", "ON_AIR", caption_status="not-verified"),
+        now=_NOW,
+        live_caption_status=silent,
+    )
+    assert status.color == "green"
+
+    stopped = derive_live_caption_processing_status(
+        {"state": "storage-refused"},
+        egress_state="STOPPED",
+        captions_expected=True,
+        now=_NOW,
+    )
+    disabled = derive_live_caption_processing_status(
+        {"state": "storage-refused"},
+        egress_state="ON_AIR",
+        captions_expected=False,
+        now=_NOW,
+    )
+    assert stopped.processing_state == "inactive"
+    assert disabled.processing_state == "disabled"
+
+
+def test_readiness_ignores_stopped_channels_and_reads_each_state_once(
+    tmp_path: Path,
+) -> None:
+    class CountingStore(_FakeStore):
+        def __init__(self):
+            super().__init__(
+                [_config("public", auto_start=False)],
+                {"public": _state("public", "STOPPED")},
+                {},
+            )
+            self.state_reads = 0
+
+        def read_state(self, channel_id):
+            self.state_reads += 1
+            return super().read_state(channel_id)
+
+    store = CountingStore()
+    status_path = tmp_path / "public" / "captions" / "runtime-status.json"
+    status_path.parent.mkdir(parents=True)
+    status_path.write_text(json.dumps({"state": "storage-refused"}), encoding="utf-8")
+    assert (
+        live_caption_readiness(
+            store,
+            captions_expected=True,
+            work_dir=tmp_path,
+            now=_NOW,
+        )
+        == "idle"
+    )
+    assert store.state_reads == 1
 
 
 def _config(

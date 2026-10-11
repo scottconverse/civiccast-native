@@ -35,7 +35,9 @@ from typing import Any, ClassVar
 # exact pattern so cleanup can NEVER touch an operator-configured, persistent
 # image (e.g. a station-bug/logo ``image_path`` from config) -- only a file this
 # module itself renders per-start()/per-reload matches.
-_STALE_BANNER_PNG_RE = re.compile(r"^graphics-overlay-lower-third\.[0-9a-f]{32}\.png$")
+_STALE_BANNER_PNG_RE = re.compile(
+    r"^(?:graphics-overlay-lower-third|emergency-overlay)\.[0-9a-f]{32}\.png$"
+)
 
 try:  # package context (see the sibling-import note further down for why both forms)
     from civiccast.egress.gst.decode_policy import (
@@ -1278,6 +1280,9 @@ class GstPlayoutEngine:
         self._overlay_layer_image_paths: dict[str, str] = {}
         self._pending_overlay_swaps: dict[str, dict[str, Any]] = {}
         self._overlay_layer_seq = 0
+        self._overlay_gpu = True
+        self._emergency_payload: dict[str, Any] | None = None
+        self._emergency_scroll_source: int | None = None
         # S11 gap 9: language tag events for secondary audio must be pushed AFTER the
         # pipeline reaches PLAYING (push_event at NULL state doesn't flow into mpegtsmux).
         # Stored here during _build(); flushed by _flush_lang_tags() post-_await_playing().
@@ -1695,12 +1700,10 @@ class GstPlayoutEngine:
 
         ``video_prev`` is the selector (or whatever upstream element the caller has
         built so far). The base program video and every overlay layer are uploaded to
-        D3D11 GPU memory (``d3d11upload``) before their compositor request pad — this
-        product's bundled runtime ships no plain ``compositor``/``videomixer``, only
-        the D3D11 family (confirmed by a real ``gst-inspect`` enumeration; see
-        ``GraphicsOverlayLeg``'s docstring) — and the composited result is downloaded
-        back to system memory (``d3d11download``) so the (system-memory) encoder chain
-        is unaffected. Returns the tail element (``videoconvert`` after the download)
+        D3D11 GPU memory when that compositor is selected, then downloaded back
+        before the encoder. The software ``compositor`` uses system-memory
+        converters instead. Both paths retain the channel's fixed output canvas.
+        Returns the tail element (``videoconvert`` after the download)
         the caller links into its encoder chain.
 
         The compositor and each layer's pad/elements are retained on
@@ -1711,8 +1714,14 @@ class GstPlayoutEngine:
         leg (BLOCKER fix, 2026-08-30 audit)."""
         compositor = self._make(leg.compositor)
         self._overlay_compositor = compositor
+        self._overlay_gpu = leg.compositor.factory.startswith("d3d11")
 
-        base_upload = self._make(ElementSpec("d3d11upload", name="graphics_overlay_base_upload"))
+        base_upload = self._make(
+            ElementSpec(
+                "d3d11upload" if self._overlay_gpu else "videoconvert",
+                name="graphics_overlay_base_upload",
+            )
+        )
         self._link(video_prev, base_upload)
         base_pad = compositor.request_pad_simple("sink_%u")
         if (
@@ -1727,10 +1736,23 @@ class GstPlayoutEngine:
             self._overlay_layer_elements[layer.name] = elements
             self._overlay_layer_image_paths[layer.name] = layer.image_path
 
-        download = self._make(ElementSpec("d3d11download", name="graphics_overlay_download"))
+        download = self._make(
+            ElementSpec(
+                "d3d11download" if self._overlay_gpu else "videoconvert",
+                name="graphics_overlay_download",
+            )
+        )
         self._link(compositor, download)
         post_convert = self._make(ElementSpec("videoconvert", name="graphics_overlay_post_convert"))
         self._link(download, post_convert)
+        # A scrolling strip can be wider than the picture. Keep the compositor's
+        # canvas at the channel profile instead of expanding and shrinking video.
+        for spec in self.graph.encoder:
+            caps = spec.props.get("caps")
+            if spec.factory == "capsfilter" and isinstance(caps, str) and "video/x-raw" in caps:
+                canvas = self._make(ElementSpec("capsfilter", props={"caps": caps}))
+                self._link(post_convert, canvas)
+                return canvas
         return post_convert
 
     def _instantiate_overlay_layer(
@@ -1761,7 +1783,7 @@ class GstPlayoutEngine:
                 ElementSpec("decodebin"),
                 ElementSpec("videoconvert"),
                 ElementSpec(
-                    "d3d11upload",
+                    "d3d11upload" if self._overlay_gpu else "videoconvert",
                     name=f"graphics_overlay_upload_{layer.name}_{self._overlay_layer_seq}",
                 ),
             )
@@ -1783,6 +1805,8 @@ class GstPlayoutEngine:
         if layer.height:
             layer_pad.set_property("height", layer.height)
         layer_pad.set_property("alpha", layer.alpha)
+        if layer.name == "emergency":
+            layer_pad.set_property("zorder", 10000)
         # A still-image filesrc/decodebin chain EOSes its compositor pad after its
         # single buffer (the bundled runtime ships no `imagefreeze`); repeat-after-eos
         # holds that last buffer on screen instead of dropping the pad — proven live
@@ -4833,6 +4857,11 @@ class GstPlayoutEngine:
                 print(f"CTRL reload armed ({command[1]})", flush=True)
             except Exception as exc:  # a bad reload must not kill the channel
                 print(f"CTRL reload failed: {exc!r}", flush=True)
+        elif command[0] == "emergency":
+            try:
+                self.set_emergency_overlay(json.loads(base64.b64decode(command[1]).decode("utf-8")))
+            except Exception as exc:
+                print(f"CTRL emergency failed: {exc!r}", flush=True)
         elif command[0] == "caption":
             # ("caption", pts_ms, dur_ms, b64text) — push one cue into the live appsrc.
             try:
@@ -7986,6 +8015,47 @@ class GstPlayoutEngine:
                 node = node.get_parent() if hasattr(node, "get_parent") else None
         return None
 
+    def set_emergency_overlay(self, payload: dict[str, Any] | None) -> None:
+        """Change only the reserved emergency layer; other station graphics remain."""
+        if self._overlay_compositor is None:
+            raise RuntimeError("Emergency presentation was not enabled when this channel started.")
+        if self._emergency_scroll_source is not None:
+            GLib.source_remove(self._emergency_scroll_source)
+            self._emergency_scroll_source = None
+        self._emergency_payload = payload
+        if payload is None:
+            self._remove_overlay_layer("emergency")
+            return
+        if payload["mode"] not in {"crawl", "overlay", "forced_slate"}:
+            raise ValueError("Invalid emergency display mode")
+        layer = GraphicsOverlayLayer(
+            name="emergency",
+            image_path=payload["image_path"],
+            xpos=int(payload["canvas_width"]) if payload["mode"] == "crawl" else 0,
+            ypos=int(payload["ypos"]),
+            width=int(payload["width"]),
+            height=int(payload["height"]),
+        )
+        self._swap_overlay_layer(layer)
+
+    def _start_emergency_crawl(self) -> None:
+        payload = self._emergency_payload
+        if payload is None or payload["mode"] != "crawl":
+            return
+        started = time.monotonic()
+        width = int(payload["width"])
+        canvas_width = int(payload["canvas_width"])
+
+        def step() -> bool:
+            pad = self._overlay_layer_pads.get("emergency")
+            if pad is None or self._emergency_payload is not payload:
+                return False
+            offset = int((time.monotonic() - started) * 90) % (canvas_width + width)
+            pad.set_property("xpos", canvas_width - offset)
+            return True
+
+        self._emergency_scroll_source = GLib.timeout_add(40, step)
+
     def reload_graphics_overlay(self, new_leg: GraphicsOverlayLeg | None) -> None:
         """Re-apply the S15 graphics-overlay leg on a content-reload.
 
@@ -8030,6 +8100,8 @@ class GstPlayoutEngine:
             layer.name: layer for layer in (new_leg.layers if new_leg is not None else ())
         }
         for name in list(self._overlay_layer_pads):
+            if name == "emergency":
+                continue
             if name not in new_layers_by_name:
                 self._remove_overlay_layer(name)
         # A layer name can be PENDING (a not-yet-committed ADD, i.e. one never in
@@ -8037,6 +8109,8 @@ class GstPlayoutEngine:
         # loop above ever seeing it -- close that gap here so a layer removed before
         # its own add commits doesn't orphan a settling swap forever.
         for name in list(self._pending_overlay_swaps):
+            if name == "emergency":
+                continue
             if name not in new_layers_by_name and name not in self._overlay_layer_pads:
                 self._abort_pending_overlay_swap(name, reason="removed")
         for layer in new_layers_by_name.values():
@@ -8061,6 +8135,12 @@ class GstPlayoutEngine:
             )
             self._abort_pending_overlay_swap(layer.name, reason="superseded")
         new_pad, new_elements = self._instantiate_overlay_layer(layer, compositor)
+        if layer.name == "emergency":
+            # A decoded still starts at PTS zero. Align a newly admitted alert
+            # with this running channel, otherwise the compositor drops it as late.
+            clock = self.pipeline.get_clock()
+            if clock is not None:
+                new_pad.set_offset(max(0, clock.get_time() - self.pipeline.get_base_time()))
         entry: dict[str, Any] = {
             "layer": layer,
             "new_pad": new_pad,
@@ -8111,6 +8191,8 @@ class GstPlayoutEngine:
         self._overlay_layer_elements[layer_name] = entry["new_elements"]
         self._overlay_layer_image_paths[layer_name] = entry["layer"].image_path
         del self._pending_overlay_swaps[layer_name]
+        if layer_name == "emergency":
+            self._start_emergency_crawl()
         if old_pad is not None:
             # R3: the swap point -- the NEW layer's first buffer has just landed,
             # so the OLD chain (about to be disposed below) is provably off-air.
@@ -8246,6 +8328,11 @@ class GstPlayoutEngine:
         own bounded-teardown contract the way an earlier, unconditionally-
         blocking ``close()`` could have."""
         self._stopping = True
+        scroll_source = getattr(self, "_emergency_scroll_source", None)
+        if scroll_source is not None:
+            with contextlib.suppress(Exception):
+                GLib.source_remove(scroll_source)
+            self._emergency_scroll_source = None
         deadline = time.monotonic() + self.teardown_timeout_s
 
         # Stop admissions before removing the downstream probe: a late probe

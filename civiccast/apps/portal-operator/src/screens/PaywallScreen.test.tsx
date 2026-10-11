@@ -54,7 +54,7 @@ function config(overrides: Partial<PaywallConfig> = {}): PaywallConfig {
     enabled: false,
     provider: 'stripe',
     tiers: [],
-    signing_secret: null,
+    signing_secret_present: false,
     created_at: now,
     updated_at: now,
     ...overrides,
@@ -92,14 +92,23 @@ beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
   vi.mocked(getPaywallConfig).mockResolvedValue(config())
-  vi.mocked(upsertPaywallConfig).mockImplementation(async (payload) =>
-    config({
+  vi.mocked(upsertPaywallConfig).mockImplementation(async (payload) => {
+    const current = await getPaywallConfig()
+    const signingSecretPresent =
+      payload.signing_secret === ''
+        ? false
+        : typeof payload.signing_secret === 'string'
+          ? true
+          : current.signing_secret_present
+    const saved = config({
       enabled: payload.enabled,
       provider: payload.provider,
       tiers: payload.tiers,
-      signing_secret: payload.signing_secret,
-    }),
-  )
+      signing_secret_present: signingSecretPresent,
+    })
+    vi.mocked(getPaywallConfig).mockResolvedValue(saved)
+    return saved
+  })
   vi.mocked(deletePaywallConfig).mockResolvedValue(undefined)
   vi.mocked(issueCompGrant).mockImplementation(async (payload) =>
     grant({
@@ -181,6 +190,74 @@ describe('PaywallScreen signing secret', () => {
     const filled = (await findByLabelText(/Signing secret \(HMAC\)/i)) as HTMLInputElement
     expect(filled.value.length).toBeGreaterThan(0)
   })
+
+  it('confirms the generated replacement value before saving an already saved secret', async () => {
+    vi.mocked(getPaywallConfig).mockResolvedValue(config({ signing_secret_present: true }))
+    const { findByLabelText, findByRole } = renderScreen()
+
+    fireEvent.click(await findByLabelText('Generate a new signing secret'))
+    const confirm = await findByRole('button', { name: /confirm replacement signing secret/i })
+    const generated = (await findByLabelText(/Signing secret \(HMAC\)/i) as HTMLInputElement).value
+    expect(generated.length).toBeGreaterThan(0)
+
+    fireEvent.click(confirm)
+    const field = (await findByLabelText(/Signing secret \(HMAC\)/i)) as HTMLInputElement
+    const replacement = field.value
+    expect(replacement).toBe(generated)
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await waitFor(() => expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(upsertPaywallConfig).mock.calls[0][0].signing_secret).toBe(replacement)
+  })
+
+  it('requires fresh confirmation for the exact manually entered replacement', async () => {
+    vi.mocked(getPaywallConfig).mockResolvedValue(config({ signing_secret_present: true }))
+    const firstReplacement = 'first-manual-replacement-secret-0123456789'
+    const finalReplacement = 'edited-manual-replacement-secret-0123456789'
+    const { findByLabelText, findByRole } = renderScreen()
+    const field = (await findByLabelText(/Signing secret \(HMAC\)/i)) as HTMLInputElement
+
+    fireEvent.change(field, { target: { value: firstReplacement } })
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    expect(vi.mocked(upsertPaywallConfig)).not.toHaveBeenCalled()
+
+    const confirmButton = await findByRole('button', { name: /confirm replacement signing secret/i })
+    fireEvent.click(confirmButton)
+    fireEvent.change(field, { target: { value: finalReplacement } })
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    expect(vi.mocked(upsertPaywallConfig)).not.toHaveBeenCalled()
+
+    fireEvent.click(await findByRole('button', { name: /confirm replacement signing secret/i }))
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await waitFor(() => expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(upsertPaywallConfig).mock.calls[0][0].signing_secret).toBe(finalReplacement)
+  })
+
+  it('cancels a replacement by discarding its unconfirmed value', async () => {
+    vi.mocked(getPaywallConfig).mockResolvedValue(config({ signing_secret_present: true }))
+    const { findByLabelText, findByRole } = renderScreen()
+    const field = (await findByLabelText(/Signing secret \(HMAC\)/i)) as HTMLInputElement
+    fireEvent.change(field, { target: { value: 'cancelled-manual-replacement-secret-012345' } })
+
+    fireEvent.click(await findByRole('button', { name: /^cancel$/i }))
+
+    expect(field.value).toBe('')
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await waitFor(() => expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledTimes(1))
+    expect(Object.hasOwn(vi.mocked(upsertPaywallConfig).mock.calls[0][0], 'signing_secret')).toBe(false)
+  })
+
+  it('requires confirmation before clearing an already saved secret', async () => {
+    vi.mocked(getPaywallConfig).mockResolvedValue(config({ signing_secret_present: true }))
+    const { findByRole } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: /clear saved signing secret/i }))
+    expect(await findByRole('button', { name: /confirm clear signing secret/i })).toBeTruthy()
+    expect(vi.mocked(upsertPaywallConfig)).not.toHaveBeenCalled()
+    fireEvent.click(await findByRole('button', { name: /confirm clear signing secret/i }))
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+    await waitFor(() => expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledTimes(1))
+    expect(vi.mocked(upsertPaywallConfig).mock.calls[0][0].signing_secret).toBe('')
+  })
 })
 
 describe('PaywallScreen tier add / remove', () => {
@@ -253,6 +330,17 @@ describe('PaywallScreen save', () => {
         }),
       ),
     )
+  })
+
+  it('omits the secret when saving other settings with a saved secret present', async () => {
+    vi.mocked(getPaywallConfig).mockResolvedValue(config({ signing_secret_present: true }))
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.click(await findByLabelText('Enable paywall'))
+    fireEvent.click(await findByRole('button', { name: /save paywall config/i }))
+
+    await waitFor(() => expect(vi.mocked(upsertPaywallConfig)).toHaveBeenCalledTimes(1))
+    const payload = vi.mocked(upsertPaywallConfig).mock.calls[0][0]
+    expect(Object.hasOwn(payload, 'signing_secret')).toBe(false)
   })
 })
 

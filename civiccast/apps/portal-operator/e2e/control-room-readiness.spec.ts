@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 
 import { expect, test, type TestInfo } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import type { ControlRoomSession } from '../src/types/api.generated'
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 
@@ -155,11 +156,42 @@ const targetCuePlan = {
   material_state_fingerprint: 'def456abc123def456abc123def456abc123def456abc123def456abc123def4',
 }
 
+const resumedTestSession: ControlRoomSession = {
+  session_id: 's1',
+  surface_id: 'srf',
+  operator_id: 'operator',
+  operator_name: 'Operator',
+  program_feed_source_ref: 'public:control-room',
+  mode: 'test',
+  safe_state_cue_id: 'cue_1',
+  state: 'open',
+  started_at: '2026-06-30T12:00:00Z',
+  on_air_expires_at: null,
+  ended_at: null,
+}
+
+const futureOnAirExpiry = () => new Date(Date.now() + 30 * 60_000).toISOString()
+
 async function mockControlRoom(
   page: import('@playwright/test').Page,
   roles: string[],
   readinessBody = readiness,
+  openSession: ControlRoomSession | null = null,
 ) {
+  let activeSession = openSession
+  const newlyOpenedSession: ControlRoomSession = {
+    session_id: 's1',
+    surface_id: 'srf',
+    operator_id: 'operator',
+    operator_name: 'Operator',
+    program_feed_source_ref: 'public:control-room',
+    mode: 'on_air',
+    safe_state_cue_id: 'cue_1',
+    state: 'open',
+    started_at: '2026-06-30T12:00:00Z',
+    on_air_expires_at: futureOnAirExpiry(),
+    ended_at: null,
+  }
   await page.route('**/api/staff/auth/me', async (route) => {
     await route.fulfill({
       status: 200,
@@ -212,23 +244,22 @@ async function mockControlRoom(
       body: JSON.stringify(body),
     })
   })
-  await page.route('**/api/staff/control-room/sessions', async (route) => {
+  await page.route('**/api/staff/control-room/surfaces/srf/session', async (route) => {
+    expect(route.request().method()).toBe('GET')
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({
-        session_id: 's1',
-        surface_id: 'srf',
-        operator_id: 'operator',
-        operator_name: 'Operator',
-        program_feed_source_ref: 'public:control-room',
-        mode: 'on_air',
-        safe_state_cue_id: 'cue_1',
-        state: 'open',
-        started_at: '2026-06-30T12:00:00Z',
-        on_air_expires_at: '2026-06-30T12:30:00Z',
-        ended_at: null,
-      }),
+      body: JSON.stringify(activeSession),
+    })
+  })
+  await page.route('**/api/staff/control-room/sessions', async (route) => {
+    expect(route.request().method()).toBe('POST')
+    expect(route.request().postDataJSON()).toMatchObject({ surface_id: 'srf' })
+    activeSession = newlyOpenedSession
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(newlyOpenedSession),
     })
   })
   await page.route('**/api/staff/control-room/sessions/s1/audit', async (route) => {
@@ -380,7 +411,7 @@ test.describe('control-room readiness panel', () => {
     await page.getByRole('button', { name: 'Open On-Air Session' }).click()
     await expect(page.getByRole('alert').filter({ hasText: 'ON-AIR MODE - cue actions can be sent' })).toBeVisible()
     await expect(page.getByText('Safe State', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Panic: Run Safe State' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Panic: Run Safe State' })).toBeEnabled()
     await page.getByRole('button', { name: 'Dry Run Safe State' }).click()
     await expect(page.getByText('Studio OBS: set scene -> CAM2').first()).toBeVisible()
     await expect(page.getByRole('button', { name: 'Panic: Run Safe State' })).toBeEnabled()
@@ -390,7 +421,19 @@ test.describe('control-room readiness panel', () => {
     await expectNoWcagAxeViolations(page, 'control-room operator controls')
   })
 
-  test('offers rollback to safe state after a failed on-air cue fire, and it fires', async ({ page }, testInfo) => {
+  test('operator resumes its open session after revisiting the surface', async ({ page }) => {
+    await mockControlRoom(page, ['meeting_operator'], readiness, resumedTestSession)
+    await page.goto('/#/control-room')
+    await page.getByLabel('Control surface').selectOption('srf')
+
+    await expect(page.getByText('Test session open', { exact: true })).toBeVisible()
+    await expect(page.getByText(/TEST MODE - device actions are blocked and recorded as test-only audit events\./)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'End session' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Open Test Session' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Take CAM2' })).toBeVisible()
+  })
+
+  test('offers Panic rollback after a failed on-air cue fire and fires it', async ({ page }, testInfo) => {
     await mockControlRoom(page, ['meeting_operator'], readyReadiness)
     // cue_1 ("Take CAM2") is the safe-state cue for this session; fail closed
     // firing cue_2 ("Take CAM1") instead, like a real TSR transport error, so
@@ -415,9 +458,9 @@ test.describe('control-room readiness panel', () => {
     await expect(page.getByText('Studio OBS: set scene -> CAM1')).toBeVisible()
     await page.getByRole('button', { name: /Fire\.\.\. \(needs confirm\)/ }).click()
     await page.getByRole('button', { name: 'Confirm fire' }).click()
-    await expect(page.getByRole('button', { name: 'Roll back to Safe State' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Panic: Run Safe State' })).toBeEnabled()
 
-    await page.getByRole('button', { name: 'Roll back to Safe State' }).click()
+    await page.getByRole('button', { name: 'Panic: Run Safe State' }).click()
     await expect(page.getByText('Rolled back to Safe State.')).toBeVisible()
     await captureUiEvidence(page, testInfo, 'operator-rollback-after-failed-fire')
     await expectNoWcagAxeViolations(page, 'control-room rollback after failed fire')

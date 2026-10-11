@@ -233,6 +233,21 @@ def display_alert(
     svc: EasDisplayService | None = Depends(get_eas_service),
 ) -> EasDisplayDecision:
     operator = _operator_id(request)
+    from civiccast.eas.presentation import presentation_enabled
+    from civiccast.egress.engine_select import gstreamer_engine_selected
+
+    if not presentation_enabled() or not gstreamer_engine_selected():
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Broadcast emergency presentation is not enabled. IT must enable CIVICCAST_EAS with the GStreamer engine, then start the channel with its graphics compositor before displaying an alert.",
+        )
+    daemon = getattr(request.app.state, "egress_daemon", None)
+    ready = getattr(daemon, "emergency_presentation_ready", None)
+    if not callable(ready) or not ready(payload.channel_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="This channel is not on air with an emergency graphics compositor. Start the configured channel after IT enables CIVICCAST_EAS with GStreamer, then try again.",
+        )
     try:
         return _require_service(svc).surface_alert(
             channel_id=payload.channel_id,

@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 import civiccast.live.models
 import civiccast.schedule.models  # noqa: F401
 from civiccast.db import Base, bind_engine, reset_engine
+from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.takeover_service import TakeoverNotReadyError, TakeoverService
 from civiccast.egress.takeover_store import PostgresTakeoverAuditStore
@@ -90,6 +91,14 @@ def _build(engine: Engine, source: LiveSourceResponse, verdict: _Verdict | None 
 
     audit = PostgresTakeoverAuditStore(factory)
     egress = InMemoryEgressStore()
+    egress.upsert_config(
+        EgressConfig(
+            channel_id="public",
+            enabled=True,
+            sinks=[EgressSinkSpec(kind="file", label="test", uri="file:///tmp/output.ts")],
+            slate_message="Test slate",
+        )
+    )
     service = TakeoverService(
         audit,
         egress,

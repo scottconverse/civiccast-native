@@ -41,13 +41,18 @@ _REQUIRED_FRAGMENTS = (
 
 
 def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
-    introduction = " ".join(
-        _SOURCE.read_text(encoding="utf-8").split("## Who Reads What")[0].split()
-    )
+    manual = _SOURCE.read_text(encoding="utf-8")
+    introduction = " ".join(manual.split("## Who Reads What")[0].split())
     assert "owner-held unpublished candidate" not in introduction
     assert "current published release described in this manual" not in introduction
+    assert "Beta.12 is an unpublished candidate" not in introduction
+    assert "installation and sustained-operation checks are pending" not in introduction
+    assert "remains the current public pre-release" not in introduction
     assert "https://github.com/scottconverse/civiccast-native/releases" in introduction
     assert "does not itself establish publication or installation acceptance" in introduction
+    assert "**v1.0.0-beta.11** was published as a GitHub pre-release on 2026-10-08" in manual
+    assert "Beta.11 is the current native-line pre-release" not in manual
+    assert "| **v1.0.0-beta.11** | 2026-10-08 | Published GitHub pre-release |" in manual
 
 
 @pytest.fixture

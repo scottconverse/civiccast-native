@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
-import type { AlertChannel, AlertChannelInput, AlertEvent, AlertRule } from '../types/api.generated'
+import type { AlertChannel, AlertChannelInput, AlertEvent, AlertRule, StaffIdentityResponse } from '../types/api.generated'
 import { AlertEventRow, ChannelCard, ChannelForm, RuleRow } from './AlertsScreen'
 import { formatCondition, severityTone } from './alerts-format'
 
@@ -9,6 +10,37 @@ import { formatCondition, severityTone } from './alerts-format'
 // never registers — unmount each render so body-scoped queries don't see
 // elements left behind by the previous test.
 afterEach(cleanup)
+beforeEach(() => vi.clearAllMocks())
+
+vi.mock('../api/client', () => ({
+  ApiError: class ApiError extends Error {
+    status: number
+    detail?: string
+    constructor(message: string, status = 0, detail?: string) {
+      super(message)
+      this.status = status
+      this.detail = detail
+    }
+  },
+  acknowledgeAlertEvent: vi.fn(),
+  createAlertChannel: vi.fn(),
+  deleteAlertChannel: vi.fn(),
+  getStaffIdentity: vi.fn(),
+  listAlertChannels: vi.fn(),
+  listAlertEvents: vi.fn(),
+  listAlertRules: vi.fn(),
+  updateAlertChannel: vi.fn(),
+  updateAlertRule: vi.fn(),
+}))
+
+import {
+  getStaffIdentity,
+  listAlertChannels,
+  listAlertEvents,
+  listAlertRules,
+  updateAlertRule,
+} from '../api/client'
+import { AlertsScreen } from './AlertsScreen'
 
 const baseEvent: AlertEvent = {
   event_id: 'evt-1',
@@ -200,5 +232,148 @@ describe('RuleRow', () => {
     )
     fireEvent.change(getByDisplayValue('15'), { target: { value: 'soon' } })
     expect((getByText('Save') as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+function alertIdentity(roles: StaffIdentityResponse['roles']): StaffIdentityResponse {
+  return { operator_id: 'op-1', operator_display_name: 'Dana', roles }
+}
+
+function renderAlertsScreen() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={client}>
+      <AlertsScreen />
+    </QueryClientProvider>,
+  )
+}
+
+describe('AlertsScreen destination assignment', () => {
+  it('saves selected destinations with existing and stale ids preserved, then refetches the rule', async () => {
+    const original = { ...baseRule, channel_ids: ['ch-1', 'ch-deleted'] }
+    let saved = original
+    vi.mocked(getStaffIdentity).mockResolvedValue(alertIdentity(['setup_admin']))
+    vi.mocked(listAlertEvents).mockResolvedValue([])
+    vi.mocked(listAlertRules).mockImplementation(async () => [saved])
+    vi.mocked(listAlertChannels).mockResolvedValue([
+      baseChannel,
+      { ...baseChannel, channel_id: 'ch-2', label: 'Duty phone', kind: 'sms' },
+    ])
+    vi.mocked(updateAlertRule).mockImplementation(async (_ruleId, payload) => {
+      saved = {
+        ...saved,
+        enabled: payload.enabled ?? saved.enabled,
+        severity: payload.severity ?? saved.severity,
+        re_alert_after_seconds: payload.re_alert_after_seconds ?? saved.re_alert_after_seconds,
+        notify_on_resolve: payload.notify_on_resolve ?? saved.notify_on_resolve,
+        channel_ids: payload.channel_ids ?? saved.channel_ids,
+        updated_at: '2026-06-15T12:01:00Z',
+      }
+      return saved
+    })
+
+    const { findByLabelText, findByRole, findByText } = renderAlertsScreen()
+    const stale = await findByLabelText('Unavailable destination ch-deleted') as HTMLInputElement
+    expect(stale.checked).toBe(true)
+    expect(await findByLabelText('Ops email') as HTMLInputElement).toHaveProperty('checked', true)
+    fireEvent.click(await findByLabelText('Duty phone'))
+    fireEvent.click(await findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(updateAlertRule).toHaveBeenCalledWith(baseRule.rule_id, {
+      enabled: true,
+      severity: 'critical',
+      re_alert_after_seconds: 900,
+      notify_on_resolve: false,
+      channel_ids: ['ch-1', 'ch-deleted', 'ch-2'],
+    }))
+    await waitFor(() => expect(listAlertRules).toHaveBeenCalledTimes(2))
+    expect(await findByText('Unavailable destination ch-deleted')).toBeTruthy()
+    expect((await findByLabelText('Duty phone') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('omits channel_ids when saving an unrelated rule setting', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(alertIdentity(['setup_admin']))
+    vi.mocked(listAlertEvents).mockResolvedValue([])
+    vi.mocked(listAlertRules).mockResolvedValue([{ ...baseRule, channel_ids: ['ch-1'] }])
+    vi.mocked(listAlertChannels).mockResolvedValue([baseChannel])
+    vi.mocked(updateAlertRule).mockResolvedValue(baseRule)
+
+    const { findByLabelText, findByRole } = renderAlertsScreen()
+    fireEvent.change(await findByLabelText('Severity'), { target: { value: 'warning' } })
+    fireEvent.click(await findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(updateAlertRule).toHaveBeenCalledWith(baseRule.rule_id, {
+      enabled: true,
+      severity: 'warning',
+      re_alert_after_seconds: 900,
+      notify_on_resolve: false,
+    }))
+  })
+
+  it('shows configured rules read-only to support admins and explains setup-admin write access', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(alertIdentity(['support_admin']))
+    vi.mocked(listAlertEvents).mockResolvedValue([])
+    vi.mocked(listAlertRules).mockResolvedValue([baseRule])
+    vi.mocked(listAlertChannels).mockResolvedValue([baseChannel])
+
+    const { findByText, queryByRole } = renderAlertsScreen()
+    expect(await findByText('Channel off air')).toBeTruthy()
+    expect(await findByText(/changing alert rules requires the setup admin role/)).toBeTruthy()
+    expect(queryByRole('button', { name: 'Save' })).toBeNull()
+    expect(queryByRole('button', { name: 'Add destination' })).toBeNull()
+  })
+
+  it('states when there are no configured rules or destinations', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(alertIdentity(['setup_admin']))
+    vi.mocked(listAlertEvents).mockResolvedValue([])
+    vi.mocked(listAlertRules).mockResolvedValue([])
+    vi.mocked(listAlertChannels).mockResolvedValue([])
+    const { findByText } = renderAlertsScreen()
+    expect(await findByText(/No alert rules are configured/)).toBeTruthy()
+    expect(await findByText(/No alert destinations yet/)).toBeTruthy()
+  })
+
+  it('shows access-checking and access-error states without querying admin routes', async () => {
+    let rejectIdentity!: (error: Error) => void
+    vi.mocked(getStaffIdentity).mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectIdentity = reject
+    }))
+    const { getByText, findAllByText } = renderAlertsScreen()
+    expect(getByText(/Checking your access to alert rules/)).toBeTruthy()
+    rejectIdentity(new Error('session expired'))
+    expect((await findAllByText(/Your access could not be checked/)).length).toBe(2)
+    expect(listAlertRules).not.toHaveBeenCalled()
+    expect(listAlertChannels).not.toHaveBeenCalled()
+  })
+
+  it('keeps rule editing routes closed to roles that cannot read alerts', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(alertIdentity(['meeting_operator']))
+    vi.mocked(listAlertEvents).mockResolvedValue([])
+    const { findAllByText } = renderAlertsScreen()
+    expect((await findAllByText(/Viewing alert rules requires the setup admin or support admin role/)).length).toBe(1)
+    expect((await findAllByText(/Viewing alert destinations requires the setup admin or support admin role/)).length).toBe(1)
+    expect(listAlertRules).not.toHaveBeenCalled()
+    expect(listAlertChannels).not.toHaveBeenCalled()
+  })
+
+  it('shows assigned ids when destinations fail to load and preserves them on other saves', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(alertIdentity(['setup_admin']))
+    vi.mocked(listAlertEvents).mockResolvedValue([])
+    vi.mocked(listAlertRules).mockResolvedValue([{ ...baseRule, channel_ids: ['ch-still-assigned'] }])
+    vi.mocked(listAlertChannels).mockRejectedValue(new Error('destination query failed'))
+    vi.mocked(updateAlertRule).mockResolvedValue(baseRule)
+
+    const { findAllByText, findByLabelText, findByRole, findByText } = renderAlertsScreen()
+    expect((await findAllByText(/destination query failed/)).length).toBeGreaterThan(0)
+    expect(await findByText(/Current destination ids: ch-still-assigned/)).toBeTruthy()
+    fireEvent.change(await findByLabelText('Severity'), { target: { value: 'warning' } })
+    fireEvent.click(await findByRole('button', { name: 'Save' }))
+
+    await waitFor(() => expect(updateAlertRule).toHaveBeenCalledWith(baseRule.rule_id, {
+      enabled: true,
+      severity: 'warning',
+      re_alert_after_seconds: 900,
+      notify_on_resolve: false,
+    }))
   })
 })

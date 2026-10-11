@@ -81,7 +81,7 @@ In total the beta.11 server exposes 488 operations on 405 paths in 81 groups.
 
 The 13 "other" operations are: ten at the root level (`/health`, the two federation discovery routes `/.well-known/nodeinfo` and `/.well-known/webfinger`, `/nodeinfo/2.0`, the four ActivityPub routes `/ap/actor`, `/ap/followers`, `/ap/inbox`, `/ap/outbox`, and the media file routes `/media/live/...` and `/media/vod/...`), plus `/api/hardware`, `/api/version` and the signed Stripe webhook `/api/webhooks/stripe`. None of these is covered by the staff-token check.
 
-> **Note:** `GET /health` always answers with HTTP 200 while the program is running. Read the `status` field instead: `healthy` means the database layout matches the program; `degraded` means it does not. `schema` is one of `current`, `behind`, `not-configured` or `unknown`.
+> **Note:** `GET /health` always answers with HTTP 200 while the program is running. Read `status`: `healthy` requires a current database schema and no degraded or unknown live-caption verdict. Inspect both `schema` and `live_captions`; detailed caption status is available only to signed-in staff. This probe does not certify every station output or device.
 
 ## How a caller proves who it is (the auth model)
 
@@ -279,9 +279,8 @@ All service logs are in `C:\ProgramData\CivicCast\logs`.
 | --- | --- |
 | `supervisor.log` | The Windows service itself: starts, stops, restarts of the child programs, watchdog messages. Rotates at 10 MiB, keeps 10 old files, written to disk on every line. |
 | `control_plane-app.log` | The CivicCast program's own log: the one to read first when something on a screen fails. |
-| `control_plane.log` | Raw console output of the control plane. |
-| `postgres.log` | The PostgreSQL server. |
-| `postgres-launcher.log` | Short-lived output from starting PostgreSQL. |
+| `control_plane.log` | Raw console output of the control plane. Rotates at 10 MiB and keeps 10 older files. |
+| `postgres.log` | PostgreSQL startup and server output. Rotates at 10 MiB and keeps 10 older files. |
 | `ollama.log` | The AI engine, when it is running (by the same naming rule: one log per child program). |
 
 The Windows Event Log also receives service messages under the source `CivicCastSupervisor`. Setup problems are in `install-progress.log` (read it from the bottom up; find the last "begin" that has no matching "returned").
@@ -454,7 +453,7 @@ Raw API words: `STOPPED`, `STARTING`, `ON_AIR`, `TRANSITIONING`, `FALLBACK_SLATE
 
 ## The station service (the supervisor's own state names)
 
-These are the state names inside the Windows service. They are not what `GET /health` reports: that is a separate `healthy` or `degraded` answer about the database layout (see the end of this section). We could not confirm which of these names `supervisor.log` prints.
+These are the state names inside the Windows service. They are not what `GET /health` reports: that is a separate `healthy` or `degraded` answer about database and live-caption readiness. Read `schema` and the coarse `live_captions` field; authenticated System Health shows channel details. We could not confirm which of these names `supervisor.log` prints.
 
 | State | Meaning |
 | --- | --- |
@@ -521,7 +520,7 @@ Code 123 hides a second number from the activation step: 66 (pack or index missi
 | Live | LiveSession already exists: council-live-room | The Live screen uses one fixed session id, so a second session cannot be created until IT resets it. |
 | Live | Go on air blocked: a fresh source-bound server-side pre-flight did not pass. No broadcast was started. Correct the failed checks and run pre-flight again. | Fix the red pre-flight items. |
 | Remote Contribution | Remote contribution is not configured (no self-hosted VDO.Ninja URL). A compositor + VDO.Ninja + coturn must be commissioned before guests can join. | Those services are not set up. |
-| Remote Contribution | Channel takeover failed; guest ... not placed on-air. | There was no ready live source to take over to. |
+| Remote Contribution | A guest-control notice says **sent, not verified**. | The director iframe does not report command completion. Check the guest in the director and mark them left only after verifying they disconnected. |
 | Emergency Alerts | A forced full-screen slate must be confirmed by an operator... | Tick the confirmation box before choosing a forced slate. |
 | Control Room | On-Air Mode expired before this cue could fire. Open a new On-Air session to continue. | The On-Air session lasts 30 minutes; open a new one. |
 | Agendas | Another agenda item already occupies (agenda_id=..., order=0) | Two items cannot share an Order number; use the next number. |
@@ -933,7 +932,7 @@ Bearer token
 :   The secret a tool sends in the `Authorization: Bearer` header to prove who it is to the API.
 
 Beta candidate
-:   A published release labeled by GitHub as a *pre-release* for testing, not a production release. Beta.11 is the current native-line pre-release.
+:   A release labeled by GitHub as a *pre-release* for testing, not a production release. Check the project's releases page for the current native-line version and its publication status.
 
 Board (community board)
 :   The between-programs picture a channel shows: zones for a ticker, schedule, logo, sponsor and approved *bulletins*.
@@ -1027,7 +1026,7 @@ Decode-back proof
 :   A check that reads captions back out of what was actually sent, to prove they are in the picture.
 
 Degraded
-:   Working, but not fully healthy. For the service it means five restarts in ten minutes. For `/health` it means the database layout does not match the program.
+:   Working, but not fully healthy. For the service it means five restarts in ten minutes. For `/health` it means the database schema is not confirmed current or live-caption readiness is degraded or unknown. Read `schema` and `live_captions`; this probe does not certify every output or device.
 
 Director view
 :   A link, shown right after you open a Remote Contribution room, that you embed in your video switcher.
@@ -1537,11 +1536,11 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 Published releases of the native Windows line of CivicCast, newest first. The authored source for this list is the project's release-truth file, checked against GitHub's release page. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** **v1.0.0-beta.11** is the current GitHub pre-release. Its exact source, package hash, observations and limitations are in the [current verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
+> **Note:** **v1.0.0-beta.11** was published as a GitHub pre-release on 2026-10-08. Its exact source, package hash, observations and limitations are in the [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md). Check the project's releases page for current publication status. An earlier October 8 package was refreshed on an existing beta.11 host; two observations 41 seconds apart showed advancing HLS and changing captions on three channels. That brief output check does not prove clean install, repair, upgrade, long-duration operation or capacity, and it does not transfer to another package.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.11** | 2026-10-08 | Current. GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the current verification record for this package's source and exact evidence. |
+| **v1.0.0-beta.11** | 2026-10-08 | Published GitHub pre-release | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the Beta.11 verification record for this package's source and exact evidence. |
 | v1.0.0-beta.10 | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Superseded by beta.11 | Added program-change, loudness, looping and relay/reload work. Its eight-hour lab run used an earlier internal build; its clean-install result belongs to the beta.10 package. See Appendix H for historical evidence and limits. |
 | v1.0.0-beta.9 | 2026-09-18 (changelog date) | Never published | A version bump and an installer rebuild; its work is in beta.10. |
 | v1.0.0-beta.8 | none | Never published | Its work is in beta.10. |

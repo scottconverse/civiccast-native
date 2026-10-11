@@ -2,7 +2,37 @@
 
 ## [Unreleased]
 
-- No additional changes recorded.
+## [1.0.0-beta.12] - 2026-10-10
+
+- Published as a GitHub pre-release from signed source `a0c98cb7367dc106042ec89d35a91905470d350c`, producer run `38097350705`. The release page carries the standard installer, five runtime packs, four manual assets, checksums and installer sidecar.
+- A normal Beta 11-to-Beta 12 setup run exited 0 and left the service running and healthy at schema 0089. The preservation marker was saved; initial checks observed all three channels with HLS audio/video and primary Whistle within capacity. The post-upgrade recorder wrapper failed during its first-minute JSON save (`Cannot convert value to type System.String.`), so no five-snapshot PASS is claimed. The owner deferred the wrapper issue as bookkeeping; repair and fresh-install checks were not run.
+
+- Record bounded station-activation child error text in the installer progress log on failure. Existing failure containment and exit handling remain in place; the original transient activation failure remains unexplained.
+- Classify mapped files using region permissions: executable and unknown-protection mappings stay strict, while positively non-executable mappings remain data-access evidence subject only to the existing exact DesktopAppInstaller PRI exception. Failed producer `38086022740` logged the rejected path but not its trace leg or protection, so this correction addresses a proven collector-contract defect without claiming that it explains that run.
+
+Release identity and remaining limits are recorded in the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
+
+- Channel health reports caption-worker activity, stalled processing, silence and the active speech-engine/fallback state. Enabled on-air channels receive a startup allowance before missing worker activity raises an alert; detailed status remains staff-only.
+- Failed speech-engine retries no longer reset the caption progress timer. Channels with pending audio and no completed progress become degraded after the existing stall allowance instead of appearing healthy while retries continue.
+- Whistle starts without preloading the Whisper fallback. A backup startup or memory-allocation failure no longer prevents a valid Whistle primary from starting; the backup loads when first needed.
+- Scheduled recordings prepared before their start time are revisited on later scheduler passes, so they enter recording when due and finalize at the planned end instead of remaining in arming. Disabling a schedule before capture starts also cancels prearmed jobs and stops their capture processes.
+- Edited bundled test sources receive a fresh live-source probe instead of passing preflight from an unrelated sample video. The unchanged no-camera rehearsal remains file-backed.
+- Live-caption performance uses the owner's 99% and 98% reporting benchmarks without an automatic numerical release gate. Accurate late captions are accepted; Scott decides release acceptability, including below 98%, and must be consulted before caption performance is treated as a blocker.
+- Beta 12 publication reports fallback, caption-only degraded health, empty/unavailable captions and sampled caption progress as advisory observations. Evidence integrity, installation, data preservation and actual video/audio checks remain enforced; Beta 11 receipt validation is unchanged.
+- Remote Contribution adds a confirmed Off air action that sends both guest-audio and camera mute requests while keeping the guest connected and the channel source unchanged. Partial send/save failures are reported separately; provider completion remains unverified. Audio-control labels now identify the guest audio they affect.
+- Alert rules expose destination assignments in the console, preserve unchanged assignments and show unavailable destinations. Setup administrators can make changes; support administrators can inspect the configuration without write controls.
+- Alert notifications read committed event state, including recovery messages. Transport failures and retry results are saved so retries can work across separate background-worker sessions.
+- Configured emergency alerts render through the existing broadcast compositor and show channel-specific warning text on the resident page. Clearing removes the alert layer while retaining other graphics; forced slates retain explicit confirmation and unconfigured broadcast presentation is refused with setup guidance.
+- Remote contribution embeds its VDO.Ninja director for targeted media commands. Requests remain explicitly unverified until observed; requesting disconnect or closing a room no longer invents a completed guest disconnection. Channel takeover is a separate confirmed action.
+- Setup administrators can read contribution room lists, details and invite lists while commissioning. Live operations and the standalone guest-session API retain their existing role requirements.
+- An elevated local `civiccast admin reset-password` command restores administrator access when credentials and recovery codes are lost. With the supervisor stopped, it preserves station data, backs up the credential state and revokes previous console sessions and recovery codes.
+- Control Room restores an existing session after refresh or navigation, shows its expiry and offers authorized release and reclaim. Expired ordinary cues are refused without discarding the session needed for an emergency Panic action.
+- Summary review supports editing pending narratives, retaining approved summaries for export, and reloading recent signed records for download and verification. Approval is bound to the draft the operator reviewed; changed drafts return a conflict and must be reloaded before approval.
+- Summary errors give recovery guidance for the action that failed: a stale edit or approval requires reloading the draft; a record-export failure retains the export-specific explanation and retry path.
+- Paywall settings preserve the saved signing secret during ordinary saves. Rotation and clearing are explicit, confirmed actions; invalid secret input is not echoed in validation errors.
+- Bound raw control-plane and PostgreSQL output logs with rotating supervisor-owned capture, including PostgreSQL output after its startup launcher exits. Existing oversized logs age out through rotation; upgrading does not immediately reclaim their space.
+- Qualify the Beta 12 remote-contribution media-control migration's `remote_guest_sessions` columns to the `civiccast` schema on PostgreSQL, matching the existing SQLite behavior. The full migration chain, downgrade and re-upgrade passed against an isolated PostgreSQL 17 cluster.
+- Synchronize project status, installation guidance and public pages with the Beta 12 release while retaining Beta 11 package and 48-hour host observations as historical evidence with their original limits.
 
 ## [1.0.0-beta.11] - 2026-10-08
 
@@ -14,6 +44,7 @@
 - On Windows, replacing a playout worker now releases the old synchronous named-pipe accept before closing its handle, avoiding a per-channel restart hang.
 - The installer package includes the Whistle asset path and activates embedded station assets before service checks. Live cue history and delivery bookkeeping are bounded; live captions do not automatically create permanent review records or audio-evidence archives.
 - The owner accepted the 24-hour three-station caption soak on October 7, then the 36-hour milestone on October 8: 102 eligible checkpoints passed (306 sampled channel checks), with four gaming-period checkpoints excluded. These measurements came from the development station with its dev7 overlay; they are separate from installer qualification. See [soak results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md).
+- A separate 48-hour observation of one host running Beta 11 recorded 635 discarded caption-input seconds over 518,400 nominal channel-seconds across three channels: 99.877507716% (99.88% rounded) logged input coverage. This does not measure transcript word accuracy or qualify the installer or Beta 12. See the [host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) and [milestone snapshot](docs/ops/evidence/beta11-host-48-hour-milestone-2026-10-10.json).
 - The original signed Beta 11 installer from source `b7cc3e7c` (build `37827938199`) refreshed an existing Beta 11 host in place, exited successfully, and returned the service healthy on Beta 11 with the current database schema and schedule loop enabled. Two observations 41 seconds apart showed advancing HLS video/audio and changing captions on all three channels. This is historical evidence for that package, not a clean-install, repair, cross-version upgrade, or capacity result for the documentation/help revision. See [package verification](docs/releases/v1.0.0-beta.11-verification.md).
 - Fixed sidecar cleanup that could close a file descriptor reused by another writer. Rebuilt in-product help also preserves later manual sections when command examples contain angle brackets.
 

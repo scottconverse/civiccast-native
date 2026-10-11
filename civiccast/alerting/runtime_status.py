@@ -16,11 +16,18 @@ color semantics.
 
 from __future__ import annotations
 
+import json
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from civiccast.alerting.models import (
+    CaptionAudioSignal,
+    CaptionProcessingState,
+    CaptionProviderState,
+    ChannelCaptionProcessingStatus,
     ChannelRuntimeStatus,
     RuntimeSafeToAirStatus,
     SafeToAirColor,
@@ -44,6 +51,231 @@ _DARK_STATES = {"STOPPED", "ERROR", "DRAINING", "STOPPING"}
 _TRANSIENT_STATES = {"STARTING", "TRANSITIONING"}
 
 _COLOR_RANK: dict[SafeToAirColor, int] = {"green": 0, "yellow": 1, "red": 2}
+_CAPTION_HEARTBEAT_STALE_SECONDS = 90
+_CAPTION_PROGRESS_STALE_SECONDS = 120
+_CAPTION_STARTUP_GRACE_SECONDS = 180
+_CAPTION_FAILURE_CAPACITY_STATES = {"overloaded", "storage-refused", "paused", "disabled"}
+_CAPTION_PROVIDER_STATES = {
+    "whistle-primary",
+    "whisper-primary",
+    "whisper-fallback",
+    "fallback-cooldown",
+    "fallback-retry-ready",
+}
+
+
+class _CaptionStatusFields(TypedDict):
+    worker_heartbeat_at: datetime | None
+    last_input_at: datetime | None
+    last_processed_at: datetime | None
+    audio_signal: CaptionAudioSignal
+    provider_state: CaptionProviderState
+    provider_retry_in_seconds: int | None
+    backlog_segments: int
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+def _timestamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return _as_utc(parsed)
+
+
+def derive_live_caption_processing_status(
+    payload: Mapping[str, Any] | None,
+    *,
+    egress_state: str,
+    captions_expected: bool,
+    now: datetime,
+    on_air_since: datetime | None = None,
+) -> ChannelCaptionProcessingStatus:
+    """Interpret worker metadata without inferring speech from VTT recency."""
+
+    if not captions_expected:
+        return ChannelCaptionProcessingStatus(processing_state="disabled")
+
+    snapshot = payload or {}
+    heartbeat = _timestamp(snapshot.get("worker_heartbeat_at"))
+    last_input = _timestamp(snapshot.get("last_input_at"))
+    last_processed = _timestamp(snapshot.get("last_processed_at"))
+    pending_since = _timestamp(snapshot.get("pending_since_at"))
+    inference_started = _timestamp(snapshot.get("inference_started_at"))
+    audio_signal_value = snapshot.get("audio_signal")
+    audio_signal: CaptionAudioSignal = (
+        cast(CaptionAudioSignal, audio_signal_value)
+        if audio_signal_value in {"digital-silence", "audio-present", "unknown"}
+        else "unknown"
+    )
+    provider_state_value = snapshot.get("provider_state")
+    provider_state: CaptionProviderState = (
+        cast(CaptionProviderState, provider_state_value)
+        if provider_state_value in _CAPTION_PROVIDER_STATES
+        else "unknown"
+    )
+    retry = snapshot.get("provider_retry_in_seconds")
+    if not isinstance(retry, int) or isinstance(retry, bool) or retry < 0:
+        retry = None
+    backlog = snapshot.get("backlog_segments", 0)
+    if not isinstance(backlog, int) or isinstance(backlog, bool) or backlog < 0:
+        backlog = 0
+    inflight = snapshot.get("inference_inflight") is True
+    capacity_state = snapshot.get("state")
+    current = _as_utc(now) or datetime.now(UTC)
+
+    common: _CaptionStatusFields = {
+        "worker_heartbeat_at": heartbeat,
+        "last_input_at": last_input,
+        "last_processed_at": last_processed,
+        "audio_signal": audio_signal,
+        "provider_state": provider_state,
+        "provider_retry_in_seconds": retry,
+        "backlog_segments": backlog,
+    }
+    if egress_state != "ON_AIR":
+        return ChannelCaptionProcessingStatus(processing_state="inactive", **common)
+    if capacity_state in _CAPTION_FAILURE_CAPACITY_STATES:
+        return ChannelCaptionProcessingStatus(processing_state="failed", **common)
+
+    pending = backlog > 0 or inflight
+    heartbeat_age = (current - heartbeat).total_seconds() if heartbeat else None
+    on_air_age = (current - (_as_utc(on_air_since) or current)).total_seconds()
+    if heartbeat_age is not None and heartbeat_age > _CAPTION_HEARTBEAT_STALE_SECONDS:
+        return ChannelCaptionProcessingStatus(
+            processing_state=(
+                "stalled" if on_air_age > _CAPTION_STARTUP_GRACE_SECONDS else "unknown"
+            ),
+            **common,
+        )
+    if heartbeat is None and on_air_age > _CAPTION_STARTUP_GRACE_SECONDS:
+        return ChannelCaptionProcessingStatus(processing_state="stalled", **common)
+    if pending:
+        # A live source can keep delivering chunks while one ASR call is hung.
+        # Use completed progress or the first still-pending input. Starting
+        # another batch after failure is not progress and must not reset the
+        # deadline. The batch start is only a fallback for older snapshots
+        # that do not carry either authoritative timestamp.
+        progress_anchor = max(
+            (stamp for stamp in (last_processed, pending_since) if stamp),
+            default=inference_started or last_input,
+        )
+        if (
+            progress_anchor is not None
+            and (current - progress_anchor).total_seconds() > _CAPTION_PROGRESS_STALE_SECONDS
+        ):
+            return ChannelCaptionProcessingStatus(processing_state="stalled", **common)
+        if heartbeat_age is None or heartbeat_age > _CAPTION_HEARTBEAT_STALE_SECONDS:
+            return ChannelCaptionProcessingStatus(processing_state="stalled", **common)
+
+    if heartbeat is None:
+        processing_state: CaptionProcessingState = "unknown"
+    elif (
+        audio_signal == "digital-silence"
+        and not pending
+        and (
+            last_processed is not None
+            and (current - last_processed).total_seconds() <= _CAPTION_PROGRESS_STALE_SECONDS
+            and (last_input is None or last_processed >= last_input)
+        )
+    ):
+        processing_state = "silent"
+    elif pending:
+        processing_state = "processing"
+    elif (
+        audio_signal == "audio-present"
+        and last_input is not None
+        and last_processed is not None
+        and last_processed >= last_input
+        and (current - last_processed).total_seconds() <= _CAPTION_PROGRESS_STALE_SECONDS
+    ):
+        processing_state = "caught-up"
+    else:
+        processing_state = "waiting"
+    return ChannelCaptionProcessingStatus(processing_state=processing_state, **common)
+
+
+def read_live_caption_processing_status(
+    work_dir: Path,
+    channel_id: str,
+    *,
+    egress_state: str,
+    captions_expected: bool,
+    now: datetime,
+    on_air_since: datetime | None = None,
+) -> ChannelCaptionProcessingStatus:
+    """Read one atomic worker snapshot; corrupt/missing status remains unknown."""
+
+    payload: Mapping[str, Any] | None = None
+    if captions_expected:
+        from civiccast.captions.live_sidecar import caption_runtime_status_path
+
+        path = caption_runtime_status_path(work_dir, channel_id)
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                payload = loaded
+        except (OSError, json.JSONDecodeError):
+            pass
+    return derive_live_caption_processing_status(
+        payload,
+        egress_state=egress_state,
+        captions_expected=captions_expected,
+        now=now,
+        on_air_since=on_air_since,
+    )
+
+
+def live_caption_readiness(
+    store: EgressStore | None,
+    *,
+    captions_expected: bool,
+    work_dir: Path,
+    now: datetime | None = None,
+) -> str:
+    """Return a detail-free station aggregate for the unauthenticated probe."""
+
+    if not captions_expected:
+        return "disabled"
+    if store is None:
+        return "unknown"
+    now = now or datetime.now(tz=UTC)
+    try:
+        active = []
+        for config in store.list_configs():
+            if not config.enabled:
+                continue
+            state_row = store.read_state(config.channel_id)
+            if state_row is not None and state_row.state == "ON_AIR":
+                active.append((config, state_row))
+        if not active:
+            return "idle"
+        statuses = [
+            read_live_caption_processing_status(
+                work_dir,
+                config.channel_id,
+                egress_state="ON_AIR",
+                captions_expected=True,
+                now=now,
+                on_air_since=state_row.updated_at,
+            )
+            for config, state_row in active
+        ]
+    except Exception:
+        _LOG.debug("Could not aggregate live-caption readiness", exc_info=True)
+        return "unknown"
+    if any(status.processing_state in {"failed", "stalled"} for status in statuses):
+        return "degraded"
+    if any(status.processing_state in {"unknown", "waiting"} for status in statuses):
+        return "unknown"
+    return "healthy"
 
 
 def _worst(colors: list[SafeToAirColor]) -> SafeToAirColor:
@@ -76,6 +308,7 @@ def compute_channel_runtime_status(
     *,
     now: datetime,
     expect_captions: bool = True,
+    live_caption_status: ChannelCaptionProcessingStatus | None = None,
 ) -> ChannelRuntimeStatus:
     """Build the runtime status for one channel from its state + latest sample.
 
@@ -98,9 +331,14 @@ def compute_channel_runtime_status(
         latest_sample is not None
         and getattr(latest_sample, "caption_status", "not-verified") == "on"
     )
-    captions_ready = captions_verified or not expect_captions
-
     on_air = state == "ON_AIR"
+    silence_is_expected = (
+        on_air
+        and live_caption_status is not None
+        and live_caption_status.audio_signal == "digital-silence"
+        and live_caption_status.processing_state == "silent"
+    )
+    captions_ready = captions_verified or not expect_captions or silence_is_expected
     on_healthy_slate = state == "FALLBACK_SLATE" and all_sinks_ok and captions_ready
 
     fps = latest_sample.encoder_fps if latest_sample is not None else None
@@ -123,13 +361,20 @@ def compute_channel_runtime_status(
     else:  # pragma: no cover - exhaustive guard for future states
         color = "yellow"
 
-    # Captions are a legal readiness requirement, not an optional health
-    # decoration. Any missing, stale, failed, or otherwise unverified proof
-    # fails closed even when transport and audio are otherwise healthy --
-    # but only while the operator expects live captions at all. With the
-    # switch off there is no embed leg to prove, so the gate would pin every
-    # channel red forever (round-2 review BLOCKER 1).
-    if expect_captions and not captions_verified:
+    # Captions are gated only for an ON_AIR channel while the operator expects
+    # them. Stopped channels already have their own egress failure; they must
+    # not gain a separate caption failure. Proven digital silence is also not
+    # a missing-caption fault: no recent VTT text is used to infer speech.
+    caption_worker_failed = (
+        live_caption_status is not None
+        and live_caption_status.processing_state in {"failed", "stalled"}
+    )
+    if (
+        on_air
+        and expect_captions
+        and (caption_worker_failed or not captions_verified)
+        and not silence_is_expected
+    ):
         color = "red"
 
     return ChannelRuntimeStatus(
@@ -145,6 +390,7 @@ def compute_channel_runtime_status(
         last_proof_event_id=(state_row.current_proof_event_id if state_row is not None else None),
         captions_expected=expect_captions,
         captions_verified=captions_verified,
+        live_captions=live_caption_status,
         color=color,
     )
 
@@ -155,8 +401,9 @@ def compute_runtime_safe_to_air(
     *,
     now: datetime | None = None,
     expect_captions: bool | None = None,
+    caption_work_dir: Path | None = None,
 ) -> RuntimeSafeToAirStatus:
-    """Compute the continuous runtime safe-to-air signal over auto_start channels.
+    """Compute runtime status for auto-start and currently active channels.
 
     ``firing_alerts`` is the current set of ``state="firing"`` alert events
     (the caller reads them once from the alert store). Overall color = worst
@@ -173,14 +420,31 @@ def compute_runtime_safe_to_air(
         from civiccast.installer.station_state import resolve_live_captions_enabled_or_default
 
         expect_captions = resolve_live_captions_enabled_or_default()
+    if caption_work_dir is None:
+        from civiccast.egress.automation import default_egress_work_dir
+
+        caption_work_dir = default_egress_work_dir()
 
     channels: list[ChannelRuntimeStatus] = []
     for config in store.list_configs():
-        if not (config.enabled and config.auto_start):
+        if not config.enabled:
             continue
         state_row = store.read_state(config.channel_id)
+        # Keep watching promised 24/7 channels and include channels already on
+        # air after a manual start. Stopped manual channels remain out of scope.
+        if not config.auto_start and (state_row is None or state_row.state != "ON_AIR"):
+            continue
         recent = store.recent_health(config.channel_id, 1)
         latest_sample = recent[0] if recent else None
+        egress_state = state_row.state if state_row is not None else "STOPPED"
+        live_caption_status = read_live_caption_processing_status(
+            caption_work_dir,
+            config.channel_id,
+            egress_state=egress_state,
+            captions_expected=expect_captions,
+            now=now,
+            on_air_since=(state_row.updated_at if egress_state == "ON_AIR" and state_row else None),
+        )
         channels.append(
             compute_channel_runtime_status(
                 config,
@@ -188,6 +452,7 @@ def compute_runtime_safe_to_air(
                 latest_sample,
                 now=now,
                 expect_captions=expect_captions,
+                live_caption_status=live_caption_status,
             )
         )
 
@@ -226,6 +491,40 @@ def _summarize(
     if color == "green":
         return ("On air", f"On air — all {len(channels)} channel(s) healthy.")
     if color == "red":
+        caption_red = [
+            channel
+            for channel in channels
+            if channel.color == "red"
+            and channel.on_air
+            and channel.captions_expected
+            and (
+                (
+                    channel.live_captions is not None
+                    and channel.live_captions.processing_state in {"failed", "stalled"}
+                )
+                or (
+                    not channel.captions_verified
+                    and not (
+                        channel.live_captions is not None
+                        and channel.live_captions.processing_state == "silent"
+                        and channel.live_captions.audio_signal == "digital-silence"
+                    )
+                )
+            )
+        ]
+        if caption_red:
+            worst_caption = caption_red[0]
+            issue = (
+                worst_caption.live_captions.processing_state
+                if worst_caption.live_captions is not None
+                and worst_caption.live_captions.processing_state in {"failed", "stalled"}
+                else "not verified"
+            )
+            return (
+                "Captions degraded",
+                f"Live captions are {issue} on {worst_caption.channel_id}; "
+                "the channel remains on air.",
+            )
         red = [c for c in channels if c.color == "red"]
         if red:
             worst = red[0]

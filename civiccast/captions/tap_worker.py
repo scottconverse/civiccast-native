@@ -61,8 +61,9 @@ import wave
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from civiccast.captions.live_sidecar import (
     CaptionRuntimeState,
@@ -640,6 +641,7 @@ class CaptionTapWorker:
         # part of the token so a late result from a prior broadcast cannot make
         # a same-numbered chunk in a new session look in-flight.
         self._channel_inflight: dict[str, set[tuple[int, str]]] = {}
+        self._channel_inflight_started_at: dict[str, datetime] = {}
         self._channel_futures: dict[
             concurrent.futures.Future[_ChannelScanResult],
             tuple[str, int, frozenset[str]],
@@ -652,6 +654,15 @@ class CaptionTapWorker:
         self._monotonic = monotonic or time.monotonic
         #: channel -> (semantic status key, monotonic time it was published)
         self._published_status: dict[str, tuple[tuple[object, ...], float]] = {}
+        # These are operator observations, not speech/caption-latency metrics.
+        # Segment timestamps mark when this worker first saw/finished work;
+        # exact all-zero PCM is reported as digital silence rather than inferred
+        # from the absence of recognized words.
+        self._last_seen_segment_index: dict[str, int] = {}
+        self._last_input_at: dict[str, datetime] = {}
+        self._last_processed_at: dict[str, datetime] = {}
+        self._pending_since_at: dict[str, datetime] = {}
+        self._audio_signal: dict[str, Literal["digital-silence", "audio-present"]] = {}
         #: monotonic time of the last retention sweep, and its last verdict.
         #: ``None`` means "never swept", so the first scan always sweeps.
         self._last_retention_sweep: float | None = None
@@ -851,6 +862,7 @@ class CaptionTapWorker:
         )
         with self._channel_executor_lock:
             tokens = self._channel_inflight.setdefault(channel_id, set())
+            self._channel_inflight_started_at.setdefault(channel_id, datetime.now(UTC))
             tokens.update((generation, name) for name in names)
             self._channel_futures[future] = (channel_id, generation, names)
         future.add_done_callback(self._channel_future_done)
@@ -872,6 +884,7 @@ class CaptionTapWorker:
                 tokens.difference_update((generation, name) for name in names)
                 if not tokens:
                     self._channel_inflight.pop(channel_id, None)
+                    self._channel_inflight_started_at.pop(channel_id, None)
         try:
             future.result()
         except Exception:
@@ -1166,6 +1179,11 @@ class CaptionTapWorker:
         # The same lock covers generation comparison + VTT publication. A publish
         # already writing finishes BEFORE this reset; any later one is refused.
         self._session_generation[channel_id] = self._session_generation.get(channel_id, 0) + 1
+        self._last_seen_segment_index.pop(channel_id, None)
+        self._last_input_at.pop(channel_id, None)
+        self._last_processed_at.pop(channel_id, None)
+        self._pending_since_at.pop(channel_id, None)
+        self._audio_signal.pop(channel_id, None)
         self._channel_workers.pop(channel_id, None)
         self._channel_publishers.pop(channel_id, None)
         self._previous_segments.pop(channel_id, None)
@@ -1313,6 +1331,24 @@ class CaptionTapWorker:
                     continue
                 with self._phase_timing.phase("scan_settle_and_backlog_gate", channel=channel_id):
                     segments = self._settled_segments(channel_dir)
+                if segments:
+                    newest_index = segments[-1][0]
+                    if newest_index > self._last_seen_segment_index.get(channel_id, -1):
+                        observed_at = datetime.now(UTC)
+                        last_input_at = self._last_input_at.get(channel_id)
+                        last_processed_at = self._last_processed_at.get(channel_id)
+                        caught_up = (
+                            last_input_at is not None
+                            and last_processed_at is not None
+                            and last_processed_at >= last_input_at
+                            and not self._channel_has_inflight(channel_id)
+                        )
+                        if channel_id not in self._pending_since_at or caught_up:
+                            self._pending_since_at[channel_id] = observed_at
+                        self._last_seen_segment_index[channel_id] = newest_index
+                        self._last_input_at[channel_id] = observed_at
+                    else:
+                        self._pending_since_at.setdefault(channel_id, datetime.now(UTC))
                 if not segments:
                     # No settled audio at all means nothing is queued, which is
                     # under the limit -- and the streak must be CONSECUTIVE, so
@@ -1322,6 +1358,13 @@ class CaptionTapWorker:
                     # settle guard leaves the newest file, so only a channel
                     # that has caught up can have an empty scan.)
                     self._reset_overload_persistence(channel_id)
+                    if not self._channel_has_inflight(channel_id):
+                        self._pending_since_at.pop(channel_id, None)
+                    self._publish_status(
+                        channel_id,
+                        state="within-capacity",
+                        backlog_segments=0,
+                    )
                     continue
                 channels.append(channel_id)
                 inflight_names = self._inflight_names(channel_id)
@@ -1339,9 +1382,19 @@ class CaptionTapWorker:
                     # stabilizer.  The current batch owns its paths; new
                     # arrivals remain queued for the next scan after it ends.
                     self._note_backlog_depth(channel_id, len(queued_segments))
+                    self._publish_status(
+                        channel_id,
+                        state="within-capacity",
+                        backlog_segments=len(queued_segments),
+                    )
                     continue
                 if not queued_segments:
                     self._note_backlog_depth(channel_id, 0)
+                    self._publish_status(
+                        channel_id,
+                        state="within-capacity",
+                        backlog_segments=0,
+                    )
                     continue
                 if self._backoff.is_paused(channel_id):
                     # A paused channel is draining, not over-limit: it must not
@@ -1693,6 +1746,10 @@ class CaptionTapWorker:
                     # A new writer may already have reused this numbered path.
                     # Do not move it or restore the old session's overlap.
                     break
+                self._last_processed_at[channel_id] = datetime.now(UTC)
+                self._audio_signal[channel_id] = (
+                    "audio-present" if any(raw_chunk.pcm_s16le) else "digital-silence"
+                )
                 with self._retention_lock:
                     retention_ready = self._retention_ready
                     retention_in_flight = self._retention_in_flight
@@ -2278,8 +2335,33 @@ class CaptionTapWorker:
         ``updated_at`` never looks abandoned.
         """
 
-        key = (state, backlog_segments, consecutive_overloads, refusal_reason)
         now = self._monotonic()
+        provider_status = getattr(self._runtime, "live_provider_status", None)
+        provider_state = "unknown"
+        provider_retry_in_seconds: int | None = None
+        if callable(provider_status):
+            try:
+                provider_state, provider_retry_in_seconds = provider_status(channel_id)
+            except Exception:
+                provider_state = "unknown"
+        with self._channel_executor_lock:
+            inference_inflight = bool(self._channel_inflight.get(channel_id))
+            inference_started_at = self._channel_inflight_started_at.get(channel_id)
+        last_input_at = self._last_input_at.get(channel_id)
+        last_processed_at = self._last_processed_at.get(channel_id)
+        pending_since_at = self._pending_since_at.get(channel_id)
+        key = (
+            state,
+            backlog_segments,
+            consecutive_overloads,
+            refusal_reason,
+            provider_state,
+            inference_inflight,
+            inference_started_at,
+            last_input_at,
+            last_processed_at,
+            pending_since_at,
+        )
         previous = self._published_status.get(channel_id)
         if previous is not None:
             previous_key, published_at = previous
@@ -2294,6 +2376,15 @@ class CaptionTapWorker:
             refusal_reason=refusal_reason,
             resume_in_seconds=resume_in_seconds,
             consecutive_overloads=consecutive_overloads,
+            worker_heartbeat_at=datetime.now(UTC),
+            last_input_at=last_input_at,
+            last_processed_at=last_processed_at,
+            pending_since_at=pending_since_at,
+            inference_started_at=inference_started_at,
+            audio_signal=self._audio_signal.get(channel_id, "unknown"),
+            provider_state=provider_state,
+            provider_retry_in_seconds=provider_retry_in_seconds,
+            inference_inflight=inference_inflight,
         )
         self._published_status[channel_id] = (key, now)
         return True

@@ -345,6 +345,155 @@ class TestConfigCrud:
         assert r.status_code == 200
         assert r.json()["enabled"] is False
 
+    @pytest.mark.parametrize("include_secret", [True, False])
+    def test_put_null_or_missing_secret_preserves_existing_secret(
+        self, include_secret: bool
+    ) -> None:
+        app, store, _, _ = _build()
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload())
+
+        payload = _config_payload(enabled=False, signing_secret=None)
+        if not include_secret:
+            payload.pop("signing_secret")
+        r = client.put("/api/staff/paywall/config", json=payload)
+
+        assert r.status_code == 200
+        assert r.json()["signing_secret_present"] is True
+        assert "signing_secret" not in r.json()
+        stored = store.get_config("pw-cfg")
+        assert stored is not None
+        assert stored.signing_secret == _SECRET
+
+    def test_put_explicit_empty_secret_clears_existing_secret(self) -> None:
+        app, store, _, _ = _build()
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload())
+
+        payload = _config_payload(enabled=False, signing_secret="")
+        r = client.put("/api/staff/paywall/config", json=payload)
+
+        assert r.status_code == 200
+        assert r.json()["signing_secret_present"] is False
+        assert "signing_secret" not in r.json()
+        stored = store.get_config("pw-cfg")
+        assert stored is not None
+        assert stored.signing_secret is None
+
+    def test_put_replacement_secret_rotates_and_does_not_echo_value(self) -> None:
+        app, store, _, _ = _build()
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload())
+        replacement = "replacement-secret-with-at-least-32-characters"
+
+        r = client.put(
+            "/api/staff/paywall/config",
+            json=_config_payload(signing_secret=replacement),
+        )
+
+        assert r.status_code == 200
+        assert r.json()["signing_secret_present"] is True
+        assert replacement not in r.text
+        stored = store.get_config("pw-cfg")
+        assert stored is not None
+        assert stored.signing_secret == replacement
+
+    def test_put_rejects_short_replacement_without_changing_saved_secret(self) -> None:
+        app, store, _, _ = _build()
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload())
+
+        r = client.put(
+            "/api/staff/paywall/config",
+            json=_config_payload(signing_secret="too-short"),
+        )
+
+        assert r.status_code == 422
+        assert "too-short" not in r.text
+        stored = store.get_config("pw-cfg")
+        assert stored is not None
+        assert stored.signing_secret == _SECRET
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("put", "/api/staff/paywall/config"),
+            ("patch", "/api/staff/paywall/config/pw-cfg"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("invalid_secret", "secret_marker"),
+        [
+            ("overlong-secret-" + "x" * 201, "overlong-secret-"),
+            ({"candidate": "wrong-type-secret-sentinel"}, "wrong-type-secret-sentinel"),
+        ],
+    )
+    def test_secret_validation_errors_do_not_echo_input_or_change_saved_secret(
+        self,
+        method: str,
+        path: str,
+        invalid_secret: object,
+        secret_marker: str,
+    ) -> None:
+        app, store, _, _ = _build()
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload())
+        payload = (
+            _config_payload(signing_secret=invalid_secret)
+            if method == "put"
+            else {"signing_secret": invalid_secret}
+        )
+
+        response = getattr(client, method)(path, json=payload)
+
+        assert response.status_code == 422
+        assert secret_marker not in response.text
+        errors = response.json()["detail"]
+        assert errors
+        secret_error = next(error for error in errors if "signing_secret" in error["loc"])
+        assert secret_error["type"]
+        assert secret_error["msg"]
+        assert "input" not in secret_error
+        stored = store.get_config("pw-cfg")
+        assert stored is not None
+        assert stored.signing_secret == _SECRET
+
+    @pytest.mark.parametrize(
+        ("payload", "expected_loc", "expected_safe_input"),
+        [
+            (
+                [{"signing_secret": "top-level-list-secret-sentinel"}],
+                ["body"],
+                [{"signing_secret": "[redacted]"}],
+            ),
+            (
+                {"unexpected": {"nested": {"signing_secret": "nested-dict-secret-sentinel"}}},
+                ["body", "unexpected"],
+                {"nested": {"signing_secret": "[redacted]"}},
+            ),
+        ],
+    )
+    def test_malformed_request_redacts_nested_secret_and_preserves_safe_error_details(
+        self,
+        payload: object,
+        expected_loc: list[str],
+        expected_safe_input: object,
+    ) -> None:
+        client = _client()
+
+        response = client.put("/api/staff/paywall/config", json=payload)
+
+        assert response.status_code == 422
+        assert "secret-sentinel" not in response.text
+        errors = response.json()["detail"]
+        assert errors
+        assert all(error["type"] and error["loc"] and error["msg"] for error in errors)
+        error = next(error for error in errors if error["loc"] == expected_loc)
+        assert error["type"]
+        assert error["loc"] == expected_loc
+        assert error["msg"]
+        assert error["input"] == expected_safe_input
+
     def test_put_different_config_id_same_station_is_409(self) -> None:
         client = _client()
         client.put("/api/staff/paywall/config", json=_config_payload(config_id="pw-1"))

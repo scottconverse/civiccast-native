@@ -192,6 +192,12 @@ DEFAULT_LOG_ROOT = Path(r"C:\ProgramData\CivicCast\logs")
 SUPERVISOR_LOG_NAME = "supervisor.log"
 LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
 LOG_BACKUP_COUNT = 10
+# Raw control-plane and PostgreSQL stdio is drained by the supervisor so the
+# child can keep writing while Windows rotates the supervisor-owned file.
+CHILD_LOG_MAX_BYTES = LOG_MAX_BYTES
+CHILD_LOG_BACKUP_COUNT = LOG_BACKUP_COUNT
+CHILD_LOG_READ_SIZE = 64 * 1024
+_ROTATED_CHILD_LOGS = frozenset({"control_plane", "postgres"})
 LOGGER_NAME = "civiccast.native.supervisor"
 #: The package-root logger ``configure_logging`` ALSO wires to supervisor.log.
 #: Field finding (2026-08-30, real box): library code the supervisor host
@@ -217,6 +223,56 @@ def child_log_path(name: str, *, log_root: Path | str | None = None) -> Path:
 
     root = Path(log_root) if log_root is not None else default_log_root()
     return root / f"{name}.log"
+
+
+class _BestEffortRotatingFileHandler(logging.handlers.RotatingFileHandler):
+    """A bounded raw-child sink whose failures never stop pipe drainage."""
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802
+        # The child pipe must still be consumed if a disk is full or a log
+        # rename is temporarily denied. Losing diagnostic output is preferable
+        # to blocking a service child on a full pipe.
+        return
+
+
+def _drain_child_output(stream: Any, handler: logging.Handler) -> None:
+    """Continuously empty a child's merged stdout/stderr pipe into its sink.
+
+    This runs on a daemon thread for the full lifetime of the inherited pipe,
+    which can outlive the short-lived pg_ctl launcher. Bounded reads and no
+    queue keep memory use fixed; output errors are discarded after the read so
+    they cannot fill the OS pipe and stall the child. The service stop path
+    never joins this thread.
+    """
+
+    try:
+        while True:
+            try:
+                chunk = stream.read(CHILD_LOG_READ_SIZE)
+            except (OSError, ValueError):
+                break
+            if not chunk:
+                break
+            try:
+                record = logging.LogRecord(
+                    name="civiccast.native.supervisor.child_output",
+                    level=logging.INFO,
+                    pathname="",
+                    lineno=0,
+                    msg=chunk.decode("utf-8", errors="replace"),
+                    args=(),
+                    exc_info=None,
+                )
+                handler.handle(record)
+            except Exception:  # noqa: S112 -- sink failures must not stop pipe drainage
+                # Keep draining even if a handler or formatter fails. A log
+                # sink is diagnostic and must never be a child-process gate.
+                continue
+    finally:
+        with contextlib.suppress(Exception):
+            stream.close()
+        with contextlib.suppress(Exception):
+            handler.close()
 
 
 class _DurableRotatingFileHandler(logging.handlers.RotatingFileHandler):
@@ -415,25 +471,22 @@ def _file_backed_popen_factory(
     spec: ChildSpec, new_process_group: bool, *, log_root: Path | str
 ) -> Any:
     """G3: the production spawn: ``subprocess.Popen`` of the child's argv with
-    its env overlaid on the current environment, with stdout+stderr
-    redirected to its per-child log file (:func:`child_log_path`). When
+    its env overlaid on the current environment, with stdout+stderr captured
+    under the per-child log path (:func:`child_log_path`). When
     ``new_process_group`` (the control-plane child, per
     ``spec.new_process_group``) the child is given its OWN process group
     (``CREATE_NEW_PROCESS_GROUP``) so a ``CTRL_BREAK`` can later drain only
     its tree (RAT-004) without signalling the supervisor.
 
-    FILE-BACKED, never a pipe: ``child_log_path`` was defined but had no
-    caller (G3), so under the SCM every child's stdout/stderr -- including
-    postgres's OWN banner, which run 17's diagnosis needed and did not
-    have -- went to inherited-but-unobserved handles and was lost. A pipe
-    was deliberately NOT used here: this repo has already lost real runs to
-    pipe inheritance (an unread pipe fills its OS buffer and can stall the
-    child, or a parent that never drains it never sees the output either).
-    The log file handle is opened, handed to ``Popen`` (which duplicates an
-    INHERITABLE copy for the child on Windows), and closed again in THIS
-    process immediately after spawn -- the child's own inherited copy
-    persists independently, so closing here does not touch the child's
-    stream.
+    ``control_plane`` and ``postgres`` stdout/stderr are captured through a
+    continuously drained pipe and a supervisor-owned rotating file. This is
+    necessary because an open redirect handle prevents safe log rotation on
+    Windows. The daemon drainer reads fixed-size chunks, never queues output,
+    continues reading through sink errors, and is not joined by the stop path.
+    PostgreSQL's ``pg_ctl start`` passes its standard handles to the durable
+    postmaster, so ``postgres.log`` continues receiving server output after
+    the short-lived launcher exits. Other children retain direct file-backed
+    capture because their logs are outside this bounded-growth change.
 
     WINDOWLESS (F-13, sandbox newcomer re-walk dd7f835f, 2026-08-01): every
     child also gets ``CREATE_NO_WINDOW``. The re-walk found a blank black
@@ -448,9 +501,9 @@ def _file_backed_popen_factory(
 
     Fixed HERE rather than by switching the interpreter to ``pythonw.exe``,
     deliberately: ``pythonw.exe`` has no valid stdout/stderr handles at all,
-    which would silently defeat the file-backed capture immediately above --
-    the exact regression G3 landed to prevent. ``CREATE_NO_WINDOW`` suppresses
-    only the WINDOW; the child keeps the inherited log-file handles.
+    which would silently defeat the output capture immediately above -- the
+    exact regression G3 landed to prevent. ``CREATE_NO_WINDOW`` suppresses
+    only the WINDOW; the child keeps the inherited pipe or file handles.
     ``getattr(..., 0)`` for the same reason as every other spawn site in this
     repo (``pg_ctl_exec``, ``installer/service``, ``provision/seams``,
     ``stream/_ffmpeg``, ``egress/gst/strategy``, ``certs/authority``,
@@ -462,17 +515,10 @@ def _file_backed_popen_factory(
     re-walk only caught the control plane because that is the one whose window
     the operator was left looking at.
 
-    Gate A run #4 fix (2026-08-21): this capture file is keyed off
-    ``spec.stdio_log_name`` when the spec sets it, NOT unconditionally off
-    ``spec.name``. postgres is the one child that can set it -- when
-    ``postgres_child_spec`` is given a ``log_path`` (its ``pg_ctl -l``
-    target), it points ``stdio_log_name`` at a different file
-    (``postgres-launcher.log``) so this capture's own open of
-    ``child_log_path("postgres")`` never collides with pg_ctl's ``-l``
-    reopen of the SAME path -- see that function's docstring for the
-    Windows ``ERROR_SHARING_VIOLATION`` this closes. Every other child
-    (``stdio_log_name`` unset) keeps resolving to ``child_log_path(name)``
-    exactly as before."""
+    ``CREATE_NO_WINDOW`` is retained for all children. ``stderr`` is merged
+    into ``stdout`` for the bounded children so a single reader drains both
+    streams and rotation has one owner.
+    """
 
     import os
     import subprocess
@@ -481,8 +527,55 @@ def _file_backed_popen_factory(
     if new_process_group:
         creationflags |= getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
     env = {**os.environ, **spec.env}
-    log_path = child_log_path(spec.stdio_log_name or spec.name, log_root=log_root)
+    log_path = child_log_path(spec.name, log_root=log_root)
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    if spec.name in _ROTATED_CHILD_LOGS:
+        handler = _BestEffortRotatingFileHandler(
+            log_path,
+            maxBytes=CHILD_LOG_MAX_BYTES,
+            backupCount=CHILD_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+            delay=True,
+        )
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        try:
+            proc = subprocess.Popen(  # noqa: S603
+                spec.argv,
+                env=env,
+                cwd=spec.cwd,
+                creationflags=creationflags,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                bufsize=0,
+            )
+        except BaseException:
+            handler.close()
+            raise
+        if proc.stdout is None:
+            handler.close()
+            with contextlib.suppress(Exception):
+                proc.terminate()
+            raise RuntimeError(f"stdout pipe missing for child {spec.name}")
+        drainer = threading.Thread(
+            target=_drain_child_output,
+            args=(proc.stdout, handler),
+            name=f"civiccast-log-{spec.name}",
+            daemon=True,
+        )
+        try:
+            drainer.start()
+        except BaseException:
+            handler.close()
+            with contextlib.suppress(Exception):
+                proc.kill()
+            with contextlib.suppress(Exception):
+                proc.stdout.close()
+            raise
+        # Kept on the Popen object for diagnostics and tests. Production stop
+        # never waits for it: grandchildren can inherit the pipe handles.
+        cast(Any, proc)._civiccast_log_drainer = drainer
+        return proc
+
     log_handle = log_path.open("ab")  # closed in the finally block below
     try:
         return subprocess.Popen(  # noqa: S603
@@ -1758,19 +1851,6 @@ def build_production_service(
         # provisioned with, not a silently wrong default.
         db_host=db_host,
         db_port=db_port,
-        # Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence):
-        # postgres.log was observed at 0 bytes for a 5+ hour run.
-        # Pointing pg_ctl at its OWN ``-l`` log file makes it
-        # own its file directly, rather than depending solely on the
-        # inherited-stdio capture -- see children.py's
-        # postgres_child_spec. This path is STILL
-        # ``child_log_path("postgres", ...)`` (the name operators and
-        # tooling expect); the fix for the sharing violation this
-        # originally caused on Windows (Gate A run #4, 2026-08-21) lives in
-        # ``postgres_child_spec`` diverting pg_ctl's OWN generic stdio
-        # capture to a different file, not in changing this path -- see
-        # that function's docstring and ``ChildSpec.stdio_log_name``.
-        postgres_log_path=str(child_log_path("postgres", log_root=layout.log_root)),
         python_path=str(layout.python_path),
         # CC-WS5-003 review-fix: preserve the egress-work-dir security wiring.
         # The layout kwargs must ADD to, not REPLACE, the existing

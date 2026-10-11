@@ -165,7 +165,7 @@ def render_native_beta_candidate_notes(
             raise ValueError("artifact_source_sha is required for direct-consumer notes.")
         consumer_mode = direct_verification.get("consumer_mode", "sandbox")
         if consumer_mode == "sandbox":
-            sandbox_proofs = {
+            legacy_sandbox_proofs = {
                 "fresh_install",
                 "failed_install_repair",
                 "repair_preservation",
@@ -173,11 +173,44 @@ def render_native_beta_candidate_notes(
                 "preservation",
                 "runtime",
             }
-            expected_proofs = sandbox_proofs | {"consumer_mode"}
-            if set(direct_verification) not in (sandbox_proofs, expected_proofs):
+            beta12_sandbox_proofs = {
+                "fresh_install",
+                "beta11_baseline_install",
+                "beta11_to_beta12_interrupted_upgrade",
+                "preservation",
+                "runtime",
+            }
+            beta12_separate_sandbox_proofs = {
+                "fresh_install",
+                "beta11_baseline_install",
+                "beta11_to_beta12_upgrade",
+                "beta12_interrupted_install_repair",
+                "preservation",
+                "repair_preservation",
+                "runtime",
+            }
+            legacy_expected = legacy_sandbox_proofs | {"consumer_mode"}
+            beta12_expected = beta12_sandbox_proofs | {"consumer_mode"}
+            beta12_separate_expected = beta12_separate_sandbox_proofs | {"consumer_mode"}
+            beta12_advisory_expected = beta12_expected | {"caption_performance_advisory"}
+            beta12_separate_advisory_expected = beta12_separate_expected | {
+                "caption_performance_advisory"
+            }
+            if set(direct_verification) not in (
+                legacy_sandbox_proofs,
+                legacy_expected,
+                beta12_sandbox_proofs,
+                beta12_expected,
+                beta12_advisory_expected,
+                beta12_separate_sandbox_proofs,
+                beta12_separate_expected,
+                beta12_separate_advisory_expected,
+            ):
                 raise ValueError(
                     "direct_verification must contain the validated direct Sandbox proof summary"
                 )
+            beta12_upgrade = "beta11_to_beta12_interrupted_upgrade" in direct_verification
+            beta12_separate_upgrade_repair = "beta11_to_beta12_upgrade" in direct_verification
             runtime_label = (
                 "One-channel install-smoke observation"
                 if "one-channel install-smoke" in direct_verification["runtime"].casefold()
@@ -199,18 +232,48 @@ def render_native_beta_candidate_notes(
                 "",
                 "## Direct Sandbox consumer verification",
                 "",
-                f"- Fresh Beta 11 install: {direct_verification['fresh_install']}",
-                f"- Failed fresh-install repair: {direct_verification['failed_install_repair']}",
-                f"- Existing account data after repair: {direct_verification['repair_preservation']}",
-                f"- Beta 10 to Beta 11 setup-only upgrade: {direct_verification['beta10_to_beta11_upgrade']}",
-                f"- Existing account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
+                f"- Fresh {tag.removeprefix('v')} install: {direct_verification['fresh_install']}",
+                *(
+                    [
+                        f"- Beta 11 baseline install: {direct_verification['beta11_baseline_install']}",
+                        f"- Beta 11 to Beta 12 interrupted-upgrade recovery: {direct_verification['beta11_to_beta12_interrupted_upgrade']}",
+                        f"- Existing Beta 11 account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
+                    ]
+                    if beta12_upgrade
+                    else (
+                        [
+                            f"- Beta 11 baseline install: {direct_verification['beta11_baseline_install']}",
+                            f"- Beta 11 to Beta 12 normal in-place upgrade: {direct_verification['beta11_to_beta12_upgrade']}",
+                            f"- Separate Beta 12 D4 interrupted-install repair: {direct_verification['beta12_interrupted_install_repair']}",
+                            f"- Existing Beta 11 account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
+                            f"- Existing account, asset, and three schedules after repair: {direct_verification['repair_preservation']}",
+                        ]
+                        if beta12_separate_upgrade_repair
+                        else [
+                            f"- Failed fresh-install repair: {direct_verification['failed_install_repair']}",
+                            f"- Existing account data after repair: {direct_verification['repair_preservation']}",
+                            f"- Beta 10 to {tag.removeprefix('v')} setup-only upgrade: {direct_verification['beta10_to_beta11_upgrade']}",
+                            f"- Existing account, asset, and three schedules after upgrade: {direct_verification['preservation']}",
+                        ]
+                    )
+                ),
                 f"- {runtime_label}: {direct_verification['runtime']}",
+                *(
+                    [
+                        f"- Caption-performance observations: {direct_verification['caption_performance_advisory']}"
+                    ]
+                    if "caption_performance_advisory" in direct_verification
+                    else []
+                ),
                 "- Gate A workflow lanes: not run.",
                 "- Download-only network route: not tested.",
             ]
         elif consumer_mode == "physical-host":
             expected_proofs = {"consumer_mode", "host_install", "host_preservation", "host_runtime"}
-            if set(direct_verification) != expected_proofs:
+            if set(direct_verification) not in (
+                expected_proofs,
+                expected_proofs | {"caption_performance_advisory"},
+            ):
                 raise ValueError(
                     "direct_verification must contain the validated physical-host proof summary"
                 )
@@ -229,9 +292,16 @@ def render_native_beta_candidate_notes(
                 "",
                 "## Physical-host consumer verification",
                 "",
-                f"- Exact Beta 11 installer and installed payload: {direct_verification['host_install']}",
+                f"- Exact {tag.removeprefix('v')} installer and installed payload: {direct_verification['host_install']}",
                 f"- Existing host configuration and schema preservation: {direct_verification['host_preservation']}",
                 f"- Three-channel host output: {direct_verification['host_runtime']}",
+                *(
+                    [
+                        f"- Caption-performance observations: {direct_verification['caption_performance_advisory']}"
+                    ]
+                    if "caption_performance_advisory" in direct_verification
+                    else []
+                ),
                 "- This was an in-place update on an existing host; clean Sandbox install and repair checks are separate.",
                 "- The accepted development-station soak is reported separately from this install check.",
             ]

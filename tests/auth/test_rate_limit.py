@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 
 import httpx
 import pytest
@@ -515,7 +514,7 @@ def test_staff_bearer_brute_force_trips_429_with_retry_after(monkeypatch) -> Non
         assert int(limited.headers["Retry-After"]) > 0
 
 
-async def test_saturated_invalid_flood_cannot_queue_a_valid_configured_token(
+async def test_saturated_invalid_flood_only_verifies_the_valid_configured_token(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN", raising=False)
@@ -532,6 +531,14 @@ async def test_saturated_invalid_flood_cannot_queue_a_valid_configured_token(
         first = await client.get("/api/staff/installer/summary", headers=bad_headers)
         assert first.status_code == 401
 
+        verified_secrets: list[str | None] = []
+        real_verifier = auth_middleware.verify_bearer_token
+
+        def track_verifier(authorization: str | None, **kwargs: object):
+            verified_secrets.append(authorization)
+            return real_verifier(authorization, **kwargs)
+
+        monkeypatch.setattr(auth_middleware, "verify_bearer_token", track_verifier)
         flood = [
             asyncio.create_task(
                 client.get(
@@ -541,17 +548,19 @@ async def test_saturated_invalid_flood_cannot_queue_a_valid_configured_token(
             )
             for index in range(4)
         ]
-        await asyncio.sleep(0.01)
-        started = time.monotonic()
+        await asyncio.sleep(0)
         valid = await client.get(
             "/api/staff/installer/summary",
             headers={"Authorization": f"Bearer {_CONFIGURED_TOKEN}"},
         )
-        valid_elapsed = time.monotonic() - started
-        await asyncio.gather(*flood)
+        responses = await asyncio.gather(*flood)
 
     assert valid.status_code == 200
-    assert valid_elapsed < 0.5
+    # Admission is the contract: saturated guesses must not consume verifier
+    # work ahead of the valid token. Timing the entire installer-summary route
+    # also measures worker-pool scheduling and filesystem readiness probes.
+    assert verified_secrets == [f"Bearer {_CONFIGURED_TOKEN}"]
+    assert all(response.status_code == 429 for response in responses)
 
 
 async def test_saturated_invalid_flood_cannot_queue_a_valid_lifecycle_token(

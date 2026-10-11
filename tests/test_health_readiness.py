@@ -28,6 +28,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -209,3 +210,60 @@ def test_api_health_alias_reports_the_same_readiness(
 
     assert alias.status_code == 200
     assert alias.json()["status"] == "degraded"
+
+
+def test_caption_worker_failure_degrades_readiness_without_leaking_channel_details(
+    health_env: None, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Liveness stays up while public readiness reflects on-air caption failure."""
+    import json
+
+    monkeypatch.setenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", "1")
+    work_dir = tmp_path / "egress"
+    status_path = work_dir / "government" / "captions" / "runtime-status.json"
+    status_path.parent.mkdir(parents=True)
+    status_path.write_text(
+        json.dumps({"state": "storage-refused", "updated_at": "2026-10-09T12:00:00Z"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CIVICCAST_EGRESS_WORK_DIR", str(work_dir))
+    monkeypatch.setattr(
+        "civiccast.installer.station_state.resolve_live_captions_enabled_or_default",
+        lambda: True,
+    )
+
+    from civiccast.app import create_app
+    from civiccast.egress.models import EgressConfig, EgressSinkSpec, EgressStateRow
+    from civiccast.egress.router import get_egress_store
+    from civiccast.egress.store import InMemoryEgressStore
+    from civiccast.schema_check import SchemaStatus
+
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        EgressConfig(
+            channel_id="government",
+            enabled=True,
+            auto_start=False,
+            slate_message="CivicCast is preparing the channel.",
+            sinks=[
+                EgressSinkSpec(kind="udp-ts", label="Cable headend", uri="udp://239.1.1.1:5000")
+            ],
+        )
+    )
+    store.write_state(
+        EgressStateRow(
+            channel_id="government",
+            state="ON_AIR",
+            updated_at=datetime.now(UTC),
+        )
+    )
+    app = create_app()
+    app.dependency_overrides[get_egress_store] = lambda: store
+
+    with TestClient(app) as client:
+        app.state.schema_status = SchemaStatus(state="current")
+        body = _health(client)
+
+    assert body["status"] == "degraded"
+    assert body["live_captions"] == "degraded"
+    assert "government" not in json.dumps(body)

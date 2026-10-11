@@ -1,8 +1,22 @@
-> Historical beta.10 audit snapshot dated 2026-10-03; retained for traceability, not current UI or user guidance.
-
 # Summary review (nav id: summary)
 
-Console group: Review Records. The page label on screen is "Summary + signed records". Spec for the in-app help of AI summary review. Written against beta.10. Paths are under `civiccast/apps/portal-operator/src/`. The part that makes a summary is the "AI summary" card on an asset page; see assets.md.
+Console group: Review Records. The page label on screen is "Summary + signed records". Current operator guidance is followed by the beta.10 audit snapshot kept for traceability. Paths are under `civiccast/apps/portal-operator/src/`. The part that makes a summary is the "AI summary" card on an asset page; see assets.md.
+
+## Current operator guidance (Beta 12 candidate)
+
+A records clerk reviews a computer-written meeting summary against the caption cues listed under **Sourced claims**. The cue buttons show cue IDs and times; they do not show caption words or play audio, so open the recording or Review queue to check the text.
+
+1. On a **Pending review** card, read the narrative and its sourced claims. Click **Edit summary** to revise the narrative, then **Save changes** or **Cancel edit**. Saving changes the audit fingerprint; the sourced claims stay as generated.
+2. Click **Approve summary** after checking the claims. CivicCast records the operator identity from the signed-in staff session. Only records clerks can edit or approve.
+3. An **Approved** card stays on this page. Click **Export signed record** to create a PDF/A-3B record. Its timestamp is deterministic test data unless the station has configured a real timestamp authority.
+4. Use **Download signed record** to save the export and **Verify signed record** to check its stored artifact and timestamp proof.
+5. To find an export after a page refresh, click **Load saved records** on the approved card. The page requests at most 10 recent records for that summary and offers **Download** and **Verify** actions for each. Only records clerks can access these actions.
+
+If a save is stale, reload the card and reapply the edit. If an action fails, follow the page's recovery message. Summary review does not have a reject or regenerate action; to make another draft, update caption review if needed and use **Generate summary** on the recording's asset page.
+
+> The material below this heading is the historical beta.10 audit snapshot dated 2026-10-03. It describes the earlier UI and is retained for traceability only; do not use it as current operator guidance.
+
+## Historical beta.10 audit snapshot
 
 ## Where the help text lives now
 - `screens/SummaryReviewScreen.tsx`: label 255; heading 257; intro 259-261; role note 267; yellow evidence bar 108-110; card title (asset ID) 146; summary ID and model tag 148; operator message 159-160; Approve summary 185; Export signed record 197; export success 206-209; empty state 87-92; error box 61-67; error box also used after failed Approve or Export 273-281.

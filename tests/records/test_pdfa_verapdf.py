@@ -21,7 +21,7 @@ def _approved_store(summary_id: str) -> InMemorySummaryStore:
         update={
             "summary_id": summary_id,
             "meeting_id": f"{summary_id}-meeting",
-            "status": "approved",
+            "status": "pending_review",
         }
     )
     store.create_summary(summary)
@@ -32,7 +32,8 @@ def _approved_store(summary_id: str) -> InMemorySummaryStore:
             operator_display_name="Avery Operator",
             approved_at=datetime(2026, 5, 16, 12, 0, tzinfo=UTC),
             approval_note="Checked against sourced transcript claims.",
-        )
+        ),
+        expected_audit_fingerprint=summary.audit_fingerprint,
     )
     return store
 

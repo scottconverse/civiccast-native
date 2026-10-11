@@ -111,18 +111,56 @@ class SummaryGenerateRequest(BaseModel):
 class SummaryApprovalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    expected_audit_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
     approval_note: str | None = None
+
+
+class SummaryEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    narrative: str = Field(min_length=1, max_length=12000)
+    expected_audit_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
 
 
 @staff_router.get(
     "/review-items",
     response_model=SummaryReviewQueueResponse,
-    summary="List sourced summaries awaiting operator review",
+    summary="List sourced summaries awaiting review or ready for export",
 )
 def list_review_items(
     store: SummaryStore = Depends(get_summary_store),
 ) -> SummaryReviewQueueResponse:
     return SummaryReviewQueueResponse(items=store.list_review_items(), next_cursor=None)
+
+
+@staff_router.patch(
+    "/{summary_id}",
+    response_model=SummaryDraft,
+    summary="Edit a pending summary narrative before approval",
+    dependencies=[Depends(require_any_role("records_clerk"))],
+    responses={
+        404: {"description": "Summary not found"},
+        409: {"description": "Summary is no longer pending review or has changed"},
+    },
+)
+def edit_summary(
+    summary_id: str,
+    payload: SummaryEditRequest,
+    store: SummaryStore = Depends(get_summary_store),
+) -> SummaryDraft:
+    try:
+        return store.edit_summary(
+            summary_id,
+            narrative=payload.narrative,
+            expected_audit_fingerprint=payload.expected_audit_fingerprint,
+        )
+    except SummaryStoreNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Summary not found: {summary_id}",
+        ) from exc
+    except SummaryStoreConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @staff_router.post(
@@ -161,7 +199,10 @@ def generate_summary(
     response_model=SummaryDraft,
     summary="Approve a sourced summary for signed-record export",
     dependencies=[Depends(require_any_role("records_clerk"))],
-    responses={404: {"description": "Summary not found"}},
+    responses={
+        404: {"description": "Summary not found"},
+        409: {"description": "Summary changed or is no longer pending; reload before approving"},
+    },
 )
 def approve_summary(
     request: Request,
@@ -178,12 +219,16 @@ def approve_summary(
         approval_note=payload.approval_note,
     )
     try:
-        return store.approve_summary(approval)
+        return store.approve_summary(
+            approval, expected_audit_fingerprint=payload.expected_audit_fingerprint
+        )
     except SummaryStoreNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Summary not found: {summary_id}. Generate or select an existing summary first.",
         ) from exc
+    except SummaryStoreConflictError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @staff_router.post(

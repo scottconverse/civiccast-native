@@ -94,6 +94,7 @@ def _build(scopes: tuple[str, ...] | None = _ALL, *, wire: bool = True, bridge=N
         clock=lambda: _T0,
         id_factory=lambda: f"{next(counter):04d}",
         token_factory=lambda: f"token-{next(tokens):0>{INVITE_TOKEN_MIN_LENGTH}}",
+        channel_enabled=lambda channel_id: {"ch": True, "disabled": False}.get(channel_id),
     )
 
     app = FastAPI()
@@ -145,10 +146,52 @@ def test_create_room_forbidden_for_meeting_operator() -> None:
 
 
 def test_create_room_allowed_for_setup_admin() -> None:
-    r = _client(scopes=("setup_admin",)).post(
-        "/api/staff/contribution/rooms", json={"channel_id": "ch", "name": "X"}
+    client = _client(scopes=("setup_admin",))
+    created = client.post("/api/staff/contribution/rooms", json={"channel_id": "ch", "name": "X"})
+    assert created.status_code == 201
+    room_id = created.json()["room_id"]
+
+    rooms = client.get("/api/staff/contribution/rooms")
+    assert rooms.status_code == 200
+    assert [room["room_id"] for room in rooms.json()] == [room_id]
+
+    detail = client.get(f"/api/staff/contribution/rooms/{room_id}")
+    assert detail.status_code == 200
+    assert detail.json()["room"]["room_id"] == room_id
+    assert detail.json()["invites"] == []
+    assert detail.json()["sessions"] == []
+
+    invites = client.get(f"/api/staff/contribution/rooms/{room_id}/invites")
+    assert invites.status_code == 200
+    assert invites.json() == []
+
+    # Room commissioning reads do not grant standalone guest-session access.
+    sessions = client.get("/api/staff/contribution/sessions")
+    assert sessions.status_code == 403
+
+    # Commissioning access does not grant live-show operation authority.
+    opened = client.post(f"/api/staff/contribution/rooms/{room_id}/open")
+    assert opened.status_code == 403
+
+
+def test_create_room_rejects_unknown_egress_channel() -> None:
+    client = _client(scopes=("setup_admin", "meeting_operator"))
+    response = client.post(
+        "/api/staff/contribution/rooms", json={"channel_id": "missing", "name": "X"}
     )
-    assert r.status_code == 201
+
+    assert response.status_code == 422
+    assert client.get("/api/staff/contribution/rooms").json() == []
+
+
+def test_create_room_rejects_disabled_egress_channel() -> None:
+    client = _client(scopes=("setup_admin", "meeting_operator"))
+    response = client.post(
+        "/api/staff/contribution/rooms", json={"channel_id": "disabled", "name": "X"}
+    )
+
+    assert response.status_code == 422
+    assert client.get("/api/staff/contribution/rooms").json() == []
 
 
 def test_list_rooms_forbidden_for_records_clerk_and_unauth() -> None:
@@ -271,6 +314,36 @@ def test_on_air_requires_admit_then_room_goes_live() -> None:
     detail = client.get(f"/api/staff/contribution/rooms/{rid}").json()
     assert detail["room"]["state"] == "live"
     assert len(detail["sessions"]) == 1
+
+
+def test_media_control_request_requires_meeting_operator_and_never_claims_media_success() -> None:
+    client = _client()
+    rid = _open_room(client)
+    token = _mint(client, rid)
+    sid = client.get(f"/api/public/contribution/invites/{token}").json()["session_id"]
+
+    refused = _client(scopes=("support_admin",)).post(
+        f"/api/staff/contribution/sessions/{sid}/media-control-request",
+        json={"action": "video_mute"},
+    )
+    assert refused.status_code == 403
+
+    recorded = client.post(
+        f"/api/staff/contribution/sessions/{sid}/media-control-request",
+        json={"action": "video_mute"},
+    )
+    assert recorded.status_code == 200
+    body = recorded.json()
+    assert body["media_control_state"] == "sent_unverified"
+    assert body["media_control_action"] == "video_mute"
+    assert body["state"] == "connected"
+    assert body["state"] != "muted"
+
+    invalid = client.post(
+        f"/api/staff/contribution/sessions/{sid}/media-control-request",
+        json={"action": "drop"},
+    )
+    assert invalid.status_code == 422
 
 
 def test_mint_invite_on_closed_room_409() -> None:

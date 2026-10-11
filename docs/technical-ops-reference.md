@@ -24,10 +24,9 @@ toccolor: black
 > [User Manual](USER-MANUAL.md).
 >
 > **Release line.** This repository carries the native Windows product, whose
-> version is `1.0.0-beta.11` (`civiccast/_native_version.py`), the owner-held
-> unpublished candidate. The latest published release is beta.10 (a GitHub
-> pre-release, published 2026-10-02;
-> `v1.0.0-beta.7` is superseded). `docs/releases/release-truth.yaml` is the authored source for
+> latest published release is `v1.0.0-beta.11` (a GitHub pre-release,
+> published 2026-10-08); Beta 12 is in development. Beta 10 and earlier
+> published betas are superseded. `docs/releases/release-truth.yaml` is the authored source for
 > release state -- read it rather than any version number quoted in prose,
 > including this one.
 >
@@ -1167,7 +1166,7 @@ questions, and monitoring setups should not confuse them.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.11","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.12","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the
@@ -1176,14 +1175,21 @@ installed but has not had its storage prepared yet. Point restart-on-failure
 supervisors and container health checks at the status code.
 
 **The `status` field is readiness.** It reads `healthy` only when the database
-schema matches the running code. Anything else reads `degraded`:
+schema matches the running code and live-caption readiness is neither
+`degraded` nor `unknown`. The schema contribution is:
 
 | `schema` | `status` | What it means |
 | --- | --- | --- |
-| `current` | `healthy` | The station can do its job. |
+| `current` | `healthy` unless captions are degraded or unknown | The database matches the program; this does not certify every station output. |
 | `not-configured` | `degraded` | No database yet — run **Prepare storage** in the console, or set `DATABASE_URL`. |
 | `behind` | `degraded` | The code is newer than the database. Run `alembic upgrade head`. |
 | `unknown` | `degraded` | CivicCast could not read the schema version — usually the database is unreachable. |
+
+`live_captions` is `disabled`, `idle`, `unknown`, `degraded` or `healthy`.
+Disabled captions and no active channel do not themselves degrade readiness.
+The public field is coarse; signed-in System Health shows affected channels,
+worker activity and speech-engine fallback. Fresh processing during silence
+differs from stalled recognition.
 
 The response always carries `schema_db_revision` and `schema_expected_head` (not just when `behind`) — `"none"`/`"unknown"` when either could not be read. When `schema` is `current` the two values are, by definition, equal; a caller proving a post-upgrade migration actually landed (rather than trusting the `current` label alone) can compare them directly.
 
@@ -1235,10 +1241,17 @@ runtime, sender, or hardware proof exists on the target host.
 
 ### Idle page and emergency overlay
 
-The resident portal now has a between-streams idle page and an emergency overlay
-state. The idle page tells residents when no meeting is live and points them to
-published recordings. The emergency overlay uses assertive live-region behavior
-and documents whether cellular fallback is enabled.
+The resident portal has a between-streams idle page and a channel-specific
+emergency overlay. The idle page points residents to published recordings when
+no meeting is live. The page polls `/api/public/cg/emergency-overlay?channel_id=...`
+for actual warning text and clears it when no active display remains; it does not
+require the old `?emergency=1` preview flag. The notice uses an assertive live region.
+
+Broadcast presentation is opt-in through `CIVICCAST_EAS` with GStreamer. The
+channel must start with its graphics compositor reserved before a display is
+accepted. Emergency updates replace only their own compositor layer; clearing
+retains other graphics. Full-frame forced slates require explicit confirmation.
+See the manual's Emergency Alerts section for configuration and operational limits.
 
 ## Troubleshooting
 
@@ -1248,7 +1261,7 @@ publish issues.
 
 | Symptom | Meaning | Operator action |
 | --- | --- | --- |
-| `/health` reports `"status":"degraded"` | The database schema does not match the running code — see the `schema` field for which case. | If `not-configured`, run **Prepare storage** in the operator console. If `behind`, run `alembic upgrade head`. If `unknown`, check that the database is reachable. |
+| `/health` reports `"status":"degraded"` | Database readiness or caption processing needs attention. Check both `schema` and the coarse `live_captions` field; the public probe does not expose channel details. | For schema `not-configured`, run **Prepare storage**; for `behind`, prepare the current schema; for `unknown`, check database reachability. For caption `degraded` or `unknown`, inspect authenticated System Health for the affected enabled on-air channel, worker activity and fallback state. Fresh processing during silence is distinct from a stalled worker. |
 | Clean Windows proof is blocked | The host did not provide an isolated target, or no install was exercised on it. | Rerun the proof on a fresh Hyper-V, Windows Sandbox, or VirtualBox Windows target. |
 | External provider lane is credential-gated | A secret may be missing or live proof has not been recorded. | Use approved credentials only, run the controlled provider proof, and store redacted evidence. |
 | Model lane is blocked | Required model hashes are unavailable. | Download or import the approved model bundle and verify hashes before captions or summaries. |

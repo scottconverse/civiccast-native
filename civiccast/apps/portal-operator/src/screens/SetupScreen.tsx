@@ -1592,8 +1592,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
       <div>
         <h2 className="m-0 text-base font-semibold">Admin sign-in</h2>
         <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-          Routine sign-in — use this every time, with the username and password from your
-          printed or saved recovery kit. Creates a fresh console token for this browser
+          Routine sign-in — use this every time with your admin username and current password.
+          After a local password reset, use the new password you entered. Creates a fresh console
+          token for this browser
           without touching any other browser or device already signed in.
         </p>
       </div>
@@ -1669,7 +1670,8 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
           <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
             The station rejected the console token this browser was still sending
             ({apiMessage(stateQuery.error, 'sign-in expired')}). Nothing is wrong with the
-            station. Sign in again with the admin username and password from your recovery kit.
+            station. Sign in again with your admin username and current password. If you just reset
+            the password locally, use the new password you entered.
           </p>
           <button
             type="button"
@@ -1784,8 +1786,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
               <p className="m-0 mt-1 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
                 CivicCast has no record that this station&apos;s recovery codes were saved or
                 printed. They were shown once during setup and cannot be shown again. Find the
-                saved or printed kit now — without those codes, a lost admin password locks this
-                station out permanently.
+                saved or printed kit now. If both the password and codes are lost, your local
+                Windows administrator can recover access without wiping the station; see
+                Administrator password reset in the Security and privacy manual chapter.
               </p>
               <button
                 type="button"

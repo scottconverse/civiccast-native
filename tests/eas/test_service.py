@@ -64,6 +64,21 @@ def _alert(
     return EasCapAlert(**base)  # type: ignore[arg-type]
 
 
+def test_expiry_clear_and_channel_scope_are_effective_without_polling(store: EasStore):
+    store.ingest_alert(_alert("test-expiry"))
+    svc = EasDisplayService(store, clock=lambda: _T0)
+    decision = svc.surface_alert(
+        channel_id="gov", alert_id="test-expiry", mode="overlay", decided_by="operator"
+    )
+    assert svc.active_presentation("gov")[0] == "overlay"
+    assert svc.active_presentation("other") is None
+    late = EasDisplayService(store, clock=lambda: _T0 + timedelta(hours=2))
+    assert late.active_presentation("gov") is None
+    svc.clear_decision(decision.decision_id)
+    assert svc.active_presentation("gov") is None
+    assert svc.auto_surface_active(channel_id="gov") == []
+
+
 def _svc(store: EasStore) -> EasDisplayService:
     return EasDisplayService(store, clock=lambda: _T0)
 

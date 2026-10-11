@@ -287,7 +287,6 @@ def make_supervisor(
     postmaster_pid_reader: Callable[[], int | None] | None = None,
     control_plane_env: dict[str, str] | None = None,
     should_abort: Callable[[], bool] | None = None,
-    postgres_log_path: str | None = None,
 ) -> Supervisor:
     guard = guard or FakeGuard(guard_decision("start", None))
     runner = runner or FakeRunner()
@@ -320,48 +319,7 @@ def make_supervisor(
         program_data_root=r"C:\ProgramData",
         postgres_data_dir="pgdata",
         control_plane_env=control_plane_env,
-        postgres_log_path=postgres_log_path,
     )
-
-
-# ---------------------------------------------------------------------------
-# Adjacent diagnosability fix (2026-08-12, TESTER2 b5 evidence): postgres_log_path
-# threaded from Supervisor into postgres_child_spec's own ``-l`` flag.
-# ---------------------------------------------------------------------------
-
-
-def test_postgres_log_path_reaches_the_spawned_spec() -> None:
-    """Fails on the pre-fix base: Supervisor had no ``postgres_log_path``
-    parameter at all, so ``_spec_for("postgres")`` could never request a
-    ``-l`` flag regardless of what the service layer wanted to pass."""
-
-    runner = FakeRunner()
-    sup = make_supervisor(
-        runner=runner, postgres_log_path=r"C:\ProgramData\CivicCast\logs\postgres.log"
-    )
-
-    sup.start_child("postgres")
-
-    spawned = next(spec for spec in runner.spawned if spec.name == "postgres")
-    assert "-l" in spawned.argv
-    assert (
-        spawned.argv[spawned.argv.index("-l") + 1] == r"C:\ProgramData\CivicCast\logs\postgres.log"
-    )
-
-
-def test_postgres_log_path_is_optional() -> None:
-    """No log path (the pre-existing call shape, e.g. every OTHER
-    make_supervisor() call in this file) must reproduce the prior argv
-    exactly -- no ``-l`` flag, no behavior change for callers that don't
-    opt in."""
-
-    runner = FakeRunner()
-    sup = make_supervisor(runner=runner)
-
-    sup.start_child("postgres")
-
-    postgres_spec = next(spec for spec in runner.spawned if spec.name == "postgres")
-    assert "-l" not in postgres_spec.argv
 
 
 # ---------------------------------------------------------------------------

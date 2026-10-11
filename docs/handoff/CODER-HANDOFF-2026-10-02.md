@@ -6,6 +6,40 @@ Read it top to bottom before touching anything. Everything it points to is on Gi
 
 All times in this repo's logs are **Mountain** (`-0600` in October, MDT). A trailing `Z` is UTC. Read the offset; never assume.
 
+## Current checkpoint (2026-10-09)
+
+The published release is Beta 11; Beta 12 is still unpublished. Work is on
+`codex/beta12-reliability`; the failed hosted-CI checkpoint was
+`4a44d8d7132deb07db0c3002bdf10b35735180ef`. Migration `0089` now qualifies
+its `remote_guest_sessions` columns to PostgreSQL's `civiccast` schema. The
+full migration-chain upgrade, downgrade and re-upgrade passed on an isolated
+PostgreSQL 17 cluster (4 focused checks passed); this was not the host database.
+
+Provisional signed build `38000097070` was cancelled before package acceptance
+because CI still had unresolved failures. Randomized run `38000087246` reported
+104 failures at this checkpoint (104 failed, 11,073 passed, 83 skipped).
+The raw randomized log is at
+`C:\Users\scott\AppData\Local\Temp\beta12-randomized-suite-38000087246\pytest-random.log`.
+Follow-up diagnosis found 73 PostgreSQL
+migration failures and one stale head assertion, now corrected and checked
+against an isolated PostgreSQL 17 cluster. Five readiness-test failures came
+from missing enabled egress fixtures; three CG assertions used an obsolete
+synthetic-overlay request; two collection/floor expectations and one legacy
+release-body assertion were stale. Their focused updates now pass 41 local
+checks. The manual TOC count is now 638; the focused docsite suite passed 20
+tests and rendered-manual currentness passed. Eighteen policy failures came
+from eight current-source blob mismatches in two historical external-evidence
+claims. Current-source-only rebinding covers 14 changed inputs (eight
+role bindings: eight code/test bindings across four files and six bindings to
+one workflow file. Direct D2 evaluation reports zero drift; the complete
+claims suite passed 125 tests in 81.86 seconds. Historic findings and the
+separate Session 0 pre-login boundary are unchanged. The old Unit run
+`38000087166` was still running its
+pytest step at the latest poll; these branch follow-ups have no fresh hosted-CI
+result yet. Do not treat this source or the cancelled build as a qualified
+Beta 12 installer. The historical Beta 10 status and plan below are retained
+as context and are superseded by this dated checkpoint.
+
 ---
 
 ## 0. The 60-second version

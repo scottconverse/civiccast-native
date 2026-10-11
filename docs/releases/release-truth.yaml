@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.11
+current: v1.0.0-beta.12
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,13 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.11
+  - tag: v1.0.0-beta.12
     status: current
+    notes: >-
+      Owner-directed publication of verified signed source a0c98cb7367dc106042ec89d35a91905470d350c, build 38097350705. Actual Beta11-to-Beta12 CPU-only Sandbox upgrade exit0/healthy/current; initial three-channel output/Whistle within capacity. Observation recorder failed JSON serialization; five-snapshot completion and exact-candidate fresh/repair not claimed. Owner directed shipment and deferred evidence bookkeeping; no fabricated consumer receipt.
+  - tag: v1.0.0-beta.11
+    status: superseded
+    superseded_by: v1.0.0-beta.12
     notes: >-
       Published October 8; documentation/help assets revised from producer 400cff08f72a4555f9de57e790a298ecefdb0cce, signed build 37857705750. Original tag target 79e6431dfea248b11b079cff69408192ef22816a is unchanged. Revised package passed a fresh offline CPU-only Windows Sandbox installation with the complete local kit, a five-minute single-channel Whistle output check, and installed Help verification; actual public installer/manual downloads and all 12 asset digests matched. Repair, Beta 10 upgrade, GPU and capacity lanes were not run for this revision. Original producer b7cc3e7cc174d6fe2e22cfea73126f9b2847d197, build 37827938199, passed its separate same-version physical-host refresh and brief three-channel output check; those results are preserved in the verification record rather than inherited by this revision.
   - tag: v1.0.0-beta.10

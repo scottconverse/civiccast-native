@@ -18,6 +18,7 @@ import type {
   AlertChannelInput,
   AlertEvent,
   AlertRule,
+  AlertRuleUpdate,
 } from '../types/api.generated'
 import { formatCondition, severityTone, type Tone } from './alerts-format'
 import { stateLabel, toneForDeliveryStatus } from './status-language'
@@ -28,10 +29,37 @@ function quietHoursValid(value: string): boolean {
   return value.trim() === '' || QUIET_HOURS_RE.test(value.trim())
 }
 
-function AccessNote({ what }: { what: string }) {
+function AccessNote({
+  what,
+  canRead,
+  canManage,
+  checking,
+  error,
+}: {
+  what: string
+  canRead: boolean
+  canManage: boolean
+  checking: boolean
+  error?: unknown
+}) {
+  let message: string
+  let role: 'status' | 'alert' | undefined
+  if (checking) {
+    message = `Checking your access to ${what}...`
+    role = 'status'
+  } else if (error != null) {
+    message = 'Your access could not be checked. Refresh the page or sign in again.'
+    role = 'alert'
+  } else if (!canRead) {
+    message = `Viewing ${what} requires the setup admin or support admin role.`
+  } else if (!canManage) {
+    message = `You can view ${what}; changing ${what} requires the setup admin role.`
+  } else {
+    return null
+  }
   return (
-    <div className="rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
-      Managing {what} requires the setup admin or support admin role. Active alerts remain visible to you above.
+    <div role={role} className="rounded-md p-3 text-sm" style={{ background: error != null ? 'var(--cc-err-soft)' : 'var(--cc-surface-2)', color: error != null ? 'var(--cc-err)' : 'var(--cc-ink-2)' }}>
+      {message} Active alerts remain visible to you above.
     </div>
   )
 }
@@ -208,10 +236,18 @@ export function RuleRow({
   rule,
   onSave,
   saving,
+  channels = [],
+  channelsLoading = false,
+  channelsError,
+  canManage = true,
 }: {
   rule: AlertRule
-  onSave: (ruleId: string, payload: { enabled: boolean; severity: AlertRule['severity']; re_alert_after_seconds: number; notify_on_resolve: boolean }) => void
+  onSave: (ruleId: string, payload: AlertRuleUpdate) => void
   saving: boolean
+  channels?: AlertChannel[]
+  channelsLoading?: boolean
+  channelsError?: unknown
+  canManage?: boolean
 }) {
   const [enabled, setEnabled] = useState(rule.enabled ?? true)
   const [severity, setSeverity] = useState<AlertRule['severity']>(rule.severity)
@@ -219,14 +255,30 @@ export function RuleRow({
     String(Math.round((rule.re_alert_after_seconds ?? 0) / 60)),
   )
   const [notifyOnResolve, setNotifyOnResolve] = useState(rule.notify_on_resolve ?? false)
+  const currentChannelIds = rule.channel_ids ?? []
+  const [channelIds, setChannelIds] = useState<string[]>(currentChannelIds)
 
   const minutes = Number.parseInt(reAlertMinutes, 10)
   const minutesValid = Number.isFinite(minutes) && minutes >= 0
+  const channelAssignmentsChanged =
+    [...channelIds].sort().join('\u0000') !== [...currentChannelIds].sort().join('\u0000')
   const dirty =
     enabled !== (rule.enabled ?? true) ||
     severity !== rule.severity ||
     notifyOnResolve !== (rule.notify_on_resolve ?? false) ||
-    (minutesValid && minutes * 60 !== (rule.re_alert_after_seconds ?? 0))
+    (minutesValid && minutes * 60 !== (rule.re_alert_after_seconds ?? 0)) ||
+    channelAssignmentsChanged
+  const knownChannelIds = new Set(channels.map((channel) => channel.channel_id))
+  const unavailableChannelIds = channelsError == null
+    ? channelIds.filter((channelId) => !knownChannelIds.has(channelId))
+    : []
+  const assignmentDisabled = !canManage || channelsLoading || channelsError != null
+
+  function toggleChannel(channelId: string, selected: boolean) {
+    setChannelIds((current) => selected
+      ? current.includes(channelId) ? current : [...current, channelId]
+      : current.filter((id) => id !== channelId))
+  }
 
   return (
     <article
@@ -241,13 +293,14 @@ export function RuleRow({
       </div>
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+          <input type="checkbox" checked={enabled} disabled={!canManage} onChange={(e) => setEnabled(e.target.checked)} />
           <span className="font-semibold">Enabled</span>
         </label>
         <label className="grid gap-1 text-xs">
           <span className="font-semibold">Severity</span>
           <select
             value={severity}
+            disabled={!canManage}
             onChange={(e) => setSeverity(e.target.value as AlertRule['severity'])}
             className="rounded-md px-2 py-1"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
@@ -262,53 +315,115 @@ export function RuleRow({
           <input
             value={reAlertMinutes}
             inputMode="numeric"
+            disabled={!canManage}
             onChange={(e) => setReAlertMinutes(e.target.value)}
             className="w-28 rounded-md px-2 py-1"
             style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }}
           />
         </label>
         <label className="flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={notifyOnResolve} onChange={(e) => setNotifyOnResolve(e.target.checked)} />
+          <input type="checkbox" checked={notifyOnResolve} disabled={!canManage} onChange={(e) => setNotifyOnResolve(e.target.checked)} />
           <span className="font-semibold">Notify on resolve</span>
         </label>
-        <button
-          type="button"
-          disabled={!dirty || !minutesValid || saving}
-          onClick={() =>
-            onSave(rule.rule_id, {
-              enabled,
-              severity,
-              re_alert_after_seconds: minutes * 60,
-              notify_on_resolve: notifyOnResolve,
-            })
-          }
-          className="rounded-md px-3 py-1.5 text-xs font-semibold"
-          style={{
-            background: dirty && minutesValid ? 'var(--cc-ink)' : 'var(--cc-surface-3)',
-            color: dirty && minutesValid ? 'var(--cc-ink-inv)' : 'var(--cc-ink-3)',
-          }}
-        >
-          {saving ? 'Saving...' : 'Save'}
-        </button>
+        {canManage && (
+          <button
+            type="button"
+            disabled={!dirty || !minutesValid || saving}
+            onClick={() => {
+              const payload: AlertRuleUpdate = {
+                enabled,
+                severity,
+                re_alert_after_seconds: minutes * 60,
+                notify_on_resolve: notifyOnResolve,
+              }
+              if (channelAssignmentsChanged) payload.channel_ids = channelIds
+              onSave(rule.rule_id, payload)
+            }}
+            className="rounded-md px-3 py-1.5 text-xs font-semibold"
+            style={{
+              background: dirty && minutesValid ? 'var(--cc-ink)' : 'var(--cc-surface-3)',
+              color: dirty && minutesValid ? 'var(--cc-ink-inv)' : 'var(--cc-ink-3)',
+            }}
+          >
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        )}
       </div>
+      <fieldset className="grid gap-2 border-0 p-0" disabled={assignmentDisabled}>
+        <legend className="mb-1 text-xs font-semibold">Destinations</legend>
+        {channelsLoading && <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>Loading destinations...</p>}
+        {channelsError != null && (
+          <>
+            <p role="alert" className="m-0 text-xs" style={{ color: 'var(--cc-err)' }}>
+              {apiMessage(channelsError, 'Destinations could not load. Existing assignments will be kept when you save other rule settings.')}
+            </p>
+            {currentChannelIds.length > 0 && (
+              <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+                Current destination ids: {currentChannelIds.join(', ')}. Saving another rule setting will keep these assignments.
+              </p>
+            )}
+          </>
+        )}
+        {!channelsLoading && channelsError == null && channels.length === 0 && (
+          <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+            No destinations are available yet. Add one in Where alerts go below.
+          </p>
+        )}
+        {channels.map((channel) => (
+          <label key={channel.channel_id} className="flex items-center gap-2 text-xs">
+            <input
+              type="checkbox"
+              aria-label={channel.label}
+              checked={channelIds.includes(channel.channel_id)}
+              onChange={(event) => toggleChannel(channel.channel_id, event.target.checked)}
+            />
+            <span>{channel.label} ({channel.kind}){channel.enabled === false ? ' · disabled' : ''}</span>
+          </label>
+        ))}
+        {unavailableChannelIds.map((channelId) => (
+          <label key={channelId} className="flex items-center gap-2 text-xs" style={{ color: 'var(--cc-warn)' }}>
+            <input
+              type="checkbox"
+              aria-label={`Unavailable destination ${channelId}`}
+              checked={channelIds.includes(channelId)}
+              onChange={(event) => toggleChannel(channelId, event.target.checked)}
+            />
+            <span>Unavailable destination {channelId}</span>
+          </label>
+        ))}
+      </fieldset>
     </article>
   )
 }
 
-function AlertRulesSection({ canManage }: { canManage: boolean }) {
+function AlertRulesSection({
+  canRead,
+  canManage,
+  accessChecking,
+  accessError,
+}: {
+  canRead: boolean
+  canManage: boolean
+  accessChecking: boolean
+  accessError?: unknown
+}) {
   const queryClient = useQueryClient()
   const rulesQuery = useQuery({
     queryKey: ['alert-rules'],
     queryFn: listAlertRules,
     retry: false,
-    enabled: canManage,  // don't fire the admin-only read for a non-admin (no red error)
+    enabled: canRead,
+  })
+  const channelsQuery = useQuery({
+    queryKey: ['alert-channels'],
+    queryFn: listAlertChannels,
+    retry: false,
+    enabled: canRead,
   })
   const save = useMutation({
     mutationFn: ({ ruleId, payload }: { ruleId: string; payload: Parameters<typeof updateAlertRule>[1] }) =>
       updateAlertRule(ruleId, payload),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['alert-rules'] })
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['alert-rules'] }),
   })
   const rules = rulesQuery.data ?? []
   return (
@@ -319,10 +434,13 @@ function AlertRulesSection({ canManage }: { canManage: boolean }) {
           Decide which problems raise an alert, how loud they are, and how often CivicCast re-notifies you while the problem persists.
         </p>
       </div>
-      {!canManage ? (
-        <AccessNote what="alert rules" />
+      {!canRead || accessChecking || accessError != null ? (
+        <AccessNote what="alert rules" canRead={canRead} canManage={canManage} checking={accessChecking} error={accessError} />
       ) : (
         <>
+          {!canManage && (
+            <AccessNote what="alert rules" canRead={canRead} canManage={canManage} checking={accessChecking} error={accessError} />
+          )}
           {rulesQuery.isLoading && (
             <div className="rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface-2)' }}>
               Loading rules...
@@ -333,16 +451,35 @@ function AlertRulesSection({ canManage }: { canManage: boolean }) {
               {apiMessage(rulesQuery.error, 'Alert rules could not load.')}
             </div>
           )}
+          {channelsQuery.isLoading && (
+            <div className="rounded-md p-3 text-sm" style={{ background: 'var(--cc-surface-2)' }}>
+              Loading destinations...
+            </div>
+          )}
+          {channelsQuery.error && (
+            <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+              {apiMessage(channelsQuery.error, 'Destinations could not load.')}
+            </div>
+          )}
           {save.error && (
             <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
               {apiMessage(save.error, 'Could not save the rule.')}
             </div>
           )}
+          {!rulesQuery.isLoading && !rulesQuery.error && rules.length === 0 && (
+            <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
+              No alert rules are configured.
+            </div>
+          )}
           <div className="grid gap-2">
             {rules.map((rule) => (
               <RuleRow
-                key={rule.rule_id}
+                key={`${rule.rule_id}:${rule.updated_at}`}
                 rule={rule}
+                channels={channelsQuery.data ?? []}
+                channelsLoading={channelsQuery.isLoading}
+                channelsError={channelsQuery.error}
+                canManage={canManage}
                 saving={save.isPending && save.variables?.ruleId === rule.rule_id}
                 onSave={(ruleId, payload) => save.mutate({ ruleId, payload })}
               />
@@ -564,12 +701,14 @@ export function ChannelCard({
   onDelete,
   updating,
   deleting,
+  canManage = true,
 }: {
   channel: AlertChannel
   onUpdate: (channelId: string, payload: AlertChannelInput) => void
   onDelete: (channelId: string) => void
   updating: boolean
   deleting: boolean
+  canManage?: boolean
 }) {
   const [editing, setEditing] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -598,37 +737,39 @@ export function ChannelCard({
               : ''}
           </p>
         </div>
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setEditing((value) => !value)}
-            className="rounded-md px-3 py-1.5 text-xs font-semibold"
-            style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
-          >
-            {editing ? 'Close' : 'Edit'}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              // Two-step confirm: a misclick must not silently remove the only
-              // path that pages a sleeping operator.
-              if (confirmDelete) {
-                onDelete(channel.channel_id)
-                setConfirmDelete(false)
-              } else {
-                setConfirmDelete(true)
-              }
-            }}
-            disabled={deleting}
-            className="rounded-md px-3 py-1.5 text-xs font-semibold"
-            style={{
-              background: confirmDelete ? 'var(--cc-err)' : 'var(--cc-err-soft)',
-              color: confirmDelete ? 'var(--cc-ink-inv)' : 'var(--cc-err)',
-            }}
-          >
-            {deleting ? 'Removing...' : confirmDelete ? 'Confirm delete?' : 'Delete'}
-          </button>
-        </div>
+        {canManage && (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setEditing((value) => !value)}
+              className="rounded-md px-3 py-1.5 text-xs font-semibold"
+              style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+            >
+              {editing ? 'Close' : 'Edit'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                // Two-step confirm: a misclick must not silently remove the only
+                // path that pages a sleeping operator.
+                if (confirmDelete) {
+                  onDelete(channel.channel_id)
+                  setConfirmDelete(false)
+                } else {
+                  setConfirmDelete(true)
+                }
+              }}
+              disabled={deleting}
+              className="rounded-md px-3 py-1.5 text-xs font-semibold"
+              style={{
+                background: confirmDelete ? 'var(--cc-err)' : 'var(--cc-err-soft)',
+                color: confirmDelete ? 'var(--cc-ink-inv)' : 'var(--cc-err)',
+              }}
+            >
+              {deleting ? 'Removing...' : confirmDelete ? 'Confirm delete?' : 'Delete'}
+            </button>
+          </div>
+        )}
       </div>
       {editing && (
         <ChannelForm
@@ -655,14 +796,24 @@ export function ChannelCard({
   )
 }
 
-function AlertChannelsSection({ canManage }: { canManage: boolean }) {
+function AlertChannelsSection({
+  canRead,
+  canManage,
+  accessChecking,
+  accessError,
+}: {
+  canRead: boolean
+  canManage: boolean
+  accessChecking: boolean
+  accessError?: unknown
+}) {
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
   const channelsQuery = useQuery({
     queryKey: ['alert-channels'],
     queryFn: listAlertChannels,
     retry: false,
-    enabled: canManage,  // admin-only read; skip for a non-admin so no red error box
+    enabled: canRead,
   })
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['alert-channels'] })
   const create = useMutation({
@@ -705,10 +856,13 @@ function AlertChannelsSection({ canManage }: { canManage: boolean }) {
           </button>
         )}
       </div>
-      {!canManage ? (
-        <AccessNote what="alert destinations" />
+      {!canRead || accessChecking || accessError != null ? (
+        <AccessNote what="alert destinations" canRead={canRead} canManage={canManage} checking={accessChecking} error={accessError} />
       ) : (
         <>
+          {!canManage && (
+            <AccessNote what="alert destinations" canRead={canRead} canManage={canManage} checking={accessChecking} error={accessError} />
+          )}
           {error != null && (
             <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
               {apiMessage(error, 'The destination change could not be saved.')}
@@ -733,9 +887,11 @@ function AlertChannelsSection({ canManage }: { canManage: boolean }) {
               {apiMessage(channelsQuery.error, 'Destinations could not load.')}
             </div>
           )}
-          {!channelsQuery.isLoading && channels.length === 0 && (
+          {!channelsQuery.isLoading && !channelsQuery.error && channels.length === 0 && (
             <div className="rounded-md p-4 text-sm" style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}>
-              No alert destinations yet. Add one so the station can reach you when something needs attention.
+              {canManage
+                ? 'No alert destinations yet. Add one so the station can reach you when something needs attention.'
+                : 'No alert destinations are configured.'}
             </div>
           )}
           <div className="grid gap-2">
@@ -743,6 +899,7 @@ function AlertChannelsSection({ canManage }: { canManage: boolean }) {
               <ChannelCard
                 key={channel.channel_id}
                 channel={channel}
+                canManage={canManage}
                 updating={update.isPending && update.variables?.channelId === channel.channel_id}
                 deleting={remove.isPending && remove.variables === channel.channel_id}
                 onUpdate={(channelId, payload) => update.mutate({ channelId, payload })}
@@ -758,14 +915,15 @@ function AlertChannelsSection({ canManage }: { canManage: boolean }) {
 
 export function AlertsScreen() {
   const identityQuery = useQuery({ queryKey: ['staff-identity'], queryFn: getStaffIdentity, retry: false })
-  // Fail CLOSED (matches CableVerificationCard): rules/channels management is gated on
-  // a successful identity carrying an admin role. Active alerts stay visible to all
-  // operator roles. The server enforces the gate independently; this keeps the UI honest
-  // (a calm "needs admin" note instead of red "could not load" errors for a meeting_operator).
-  const canManage =
+  // The API permits setup/support admins to read rules and destinations, but only
+  // setup admins to change them. Active alerts remain visible to every operator role.
+  const canRead =
     identityQuery.isSuccess &&
     (hasOperatorRole(identityQuery.data, 'setup_admin') ||
       hasOperatorRole(identityQuery.data, 'support_admin'))
+  const canManage = identityQuery.isSuccess && hasOperatorRole(identityQuery.data, 'setup_admin')
+  const accessChecking = identityQuery.isPending
+  const accessError = identityQuery.error
   return (
     <div className="grid gap-6 px-6 py-5">
       <header>
@@ -778,8 +936,8 @@ export function AlertsScreen() {
         </p>
       </header>
       <ActiveAlertsSection />
-      <AlertRulesSection canManage={canManage} />
-      <AlertChannelsSection canManage={canManage} />
+      <AlertRulesSection canRead={canRead} canManage={canManage} accessChecking={accessChecking} accessError={accessError} />
+      <AlertChannelsSection canRead={canRead} canManage={canManage} accessChecking={accessChecking} accessError={accessError} />
     </div>
   )
 }
