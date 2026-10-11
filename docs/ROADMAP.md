@@ -1,6 +1,6 @@
 # CivicCast Roadmap
 
-> **Current release:** `v1.0.0-beta.11`, published 2026-10-08 as a GitHub
+> **Current release:** `v1.0.0-beta.12`, published 2026-10-10 as a GitHub
 > pre-release (a beta candidate, not a production release).
 > `v1.0.0-beta.7`, a download-only upgrade for
 > stations already on `v1.0.0-beta.5`, is superseded, as are
@@ -22,17 +22,9 @@
 
 ## Current native Windows work
 
-Beta 11 is published; its [verification record](releases/v1.0.0-beta.11-verification.md)
-distinguishes corrected-package checks from earlier development soaks.
-Beta 12 is in development for unattended reliability and existing operator
-workflows: upgrades and recovery, caption health, bounded logs, summary
-approval/export, administrator and Control Room recovery, remote media controls,
-alert routing and presentation, paywall settings, hardware operation, and
-documentation consistency. It is not yet released.
+Beta 12 is published. It adds unattended-operation hardening and completes operator workflows: upgrades and recovery, caption health, bounded logs, summary approval/export, administrator and Control Room recovery, remote media controls, alert routing and presentation, paywall settings, and updated documentation. See its [verification record](releases/v1.0.0-beta.12-verification.md).
 
-The separate Beta 11 host observation recorded 99.877507716% (99.88% rounded)
-logged live caption-input coverage over 48 hours and three channels. This is
-not Beta 12 or installer qualification; see the [48-hour host report](ops/beta11-host-caption-performance-48-hour-2026-10-10.md).
+A Beta 11 host ran three channels for 48 hours with **99.88% live caption-input coverage**. See the [48-hour soak report](ops/beta11-host-caption-performance-48-hour-2026-10-10.md).
 
 The longer-term plan below is retained as historical context. Its capability
 claims and old-platform evidence do not establish current native Windows

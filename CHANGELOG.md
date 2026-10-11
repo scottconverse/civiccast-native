@@ -4,6 +4,8 @@
 
 ## [1.0.0-beta.12] - 2026-10-10
 
+- October 11 documentation revision: refreshed the full landing page around the three-channel, 48-hour soak; removed obsolete Beta 10 caption-loss examples and fixed-feature warnings; corrected the download link and roadmap to Beta 12; regenerated the PDF, Word and built-in manual sources. Historical test reports remain available.
+
 - Published as a GitHub pre-release from signed source `a0c98cb7367dc106042ec89d35a91905470d350c`, producer run `38097350705`. The release page carries the standard installer, five runtime packs, four manual assets, checksums and installer sidecar.
 - A normal Beta 11-to-Beta 12 setup run exited 0 and left the service running and healthy at schema 0089. The preservation marker was saved; initial checks observed all three channels with HLS audio/video and primary Whistle within capacity. The post-upgrade recorder wrapper failed during its first-minute JSON save (`Cannot convert value to type System.String.`), so no five-snapshot PASS is claimed. The owner deferred the wrapper issue as bookkeeping; repair and fresh-install checks were not run.
 

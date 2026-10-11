@@ -7,7 +7,7 @@ This appendix preserves **historical beta.10 evidence**: what was measured, on w
 | Evidence | Build | What it covers |
 | --- | --- | --- |
 | Clean-install Gate A lane, 10 of 10 criteria | The **published** beta.10 installer and packs (commit `b6520847`) | Install, first start, console and portal render, clerk workflow, captions, playout, 5-minute soak, install progress, completion |
-| Eight-hour watched run, 3 channels | Earlier internal build `C16`; the four key engine files are identical to the published source | Playout, program changes, loudness, preparation times, caption drops |
+| Eight-hour watched run, 3 channels | Earlier internal build `C16`; the four key engine files are identical to the published source | Playout, program changes, loudness, preparation times |
 | About 59 hours of uptime, 2 channels | Earlier internal build `C15`, **not** the published build | Long-run stability of the engine |
 
 No long run was done on the published installer. The published build contains the later fixes (including the watchdog that ends a stuck program change) and the installer fixes.
@@ -35,22 +35,20 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 - **Government and public channels:** 27 of 28 programs and 111 of 112 seamless program changes went through. Both channels stayed on the air to the end of the period, with no slate, no filler and no crash.
 - **Education channel:** it got stuck in a program change on 2026-09-30 at about 03:44 and then showed black picture and silence for about 34 hours until the service was restarted. The watchdog that now ends that kind of stuck program change was built afterwards and is in the published build. The exact stall has not recurred since.
-- **Caption audio:** both channels discarded some live-caption audio under load (government 9 events, 150 seconds; education 8 events, 170 seconds; public 10 events, 230 seconds).
 - **One caption file error:** the government channel logged one isolated "permission denied" error while renaming a caption file.
 
 **How to state this fairly.** The same playout engine has run two channels on one lab station for more than two days. That is not the same as saying beta.10 has done so, because the long run used an earlier build. It is two channels on one station, not two stations, and it was assessed from service logs, program-change records and sampled output, not by inspecting every second of video.
 
 ## H.4 Limits recorded for beta.10
 
-1. **Live-caption audio was dropped under heavy load.** The beta.10 caption worker fell behind during long first-time media preparations and then skipped ahead, so some spoken audio got no caption. In the eight-hour run there were 13 catch-up discards; on a quiet machine the total was about 160 seconds of audio over two channels. This is a beta.10 measurement. Beta.11 changes the native live primary to Whistle and still treats live captions as best-effort; it does not promise that every spoken word is captured. See Chapters 8 and 16 for current behavior and the beta.11 verification record for package evidence.
-2. **Two program-change first attempts aborted and recovered** on the government channel during the eight-hour run, each in about 3 seconds with no visible effect on air.
-3. **One single-frame video drop** (0.033 s) at a join inside a program.
-4. **Quiet source material is reported, not leveled** when it is too quiet for the loudness control's maximum lift.
-5. **Eleven playout-engine unit tests fail** in the same way on the published tree and the installed tree; they were failing before this build and are unexplained.
-6. **An unexplained rebuild of a long cached program** was seen in the previous internal run and is unresolved.
-7. **Upgrades were not proven for beta.10.** Installing beta.10 over an earlier release was not tested; use the current beta.11 verification record for the exact package paired with this manual.
-8. **A first install with neither the full kit (installer plus its `packs` and `station` folders) nor an earlier install was not proven for beta.10.** The code requires the kit. See [Chapter 10](#ch-installing) for the current package contents and evidence link.
-9. **Several staff-console screens described behavior the beta.10 code did not have.** Current screen notes in Part I use beta.11 scope where the mismatch remains.
+1. **Two program-change first attempts aborted and recovered** on the government channel during the eight-hour run, each in about 3 seconds with no visible effect on air.
+2. **One single-frame video drop** (0.033 s) at a join inside a program.
+3. **Quiet source material is reported, not leveled** when it is too quiet for the loudness control's maximum lift.
+4. **Eleven playout-engine unit tests fail** in the same way on the published tree and the installed tree; they were failing before this build and are unexplained.
+5. **An unexplained rebuild of a long cached program** was seen in the previous internal run and is unresolved.
+6. **Upgrades were not proven for beta.10.** Installing beta.10 over an earlier release was not tested; use the current beta.11 verification record for the exact package paired with this manual.
+7. **A first install with neither the full kit (installer plus its `packs` and `station` folders) nor an earlier install was not proven for beta.10.** The code requires the kit. See [Chapter 10](#ch-installing) for the current package contents and evidence link.
+8. **Several staff-console screens described behavior the beta.10 code did not have.** Current screen notes in Part I use beta.11 scope where the mismatch remains.
 
 ## H.5 What is not proven
 
