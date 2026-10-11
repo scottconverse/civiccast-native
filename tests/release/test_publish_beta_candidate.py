@@ -414,7 +414,9 @@ def _write_direct_kit(
         ),
         encoding="utf-8",
     )
-    with patch("scripts.release.candidate_manual._candidate_version", return_value=candidate_version):
+    with patch(
+        "scripts.release.candidate_manual._candidate_version", return_value=candidate_version
+    ):
         create_candidate_manual_receipt(
             manual_dir=manual_dir,
             source_sha=source_sha,
