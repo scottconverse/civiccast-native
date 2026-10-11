@@ -7,43 +7,24 @@
 
 ## Current Release State
 
-`v1.0.0-beta.12` is the current published GitHub pre-release, published October
-10, 2026, with the station-download distribution repair added October 11; it
-is not a production release. Its asset set includes the signed `setup.exe`,
-five runtime packs, four manual assets, `SHA256SUMS.txt`, the setup sidecar,
-the release-matched Windows downloader, `station-models.json`, and the
-multipart station ZIP parts. The manifest hashes every part and each of the
-eight unpacked station files. The release-matched downloader verifies the
-installer, runtime packs and station bundle; `-Install` stages the complete
-kit and runs setup with `/S`.
-
-The October 11 R9 first-install attempt used the earlier incomplete public
-asset set, before station parts and the manifest were published. It failed
-activation with actual installer exit 123 because four signed station packs
-were missing and their embedded URLs were empty. No service or first-admin
-account was created. That previously used machine had residual files and model
-caches, so it is not clean-machine proof and does not test the repaired
-download. In a separate fresh offline Sandbox run using the repaired public
-kit, setup exited 0, station activation returned 0, the service was `Running`,
-and offline Ollama plus CPU faster-whisper self-tests passed. A follow-on
-first-admin/three-channel check failed with only the first Python traceback
-line captured, leaving its cause unresolved; complete UI/channel validation is
-not established. No repair, upgrade retest, or sustained-operation result was
-recorded. See the [captured fresh-install result](../ops/evidence/beta12-public-fresh-install-2026-10-11.json).
-
-The recorded Beta 11-to-Beta 12 CPU-only Sandbox upgrade exited 0, reached a
-healthy service/API at schema 0089, saved the initial-data preservation marker,
-and observed initial three-channel HLS output with Whistle within capacity. Its
-post-upgrade recorder wrapper failed at the first JSON save with
-`Cannot convert value to type System.String.`. No five-snapshot PASS or
-sustained-operation result was recorded. See the [Beta 12 verification
-record](../releases/v1.0.0-beta.12-verification.md) and [exact release
-page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+`v1.0.0-beta.13` is the current signed GitHub pre-release, not a production
+release. Its exact source is `8053fb1cf05b989fb1f23e650893cc6abfa659d4`,
+producer run [38160778457](https://github.com/scottconverse/civiccast-native/actions/runs/38160778457).
+The 19-member kit passed exact hash/size and signed station-index verification.
+The installer SHA-256 is
+`cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16`; its
+Authenticode signature is valid and names Scott Converse. The complete kit
+includes the signed installer, five runtime packs, six station packs, manuals,
+checksums and release-matched helper. The [Beta 13 verification
+record](../releases/v1.0.0-beta.13-verification.md) records passing normal-upgrade,
+one-interruption repair and fresh-install scenarios, each with five-minute
+observations across all three channels. Download from the [Beta 13 release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
+Historical Beta 12 evidence remains in its [verification record](../releases/v1.0.0-beta.12-verification.md).
 [release-truth.yaml](../releases/release-truth.yaml) is the authored
 release-state record. Watch the official native release page, not
 `scottconverse/civiccast` (the retired, separate WSL2-line repository) and
 not any `v1.0.0-rcNN` tag, which belongs to that other repository.
-
 
 `v1.0.0-beta.11` and earlier published betas are superseded. Beta 8 and 9
 were never published; their work was included in Beta 10. See their
@@ -103,22 +84,22 @@ report `Valid` and the approved publisher; a local `NotSigned` engineering build
 is suitable only for an explicitly authorized local acceptance run and must not
 be distributed as a public beta.
 
-## Download The Complete Beta 12 Kit
+## Download The Complete Beta 13 Kit
 
 Use the helper asset from the exact tagged release. Download the helper and
 `SHA256SUMS.txt`, then verify the helper's own hash before executing it:
 
 ```powershell
-$tag = "v1.0.0-beta.12"
+$tag = "v1.0.0-beta.13"
 $base = "https://github.com/scottconverse/civiccast-native/releases/download/$tag"
-$helper = Join-Path $env:TEMP "CivicCast-Install-Beta12.ps1"
-$sums = Join-Path $env:TEMP "CivicCast-Beta12-SHA256SUMS.txt"
+$helper = Join-Path $env:TEMP "CivicCast-Install-Beta13.ps1"
+$sums = Join-Path $env:TEMP "CivicCast-Beta13-SHA256SUMS.txt"
 Invoke-WebRequest -UseBasicParsing "$base/download_windows_release_artifacts.ps1" -OutFile $helper
 Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS.txt" -OutFile $sums
 $expected = ((Get-Content $sums) | Where-Object { $_ -match '\s+download_windows_release_artifacts\.ps1$' } | Select-Object -First 1) -replace '^([0-9a-fA-F]{64})\s+.*$', '$1'
 $actual = (Get-FileHash $helper -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw "Downloader hash does not match the release checksum list." }
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -Tag $tag -Version $tag.TrimStart('v') -Install -Destination (Join-Path $env:USERPROFILE "Downloads\CivicCast-Beta12")
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -Tag $tag -Version $tag.TrimStart('v') -Install -Destination (Join-Path $env:USERPROFILE "Downloads\CivicCast-Beta13")
 ```
 
 With `-Install`, the helper downloads and checks all five runtime packs,
@@ -132,7 +113,7 @@ successful download as installation or operating proof.
 
 ## Verify The Download With PowerShell
 
-1. For the complete Beta 12 download, use the release-matched helper and
+1. For the complete Beta 13 download, use the release-matched helper and
    choose `-IncludePacks` to stage without installing or `-Install` to run setup
    after verification. The destination contains `setup.exe`, its sidecar,
    `SHA256SUMS.txt`, five runtime packs under `packs\`, station files under

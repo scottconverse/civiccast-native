@@ -1,9 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0-beta.13] - 2026-10-11
 
-- `v1.0.0-beta.13` candidate: automatically retry Whistle while Whisper supplies backup captions. Candidate verification and publication are pending.
-- Clarify visible caption setup and AI-model help: Whistle is the included CPU live primary; Whisper Medium/Large are fallback and recording models. Remove old trim-editor sprint forecasts. These source changes require a replacement package before they appear in installed software.
+- Automatically recover the Whistle live-caption primary after transient probe failures. Retry delays begin at 30 seconds and then use capped 60/120/240/300-second backoff while the channel has audio; Whisper remains the channel fallback.
+- Warn when a Whistle child is slow after 10 seconds and terminate it at the 30-second watchdog deadline if it remains unresponsive. Keep the waiting queue bounded to 42 five-second audio chunks (210 seconds); this is a finite backlog limit, not a delivery guarantee.
+- Bound diagnostic records and retain failure context without archiving live audio. Keep Whistle as the CPU live primary, with Whisper for fallback and recorded transcription; optional NVIDIA CUDA acceleration applies to Whisper.
+- Clarify caption-engine setup and model help, including the Whistle CPU primary and Whisper fallback/recording roles.
 
 ## [1.0.0-beta.12] - 2026-10-10
 

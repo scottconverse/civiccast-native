@@ -1,14 +1,12 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.12` is the current
-> public release, published 2026-10-10 as a GitHub pre-release, not a
-> production or SLA-backed field release. Its installer, runtime packs, and
+> **Current native release posture:** `v1.0.0-beta.13` is the current
+> signed GitHub pre-release, not a production or SLA-backed field release. Its installer, runtime packs, and
 > manuals are on the
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
-> The [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
-> reports a successful normal Beta 11 upgrade setup and its saved preservation
-> marker, plus the first-snapshot recorder failure; exact fresh-install,
-> interrupted-repair, and sustained-operation checks were not run. Community
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
+> The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
+> records passing normal-upgrade, one-interruption repair and fresh-install
+> scenarios, with five-minute observations across all three channels. Community
 > support does not turn this beta into a supported, SLA'd field release.
 
 > **This repository ships one product line: native Windows.** Earlier
@@ -76,11 +74,11 @@ enabled throwaway development.
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
 is a **public beta**, not a finished production release. Its current release,
-`v1.0.0-beta.12`, is downloadable from its
-[GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+`v1.0.0-beta.13`, is downloadable from its
+[GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
 There is no dedicated, SLA'd support intake for it; the same community-driven,
 no-SLA posture above applies. Its package-specific scope and limits are in the
-[Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
+[Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
 
 If you are working on, evaluating, or running the native line:
 
@@ -92,9 +90,10 @@ If you are working on, evaluating, or running the native line:
   have a native-specific path, so context has to be spelled out by hand.
 - Do not treat anything reported against the native line as a supported,
   SLA'd, or fully field-proven path. The same "community-driven, no SLA"
-  posture above applies. The Beta 12 verification record
-  ([`docs/releases/v1.0.0-beta.12-verification.md`](docs/releases/v1.0.0-beta.12-verification.md))
-  states what was and was not proven. The superseded Beta 11 and Beta 10
+  posture above applies. The Beta 13 verification record
+  ([`docs/releases/v1.0.0-beta.13-verification.md`](docs/releases/v1.0.0-beta.13-verification.md))
+  states what was and was not proven. Historical Beta 12 evidence remains in its
+  [verification record](docs/releases/v1.0.0-beta.12-verification.md). Superseded Beta 11 and Beta 10
   records, including the Beta 11 host caption report, remain version-scoped
   historical evidence. The superseded Beta 7
   verification records are

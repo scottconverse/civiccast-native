@@ -1,0 +1,528 @@
+{
+  "candidate": {
+    "version": "1.0.0-beta.13",
+    "source_sha": "8053fb1cf05b989fb1f23e650893cc6abfa659d4",
+    "workflow_run_id": "38160778457",
+    "installer_sha256": "cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16",
+    "signature_status": "Valid"
+  },
+  "scope": "One controlled D4 interruption, same-candidate repair, and five short post-repair observations in the isolated Beta 11 to Beta 13 upgrade guest.",
+  "result": "PASS",
+  "interruption": {
+    "result": "INTERRUPTED_CONFIRMED",
+    "started_utc": "2026-10-11T20:15:18.5776408Z",
+    "interrupted_utc": "2026-10-11T20:21:37.0568638Z",
+    "phase": "observing-d4-activate-station",
+    "d4_return_observed": false,
+    "setup_exit_code": 1,
+    "precondition_guard_checks": {
+      "station_product_version_matches": true,
+      "registry_version_matches": true,
+      "service_running": true,
+      "health_status_healthy": true,
+      "health_schema_current": true
+    },
+    "installer_sha256": "cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16"
+  },
+  "repair": {
+    "installer_setup": {
+      "result": "PASS",
+      "exit_code": 0,
+      "completed_utc": "2026-10-11T20:27:48Z",
+      "installer_sha256": "cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16",
+      "immediate_health_report": "service Running; caption-degraded advisory with current schema"
+    },
+    "repair_recovery_result": {
+      "result": "PASS",
+      "utc": "2026-10-11T20:34:51.5895447Z",
+      "candidate_source_sha": "8053fb1cf05b989fb1f23e650893cc6abfa659d4",
+      "candidate_version": "1.0.0-beta.13",
+      "workflow_run_id": "38160778457",
+      "installer_sha256": "cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16"
+    },
+    "installed_state_after_observation": {
+      "captured_utc": "2026-10-11T20:34:51.5835046Z",
+      "installed_version": "1.0.0-beta.13",
+      "service_state": "Running",
+      "health_status": "healthy",
+      "schema": "current",
+      "schema_db_revision": "0089_contribution_media_control_requests",
+      "live_captions": "healthy",
+      "retained_activation_caption_self_test_receipt": {
+        "receipt_source": "matching successful activation receipt retained by same-version no-op repair",
+        "same_version_repair_reran_self_test": false,
+        "result": "passed",
+        "model": "Systran/faster-whisper-medium@08e178d48790749d25932bbc082711ddcfdfbc4f",
+        "model_path": "packs/captions-floor/models/faster-whisper-medium",
+        "local_files_only": true,
+        "model_bin_bytes": 1527906378,
+        "model_bin_sha256": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae"
+      }
+    }
+  },
+  "preservation": {
+    "preserve_install_and_database": true,
+    "preserve_marker_sha256": "4cce6387e080e5bc78cded312083b313e91cccad2cec198c1dd22ebc889c184a",
+    "operator_endpoint_http_status": 200,
+    "preserved_asset_checks": 1,
+    "baseline_schedule_ids_preserved": 3,
+    "existing_smoke_schedule_reused": true,
+    "fixture_sha256": "3ff08c018d905537c2025812f1983c4765f64b129ef6f9682698e9f720babec5",
+    "fixture_matches_normal_upgrade": true,
+    "station_set_sha256": "c0564b6e7edc486802d271101a70366d51ac100f90fb7f3d894f4ac74f2ce30e"
+  },
+  "post_repair_observation": {
+    "mode": "PostUpgrade",
+    "result": "PASS",
+    "started_utc": "2026-10-11T20:29:42.9011914Z",
+    "finished_utc": "2026-10-11T20:34:51.5165311Z",
+    "observed_minutes": 5,
+    "health": {
+      "schema_db_revision": "0089_contribution_media_control_requests",
+      "revision_pair_matches": true,
+      "version": "1.0.0-beta.13",
+      "classification": "healthy",
+      "schema_expected_head": "0089_contribution_media_control_requests",
+      "live_captions": "healthy",
+      "schema": "current",
+      "status": "healthy",
+      "caption_health_available": true
+    },
+    "channels": [
+      {
+        "id": "public",
+        "vtt_samples_available": 5,
+        "vtt_samples_unavailable": 0,
+        "runtime_samples_available": 5,
+        "unique_vtt_sha256_count": 5,
+        "expected_words": {
+          "fellow": true,
+          "americans": true,
+          "country": true
+        },
+        "whistle_primary_event_seen": true,
+        "whistle_fallback_seen": false,
+        "runtime_states_observed": [
+          "within-capacity",
+          "within-capacity",
+          "within-capacity",
+          "within-capacity",
+          "within-capacity"
+        ]
+      },
+      {
+        "id": "government",
+        "vtt_samples_available": 5,
+        "vtt_samples_unavailable": 0,
+        "runtime_samples_available": 5,
+        "unique_vtt_sha256_count": 5,
+        "expected_words": {
+          "fellow": true,
+          "americans": true,
+          "country": true
+        },
+        "whistle_primary_event_seen": true,
+        "whistle_fallback_seen": false,
+        "runtime_states_observed": [
+          "within-capacity",
+          "within-capacity",
+          "within-capacity",
+          "within-capacity",
+          "within-capacity"
+        ]
+      },
+      {
+        "id": "education",
+        "vtt_samples_available": 5,
+        "vtt_samples_unavailable": 0,
+        "runtime_samples_available": 5,
+        "unique_vtt_sha256_count": 5,
+        "expected_words": {
+          "fellow": true,
+          "americans": true,
+          "country": true
+        },
+        "whistle_primary_event_seen": true,
+        "whistle_fallback_seen": false,
+        "runtime_states_observed": [
+          "within-capacity",
+          "within-capacity",
+          "within-capacity",
+          "within-capacity",
+          "within-capacity"
+        ]
+      }
+    ],
+    "snapshots": [
+      {
+        "minute": 1,
+        "source_file": "minute-1.json",
+        "source_sha256": "96583b04588a40426515cf6fcb0c76776af285a2109d27cf6a61eb435122b0ca",
+        "observed_utc": "2026-10-11T20:30:44.306993Z",
+        "health": "healthy",
+        "channels": [
+          {
+            "id": "public",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "248cd9357dd3d718c9849f09293ea46cfb7ba2b89079cdb3b60d6be82213a99f",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "government",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "6d2992e89c64df9b38b6453b0247b4d5738f3e0c1114a3ad2f380e3dc1d4e2fc",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "education",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "0999d9302f5e237d1e8000191443e57cbedae66f259da20523083a17aa0b842e",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          }
+        ]
+      },
+      {
+        "minute": 2,
+        "source_file": "minute-2.json",
+        "source_sha256": "b0d0d94d861123aba3e78f0ffb6ec22d479544955b8cf7d41a586c456955fc56",
+        "observed_utc": "2026-10-11T20:31:46.1091719Z",
+        "health": "healthy",
+        "channels": [
+          {
+            "id": "public",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "74011ca8c74b76e7f55dfc05e15a4fcc3b790c97b8fef6e638d97d2f22acbf7a",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "government",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "ad265fcde55b8581b843bcd42a4131b7b3638f32aa90c891997a99bae180df71",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "education",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "6a4b9da61b98afdda80542e2ce912bba6213dd93ad86538c28caa047836952ea",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          }
+        ]
+      },
+      {
+        "minute": 3,
+        "source_file": "minute-3.json",
+        "source_sha256": "ba07862c23a2fca87e9ba2bb1153312ef08a0d032d74c5bb673ab0af1c177935",
+        "observed_utc": "2026-10-11T20:32:47.8834113Z",
+        "health": "healthy",
+        "channels": [
+          {
+            "id": "public",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "87b264acdd6de2bead8c3e043c40cceae6616bc0ffcd1ad93ac91c181ad4efb4",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "government",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "5727c0eb1ef8bb759fcfb3cb21306ad7103c747de52004560ca514e57a6d8c2a",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "education",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "dd924d1b0faafb17751c40deeb510729d96d620d0206e889ef9638143403cb19",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          }
+        ]
+      },
+      {
+        "minute": 4,
+        "source_file": "minute-4.json",
+        "source_sha256": "1196a95ca4efd6c59efa0c95ef53885335affd17abbf4c212ef2d8f647ac028c",
+        "observed_utc": "2026-10-11T20:33:49.5545845Z",
+        "health": "healthy",
+        "channels": [
+          {
+            "id": "public",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "5e07a832f2053388eadebb9ff30710467e73da731d7013ea583319ead8c613f8",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "government",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "6ac89b5cb79abf42e47a8ce350e079d2678fa9a34ac8915ba4b55831cd645255",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "education",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "4c791a5a9880c79c29bf3b695c04793d905bf1f6301dfef4700d8ae5f2188a75",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          }
+        ]
+      },
+      {
+        "minute": 5,
+        "source_file": "minute-5.json",
+        "source_sha256": "96eb8bbb8ca7be4a4e0a2f4901214cb99b56f4587487248a287bb28831c94f89",
+        "observed_utc": "2026-10-11T20:34:51.1410829Z",
+        "health": "healthy",
+        "channels": [
+          {
+            "id": "public",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "aa5be24de73082c3100e237c21a9a0ccb30d00d6e5024efc73d61bd80e49292f",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "government",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "4bfa7b0245907f690aae8ac1e0c7aaa3d0810d4e78c79d64465dab5f34e2c33c",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          },
+          {
+            "id": "education",
+            "state": "ON_AIR",
+            "codecs": [
+              "aac",
+              "h264"
+            ],
+            "vtt_available": true,
+            "vtt_sha256": "3f992fb591723303cf867faf0fa77b870d5f038d72d3f95628d952c1d6f764bd",
+            "expected_words": {
+              "fellow": true,
+              "americans": true,
+              "country": true
+            },
+            "provider": "whistle-primary",
+            "runtime_state": "within-capacity"
+          }
+        ]
+      }
+    ]
+  },
+  "checker_note": "The checker received HTTP 409 when it tried to create an overlapping smoke schedule; it reused the existing smoke schedule with the same fixture instead. No product change or second D4 interruption was made.",
+  "not_claimed": [
+    "Fresh installation completion",
+    "Beta 13 publication",
+    "Extended soak"
+  ],
+  "evidence_root": "outputs/beta13-candidate-8053fb1c",
+  "source_receipts": [
+    {
+      "file": "consumer/upgrade-evidence/Beta13/D4RepairOnce/d4-repair-interruption.json",
+      "bytes": 4890,
+      "sha256": "3863ddd53c7fb519e595842cbfee2e758b9aa913eefc1d052d508c2ece6329a2"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/repair-recovery-result.json",
+      "bytes": 441,
+      "sha256": "ffe393197a752f7189d2862172c63adbd76fb1f953ea2a6642190f81ee544d82"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/interrupted-repair-install-command.log",
+      "bytes": 322,
+      "sha256": "27fcf5deea2f6173a9955e24280c50f28e72d4062d6afa20368bf18b66eb0233"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/repair-install-progress.log",
+      "bytes": 27598,
+      "sha256": "201b92d2a70199c4b1e2202817d42e6f8573350b3794b59af082c5a23622329a"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/Beta12PostRepairVerified/result.json",
+      "bytes": 7608,
+      "sha256": "b47dd28ca91f197ab2ca302ae7e39c56cf645860f7dd252c6662ca723a2800b6"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/Beta12PostRepairVerified/preserve-marker.json",
+      "bytes": 18292,
+      "sha256": "4cce6387e080e5bc78cded312083b313e91cccad2cec198c1dd22ebc889c184a"
+    },
+    {
+      "file": "consumer/upgrade-evidence/repair-install-state-after-postupgrade-pass.json",
+      "bytes": 2840,
+      "sha256": "7cf2730712cafa06abe7748e74a9366e272749970aac7731d33ab3f281a4353e"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/Beta12PostRepairVerified/minute-1.json",
+      "bytes": 32333,
+      "sha256": "96583b04588a40426515cf6fcb0c76776af285a2109d27cf6a61eb435122b0ca"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/Beta12PostRepairVerified/minute-2.json",
+      "bytes": 38047,
+      "sha256": "b0d0d94d861123aba3e78f0ffb6ec22d479544955b8cf7d41a586c456955fc56"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/Beta12PostRepairVerified/minute-3.json",
+      "bytes": 44049,
+      "sha256": "ba07862c23a2fca87e9ba2bb1153312ef08a0d032d74c5bb673ab0af1c177935"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/Beta12PostRepairVerified/minute-4.json",
+      "bytes": 44882,
+      "sha256": "1196a95ca4efd6c59efa0c95ef53885335affd17abbf4c212ef2d8f647ac028c"
+    },
+    {
+      "file": "consumer/upgrade-evidence/Beta13/Beta12PostRepairVerified/minute-5.json",
+      "bytes": 44922,
+      "sha256": "96eb8bbb8ca7be4a4e0a2f4901214cb99b56f4587487248a287bb28831c94f89"
+    }
+  ]
+}

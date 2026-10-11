@@ -18,10 +18,9 @@ Two asset-set families are supported:
     constants by tests/policy/test_windows_release_downloader.py so the two
     cannot drift.
 
-The default tag and expected version are pinned to the current published
-release in `docs/releases/release-truth.yaml`, not the next owner-held source
-candidate. For a historical beta.7 download, specify both
-`-Tag v1.0.0-beta.7 -Version 1.0.0-beta.7`.
+The defaults match the Beta 13 release tag and product version. For a
+historical beta.12 or beta.7 download, specify both `-Tag` and `-Version` for
+that release.
 
   ProofKit / TesterPackage / All (the retired WSL2 rc line's shape): fetch the
     release-artifacts manifest plus the tester package and/or proof kit,
@@ -32,8 +31,8 @@ candidate. For a historical beta.7 download, specify both
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.12",
-  [string]$Version = "1.0.0-beta.12",
+  [string]$Tag = "v1.0.0-beta.13",
+  [string]$Version = "1.0.0-beta.13",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,

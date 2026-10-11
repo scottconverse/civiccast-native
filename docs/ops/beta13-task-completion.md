@@ -1,22 +1,24 @@
-# Beta 13 — Whistle recovery and remaining installation work
+# Beta 13 — Whistle recovery and release completion
 
 Owner-authorized objective: execute `C:\Users\scott\Desktop\Goals\# CivicCast — Whistle Recovery and Task Completion.txt`. Scott selected **Beta 13** on October 11, 2026. Engagement: finite release workflow; concurrency, worker lifetime and installation are the named Critical risks.
 
 The current host station and its observer remain running. Source work is on `codex/whistle-recovery-task-completion`, based on main `64058099`. No host cutover is authorized by this development checkpoint.
 
-| Goal | Current state | Evidence required for completion |
+| Goal | Current state | Recorded evidence / remaining criterion |
 | --- | --- | --- |
-| 1. Recover Whistle automatically | Implementation in progress | Transient failure/fallback/recovery; failed recovery/backoff; serialized probes; no duplicate output; close invalidates outstanding recovery |
-| 2. Coordinate watchdog and backlog | Implementation in progress | 10-second warning, 30-second Whistle deadline, finite backlog grace and sustained-overload bounds |
-| 3. Preserve diagnostics and show recovery | Implementation in progress | Bounded error output, pre-termination counters/exit status where available, request identity and operator recovery state |
-| 4. Fresh installation and startup | Pending final candidate | Exact-candidate setup, first administrator and three-channel audio/video/captions |
-| 5. Post-upgrade observation | Pending final candidate | Saved state preserved and five usable observation snapshots |
-| 6. Interrupted-install recovery | Pending final candidate | One controlled isolated interruption and repair with state preservation |
-| 7. Deliver consistent release | In progress | Independent review, affected checks, signed candidate, applicable installation results, manuals/help/site/version consistency, publication, D kit and cleanup |
+| 1. Recover Whistle automatically | Implemented; focused recovery checks passed in the recorded correction run. | Transient failure/fallback/recovery; failed recovery/backoff; serialized probes; no duplicate output; close invalidates outstanding recovery |
+| 2. Coordinate watchdog and backlog | Implemented; recorded focused backlog/backoff cases passed. | 10-second warning, 30-second Whistle deadline, finite backlog grace and sustained-overload bounds |
+| 3. Preserve diagnostics and show recovery | Implemented; diagnostic/status assertions and operator checks have recorded passes. | Bounded error output, pre-termination counters/exit status where available, request identity and operator recovery state |
+| 4. Fresh installation and startup | Complete; exact-candidate setup exited 0 and five-minute three-channel observation passed. | Fresh install-state and runtime evidence; see fresh-install evidence |
+| 5. Post-upgrade observation | Complete; exact Beta 11-to-13 upgrade and five observations passed. | Saved state preserved and five usable observation snapshots; see normal-upgrade evidence |
+| 6. Interrupted-install recovery | Complete; one D4 interruption, same-candidate repair and five post-repair observations passed. | One controlled isolated interruption and repair with state preservation; see repair-observation evidence |
+| 7. Deliver consistent release | Package and local distribution checks complete; publication and main-branch release update pending. | Signed kit assembly, direct-consumer receipt, D: copy verification and isolated-store cleanup complete; publish and reconcile public release surfaces |
+
+Goals 1–3 reflect the focused component results already recorded in the [authorized correction check](#authorized-correction-check): Whistle recovery, backlog/backoff and alerting cases passed; diagnostics and operator UI/type-check results are documented there. These outcomes were not rerun for this documentation update.
 
 ## Execution sequence
 
-Consolidate the runtime, backlog, diagnostic, UI and installation-check corrections; obtain independent review; run the focused consolidated checks; produce the final candidate; perform the requested installation scenarios sequentially; publish and verify downloads; update the D kit and remove disposable staging. No new soak, elaborate harness or autonomous correction/check/rebuild cycle. Escalate a failed final check with its diagnosed cause rather than silently starting another cycle.
+Consolidate necessary focused corrections before their affected checks; produce the final candidate; perform the requested installation scenarios sequentially; verify package distribution; then publish and reconcile release surfaces. Limited necessary correction/check/rebuild cycles are allowed when a diagnosed issue requires them; do not start broad or autonomous loops, add harnesses, or repeat unrelated suites. No new soak is in scope.
 
 Existing Beta 12 public-download setup and activation success remain historical results. Its failed startup checker and incomplete upgrade recorder do not establish Beta 13 results. The Beta 11 48-hour/99.88% input-coverage result remains Beta 11 evidence. Target-machine sustained testing is owner-managed and outside these goals. Scott controls release acceptability; numerical caption results are not automatic release vetoes.
 
@@ -92,3 +94,125 @@ The copied fresh-install guest driver omits the inherited generative-summary tes
 The focused documentation corrections finished with 12 passes in the first 18-case run, five passes in the six-case follow-up, and one pass after replacing the remaining obsolete Sigstore prose assertion with checks of the actual plain-sidecar/`attestation: null` contract. Thus all 18 previously failing cases have passed in affected checks; no full-suite pass is claimed. The local tracked manual render manifest now points to the tracked `docs/` files; its source, hashes and sizes are unchanged from the exact-run artifacts, whose original receipt is preserved separately.
 
 Pre-push five-lens review of this documentation/bookkeeping batch: engineering — application runtime and frozen manual/quickstart sources unchanged, actual hosted manual bytes retained; UX — silent-install heartbeat and provider billing explained; tests — helper verification, candidate/published distinction, scoped historical evidence and unsigned-pack warnings remain asserted, stale retired-release prose removed; docs — current public downloads remain Beta 12 while the Beta 13 application build is unfinished; QA/artifact state — no installer success, Sandbox result or publication pass claimed. The frozen installer source remains 8053fb1cf05b989fb1f23e650893cc6abfa659d4.
+
+## Signed candidate assembled; upgrade guest launched
+
+Hosted build 38160778457 completed successfully. The installer SHA-256 is `cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16`, Authenticode is Valid with Scott Converse as signer. Local assembly verified all 19 kit members, including the six station packs against the canonical Ed25519-signed index and exact size/SHA-256 values. Actual assembly receipt SHA-256: `cd0039bc852872e016e3a61125dfc6087d14a51e7d4b236202d565905341c925`; workspace log and receipt are under `outputs/beta13-candidate-8053fb1c`.
+
+At 2026-10-11T19:11:27Z the one 9,216 MiB upgrade guest was launched, with 11.85 GiB host RAM available. Registered Sandbox ID: `d21d1138-e9b6-45c1-8ad2-bf82850f45db`. Its actual launch receipt binds the candidate, assembly receipt and previously verified Beta 11 baseline installer. At launch, upgrade/repair outcomes were pending. The host CivicCast service is still running; no host deployment occurred.
+
+## Exact normal upgrade and five observations completed
+
+The pinned Beta 11 baseline installed successfully; first-administrator setup,
+uploaded media, three saved schedules and station-profile fields were prepared.
+The exact signed Beta 13 candidate upgrade completed at 13:54:42 MDT on
+October 11 with exit 0, healthy schema 0089 and the correct clean source8053.
+The original identity-check failure was a copied-checker defect (missing
+receipt fields and misspelled manifest key), not an installed app mismatch.
+
+The recorder's uncast raw filesystem text expanded PowerShell metadata during
+JSON conversion; root stopped only that test process at 1.47 GB working set.
+A PS5 reproduction and the eventual 8–11 ms snapshot writes establish the
+one-field string-cast correction. The reuse guard also required published
+schedule state and a directly assigned API array; actual guest HTTP queries
+proved80 published rows and61 future marker matches. All failed records remain
+intact; no baseline or normal upgrade was repeated.
+
+Priority 5 is now complete: the five post-upgrade observations ran
+14:10:09–14:15:18 MDT, all15 channel samples ON_AIR with H.264/AAC, healthy
+caption status and Whistle primary/within capacity. Each channel produced
+five distinct VTT hashes and the expected speech words; no fallback observed.
+The public non-secret summary is
+`docs/ops/evidence/beta13-normal-upgrade-observations-2026-10-11.json`.
+The cumulative normal-upgrade log is preserved; a contiguous scoped slice
+with byte/line boundaries and source/derived hashes supplies its receipt.
+
+The one controlled D4 interruption began at20:15:18Z in the SAME guest,
+followed by same-candidate repair and five repair observations when reached.
+At this point in the timeline, those outcomes, fresh installation, publication
+and D: transfer remained pending; later entries record repair, fresh-install and
+transfer completion.
+The host station and independent monitor remain untouched. No new soak or
+replacement build was started. Existing frozen manual/quickstart bytes remain.
+
+## Same-candidate repair and post-repair observation completed
+
+The single controlled D4 interruption was confirmed at 20:21:37Z before
+activation returned. The signed Beta 13 setup was repaired with the same
+installer; the setup exited 0 at 20:27:48Z. The five post-repair observations
+passed from 20:29:42.901Z through 20:34:51.516Z. All 15 channel-minute samples
+were ON_AIR with H.264/AAC, Whistle primary, within-capacity caption state,
+expected speech words and five distinct VTT hashes per channel.
+
+The after-observation install-state receipt reports Beta 13 service Running,
+health and live captions healthy, schema current at revision
+0089_contribution_media_control_requests. The matching successful activation receipt
+retained by the same-version no-op repair includes the Medium self-test; repair did not rerun it. The five-minute Whistle observations separately demonstrate post-repair caption operation. The preservation marker records preserved install/database state,
+one uploaded asset check, all three baseline schedule IDs and reuse of the
+existing smoke schedule.
+
+The observation checker first received HTTP 409 while attempting to create an
+overlapping smoke schedule. It was corrected to reuse the existing schedule
+and same fixture; no product change, second D4 interruption or repeated repair
+was made. The [non-secret repair evidence](evidence/beta13-repair-observations-2026-10-11.json)
+summarizes the result and hashes the source receipts.
+
+## Fresh installation and Help inspection completed
+
+The separate fresh-install setup ran 20:38:41.648–21:06:21.143Z and exited 0.
+The installed service was Running and healthy on current schema
+`0089_contribution_media_control_requests`, with live captions healthy. The
+fresh runtime observation passed five minutes from 21:06:49.913Z to
+21:11:58.703Z. At each minute all three channels were ON_AIR with H.264/AAC;
+Whistle was primary and within capacity, expected speech words were observed,
+and each channel had a distinct VTT hash in all five samples. The initial
+preconfiguration health receipt reports captions disabled before minute 1;
+minutes 1–5 report healthy captions. Its caption assessment is report-only.
+See the [fresh-install evidence](evidence/beta13-fresh-install-observations-2026-10-11.json)
+for per-minute summaries and hashes of the actual receipts.
+
+The exact-source Help inspection passed with manual source SHA-256
+`120ad2a18f6c18768ef352abae05a1a3e2344034c151308d14093e8f16185ed3`, 29 embedded
+images, 99 internal targets and no missing targets; the Help shell and both
+UI assets returned HTTP 200. Admin-reset CLI help availability was checked
+only; no reset or guest browser click is claimed.
+
+## Package distribution and current completion state
+
+The assembled kit passed the direct-consumer receipt
+`9a79ce7dd99a99af5b7089e8b30189289d5f765a59bf970b69ec9b063daba4a4` with eight
+proof groups.
+The D: copy passed exact verification for 19/19 files totaling 26,915,515,033
+bytes; workspace receipt `outputs/beta13-candidate-8053fb1c/usb-verification.json`
+records the exact destination comparison. Isolated consumer test-store/private
+staging was cleaned after evidence assembly (receipt:
+`outputs/beta13-candidate-8053fb1c/isolated-store-cleanup.json`); all guests are
+closed, the host service remains Running, and host RAM was 15.25 GiB at the
+completion snapshot. No host deployment occurred.
+
+Goals 1–6 are complete. Goal 7 is pending publication and public download
+verification on the main release surfaces; package assembly, D: kit copy and
+isolated staging cleanup are complete. Beta 12 evidence remains in its
+historical verification record, and the Beta 11 48-hour/99.88% measurement stays
+scoped to its original host and release.
+
+## Final documentation and publication preparation checks
+
+The affected five-file documentation/helper batch recorded 66 passes and one
+archive-extraction case failing because its Windows PowerShell child could not
+resolve Get-FileHash. All four affected archive cases passed (3.13 seconds)
+when launched from native Windows PowerShell. No product change or broad
+repeat was required. Release identity and git diff --check passed after the
+HTML version badge was given its own span; the visible version is unchanged.
+CI at eba0d94ea5f267b5ceab454fb54c3e5bed77b2f2 finished all 25 checks with
+22 passes and three skips. No new application build was produced.
+
+Five-lens review of the final documentation delta: engineering verified
+candidate/build identities and the actual fresh, upgrade, repair and D: receipts;
+UX checked complete-kit download instructions and CPU-primary/fallback wording;
+tests retained published-truth safeguards and checked affected documentation and
+archive paths; docs reconciled README, installation/trust guides, landing page,
+changelog and this ledger; QA kept the Beta 11 soak historical and publication
+pending until the actual publisher succeeds. Artifact-state review preserves
+the frozen 8053 application/manual, unrelated oversight evidence, and original
+failed checking-tool records. No unresolved material finding in this delta.

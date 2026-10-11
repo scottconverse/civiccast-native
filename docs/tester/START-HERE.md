@@ -1,52 +1,27 @@
 # CivicCast Tester Packet - Start Here
 
-> **Current native testers:** CivicCast `v1.0.0-beta.12` is the current
-> published GitHub pre-release, not a production release. Follow the
+> **Current native testers:** CivicCast `v1.0.0-beta.13` is the current
+> signed GitHub pre-release, not a production release. Follow the
 > [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
 > [Windows release-trust guide](../install/windows-release-trust.md), and the
-> exact [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md).
-> The Beta 11/Beta 10 notes below are historical and do not qualify Beta 12.
+> exact [Beta 13 verification record](../releases/v1.0.0-beta.13-verification.md).
+> The Beta 11/Beta 10 notes below are historical and do not qualify Beta 13.
 > The rc-numbered appendix at the bottom describes the retired WSL2 product.
 
 ## Current Release
 
-`v1.0.0-beta.12` is the current published GitHub pre-release, published
-October 10, 2026, with the station-model distribution repair added October 11.
-The release assets include the signed installer, five runtime packs, four
-manual assets, checksum list, sidecar, Windows download helper, station-models
-manifest and split station ZIP parts. Use the exact release-matched helper
-described in the [Windows release-trust guide](../install/windows-release-trust.md);
-its `-Install` option downloads and validates the complete kit before it runs
-the installer with `/S`. Availability of the repaired full download is not
-installation or operational acceptance.
-
-The October 11 R9 attempt used the earlier incomplete public asset set on
-MICROMONSTERPC, a previously used machine with residual ProgramData files and
-model caches but no active CivicCast service or application. With the five
-verified runtime packs flat beside `setup.exe`, pack staging returned child
-exit 74. Placing the same bytes in the required sibling `packs\` directory
-allowed staging to advance, but activation failed with actual installer exit
-123 because four required signed station packs were missing and their
-embedded-index URLs were empty. No service or first-admin account was created.
-This result predates the repaired download; it is not clean-machine proof or a
-result for the complete kit. R9 also observed optional Large Whisper download
-bytes advancing while its box was unchecked and the UI showed **Not ready**.
-
-The recorded Beta 11-to-Beta 12 CPU-only Sandbox upgrade exited 0, the
-service/API were healthy at schema 0089, and the initial-data preservation
-marker was saved. Initial three-channel HLS output and Whistle within capacity
-were observed. The recorder wrapper then failed during its first JSON save
-with `Cannot convert value to type System.String.`; no five-snapshot PASS
-was recorded. A separate fresh offline Sandbox install using the repaired
-public kit exited 0, activated the station, left the service `Running`, and
-passed the offline Ollama and CPU faster-whisper self-tests. Its follow-on
-first-admin/three-channel check failed with only the first Python traceback
-line captured, so the cause is unresolved and complete UI/channel validation
-is not established. Repair, upgrade retest, and sustained-operation results
-are not recorded. See the [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md) and [GitHub
-release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
-
-
+`v1.0.0-beta.13` is the current signed GitHub pre-release. Its source, build,
+installer and 19-member kit are identified in the [Beta 13 verification
+record](../releases/v1.0.0-beta.13-verification.md). The normal Beta 11-to-13
+upgrade and five post-upgrade observations passed across all three channels.
+Whistle remained within capacity in all 15 runtime samples, with five distinct
+caption samples per channel and expected words observed. The one-interruption
+same-candidate repair and separate fresh installation also passed, each with
+five-minute observations across all three channels. Use the release-matched helper
+in the [Windows release-trust guide](../install/windows-release-trust.md) and
+follow the active owner-authorized handoff for assigned checks. Historical
+Beta 12 package results remain in the [Beta 12 verification
+record](../releases/v1.0.0-beta.12-verification.md).
 ## Historical Beta 11 release snapshot (October 8, 2026)
 
 <details>
@@ -140,14 +115,14 @@ before clicking through it.
   [Field-Test Quick Start](../QUICKSTART-OPERATOR.md) and the current manual.
   Use the active handoff for the exact package procedure.
 - **Technical tester or station admin:** use
-  the [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md)
-  for candidate evidence and limits, plus the active handoff for assigned
+  the [Beta 13 verification record](../releases/v1.0.0-beta.13-verification.md)
+  for package evidence and limits, plus the active handoff for assigned
   checks.
 - **Meeting-night dry run:** use
   [first-broadcast-checklist.md](first-broadcast-checklist.md).
 - **Longmont Public Media beta:** use
   the active owner-authorized handoff; this repository's older LPM handoff is
-  historical and is not the Beta 12 procedure.
+  historical and is not the Beta 13 procedure.
 - **Before reporting a problem:** create a support bundle and use
   [bug-report-template.md](bug-report-template.md).
 - **Closed or lost the recovery kit:** use
@@ -159,22 +134,20 @@ before clicking through it.
 1. Verify the release Windows proof kit or setup executable against its
    matching delivery manifest or, for a GitHub download, its sidecar and
    checksum (`SHA256SUMS.txt`).
-2. Download and install only the exact Beta 12 set named by the active handoff.
+2. Download and install only the exact Beta 13 set named by the active handoff.
    The release helper `download_windows_release_artifacts.ps1` with `-Install`
    verifies the installer, runtime packs and multipart station bundle, extracts
    the complete kit and runs setup with `/S`. The helper is documented in
    the [Windows release-trust guide](../install/windows-release-trust.md). A
    successful download does not prove that the installation or station is
-   ready. Beta 12 has setup and activation evidence for a fresh repaired-kit
-   install, but its follow-on first-admin/three-channel check failed with an
-   unresolved Python startup cause; complete UI/channel validation is not
-   established. See the verification record for the captured result.
+    ready. The Beta 13 normal upgrade, one-interruption repair and fresh install
+    passed, each with five-minute observations across all three channels. See
+    the verification record for exact package identity and captured results.
 3. Follow the active owner-authorized handoff for the named package and checks.
-   Beta 12's recorded upgrade outcome and failed R9 public-assets first-install
-   attempt are summarized above and detailed in the verification record. The
-   repaired-kit Sandbox setup/activation succeeded, but the follow-on check
-   failed without a recoverable Python error detail. No repair, upgrade retest,
-   complete UI/channel validation, or sustained run is established.
+    Upgrade, one-interruption repair and fresh-install observations are recorded
+    in the Beta 13 verification record. No extended Beta 13 soak is claimed.
+   Beta 12's package-specific results remain in its historical verification
+   record.
 4. Open the operator console on the station itself (the **Open operator
    console** button, or the **CivicCast Operator Console** shortcut).
 5. Create the first admin and save the recovery kit.

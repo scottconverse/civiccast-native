@@ -146,7 +146,7 @@ def test_readme_keeps_source_and_field_proof_distinct() -> None:
         assert "no published installer or release evidence yet" in normalized
     assert "99.88%" in normalized
     assert "separate beta 11 host" in normalized
-    assert "it is not a beta 12 soak, general service-uptime percentage" in normalized
+    assert "it is not a beta 13 soak, general service-uptime percentage" in normalized
     assert "package qualification" in normalized
 
 

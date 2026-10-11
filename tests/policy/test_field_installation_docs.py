@@ -79,7 +79,7 @@ def test_readme_separates_published_downloads_from_field_evidence() -> None:
     assert PUBLISHED_RELEASE_LINK in readme
     assert "99.88% live caption-input coverage" in readme
     assert "separate beta 11 host" in readme
-    assert "it is not a beta 12 soak, general service-uptime percentage" in readme
+    assert "it is not a beta 13 soak, general service-uptime percentage" in readme
     assert "package qualification" in readme
 
 
