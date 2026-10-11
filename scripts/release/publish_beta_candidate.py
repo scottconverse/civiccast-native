@@ -1379,6 +1379,8 @@ def verify_consumer_evidence_receipt(
                 "observation_ended_utc",
                 "progress_delta_sha256",
             }
+            if "precondition_health_assessment" in interruption:
+                interruption_fields.add("precondition_health_assessment")
             _record_keys(interruption, interruption_fields, label="D4 repair interruption")
             installed_before = _record(
                 interruption.get("installed_before"), label="D4 repair installed-before state"
@@ -1413,6 +1415,23 @@ def verify_consumer_evidence_receipt(
                 )
                 if installed_before_health_finding is not None:
                     caption_findings.add(installed_before_health_finding)
+                health_assessment = interruption.get("precondition_health_assessment")
+                if health_assessment is not None:
+                    health_assessment = _record(
+                        health_assessment, label="D4 repair precondition health assessment"
+                    )
+                    if (
+                        health_assessment.get("accepted") is not True
+                        or health_assessment.get("health_status_consistent") is not True
+                        or health_assessment.get("schema_revision_pair_matches") is not True
+                        or health_assessment.get("live_captions_state")
+                        != full_public_health.get("live_captions")
+                        or health_assessment.get("health_status_caption_only_degraded_advisory")
+                        is not (installed_before_health_finding is not None)
+                    ):
+                        raise PublishError(
+                            "D4 repair precondition health assessment is inconsistent with the checked public health"
+                        )
             installed_health_status = (
                 full_public_health.get("status")
                 if beta12_sandbox and isinstance(full_public_health, dict)

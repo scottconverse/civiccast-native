@@ -216,3 +216,18 @@ changelog and this ledger; QA kept the Beta 11 soak historical and publication
 pending until the actual publisher succeeds. Artifact-state review preserves
 the frozen 8053 application/manual, unrelated oversight evidence, and original
 failed checking-tool records. No unresolved material finding in this delta.
+
+## Actual consumer receipt compatibility correction
+
+The first actual publisher invocation stopped before any remote mutation:
+its strict D4 field list rejected the existing checker-emitted optional
+precondition_health_assessment. The publisher now accepts that field and
+checks its accepted/consistency, schema-pair, caption-state and advisory
+values against the existing bound public-health validation. Raw receipts are
+unchanged. The actual consumer receipt passed all eight proof groups; 11
+focused publisher tests passed (117 deselected), and Ruff lint/format plus
+whitespace checks passed. No application/manual change or rebuild occurred.
+Five-lens delta review: engineering retains exact artifact and health checks;
+UX unchanged; tests cover healthy, degraded and inconsistent assessments;
+docs record the actual failure/correction; QA preserves old evidence and
+publication-pending status. No material unresolved finding in this correction.

@@ -1255,6 +1255,8 @@ def _write_beta12_separate_upgrade_repair_contract(
                     "version": candidate_version,
                     "schema": "current",
                     "live_captions": "healthy",
+                    "schema_db_revision": "0089_contribution_media_control_requests",
+                    "schema_expected_head": "0089_contribution_media_control_requests",
                 },
                 "station_set_sha256": "a" * 64,
                 "read_errors": {},
@@ -1265,6 +1267,19 @@ def _write_beta12_separate_upgrade_repair_contract(
                 "service_running": True,
                 "health_status_healthy": True,
                 "health_schema_current": True,
+            },
+            "precondition_health_assessment": {
+                "health_status_caption_only_degraded_advisory": False,
+                "health_status_consistent": True,
+                "health_version_matches": True,
+                "health_schema_current": True,
+                "schema_db_revision": "0089_contribution_media_control_requests",
+                "schema_expected_head": "0089_contribution_media_control_requests",
+                "schema_revision_pair_matches": True,
+                "live_captions_value_is_string": True,
+                "live_captions_enum_valid": True,
+                "live_captions_state": "healthy",
+                "accepted": True,
             },
             "precondition_captured_utc": "2026-10-09T05:59:55Z",
             "signature_status": "Valid",
@@ -1657,10 +1672,25 @@ def test_beta12_d4_repair_accepts_caption_only_degraded_precondition_health(tmp_
                 "version": VERSION,
                 "schema": "current",
                 "live_captions": "unknown",
+                "schema_db_revision": "0089_contribution_media_control_requests",
+                "schema_expected_head": "0089_contribution_media_control_requests",
             },
         }
     )
     interruption["precondition_guard_checks"]["health_status_healthy"] = False
+    interruption["precondition_health_assessment"] = {
+        "health_status_caption_only_degraded_advisory": True,
+        "health_status_consistent": True,
+        "health_version_matches": True,
+        "health_schema_current": True,
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "schema_revision_pair_matches": True,
+        "live_captions_value_is_string": True,
+        "live_captions_enum_valid": True,
+        "live_captions_state": "unknown",
+        "accepted": True,
+    }
     interruption_ref.update(_write_bound_json(interruption_path, interruption))
     receipt_path.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
 
@@ -1741,6 +1771,11 @@ def test_beta12_separate_upgrade_requires_its_saved_postupgrade_result(tmp_path,
         ("phase", "stage-packs", "was not confirmed"),
         ("progress_delta_path", r"C:\TestEvidence\different.txt", "filenames differ"),
         ("precondition_captured_utc", "2026-10-09T06:01:00Z", "timestamps are out of order"),
+        (
+            "precondition_health_assessment",
+            {"accepted": False},
+            "precondition health assessment is inconsistent",
+        ),
         ("repair_finished", "2026-10-09T05:59:00Z", "finished before the confirmed interruption"),
     ),
 )
