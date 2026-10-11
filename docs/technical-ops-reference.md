@@ -166,7 +166,8 @@ translation. These tiers:
 - **send meeting content to a third-party provider** (they are not private and
   require network access);
 - may incur charges under the provider's current pricing and account terms;
-  consult that provider before enabling a hosted model; and
+  pricing may be per-token or use another provider-specific billing model, so
+  check current rates before enabling a hosted model; and
 - require the operator to acknowledge the provider terms and costs before the
   selection is saved. The consent (who accepted,
   and when) is recorded with the selection.

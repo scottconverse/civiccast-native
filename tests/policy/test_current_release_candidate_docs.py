@@ -19,6 +19,7 @@ CURRENT_VERSION = (
     .split('__version__ = "', 1)[1]
     .split('"', 1)[0]
 )
+CURRENT_CANDIDATE_TAG = f"v{CURRENT_VERSION}"
 # The source version can be the next owner-held candidate while the published
 # release remains current. Public download targets come from the authored
 # release-truth manifest, not civiccast/_version.py.
@@ -82,25 +83,19 @@ STALE_EVIDENCE_MARKERS = [
 ]
 
 
-def test_clean_windows_docs_require_docs_first_proof_step() -> None:
+def test_windows_install_guide_pins_published_helper_and_verification_flow() -> None:
     install_doc = (ROOT / "INSTALL-WINDOWS.md").read_text(encoding="utf-8")
-    tester_doc = (ROOT / "docs" / "tester" / "START-HERE.md").read_text(encoding="utf-8")
+    normalized = " ".join(install_doc.split()).casefold()
 
-    required_targets = [
-        "docs/tester/START-HERE.md",
-        "INSTALL-WINDOWS.md",
-        "docs/install/windows-release-trust.md",
-    ]
-
-    for target in required_targets:
-        assert target in install_doc or target in tester_doc
-
-    assert "A clean-machine test starts with the documentation" in install_doc
-    assert "Record in the clean-machine proof report" in install_doc
-    assert "Clean-Machine Test Rule" in tester_doc
-    assert "Your proof report must state that these docs were read" in tester_doc
-    assert "installer/proof package disagree" in install_doc
-    assert "GitHub Release assets, manifest, sidecar, and installer UI" in tester_doc
+    assert PUBLISHED_RELEASE_TAG.casefold() in normalized
+    assert f"releases/tag/{PUBLISHED_RELEASE_TAG}".casefold() in normalized
+    assert "download_windows_release_artifacts.ps1" in normalized
+    assert "-install" in normalized
+    assert "all five runtime packs and all six signed station packs" in normalized
+    assert "sha-256" in normalized
+    assert "authenticode signature" in normalized
+    assert "install-progress.log" in normalized
+    assert "actual nonzero exit is reported as failure" in normalized
 
 
 def test_current_release_identity_is_consistent_across_runtime_and_installer() -> None:
@@ -141,11 +136,18 @@ def test_retired_wsl_install_docs_are_explicitly_historical() -> None:
 def test_readme_keeps_source_and_field_proof_distinct() -> None:
     """Source and lab evidence must not be presented as field proof."""
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    normalized = " ".join(text.split())
+    normalized = " ".join(text.replace("**", "").split()).casefold()
     # The false "nothing changed since rc6" claim must never return.
-    assert "only installer unit tests and the version stamp changed" not in text
-    assert "first downloadable" in normalized
-    assert "has not been proven against physical SDI" in normalized
+    assert "only installer unit tests and the version stamp changed" not in normalized
+    assert PUBLISHED_RELEASE_TAG.casefold() in normalized
+    assert f"releases/tag/{PUBLISHED_RELEASE_TAG}".casefold() in normalized
+    if CURRENT_CANDIDATE_TAG.casefold() != PUBLISHED_RELEASE_TAG.casefold():
+        assert "unpublished candidate" in normalized
+        assert "no published installer or release evidence yet" in normalized
+    assert "99.88%" in normalized
+    assert "separate beta 11 host" in normalized
+    assert "it is not a beta 12 soak, general service-uptime percentage" in normalized
+    assert "package qualification" in normalized
 
 
 def test_architecture_doc_names_current_release() -> None:

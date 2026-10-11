@@ -18,7 +18,12 @@ Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civicc
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta12"
 ```
 
-The helper downloads the installer, all five runtime packs and all six signed station packs. It verifies hashes and the installer's valid **Scott Converse** Authenticode signature, and creates the `packs` and `station` folders setup needs. Windows requests administrator approval if needed. Setup uses supported silent mode with the complete kit, without the separate optional raw-model acquisition screen. Wait for it to finish; any actual nonzero exit is reported as failure.
+The helper downloads the installer, all five runtime packs and all six signed station packs. It verifies SHA-256 hashes and the installer's valid **Scott Converse** Authenticode signature, and creates the `packs` and `station` folders setup needs. Windows requests administrator approval if needed. Setup uses supported silent mode with the complete kit, without the separate optional raw-model acquisition screen. Wait for it to finish; any actual nonzero exit is reported as failure.
+
+Keep the PowerShell window open until it reports **Done**. During silent
+setup, the installer writes a timestamped progress heartbeat before and after
+each step to `C:\ProgramData\CivicCast\install-progress.log`; its latest line
+names the step in progress.
 
 For download only, replace `-Install` with `-IncludePacks`. Keep the resulting folder together when copying it to USB. The complete folder supplies the dependencies for offline installation.
 

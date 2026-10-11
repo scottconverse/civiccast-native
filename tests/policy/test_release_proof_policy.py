@@ -84,17 +84,22 @@ class TestWindowsAttestationDocumentation:
         windows-setup.exe` naming; updated 2026-09-02 to the real native-line
         asset name so the trust guide isn't forced to document a filename the
         publisher never produces."""
-        text = Path("docs/install/windows-release-trust.md").read_text(encoding="utf-8")
+        text = " ".join(
+            Path("docs/install/windows-release-trust.md").read_text(encoding="utf-8").split()
+        )
 
         assert "setup.exe`" in text
         assert "setup.exe.sidecar.json`" in text
-        assert "keep them together in one folder" in text
+        assert "same folder" in text
+        assert "SHA256SUMS.txt" in text
+        assert "actual Authenticode signature before installation" in text
         # ADR 0022: Sigstore/cosign was evaluated and denied for this release
         # chain. No release asset carries a `.sigstore.json` bundle, so the
         # trust guide must not tell testers to fetch one -- the only
-        # permitted "sigstore" mention is the explicit denial statement.
+        # sidecar is plain metadata rather than a separate attestation.
         assert "setup.exe.sigstore.json`" not in text
-        assert "carries no Sigstore/cosign step" in text
+        assert "`attestation: null`" in text
+        assert "It is not separately signed" in text
 
     def test_code_signing_policy_documents_authenticode_only_chain(self) -> None:
         text = Path("CODE_SIGNING_POLICY.md").read_text(encoding="utf-8")

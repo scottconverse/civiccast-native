@@ -170,7 +170,8 @@ default:
   (Ollama Cloud or OpenRouter). These models are not private and require
   network access.
 - **Provider charges may apply.** CivicCast does not set or guarantee provider
-  rates. Review the provider's current pricing and your account terms before
+  rates. Pricing may be per-token or use another provider-specific billing
+  model. Review the provider's current pricing and your account terms before
   enabling a hosted model.
 - **Consent is required.** Before a hosted selection is saved, the operator must
   tick a checkbox acknowledging the provider terms and costs. CivicCast records

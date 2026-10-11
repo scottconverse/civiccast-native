@@ -86,6 +86,8 @@ ALLOWED_UNSIGNED_CONTEXTS = [
     "unsigned software would say",  # SMARTSCREEN: contrast vs "Unknown publisher"
     "allow unsigned software",  # SMARTSCREEN: IT-policy note (none needed)
     "unsigned install manifest",  # USER-MANUAL: a tests-only env var
+    "do not use unsigned or substitute model files",  # USER-MANUAL: station-pack safety warning
+    "do not substitute raw model downloads or unsigned files",  # USER-MANUAL: complete-kit safety warning
     "unsigned manifests",  # cross-platform-installer: a blocked state
     "builds remain unsigned",  # spec: macOS Gatekeeper (genuinely unsigned)
     "builds the unsigned installer, then",  # CODE_SIGNING_POLICY: pipeline stage before signing

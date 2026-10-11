@@ -22,6 +22,11 @@ Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civicc
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta12"
 ```
 
+Keep the PowerShell window open until it reports **Done**. During silent setup,
+the installer writes a timestamped progress heartbeat before and after each
+step to `C:\ProgramData\CivicCast\install-progress.log`; its latest line
+names the step in progress.
+
 See [Install CivicCast on Windows](INSTALL-WINDOWS.md) for first setup, existing installations, offline copies and password recovery. Open **CivicCast Operator Console** after setup finishes.
 
 The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs/USER-MANUAL.docx)) covers operation, installation and architecture. Online manual revisions reach installed copies with a replacement application package. Additional guides: [Admin](docs/admin-guide.md), [Meeting Operator](docs/meeting-operator-guide.md), [Records Clerk](docs/records-clerk-guide.md) and [Tester Start Here](docs/tester/START-HERE.md).

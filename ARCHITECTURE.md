@@ -4,6 +4,7 @@
 > GitHub pre-release, not a production or SLA-backed field release. The
 > [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
 > binds package evidence to source `a0c98cb7367dc106042ec89d35a91905470d350c`.
+> Get the published package from the [Beta 12 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
 > A normal upgrade from Beta 11 exited 0 and left a healthy service at schema
 > 0089 with its preservation marker saved and initial output on three channels.
 > The post-upgrade recorder failed on its first JSON save, so no five-snapshot

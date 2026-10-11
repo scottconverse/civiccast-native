@@ -21,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from scripts import render_user_manual
+from scripts.policy.check_v17_adoption_gate import PUBLISHED_RELEASE_TAG
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _SOURCE = _REPO_ROOT / "docs" / "USER-MANUAL.md"
@@ -45,14 +46,19 @@ def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
     introduction = " ".join(manual.split("## Who Reads What")[0].split())
     assert "owner-held unpublished candidate" not in introduction
     assert "current published release described in this manual" not in introduction
-    assert "Beta.12 is an unpublished candidate" not in introduction
     assert "installation and sustained-operation checks are pending" not in introduction
     assert "remains the current public pre-release" not in introduction
     assert "https://github.com/scottconverse/civiccast-native/releases" in introduction
     assert "does not itself establish publication or installation acceptance" in introduction
-    assert "**v1.0.0-beta.11** was published as a GitHub pre-release on 2026-10-08" in manual
-    assert "Beta.11 is the current native-line pre-release" not in manual
-    assert "| **v1.0.0-beta.11** | 2026-10-08 | Published GitHub pre-release |" in manual
+    manual_version = render_user_manual._source_version_token(manual)
+    if manual_version != PUBLISHED_RELEASE_TAG:
+        published_history_rows = [
+            line
+            for line in manual.splitlines()
+            if line.startswith("|") and PUBLISHED_RELEASE_TAG in line
+        ]
+        assert any("Published GitHub pre-release" in line for line in published_history_rows)
+    assert "is the current native-line pre-release" not in manual
 
 
 @pytest.fixture

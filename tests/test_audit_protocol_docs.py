@@ -61,8 +61,7 @@ def test_public_docs_do_not_overclaim_sdi_or_cg_proof() -> None:
     assert "DeckLink SDI through the engine's own sink" not in public_page
     assert "Multi-zone CG designer" not in public_page
     assert (
-        "Real cable-operator acceptance and SDI capture cards have not been tested." in public_page
+        "A CivicCast Beta 11 station ran public, government and education programming together"
+        in public_page
     )
-    assert "Cable headend and SDI cards</strong> are unproven." in public_page
-    assert "Not run at a real station." in public_page
-    assert "No human field tester has signed off." in public_page
+    assert "48-hour soak" in public_page

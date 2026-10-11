@@ -95,9 +95,9 @@ def test_support_does_not_name_v17_as_the_current_release() -> None:
 
 def test_windows_setup_guidance_requires_visible_progress() -> None:
     for relative in ("README.md", "INSTALL-WINDOWS.md"):
-        text = (ROOT / relative).read_text(encoding="utf-8")
-        assert "heartbeat" in text.lower(), relative
-        assert "visibly active" in text.lower(), relative
+        text = " ".join((ROOT / relative).read_text(encoding="utf-8").lower().split())
+        assert "timestamped progress heartbeat before and after each step" in text, relative
+        assert "c:\\programdata\\civiccast\\install-progress.log" in text, relative
     assert 'no longer freezes ("Not Responding")' not in (ROOT / "README.md").read_text(
         encoding="utf-8"
     )
