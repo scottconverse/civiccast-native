@@ -12,7 +12,7 @@ The current host station and its observer remain running. Source work is on `cod
 | 4. Fresh installation and startup | Complete; exact-candidate setup exited 0 and five-minute three-channel observation passed. | Fresh install-state and runtime evidence; see fresh-install evidence |
 | 5. Post-upgrade observation | Complete; exact Beta 11-to-13 upgrade and five observations passed. | Saved state preserved and five usable observation snapshots; see normal-upgrade evidence |
 | 6. Interrupted-install recovery | Complete; one D4 interruption, same-candidate repair and five post-repair observations passed. | One controlled isolated interruption and repair with state preservation; see repair-observation evidence |
-| 7. Deliver consistent release | Package and local distribution checks complete; publication and main-branch release update pending. | Signed kit assembly, direct-consumer receipt, D: copy verification and isolated-store cleanup complete; publish and reconcile public release surfaces |
+| 7. Deliver consistent release | Published; exact public assets and D: distribution verified. | Signed kit assembly, actual installations, direct-consumer receipt, D: verification, public release/download verification and publication-staging cleanup complete |
 
 Goals 1–3 reflect the focused component results already recorded in the [authorized correction check](#authorized-correction-check): Whistle recovery, backlog/backoff and alerting cases passed; diagnostics and operator UI/type-check results are documented there. These outcomes were not rerun for this documentation update.
 
@@ -190,9 +190,10 @@ staging was cleaned after evidence assembly (receipt:
 closed, the host service remains Running, and host RAM was 15.25 GiB at the
 completion snapshot. No host deployment occurred.
 
-Goals 1–6 are complete. Goal 7 is pending publication and public download
-verification on the main release surfaces; package assembly, D: kit copy and
-isolated staging cleanup are complete. Beta 12 evidence remains in its
+Goals 1–6 are complete. Goal 7 is published with verified public downloads,
+D: distribution and cleanup. This documentation change reconciles the public
+release frontdoors. Post-merge deployed-page checks belong with the workspace
+publication evidence. Package assembly and isolated-store cleanup are complete. Beta 12 evidence remains in its
 historical verification record, and the Beta 11 48-hour/99.88% measurement stays
 scoped to its original host and release.
 
@@ -231,3 +232,36 @@ Five-lens delta review: engineering retains exact artifact and health checks;
 UX unchanged; tests cover healthy, degraded and inconsistent assessments;
 docs record the actual failure/correction; QA preserves old evidence and
 publication-pending status. No material unresolved finding in this correction.
+
+## Actual publication and public asset verification
+
+Beta 13 published at 2026-10-11T21:39:34Z with all 26 assets, tag target
+38011c645c64863aeb435b28c05e8afb3f6529e6 and unchanged signed application
+source8053/build38160778457. All 26 public asset names, sizes and GitHub
+SHA-256 digests match the publisher table. Nine selected public downloads
+additionally matched local hashes, including the installer and manuals;
+the downloaded installer signature is Valid, Scott Converse. See
+[evidence](evidence/beta13-published-assets-2026-10-11.json). Draft notes were
+corrected to actual Beta 13 upgrade/repair labels and the dated changelog.
+No tag rewrite, application rebuild, new soak or host cutover occurred.
+
+Owner-requested 72-hour marketing updates are prepared outside this branch
+for the next beta or release candidate, under workspace outputs/beta-next-72-hour-docs.
+They are deliberately not applied to Beta 13. The running station remains Beta 11.
+
+## Publication staging removed
+
+After public verification, the 12 uploaded station archive parts and redundant
+staged setup alias were removed from the bounded release staging directory:
+13 files, 22,273,629,969 bytes (20.74 GiB). The complete source and D: kits,
+public assets, checksums/manifests/notes, actual-download evidence and all
+installation receipts remain. C: had 410.09 GiB free immediately afterward.
+The prior isolated-store cleanup reclaimed 118.45 GiB. No live station data
+was removed. See workspace publication-staging-cleanup.json for each path.
+
+Final metadata five-lens review: engineering matched all public asset digests
+and the immutable tag; UX checked the real helper/manual download targets;
+tests used actual downloaded bytes and Authenticode instead of a new harness;
+docs reconcile published truth, verification, PR and this ledger; QA preserves
+original failed checks, separates historical Beta 11 soak and deferred next-release
+marketing, and records no host cutover. Application and manual bytes unchanged.

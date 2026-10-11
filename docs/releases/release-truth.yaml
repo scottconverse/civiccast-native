@@ -40,7 +40,7 @@ entries:
   - tag: v1.0.0-beta.13
     status: current
     notes: >-
-      Signed application source 8053fb1cf05b989fb1f23e650893cc6abfa659d4, hosted build 38160778457. Automatic Whistle recovery with temporary Whisper fallback, bounded watchdog/backlog and failure diagnostics. Exact-package installation outcomes and scope are recorded in docs/releases/v1.0.0-beta.13-verification.md; historical Beta 11 soak evidence is not inherited by Beta 13.
+      Published by publish_beta_candidate.py, artifact source 8053fb1cf05b989fb1f23e650893cc6abfa659d4, tag target 38011c645c64863aeb435b28c05e8afb3f6529e6, build run 38160778457, direct Sandbox consumer receipt C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\beta13-candidate-8053fb1c\direct-consumer-receipt.json; Gate A not run.
   - tag: v1.0.0-beta.12
     status: superseded
     superseded_by: v1.0.0-beta.13
