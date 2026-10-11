@@ -1,10 +1,14 @@
 # CivicCast Native installation support prompt
 
 Use this guide only for an owner-authorized Windows beta field test. It is
-candidate-neutral: the tester handoff and the candidate's verification record
-identify the approved installer and procedure. Beta 12 is an unpublished
-candidate; Beta 11 remains the public release. This guide does not authorize an
-installation, upgrade, release or station cutover.
+candidate-neutral: the tester handoff and the release verification record
+identify the approved installer and procedure. Beta 12 is the current public
+pre-release, signed from source
+`a0c98cb7367dc106042ec89d35a91905470d350c`, producer run `38097350705`.
+The normal Beta 11 upgrade setup exited 0 and left a running, healthy service;
+the post-upgrade five-snapshot recorder failed during its first JSON save.
+Repair and fresh-install checks have not been run. This guide does not authorize
+an installation, upgrade, release or station cutover.
 
 Give the instructions below to an assistant helping the operator. Proceed one
 step at a time, explain what the operator should see, and ask for a screenshot
@@ -46,9 +50,15 @@ exact handoff identifies this kit layout. `station\SHA256SUMS.txt` covers the
 station bundle; it does not verify the setup executable or runtime packs.
 
 For a Beta 12 field test, follow the Beta 12 handoff and current
-[candidate verification record](releases/v1.0.0-beta.12-verification.md). The
-Beta 11 package or host-observation evidence does not qualify a Beta 12 install
-or upgrade.
+[release verification record](releases/v1.0.0-beta.12-verification.md). The
+standard signed installer, runtime packs and four manual assets are on the
+[Beta 12 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12);
+the producer run retains the exact-source build evidence. Use them only when
+the owner-approved handoff names this release and procedure. The local
+19-member kit receipt is recorded in the verification record. Its upgrade
+observation does not establish the recorder's five-snapshot check, recovery or
+fresh-install acceptance. Beta 11 package or host-observation evidence does not
+qualify a Beta 12 install or upgrade.
 
 ## Run the assigned install procedure
 

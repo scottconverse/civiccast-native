@@ -2,10 +2,15 @@
 
 ## [Unreleased]
 
+## [1.0.0-beta.12] - 2026-10-10
+
+- Published as a GitHub pre-release from signed source `a0c98cb7367dc106042ec89d35a91905470d350c`, producer run `38097350705`. The release page carries the standard installer, five runtime packs, four manual assets, checksums and installer sidecar.
+- A normal Beta 11-to-Beta 12 setup run exited 0 and left the service running and healthy at schema 0089. The preservation marker was saved; initial checks observed all three channels with HLS audio/video and primary Whistle within capacity. The post-upgrade recorder wrapper failed during its first-minute JSON save (`Cannot convert value to type System.String.`), so no five-snapshot PASS is claimed. The owner deferred the wrapper issue as bookkeeping; repair and fresh-install checks were not run.
+
 - Record bounded station-activation child error text in the installer progress log on failure. Existing failure containment and exit handling remain in place; the original transient activation failure remains unexplained.
 - Classify mapped files using region permissions: executable and unknown-protection mappings stay strict, while positively non-executable mappings remain data-access evidence subject only to the existing exact DesktopAppInstaller PRI exception. Failed producer `38086022740` logged the rejected path but not its trace leg or protection, so this correction addresses a proven collector-contract defect without claiming that it explains that run.
 
-Development candidate: `v1.0.0-beta.12` (unpublished).
+Release identity and remaining limits are recorded in the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
 
 - Channel health reports caption-worker activity, stalled processing, silence and the active speech-engine/fallback state. Enabled on-air channels receive a startup allowance before missing worker activity raises an alert; detailed status remains staff-only.
 - Failed speech-engine retries no longer reset the caption progress timer. Channels with pending audio and no completed progress become degraded after the existing stall allowance instead of appearing healthy while retries continue.
@@ -27,7 +32,7 @@ Development candidate: `v1.0.0-beta.12` (unpublished).
 - Paywall settings preserve the saved signing secret during ordinary saves. Rotation and clearing are explicit, confirmed actions; invalid secret input is not echoed in validation errors.
 - Bound raw control-plane and PostgreSQL output logs with rotating supervisor-owned capture, including PostgreSQL output after its startup launcher exits. Existing oversized logs age out through rotation; upgrading does not immediately reclaim their space.
 - Qualify the Beta 12 remote-contribution media-control migration's `remote_guest_sessions` columns to the `civiccast` schema on PostgreSQL, matching the existing SQLite behavior. The full migration chain, downgrade and re-upgrade passed against an isolated PostgreSQL 17 cluster.
-- Correct stale project status, roadmap, technical operations and field quick-start wording: Beta 11 is published, Beta 12 is in development, and the corrected Beta 11 package's fresh-install results do not establish upgrades, GPU operation or sustained three-channel capacity.
+- Synchronize project status, installation guidance and public pages with the Beta 12 release while retaining Beta 11 package and 48-hour host observations as historical evidence with their original limits.
 
 ## [1.0.0-beta.11] - 2026-10-08
 
