@@ -1,4 +1,6 @@
-# CivicCast manual - style guide and chapter map (documentation sprint)
+# CivicCast manual - style guide and chapter map
+
+**Current documentation target: Beta 12.** The October 3 screen inventories are historical snapshots; recheck current source before carrying any finding into current guidance. Use the current release verification record for package evidence. Do not transfer old installation or soak results to a newer package.
 
 Read this completely before writing any chapter. It is the contract between the chapter writers and the assembler.
 
@@ -18,14 +20,11 @@ Never address a reader as a computer expert in Part I. Never talk down to the IT
    `generated/cli.md`, `generated/api.md`, `generated/env-vars.md`) **and/or from code you read yourself**. When you rely on a
    statement you cannot trace, do not write it.
 2. **Describe actual behavior, not intended behavior.** The inventories list defects as `[HELP-nn]` findings. If a control is broken
-   or misleading in beta.10, say what really happens in a callout (section 4, "Known issue") and give the reader the workaround if the
+   or misleading in the version being documented, say what really happens in a callout (section 4, "Known issue") and give the reader the workaround if the
    code shows one. Do not hide a defect and do not describe the screen as if it worked.
 3. Anything marked `UNVERIFIED` in an inventory is **not** to be stated as fact. Either omit it, or write it as "In testing we could not
    confirm..." only when it matters to the reader.
-4. Proof status. State beta.10's status exactly: published 2026-10-02 as a **GitHub pre-release / beta candidate**; Gate A passed for the
-   clean-install lane only; upgrade and download-only lanes not run; a **first install with neither the full kit nor an earlier install is
-   not proven** (the installer needs the `packs` and `station` folders; see `inventory/screens/installer-*.md`); no human field-tester
-   sign-off yet. The exact wording lives in `docs/releases/v1.0.0-beta.10-verification.md`. Do not claim more.
+4. Proof status. Use `docs/releases/release-truth.yaml` and the current release's verification record. Beta 12 is published as a GitHub pre-release. Report only the exact checks performed on that package. Historical Beta 11/Beta 10 results retain their original identity; an old inventory or successful source test does not establish a new installed-package result.
 5. No invented numbers, sizes, times, limits or defaults. Quote them from code/inventory with a source in a hidden comment (section 6).
 6. Time zones: several screens treat typed times as **UTC** (see the Recording, Program Guide, Schedule inventories). Say so wherever
    a reader types a time.
@@ -38,7 +37,7 @@ One short paragraph: what this chapter lets you do and who normally does it.
 ## <Task name>                       (one level-2 heading per task, verb first: "Start a channel")
 Numbered steps. One action per step. Bold the exact label of anything the reader clicks: **Start**.
 What you should see after the steps (one sentence, quoting the real on-screen text).
-> **Known issue (beta.10):** ...     (only where the code is wrong/misleading)
+> **Known issue (version):** ...     (only where the code is wrong/misleading)
 > **Warning:** ...                   (anything that affects a channel on the air, or deletes, or cannot be undone)
 ## If it did not work                (real error texts quoted from the code, with the cause and the fix)
 ## Related                           (links to other chapters by anchor)
@@ -48,7 +47,7 @@ column short enough to render in a printed page; split wide tables.
 
 ## 4. Callouts (render as pandoc block quotes with a bold label; do not invent other labels)
 `> **Note:**` background the reader may need. `> **Tip:**` a faster or safer way. `> **Warning:**` can affect what is on the air,
-delete data, or cannot be undone. `> **Known issue (beta.10):**` a defect or surprise in this build, with the workaround.
+delete data, or cannot be undone. `> **Known issue (version):**` a defect or surprise in this build, with the workaround.
 `> **For IT staff:**` (Part I only) one line pointing to the Part II chapter that has the technical detail.
 
 ## 5. Screenshots

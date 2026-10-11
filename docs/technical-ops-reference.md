@@ -2,7 +2,7 @@
 title: CivicCast Technical Operations Reference
 subtitle: Installation, configuration, command-line evidence, and recovery operations
 author: The CivicCast Authors
-date: 2026-07-16
+date: 2026-10-11
 documentclass: article
 geometry: margin=1in
 fontsize: 11pt
@@ -24,8 +24,15 @@ toccolor: black
 > [User Manual](USER-MANUAL.md).
 >
 > **Release line.** This repository carries the native Windows product, whose
-> latest published release is `v1.0.0-beta.11` (a GitHub pre-release,
-> published 2026-10-08); Beta 12 is in development. Beta 10 and earlier
+> current published release is `v1.0.0-beta.12` (a GitHub pre-release,
+> published 2026-10-10), not a production release. Its exact source, package,
+> limited upgrade observation and remaining checks are recorded in
+> [the Beta 12 verification record](releases/v1.0.0-beta.12-verification.md).
+> A public-assets fresh-install attempt reached activation and failed with
+> exit 123 because four required signed station packs were missing; their
+> embedded index URLs are empty. The matching complete kit was not available
+> in that field attempt. Repair and sustained operation remain unestablished.
+> Beta 11 and earlier
 > published betas are superseded. `docs/releases/release-truth.yaml` is the authored source for
 > release state -- read it rather than any version number quoted in prose,
 > including this one.
@@ -40,11 +47,11 @@ toccolor: black
 > support bundles, release trust, safer secret defaults, real-boundary smoke
 > tests, and task-based operator guidance.
 >
-> **Credential-gated proof note.** First-run checks now fail closed for
-> external/provider lanes until live verification evidence exists; placeholder
-> credentials and path strings are not enough. A blocked lane is not a failure
-> of the installer; it is the operator's instruction to configure the named
-> setting, run the verification step, and record redacted evidence.
+> **Station report note.** Readiness and handoff commands report what is
+> configured or observed on a particular station. Their output is operational
+> evidence, not a universal Beta 12 release-acceptance checklist. A configured
+> path or credential reference alone does not prove that an external service
+> accepted a real upload.
 
 ## Who this reference is for
 
@@ -68,26 +75,28 @@ as ready.
 ## What CivicCast does
 
 CivicCast is open-source, self-hostable civic meeting recording and publication
-software. The stock build proves recorded sample → exact-sample private rehearsal →
-private package → explicit Portal approval → resident playback. It does not
-prove live ingest, a full station,
-Internet Archive, NAS, YouTube, physical hardware, or headend delivery. Those
-paths appear below only as source contracts or integrator procedures and need
-separate live evidence before operational use.
+software. The application wires a production live-source probe into live
+pre-flight, in addition to the recorded-media and Portal workflows. A working
+probe is not proof that a particular station's source, hardware, output,
+archive, CDN or headend works end to end. Beta 12's verification record
+contains one limited normal-upgrade observation and no sustained-operation
+result; station-specific external services still require their own checks.
 
 ## AI models: defaults and operator selection
 
-CivicCast no longer hard-wires a single model per AI feature. Each of the three
-AI features — captions, summary, and translation — has an operator-selectable
-model with a private, on-box **local** default that costs nothing per token.
-Operators change selections in the operator console under **Settings -> AI
-Models** (see "AI Models console" below). Selection is also exposed over the
-staff API at `/api/staff/ai-models`.
+CivicCast has operator-selectable models for captions, summary, and translation.
+Native live captions use Whistle as the CPU primary, with Whisper as the live
+fallback; Whisper also handles recorded-media transcription. Operators choose
+models in the operator console under **Setup -> AI Models** (see "AI Models
+console" below). Selection is also exposed over the staff API at
+`/api/staff/ai-models`.
 
-The defaults a fresh install ships with are:
+The current defaults and component identities are:
 
-1. **Captions** use faster-whisper `whisper-large-v3` (INT8). Local, private,
-   no per-token cost.
+1. **Live captions** use the included Whistle CPU engine as the primary and
+   Whisper fallback. **Recorded-media captions** use the selected local
+   faster-whisper model; Medium is the required tier and Large is optional.
+   Check the current catalog on the station for the actual selection.
 2. **Summary** uses an *adaptive* local default gated on GPU presence AND RAM,
    not RAM alone. On a box with **a real (NVIDIA/NVML-detected) GPU and 16 GB
    or more of system RAM**, the default is Ollama `gemma4:12b` (the
@@ -100,9 +109,12 @@ The defaults a fresh install ships with are:
    (94-128s) — RAM headroom does not predict CPU token-generation throughput,
    a discrete GPU does. The first-run wizard reports which default the
    detected hardware gets, and commissioning provisions **both** summary tags
-   (`gemma4:12b` and `gemma4:e4b`) so an operator can still select 12B
-   manually on a CPU-only box if they choose to accept the slower, less
-   reliable path. Provenance records the model tag, model digest, Ollama
+   (`gemma4:12b` and `gemma4:e4b`) so an operator can select 12B manually on
+   a CPU-only box if they choose to accept the slower path. These runtime tags
+   differ from the staged component IDs (`summary-gemma4-12b` and
+   `summary-gemma4-e4b`). Component presence and model activation depend on the
+   package and acquisition path; silent setup does not run the GUI acquisition
+   or automatically fetch models. Provenance records the model tag, model digest, Ollama
    runtime version, and manifest source.
 3. **Summary generation runs as an async job**, not a blocking request:
    `POST /api/staff/summaries/jobs` queues generation from committed
@@ -116,18 +128,16 @@ The defaults a fresh install ships with are:
    itself had already produced a completion. `POST /generate` still exists
    (a longer 600s socket budget now backs it) for a fast tier or a script
    that wants to wait synchronously.
-4. **Spanish translation** picker offers local Ollama `translategemma:4b`
-   (slug `translategemma-4b-ollama`) with the same digest and runtime
-   provenance posture, but selecting it has **no visible effect today**: no
-   caller supplies a target language, so the model is never actually invoked
-   and no translated caption track is published. The AI Models console says
-   so plainly rather than implying a working capability the build does not
-   yet have.
+4. **Spanish translation** uses the configured translation model in the
+   recorded-caption workflow. Translated Spanish cues are queued for review;
+   this does not translate the live English caption stream. Review the cues
+   before attaching or publishing the translated track.
 
-Deterministic adapters remain available for tests, but an operator release
-proof fails if a deterministic runtime appears on the release proof path.
+Deterministic adapters are test infrastructure. Check the installed runtime
+and current station configuration before relying on an AI feature; the Beta 12
+verification record describes package evidence separately.
 
-### Cloud and frontier tiers (optional, paid, default OFF)
+### Cloud and frontier tiers (optional, default OFF)
 
 Beyond the local defaults, the model catalog offers **hosted** tiers an operator
 can opt into per feature: Ollama Cloud (`gemma4:31b-cloud`) and an OpenRouter
@@ -138,10 +148,10 @@ translation. These tiers:
   there until an operator explicitly selects a hosted model;
 - **send meeting content to a third-party provider** (they are not private and
   require network access);
-- are **billed per token in $USD** (the console shows the per-token cost on each
-  option); and
-- require the operator to **accept the provider terms of service and the
-  per-token cost** before the selection is saved. The consent (who accepted,
+- may incur charges under the provider's current pricing and account terms;
+  consult that provider before enabling a hosted model; and
+- require the operator to acknowledge the provider terms and costs before the
+  selection is saved. The consent (who accepted,
   and when) is recorded with the selection.
 
 Only the **setup_admin** role can change a selection; the **meeting_operator**
@@ -152,13 +162,13 @@ local-runtime loopback guard remains in force — local models are only reached 
 
 ### AI Models console
 
-Operators reach model selection in the operator console at **Settings -> AI
+Operators reach model selection in the operator console at **Setup -> AI
 Models**. The screen shows one card per feature with the current model, its tier
-band (Local / Cloud / Frontier), the per-token cost, the privacy label, and a
+band (Local / Cloud / Frontier), provider-cost information where available, the privacy label, and a
 runtime-availability hint. Selecting a hosted (cloud or frontier) model surfaces
 a consent checkbox; the selection is only saved after the operator accepts the
-provider terms of service and the per-token cost. For the full local-vs-cloud,
-cost, and consent guidance written for the people who run the station, see the
+provider terms and costs. Check the provider's current pricing. For the full
+local-vs-cloud and consent guidance written for the people who run the station, see the
 [Admin Guide](admin-guide.md) ("Cloud & frontier models") and the
 [Meeting Operator Guide](meeting-operator-guide.md).
 
@@ -198,16 +208,16 @@ script:
 powershell -ExecutionPolicy Bypass -File scripts\install-windows-accessibility-tools.ps1
 ```
 
-Beta testers should also run the handoff summary before first broadcast:
+Technical staff can use the handoff summary to collect station-specific status:
 
 ```bash
 uv run civiccast installer beta-handoff --json
 ```
 
-That summary ties package acquisition, clean Windows install proof,
-dependencies, model hashes, mTLS, and external provider proof into one
-fail-closed checklist. A lane that needs credentials, hardware, or a controlled
-target remains blocked until the operator records evidence.
+That summary reports available package, installation, dependency, model, mTLS
+and provider evidence. Missing evidence can prompt station-specific follow-up;
+the output is not a universal package-release gate or a claim about every
+installation.
 
 For linear-channel and headend-style output proof, use the
 [Channel Egress Operator And Tester Runbook](ops/channel-egress-runbook.md).
@@ -269,11 +279,12 @@ Run this before using real meeting content:
 ### Operator data and persistence
 
 Do not run an operator or beta-test station without durable storage. If
-`DATABASE_URL` is unset, CivicCast starts in local setup mode until the
-installer or operator Setup screen prepares the managed local SQLite database
-and applies migrations. If `CIVICCAST_ALLOW_EPHEMERAL_STORES=1` is set,
-CivicCast uses volatile in-memory stores for tests or throwaway development
-only; that is not an operator install.
+`DATABASE_URL` is unset, CivicCast starts in local setup mode until the native
+installer or operator Setup screen prepares the managed PostgreSQL database
+and applies migrations. SQLite is a separate standalone backend; it is not the
+database prepared for an installed native station. If
+`CIVICCAST_ALLOW_EPHEMERAL_STORES=1` is set, CivicCast uses volatile in-memory
+stores for tests or throwaway development only; that is not an operator install.
 
 For a beta or production-like setup:
 
@@ -282,8 +293,10 @@ For a beta or production-like setup:
 2. Create the first local admin in the Setup screen and save the recovery kit.
 3. Start the API and operator console only after storage and first-admin setup
    succeed.
-4. If the station requires Postgres, set `DATABASE_URL` before starting the API
-   and run `uv run alembic upgrade head` as the technical-admin path.
+4. The native station uses bundled PostgreSQL and stores its connection string
+   in the protected registry value. Standalone deployments may select a
+   supported database explicitly with `DATABASE_URL` and apply migrations with
+   `uv run alembic upgrade head`.
 
 The operator console, asset library, schedule, publish records, summaries,
 signed records, subscribers, podcast feeds, and beta-handoff evidence all
@@ -338,11 +351,11 @@ support ticket.
 | Command | Use it for | Important options |
 | --- | --- | --- |
 | `uv run civiccast installer plan` | Print the first-run setup plan for a deployment profile. | `--profile`, `--recommended-tier`, `--json` |
-| `uv run civiccast installer health-check` | Fail-closed check of publish targets before a first broadcast. | `--profile`, `--json` |
+| `uv run civiccast installer health-check` | Report station readiness and configured publish-target posture. The result is station-specific, not a universal release gate. | `--profile`, `--json` |
 | `uv run civiccast installer platform-plan` | Show the host requirements the installer checks before it runs. | `--os-family`, `--json` |
 | `uv run civiccast installer verify-package` | Verify package bytes, sidecar hash, signed install manifest, and metadata (Authenticode evidence for a Windows `.exe` claiming `signed: true`). | `--artifact`, `--sidecar`, `--json` |
 | `uv run civiccast installer summary` | Print the installer readiness summary used by the GUI. | `--json` |
-| `uv run civiccast installer beta-handoff` | Produce the beta tester checklist covering package, clean install, dependencies, models, mTLS, and providers. | `--release-manifest`, `--clean-windows-evidence`, `--json` |
+| `uv run civiccast installer beta-handoff` | Summarize the beta package and station evidence supplied to the command; it does not define release-acceptance criteria. | `--release-manifest`, `--clean-windows-evidence`, `--json` |
 
 ### Model commands
 
@@ -545,7 +558,8 @@ public_url = cdn.upload_file(
 # Returns: https://your-station.b-cdn.net/council-2026-05-15/playlist.m3u8
 ```
 
-Egress at $0.005/GB means a 60-minute 720p meeting (~2 GB) costs about $0.01.
+Egress charges depend on the provider's current rates, traffic and account
+terms. Check those terms for the expected meeting size and audience.
 
 **Cloudflare R2 + CDN (DDoS-protection alternate).**
 
@@ -640,13 +654,11 @@ base URL — correct for single-host deployments.
 ## Stream a live meeting
 
 The operator console includes a Live Room for running a meeting broadcast from
-a configured source. Source records and URLs are configuration, not media
-proof. The stock build has no production server-side media probe, so
-it shows **Source preview unavailable** and refuses real-source pre-flight and
-go-on-air rather than simulating preview, meters, or source-drop fallback. The
-separate stock private-rehearsal path accepts only the exact validated recorded
-sample selected during setup; it revalidates the copied bytes, finalizes a
-private recording, and checks resident preview without enabling live ingest.
+a configured source. Production pre-flight probes the configured live source
+through the application's source-probe implementation. A successful probe is
+not proof of sustained ingest, every output device, or downstream headend
+acceptance. The separate recorded-sample rehearsal checks that selected
+recording path; it does not substitute for verifying a real live source.
 
 For remote rooms, field kits, or partner facilities, CivicCast can also build a
 live ingest plan that keeps the local encoder path as the default and adds
@@ -657,8 +669,9 @@ and failure-handling guidance.
 
 ### Start a live broadcast
 
-These steps apply only after an integrator supplies and verifies a supported
-server-side media probe. They are not a stock clean-install capability.
+These steps require a configured source and station-specific output path. The
+Beta 12 package record does not establish a fresh-install or sustained live
+operation result.
 
 1. Open the operator console and choose **Live**.
 2. Confirm that at least one live source appears. If the room says no live
@@ -675,7 +688,7 @@ server-side media probe. They are not a stock clean-install capability.
 
    | Pre-flight result | What it means | Set by |
    | --- | --- | --- |
-   | `pass` | The provider is selected as real and resolves. The recording will genuinely be published there. | `CIVICCAST_PROVIDER_<KIND>=real` plus that provider's credentials |
+   | `pass` | The provider is selected as real and resolves during pre-flight. This does not prove a later upload or archive write succeeded. | `CIVICCAST_PROVIDER_<KIND>=real` plus that provider's credentials |
    | `fail` | Real publish was selected but the client cannot be built — the message names the missing variable or unmounted path. The broadcast still proceeds; the surface fails at publish time. | a real selection with incomplete configuration |
    | `not_configured` | The shipped simulation is in use. **Nothing is written anywhere.** | the default, when `CIVICCAST_PROVIDER_<KIND>` is unset |
 
@@ -889,11 +902,13 @@ integrations without real credentials and redacted live evidence.
 
 ### Required archive rule
 
-For public-record content, archive verification is not complete until the
-Internet Archive row and both local NAS rows are either succeeded or explicitly
-overridden. Overrides require an operator-entered justification. Use that only
-for a documented legal or operational exception, because the justification is
-stored with the publish audit evidence.
+The required publish surfaces are determined by the station configuration and
+the asset's `public_record_required` state. Do not treat Internet Archive or
+local NAS as a universal legal requirement for every station or asset; the
+applicable obligations come from the station's records policy and jurisdiction.
+For any surface marked required, check its actual result. A simulated provider
+result records no upload or file copy, and an override is an operator action
+recorded with the publish evidence.
 
 ### Preflight and credentials
 
@@ -921,19 +936,20 @@ overridden.
 CivicCast backup planning separates the working media store from the archival
 record. Keep database backups, media originals, HLS outputs, local NAS archive
 copies, signed-record exports, and release evidence in separate retention
-sets. Before any beta handoff, confirm:
+sets. For the station's own recovery plan, identify:
 
 1. `CIVICCAST_NAS_ARCHIVE_PATH` points to a mounted archive directory.
-2. The first-run health check can write, read, hash, and delete its NAS probe.
-3. Database backup automation has produced a restorable dump for the target
-   environment.
-4. Release evidence and clean-install proof files are copied outside temporary
-   build directories.
-5. Restore rehearsal notes name the exact artifact manifest and app version
-   restored.
+2. The backup-storage probe can write, copy, checksum and remove its small
+   manifest in the selected destination. This is a storage round-trip check,
+   not a station restore.
+3. A database drill has separately restored a dump into a throwaway database;
+   that does not restore the live station or its media/configuration/provider
+   state.
+4. Keep recovery instructions and any station-specific restore evidence with
+   the records needed by your own IT process.
 
-Do not mark a deployment ready from backup configuration alone. A restore claim
-needs a completed rehearsal or an explicit blocked handoff lane.
+Do not describe either probe as proof that a full station restore has worked.
+No universal release gate is defined by these operational checks.
 
 ## Manage subscribers and podcast feeds
 
@@ -1126,38 +1142,15 @@ The plan covers:
 Cloud fallback remains off by default. Operators must explicitly opt in before
 using a cloud provider.
 
-### v1.2 fail-closed first-run gates
+### Station readiness and health reports
 
-For the v1.2 hardening run, `civiccast installer health-check` reports external
-or environment-dependent lanes as blocked unless real local verification has
-run:
-
-| Lane | Required setup | Blocked operator action |
-| --- | --- | --- |
-| Resident portal | `CIVICCAST_PORTAL_TOKEN` plus live portal verification evidence | Set the portal token, run the live portal verification command, and record redacted evidence. |
-| Internet Archive | `CIVICCAST_INTERNET_ARCHIVE_ACCESS_KEY` plus live item evidence | Set the IA access key, run a live verification upload, and record the item URL and hash. |
-| YouTube | `CIVICCAST_YOUTUBE_CLIENT_SECRET` plus live ingest or VOD evidence | Set the YouTube OAuth secret, run the live verification command, and record the unlisted proof URL. |
-| Local NAS | `CIVICCAST_NAS_ARCHIVE_PATH` pointing to a writable archive directory | Configure the NAS archive path; CivicCast writes, reads, hashes, and deletes a probe file before the lane reports `ok`. |
-| Subscriber notifications | `CIVICCAST_SUBSCRIBER_WEBHOOK_SECRET` plus double opt-in and delivery evidence | Provide the webhook secret, run double opt-in and notification delivery verification, and record redacted evidence. |
-
-The offline model bundle verifier reports SHA-256 values calculated from the
-actual files in the bundle directory. If an artifact is missing, the message
-names the missing filename and tells the operator to copy the offline bundle
-into the VM before rerunning verification.
-
-### First-run health check
-
-Before the first broadcast, run:
-
-```bash
-uv run civiccast installer health-check --profile public-meetings
-```
-
-The v1.2 hardening check covers the resident portal, Internet Archive, YouTube,
-local NAS archive path, podcast feed, signed transcript, and subscriber
-notification path. Provider lanes do not report `ok` from placeholder
-credentials alone. Local NAS reports `ok` only after a write/read/delete hash
-probe succeeds; provider lanes require separate live verification evidence.
+`civiccast installer health-check --profile public-meetings` reports
+station-specific readiness and configured target status. Read the current
+command output and address the conditions relevant to the station. This report
+does not define universal release-acceptance criteria. A configured provider,
+credential reference, or destination path alone does not prove a real external
+write. The backup-storage probe is a manifest round-trip and does not restore
+the station database, media, or configuration.
 
 ### Monitoring the running service (`/health`)
 
@@ -1225,19 +1218,18 @@ model bundle hashes from inside that environment -- has not been run and
 recorded here yet. Treat air-gapped install as unproven for the native
 station until it has been.
 
-### Beta tester handoff check
+### Beta handoff report
 
-Before handing a release candidate to a tester, run:
+Technical staff may run this command to collect the status and evidence inputs
+available for a beta handoff:
 
 ```bash
 uv run civiccast installer beta-handoff --json
 ```
 
-The required handoff lanes are package acquisition, clean Windows install
-proof, local dependencies, model proof, mTLS, and external providers.
-External providers stay `credential_or_secret_required` without approved
-credentials and redacted live proof. NDI remains operator-gated unless the
-runtime, sender, or hardware proof exists on the target host.
+The output is an evidence summary. It is not a release gate, a clean-install
+result by itself, or proof that a station's external providers work. Consult
+the release's verification record for package-specific checks and limitations.
 
 ### Idle page and emergency overlay
 

@@ -5,7 +5,7 @@ Thanks for considering a contribution. CivicCast is an open-source public-good p
 ## Before you start
 
 1. Read [CLAUDE.md](CLAUDE.md) — the project's orientation document. It explains the verification that actually gates this repo, role posture, and what is and isn't in scope.
-2. Read [BRANCHES.md](BRANCHES.md) to find out which of the two product lines your change belongs to and which branch your PR should target.
+2. Read [BRANCHES.md](BRANCHES.md) for the native Windows product scope and branch target. This repository has one product line, carried on `main`.
 3. Read the canonical spec, [`docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md`](docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md), for what the product is and how it's structured. (`docs/spec/spec.md` self-declares historical — do not implement against it.)
 4. Read [ARCHITECTURE.md](ARCHITECTURE.md) for the system map, module boundaries, deployment posture, and open gates. Use the ADRs at [docs/adr/](docs/adr/) as the deeper contract once the overview gives you the shape.
 
@@ -90,8 +90,9 @@ purpose so it does not get copied into a deployment script unintentionally.
 
 ### Running the operator portal locally
 
-The operator portal uses installer-managed local SQLite storage by default in
-dev and standalone beta runs. Start the backend with the normal app factory,
+The standalone operator portal development app can use installer-managed local
+SQLite storage. The native Windows service uses its installer-provisioned local
+PostgreSQL database. Start the standalone backend with the normal app factory,
 open the Setup screen (`/operator/`, from the same computer), and choose **Prepare
 storage** before creating the first admin. Use Postgres only when you are
 testing Postgres-specific migration or deployment behavior; see
@@ -114,7 +115,7 @@ for both paths.
    - DCO sign-off on every commit
 4. **PR description:** Use the [PR template](.github/PULL_REQUEST_TEMPLATE.md). Name the branch/line and target, the spec section(s) touched, the 5-lens self-audit result (see below), and what was actually run to verify the change.
 5. **Conversation resolution.** On the native line, GitHub branch protection blocks merge while any PR review thread is unresolved (`required_conversation_resolution`), independent of approval count. Resolve every thread, don't just reply to it.
-6. **Merge authority follows the owner's current assignment.** For beta.5, Scott has authorized the release manager to merge after green CI and resolved review findings, and to tag and publish the verified beta. See `AGENTS.md`.
+6. **Merge and release authority follows the owner's current instructions.** Historical beta.5 delegation notes are not current release authorization. Do not merge, tag, or publish without the applicable owner authorization and repository policy.
 
 ## The verification that actually gates this repo
 

@@ -191,6 +191,18 @@ export function FeatureModelCard({
         <BandBadge tier={effectiveTier} />
       </div>
 
+      {registry.feature === 'captions' && (
+        <div
+          role="note"
+          className="rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+        >
+          Live captions use Whistle as the CPU primary. This selector sets the
+          Whisper model used for recorded captions and live fallback when a
+          channel needs it; it does not replace Whistle as the live primary.
+        </div>
+      )}
+
       {/* U4/Q2/M3: spec §6.3 degraded-state surface — TEXT, not color-only. */}
       {availMessage && <AvailabilityHint message={availMessage} />}
 

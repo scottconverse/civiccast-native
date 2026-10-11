@@ -1,8 +1,26 @@
-# Current continuation state - 2026-10-10 Beta 12
+# Current continuation state
 
-This section supersedes every older status entry below.
+The current published release is Beta 12. For its package identity, evidence,
+and limits, use [PROJECT-STATUS.md](PROJECT-STATUS.md) and the [Beta 12
+verification record](docs/releases/v1.0.0-beta.12-verification.md). The
+October 10 checkpoint below predates publication and is retained only as
+history; its candidate, pending-work, and authorization statements are not
+current status.
 
-- The full twelve-item Beta 12 implementation/build/release goal is active. Branch `codex/beta12-reliability`, draft [PR #236](https://github.com/scottconverse/civiccast-native/pull/236). Beta 11 remains published; Beta 12 is unpublished.
+The release's public distribution was repaired on October 11: all 14 added
+station-bundle/helper assets match their local sizes and digests. The complete
+public kit was downloaded and verified. Fresh offline Sandbox setup exited 0,
+station activation and offline model self-tests passed, and the service was
+`Running`. A follow-on first-admin/three-channel check failed with only the
+first Python traceback line captured; its cause is unresolved and full
+first-admin/channel validation is not established. See the [captured result](docs/ops/evidence/beta12-public-fresh-install-2026-10-11.json).
+The original R9 exit-123
+attempt predates the repair and remains a failure. The published EXE is
+unchanged; later source installer/operator corrections are not embedded in it.
+
+## Historical October 10 Beta 12 pre-publication checkpoint
+
+- At this checkpoint the full twelve-item Beta 12 implementation/build/release goal was active. Branch `codex/beta12-reliability`, draft [PR #236](https://github.com/scottconverse/civiccast-native/pull/236). Beta 11 was then published; Beta 12 had not yet been published.
 - This integrated follow-up to `c6f0864becfb93444853c754cfc50f4226267209` adds lazy Whisper backup startup, due prearmed-recording starts and cancellation on schedule disable, canonical-sample-only local preflight, and truthful station-index/six-pack publication evidence. Sensitive regressions, affected checks and independent reviews are recorded in [Beta 12 verification](docs/releases/v1.0.0-beta.12-verification.md).
 - The c6 signed diagnostic producer `38031718156` succeeded and its 19-member kit was checked. Required c6 source checks passed; informational mutation was cancelled. That kit predates these follow-ups. Build one combined candidate and use the retained offline CPU-only guest's prepared Beta 11 baseline for upgrade/repair and preservation evidence. Do not recreate the baseline or claim historical F93 checks qualify the new package.
 - Manual chapters, in-app Help, Markdown, PDF, Word and the in-app manual are synchronized. Tracked-download, renderer currentness and release-identity checks passed for Beta 12.

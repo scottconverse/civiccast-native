@@ -102,7 +102,7 @@ export const COMPONENT_CATALOG: readonly CatalogComponent[] = [
   },
   {
     id: "captions_medium",
-    name: "Caption engine — Medium (required)",
+    name: "Whisper Medium — required",
     purpose: "Required Whisper model for caption fallback and recording transcription. Native live captions use Whistle as the CPU primary.",
     placeholderSizeBytes: Math.round(1.5 * GB),
     required: true,
@@ -110,7 +110,7 @@ export const COMPONENT_CATALOG: readonly CatalogComponent[] = [
   },
   {
     id: "captions_large",
-    name: "Caption engine — Large (optional)",
+    name: "Whisper Large — optional",
     purpose: "Optional larger Whisper model for caption fallback and recording transcription. Supported NVIDIA graphics can accelerate Whisper; Whistle remains the live-caption CPU primary.",
     placeholderSizeBytes: Math.round(3.1 * GB),
     required: false,
@@ -132,7 +132,7 @@ export const COMPONENT_CATALOG: readonly CatalogComponent[] = [
     id: "cuda_runtime",
     name: "Whisper GPU acceleration (optional)",
     purpose:
-      "Lets Whisper use supported NVIDIA graphics acceleration for live captions. Whistle remains CPU-only.",
+      "Lets live Whisper fallback use supported NVIDIA graphics acceleration. Whistle is included with the station components and remains the CPU primary for live captions.",
     placeholderSizeBytes: Math.round(1.3 * GB),
     required: false,
     // Enrolled in production_catalog() 2026-08-16 (owner ruling, same day as

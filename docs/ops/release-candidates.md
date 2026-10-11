@@ -21,13 +21,16 @@ on the release branch. It produces, per candidate commit (`<sha>`):
 - `packs\*.ccpack` -- signed runtime component packs (app payload, server
   binaries, FFmpeg, Ollama runtime, optional CUDA runtime). Each is well
   under GitHub's 2 GB/file release-asset cap.
-- `station\` -- the ~21 GB AI-model bundle. **This never goes on a GitHub
-  release.** It is either already on the target machine (an upgrade,
-  reusing cached model packs per PR #127/#126) or delivered via the USB
-  bundle (a first-time install).
+- `station\` -- the complete signed AI-model bundle. The publisher
+  streams the six packs, station index and checksum file directly into a
+  standard ZIP64 STORE archive split into parts below GitHub's per-file cap,
+  without writing a full-size intermediate ZIP. `station-models.json` records
+  each part's name, size and hash plus the archive hash and all eight unpacked
+  file hashes. The parts and manifest are included in release checksums and
+  assets.
 - `manual\` in the assembled kit -- `USER-MANUAL.pdf`, `USER-MANUAL.docx`,
-  the render manifest, and an exact-source/run receipt. Beta 11 publication
-  includes these four small files as release assets and in `SHA256SUMS.txt`.
+  the render manifest, and an exact-source/run receipt. The candidate's four
+  manual files are included as release assets and in `SHA256SUMS.txt`.
 
 Confirm the build run's conclusion is `success` and note its run id
 (`--build-run-id` below).
@@ -366,26 +369,26 @@ recommended install target.
 
 ## 4. What Sergio (LPM) sees on GitHub
 
-`https://github.com/scottconverse/civiccast-native/releases` shows the new
-tag as a **prerelease** (never a full "Latest release" until the owner
-decides otherwise) with:
+The exact tag appears on the `scottconverse/civiccast-native` Releases page
+as a **prerelease**, not a full Latest release. Its assets include:
 
-- `setup.exe` and every `*.ccpack` runtime pack as downloadable assets
-  (each under 2 GB).
-- `SHA256SUMS.txt` and the installer's `*.sidecar.json`.
-- Release notes stating: this is a beta candidate, not a production release;
-  the exact source SHA; a link to the build and the selected consumer-evidence
-  route (the Gate A run with per-lane PASS verdicts for workflow mode, or the
-  direct Sandbox scenarios with Gate A and download-only route gaps stated);
-  an asset table with size and SHA-256; plain install/upgrade instructions
-  ("download setup.exe; if you already have CivicCast installed just run it --
-  your recordings, database and AI models are kept; first-time installs need
-  the USB model bundle"); and the SmartScreen note.
+- `setup.exe`, all five runtime packs and the four candidate manual files.
+- `SHA256SUMS.txt`, `setup.exe.sidecar.json`, and the
+  `download_windows_release_artifacts.ps1` helper.
+- `station-models.json` and each multipart station archive asset. Every part
+  is below the 2 GiB per-file limit; the manifest binds the ordered parts,
+  complete archive hash, signed station-index hash and hashes of the eight
+  files extracted into `station\`.
 
-No release ever carries the ~21 GB `station\` bundle as an asset. A
-download-only fresh install (no prior CivicCast install, no USB bundle
-run first) is not yet a supported path -- the release notes and
-`INSTALL-WINDOWS.md` say so explicitly; do not imply otherwise.
+The helper's `-Install` option downloads and verifies the full kit and runs
+the signed installer with `/S`, elevating when required. It also supports
+`-IncludePacks` to download and verify the full kit without installing.
+Release notes should state the exact source SHA, build and consumer-evidence
+route, asset sizes and hashes, and the SmartScreen verification instructions.
+Do not describe availability of the complete package as first-install,
+upgrade-preservation, repair or sustained-operation acceptance. The October 11
+R9 failure applies to the earlier incomplete public asset set; no completed
+fresh-install result for the repaired Beta 12 asset set is recorded here.
 
 ## 5. Withdrawing a bad candidate
 

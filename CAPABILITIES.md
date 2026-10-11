@@ -1,16 +1,14 @@
-# CivicCast - Capability Matrix
+# CivicCast — Capability Matrix and Evidence History
 
-> **Release state:** `v1.0.0-beta.10` is the current release, published
-> 2026-10-02 as a GitHub pre-release (a beta candidate, not a production
-> release). `v1.0.0-beta.7`, a download-only
-> upgrade for stations already on `v1.0.0-beta.5`, is superseded (as are
-> `v1.0.0-beta.5` and `v1.0.0-beta.3`, the first downloadable release). `v1.0.0-beta.1`
-> (USB-delivered) is also superseded. `v1.0.0-beta.2` was never published -- it exists only as an
-> internal Gate A upgrade-baseline kit. `v1.0.0-beta.8` and
-> `v1.0.0-beta.9` were never published; rows marked "beta.10 candidate"
-> below describe the build published as beta.10. See
-> [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
-> the authored release-state record.
+> **Current release:** `v1.0.0-beta.12`, published 2026-10-10 as a GitHub
+> pre-release. Its [verification record](docs/releases/v1.0.0-beta.12-verification.md)
+> binds package evidence to source `a0c98cb7367dc106042ec89d35a91905470d350c`.
+> A normal Beta 11 upgrade setup exited 0, left a healthy service at schema
+> 0089, and saved the preservation marker; the first post-upgrade JSON snapshot
+> failed, so there is no five-snapshot PASS. Fresh-install, interrupted-repair,
+> and sustained-operation checks were not run. The record is the authority for
+> the current package boundary; see [`release-truth.yaml`](docs/releases/release-truth.yaml)
+> for current and historical release identities.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -22,22 +20,22 @@
 > explanation and where the retired line's history now lives (private, not
 > archived).
 
-**This is the canonical, living record of what each CivicCast subsystem actually does today.**
-It exists so docs and release notes stop implying that proof integrations are production integrations. When a subsystem's real state changes, **update this file in the same commit**; do not let the matrix drift behind the code.
+This matrix distinguishes implemented components, wired workflows, and the
+limits of the evidence available for them. It contains entries from different
+development and release dates; any row naming Beta 10, Beta 11, or an earlier
+milestone is historical evidence for that scope, not a Beta 12 measurement.
+Rows not tied to a current package or source check should be treated as
+engineering history until revalidated. Do not infer package qualification,
+station capacity, or external-provider acceptance from a component state.
 
-_Product-line scope:_ This matrix's published Windows evidence below
-describes the retired WSL2 line (historical, kept as record -- see the
-banner above) unless a row explicitly says otherwise. The native Windows
-product this repository ships is tracked under
-[ADR 0021](docs/adr/0021-native-windows-runtime.md); its own development
-release evidence is recorded separately for the published native beta.10
-(and, for the superseded beta.7, in its own verification record).
-Beta.10 lab evidence (an eight-hour three-channel run) does not establish
-human/station acceptance. Its Gate A clean-install lane passed (10 of 10
-criteria, Windows Sandbox, 2026-10-02); the upgrade and download-only lanes
-were not run (waived by the owner), and the human/station acceptance pass has
-not been done; see its [verification record](docs/releases/v1.0.0-beta.10-verification.md).
-_This matrix was first written as a baseline observed at `v2.0.10` (commit `02c9e6c`), 2026-06-09, a pre-reset internal build-ladder version (used through June 2026, before the public version reset) on a separate numbering track from this repository's `v1.0.0-beta.N` releases. Rows have been updated in-commit since; only rows that name the beta.10 candidate or a beta.N release were written against this product line, and the other rows' evidence was not re-verified against beta.10 when this note was revised - see git history per row. On the retired WSL2 line (repository `scottconverse/civiccast`, not this repository), the last published release was `v1.0.0-rc18` (controlled beta); rc17 was the rollback target; the full recorded-media product path was last proven against rc17's exact published installer via a full clean-host walkthrough on 2026-07-20, and that full-path proof was never repeated against rc18's exact bytes before the line was retired. (Neither that release page nor its verification record is present in this repository.) Local 3.2 LPM contract-lab work is development proof only until its own gates pass and station-device evidence is attached._
+The table began as an internal build-ladder baseline on 2026-06-09 and includes
+work from both the earlier retired WSL2 product line and this native Windows
+repository. Retired-line entries remain history; this repository ships the
+native Windows product described in [BRANCHES.md](BRANCHES.md). The current
+Beta 11 host caption result is reported separately as **99.88% live
+caption-input coverage over 48 hours**; it is not a Beta 12 soak or a generic
+uptime measure. See the [host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md)
+for scope and method.
 
 ---
 
@@ -93,6 +91,12 @@ An `A -> B` entry means the component is `A` but its current limitation is `B`, 
 
 ## Proof Is Not Production
 
-CivicCast's broadcast/streaming core is real: egress, CDN adapters, ActivityPub signed delivery, and cable file-package output. LPM headend/device proof remains a station-device rung. The local 3.2 contract-lab work is not release evidence until its static gates, dependency-host gates, vMix software-lab proof, clean first-run evidence, elapsed soak, and station-device evidence are attached. Real adapters now exist for Internet Archive, YouTube, SMTP mail, subscriber webhooks, and the local-NAS archive copy but stay behind explicit config (`CIVICCAST_PROVIDER_*=real`); the default publishing/provider delivery surface remains simulated.
+CivicCast's broadcast and streaming components have distinct code, integration,
+and deployment evidence. LPM headend/device proof remains a station-device rung.
+The local 3.2 contract-lab work is not release evidence until its separately
+specified checks and station-device evidence are attached. Real adapters for
+Internet Archive, YouTube, SMTP mail, subscriber webhooks, and local-NAS archive
+copy stay behind explicit configuration; provider behavior and package scope
+must be checked in the corresponding current source and verification records.
 
 Keep these states distinct when updating this file. A subsystem moving from `real proof` to `supervised component` to a deployed lifecycle is a real promotion that should be reflected here explicitly, not implied by prose elsewhere.

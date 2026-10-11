@@ -6,9 +6,13 @@ runtime. It reads one pre-rendered, pre-sanitized artifact,
 `civiccast/docsite/manual.json`, that ships inside the installed `civiccast`
 package payload — the same way `USER-MANUAL.pdf` and `USER-MANUAL.docx` are
 rendered as release artifacts, not generated on demand. The Markdown is the
-current manual source. Every PDF, DOCX, and in-product copy distributed with a
-release must be rendered from that same source revision and bound by its render
-manifest; an older generated copy is not an exception or current guidance.
+current manual source. When producing a documentation revision, render each
+downloadable format and the in-product manual artifact from the same source
+revision and bind them by their render manifests. After a release is installed,
+changing the website, PDF, or DOCX does not change the `manual.json` already
+bundled in that installed application; updating that built-in copy requires a
+later application package. The October 11, 2026 documentation update did not
+rebuild the Beta 12 installer or runtime packs.
 Candidate PDF/DOCX renders are staged under
 `artifacts/release-preparation/manual/`.
 
@@ -18,8 +22,7 @@ Candidate PDF/DOCX renders are staged under
 2. `scripts/render_docsite_manual.py` renders it to HTML with the same
    `pandoc` binary `scripts/render_user_manual.py` already requires for the
    PDF/DOCX artifacts (one rendering engine, not two), then:
-   - embeds every local image (currently the two architecture diagrams,
-     referenced relative to `docs/`) as a base64 `data:` URI
+   - embeds every referenced local image as a base64 `data:` URI
      (`civiccast/docsite/render.py::embed_local_images`) — a relative path
      doesn't resolve to anything once this HTML is served from
      `manual.json` with no filesystem underneath it, so embedding once at

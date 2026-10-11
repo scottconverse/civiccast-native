@@ -1,10 +1,10 @@
 # CivicCast Beta Test Handoff For Longmont Public Media
 
-> **Archived Beta 10 handoff.** This document records the tester packet for
-> Beta 10 and is not a current release guide. Beta 11 is current; use the
-> [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
-> [tester start page](START-HERE.md), and [Beta 11 verification
-> record](../releases/v1.0.0-beta.11-verification.md) for present-day guidance.
+> **Archived Beta 10 handoff.** This document records the Beta 10 tester
+> packet and is not a current release guide. Beta 12 is the current release;
+> use the [current User Manual](../USER-MANUAL.md), [Windows install
+> guide](../../INSTALL-WINDOWS.md), [tester start page](START-HERE.md), and
+> [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md).
 
 ## Historical Beta 10 Release Record
 

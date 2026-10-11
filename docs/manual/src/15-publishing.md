@@ -128,14 +128,14 @@ Some stations may want some recordings behind a paid subscription. The **Paywall
 
 The screen has three cards: **Config** (the **Enable paywall** box, a provider, a signing secret), **Tiers** (plans that map to prices you create yourself in Stripe, a payment company) and **Comp access grants** (free passes you give to an email address).
 
-> **Known issue (beta.11):** Treat the Paywall as not ready for live use. In the code we read:
+> **Known issue (beta.12):** Treat the Paywall as not ready for live paid access. In the current code:
 >
 > - Turning it on does not select particular recordings. The Watch page asks every resident for a pass on every recording.
 > - The video file itself is not protected. The gate is a screen shown in front of the player.
 > - The "Email me a sign-in link" button reports "Check your inbox for a link.", but no email is ever sent, so a resident cannot finish signing in.
 > - The pages the portal uses to list plans and start payment do not exist on the server, so a resident cannot subscribe.
-> - **Save** with an empty **Signing secret** box erases the stored secret, and the box is always empty after you reload the page. Changing any other setting and saving erases it.
-> - The list of comp grants shows only grants made in the current browser session, and a grant cannot be revoked after you reload.
+> - An ordinary save with the **Signing secret** box left blank preserves the stored secret. To remove it, use the explicit clear control. The secret is hidden when the page reloads.
+> - The list of comp grants shows only grants made in the current browser session, and does not provide a history of grants from earlier sessions.
 
 If you turn the paywall on for testing, the Watch page shows the gate described in the resident tour below. Residents will be blocked.
 

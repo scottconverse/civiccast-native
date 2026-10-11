@@ -2,6 +2,9 @@
 
 # Next Cleanup
 
+> Carried-forward engineering notes, not the Beta 12 release-completion list.
+> Current release status and recorded checks are in [verification](docs/releases/v1.0.0-beta.12-verification.md).
+
 Deferred, non-blocking follow-up work queued out of `civiccast/` source per
 `scripts/policy/check_no_todos.py` (no TODO/FIXME/HACK markers allowed in
 shipped source; unfinished work is tracked here instead).

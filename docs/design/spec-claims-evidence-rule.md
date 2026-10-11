@@ -6,6 +6,13 @@ reviews/2026-07-17-specs-design-review.md). Not owner-approved. The
 trust-root pin (D6) is an explicit owner-acceptance item and is
 NON-AUTHORIZING until the owner accepts it.**
 
+> **Historical design-state note (October 11, 2026):** The status and proposed
+> authority-record flow below are a dated design snapshot, not a current
+> authorization gate. The owner removed the extra external authority-record
+> requirement on 2026-08-07; the current schema and verifier documentation
+> record that decision. Existing claim bindings remain in their registry, but
+> this design text does not add a new bookkeeping requirement.
+
 Charter section 4 / gate 3, alongside ADR-0021. A capability claim in prose
 must be machine-bound to evidence; the motivating failure was an overclaim
 inside the honesty machinery itself (the DR doc's "Postgres backup/restore is

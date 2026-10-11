@@ -55,8 +55,8 @@ Public (no auth, mounted at `/api/public`):
 - `GET /assets` — list every packaged asset (`manifest_url IS NOT NULL`).
 - `GET /assets/{asset_id}` — get one packaged asset, 404 if absent or unpackaged.
 
-Staff (no auth at this rung — see [docs/ops/staff-route-protection.md](../../docs/ops/staff-route-protection.md);
-bearer-token auth lands at v0.4):
+Staff (bearer-token authenticated under `/api/staff`; see
+[docs/ops/staff-route-protection.md](../../docs/ops/staff-route-protection.md)):
 
 - `GET /assets` — operator library; returns every asset regardless of state.
 - `GET /assets/{asset_id}` — get one operator-side asset row.

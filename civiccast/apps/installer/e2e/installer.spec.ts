@@ -433,7 +433,7 @@ test("installer revokes stale Ready when the installed runtime becomes unavailab
   await expect(page.getByRole("button", { name: "Open operator console" })).toHaveCount(0);
 });
 
-test("installer never shows the optimistic 'finishing setup' banner over a stale runtime error card (UX-2 / G-9a)", async ({ page }) => {
+test("installer never shows the retry banner over a stale runtime error card (UX-2 / G-9a)", async ({ page }) => {
   await page.addInitScript(() => {
     (window as Window & { __TAURI__?: unknown }).__TAURI__ = {
       core: {
@@ -488,9 +488,9 @@ test("installer never shows the optimistic 'finishing setup' banner over a stale
   await page.goto("/?downloadExperience=0");
 
   // The auto-retry banner and the exit-43 failure card must never render at the same time.
-  await expect(page.getByRole("status")).toContainText("CivicCast is finishing setup.");
+  await expect(page.getByRole("status")).toContainText("CivicCast is retrying this setup step.");
   await expect(page.getByText(/exit code 43/)).toBeHidden();
-  await expect(page.getByLabel("Installer wizard").getByText("Retrying automatically")).toBeVisible();
+  await expect(page.getByLabel("Installer wizard").getByText("Retrying this setup step")).toBeVisible();
 });
 
 test("installer local helper-ready progress continues to CivicCast setup", async ({ page }) => {

@@ -1,13 +1,56 @@
 # CivicCast Tester Packet - Start Here
 
-> **Current native testers:** CivicCast `v1.0.0-beta.11` is the current
-> published release. Follow the [current User Manual](../USER-MANUAL.md),
-> [Windows install guide](../../INSTALL-WINDOWS.md), and exact package scope in
-> the [Beta 11 verification record](../releases/v1.0.0-beta.11-verification.md).
-> The Beta 10 test details below are historical and do not qualify Beta 11.
+> **Current native testers:** CivicCast `v1.0.0-beta.12` is the current
+> published GitHub pre-release, not a production release. Follow the
+> [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
+> [Windows release-trust guide](../install/windows-release-trust.md), and the
+> exact [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md).
+> The Beta 11/Beta 10 notes below are historical and do not qualify Beta 12.
 > The rc-numbered appendix at the bottom describes the retired WSL2 product.
 
 ## Current Release
+
+`v1.0.0-beta.12` is the current published GitHub pre-release, published
+October 10, 2026, with the station-model distribution repair added October 11.
+The release assets include the signed installer, five runtime packs, four
+manual assets, checksum list, sidecar, Windows download helper, station-models
+manifest and split station ZIP parts. Use the exact release-matched helper
+described in the [Windows release-trust guide](../install/windows-release-trust.md);
+its `-Install` option downloads and validates the complete kit before it runs
+the installer with `/S`. Availability of the repaired full download is not
+installation or operational acceptance.
+
+The October 11 R9 attempt used the earlier incomplete public asset set on
+MICROMONSTERPC, a previously used machine with residual ProgramData files and
+model caches but no active CivicCast service or application. With the five
+verified runtime packs flat beside `setup.exe`, pack staging returned child
+exit 74. Placing the same bytes in the required sibling `packs\` directory
+allowed staging to advance, but activation failed with actual installer exit
+123 because four required signed station packs were missing and their
+embedded-index URLs were empty. No service or first-admin account was created.
+This result predates the repaired download; it is not clean-machine proof or a
+result for the complete kit. R9 also observed optional Large Whisper download
+bytes advancing while its box was unchecked and the UI showed **Not ready**.
+
+The recorded Beta 11-to-Beta 12 CPU-only Sandbox upgrade exited 0, the
+service/API were healthy at schema 0089, and the initial-data preservation
+marker was saved. Initial three-channel HLS output and Whistle within capacity
+were observed. The recorder wrapper then failed during its first JSON save
+with `Cannot convert value to type System.String.`; no five-snapshot PASS
+was recorded. A separate fresh offline Sandbox install using the repaired
+public kit exited 0, activated the station, left the service `Running`, and
+passed the offline Ollama and CPU faster-whisper self-tests. Its follow-on
+first-admin/three-channel check failed with only the first Python traceback
+line captured, so the cause is unresolved and complete UI/channel validation
+is not established. Repair, upgrade retest, and sustained-operation results
+are not recorded. See the [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md) and [GitHub
+release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+
+
+## Historical Beta 11 release snapshot (October 8, 2026)
+
+<details>
+<summary>Historical Beta 11 and Beta 10 release details</summary>
 
 `v1.0.0-beta.11` is the current published release (published 2026-10-08),
 recorded as `current` in the release-truth record. It is a GitHub
@@ -70,6 +113,8 @@ models. Beta.7 had download-only upgrade proof from beta.5; consult its exact
 verification record for that evidence. Upgrade paths were not run for beta.10,
 so that evidence is not acceptance of a beta.10 upgrade.
 
+</details>
+
 ## Clean-Machine Test Rule
 
 Start by reading the docs, then run the installer. For a clean Windows proof,
@@ -92,15 +137,17 @@ before clicking through it.
 ## Pick Your Path
 
 - **Non-technical tester:** use
-  [nontechnical-walkthrough.md](nontechnical-walkthrough.md). You should not
-  need a terminal.
+  [Field-Test Quick Start](../QUICKSTART-OPERATOR.md) and the current manual.
+  Use the active handoff for the exact package procedure.
 - **Technical tester or station admin:** use
-  [technical-walkthrough.md](technical-walkthrough.md) when you want to inspect
-  evidence, CLI output, or live provider proof.
+  the [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md)
+  for candidate evidence and limits, plus the active handoff for assigned
+  checks.
 - **Meeting-night dry run:** use
   [first-broadcast-checklist.md](first-broadcast-checklist.md).
 - **Longmont Public Media beta:** use
-  [lpm-beta-test-handoff.md](lpm-beta-test-handoff.md).
+  the active owner-authorized handoff; this repository's older LPM handoff is
+  historical and is not the Beta 12 procedure.
 - **Before reporting a problem:** create a support bundle and use
   [bug-report-template.md](bug-report-template.md).
 - **Closed or lost the recovery kit:** use
@@ -112,23 +159,30 @@ before clicking through it.
 1. Verify the release Windows proof kit or setup executable against its
    matching delivery manifest or, for a GitHub download, its sidecar and
    checksum (`SHA256SUMS.txt`).
-2. Run the Windows setup app. Plan enough disk space for the large AI
-   components (whether they come in the USB/LAN kit or are downloaded by the
-   installer) and the installed runtime/model copy they produce, plus the
-   recordings, media, and backups used by the station. The installer verifies
-   the signed model packs and composes the local Ollama model store; it does
-   not run a further background model download after setup.
-3. Let it prepare local storage, runtime dependencies, and the CivicCast
-   service when your handoff names a gate-cleared package (a package your
-   tester handoff confirms has passed release review). Also provisions the
-   local Ollama AI runtime and its standard model set.
+2. Download and install only the exact Beta 12 set named by the active handoff.
+   The release helper `download_windows_release_artifacts.ps1` with `-Install`
+   verifies the installer, runtime packs and multipart station bundle, extracts
+   the complete kit and runs setup with `/S`. The helper is documented in
+   the [Windows release-trust guide](../install/windows-release-trust.md). A
+   successful download does not prove that the installation or station is
+   ready. Beta 12 has setup and activation evidence for a fresh repaired-kit
+   install, but its follow-on first-admin/three-channel check failed with an
+   unresolved Python startup cause; complete UI/channel validation is not
+   established. See the verification record for the captured result.
+3. Follow the active owner-authorized handoff for the named package and checks.
+   Beta 12's recorded upgrade outcome and failed R9 public-assets first-install
+   attempt are summarized above and detailed in the verification record. The
+   repaired-kit Sandbox setup/activation succeeded, but the follow-on check
+   failed without a recoverable Python error detail. No repair, upgrade retest,
+   complete UI/channel validation, or sustained run is established.
 4. Open the operator console on the station itself (the **Open operator
    console** button, or the **CivicCast Operator Console** shortcut).
 5. Create the first admin and save the recovery kit.
 6. Verify backup and run the database restore drill; record that media,
    configuration, and credentials remain separate recovery work.
-7. Confirm the stock build fails closed with **Source preview unavailable** when no
-   server-side media probe is configured.
+7. Configure a supported source and run the server-side source probe during
+   live pre-flight. Record what the probe reports; a passing probe does not
+   establish sustained ingest, every output path, or external delivery.
 8. Upload or create a test recording, then run the private rehearsal and
    confirm it proves that exact sample and a finalized private recording.
 9. Package the recording.

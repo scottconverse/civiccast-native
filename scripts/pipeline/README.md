@@ -1,5 +1,7 @@
 # CivicCast agentic pipeline runner
 
+> **Optional historical tooling.** This describes the existing Claude pipeline mechanism, not the current authorized work sequence. Scott's standing no-autonomous-fix/test/rebuild-loop instruction takes precedence. Do not invoke or repeat a pipeline without his authorization.
+
 Two Claude Code custom commands orchestrate the agentic pipelines defined in [`.pipelines/`](../../.pipelines/). Both run inside a Claude Code session — there is no external service, no daemon, and no API key to manage. The orchestrator IS Claude, using the `Agent` tool to spawn isolated subagents for agent stages, `Bash` for the policy stage, and `AskUserQuestion` for human-approval gates.
 
 ## Commands

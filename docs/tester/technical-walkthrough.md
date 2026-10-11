@@ -1,10 +1,9 @@
 # Technical Tester Walkthrough
 
-> **Historical Beta 10 walkthrough.** Beta 11 is the current release. Use the
-> [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
-> and [Beta 11 verification record](../releases/v1.0.0-beta.11-verification.md)
-> for current package and operating guidance; the release-specific checks below
-> describe Beta 10 only.
+> **Historical Beta 10 walkthrough.** The procedure below describes Beta 10
+> only. For current Beta 12 guidance, use the [tester start page](START-HERE.md),
+> [Windows install guide](../../INSTALL-WINDOWS.md), and [Beta 12 verification
+> record](../releases/v1.0.0-beta.12-verification.md).
 
 ## Release State
 

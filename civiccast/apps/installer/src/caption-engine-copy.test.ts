@@ -93,7 +93,7 @@ describe("installer caption guidance as the operator sees it", () => {
     );
     const largeRow =
       Array.from(container.querySelectorAll(".plan-row")).find((row) =>
-        row.textContent?.includes("Caption engine — Large")
+        row.textContent?.includes("Whisper Large — optional")
       )?.textContent ?? "";
 
     expect(largeRow).not.toBe("");

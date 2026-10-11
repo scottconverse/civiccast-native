@@ -1,18 +1,15 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.11` is the current
-> release, published 2026-10-08 as a GitHub pre-release (a beta candidate) --
-> `setup.exe` and the runtime
-> `.ccpack` packs are attached to its
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11).
-> `v1.0.0-beta.10`, `v1.0.0-beta.7`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first downloadable
-> release) are now superseded.
-> `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is also
-> superseded. `v1.0.0-beta.2` was never published -- it exists only as an
-> internal Gate A upgrade-baseline kit. `v1.0.0-beta.8`
-> and `v1.0.0-beta.9` were never published; their work is inside beta.10.
-> Community support does not turn this beta into a
-> supported, SLA'd field release.
+> **Current native release posture:** `v1.0.0-beta.12` is the current
+> public release, published 2026-10-10 as a GitHub pre-release, not a
+> production or SLA-backed field release. Its installer, runtime packs, and
+> manuals are on the
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+> The [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
+> reports a successful normal Beta 11 upgrade setup and its saved preservation
+> marker, plus the first-snapshot recorder failure; exact fresh-install,
+> interrupted-repair, and sustained-operation checks were not run. Community
+> support does not turn this beta into a supported, SLA'd field release.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -78,14 +75,12 @@ enabled throwaway development.
 ## Native Windows Beta
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
-is a **public beta**, not a finished production release. Its current
-release, `v1.0.0-beta.11`, is downloadable (setup.exe and the runtime packs
-on its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11)),
-published 2026-10-08 as a GitHub pre-release (a beta candidate), not a
-production release. There is still no dedicated, SLA'd support intake for it --
-the same community-driven, no-SLA posture above applies. Its tested scope and
-known limits are in the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md).
-earlier `v1.0.0-beta.7` is superseded.
+is a **public beta**, not a finished production release. Its current release,
+`v1.0.0-beta.12`, is downloadable from its
+[GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+There is no dedicated, SLA'd support intake for it; the same community-driven,
+no-SLA posture above applies. Its package-specific scope and limits are in the
+[Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md).
 
 If you are working on, evaluating, or running the native line:
 
@@ -97,17 +92,20 @@ If you are working on, evaluating, or running the native line:
   have a native-specific path, so context has to be spelled out by hand.
 - Do not treat anything reported against the native line as a supported,
   SLA'd, or fully field-proven path. The same "community-driven, no SLA"
-  posture above applies. The Beta 11 verification record
-  ([`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md))
-  states what was and was not proven. The superseded Beta 10 and Beta 7
+  posture above applies. The Beta 12 verification record
+  ([`docs/releases/v1.0.0-beta.12-verification.md`](docs/releases/v1.0.0-beta.12-verification.md))
+  states what was and was not proven. The superseded Beta 11 and Beta 10
+  records, including the Beta 11 host caption report, remain version-scoped
+  historical evidence. The superseded Beta 7
   verification records are
   [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md)
   and
   [`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md);
   these are engineering records, not a support commitment.
 
-This section will be replaced with a real support surface once the native
-line has its own proof boundary document beyond those verification records.
+The release verification record is an evidence boundary for its named package,
+not a service-level agreement or complete field-qualification report. Support
+remains community-driven; no broader intake or response commitment is implied.
 
 ## What Is Not Supported
 

@@ -91,7 +91,27 @@ def _write_kit(
         (packs_dir / "native-app-payload.ccpack").write_bytes(b"pack-a")
         (packs_dir / "native-server-binaries.ccpack").write_bytes(b"pack-b")
     if with_station:
-        (kit_dir / "station").mkdir(exist_ok=True)
+        station_dir = kit_dir / "station"
+        station_dir.mkdir(exist_ok=True)
+        station_packs = {
+            name: station_dir / f"{name}.ccpack" for name in STATION_REQUIRED_COMPONENTS
+        }
+        for name, path in station_packs.items():
+            path.write_bytes(f"fixture station pack {name}".encode())
+        station_index_path = station_dir / "station-index.json"
+        build_distribution_index(
+            output=station_index_path,
+            kind="station-index",
+            channel="beta",
+            product_version=VERSION,
+            compatible_core=VERSION,
+            packs=station_packs,
+            urls={component: [] for component in station_packs},
+            signing_private_key=Ed25519PrivateKey.from_private_bytes(bytes(range(32))),
+            signing_key_id="civiccast-production-test-key",
+            created_epoch=1_700_000_000,
+        )
+        (station_dir / "SHA256SUMS.txt").write_text("fixture\\n", encoding="utf-8")
     if with_manual:
         manual_dir = kit_dir / "manual"
         manual_dir.mkdir(exist_ok=True)
@@ -254,6 +274,11 @@ def _base_repo_root(tmp_path: Path) -> Path:
     (root / "CHANGELOG.md").write_text(
         "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- Something new.\n\n## [1.0.0-beta.1] - 2026-08-01\n\nOld.\n",
         encoding="utf-8",
+    )
+    helper = root / "scripts" / "download_windows_release_artifacts.ps1"
+    helper.parent.mkdir(parents=True)
+    helper.write_bytes(
+        (m.REPO_ROOT / "scripts" / "download_windows_release_artifacts.ps1").read_bytes()
     )
     return root
 
@@ -2888,10 +2913,14 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
     assert sidecar["install_manifest"]["signed"] is True
     assert sidecar["sha256"] == m.sha256_file(setup)
 
-    # SHA256SUMS.txt lists setup.exe and both packs
+    # SHA256SUMS.txt lists setup.exe, packs, the release helper and model bundle.
     assert f"{m.sha256_file(setup)}  setup.exe" in sums
     assert "native-app-payload.ccpack" in sums
     assert "native-server-binaries.ccpack" in sums
+    helper = repo_root / "scripts" / "download_windows_release_artifacts.ps1"
+    assert f"{m.sha256_file(helper)}  download_windows_release_artifacts.ps1" in sums
+    assert "station-models.zip.001" in sums
+    assert "station-models.json" in sums
 
     # notes contain the source sha, all three lane verdicts, and every asset hash
     assert SOURCE_SHA in notes
@@ -2902,6 +2931,7 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
         setup,
         kit_dir / "packs" / "native-app-payload.ccpack",
         kit_dir / "packs" / "native-server-binaries.ccpack",
+        helper,
         *(
             kit_dir / "manual" / name
             for name in (
@@ -2923,7 +2953,8 @@ def test_dry_run_produces_expected_artifacts(tmp_path, monkeypatch):
     assert f"| {setup.name}.sidecar.json |" in notes
     assert m.sha256_file(out_dir / f"{setup.name}.sidecar.json") in notes
     assert "beta candidate, not a production release" in notes.lower()
-    assert "download setup.exe" in notes.lower() or "download `setup.exe`" in notes.lower()
+    assert "download_windows_release_artifacts.ps1" in notes
+    assert "runs setup with `/S`" in notes
     assert "verify the exact sha-256" in notes.lower()
     assert "warning alone proves neither signature failure nor a valid publisher" in notes.lower()
     assert "missing, or the publisher/hash differs, stop" in notes.lower()

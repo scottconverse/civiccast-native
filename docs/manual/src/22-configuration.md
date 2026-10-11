@@ -2,7 +2,7 @@
 
 This chapter is for the person at the city who owns the CivicCast computer. It walks through every place a station is configured: First Setup and the admin account, the Station Profile, channels and their outputs, loudness, the playout engine, captions, AI models, cable commissioning, the Control Room, custom fields, the paywall, certificates and network exposure, storage, and the environment variables that sit behind all of it. Most of it is done once, before the first public meeting, by someone with the `setup_admin` role. A few things (the environment variables, the registry) need Administrator rights on the Windows computer itself.
 
-> **Note:** CivicCast 1.0.0-beta.11 was published on 2026-10-08 as a GitHub pre-release for testing. The [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) lists package-specific checks and limits. This chapter describes the program's current configuration behavior; it does not claim that every path was observed on a live station.
+> **Note:** CivicCast 1.0.0-beta.12 was published on 2026-10-10 as a GitHub pre-release, not a production release. The [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) lists package-specific observations and limits. This chapter describes source behavior; it does not claim that every path was observed on a live station.
 
 ## Before you start
 
@@ -266,7 +266,7 @@ At service start the station validates the staged Whisper tier and self-test rec
 
 The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service** environment, if set, wins in either direction (`cuda` or `cpu`), with `CIVICCAST_WHISPER_COMPUTE_TYPE` (default `float16` for cuda, `int8` for cpu). Otherwise the station uses the GPU only when an NVIDIA adapter with at least 8 GB is found **and** both CUDA runtime libraries are staged; anything else is CPU with `int8`.
 
-> **Note:** The AI Models caption selection concerns Whisper tiers. It does not change the native live engine from Whistle. Optional Large Whisper and CUDA downloads are governed by the first-run selection checkboxes.
+> **Note:** The AI Models caption selection concerns Whisper tiers. It does not change the native live engine from Whistle. In the Beta 12 R9 field attempt, Large Whisper downloaded even though its optional first-run checkbox was unchecked; check active transfer rows instead of relying on that checkbox to prevent a download.
 
 ### Live captions: what the settings change
 
@@ -302,8 +302,8 @@ The AI Models screen (Setup group; `setup_admin` changes, `meeting_operator` rea
 
 | Job | Default | Other choices |
 | --- | --- | --- |
-| Whisper captions (fallback and recorded media; optional direct live-primary mode) | `whisper-medium-faster` (needs 4 GB of memory) | `whisper-large-v3-faster` (8 GB) |
-| Summary | `gemma4-12b-ollama` (16 GB) when the computer has a GPU and at least 16 GB of RAM; otherwise `gemma4-e4b-ollama` (8 GB) | `gemma4-31b-cloud` (Ollama Cloud, about $0.10 per million tokens), `gemini-2.5-flash-openrouter` (OpenRouter, about $0.30 per million tokens) |
+| Whisper captions (live fallback and recorded media; optional direct live-primary mode) | `whisper-medium-faster` (needs 4 GB of memory) | `whisper-large-v3-faster` (8 GB) |
+| Summary | `gemma4-12b-ollama` (16 GB) when the computer has a GPU and at least 16 GB of RAM; otherwise `gemma4-e4b-ollama` (8 GB) | `gemma4-31b-cloud` (Ollama Cloud), `gemini-2.5-flash-openrouter` (OpenRouter). Check the provider's current pricing and terms before enabling a hosted model. |
 | Translation (English to Spanish) | `translategemma-4b-ollama` | `gemma4-31b-cloud` |
 
 The rule behind the summary default is measured, not guessed. On a 32 GB computer with no graphics card the 12B model took 366 seconds for one summary and then failed twice with memory errors, while the e4b model finished every attempt in 94 to 128 seconds. So 12B is only the default when a GPU is present. A summary is queued as a background job (poll every 15 s, retry after 120 s, 3 attempts; `CIVICCAST_SUMMARY_JOB`, `..._POLL_SECONDS`, `..._BACKOFF_SECONDS`, `..._MAX_ATTEMPTS`) so one slow generation does not time out a web request.
@@ -311,13 +311,13 @@ The rule behind the summary default is measured, not guessed. On a 32 GB compute
 How the Ollama child starts. The service starts Ollama only when the program `dependencies\ollama\ollama.exe` exists and a staged model store exists with a `manifests` folder (`models\ollama` first, then `packs\local-ai-model\models`, then `C:\ProgramData\CivicCast\packs\local-ai-model\models`, where the first-run window saves its downloads). If either is missing the service logs one line ("ollama child skipped (degraded AI, service healthy): ...") and keeps running without AI. A skipped child is re-checked every 60 seconds, so models downloaded while the service is running are picked up without a restart. The child is started with `OLLAMA_NO_CLOUD=1`; hosted models are called by CivicCast directly over the internet, not through the local Ollama.
 
 - **Choosing a local model** saves at once, with no confirmation. Options that need more memory than the computer has are disabled and marked "(exceeds this box)"; the screen does not show how much memory the computer has.
-- **Choosing a hosted model** (Cloud or Frontier) only stages the choice. The page asks for the provider's API key, then for a tick on "I accept the provider terms of service and the per-token cost for this hosted model.", then **Apply cloud model**. Hosted models send the meeting content to the provider and bill per use. The server refuses a hosted choice without the consent tick.
+- **Choosing a hosted model** (Cloud or Frontier) only stages the choice. The page asks for the provider's API key, then for a tick acknowledging the provider's terms and costs, then **Apply cloud model**. Hosted models send meeting content to the provider; possible charges depend on the provider's current pricing and account terms. The server refuses a hosted choice without the consent tick.
 - **Provider keys** go in the Windows credential store under the service name `civiccast.ai-provider` (handles `ollama-cloud-key` and `openrouter-key`). They are write-only: the screen never shows one again, and there is no button to remove one. To clear a key, run `civiccast model set-provider-key <ollama-cloud|openrouter> --clear`. To store a key without the console (for an offline station), run `civiccast model set-provider-key <provider>` with the key in the environment variable `CIVICCAST_PROVIDER_API_KEY` of that command's own shell (not the service). A hosted choice with no stored key shows "Hosted tier selected but no provider credential is stored — feature will defer until a key is saved."
 - Hosted requests go to `https://ollama.com` and `https://openrouter.ai`. A station that blocks outbound traffic cannot use them.
 
 For an air-gapped station, `civiccast model download --offline-bundle --bundle-dir <folder>` prints the manifest of model files with their SHA-256 values and `civiccast model import-offline` verifies a bundle against expected hashes (see [Appendix: command line](#app-cli)).
 
-> **Known issue (beta.11):** The About line of the default translation model on this screen reads "NOT YET CONNECTED (audit finding, 2026-08-29): no caller supplies a translation target, so this model is never actually invoked...". That text is out of date. The program builds a translator from this selection and uses it for recorded Spanish captions (see the offline captions section). The grey note on the card is the accurate one. Live broadcasts are captioned in English only.
+Recorded-caption translation uses the configured translation model to queue translated Spanish caption cues for review. This is a post-publication workflow; it does not translate the live English caption stream. Review the translated cues before attaching or publishing the translated track.
 
 > **Known issue (beta.11):** The cards show internal names such as `gemma4-e4b-ollama` and `whisper-medium-faster` with no plain-English description, and the "About" line for the 12B summary model shows engineering notes. A local choice changes what the next summary or caption job loads; we could not confirm what a job already running does.
 

@@ -1,435 +1,30 @@
 # CivicCast
 
-**CivicCast `v1.0.0-beta.12` is the current public pre-release**, published
-October 10, 2026. Its signed source is
-`a0c98cb7367dc106042ec89d35a91905470d350c`, producer run
-[`38097350705`](https://github.com/scottconverse/civiccast-native/actions/runs/38097350705).
-The [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12)
-has the standard installer, runtime packs, manuals and checksum assets. A normal
-Beta 11-to-Beta 12 setup run exited 0 and returned a running, healthy service at
-schema 0089; the post-upgrade five-snapshot recorder then failed while saving
-JSON, so that five-minute check did not pass. Repair and fresh-install checks
-have not been run. See the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
-for the exact evidence and limits.
+**CivicCast `v1.0.0-beta.12` is the current public pre-release**, published October 10, 2026. It is a native Windows station-in-a-box for public-access and local-government media: record and broadcast meetings, review captions, prepare sourced summaries, schedule programs, and publish recordings to a resident portal. Optional cloud services may charge their own usage fees; CivicCast has no per-minute software fee.
 
-The Beta 12 release continues to use Whistle as the CPU primary; Whisper fallback is scoped to the affected channel, and operators can select NVIDIA CUDA for Whisper or recorded-media captions. The first recognition is published without repeat-agreement gating. Whistle primary inference is serialized across channels within each station runtime; fallback Whisper requests use a separate serialization lock.
+The signed release source is `a0c98cb7367dc106042ec89d35a91905470d350c` (producer run [`38097350705`](https://github.com/scottconverse/civiccast-native/actions/runs/38097350705)). The [Beta 12 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12) provides the installer, runtime packs, complete signed station-model download, manuals, and checksums. Start with [Install CivicCast on Windows](INSTALL-WINDOWS.md), the [User Manual](docs/USER-MANUAL.md), or the [FAQ](FAQ.md).
 
-The October 8 documentation/help download revision (producer `400cff08`, signed build `37857705750`) passed a fresh CPU-only Windows Sandbox installation, a five-minute single-channel caption/output check, and installed Help verification. Its manual, contextual instructions, PDF and Word editions are reconciled with the software. The published tag remains unchanged; the verification record identifies the revised source and keeps earlier package and development-soak results separate. See [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) for results and limits.
+A normal upgrade from Beta 11 to Beta 12 exited 0 and left a healthy service at schema 0089; the preservation marker was saved, and initial checks observed audio and video on all three channels. The post-upgrade recorder failed while saving its first JSON snapshot, so the five-snapshot check did not pass. An October 11 first-install attempt using the exact public artifacts failed activation with exit 123 because four required signed station packs were absent from the original public downloads; the October 11 distribution repair adds them. No interrupted-repair or sustained-operation result is claimed. The [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md) has the package identity, evidence, and limits.
 
-A 48-hour soak ran public, government and education channels together on one Windows PC, with **99.88% live caption-input coverage**. Read the [Beta 11 host soak report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurements.
+A separate **Beta 11 host** ran public, government, and education channels together for 48 hours and achieved **99.88% live caption-input coverage**. This is a positive operating result for that host and release; it is not a Beta 12 soak, general service-uptime percentage, transcript accuracy, or package qualification. See the [host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurement and method.
 
-The Beta 12 rendered PDF, Word, and other manual assets are on the
-[published release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
-The checked-in [manual source](docs/USER-MANUAL.md) and its PDF/Word editions
-are separate repository downloads. The historical 48-hour Beta 11 observation
-above does not establish Beta 12 installation acceptance.
+Beta 12 uses Whistle as the CPU live-caption primary, publishes first-pass recognition, and loads Whisper fallback only for the affected channel when needed. NVIDIA CUDA is an option for supported Whisper work; Whistle remains CPU-only. The native installer registers a Windows service and supervises the control plane, PostgreSQL, and media workers from the bundled runtime. This repository is the native Windows product line; it has no WSL, Docker, or Linux installation target. See [BRANCHES.md](BRANCHES.md) for project history.
 
-`v1.0.0-beta.10` was published on 2026-10-02 and is now superseded. Its
-historical Gate A clean-install lane passed 10 of 10 criteria; its upgrade and
-download-only lanes were not run. See the
-[Beta 10 verification record](docs/releases/v1.0.0-beta.10-verification.md)
-for that release's evidence.
-
-**CivicCast is an open-source, self-hostable civic broadcast platform for
-PEG/local-government stations** — record a meeting, generate offline
-captions, let an operator review and approve the recording, get an
-AI-drafted summary linked back to the transcript, schedule it, and publish
-it to residents on a branded portal with captions. It's built to run on
-commodity Windows hardware, with no per-minute CivicCast software fee and no
-proprietary appliance. Optional cloud AI providers may charge for usage.
-
-This repository (`civiccast-native`) is the one product line: a native
-Windows station-in-a-box, installed with a signed installer that registers
-a Windows service and supervises the control plane, Postgres, and the media
-workers from a bundled runtime. No WSL, no Docker, no Linux install target.
-See [BRANCHES.md](BRANCHES.md) for the full explanation, including where an
-earlier, retired WSL2/Ubuntu lane's history now lives (a separate, private
-repository, not this one).
-
-**Current version: `v1.0.0-beta.12`** (published 2026-10-10) -- a GitHub
-pre-release, not a production release. Its release page carries the signed
-installer, five runtime `.ccpack` packs, four manual assets, checksum manifest
-and installer sidecar. The ~21 GB AI-model `station\` bundle (the offline
-alternative to the installer's own download screen) is in the locally verified
-19-member kit; see the [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
-for package and upgrade evidence. `v1.0.0-beta.11` is superseded as the public
-release; its 48-hour host metric above remains historical. `v1.0.0-beta.10`, `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first downloadable public
-release) are now superseded; `v1.0.0-beta.1` (USB-delivered, no downloadable
-assets) is also superseded; `v1.0.0-beta.2` was never published -- it exists
-only as an internal Gate A upgrade-baseline kit (see
-[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
-See [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml)
-for the authored release-state record,
-[`docs/releases/v1.0.0-beta.11-verification.md`](docs/releases/v1.0.0-beta.11-verification.md)
-for Beta 11's historical verification record, and
-[`docs/releases/v1.0.0-beta.12-verification.md`](docs/releases/v1.0.0-beta.12-verification.md)
-for the current release's identity, verification evidence and remaining limits.
-
-**Earlier release: `v1.0.0-beta.10`** (published 2026-10-02) is superseded;
-its [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10)
-and [verification record](docs/releases/v1.0.0-beta.10-verification.md) remain
-available as history. Beta.8 and beta.9 were never published; their work was
-included in beta.10.
-
-### Beta 10 history
-
-The following changes and measurements describe the superseded Beta 10 release.
-They are not qualification results for Beta 11 or Beta 12.
-
-Compared with the published beta.7, beta.10 changed the following:
-
-- **Program changes without gaps.** A change from one program to the next no
-  longer leaves a black or silent gap, and a watchdog now ends a program
-  change that gets stuck. (Before this fix the education channel once sat
-  black and silent for about 34 hours.)
-- **Speech leveling.** Spoken programs are leveled toward -16 LUFS (a standard loudness measure) when they
-  are prepared for air. A stretch of a source that is too quiet for the leveling
-  to reach the target is reported, not leveled.
-- **Schedules that loop.** A schedule that is set to repeat now repeats.
-- **Larger prepared-program cache.** The disk space CivicCast keeps for
-  prepared copies of long programs (the "conform cache") now defaults to
-  60 GB instead of 20 GB. Set `CIVICCAST_CONFORM_CACHE_GB` to change it.
-- **More fault tolerance.** Reloads, restarts and stuck relays recover on
-  their own in more situations, and the station reports what it did.
-- **Live captions catch up instead of pausing.** A channel that falls behind
-  now keeps captioning from the newest audio instead of stopping for minutes
-  (see the limit below for what that costs).
-
-**Historical Beta 10 measurements.** An eight-hour watched run on a three-channel lab
-station (education, government and public airing real programs at the same
-time) kept one service process for the whole eight hours, with no restart, no
-crash, and no slate or filler after startup. Of 41 verify checks, 40 passed
-and one raw failure was judged a sampling blip. Loudness passed in 16 of 16
-240-second windows (target -16 LUFS, plus or minus 1). Fifty program changes
-were scored with no holes (picture gap at most 0.033 s, sound gap at most
-0.041 s). Details, the evidence paths and the adjudication are in the
-[beta.10 verification record](docs/releases/v1.0.0-beta.10-verification.md).
-
-**What was not proven for Beta 10.** Of the three Gate A lanes, only the clean-install lane
-was run for beta.10 (it passed, 10 of 10 criteria). The cross-version
-(upgrade) lane and the download-only lane were not run; the owner waived them
-for that publication, so an upgrade from beta.7 and a download-only install
-were not proven for beta.10. The Beta 11 package's tested scope is recorded in
-the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md).
-The measured Beta 10 limits are listed below for historical context.
-
-`v1.0.0-beta.7` carries in-place schedule rollover enabled by default.
-This lets the playout worker load the next plan without a planned encoder
-restart, including refreshing filler between programs. Bulletin rotations
-retain all approved, currently airable slides within the decoder-chain limit.
-Channel status and health reporting distinguish scheduled programs from filler
-as soon as a handoff completes.
-Setting `CIVICCAST_EGRESS_SEAMLESS_RELOAD=0` explicitly selects the
-restart fallback for diagnosis and can interrupt output. Live captions are
-**off by default** in beta.7; the release notes explain how to turn them on
-and what to expect. The soak history that led to the published beta.7 is
-in the [recovery record](docs/releases/beta5-recovery-2026-09-08.md) and the
-verification record linked above.
-The bundled beta.7 manual describes operation without freezing a mutable
-publication status into the installer. Use this page and the exact GitHub
-Release for current download and verification status.
-
-**Reload repair status (2026-09-09):** the native engine suite now runs clean
-ten times out of ten with normal logging, each run covering three workers
-through six in-place replacements with clean transport checks and clean stop
-(320 committed replacements across those runs, no stalls and no unfinished
-commits). The repaired path keeps persistent bounded A/V queues, holds the
-replacement until the outgoing leg retires, and leaves the existing watchdog
-bounds unchanged. An overlapping commit request is explicitly declined and
-uses the existing full-graph restart recovery path; there is no latest-request
-queue and no capability is disabled. Ten clean runs bounds the failure rate; it
-is not proof of absence. This is source/diagnostic evidence only; the
-published beta.7's own sandbox-soak and Gate A evidence, and the known
-issues it shipped with, are recorded in
-[`docs/releases/v1.0.0-beta.7-verification.md`](docs/releases/v1.0.0-beta.7-verification.md).
-
-Live-caption timing now uses a separate forwarding queue. During intervals
-without text, CivicCast sends small timing signals; at most one can wait behind
-the signal currently being processed. This prevents an unlimited heartbeat
-backlog. It does not change how actual caption cues are handled or impose a
-new limit on their text buffers.
-
-![CivicCast system architecture](docs/assets/architecture/civiccast-system-architecture.svg)
-
-## Product capabilities and prior-release evidence
-
-These capabilities span several releases and do not mean every item was
-re-verified against the October 8 Beta 11 package. Its exact installer and
-output-check scope is in the [Beta 11 verification record](docs/releases/v1.0.0-beta.11-verification.md).
-
-The core meeting-to-resident pipeline works end to end and is exercised by
-the automated test suite and, for the recording/playout path, by live
-pipeline proofs against the real bundled GStreamer runtime (not mocks):
-
-- **Record.** Scheduled recording from network sources (RTSP / SRT / HLS /
-  RTMP / MPEG-TS), one-shot or recurring, with finalization into the asset
-  library. Capture reliability was hardened this candidate: an ffmpeg
-  packet-flush fix stops network-stream recordings from losing their
-  unflushed tail when Windows terminates the capture process.
-- **Offline captions.** Caption generation runs against the recorded media
-  (Faster Whisper, bundled wheelhouse) with a tiered fallback: if a
-  station's preferred caption tier isn't available, the system degrades to
-  a proven floor tier automatically, logs the degrade to the durable
-  supervisor log, and raises an operator-visible alert — it no longer runs
-  silently degraded.
-- **Operator review.** Before anything publishes, an operator reviews the
-  recording and its captions and approves it — the review/approval gate
-  that keeps an AI-assisted pipeline from putting unreviewed material in
-  front of residents.
-- **AI summary.** A transcript-linked meeting summary is generated from the
-  approved captions, so the summary text traces back to what was actually
-  said and captioned, not a free-standing AI guess.
-- **Schedule and publish.** Recurring/one-shot scheduling with a 72-hour
-  rolling program log, and an explicit publish step to the resident-facing
-  portal — nothing reaches residents without an operator publishing it.
-- **Resident portal.** A public portal (live, upcoming, replays, archives)
-  serves the published recording with captions.
-- **Contributor intake.** The public contribution flow now carries a
-  submitted file all the way to an airable, packaged state — accept →
-  ingest into the real asset library → package (manifest generated) →
-  schedule → publish, not just an accepted-but-stuck upload.
-- **In-product manual.** The operator manual (the same content that ships
-  as [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md)) is served from inside
-  the running app over an unauthenticated endpoint, specifically so an
-  operator stuck mid-setup or mid-error — including on the pre-login First
-  Setup screen — can reach it without needing to already be signed in.
-- **Signed-pack install, and an upgrade path proven for earlier releases.** The native installer
-  verifies Ed25519-signed component packs against the running installer's
-  expected product/version identity before trusting them. The
-  uninstall → reinstall upgrade path was exercised for earlier releases (most recently beta.7) by
-  an automated "dirty lane" acceptance run: install, plant real data,
-  uninstall, reinstall, and verify the same Postgres data cluster and the same
-  uploaded files survive the full cycle byte-for-byte. That lane was not run
-  for beta.10.
-
-## Capabilities introduced in candidate #22: on-air graphics and live broadcast
-
-These capabilities first landed in candidate #22. They were proven at the
-playout-engine level and are operator-drivable, but were not hardened for
-unattended production use. This is historical capability evidence, not an
-additional Beta 11 package test:
-
-- **On-air graphics (station bug + lower-third).** The GStreamer playout
-  engine can now composite a station bug/logo (any corner) and a
-  text lower-third banner onto the program video, using the bundled
-  runtime's D3D11 hardware compositor. Proven live: MPEG-TS continuity
-  clean (0 continuity-count errors, 0 PCR discontinuities) with the overlay
-  on, plus a decoded-pixel check confirming the graphics are actually
-  visible in the output, not just that the pipeline didn't crash. An
-  operator can turn the lower-third on/off and edit its text from the
-  console; a change applies on the channel's next start or content reload,
-  not to an already-live pipeline instantly.
-- **Live broadcast (ingest → engine → HLS egress).** Live source ingest
-  feeding the playout engine's automated relaunch/fallback logic, egressing
-  to HLS, proven on real captured footage. A live source that becomes
-  unreachable or drops no longer crash-loops the channel forever: after a
-  bounded number of failed relaunches the channel falls back to slate and
-  stays there — dead air is avoided by falling back to a known-good state,
-  not by silently retrying a dead source forever. A dead HLS relay process
-  is now polled and its health correctly reported, instead of a healthy
-  main encoder masking a relay that residents are no longer receiving
-  anything from.
-
-## Honestly scoped as beta / roadmap — not done
-
-The following are **not** claimed as finished capabilities of this
-candidate. They are either partially built, lab-only, or dependent on
-things outside this repository's control:
-
-
-### Historical Beta 10 limitations — not Beta 11 package test results
-
-These are historical, measured limits of `v1.0.0-beta.10`, taken from its
-eight-hour three-channel run (see the
-[verification record](docs/releases/v1.0.0-beta.10-verification.md)). It is a
-beta candidate: only the Gate A clean-install lane was run for it (it passed),
-the upgrade and download-only lanes were not run, and no human field tester
-has signed off on it.
-
-**Program changes.**
-- Two program-change first attempts on the government channel aborted and
-  recovered on their own in about 3 seconds with no on-air effect.
-- One known single-frame (0.033 s) video drop happened at a part-to-part join
-  inside a program.
-
-**Leveling.**
-- A stretch of a source that is too quiet for the leveling ride is reported,
-  not leveled. Speech leveling targets -16 LUFS; a worst four-minute stretch
-  was off by 1.94 LU on one program even though the whole program was within
-  0.02 LU.
-
-**Carried over from beta.9 and not re-tested in the beta.10 run.**
-- When a channel's scheduled programming runs out and the schedule does not
-  repeat, the channel can stop and need a manual start, and the error message
-  then tells the operator to check the media even though the schedule is the
-  problem.
-- `/api/health` can report healthy while a channel is unable to air.
-- The station's own decode-back self-check (it decodes the broadcast to
-  confirm the captions) failed on certain cue timings in beta.9 and was not
-  re-tested in the beta.10 run, which used a separate lab verify script.
-
-**Not proven at all, for beta.10 or earlier releases.**
-- **No full cable/SDI broadcast headend acceptance.** DeckLink SDI output
-  is contract-tested against the GStreamer element it wires to
-  (`decklinkvideosink`); it has not been proven against physical SDI
-  hardware or a real cable-operator headend.
-- **Multi-channel operation is proven only for eight hours on one lab
-  machine.** Three channels aired at the same time for eight hours in the
-  beta.10 run; no 24-hour or longer run, and no run at a real station, has
-  been done for this candidate.
-- **Internet Archive and YouTube syndication need station-provided
-  accounts and credentials.** These integrations ship real adapters, gated
-  off by default, and are contract-tested without live external calls. A
-  station must supply its own credentials and prove its own publish before
-  relying on them publicly.
-- **No native OTT store apps shipped as finished products.** Starter,
-  platform-idiomatic source trees exist for several targets, but
-  store-ready polish (artwork, store metadata, content ratings, privacy
-  manifests, per-platform accessibility audits) and app-store submission
-  are not part of this candidate.
-- **CivicCast is not an EAS device.** It can display CAP/IPAWS alert
-  content in software; it never claims FCC Part 11 EAS certification or
-  compliance. Mandatory EAS relay is the cable operator's certified
-  headend device, not this product.
-- **Live per-leg SRT reconnect is a known, deferred robustness gap.**
-  Today a dropped SRT/UDP leg falls back to slate rather than
-  reconnecting that one leg in place without a full pipeline rebuild; a
-  full pipeline rebuild is the current recovery path. This is tracked, not
-  silently accepted.
-- **GStreamer engine egress: proven in Gate A for the first time in
-  `v1.0.0-beta.4`, with an honest boundary around continuous-premiere
-  scheduling.** Gate A's station-acceptance run includes a product-engine
-  check (`t4_engine`) that starts the real GStreamer playout engine and
-  verifies its output with TSDuck; the beta.3 grader read a false PASS
-  from a bug in the capture tool (fixed in #145) -- re-run correctly, the
-  engine's own state was `FALLBACK_SLATE`, not on-air, for beta.3. See
-  [`docs/ops/gate-a.md`](docs/ops/gate-a.md#known-limitation-test-tsproof-null-pipeline-bug-let-a-false-t4-pass-through-fixed-in-145)
-  for the full account. The real cause was plain: on every machine without
-  a system-wide GStreamer install already on `PATH` -- every customer box,
-  every sandbox run -- the control-plane child process never actually got
-  the bundled GStreamer `bin` directory on its own `PATH`, so `gi` could
-  not load `gstreamer-1.0-0.dll` and the worker died at import, before it
-  could reach `PLAYING` or decode anything (#154). A dev box with
-  GStreamer already on the system `PATH` hid this completely. Two smaller,
-  secondary bugs were also found and fixed, but neither could matter until
-  the import-time crash above was fixed: a module-identity mismatch that
-  made engine dispatch miss on every program leg once the worker did start
-  (#153), and a hardware-decoder rank policy that let a non-functional GPU
-  decoder stall the pipeline ~10s after `PLAYING` (also #154). Once those
-  fixes and the TSDuck data-file fix (#156) landed, Gate A run
-  [`33837269907`](https://github.com/scottconverse/civiccast-native/actions/runs/33837269907)
-  against kit `4b30c99`, clean lane, measured a real passing engine:
-  `T4_RESULT=PASS_PRODUCT_ENGINE; tsp exited 0 over 1233 analysed packets
-  with 0 invalid syncs / transport errors / discontinuities`. This makes
-  `v1.0.0-beta.4` the first CivicCast release whose Gate A run measured
-  real MPEG-TS packets from the GStreamer default engine, not the ffmpeg
-  fallback.
-  **This does not extend to a separate 120-minute engine soak (2026-09-04,
-  sandbox, kit `4b30c99`, T6) -- the soak did NOT pass, and that is stated
-  plainly here rather than folded into the PASS above.** Three channels
-  each played real LPM sample clips as premieres for two continuous hours;
-  every one of 66 samples (22 beats x 3 channels) stayed `ON_AIR` with a
-  passing TSDuck capture and worker memory stayed flat -- but the lane
-  verdict is `T6_RESULT=FAIL`, on a relaunch-count rule
-  (`relaunches>3` per channel), not on liveness (`failed_beats=0`).
-  **Correction (2026-09-05):** this bullet previously attributed the
-  restarts to the worker exiting at the end of every source plan
-  (`max_segments=8`) roughly every 10-15 minutes and credited beta.5's
-  #162 with fixing it; that was an unverified inference from pid changes,
-  not from the worker's own logs, and is retracted. The actual
-  `gst-worker.stderr.log` for every channel in this soak, and in a beta.5
-  retest soak (kit `e502074`), contains only `CTRL stall: no output for
-  10s — quitting for daemon restart` lines -- no plan-end exit ever
-  appears, and the plans running were 28-38 minutes long while restarts
-  came 1-25 minutes apart. Two contributing issues were found in the
-  sandbox soaks, 2026-09-05: periodic output stalls specific to the
-  GPU-less Windows Sandbox test environment (not established to reproduce
-  on real station hardware), and a `UnicodeEncodeError` in the
-  channel-automation pass on every restart that skipped channel
-  supervision for that channel -- a real product bug. (#167, the first
-  attempt at that fix, is closed, superseded by #169, merged.) #162's
-  seamless plan rollover is a genuine improvement for plan-boundary
-  transitions, but neither soak ever reached one, and #162 is not what
-  fixes the restarts measured here.
-  **What operators actually see (measured on real tester hardware,
-  2026-09-05):** a brief on-air blip every 10-25 minutes on a
-  multi-channel, CPU-only station with live captions turned on. The
-  driver is the live caption tap
-  (`civiccast/captions/tap_worker.py`): it transcribes every `ON_AIR`
-  channel in-process on CPU, and on three simultaneous channels it
-  exceeds its own backlog limit roughly every 30 seconds (`CRITICAL
-  civiccast.captions.tap_worker: Caption tap overload for channel <id>: N
-  settled segments exceeds the maximum 2 ...`) without ever backing off --
-  driving the control-plane process to ~2.5 CPU cores and starving the
-  GStreamer playout workers, whose own 10-second stall watchdog then
-  exits, which the daemon relaunches. Fixed in beta.5: #169 (the
-  state-write `UnicodeEncodeError` above). **Current beta.5 source update:**
-  the caption backoff repair [#172](https://github.com/scottconverse/civiccast-native/pull/172),
-  bounded live-caption work [#182](https://github.com/scottconverse/civiccast-native/pull/182),
-  non-blocking audio tap [#190](https://github.com/scottconverse/civiccast-native/pull/190),
-  and native caption-tap off switch [#191](https://github.com/scottconverse/civiccast-native/pull/191)
-  are merged and included in the candidate source. Merged code is not a
-  completed two-hour candidate soak; the exact installed beta.5 candidate
-  still needs its own acceptance evidence before release. This does not
-  retroactively turn the historical beta.4 or earlier beta.5 soaks into passes.
-  **Workaround for beta.4:
-  none in the product.** `CIVICCAST_CAPTION_TAP` is the only switch for
-  the live caption tap, and a native station's control-plane process
-  hardcodes it to `inline` unconditionally
-  (`civiccast/native/station_runtime.py:1361`) -- there is no per-channel
-  or operator-console setting to turn live captioning off on a beta.4
-  station. See
-  [`docs/releases/2026-09-03-beta4-release-notes.md`](docs/releases/2026-09-03-beta4-release-notes.md)
-  for the full corrected account and evidence paths.
+Current release state is recorded in [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml). Earlier package and lab evidence remains available in its release records, including the [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) and [Beta 10 verification](docs/releases/v1.0.0-beta.10-verification.md); those records apply only to their named releases.
 
 ## Install and run
 
-- **Windows installer.** CivicCast installs as a signed Windows installer;
-  see [Install CivicCast On Windows](INSTALL-WINDOWS.md) and
-  [Windows Release Trust And Verification](docs/install/windows-release-trust.md)
-  for the setup path, Authenticode signature verification, and the pack-trust
-  model. `v1.0.0-beta.12` is the current public GitHub pre-release (published
-  2026-10-10): the signed installer, five runtime `.ccpack` packs, four manual
-  assets, checksum manifest and installer sidecar are attached to the
-  [`v1.0.0-beta.12` GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
-  `v1.0.0-beta.7`, `v1.0.0-beta.5`, `v1.0.0-beta.4`, and `v1.0.0-beta.3` (the first **downloadable** release)
-  are superseded.
-  `v1.0.0-beta.1` (USB-delivered, no downloadable assets) is superseded.
-  `v1.0.0-beta.2` was never published -- it exists only as an internal
-  Gate A upgrade-baseline kit, not a release a tester can obtain.
-  A **first-time install** brings its large AI components either in the
-  USB/LAN-delivered model bundle (~21 GB, the offline alternative) or, for
-  components the installer can download, through the installer window's
-  download screen -- the GitHub download alone does not include them. A fresh
-  install has not been run for the exact Beta 12 release; see
-  [INSTALL-WINDOWS.md](INSTALL-WINDOWS.md).
-  **Upgrading from `v1.0.0-beta.1`:** copy the whole `beta.3` kit
-  (`setup.exe` + packs + `station\` folder) to the station and run
-  `setup.exe` over the existing install; recordings, settings, database,
-  and AI models are kept and the schema migrates. The one unsupported path
-  is running `setup.exe` alone, without the `station\` folder, from a
-  beta.1 install -- see
-  [`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md).
-  From `v1.0.0-beta.3` on, a download-only **upgrade** of an
-  already-installed station keeps the station's recordings, database, and
-  AI models -- this is the path proven for `v1.0.0-beta.5` -> `v1.0.0-beta.7`
-  (as it was for earlier downloadable releases): run
-  `setup.exe` (with the runtime packs) over the existing install, no
-  `station\` folder and no re-downloading the AI-model bundle. That
-  exact beta.11 package was installed as a same-version in-place refresh; a
-  Beta 10 upgrade lane was not run. See
-  [BRANCHES.md](BRANCHES.md) for release identity and status.
-  Slow setup must remain visibly active: the installer reports its current
-  phase and updates a progress heartbeat instead of appearing frozen.
-- **In-product operator manual.** Once running, open the operator manual
-  from inside the app at any time, including before signing in — it serves
-  the same content as [`docs/USER-MANUAL.md`](docs/USER-MANUAL.md)
-  ([PDF](docs/USER-MANUAL.pdf), [DOCX](docs/USER-MANUAL.docx)).
-- **Other operator documentation:**
-  [Admin Guide](docs/admin-guide.md),
-  [Meeting Operator Guide](docs/meeting-operator-guide.md),
-  [Records Clerk Guide](docs/records-clerk-guide.md),
-  [Beta Tester Start Here](docs/tester/START-HERE.md).
+Download the complete Beta 12 station with the Windows helper. It obtains the signed installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
+
+```powershell
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta12.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.12/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta12"
+```
+
+See [Install CivicCast on Windows](INSTALL-WINDOWS.md) for first setup, existing installations, offline copies and password recovery. Open **CivicCast Operator Console** after setup finishes.
+
+The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs/USER-MANUAL.docx)) covers operation, installation and architecture. Online manual revisions reach installed copies with a replacement application package. Additional guides: [Admin](docs/admin-guide.md), [Meeting Operator](docs/meeting-operator-guide.md), [Records Clerk](docs/records-clerk-guide.md) and [Tester Start Here](docs/tester/START-HERE.md).
 
 ### Developer — run from source, contribute
 
@@ -447,10 +42,11 @@ uv run civiccast doctor
 uv run uvicorn civiccast.app:app --reload
 ```
 
-Without `DATABASE_URL`, CivicCast starts in local setup mode and prepares
-installer-managed durable SQLite storage. Set `DATABASE_URL` to point at
-Postgres for technical deployments. In-memory stores are for tests and
-local experiments only and require explicit acknowledgement.
+In a standalone `uvicorn` developer run, CivicCast can start in local setup
+mode and prepare managed SQLite storage when `DATABASE_URL` is unset. This is
+not the native Windows service default; that service uses its installer-
+provisioned PostgreSQL database. In-memory stores are for tests and local
+experiments only and require explicit acknowledgement.
 
 Technical references:
 
@@ -501,9 +97,9 @@ apps. The [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml) is a
 repo-verified, fail-closed manifest that checks each spec item's claimed
 status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
-candidate. The "Product capabilities and prior-release evidence" and
-"Historical Beta 10 limitations" sections above distinguish current behavior
-from earlier candidate evidence.
+release. The Beta 12 verification record describes the current package
+boundary, and the Beta 11 host report is separately scoped historical runtime
+evidence.
 
 Proprietary-appliance capabilities are **out of scope** for V1 by explicit
 decision, documented in

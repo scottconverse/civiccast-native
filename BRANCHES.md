@@ -50,24 +50,20 @@ not scratch.
 
 ## Release identity
 
-`v1.0.0-beta.10` is the current release, published 2026-10-02 as a GitHub
-pre-release (a beta candidate, not a production release): `setup.exe` and the
-runtime `.ccpack` packs are attached to
-its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10),
-verified by `SHA256SUMS.txt` and a signed sidecar. `v1.0.0-beta.7`, a
-download-only upgrade for stations already on `v1.0.0-beta.5`, is superseded,
-as are `v1.0.0-beta.5`, `v1.0.0-beta.4` and `v1.0.0-beta.3` (the first
-downloadable release); `v1.0.0-beta.8` and `v1.0.0-beta.9` were never
-published (their work is inside beta.10). `v1.0.0-beta.2` was
-**never published** -- it exists only as an internal Gate A upgrade-baseline
-kit, never a release. The `v1.0.0-beta.1` owner-published
-prerelease tag has no installer asset (USB-delivered only) and is now
-superseded; `v1.0.0-beta.1` to `v1.0.0-beta.3` requires the full kit
-(`setup.exe` plus the `station\` folder) run over the existing install --
-recordings, settings, database, and AI models are kept and the schema
-migrates (see
-[`docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md`](docs/releases/2026-09-02-beta1-to-beta2-fresh-install-only.md)).
-Tags, releases and publication are owner-only decisions; the coordinating
-agent cuts beta-candidate releases going forward per the owner's 2026-09-02
-delegation (see `scripts/release/publish_beta_candidate.py`'s module
-docstring), and no agent creates or moves a tag by hand.
+`v1.0.0-beta.12` is the current public release, published 2026-10-10 as a
+GitHub pre-release (not a production release). The signed installer, runtime
+packs, manuals, checksums, and installer sidecar are attached to the
+[Beta 12 GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+Its [verification record](docs/releases/v1.0.0-beta.12-verification.md)
+reports a normal Beta 11 upgrade setup that exited 0 with a healthy service at
+schema 0089 and a saved preservation marker. The first post-upgrade JSON
+snapshot failed; the five-snapshot check did not pass. Exact-candidate fresh
+install, interrupted repair, and sustained operation were not run.
+
+Beta 11 and earlier releases are superseded; Beta 8 and Beta 9 were never
+published, and Beta 2 exists only as an internal upgrade-baseline kit. See
+[`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for the
+authored state of each tag and [`docs/releases/`](docs/releases/) for
+release-specific history. Tag movement and publication require current owner
+authorization; older release-process notes do not grant blanket approval for
+a new publication.

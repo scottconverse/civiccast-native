@@ -7,26 +7,49 @@
 
 ## Current Release State
 
-`v1.0.0-beta.11` is the current release, published 2026-10-08: `setup.exe`
-(signed), per-pack runtime `.ccpack` assets, a `SHA256SUMS.txt` checksum file,
-a `setup.exe.sidecar.json`, and manuals, published as a
-**prerelease** at
-<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11>
-(all releases: <https://github.com/scottconverse/civiccast-native/releases>) -- watch that
-page, not `scottconverse/civiccast` (the retired, separate WSL2-line
-repository) and not any `v1.0.0-rcNN` tag, which belongs to that other
-repository. See
-[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
-authored release-state record. `v1.0.0-beta.10` is superseded; its historical
-clean-install lane passed 10 of 10 in Windows Sandbox, while the upgrade and
-download-only lanes were not run. `v1.0.0-beta.8` and `v1.0.0-beta.9` were
-never published; their work was included in beta.10. See the current package's
-verified scope in
-[`docs/releases/v1.0.0-beta.11-verification.md`](../releases/v1.0.0-beta.11-verification.md)
-and Beta 10 history in
-[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md).
-Verify the downloaded installer yourself using the steps below; lab evidence is
-not a substitute for verifying the exact bytes you downloaded.
+`v1.0.0-beta.12` is the current published GitHub pre-release, published October
+10, 2026, with the station-download distribution repair added October 11; it
+is not a production release. Its asset set includes the signed `setup.exe`,
+five runtime packs, four manual assets, `SHA256SUMS.txt`, the setup sidecar,
+the release-matched Windows downloader, `station-models.json`, and the
+multipart station ZIP parts. The manifest hashes every part and each of the
+eight unpacked station files. The release-matched downloader verifies the
+installer, runtime packs and station bundle; `-Install` stages the complete
+kit and runs setup with `/S`.
+
+The October 11 R9 first-install attempt used the earlier incomplete public
+asset set, before station parts and the manifest were published. It failed
+activation with actual installer exit 123 because four signed station packs
+were missing and their embedded URLs were empty. No service or first-admin
+account was created. That previously used machine had residual files and model
+caches, so it is not clean-machine proof and does not test the repaired
+download. In a separate fresh offline Sandbox run using the repaired public
+kit, setup exited 0, station activation returned 0, the service was `Running`,
+and offline Ollama plus CPU faster-whisper self-tests passed. A follow-on
+first-admin/three-channel check failed with only the first Python traceback
+line captured, leaving its cause unresolved; complete UI/channel validation is
+not established. No repair, upgrade retest, or sustained-operation result was
+recorded. See the [captured fresh-install result](../ops/evidence/beta12-public-fresh-install-2026-10-11.json).
+
+The recorded Beta 11-to-Beta 12 CPU-only Sandbox upgrade exited 0, reached a
+healthy service/API at schema 0089, saved the initial-data preservation marker,
+and observed initial three-channel HLS output with Whistle within capacity. Its
+post-upgrade recorder wrapper failed at the first JSON save with
+`Cannot convert value to type System.String.`. No five-snapshot PASS or
+sustained-operation result was recorded. See the [Beta 12 verification
+record](../releases/v1.0.0-beta.12-verification.md) and [exact release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
+[release-truth.yaml](../releases/release-truth.yaml) is the authored
+release-state record. Watch the official native release page, not
+`scottconverse/civiccast` (the retired, separate WSL2-line repository) and
+not any `v1.0.0-rcNN` tag, which belongs to that other repository.
+
+
+`v1.0.0-beta.11` and earlier published betas are superseded. Beta 8 and 9
+were never published; their work was included in Beta 10. See their
+verification records for historical package scopes. Verify the downloaded
+installer yourself using the steps below; lab evidence is not a substitute
+for checking the exact bytes you downloaded.
 
 `v1.0.0-beta.7` (a download-only upgrade for stations on `v1.0.0-beta.5`) and
 `v1.0.0-beta.3`, the first downloadable release, are now superseded.
@@ -80,29 +103,44 @@ report `Valid` and the approved publisher; a local `NotSigned` engineering build
 is suitable only for an explicitly authorized local acceptance run and must not
 be distributed as a public beta.
 
+## Download The Complete Beta 12 Kit
+
+Use the helper asset from the exact tagged release. Download the helper and
+`SHA256SUMS.txt`, then verify the helper's own hash before executing it:
+
+```powershell
+$tag = "v1.0.0-beta.12"
+$base = "https://github.com/scottconverse/civiccast-native/releases/download/$tag"
+$helper = Join-Path $env:TEMP "CivicCast-Install-Beta12.ps1"
+$sums = Join-Path $env:TEMP "CivicCast-Beta12-SHA256SUMS.txt"
+Invoke-WebRequest -UseBasicParsing "$base/download_windows_release_artifacts.ps1" -OutFile $helper
+Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS.txt" -OutFile $sums
+$expected = ((Get-Content $sums) | Where-Object { $_ -match '\s+download_windows_release_artifacts\.ps1$' } | Select-Object -First 1) -replace '^([0-9a-fA-F]{64})\s+.*$', '$1'
+$actual = (Get-FileHash $helper -Algorithm SHA256).Hash
+if ($actual -ne $expected) { throw "Downloader hash does not match the release checksum list." }
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -Tag $tag -Version $tag.TrimStart('v') -Install -Destination (Join-Path $env:USERPROFILE "Downloads\CivicCast-Beta12")
+```
+
+With `-Install`, the helper downloads and checks all five runtime packs,
+the station manifest and every multipart ZIP part, reconstructs and validates
+the archive, and checks station-index and pack hashes against the manifest.
+The helper launches `setup.exe /S`, elevating when required; setup verifies
+signed station metadata. For download-only staging, use `-IncludePacks`; it
+downloads and verifies the complete kit but does not launch setup. Follow the
+active handoff for the machine-specific procedure, and do not treat a
+successful download as installation or operating proof.
+
 ## Verify The Download With PowerShell
 
-The native release chain carries no Sigstore/cosign step. Do not look for or
-download a Sigstore bundle; verify the actual executable's Authenticode
-signature and matching checksum metadata as described below.
-The release publisher's child Windows PowerShell uses its own default module
-paths rather than inheriting PowerShell 7 paths. This prevents the observed
-type-data import conflict without changing the parent environment or replacing
-the operator's signature checks below.
+1. For the complete Beta 12 download, use the release-matched helper and
+   choose `-IncludePacks` to stage without installing or `-Install` to run setup
+   after verification. The destination contains `setup.exe`, its sidecar,
+   `SHA256SUMS.txt`, five runtime packs under `packs\`, station files under
+   `station\`, and the station manifest and multipart parts. The installer
+   remains at the destination root; the helper runs from its temporary
+   download path. Do not move or rename files.
+2. Open PowerShell in the destination folder.
 
-1. From the exact tagged GitHub Release, obtain these matching files and
-   keep them together in one folder (these are the exact asset names the
-   publisher uploads -- there is no version number in the filename):
-   - `setup.exe`
-   - `setup.exe.sidecar.json`
-   - `SHA256SUMS.txt`
-   - any `*.ccpack` runtime pack(s) your install needs
-   Use the exact release page, not a draft, an older prerelease, or a
-   generic "latest" link.
-   Publisher preflight downloads are archived under a fresh attempt directory
-   on each run, so later preparation cannot reuse or overwrite an older Gate A
-   proof.
-2. Open PowerShell in the download folder.
 3. Compute the local hash:
 
 ```powershell

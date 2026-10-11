@@ -10,6 +10,15 @@
 > describe CivicCast's own features and evidence boundaries in vendor-neutral
 > language. See [LEGAL-NOTICES.md](../../../LEGAL-NOTICES.md).
 
+> **Design-target boundary (October 11, 2026):** This is the accepted CivicCast
+> 3.0 design target, not a statement of the current Beta 12 shipped scope.
+> The approval/build cursor below was checked against `main @ 69cc676` in June
+> 2026 and is a historical implementation snapshot. The dated October 10
+> caption-policy amendment later in this document remains an owner decision.
+> For current shipped behavior and candidate evidence, use the [Beta 12
+> verification record](../../../docs/releases/v1.0.0-beta.12-verification.md)
+> and source at the candidate revision.
+
 > Status: **APPROVED — implementation IN PROGRESS** (branch `work/3.0-gstreamer-engine`).
 > The build order in **§10 is the live tracker**; current cursor = **step 4 (S8 alerting)**,
 > with steps 0–3 (prototype, GStreamer engine, 4h soak, S9 reliability) code-complete and

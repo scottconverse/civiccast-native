@@ -1,6 +1,6 @@
 # Appendix H: Measured evidence and known limits {#app-evidence}
 
-This appendix preserves **historical beta.10 evidence**: what was measured, on which older build, and what those measurements do not show. It is not the proof record for beta.11. Use the [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for the source, hash and checks tied to the exact package you install. The historical beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+This appendix preserves **historical beta.10 evidence**: what was measured, on which older build, and what those measurements do not show. It is not the proof record for Beta 12. Use the [current Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) for the source, hash and checks tied to the exact package you install. The historical beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
 
 ## H.1 Which build each result comes from
 
@@ -46,9 +46,9 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 3. **Quiet source material is reported, not leveled** when it is too quiet for the loudness control's maximum lift.
 4. **Eleven playout-engine unit tests fail** in the same way on the published tree and the installed tree; they were failing before this build and are unexplained.
 5. **An unexplained rebuild of a long cached program** was seen in the previous internal run and is unresolved.
-6. **Upgrades were not proven for beta.10.** Installing beta.10 over an earlier release was not tested; use the current beta.11 verification record for the exact package paired with this manual.
+6. **Upgrades were not proven for beta.10.** Installing beta.10 over an earlier release was not tested; use the current Beta 12 verification record for the exact package paired with this manual.
 7. **A first install with neither the full kit (installer plus its `packs` and `station` folders) nor an earlier install was not proven for beta.10.** The code requires the kit. See [Chapter 10](#ch-installing) for the current package contents and evidence link.
-8. **Several staff-console screens described behavior the beta.10 code did not have.** Current screen notes in Part I use beta.11 scope where the mismatch remains.
+8. **Several staff-console screens described behavior the beta.10 code did not have.** Current screen notes in Part I use Beta 12 scope where the mismatch remains.
 
 ## H.5 What is not proven
 
@@ -58,6 +58,6 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 ## H.6 How to use this evidence
 
-Read these results as historical beta.10 evidence only. For beta.11, read the current verification record and the current operating chapters; do not transfer a beta.10 measurement to another source or package. If you rely on captions for legal compliance, plan a manual check of captions on the material that matters.
+Read these results as historical beta.10 evidence only. For Beta 12, read the current verification record and the current operating chapters; do not transfer a beta.10 measurement to another source or package. If you rely on captions for legal compliance, plan a manual check of captions on the material that matters.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; ops/beta10-oversight/OVERSIGHT-LOG.md entries 2026-10-01 14:12 and 14:22; ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md -->

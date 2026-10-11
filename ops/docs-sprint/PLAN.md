@@ -1,3 +1,5 @@
+> **Historical October 3 documentation-sprint plan.** Its Beta 10 status and staged publication directions describe that assignment. Current documentation follows Beta 12 source/release records and Scott's latest instructions.
+
 # Documentation sprint plan (started 2026-10-03; owner: Scott; writer: Claude, docs only, no code)
 
 Scott's directions (2026-10-02): publish docs as plain files straight to `main` **in stages** (no PR, no CI, no LFS, nothing in the

@@ -391,8 +391,10 @@ export function DownloadPlanScreen({
         <div>
           <h1>What CivicCast Needs</h1>
           <p className="lead">
-            These are the large pieces CivicCast runs on. Anything already on this computer or on your USB kit is used
-            as-is and is not downloaded again; only what is missing comes from the internet.
+            Whistle is included with the signed station components and is the CPU primary for live captions. The
+            Whisper models listed here provide live-caption fallback and recording transcription: Medium is required
+            and Large is optional. Install CivicCast from the complete release kit before managing these additional
+            models. If station setup is incomplete, use the release download helper to obtain the required components.
           </p>
         </div>
       </header>

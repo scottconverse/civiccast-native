@@ -4,11 +4,11 @@ This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.12**, the 
 
 ## What state this software is in
 
-The version this manual describes is printed on its cover. Publication and download status can change; check the project's releases page for the current release. Each verification record identifies a specific package and the checks performed on it, and results for one package do not qualify another. The [Beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) documents that package's checks and limits. The separate 36-hour soak belongs to an earlier dev7 development overlay. Beta.10 measurements are historical evidence in [Appendix H](#app-evidence).
+This manual describes **Beta 12**, the native Windows release. Start with the complete download helper in [Chapter 10](#ch-installing), then create the station administrator on the station computer. Whistle provides CPU live captioning; Whisper supplies fallback and recorded captions. The [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) identifies the signed package and actual installation observations. A separate Beta 11 host run measured **99.88% live caption-input coverage across three channels over 48 hours**; that result belongs to that run. Earlier history remains in the evidence appendix and dated verification records.
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
 
-A **historical beta.10 observation** describes behavior or evidence from the superseded release. A **Known issue** names the version in which that behavior was observed. Retained Beta.11 findings are not Beta.12 verification results; affected chapters describe the fixes as they are implemented. If a note conflicts with the screen, follow the concrete steps in the relevant chapter and check its version scope.
+A **historical beta.10 observation** describes behavior or evidence from the superseded release. A **Known issue (version)** names the version in which the behavior was checked. The label alone does not say whether it remains true now: follow any explicit later-version status in the note, and check the current screen and release record when the behavior affects an on-air decision. Beta.11 findings are not Beta.12 verification results.
 
 ## Who Reads What
 
@@ -36,7 +36,7 @@ Earlier releases split this manual into separate guides. Their names are still u
 
 > **Warning:** something that can change what is on the air, delete data, or cannot be undone.
 
-> **Known issue (beta.11):** current behavior differs from what the screen suggests; the note says what really happens and what to do.
+> **Known issue (version):** behavior checked in the named version differs from what the screen suggests; the note gives its scope and a safe next step. A note that says it remains in Beta.12 describes a current limitation; an older label alone is historical.
 
 > **For IT staff:** a pointer from the non-technical part to the technical chapter that has the detail.
 
@@ -55,6 +55,6 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Where to get help and report problems
 
-Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. The [Beta.11 package verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) remains available for that package's checks and limits.
+Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. The [Beta.12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) covers the current package; the [Beta.11 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) remains available for that superseded package.
 
-<!-- SOURCES: docs/releases/v1.0.0-beta.11-verification.md; docs/releases/v1.0.0-beta.10-verification.md (historical appendix only); docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->
+<!-- SOURCES: docs/releases/v1.0.0-beta.12-verification.md; docs/releases/v1.0.0-beta.11-verification.md (historical host evidence); docs/releases/v1.0.0-beta.10-verification.md (historical appendix only); docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->

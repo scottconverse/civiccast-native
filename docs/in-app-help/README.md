@@ -1,10 +1,10 @@
 # Historical in-app help audit: beta.10 snapshot
 
-This is the archived documentation-sprint index from 2026-10-03. It describes beta.10 screens and proposed copy from before the Beta.11 audit. The 62 linked per-screen audit files are retained for traceability and each is marked as a historical snapshot. Do not apply their proposed strings as current guidance. The separate Beta.11 source inventory and its reconciled findings are in [help.md](help.md).
+This is the archived documentation-sprint index from 2026-10-03. It describes beta.10 screens and proposed copy from before the Beta.11 audit. The 62 linked per-screen audit files are retained for traceability and each is marked as a historical snapshot. Do not apply their proposed strings as current guidance. The [Beta.11 source inventory](help.md) is also a historical audit; use the [current Beta.12 User Manual](../USER-MANUAL.md) and [verification record](../releases/v1.0.0-beta.12-verification.md) for current guidance and package scope.
 
 ## How to use these files
 
-The tables below are the historical beta.10 audit index, not a current implementation checklist. Their mismatch counts, source lines, and proposed copy record what that audit found at the time. Nothing in those archived tables establishes later behavior; use [help.md](help.md) for the dated source-audit scope and findings.
+The tables below are the historical beta.10 audit index, not a current implementation checklist. Their mismatch counts, source lines, and proposed copy record what that audit found at the time. Nothing in those archived tables establishes later behavior; use the current manual for operator instructions and [help.md](help.md) only as dated Beta.11 audit evidence.
 
 ## Operator console: Run Meeting
 

@@ -1,11 +1,21 @@
 # CivicCast 3.0 Spec Set — Reconciliation & Canonical Decisions
 
+> **Historical reconciliation snapshot (October 11, 2026):** This record was
+> produced in June 2026 against `main @ 69cc676`; its “current” readiness,
+> implementation cursor, and migration-head statements describe that dated
+> review, not Beta 12. The Beta 12 verification record reports the observed
+> candidate schema as 0089. Use the [current release verification
+> record](../../../docs/releases/v1.0.0-beta.12-verification.md) and current
+> source for shipped scope. This notice preserves the historical design
+> decisions below without treating them as current implementation proof.
+
 > **Version-numbering note (added 1.0-hardening):** the `3.0` in this
 > directory name is the INTERNAL spec-document era (master spec section
 > numbering), decoupled from the public release line. The public releases
-> reset to semver `0.x` at `v0.1.0-rc1` (July 2026); this spec set and its
-> machine-checked `ROADMAP.status.yaml` remain the current, actively
-> reconciled 1.0-readiness ledger for that public line.
+> reset to semver `0.x` at `v0.1.0-rc1` (July 2026). At the time this note was
+> written, this spec set and its machine-checked `ROADMAP.status.yaml` were the
+> actively reconciled 1.0-readiness ledger for that public line; this dated
+> status no longer establishes current Beta 12 readiness.
 
 
 > Status: authoritative consistency record for the 3.0 spec set, produced 2026-06-13 after a

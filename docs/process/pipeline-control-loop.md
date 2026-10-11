@@ -1,5 +1,12 @@
 # Pipeline Control Loop
 
+> **Owner instruction (current, October 11, 2026):** Scott's task-specific
+> sequence controls. This document's self-continuing push/CI/fix/commit/push
+> loop and its stop-condition gates do not authorize work or repeated cycles.
+> Do not start another correction, test, rebuild, push, or commit unless Scott
+> explicitly authorizes that step. The mechanics below are retained as legacy
+> process documentation and apply only when the owner explicitly invokes them.
+
 The CivicCast pipeline continuation rule is mechanical.
 
 During an authorized pipeline run, the agent may not send a final response, defer work, skip push, skip CI, write a stopping handoff, compact-and-stop, or pause unless `.agent-runs/<run-id>/active-control-state.md` records a valid stop condition, `scripts/policy/check_pipeline_control_loop.py --run <run-id>` passes, `scripts/policy/final_response_gate.py --require-active-run` prints `final_response_gate: ALLOW`, and `scripts/policy/agent_decision_gate.py` allows that specific decision.

@@ -11,7 +11,8 @@ Two asset-set families are supported:
     the native beta-candidate release shape published by
     scripts/release/publish_beta_candidate.py -- SHA256SUMS.txt, setup.exe,
     setup.exe.sidecar.json, and (with -IncludePacks) every *.ccpack runtime
-    pack. setup.exe and every pack are verified against SHA256SUMS.txt; the
+    pack in packs/ and the complete station-models.json multipart ZIP bundle
+    extracted into station/. setup.exe and every runtime pack are verified against SHA256SUMS.txt; the
     sidecar is verified by its own sha256 field matching SHA256SUMS.txt's
     setup.exe line. The asset names here are pinned against the publisher's
     constants by tests/policy/test_windows_release_downloader.py so the two
@@ -31,16 +32,19 @@ candidate. For a historical beta.7 download, specify both
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.11",
-  [string]$Version = "1.0.0-beta.11",
+  [string]$Tag = "v1.0.0-beta.12",
+  [string]$Version = "1.0.0-beta.12",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,
+  [switch]$Install,
   [string]$Destination = "C:\CivicCastProof",
   [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+if ($Install) { $IncludePacks = $true }
 
 # Asset naming contract shared with scripts/release/publish_beta_candidate.py
 # (SETUP_ASSET_NAME / SHA256SUMS_ASSET_NAME / SIDECAR_SUFFIX / PACK_SUFFIX).
@@ -102,7 +106,7 @@ function Save-ReleaseAsset {
   }
 
   Write-Step "Downloading $($Asset.name)"
-  Invoke-WebRequest -Uri $Asset.browser_download_url -OutFile $Target -Headers @{
+  Invoke-WebRequest -UseBasicParsing -Uri $Asset.browser_download_url -OutFile $Target -Headers @{
     "Accept" = "application/octet-stream"
     "User-Agent" = "CivicCast-Windows-Release-Downloader"
   }
@@ -148,6 +152,7 @@ function Assert-Sha256 {
     [string]$ExpectedHash
   )
 
+  if ($ExpectedHash -notmatch '^[0-9a-fA-F]{64}$') { throw "Invalid SHA-256 for $Path" }
   $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
   if ($actual -ne $ExpectedHash.ToLowerInvariant()) {
     throw "SHA-256 mismatch for $Path. Expected $ExpectedHash but got $actual."
@@ -172,7 +177,156 @@ function Read-Sha256Sums {
   return $table
 }
 
+function Assert-AssetDigest {
+  param([object]$Asset, [string]$Path, [switch]$Required)
+  if ($Asset.digest -and $Asset.digest -match '^sha256:([0-9a-fA-F]{64})$') {
+    Assert-Sha256 -Path $Path -ExpectedHash $Matches[1]
+  } elseif ($Required) { throw "GitHub asset '$($Asset.name)' has no usable SHA-256 digest." }
+}
+
+function Get-StationEntries {
+  param([object]$Manifest)
+  if ($Manifest.schema_version -ne 1 -or $Manifest.archive_format -ne 'zip' -or $Manifest.archive_name -ne 'station-models.zip') {
+    throw 'Unsupported station-models.json schema or archive format.'
+  }
+  $entries = @{}
+  foreach ($entry in $Manifest.unpacked_files) {
+    # Only flat, known station filenames are allowed. This also excludes ADS,
+    # rooted paths, dot segments and Windows path aliases before extraction.
+    if ($entry.path -notmatch '^station/(station-index\.json|SHA256SUMS\.txt|[a-z0-9][a-z0-9-]*\.ccpack)$' -or $entries.ContainsKey($entry.path)) {
+      throw "Unsafe or duplicate station path: $($entry.path)"
+    }
+    if ($entry.sha256 -notmatch '^[0-9a-fA-F]{64}$' -or [long]$entry.size_bytes -lt 0) { throw 'Invalid station file metadata.' }
+    $entries[$entry.path] = $entry
+  }
+  $required = @('station-index.json', 'SHA256SUMS.txt', 'core.ccpack', 'captions-floor.ccpack', 'captions-whistle.ccpack',
+    'summary-gemma4-12b.ccpack', 'summary-gemma4-e4b.ccpack', 'translation-translategemma-4b.ccpack')
+  if ($entries.Count -ne $required.Count) { throw 'Station bundle must contain the complete eight-file station set.' }
+  foreach ($name in $required) { if (-not $entries.ContainsKey("station/$name")) { throw "Station bundle is missing $name" } }
+  return $entries
+}
+
+function Assert-StationDirectory {
+  param([string]$Root, [object]$Manifest, [hashtable]$Entries)
+  foreach ($key in $Entries.Keys) {
+    $file = Join-Path $Root $key
+    if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { throw "Missing station file: $file" }
+    if ((Get-Item -LiteralPath $file).Length -ne [long]$Entries[$key].size_bytes) { throw "Station file size mismatch: $file" }
+    Assert-Sha256 -Path $file -ExpectedHash $Entries[$key].sha256
+  }
+  $indexPath = Join-Path $Root 'station/station-index.json'
+  Assert-Sha256 -Path $indexPath -ExpectedHash $Manifest.station_index_sha256
+  $index = (Get-Content -LiteralPath $indexPath -Raw | ConvertFrom-Json).manifest
+  if ($index.product_version -ne $Version -or @($index.packs).Count -ne 6) { throw 'Station index does not match the requested version and six-pack station set.' }
+  $stationSums = Read-Sha256Sums -Path (Join-Path $Root 'station/SHA256SUMS.txt')
+  if ($stationSums['station-index.json'] -ne $Manifest.station_index_sha256) { throw 'Station checksum list disagrees with station index hash.' }
+  $seen = @{}
+  foreach ($pack in $index.packs) {
+    $key = "station/$($pack.filename)"
+    if (-not $Entries.ContainsKey($key) -or $pack.filename -notlike '*.ccpack' -or $seen.ContainsKey($key) -or
+        $pack.required -ne $true -or $pack.sha256 -ne $Entries[$key].sha256 -or
+        [long]$pack.bytes -ne [long]$Entries[$key].size_bytes -or $stationSums[$pack.filename] -ne $pack.sha256) {
+      throw "Station index/checksum list disagrees with bundle: $($pack.filename)"
+    }
+    $seen[$key] = $true
+  }
+}
+
+function Install-StationArchive {
+  param([string]$ArchivePath, [string]$Root, [object]$Manifest)
+  $entries = Get-StationEntries -Manifest $Manifest
+  # Refuse reparse-point directories so validated relative paths stay in Root.
+  foreach ($directory in @($Root, (Join-Path $Root 'station'))) {
+    if ((Test-Path -LiteralPath $directory) -and ((Get-Item -LiteralPath $directory).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+      throw "Refusing reparse-point destination: $directory"
+    }
+  }
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $stage = Join-Path $Root ('.station-download-' + [guid]::NewGuid().ToString('N'))
+  New-Item -ItemType Directory -Path $stage | Out-Null
+  try {
+    $zip = [IO.Compression.ZipFile]::OpenRead($ArchivePath)
+    try {
+      $seen = @{}
+      foreach ($entry in $zip.Entries) {
+        if ($entry.FullName -eq 'station/' -and $entry.Length -eq 0) { continue }
+        if (-not $entries.ContainsKey($entry.FullName) -or $seen.ContainsKey($entry.FullName) -or
+            $entry.Length -ne [long]$entries[$entry.FullName].size_bytes) { throw "Unexpected, duplicate or unsafe ZIP entry: $($entry.FullName)" }
+        $seen[$entry.FullName] = $true
+      }
+      if ($seen.Count -ne $entries.Count) { throw 'Station ZIP is missing required files.' }
+    } finally { $zip.Dispose() }
+    # .NET extraction streams ZIP64 members and works in Windows PowerShell 5.1.
+    [IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $stage)
+    Assert-StationDirectory -Root $stage -Manifest $Manifest -Entries $entries
+    # Check every existing destination before adding any file; never overwrite
+    # station data, including with -Force.
+    foreach ($key in $entries.Keys) {
+      $target = Join-Path $Root $key
+      if (Test-Path -LiteralPath $target) {
+        if ((Get-Item -LiteralPath $target).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Refusing reparse-point file: $target" }
+        Assert-Sha256 -Path $target -ExpectedHash $entries[$key].sha256
+      }
+    }
+    New-Item -ItemType Directory -Force -Path (Join-Path $Root 'station') | Out-Null
+    foreach ($key in $entries.Keys) {
+      $target = Join-Path $Root $key
+      if (-not (Test-Path -LiteralPath $target)) { [IO.File]::Move((Join-Path $stage $key), $target) }
+    }
+  } finally {
+    # Stage is an internally generated child of Root, never an archive path.
+    Remove-Item -LiteralPath $stage -Recurse -Force
+  }
+}
+
+function Save-StationBundle {
+  param([object]$Release, [string]$Root)
+  $manifestAsset = Get-ReleaseAsset -Release $Release -Name 'station-models.json'
+  $manifestPath = Join-Path $Root 'station-models.json'
+  Save-ReleaseAsset -Asset $manifestAsset -Target $manifestPath
+  Assert-AssetDigest -Asset $manifestAsset -Path $manifestPath
+  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  $entries = Get-StationEntries -Manifest $manifest
+  if (@($manifest.parts).Count -eq 0) { throw 'Station bundle manifest contains no archive parts.' }
+  $partPaths = @()
+  $number = 1
+  foreach ($part in $manifest.parts) {
+    $expectedName = 'station-models.zip.{0:D3}' -f $number
+    if ($part.filename -cne $expectedName -or [long]$part.size_bytes -le 0 -or [long]$part.size_bytes -gt 1900000000) {
+      throw "Invalid station archive part: $($part.filename); expected $expectedName"
+    }
+    $asset = Get-ReleaseAsset -Release $Release -Name $part.filename
+    $path = Join-Path $Root $part.filename
+    Save-ReleaseAsset -Asset $asset -Target $path
+    if ((Get-Item -LiteralPath $path).Length -ne [long]$part.size_bytes) { throw "Station archive part size mismatch: $path" }
+    Assert-AssetDigest -Asset $asset -Path $path -Required
+    Assert-Sha256 -Path $path -ExpectedHash $part.sha256
+    $partPaths += $path
+    $number++
+  }
+  $archivePath = Join-Path $Root 'station-models.zip'
+  $createdArchive = $false
+  if (-not (Test-Path -LiteralPath $archivePath)) {
+    $partial = Join-Path $Root ('.station-archive-' + [guid]::NewGuid().ToString('N'))
+    try {
+      $output = [IO.File]::Create($partial)
+      try {
+        foreach ($path in $partPaths) {
+          $inputStream = [IO.File]::OpenRead($path)
+          try { $inputStream.CopyTo($output) } finally { $inputStream.Dispose() }
+        }
+      } finally { $output.Dispose() }
+      Assert-Sha256 -Path $partial -ExpectedHash $manifest.archive_sha256
+      [IO.File]::Move($partial, $archivePath)
+      $createdArchive = $true
+    } finally { if (Test-Path -LiteralPath $partial) { Remove-Item -LiteralPath $partial -Force } }
+  } else { Assert-Sha256 -Path $archivePath -ExpectedHash $manifest.archive_sha256 }
+  Install-StationArchive -ArchivePath $archivePath -Root $Root -Manifest $manifest
+  if ($createdArchive) { Remove-Item -LiteralPath $archivePath -Force }
+}
+
 New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+$Destination = (Get-Item -LiteralPath $Destination).FullName
 
 $release = Get-Release -Repository $Repository -Tag $Tag
 
@@ -198,6 +352,11 @@ if ($AssetSet -eq "NativeCandidate") {
   $setupPath = Join-Path $Destination $NativeSetupName
   Save-ReleaseAsset -Asset $setupAsset -Target $setupPath
   Assert-Sha256 -Path $setupPath -ExpectedHash $sums[$NativeSetupName]
+  Assert-AssetDigest -Asset $setupAsset -Path $setupPath
+  $signature = Get-AuthenticodeSignature -LiteralPath $setupPath
+  if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch '(^|,\s*)CN=Scott Converse(,|$)') {
+    throw 'setup.exe must have a valid Authenticode signature from Scott Converse.'
+  }
 
   # 3. The sidecar: its sha256 field must equal SHA256SUMS.txt's setup.exe
   #    line (the same bytes described two independent ways).
@@ -205,6 +364,7 @@ if ($AssetSet -eq "NativeCandidate") {
   $sidecarAsset = Get-ReleaseAsset -Release $release -Name $sidecarName
   $sidecarPath = Join-Path $Destination $sidecarName
   Save-ReleaseAsset -Asset $sidecarAsset -Target $sidecarPath
+  Assert-AssetDigest -Asset $sidecarAsset -Path $sidecarPath
   $sidecar = Get-Content -LiteralPath $sidecarPath -Raw | ConvertFrom-Json
   if ([string]$sidecar.sha256 -ne $sums[$NativeSetupName]) {
     throw "$sidecarName sha256 '$($sidecar.sha256)' does not match $NativeSumsName's $NativeSetupName entry '$($sums[$NativeSetupName])'."
@@ -217,14 +377,21 @@ if ($AssetSet -eq "NativeCandidate") {
     if ($packAssets.Count -eq 0) {
       throw "-IncludePacks was requested but release '$Tag' carries no $NativePackSuffix assets."
     }
+    $runtimeNames = @('native-app-payload.ccpack', 'native-cuda-runtime.ccpack', 'native-ffmpeg-runtime.ccpack', 'native-ollama-runtime.ccpack', 'native-server-binaries.ccpack')
+    $packRoot = Join-Path $Destination 'packs'
+    New-Item -ItemType Directory -Force -Path $packRoot | Out-Null
+    foreach ($name in $runtimeNames) { $null = Get-ReleaseAsset -Release $release -Name $name }
     foreach ($packAsset in $packAssets) {
       if (-not $sums.ContainsKey($packAsset.name)) {
         throw "$NativeSumsName does not list $($packAsset.name); refusing to trust that pack."
       }
-      $packPath = Join-Path $Destination $packAsset.name
+      if ($packAsset.name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]*\.ccpack$') { throw 'Unsafe runtime pack filename.' }
+      $packPath = Join-Path $packRoot $packAsset.name
       Save-ReleaseAsset -Asset $packAsset -Target $packPath
       Assert-Sha256 -Path $packPath -ExpectedHash $sums[$packAsset.name]
+      Assert-AssetDigest -Asset $packAsset -Path $packPath
     }
+    Save-StationBundle -Release $release -Root $Destination
   }
 } else {
   $manifestName = "civiccast-$Version-release-artifacts-manifest.json"
@@ -258,7 +425,26 @@ if ($AssetSet -eq "NativeCandidate") {
   }
 }
 
+if ($Install) {
+  if ($AssetSet -ne 'NativeCandidate') { throw '-Install requires NativeCandidate assets.' }
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+  $start = @{ FilePath = $setupPath; ArgumentList = '/S'; Wait = $true; PassThru = $true }
+  if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { $start.Verb = 'RunAs' }
+  Write-Step 'Installing the verified complete kit. Please wait for setup to finish; installation progress is recorded by setup.'
+  $process = Start-Process @start
+  if ($process.ExitCode -ne 0) { throw "CivicCast setup exited with code $($process.ExitCode)." }
+}
 Write-Step "Done."
+if ($AssetSet -eq 'NativeCandidate') {
+  if ($Install) {
+    Write-Step 'Setup completed successfully. Open CivicCast Operator Console from the Start menu to sign in or create the first administrator.'
+  } elseif ($IncludePacks) {
+    Write-Step 'Verified installer, runtime packs and complete station bundle. Setup will verify signed station metadata during installation.'
+    Write-Host "Next command (Windows x64, administrator): & `"$setupPath`" /S"
+    Write-Host 'Keep setup.exe, packs\ and station\ together. Full installation requires sufficient disk space for the downloaded kit and installed models.'
+  } else { Write-Step 'Installer only. Run this downloader with -IncludePacks before installing to acquire the complete required kit.' }
+}
 Write-Host ""
 Write-Host "Downloaded artifacts:"
 Get-ChildItem -LiteralPath $Destination -File | Select-Object Name, Length, LastWriteTime | Format-Table -AutoSize

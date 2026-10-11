@@ -134,17 +134,15 @@ These are the words used most in Part I. Each is explained again where it first 
 | **Test mode** | The mode a new station starts in. The First-run defaults card on First Setup shows a **Mode** heading with "Test mode" under it. |
 | **Headend** | The cable company's equipment that receives a channel's signal. |
 
-## What is and is not proven in beta.11
+## What is and is not proven in beta.12
 
-CivicCast beta.11 was published on 2026-10-08 as a **GitHub pre-release**. It is not a production release. An earlier beta.11 package was refreshed on an existing station and showed output on all three channels in two observations 41 seconds apart; that result applies only to that package. Use the [current beta.11 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.11-verification.md) for package-specific checks and [the release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.11).
+CivicCast **Beta 12** is the current native Windows GitHub pre-release. Use the complete download and installation instructions in [Chapter 10](#ch-installing). Package identity and observed installation results are recorded in the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md). Historical results remain tied to their named release.
 
-**What the original-package check showed:** that package could refresh the existing host and the three channels produced changing caption output while HLS advanced at two sampled times.
+**A useful earlier operating result:** a separate Beta.11 host ran public, government, and education channels together for 48 hours and recorded **99.88% live caption-input coverage**. See the [48-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurement and method. This is a positive result for that Beta.11 host run; it is not a Beta.12 soak, generic service uptime, transcript-word accuracy, or package qualification.
 
-The original-package check did not establish clean installation, repair after a failed installation, upgrade from beta.10, long-duration operation or capacity, real-station operation, physical DeckLink SDI operation, or cable-headend acceptance. Separately, a current beta.11 host ran three channels for 48 hours; the report records 99.88% nominal caption-input coverage and all three channels on air at the endpoint. See the [48-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md). This is runtime history for that host, not package qualification or proof of supported capacity. Candidate-specific package checks remain in the current verification record.
+**Live captions:** Beta.12 uses Whistle as the CPU primary, publishes first-pass recognition, and loads Whisper fallback only for the affected channel when needed. Optional NVIDIA CUDA applies to supported Whisper work; Whistle remains CPU-only.
 
-**Live captions:** beta.11 uses Whistle as the native live primary on CPU, publishes first-pass recognition, and falls back to Whisper for a channel after a primary failure or timeout.
-
-The [evidence appendix](#app-evidence) separates current package evidence from historical beta.10 measurements and development-station results.
+The [evidence appendix](#app-evidence) separates current package evidence from historical Beta.10 measurements and development-station results.
 
 ## If it did not work
 

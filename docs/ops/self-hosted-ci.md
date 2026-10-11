@@ -1,5 +1,16 @@
 # CivicCast Self-Hosted CI
 
+> **Historical runner snapshot:** This page describes the retired WSL2-era
+> self-hosted runner configuration. Its runner names, workflow list, and old
+> expected test counts are not the current native Windows CI contract. The
+> older `634 passed` / 19 real-Postgres figures below are historical counts,
+> not current release thresholds. The later
+> [`workflow-contract.yaml`](../claims/workflow-contract.yaml) records run
+> `29569282094` with 5,673 collected tests (5,643 passed, 30 skipped) and a
+> per-producer collection floor of 5,000. That floor checks collection
+> completeness; it is not a product-quality or release-acceptance threshold.
+> Inspect current workflow definitions and run logs for current CI evidence.
+
 CivicCast PR gates run on Scott's `scott-desktop-wsl` self-hosted runner while
 the `scottconverse` GitHub Actions account is on the free-tier hard cap.
 
@@ -39,7 +50,7 @@ a GitHub Actions billing failure. After the service was active and GitHub API
 reported `status: online`, run `25816564268` passed on head
 `eed7cf93cfbe7d9d520ea5f3938b57a5cde467e3`.
 
-## Current PR Gates
+## Historical PR Gates
 
 The following workflows are pinned to the self-hosted runner so PR validation
 continues at zero GitHub-hosted runner spend:

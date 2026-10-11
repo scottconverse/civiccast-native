@@ -15,7 +15,7 @@ Include in the report:
 - A description of the vulnerability and its impact.
 - Steps to reproduce, or a proof-of-concept if one exists.
 - The version (or commit SHA) you tested against.
-- The deployment configuration if it's relevant (Mode A standalone, Mode B alongside CivicSuite, Tier 1 Streaming reference build, etc.).
+- The deployment configuration if it's relevant: Windows/service version, database mode, network bindings or proxy, and the configured provider or integration involved. Do not include credentials or private meeting data.
 - Whether you intend to publish a write-up, and if so, your preferred timeline.
 
 ### What to expect

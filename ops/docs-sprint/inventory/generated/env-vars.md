@@ -6,37 +6,37 @@
 
 | Name | Prod refs | First location | Documented | Notes |
 | --- | --- | --- | --- | --- |
-| `CIVICAST_CAPTION_PROOF_POLL_SECONDS` | 1 | civiccast/app.py:1673 | yes | one-C spelling: check it is not silently inert |
-| `CIVICAST_CAPTION_PROOF_TIMEOUT_SECONDS` | 1 | civiccast/app.py:1675 | yes | one-C spelling: check it is not silently inert |
+| `CIVICAST_CAPTION_PROOF_POLL_SECONDS` | 1 | civiccast/app.py:1711 | yes | one-C spelling: check it is not silently inert |
+| `CIVICAST_CAPTION_PROOF_TIMEOUT_SECONDS` | 1 | civiccast/app.py:1713 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_CI_SOURCE_SHA` | 1 | scripts/collect_source_state.py:107 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_CLEANROOM_VBOX_REPORT` | 1 | scripts/run_clean_windows_install_proof.py:248 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_CLEANROOM_VBOX_REPORT_MAX_AGE_SECONDS` | 1 | scripts/run_clean_windows_install_proof.py:442 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_CLEANROOM_VBOX_VM` | 2 | scripts/run_clean_windows_install_proof.py:84 | yes | one-C spelling: check it is not silently inert |
-| `CIVICAST_CONTROL_ROOM_TSR_URL` | 1 | civiccast/apps/portal-operator/e2e/control-room-readiness.spec.ts:29 | yes | one-C spelling: check it is not silently inert |
-| `CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS` | 4 | civiccast/egress/automation.py:1590 | yes | one-C spelling: check it is not silently inert |
+| `CIVICAST_CONTROL_ROOM_TSR_URL` | 1 | civiccast/apps/portal-operator/e2e/control-room-readiness.spec.ts:30 | yes | one-C spelling: check it is not silently inert |
+| `CIVICAST_EGRESS_PREPARATION_TIMEOUT_SECONDS` | 4 | civiccast/egress/automation.py:1592 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_EXPECTED_VERSION` | 1 | scripts/policy/check_release_identity.py:229 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_GSTREAMER_SOURCE_SEGMENT_SECONDS` | 2 | civiccast/egress/env_vars.py:17 | yes | one-C spelling: check it is not silently inert |
-| `CIVICAST_GST_LEG_RATE_DIAG` | 2 | civiccast/egress/gst/engine.py:654 | yes | one-C spelling: check it is not silently inert |
+| `CIVICAST_GST_LEG_RATE_DIAG` | 2 | civiccast/egress/gst/engine.py:656 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_KEEP_PASSING_UI_EVIDENCE` | 5 | civiccast/apps/portal-operator/playwright.config.ts:14 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_OBS_WEBSOCKET_PASSWORD` | 4 | civiccast/control_room/lpm_lab_stage45.py:2440 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_TRANSLATE_WINDOWS_BACKUP_PATHS` | 1 | civiccast/installer/service.py:1131 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_WORKER_PERSISTENT` | 1 | civiccast/egress/gst/reload_policy.py:75 | yes | one-C spelling: check it is not silently inert |
 | `CIVICAST_WSL_DRIVE_MOUNT_ROOT` | 1 | civiccast/installer/service.py:1130 | yes | one-C spelling: check it is not silently inert |
-| `CIVICCAST_ACCEPTANCE_PACKET_DIR` | 1 | civiccast/installer/service.py:3506 | yes |  |
+| `CIVICCAST_ACCEPTANCE_PACKET_DIR` | 1 | civiccast/installer/service.py:3516 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_ALLOWLIST` | 1 | civiccast/activitypub/config.py:79 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_ALLOWLIST_FILE` | 1 | civiccast/activitypub/config.py:80 | yes |  |
-| `CIVICCAST_ACTIVITYPUB_AUTHORIZED_FETCH` | 5 | civiccast/cli.py:2222 | yes |  |
-| `CIVICCAST_ACTIVITYPUB_BASE_URL` | 5 | civiccast/cli.py:2219 | yes |  |
+| `CIVICCAST_ACTIVITYPUB_AUTHORIZED_FETCH` | 5 | civiccast/cli.py:2224 | yes |  |
+| `CIVICCAST_ACTIVITYPUB_BASE_URL` | 5 | civiccast/cli.py:2221 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_BLOCKLIST` | 1 | civiccast/activitypub/config.py:75 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_BLOCKLIST_FILE` | 1 | civiccast/activitypub/config.py:76 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_DISPLAY_NAME` | 1 | civiccast/activitypub/config.py:86 | yes |  |
-| `CIVICCAST_ACTIVITYPUB_HANDLE` | 5 | civiccast/cli.py:2220 | yes |  |
+| `CIVICCAST_ACTIVITYPUB_HANDLE` | 5 | civiccast/cli.py:2222 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_INBOX_RATE_LIMIT` | 1 | civiccast/activitypub/config.py:95 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_INBOX_RATE_WINDOW_SECONDS` | 1 | civiccast/activitypub/config.py:97 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_LAB_ALLOW_LOCAL` | 1 | civiccast/activitypub/config.py:94 | yes |  |
-| `CIVICCAST_ACTIVITYPUB_MODE` | 10 | civiccast/cli.py:2218 | yes |  |
-| `CIVICCAST_ACTIVITYPUB_PRIVATE_KEY_PATH` | 6 | civiccast/cli.py:2221 | yes |  |
-| `CIVICCAST_ACTIVITYPUB_PUBLIC_KEY_PEM` | 2 | civiccast/cli.py:2224 | yes |  |
+| `CIVICCAST_ACTIVITYPUB_MODE` | 10 | civiccast/cli.py:2220 | yes |  |
+| `CIVICCAST_ACTIVITYPUB_PRIVATE_KEY_PATH` | 6 | civiccast/cli.py:2223 | yes |  |
+| `CIVICCAST_ACTIVITYPUB_PUBLIC_KEY_PEM` | 2 | civiccast/cli.py:2226 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_RETRY_BACKOFF_SECONDS` | 1 | civiccast/activitypub/retry_worker.py:74 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_RETRY_MAX_ATTEMPTS` | 1 | civiccast/activitypub/retry_worker.py:77 | yes |  |
 | `CIVICCAST_ACTIVITYPUB_RETRY_POLL_SECONDS` | 1 | civiccast/activitypub/retry_worker.py:71 | yes |  |
@@ -53,13 +53,13 @@
 | `CIVICCAST_AKAMAI_REGION` | 1 | civiccast/installer/service.py:434 | yes |  |
 | `CIVICCAST_AKAMAI_SECRET_ACCESS_KEY` | 1 | civiccast/installer/service.py:436 | yes |  |
 | `CIVICCAST_ALERT` | 21 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:261 | yes |  |
-| `CIVICCAST_ALERTING` | 4 | civiccast/app.py:1424 | yes |  |
+| `CIVICCAST_ALERTING` | 4 | civiccast/app.py:1462 | yes |  |
 | `CIVICCAST_ALERT_CREDENTIALS_FILE` | 2 | civiccast/alerting/credentials.py:55 | yes |  |
 | `CIVICCAST_ALLOW_CAPTIONS_OFF_FOR_TESTS` | 1 | civiccast/captions/vod_job.py:113 | yes |  |
 | `CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN` | 6 | civiccast/auth/tokens.py:73 | yes |  |
 | `CIVICCAST_ALLOW_DETERMINISTIC_SUBSCRIBE_SECRETS` | 1 | civiccast/subscribe/secrets.py:86 | yes |  |
 | `CIVICCAST_ALLOW_DEVELOPMENT_PACK_KEY` | 5 | civiccast/apps/installer/src-tauri/src/native_packs.rs:247 | yes |  |
-| `CIVICCAST_ALLOW_EPHEMERAL_STORES` | 22 | civiccast/app.py:1805 | yes |  |
+| `CIVICCAST_ALLOW_EPHEMERAL_STORES` | 22 | civiccast/app.py:1843 | yes |  |
 | `CIVICCAST_ALLOW_FIRST_ADMIN_RESET` | 5 | civiccast/installer/router.py:1567 | yes |  |
 | `CIVICCAST_ALLOW_INSECURE_MANIFEST` | 4 | civiccast/vod/models.py:20 | yes |  |
 | `CIVICCAST_ANALYTICS_RATE_LIMIT_MAX_BUCKETS` | 1 | civiccast/app_platform/router.py:559 | yes |  |
@@ -67,58 +67,58 @@
 | `CIVICCAST_ANALYTICS_ROLLUP_LOOKBACK_DAYS` | 1 | civiccast/analytics/pg_store.py:394 | yes |  |
 | `CIVICCAST_ANALYTICS_ROLLUP_POLL_SECONDS` | 1 | civiccast/analytics/pg_store.py:393 | yes |  |
 | `CIVICCAST_ANALYTICS_ROLLUP_WORKER` | 2 | civiccast/analytics/pg_store.py:385 | yes |  |
-| `CIVICCAST_ANALYTICS_TRUSTED_PROXY_CIDRS` | 5 | civiccast/cli.py:2401 | yes |  |
+| `CIVICCAST_ANALYTICS_TRUSTED_PROXY_CIDRS` | 5 | civiccast/cli.py:2403 | yes |  |
 | `CIVICCAST_APP_BUILD_ARTIFACTS_DIR` | 1 | civiccast/app_platform/build_router.py:82 | yes |  |
 | `CIVICCAST_APP_BUILD_STORE_PATH` | 1 | civiccast/app_platform/build_store.py:122 | yes |  |
 | `CIVICCAST_APP_PLATFORM_CONFIG_PATH` | 1 | civiccast/app_platform/store.py:230 | yes |  |
-| `CIVICCAST_AUTH_ACK` | 3 | civiccast/app.py:2542 | yes |  |
+| `CIVICCAST_AUTH_ACK` | 3 | civiccast/app.py:2595 | yes |  |
 | `CIVICCAST_AUTH_RATE_LIMIT` | 2 | civiccast/auth/rate_limit.py:74 | yes |  |
 | `CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS` | 2 | civiccast/auth/rate_limit.py:75 | yes |  |
-| `CIVICCAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS` | 1 | civiccast/egress/automation.py:271 | yes |  |
+| `CIVICCAST_AUTOMATION_PASS_WATCHDOG_REPEAT_SECONDS` | 1 | civiccast/egress/automation.py:273 | yes |  |
 | `CIVICCAST_AUTOMATION_PASS_WATCHDOG_SECONDS` | 2 | civiccast/egress/automation.py:20 | yes |  |
-| `CIVICCAST_AUTOSCHEDULE` | 4 | civiccast/app.py:1472 | yes |  |
+| `CIVICCAST_AUTOSCHEDULE` | 4 | civiccast/app.py:1510 | yes |  |
 | `CIVICCAST_AVAILABLE_VERSION` | 3 | civiccast/installer/service.py:1483 | yes |  |
 | `CIVICCAST_BACKUP_DIR` | 2 | civiccast/installer/service.py:208 | yes |  |
-| `CIVICCAST_BOOTSTRAP_INSTANCE_ID` | 1 | civiccast/app.py:2426 | yes |  |
-| `CIVICCAST_BULLETIN_EXPIRY` | 3 | civiccast/app.py:1500 | yes |  |
+| `CIVICCAST_BOOTSTRAP_INSTANCE_ID` | 1 | civiccast/app.py:2479 | yes |  |
+| `CIVICCAST_BULLETIN_EXPIRY` | 3 | civiccast/app.py:1538 | yes |  |
 | `CIVICCAST_BUNNY_` | 1 | civiccast/stream/cdn/factory.py:12 | yes |  |
 | `CIVICCAST_BUNNY_ACCESS_KEY` | 3 | civiccast/installer/service.py:423 | yes |  |
 | `CIVICCAST_BUNNY_CDN_HOSTNAME` | 3 | civiccast/installer/service.py:424 | yes |  |
 | `CIVICCAST_BUNNY_STORAGE_ZONE` | 3 | civiccast/installer/service.py:422 | yes |  |
 | `CIVICCAST_CABLE_CAPTIONS_DIR` | 2 | civiccast/cable/package.py:174 | yes |  |
 | `CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR` | 2 | civiccast/cable/package.py:173 | yes |  |
-| `CIVICCAST_CANDIDATE_WORKFLOW_RUN_ID` | 2 | scripts/verify-release.sh:15 | no |  |
+| `CIVICCAST_CANDIDATE_WORKFLOW_RUN_ID` | 2 | scripts/verify-release.sh:15 | yes |  |
 | `CIVICCAST_CAPTION_AUDIO` | 2 | scripts/run_real_ai_release_proof.py:81 | yes |  |
-| `CIVICCAST_CAPTION_FEED_POLL_SECONDS` | 1 | civiccast/app.py:1665 | yes |  |
+| `CIVICCAST_CAPTION_FEED_POLL_SECONDS` | 1 | civiccast/app.py:1703 | yes |  |
 | `CIVICCAST_CAPTION_MODEL_HASH_RECEIPT` | 1 | civiccast/native/station_runtime.py:1432 | yes |  |
-| `CIVICCAST_CAPTION_PROOF_PROCESS` | 3 | civiccast/app.py:1677 | yes |  |
+| `CIVICCAST_CAPTION_PROOF_PROCESS` | 3 | civiccast/app.py:1715 | yes |  |
 | `CIVICCAST_CAPTION_PROOF_PROCESS_CHILD` | 1 | civiccast/egress/caption_proof_process.py:91 | yes |  |
-| `CIVICCAST_CAPTION_RUNTIME` | 5 | civiccast/captions/tap_worker.py:2580 | yes |  |
-| `CIVICCAST_CAPTION_TAP` | 22 | civiccast/app.py:1513 | yes |  |
-| `CIVICCAST_CAPTION_TAP_ATOMIC` | 2 | civiccast/captions/tap_worker.py:364 | yes |  |
+| `CIVICCAST_CAPTION_RUNTIME` | 5 | civiccast/captions/tap_worker.py:2671 | yes |  |
+| `CIVICCAST_CAPTION_TAP` | 22 | civiccast/app.py:1551 | yes |  |
+| `CIVICCAST_CAPTION_TAP_ATOMIC` | 2 | civiccast/captions/tap_worker.py:365 | yes |  |
 | `CIVICCAST_CAPTION_TAP_BATCH_DIAGNOSTIC` | 3 | civiccast/captions/tap_batch_diagnostic.py:23 | yes |  |
-| `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT` | 1 | civiccast/captions/tap_worker.py:391 | yes |  |
-| `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_WINDOW_SECONDS` | 1 | civiccast/captions/tap_worker.py:399 | yes |  |
+| `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_LIMIT` | 1 | civiccast/captions/tap_worker.py:392 | yes |  |
+| `CIVICCAST_CAPTION_TAP_CATCH_UP_SHED_WINDOW_SECONDS` | 1 | civiccast/captions/tap_worker.py:400 | yes |  |
 | `CIVICCAST_CAPTION_TAP_CPU_THREADS` | 7 | civiccast/captions/runtime.py:154 | yes |  |
-| `CIVICCAST_CAPTION_TAP_DIR` | 25 | civiccast/app.py:1513 | yes |  |
-| `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | 1 | civiccast/captions/tap_worker.py:375 | yes |  |
-| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | 3 | civiccast/captions/tap_worker.py:226 | yes |  |
-| `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | 2 | civiccast/captions/tap_worker.py:435 | yes |  |
-| `CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS` | 1 | civiccast/captions/tap_worker.py:366 | yes |  |
-| `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | 1 | civiccast/captions/tap_worker.py:432 | yes |  |
-| `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` | 1 | civiccast/captions/tap_worker.py:383 | yes |  |
+| `CIVICCAST_CAPTION_TAP_DIR` | 25 | civiccast/app.py:1551 | yes |  |
+| `CIVICCAST_CAPTION_TAP_MAX_BACKLOG_SEGMENTS` | 1 | civiccast/captions/tap_worker.py:376 | yes |  |
+| `CIVICCAST_CAPTION_TAP_MAX_CHANNEL_WORKERS` | 3 | civiccast/captions/tap_worker.py:227 | yes |  |
+| `CIVICCAST_CAPTION_TAP_MAX_OVERLOAD_BACKOFF_SECONDS` | 2 | civiccast/captions/tap_worker.py:436 | yes |  |
+| `CIVICCAST_CAPTION_TAP_OVERLAP_SECONDS` | 1 | civiccast/captions/tap_worker.py:367 | yes |  |
+| `CIVICCAST_CAPTION_TAP_OVERLOAD_BACKOFF_SECONDS` | 1 | civiccast/captions/tap_worker.py:433 | yes |  |
+| `CIVICCAST_CAPTION_TAP_OVERLOAD_PERSISTENCE_SCANS` | 1 | civiccast/captions/tap_worker.py:384 | yes |  |
 | `CIVICCAST_CAPTION_TAP_PHASE_TIMING` | 3 | civiccast/captions/phase_timing.py:19 | yes |  |
-| `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | 1 | civiccast/captions/tap_worker.py:368 | yes |  |
+| `CIVICCAST_CAPTION_TAP_POLL_SECONDS` | 1 | civiccast/captions/tap_worker.py:369 | yes |  |
 | `CIVICCAST_CAPTION_TAP_SEGMENT_SECONDS` | 5 | civiccast/captions/tap.py:72 | yes |  |
 | `CIVICCAST_CAPTION_TIER` | 2 | civiccast/captions/runtime.py:102 | yes |  |
 | `CIVICCAST_CAPTION_TIER_EVENT` | 4 | civiccast/app.py:1037 | yes |  |
 | `CIVICCAST_CAPTION_TRUTH` | 2 | scripts/run_real_ai_release_proof.py:82 | yes |  |
-| `CIVICCAST_CDN_PROVIDER` | 16 | civiccast/cli.py:2318 | yes |  |
+| `CIVICCAST_CDN_PROVIDER` | 16 | civiccast/cli.py:2320 | yes |  |
 | `CIVICCAST_CDN_STUB_ROOT` | 3 | civiccast/stream/cdn/factory.py:22 | yes |  |
-| `CIVICCAST_CERT_ROOT` | 2 | civiccast/cli.py:913 | yes |  |
-| `CIVICCAST_CG_DEMO_FEEDS` | 8 | civiccast/cg/router.py:77 | yes |  |
+| `CIVICCAST_CERT_ROOT` | 2 | civiccast/cli.py:915 | yes |  |
+| `CIVICCAST_CG_DEMO_FEEDS` | 8 | civiccast/cg/router.py:76 | yes |  |
 | `CIVICCAST_CHANNEL_AUTOMATION` | 3 | civiccast/egress/automation.py:32 | yes |  |
-| `CIVICCAST_CHANNEL_AUTOMATION_POLL_SECONDS` | 3 | civiccast/egress/automation.py:770 | yes |  |
+| `CIVICCAST_CHANNEL_AUTOMATION_POLL_SECONDS` | 3 | civiccast/egress/automation.py:772 | yes |  |
 | `CIVICCAST_CLEANROOM_VM` | 1 | scripts/run_vm_cleanroom_release.py:131 | yes |  |
 | `CIVICCAST_COMPONENTS_BASE_URL` | 1 | civiccast/apps/installer/src-tauri/src/acquisition_catalog.rs:216 | yes |  |
 | `CIVICCAST_CONFIG_DIR` | 4 | civiccast/alerting/credentials.py:55 | yes |  |
@@ -136,28 +136,28 @@
 | `CIVICCAST_CONTRIBUTOR_UPLOAD_RATE_LIMIT` | 1 | civiccast/contribute/router.py:316 | yes |  |
 | `CIVICCAST_CONTRIBUTOR_UPLOAD_REAP` | 1 | civiccast/app.py:1333 | yes |  |
 | `CIVICCAST_CONTRIBUTOR_UPLOAD_REAP_POLL_SECONDS` | 1 | civiccast/app.py:1321 | yes |  |
-| `CIVICCAST_CONTROL_PLANE_URL` | 2 | civiccast/native/supervisor/service.py:1972 | yes |  |
-| `CIVICCAST_CONTROL_ROOM_TSR_URL` | 4 | civiccast/app.py:3054 | yes |  |
-| `CIVICCAST_CORS_ALLOWED_ORIGINS` | 5 | civiccast/app.py:2206 | yes |  |
+| `CIVICCAST_CONTROL_PLANE_URL` | 2 | civiccast/native/supervisor/service.py:2052 | yes |  |
+| `CIVICCAST_CONTROL_ROOM_TSR_URL` | 4 | civiccast/app.py:3107 | yes |  |
+| `CIVICCAST_CORS_ALLOWED_ORIGINS` | 5 | civiccast/app.py:2244 | yes |  |
 | `CIVICCAST_COTURN_COMMAND` | 5 | civiccast/installer/contribution_install.py:24 | yes |  |
 | `CIVICCAST_CUDA_BIN_DIR` | 3 | civiccast/captions/runtime.py:60 | yes |  |
-| `CIVICCAST_DATABASE_URL` | 3 | civiccast/native/provision/__main__.py:43 | yes |  |
+| `CIVICCAST_DATABASE_URL` | 3 | civiccast/apps/installer/src-tauri/src/native_service_registration.rs:1803 | yes |  |
 | `CIVICCAST_DB_CONNECT_TIMEOUT` | 5 | civiccast/db/session.py:99 | yes |  |
 | `CIVICCAST_DISTRIBUTION` | 16 | civiccast/native/app_payload.py:64 | yes |  |
-| `CIVICCAST_EAS` | 2 | civiccast/app.py:1721 | yes |  |
-| `CIVICCAST_EAS_AUTO_SURFACE` | 2 | civiccast/app.py:1728 | yes |  |
-| `CIVICCAST_EAS_POLL_SECONDS` | 1 | civiccast/app.py:1743 | yes |  |
+| `CIVICCAST_EAS` | 5 | civiccast/app.py:1759 | yes |  |
+| `CIVICCAST_EAS_AUTO_SURFACE` | 2 | civiccast/app.py:1766 | yes |  |
+| `CIVICCAST_EAS_POLL_SECONDS` | 1 | civiccast/app.py:1781 | yes |  |
 | `CIVICCAST_EGRESS_DEGRADED_REASON` | 1 | civiccast/native/station_runtime.py:96 | yes |  |
 | `CIVICCAST_EGRESS_DRAIN_DEADLINE_SECONDS` | 2 | civiccast/app.py:632 | yes |  |
-| `CIVICCAST_EGRESS_EMBED_CAPTIONS` | 11 | civiccast/app.py:1632 | yes |  |
-| `CIVICCAST_EGRESS_ENGINE` | 17 | civiccast/cli.py:1244 | yes |  |
-| `CIVICCAST_EGRESS_PREPARATION_TIMEOUT_SECONDS` | 3 | civiccast/egress/automation.py:974 | yes |  |
-| `CIVICCAST_EGRESS_ROLLOVER_LEAD_SECONDS` | 1 | civiccast/egress/automation.py:253 | yes |  |
-| `CIVICCAST_EGRESS_SEAMLESS_RELOAD` | 11 | civiccast/egress/daemon.py:2475 | yes |  |
-| `CIVICCAST_EGRESS_WORK_DIR` | 12 | civiccast/egress/automation.py:304 | yes |  |
+| `CIVICCAST_EGRESS_EMBED_CAPTIONS` | 11 | civiccast/app.py:1670 | yes |  |
+| `CIVICCAST_EGRESS_ENGINE` | 17 | civiccast/cli.py:1246 | yes |  |
+| `CIVICCAST_EGRESS_PREPARATION_TIMEOUT_SECONDS` | 3 | civiccast/egress/automation.py:976 | yes |  |
+| `CIVICCAST_EGRESS_ROLLOVER_LEAD_SECONDS` | 1 | civiccast/egress/automation.py:255 | yes |  |
+| `CIVICCAST_EGRESS_SEAMLESS_RELOAD` | 11 | civiccast/egress/daemon.py:2489 | yes |  |
+| `CIVICCAST_EGRESS_WORK_DIR` | 12 | civiccast/egress/automation.py:306 | yes |  |
 | `CIVICCAST_EMAIL_FROM` | 1 | civiccast/publish/providers.py:30 | yes |  |
 | `CIVICCAST_EMAIL_SMTP_URL` | 1 | civiccast/publish/providers.py:30 | yes |  |
-| `CIVICCAST_EVIDENCE_DIR` | 6 | civiccast/apps/portal-public/e2e/a11y.spec.ts:6 | yes |  |
+| `CIVICCAST_EVIDENCE_DIR` | 6 | civiccast/apps/portal-operator/e2e/a11y.spec.ts:20 | yes |  |
 | `CIVICCAST_EXIT_D2_APP_PAYLOAD` | 3 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:486 | yes |  |
 | `CIVICCAST_EXIT_D2_FFMPEG_RUNTIME` | 2 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:508 | yes |  |
 | `CIVICCAST_EXIT_D2_OLLAMA_RUNTIME` | 2 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:509 | yes |  |
@@ -205,24 +205,24 @@
 | `CIVICCAST_GSTREAMER_RUNTIME_ROOT` | 4 | civiccast/native/gstreamer_runtime.py:97 | yes |  |
 | `CIVICCAST_GSTREAMER_SOURCE_SEGMENT_SECONDS` | 2 | civiccast/egress/env_vars.py:15 | yes |  |
 | `CIVICCAST_GST_ALLOW_HARDWARE_DECODE` | 1 | civiccast/egress/gst/decode_policy.py:72 | yes |  |
-| `CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S` | 2 | civiccast/egress/gst/engine.py:343 | yes |  |
-| `CIVICCAST_GST_PREROLL_TIMEOUT_S` | 4 | civiccast/egress/gst/engine.py:248 | yes |  |
+| `CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S` | 2 | civiccast/egress/gst/engine.py:345 | yes |  |
+| `CIVICCAST_GST_PREROLL_TIMEOUT_S` | 4 | civiccast/egress/gst/engine.py:250 | yes |  |
 | `CIVICCAST_HLS_RELAY_BASE_PORT` | 1 | civiccast/egress/hls_relay.py:251 | yes |  |
 | `CIVICCAST_IA_ACCESS_KEY` | 4 | civiccast/archive/internet_archive.py:43 | yes |  |
 | `CIVICCAST_IA_ACCESS_VALUE` | 1 | civiccast/publish/providers.py:28 | yes |  |
 | `CIVICCAST_IA_COLLECTION` | 1 | civiccast/archive/internet_archive.py:63 | yes |  |
 | `CIVICCAST_IA_ITEM_PREFIX` | 1 | civiccast/archive/internet_archive.py:64 | yes |  |
 | `CIVICCAST_IA_SECRET_KEY` | 3 | civiccast/archive/internet_archive.py:44 | yes |  |
-| `CIVICCAST_INSTALLER_BOOTSTRAP_LOG` | 1 | civiccast/installer/service.py:3488 | yes |  |
+| `CIVICCAST_INSTALLER_BOOTSTRAP_LOG` | 1 | civiccast/installer/service.py:3498 | yes |  |
 | `CIVICCAST_INTERNET_ARCHIVE_ACCESS_KEY` | 4 | civiccast/installer/handoff.py:333 | yes |  |
-| `CIVICCAST_LAN_ONLY_STATION` | 3 | civiccast/app.py:2093 | yes |  |
+| `CIVICCAST_LAN_ONLY_STATION` | 3 | civiccast/app.py:2131 | yes |  |
 | `CIVICCAST_LIVE_CAPTION_ENGINE` | 2 | civiccast/ai_models/runtime.py:126 | yes |  |
 | `CIVICCAST_LIVE_HLS_ROOT` | 9 | civiccast/egress/headend.py:67 | yes |  |
 | `CIVICCAST_LIVE_MANIFEST_BASE_URL` | 5 | civiccast/live/finalization_worker.py:123 | yes |  |
 | `CIVICCAST_LIVE_SOURCE_PROBE_TIMEOUT_SECONDS` | 4 | civiccast/live/source_probe.py:35 | yes |  |
 | `CIVICCAST_LIVE_SOURCE_READINESS_TTL_SECONDS` | 1 | civiccast/live/readiness.py:78 | yes |  |
 | `CIVICCAST_LIVE_SURGE_BUFFER_SECONDS` | 3 | civiccast/live/surge_service.py:137 | yes |  |
-| `CIVICCAST_LIVE_SURGE_THRESHOLD` | 7 | civiccast/app.py:2255 | yes |  |
+| `CIVICCAST_LIVE_SURGE_THRESHOLD` | 7 | civiccast/app.py:2293 | yes |  |
 | `CIVICCAST_LOCAL_MEDIA_BASE_URL` | 8 | civiccast/cable/channel.py:40 | yes |  |
 | `CIVICCAST_MANAGED_STORAGE_DIR` | 6 | civiccast/installer/service.py:206 | yes |  |
 | `CIVICCAST_MEDIA_INTEGRITY_POLL_SECONDS` | 2 | civiccast/schedule/media_integrity_worker.py:100 | yes |  |
@@ -237,14 +237,14 @@
 | `CIVICCAST_MSVC_RUNTIME_DLL` | 2 | scripts/build_native_app_payload.py:1747 | yes |  |
 | `CIVICCAST_NAS_ARCHIVE_PATH` | 11 | civiccast/archive/local_nas.py:6 | yes |  |
 | `CIVICCAST_NAS_TARGET` | 1 | civiccast/publish/providers.py:32 | yes |  |
-| `CIVICCAST_NATIVE_REPORTED_VERSION` | 4 | civiccast/app.py:2110 | yes |  |
+| `CIVICCAST_NATIVE_REPORTED_VERSION` | 4 | civiccast/app.py:2148 | yes |  |
 | `CIVICCAST_NATIVE_ROOT` | 2 | scripts/verify_beta10_live_hls_media.py:359 | yes |  |
 | `CIVICCAST_NATIVE_STATION` | 10 | civiccast/app.py:905 | yes |  |
-| `CIVICCAST_NATIVE_STATION_MANIFEST` | 3 | civiccast/installer/service.py:6062 | yes |  |
-| `CIVICCAST_NATIVE_STATION_ROOT` | 3 | civiccast/installer/service.py:5386 | yes |  |
+| `CIVICCAST_NATIVE_STATION_MANIFEST` | 3 | civiccast/installer/service.py:6072 | yes |  |
+| `CIVICCAST_NATIVE_STATION_ROOT` | 3 | civiccast/installer/service.py:5396 | yes |  |
 | `CIVICCAST_NDI_FFMPEG` | 6 | civiccast/egress/ndi_relay.py:8 | yes |  |
 | `CIVICCAST_NDI_RELAY` | 2 | civiccast/egress/ndi_relay.py:62 | yes |  |
-| `CIVICCAST_NDI_RUNTIME_DIR` | 1 | civiccast/installer/service.py:6280 | yes |  |
+| `CIVICCAST_NDI_RUNTIME_DIR` | 1 | civiccast/installer/service.py:6290 | yes |  |
 | `CIVICCAST_NDI_SENDER` | 1 | civiccast/cable/ndi.py:119 | yes |  |
 | `CIVICCAST_NETWORK_PROBE_TIMEOUT_SECONDS` | 2 | civiccast/live/network_probe.py:57 | yes |  |
 | `CIVICCAST_NOTICE` | 4 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:290 | yes |  |
@@ -258,8 +258,8 @@
 | `CIVICCAST_OLLAMA_BASE_URL` | 1 | civiccast/alerting/self_test.py:250 | yes |  |
 | `CIVICCAST_OLLAMA_READY` | 2 | scripts/run_real_ai_release_proof.py:145 | yes |  |
 | `CIVICCAST_OLLAMA_REGISTRY_BASE_URL` | 1 | civiccast/apps/installer/src-tauri/src/acquisition_catalog.rs:253 | yes |  |
-| `CIVICCAST_OPERATOR_CONSOLE_DIST` | 7 | civiccast/app.py:2586 | yes |  |
-| `CIVICCAST_OPERATOR_CONSOLE_URL` | 3 | civiccast/installer/service.py:6014 | yes |  |
+| `CIVICCAST_OPERATOR_CONSOLE_DIST` | 7 | civiccast/app.py:2639 | yes |  |
+| `CIVICCAST_OPERATOR_CONSOLE_URL` | 3 | civiccast/installer/service.py:6024 | yes |  |
 | `CIVICCAST_PACK_PUBLIC_KEY_BASE64` | 2 | civiccast/apps/installer/src-tauri/src/native_packs.rs:244 | yes |  |
 | `CIVICCAST_PACK_SIGNING_KEY_ID` | 2 | civiccast/apps/installer/src-tauri/src/native_packs.rs:242 | yes |  |
 | `CIVICCAST_PAYLOAD_REPLACED` | 3 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:344 | yes |  |
@@ -273,19 +273,19 @@
 | `CIVICCAST_PROGRAM_LOG_POLL_SECONDS` | 1 | civiccast/programlog/materializer.py:71 | yes |  |
 | `CIVICCAST_PROGRAM_LOG_WORKER` | 3 | civiccast/programlog/materializer.py:15 | yes |  |
 | `CIVICCAST_PROVIDER_` | 6 | civiccast/agenda_import/config.py:8 | yes |  |
-| `CIVICCAST_PROVIDER_API_KEY` | 1 | civiccast/cli.py:960 | yes |  |
-| `CIVICCAST_PROVIDER_CREDENTIALS_FILE` | 1 | civiccast/installer/service.py:4693 | yes |  |
+| `CIVICCAST_PROVIDER_API_KEY` | 1 | civiccast/cli.py:962 | yes |  |
+| `CIVICCAST_PROVIDER_CREDENTIALS_FILE` | 1 | civiccast/installer/service.py:4703 | yes |  |
 | `CIVICCAST_PROVIDER_INTERNET_ARCHIVE` | 11 | civiccast/archive/internet_archive.py:6 | yes |  |
 | `CIVICCAST_PROVIDER_LOCAL_NAS` | 4 | civiccast/archive/local_nas.py:17 | yes |  |
 | `CIVICCAST_PROVIDER_MAIL` | 2 | civiccast/subscribe/smtp.py:6 | yes |  |
-| `CIVICCAST_PROVIDER_PROOFS_FILE` | 1 | civiccast/installer/service.py:4700 | yes |  |
+| `CIVICCAST_PROVIDER_PROOFS_FILE` | 1 | civiccast/installer/service.py:4710 | yes |  |
 | `CIVICCAST_PROVIDER_WEBHOOK` | 2 | civiccast/app.py:1247 | yes |  |
 | `CIVICCAST_PROVIDER_YOUTUBE` | 5 | civiccast/platform/providers.py:11 | yes |  |
 | `CIVICCAST_PUBLIC_ANALYTICS_ALLOWED_ORIGINS` | 3 | civiccast/app_platform/router.py:569 | yes |  |
 | `CIVICCAST_PUBLIC_ANALYTICS_KEY` | 4 | civiccast/analytics/models.py:152 | yes |  |
 | `CIVICCAST_PUBLIC_ANALYTICS_RATE_LIMIT_PER_MINUTE` | 1 | civiccast/app_platform/router.py:542 | yes |  |
 | `CIVICCAST_PUBLIC_BASE_URL` | 3 | civiccast/activitypub/config.py:59 | yes |  |
-| `CIVICCAST_PUBLIC_PORTAL_DIST` | 11 | civiccast/app.py:2577 | yes |  |
+| `CIVICCAST_PUBLIC_PORTAL_DIST` | 11 | civiccast/app.py:2630 | yes |  |
 | `CIVICCAST_R2_` | 2 | civiccast/load/real_edge_ramp.py:24 | yes |  |
 | `CIVICCAST_R2_ACCESS_KEY_ID` | 5 | civiccast/installer/service.py:216 | yes |  |
 | `CIVICCAST_R2_ACCOUNT_ID` | 5 | civiccast/installer/service.py:215 | yes |  |
@@ -297,14 +297,14 @@
 | `CIVICCAST_RECORDING_INPUT_PRESETS_JSON` | 1 | civiccast/recording/input_presets.py:19 | yes |  |
 | `CIVICCAST_RELEASE_ENGINEERING` | 1 | civiccast/installer/router.py:1023 | yes |  |
 | `CIVICCAST_RELEASE_RUN_ID` | 1 | scripts/verify-release.sh:11 | yes |  |
-| `CIVICCAST_RELOAD_COMMIT_TIMEOUT_S` | 2 | civiccast/egress/gst/engine.py:798 | yes |  |
-| `CIVICCAST_RELOAD_TIMEOUT_S` | 1 | civiccast/egress/gst/worker.py:719 | yes |  |
-| `CIVICCAST_REMOTE_CONTRIBUTION` | 6 | civiccast/app.py:1429 | yes |  |
+| `CIVICCAST_RELOAD_COMMIT_TIMEOUT_S` | 2 | civiccast/egress/gst/engine.py:800 | yes |  |
+| `CIVICCAST_RELOAD_TIMEOUT_S` | 1 | civiccast/egress/gst/worker.py:724 | yes |  |
+| `CIVICCAST_REMOTE_CONTRIBUTION` | 6 | civiccast/app.py:1467 | yes |  |
 | `CIVICCAST_REMOTE_CONTRIBUTION_HOME` | 2 | civiccast/installer/contribution_install.py:50 | yes |  |
 | `CIVICCAST_REMOTE_CONTRIBUTION_POLL` | 2 | civiccast/live/contribution/coprocess.py:81 | yes |  |
-| `CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL` | 3 | civiccast/app.py:3077 | yes |  |
+| `CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL` | 3 | civiccast/app.py:3130 | yes |  |
 | `CIVICCAST_REPORTING_WORK_DIR` | 2 | civiccast/reporting/asrun_outbox.py:139 | yes |  |
-| `CIVICCAST_REQUIRE_FCC_ACK` | 9 | civiccast/app.py:3202 | yes |  |
+| `CIVICCAST_REQUIRE_FCC_ACK` | 9 | civiccast/app.py:3261 | yes |  |
 | `CIVICCAST_RESIDENT_PORTAL_URL` | 5 | civiccast/installer/service.py:209 | yes |  |
 | `CIVICCAST_RETAINED_WHEEL_PATH` | 11 | civiccast/native/app_payload.py:65 | yes |  |
 | `CIVICCAST_RETENTION_POLL_SECONDS` | 2 | civiccast/schedule/retention_worker.py:114 | yes |  |
@@ -312,7 +312,7 @@
 | `CIVICCAST_ROLLBACK_ARTIFACT_PATH` | 1 | civiccast/installer/service.py:1510 | yes |  |
 | `CIVICCAST_ROOT_KEY` | 15 | civiccast/apps/installer/src-tauri/src/native_service_registration.rs:191 | yes |  |
 | `CIVICCAST_RUNTIME_ARTIFACT_MIRROR` | 2 | scripts/provision_native_runtime_dependencies.py:43 | yes |  |
-| `CIVICCAST_RUNTIME_BUILD_ID` | 1 | civiccast/app.py:2429 | yes |  |
+| `CIVICCAST_RUNTIME_BUILD_ID` | 1 | civiccast/app.py:2482 | yes |  |
 | `CIVICCAST_RUN_POSTGRES_TESTS` | 2 | civiccast/dr/report.py:22 | yes |  |
 | `CIVICCAST_SCHEDULED_RECORDING` | 2 | civiccast/recording/runtime.py:68 | yes |  |
 | `CIVICCAST_SCHEDULED_RECORDING_CAPTURE_SUBDIR` | 1 | civiccast/recording/runtime.py:78 | yes |  |
@@ -322,7 +322,7 @@
 | `CIVICCAST_SDI_FFMPEG` | 8 | civiccast/egress/router.py:1023 | yes |  |
 | `CIVICCAST_SDI_RELAY` | 2 | civiccast/egress/sdi_relay.py:70 | yes |  |
 | `CIVICCAST_SELF_HOSTED_RTX` | 1 | scripts/run_real_ai_release_proof.py:73 | yes |  |
-| `CIVICCAST_SETUP_NONCE` | 1 | civiccast/installer/service.py:6002 | yes |  |
+| `CIVICCAST_SETUP_NONCE` | 1 | civiccast/installer/service.py:6012 | yes |  |
 | `CIVICCAST_SMTP_FROM` | 2 | civiccast/subscribe/smtp.py:47 | yes |  |
 | `CIVICCAST_SMTP_HOST` | 2 | civiccast/subscribe/smtp.py:46 | yes |  |
 | `CIVICCAST_SMTP_PASSWORD` | 2 | civiccast/subscribe/smtp.py:67 | yes |  |
@@ -335,19 +335,19 @@
 | `CIVICCAST_SOAK_THRESHOLD` | 3 | civiccast/load/live_soak.py:77 | yes |  |
 | `CIVICCAST_STAFF_` | 1 | civiccast/installer/wizard.py:20 | yes |  |
 | `CIVICCAST_STAFF_TOKEN` | 3 | scripts/generate-openapi-artifacts.py:319 | yes |  |
-| `CIVICCAST_STAFF_TOKENS` | 18 | civiccast/cli.py:2067 | yes |  |
+| `CIVICCAST_STAFF_TOKENS` | 18 | civiccast/cli.py:2069 | yes |  |
 | `CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB` | 5 | civiccast/auth/tokens.py:171 | yes |  |
 | `CIVICCAST_STALL_TIMEOUT_S` | 7 | civiccast/egress/daemon.py:173 | yes |  |
 | `CIVICCAST_STARTUP_HOOK_TIMEOUT_SECONDS` | 1 | civiccast/app.py:647 | yes |  |
 | `CIVICCAST_STATION_BACKUPS` | 2 | civiccast/installer/station_state.py:389 | yes |  |
-| `CIVICCAST_STATION_ID` | 13 | civiccast/app.py:3221 | yes |  |
+| `CIVICCAST_STATION_ID` | 13 | civiccast/app.py:3280 | yes |  |
 | `CIVICCAST_STATION_MEDIA_LIBRARY` | 3 | civiccast/installer/station_state.py:388 | yes |  |
 | `CIVICCAST_STATION_NAME` | 3 | civiccast/installer/station_state.py:367 | yes |  |
 | `CIVICCAST_STATION_RECORDINGS` | 2 | civiccast/installer/station_state.py:389 | yes |  |
-| `CIVICCAST_STATION_STATE_PATH` | 5 | civiccast/installer/station_state.py:602 | yes |  |
+| `CIVICCAST_STATION_STATE_PATH` | 6 | civiccast/installer/station_state.py:602 | yes |  |
 | `CIVICCAST_STATION_STORAGE_ROOT` | 2 | civiccast/installer/station_state.py:1155 | yes |  |
 | `CIVICCAST_STATION_TZ` | 7 | civiccast/app.py:992 | yes |  |
-| `CIVICCAST_STEP` | 107 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:105 | yes |  |
+| `CIVICCAST_STEP` | 108 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:105 | yes |  |
 | `CIVICCAST_SUBSCRIBER_WEBHOOK_SECRET` | 6 | civiccast/installer/handoff.py:335 | yes |  |
 | `CIVICCAST_SUBSCRIBE_ACCEPT_V08_LEGACY_SECRETS` | 1 | civiccast/subscribe/secrets.py:171 | yes |  |
 | `CIVICCAST_SUBSCRIBE_ENCRYPTION_KEY` | 2 | civiccast/subscribe/secrets.py:95 | yes |  |
@@ -365,11 +365,11 @@
 | `CIVICCAST_SUPERVISED_ENV_VAR` | 5 | civiccast/app.py:415 | yes |  |
 | `CIVICCAST_SUPERVISOR_MODE` | 5 | civiccast/app.py:696 | yes |  |
 | `CIVICCAST_SUPERVISOR_MODE_CONTRACT` | 7 | civiccast/app.py:597 | yes |  |
-| `CIVICCAST_SUPERVISOR_STOP_WATCHDOG_SECONDS` | 1 | civiccast/native/supervisor/service.py:985 | yes |  |
-| `CIVICCAST_SUPPORT_BUNDLE_DIR` | 2 | civiccast/installer/service.py:5125 | yes |  |
+| `CIVICCAST_SUPERVISOR_STOP_WATCHDOG_SECONDS` | 1 | civiccast/native/supervisor/service.py:1078 | yes |  |
+| `CIVICCAST_SUPPORT_BUNDLE_DIR` | 2 | civiccast/installer/service.py:5135 | yes |  |
 | `CIVICCAST_TEARDOWN_EXIT` | 18 | civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh:136 | yes |  |
 | `CIVICCAST_TESTER_AVAILABLE_VERSION` | 1 | civiccast/installer/service.py:1484 | yes |  |
-| `CIVICCAST_TESTER_OPS_STATE_PATH` | 4 | civiccast/installer/service.py:4641 | yes |  |
+| `CIVICCAST_TESTER_OPS_STATE_PATH` | 4 | civiccast/installer/service.py:4651 | yes |  |
 | `CIVICCAST_TRANSCODE_FORMATS` | 3 | civiccast/schedule/media_lifecycle_models.py:137 | yes |  |
 | `CIVICCAST_TRANSCODE_OUTPUT_ROOT` | 1 | civiccast/schedule/media_lifecycle_worker.py:473 | yes |  |
 | `CIVICCAST_TRUSTED_ANALYTICS_RATE_LIMIT_PER_MINUTE` | 1 | civiccast/app_platform/router.py:540 | yes |  |
@@ -386,7 +386,7 @@
 | `CIVICCAST_TS_RELAY_BASE_PORT` | 1 | civiccast/egress/ts_relay.py:51 | yes |  |
 | `CIVICCAST_TURN_HOST` | 5 | civiccast/installer/contribution_install.py:22 | yes |  |
 | `CIVICCAST_TURN_PORT` | 6 | civiccast/installer/contribution_install.py:22 | yes |  |
-| `CIVICCAST_UPLOAD_DIR` | 48 | civiccast/app.py:3493 | yes |  |
+| `CIVICCAST_UPLOAD_DIR` | 48 | civiccast/app.py:3552 | yes |  |
 | `CIVICCAST_UPLOAD_MAX_BYTES` | 4 | civiccast/schedule/media_lifecycle_router.py:532 | yes |  |
 | `CIVICCAST_UV_EXE` | 4 | scripts/build_native_app_payload.py:960 | yes |  |
 | `CIVICCAST_VDO_COMMAND` | 2 | civiccast/installer/contribution_install.py:126 | yes |  |
@@ -404,14 +404,14 @@
 | `CIVICCAST_WEBHOOK_TIMEOUT_SECONDS` | 3 | civiccast/subscribe/webhook.py:39 | yes |  |
 | `CIVICCAST_WHISPER_BEAM_SIZE` | 5 | civiccast/captions/runtime.py:374 | yes |  |
 | `CIVICCAST_WHISPER_COMPUTE_TYPE` | 6 | civiccast/captions/runtime.py:700 | yes |  |
-| `CIVICCAST_WHISPER_CPP_EXE` | 2 | civiccast/captions/tap_worker.py:2655 | yes |  |
-| `CIVICCAST_WHISPER_CPP_MODEL_PATH` | 2 | civiccast/captions/tap_worker.py:2656 | yes |  |
+| `CIVICCAST_WHISPER_CPP_EXE` | 2 | civiccast/captions/tap_worker.py:2746 | yes |  |
+| `CIVICCAST_WHISPER_CPP_MODEL_PATH` | 2 | civiccast/captions/tap_worker.py:2747 | yes |  |
 | `CIVICCAST_WHISPER_CPU_THREADS` | 17 | civiccast/captions/runtime.py:118 | yes |  |
 | `CIVICCAST_WHISPER_DEVICE` | 9 | civiccast/captions/runtime.py:52 | yes |  |
 | `CIVICCAST_WHISPER_MODEL_PATH` | 5 | civiccast/captions/runtime.py:98 | yes |  |
 | `CIVICCAST_WHISPER_NUM_WORKERS` | 4 | civiccast/captions/runtime.py:766 | yes |  |
-| `CIVICCAST_WHISTLE_CHANNELS` | 1 | civiccast/ai_models/runtime.py:164 | no |  |
-| `CIVICCAST_WHISTLE_ROOT` | 1 | civiccast/ai_models/runtime.py:132 | no |  |
+| `CIVICCAST_WHISTLE_CHANNELS` | 1 | civiccast/ai_models/runtime.py:164 | yes |  |
+| `CIVICCAST_WHISTLE_ROOT` | 1 | civiccast/ai_models/runtime.py:132 | yes |  |
 | `CIVICCAST_YOUTUBE_CLIENT_ID` | 5 | civiccast/installer/service.py:212 | yes |  |
 | `CIVICCAST_YOUTUBE_CLIENT_SECRET` | 8 | civiccast/installer/handoff.py:334 | yes |  |
 | `CIVICCAST_YOUTUBE_MEDIA_ROOT` | 3 | civiccast/syndicate/youtube.py:15 | yes |  |

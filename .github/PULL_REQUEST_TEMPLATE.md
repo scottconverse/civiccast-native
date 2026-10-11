@@ -73,7 +73,7 @@ walked, console state. Point at durable evidence, not descriptions:
 - [ ] Module README and module CHANGELOG updated where applicable
 - [ ] No secrets, credentials, or PII in the diff
 - [ ] No closed architectural decisions reopened without an RFC
-- [ ] Native-line PRs: every review conversation resolved (branch protection blocks merge on open threads)
+- [ ] Native-line PRs: review conversations resolved; do not assume main branch protection was verified
 
 ## Related issues / PRs
 

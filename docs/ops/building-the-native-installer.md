@@ -1,16 +1,20 @@
 # Building the native Windows installer
 
 How to build `CivicCast (Native)_<version>_x64-setup.exe` on a Windows
-workstation, and what currently stops that build from finishing.
+workstation, including a historical reproducibility diagnosis.
 
 Nothing in this repository documented this before. Every step below was
 recovered by reading `.github/workflows/native-beta-candidate-artifacts.yml`
 and running it, so it is a record of what actually happens rather than what
 was intended.
 
-**Status: the build does not complete.** Stages 1–3 pass; stage 4 fails on a
-reproducibility pin. See "Where it stops" at the end — that section is the
-point of this document, not an aside.
+> **Status boundary (October 11, 2026):** The failure described below is a
+> historical diagnostic snapshot, not the current candidate build result.
+> Beta 12 source `a0c98cb7367dc106042ec89d35a91905470d350c` completed the
+> signed candidate-assets workflow in run `38097350705`; see the [Beta 12
+> verification record](../releases/v1.0.0-beta.12-verification.md). That build
+> result does not establish fresh-install, repair, or sustained-operation
+> acceptance. The diagnostic below is retained as history.
 
 ---
 
@@ -24,7 +28,10 @@ point of this document, not an aside.
 | `scripts/build_native_app_payload.py` | the application payload tree |
 | `scripts/build_native_installer.py` | the **unsigned** installer `.exe`, orchestrating all of the above |
 
-Signing is separate and needs the owner's credentials — see "Signing".
+Signing is separate from the local unsigned build. The candidate workflow can
+sign when its configured Azure credentials are available; the successful
+Beta 12 run demonstrates signing for that exact candidate, not credential
+availability on this workstation. See "Signing".
 
 ## Prerequisites
 
@@ -130,7 +137,7 @@ new source identity and artifact hashes.
 * `--skip-closure-build` — reuse an existing tree at `--tree-out`.
 * `--skip-app-build` — reuse an existing payload at `--app-tree-out`.
 
-## Where it stops
+## Historical diagnostic: where the earlier build stopped
 
 Measured on a clean Windows 11 workstation, 2026-08-20, with everything above
 verified as matching the reviewed identities:
@@ -254,17 +261,19 @@ produced a wheel **byte-identical** to this one — 4,346,817 bytes, SHA-256
 `2eb68720311d463c…`. Two independent builds here agree with each other and
 disagree with the pin, so the divergence is between machines, not between runs.
 
-Until the missing input is identified and pinned, this build cannot be
-completed by following its own recipe on a clean machine, and the same pin will
-fail in CI whenever the `windows-latest` image drifts. That has not been
-observed in CI only because the native candidate workflow has never completed a
-run in this repository.
+At the time of this earlier diagnosis, the native candidate workflow had not
+completed a run and the missing input remained unresolved. That status is
+superseded by the successful Beta 12 candidate-assets run recorded above.
+This historical run does not establish clean-machine reproducibility of every
+step in this guide; use the exact candidate-bound evidence for claims about a
+particular build.
 
 ## Signing
 
-`build_native_installer.py` produces an **unsigned** `.exe`. Signing happens in
-`native-beta-candidate-artifacts.yml` via Azure Artifact Signing and needs
-repository credentials that are not set here:
+`build_native_installer.py` produces an **unsigned** `.exe`. The candidate
+workflow signs through Azure Artifact Signing when its repository credentials
+are configured. Beta 12's signed artifact is recorded in its verification
+record. The required configuration names are:
 
 | Kind | Name |
 | --- | --- |

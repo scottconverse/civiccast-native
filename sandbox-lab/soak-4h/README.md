@@ -1,5 +1,10 @@
 # 4-hour soak kit (v3.0)
 
+> **Historical synthetic-encoder kit.** This tool emits color bars and tones
+> from standalone FFmpeg encoders; it does not establish Beta 12 three-channel
+> station operation or speech-caption performance. Use the current
+> [tester guide](../../docs/tester/START-HERE.md) for station evaluation.
+
 This is the kit the tester directive references at:
 
 `$Kit = "$DirectiveRepo\tester-handoff\v3.0\soak-4h"`
