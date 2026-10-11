@@ -23,8 +23,13 @@ activation with actual installer exit 123 because four signed station packs
 were missing and their embedded URLs were empty. No service or first-admin
 account was created. That previously used machine had residual files and model
 caches, so it is not clean-machine proof and does not test the repaired
-download. No completed fresh install or sustained-operation result for the
-repaired Beta 12 asset set is established.
+download. In a separate fresh offline Sandbox run using the repaired public
+kit, setup exited 0, station activation returned 0, the service was `Running`,
+and offline Ollama plus CPU faster-whisper self-tests passed. A follow-on
+first-admin/three-channel check failed with only the first Python traceback
+line captured, leaving its cause unresolved; complete UI/channel validation is
+not established. No repair, upgrade retest, or sustained-operation result was
+recorded. See the [captured fresh-install result](../ops/evidence/beta12-public-fresh-install-2026-10-11.json).
 
 The recorded Beta 11-to-Beta 12 CPU-only Sandbox upgrade exited 0, reached a
 healthy service/API at schema 0089, saved the initial-data preservation marker,

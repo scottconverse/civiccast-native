@@ -43,8 +43,11 @@ owner-authorized tester handoff.
    `-Install`. It stages runtime packs under `packs\`, verifies and
    extracts the station bundle into `station\`, then runs the signed
    `setup.exe` with `/S`. Do not substitute a source ZIP, older release,
-   or generic latest download. The repaired download has not yet been shown to
-   complete a fresh Beta 12 station installation; report only observed results.
+   or generic latest download. A fresh offline Sandbox setup and station
+   activation completed with exit 0 and the service `Running`; the follow-on
+   first-admin/three-channel check failed with only the first Python traceback
+   line captured, so its cause is unresolved. Full UI/channel validation is not
+   established; see the [verification record](releases/v1.0.0-beta.12-verification.md).
 2. If Windows shows **Windows protected your PC**, choose **More info** and
    confirm the publisher is Scott Converse before continuing. If the publisher,
    filename or hash is wrong, choose **Don't run** and contact your technical
@@ -98,10 +101,14 @@ proof that the station is ready for public cutover.
 
 ## Verification limits - read before operating a station
 
-The repaired public download path is available, but a completed fresh Beta 12
-installation, repair, or sustained-operation result for that path is not
-recorded. The R9 exit 123 was observed with the earlier incomplete asset set
-and does not test the repaired package.
+The repaired public kit completed fresh offline Sandbox setup and station
+activation: setup exited 0, the service was `Running`, and offline Ollama and
+CPU faster-whisper self-tests passed. A follow-on first-admin/three-channel
+check failed; only the generic first Python traceback line was captured, so its
+cause is unresolved and full UI/channel validation is not established. No
+repair, upgrade retest, or sustained-operation result is recorded. The R9 exit
+123 was observed with the earlier incomplete asset set and does not test the
+repaired package. See the [captured fresh-install result](ops/evidence/beta12-public-fresh-install-2026-10-11.json).
 
 The Beta 12 Sandbox upgrade evidence is limited: setup exited 0, the service
 and API were healthy at schema 0089, an initial-data marker survived, and

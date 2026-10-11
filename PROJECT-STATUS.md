@@ -22,7 +22,11 @@
 > The normal Beta 11 upgrade setup exited 0 and returned a running, healthy
 > service at schema 0089. The post-upgrade five-snapshot recorder failed on its
 > first JSON save; no five-snapshot PASS is claimed. The complete public
-> download and all hashes verified; the fresh offline Sandbox install is running. The R9 exit-123
+> download and all hashes verified. Fresh offline Sandbox setup and station
+> activation succeeded (setup exit 0, service `Running`, offline AI and CPU
+> caption self-tests passed); its follow-on first-admin/three-channel check
+> failed with only the first Python traceback line captured, so the cause is
+> unresolved and full UI/channel validation is not established. The R9 exit-123
 > attempt predates this distribution repair and remains a failed pre-repair
 > attempt. The published installer SHA-256 remains
 > `2dbc982d07b66f5bc760dfc1c1a943e9a3e100d3c3c7421ace74d6a2c744ab12`; source
@@ -79,8 +83,15 @@ capacity. At 20:31:16 MDT, the post-upgrade recorder wrapper failed during its
 first-minute JSON save with `Cannot convert value to type System.String.` No
 five-snapshot PASS was recorded. The owner deferred that wrapper issue as
 bookkeeping; interrupted repair and sustained-operation checks have no result.
-The pre-repair R9 attempt exited 123; a new fresh-install run using the repaired
-public asset set is pending its current download and Windows Sandbox run. Actual
+The pre-repair R9 attempt exited 123. The repaired public kit was subsequently
+downloaded and verified in a fresh offline Sandbox run: setup exited 0, the
+service was `Running`, station activation returned 0, and offline Ollama plus
+CPU faster-whisper self-tests passed. The bounded first-admin/three-channel
+check then failed; only `Traceback (most recent call last):` was captured from
+Python stderr, so the cause is unknown and complete first-admin/channel
+validation is not established. No repair, upgrade retest, or soak was run. See
+the [captured result](docs/ops/evidence/beta12-public-fresh-install-2026-10-11.json).
+Actual
 synthetic VDO peers previously exercised camera mute, audio gain mute and
 disconnect; this does not establish guest routing into the
 native broadcast compositor. The [verification record](docs/releases/v1.0.0-beta.12-verification.md)

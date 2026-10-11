@@ -37,9 +37,13 @@ service/API were healthy at schema 0089, and the initial-data preservation
 marker was saved. Initial three-channel HLS output and Whistle within capacity
 were observed. The recorder wrapper then failed during its first JSON save
 with `Cannot convert value to type System.String.`; no five-snapshot PASS
-was recorded. No completed install of the repaired full download, fresh-machine
-result, repair or sustained-operation result is established. See the [Beta 12
-verification record](../releases/v1.0.0-beta.12-verification.md) and [GitHub
+was recorded. A separate fresh offline Sandbox install using the repaired
+public kit exited 0, activated the station, left the service `Running`, and
+passed the offline Ollama and CPU faster-whisper self-tests. Its follow-on
+first-admin/three-channel check failed with only the first Python traceback
+line captured, so the cause is unresolved and complete UI/channel validation
+is not established. Repair, upgrade retest, and sustained-operation results
+are not recorded. See the [Beta 12 verification record](../releases/v1.0.0-beta.12-verification.md) and [GitHub
 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12).
 
 
@@ -161,13 +165,16 @@ before clicking through it.
    the complete kit and runs setup with `/S`. The helper is documented in
    the [Windows release-trust guide](../install/windows-release-trust.md). A
    successful download does not prove that the installation or station is
-   ready. Beta 12 has no completed fresh-install evidence for this repaired
-   distribution path.
+   ready. Beta 12 has setup and activation evidence for a fresh repaired-kit
+   install, but its follow-on first-admin/three-channel check failed with an
+   unresolved Python startup cause; complete UI/channel validation is not
+   established. See the verification record for the captured result.
 3. Follow the active owner-authorized handoff for the named package and checks.
    Beta 12's recorded upgrade outcome and failed R9 public-assets first-install
-   attempt are summarized above and detailed in the verification record. No
-   completed clean-machine or complete-kit install, repair, or sustained run is
-   established.
+   attempt are summarized above and detailed in the verification record. The
+   repaired-kit Sandbox setup/activation succeeded, but the follow-on check
+   failed without a recoverable Python error detail. No repair, upgrade retest,
+   complete UI/channel validation, or sustained run is established.
 4. Open the operator console on the station itself (the **Open operator
    console** button, or the **CivicCast Operator Console** shortcut).
 5. Create the first admin and save the recovery kit.

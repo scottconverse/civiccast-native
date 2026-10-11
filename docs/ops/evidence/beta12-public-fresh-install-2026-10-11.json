@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "product": "civiccast-native",
+  "product_version": "1.0.0-beta.12",
+  "candidate_source": "a0c98cb7367dc106042ec89d35a91905470d350c",
+  "installer_sha256": "2dbc982d07b66f5bc760dfc1c1a943e9a3e100d3c3c7421ace74d6a2c744ab12",
+  "scope": "Fresh public-download installation and bounded startup in offline Windows Sandbox; no soak.",
+  "run": {
+    "started_utc": "2026-10-11T08:22:44.2316586Z",
+    "setup_finished_utc": "2026-10-11T08:44:04.8079717Z",
+    "elapsed": "PT21M20.576S",
+    "elapsed_definition": "From checking-script start to setup completion; setup process started several seconds after the script.",
+    "finished_utc": "2026-10-11T08:44:07.6304458Z",
+    "overall_status": "FAIL",
+    "setup_exit_code": 0,
+    "service": "Running",
+    "postinstall": "SUCCESS"
+  },
+  "station_activation": {
+    "exit_code": 0,
+    "ollama": {
+      "runtime": "Ollama 0.30.6",
+      "offline_only": true,
+      "result": "passed",
+      "models": [
+        "gemma4:12b",
+        "gemma4:e4b",
+        "translategemma:4b"
+      ]
+    },
+    "caption_inference": {
+      "runtime": "faster-whisper 1.2.1; CTranslate2 4.8.1",
+      "model": "Systran/faster-whisper-medium@08e178d48790749d25932bbc082711ddcfdfbc4f",
+      "device": "cpu",
+      "compute_type": "int8",
+      "local_files_only": true,
+      "model_bin_bytes": 1527906378,
+      "model_bin_sha256": "9b45e1009dcc4ab601eff815b61d80e60ce3fd8c74c1a14f4a282258286b51ae",
+      "result": "passed"
+    }
+  },
+  "follow_on_check": {
+    "scope": "Bounded first-admin/three-channel startup check",
+    "result": "failed",
+    "captured_python_stderr": "Traceback (most recent call last):",
+    "cause": "Unavailable; only the first stderr line was captured.",
+    "interpretation": "Does not establish a confirmed product failure. Complete UI, first-admin, and three-channel validation remain unestablished."
+  },
+  "evidence_limits": [
+    "Host-side imports passed; this does not prove guest imports.",
+    "No repair, upgrade retest, or sustained operation/soak was run.",
+    "The original installer binary/source identity is unchanged; source installer/operator edits are not embedded in this EXE."
+  ],
+  "evidence_files": [
+    "result.json",
+    "activation-self-test.json",
+    "install-progress.log"
+  ]
+}

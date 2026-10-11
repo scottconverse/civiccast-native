@@ -9,8 +9,12 @@ current status.
 
 The release's public distribution was repaired on October 11: all 14 added
 station-bundle/helper assets match their local sizes and digests. The complete
-public download and all hashes verified; a fresh offline Sandbox install is
-running. The original R9 exit-123
+public kit was downloaded and verified. Fresh offline Sandbox setup exited 0,
+station activation and offline model self-tests passed, and the service was
+`Running`. A follow-on first-admin/three-channel check failed with only the
+first Python traceback line captured; its cause is unresolved and full
+first-admin/channel validation is not established. See the [captured result](docs/ops/evidence/beta12-public-fresh-install-2026-10-11.json).
+The original R9 exit-123
 attempt predates the repair and remains a failure. The published EXE is
 unchanged; later source installer/operator corrections are not embedded in it.
 
