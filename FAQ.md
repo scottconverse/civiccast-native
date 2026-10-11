@@ -9,6 +9,10 @@
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
 > the authored release-state record.
 
+> **Beta 13 candidate:** `v1.0.0-beta.13` is not published. Candidate
+> verification is pending the final signed installer and its bound evidence;
+> the Beta 12 release remains the download target.
+
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
 > shipping from this repository -- that described the OLD
@@ -111,6 +115,16 @@ attach to a published file. Summaries are sourced: quantitative claims must
 be backed by transcript timestamps before approval. Spanish translation can
 publish an additional WebVTT track while keeping the original English captions
 available.
+
+The Beta 13 candidate automatically retries Whistle while Whisper supplies
+backup captions. The 30-second initial cooldown and capped backoff delays
+(60, 120, 240, then 300 seconds) govern failed probes; retries continue while
+the affected channel has audio. A slow warning appears after 10 seconds. At
+30 seconds, the watchdog terminates an unresponsive child. The 210-second
+queue bound comes from the serialized request allowance `(3 × 2 + 1) × 30`,
+not the retry schedule. The default queue caps at 42 five-second WAV chunks;
+after sustained overload it can catch up only at a finite rate. Diagnostics
+are bounded and do not archive audio.
 
 Test builds may use simplified stand-in captions and summaries that are not
 meant for real meetings. A real beta station should use the local model

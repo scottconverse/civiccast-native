@@ -53,6 +53,7 @@ import concurrent.futures
 import ctypes
 import hashlib
 import logging
+import math
 import os
 import re
 import threading
@@ -161,6 +162,12 @@ _RETENTION_FIRST_VERDICT_WAIT_SECONDS = 1.0
 #: ``1`` restores the pre-U11 contract (pause on the first over-limit scan) and
 #: is the operator's escape hatch if the deferred path is ever wrong.
 DEFAULT_OVERLOAD_PERSISTENCE_SCANS = 15
+
+#: Waiting tap files normally stay at a 60-second ceiling (12 five-second
+#: WAVs). A runtime with a larger ``caption_backlog_grace_seconds`` advertises
+#: how long serialized inference can legitimately take; its file ceiling is
+#: sized from that grace and the configured segment duration.
+DEFAULT_WORKING_AUDIO_LIMIT_SEGMENTS = 12
 
 #: How many CATCH-UP SHEDS a channel may take inside
 #: :data:`DEFAULT_CATCH_UP_SHED_WINDOW_SECONDS` before the tap concludes the box
@@ -617,6 +624,21 @@ class CaptionTapWorker:
         self._retain_review_evidence = retain_review_evidence
         self._review_store = review_store
         self._segment_seconds = segment_seconds
+        try:
+            caption_backlog_grace_seconds = float(
+                getattr(runtime, "caption_backlog_grace_seconds", 0.0)
+            )
+        except (TypeError, ValueError):
+            caption_backlog_grace_seconds = 0.0
+        if not math.isfinite(caption_backlog_grace_seconds) or caption_backlog_grace_seconds < 0:
+            caption_backlog_grace_seconds = 0.0
+        self._caption_backlog_grace_seconds = caption_backlog_grace_seconds
+        if caption_backlog_grace_seconds > 0 and segment_seconds > 0:
+            self._working_audio_limit_segments = max(
+                1, math.ceil(caption_backlog_grace_seconds / segment_seconds)
+            )
+        else:
+            self._working_audio_limit_segments = DEFAULT_WORKING_AUDIO_LIMIT_SEGMENTS
         self._atomic_segments = atomic_segments
         if overlap_seconds <= 0:
             raise ValueError("Caption tap overlap_seconds must be greater than zero.")
@@ -698,6 +720,10 @@ class CaptionTapWorker:
         if overload_persistence_scans < 1:
             raise ValueError("Caption tap overload_persistence_scans must be at least 1.")
         self._overload_persistence_scans = overload_persistence_scans
+        #: Monotonic start of the current over-limit episode. Whistle advertises
+        #: a finite grace for the station-wide serialized request cycle; the
+        #: normal scan-count persistence rule still applies to every runtime.
+        self._overload_started_at: dict[str, float] = {}
         #: channel -> consecutive scans whose queued backlog was OVER the limit.
         #: Only this count decides the pause (see the scan loop): a transient
         #: overshoot must be drained, not punished. Touched only from the scan
@@ -711,7 +737,15 @@ class CaptionTapWorker:
         if catch_up_shed_window_seconds <= 0:
             raise ValueError("Caption tap catch_up_shed_window_seconds must be greater than zero.")
         self._catch_up_shed_limit = catch_up_shed_limit
-        self._catch_up_shed_window_seconds = catch_up_shed_window_seconds
+        # Keep the existing bounded shed budget reachable when Whistle's
+        # legitimate serialized cycle exceeds the generic five-minute window.
+        # The window must contain the allowed sheds plus the next shed attempt.
+        self._catch_up_shed_window_seconds = max(
+            catch_up_shed_window_seconds,
+            (catch_up_shed_limit + 1) * caption_backlog_grace_seconds
+            if caption_backlog_grace_seconds > 0 and catch_up_shed_limit > 0
+            else catch_up_shed_window_seconds,
+        )
         #: channel -> monotonic timestamps of its recent catch-up sheds. Pruned
         #: to the window whenever it is read or appended, so it cannot grow.
         #:
@@ -914,11 +948,12 @@ class CaptionTapWorker:
     def _note_backlog_depth(self, channel_id: str, depth: int) -> bool:
         """Count this scan for/against the overload persistence window.
 
-        Returns True when the backlog has been over ``max_backlog_segments`` on
-        this many CONSECUTIVE scans -- i.e. when the overshoot has persisted long
-        enough to be a collapse rather than a transient (U11 B2). Any scan at or
-        under the limit clears the streak, so a single overshoot followed by a
-        drained queue never pauses a channel.
+        Returns True after the backlog has exceeded ``max_backlog_segments``
+        for the configured consecutive-scan window. A runtime may advertise a
+        longer finite grace for serialized calls; that deadline is measured
+        from the first over-limit scan and must also expire before shedding.
+        Any scan at or under the limit clears both timers, so a transient that
+        drains never pauses a channel.
         """
 
         if depth <= self._max_backlog_segments:
@@ -926,12 +961,18 @@ class CaptionTapWorker:
             return False
         streak = self._overload_scan_streak.get(channel_id, 0) + 1
         self._overload_scan_streak[channel_id] = streak
-        return streak >= self._overload_persistence_scans
+        started_at = self._overload_started_at.setdefault(channel_id, self._monotonic())
+        if streak < self._overload_persistence_scans:
+            return False
+        if self._caption_backlog_grace_seconds <= 0:
+            return True
+        return self._monotonic() - started_at >= self._caption_backlog_grace_seconds
 
     def _reset_overload_persistence(self, channel_id: str) -> None:
         """Forget a channel's over-limit streak and its once-per-episode notice."""
 
         self._overload_scan_streak.pop(channel_id, None)
+        self._overload_started_at.pop(channel_id, None)
         self._overload_deferral_announced.discard(channel_id)
 
     def _announce_deferred_backlog(self, channel_id: str, depth: int) -> None:
@@ -2419,14 +2460,16 @@ class CaptionTapWorker:
         # every visible WAV is complete. Legacy FFmpeg segment output writes the
         # highest WAV in place; preserve its one-file settling guard.
         settled = numbered if self._atomic_segments else numbered[:-1]
-        if not self._retain_review_evidence:
+        if not self._retain_review_evidence or self._caption_backlog_grace_seconds > 0:
             # A hung inference child must not turn its continuing audio fork
             # into an unlimited recording. Never delete an in-flight owner's
-            # inputs; keep at most twelve waiting segments (60s at 5s cadence).
+            # inputs. Ordinary runtimes keep the 12-file (60s at 5s cadence)
+            # ceiling; a Whistle runtime advertises a longer finite grace, so
+            # its cap grows only enough to retain that much queued audio.
             owned = self._inflight_names(channel_dir.name)
             waiting = [item for item in settled if item[1].name not in owned]
-            if len(waiting) > 12:
-                discarded = waiting[:-12]
+            if len(waiting) > self._working_audio_limit_segments:
+                discarded = waiting[: -self._working_audio_limit_segments]
                 discarded_names = {path.name for _, path in discarded}
                 discarded_seconds = sum(self._chunk_span_seconds(path) for _, path in discarded)
                 self._record_discarded_batch(
@@ -2442,10 +2485,11 @@ class CaptionTapWorker:
                 _LOG.warning(
                     "Caption tap catch-up for channel %s: working-audio limit "
                     "discarded %d queued segments (%.1fs of audio); "
-                    "kept the newest 12 and all in-flight inputs.",
+                    "kept the newest %d and all in-flight inputs.",
                     channel_dir.name,
                     len(discarded),
                     discarded_seconds,
+                    self._working_audio_limit_segments,
                 )
         return settled
 

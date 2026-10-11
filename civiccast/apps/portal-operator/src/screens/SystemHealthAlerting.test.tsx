@@ -24,6 +24,27 @@ const greenStatus: RuntimeSafeToAirStatus = {
 }
 
 describe('RuntimeSafeToAirBanner', () => {
+  it.each([
+    ['whistle-recovering', 'Whisper fallback selected; checking Whistle recovery'],
+    ['whistle-recovery-cooldown', 'Whisper fallback selected; Whistle retry in 30s'],
+  ] as const)('shows %s while backup captions continue', (provider, label) => {
+    const { container } = render(
+      <RuntimeSafeToAirBanner status={{
+        ...greenStatus,
+        channels: [{
+          ...greenStatus.channels![0],
+          captions_expected: true,
+          live_captions: {
+            processing_state: 'processing',
+            provider_state: provider,
+            provider_retry_in_seconds: 30,
+          },
+        }],
+      }} />,
+    )
+    expect(container.textContent).toContain(label)
+  })
+
   it('renders nothing without a status', () => {
     const { container } = render(<RuntimeSafeToAirBanner status={undefined} />)
     expect(container.textContent).toBe('')

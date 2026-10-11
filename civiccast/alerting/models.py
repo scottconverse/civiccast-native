@@ -133,6 +133,8 @@ CaptionProviderState = Literal[
     "whistle-primary",
     "whisper-primary",
     "whisper-fallback",
+    "whistle-recovering",
+    "whistle-recovery-cooldown",
     "fallback-cooldown",
     "fallback-retry-ready",
     "unknown",

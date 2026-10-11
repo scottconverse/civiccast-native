@@ -1002,7 +1002,7 @@ export interface ChannelCaptionProcessingStatus {
   last_input_at?: string | null
   last_processed_at?: string | null
   audio_signal?: 'digital-silence' | 'audio-present' | 'unknown'
-  provider_state?: 'whistle-primary' | 'whisper-primary' | 'whisper-fallback' | 'fallback-cooldown' | 'fallback-retry-ready' | 'unknown'
+  provider_state?: 'whistle-primary' | 'whisper-primary' | 'whisper-fallback' | 'whistle-recovering' | 'whistle-recovery-cooldown' | 'fallback-cooldown' | 'fallback-retry-ready' | 'unknown'
   provider_retry_in_seconds?: number | null
   backlog_segments?: number
 }

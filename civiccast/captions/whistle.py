@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) The CivicCast Authors
-"""Isolated Whistle live transcription with sticky Whisper fallback."""
+"""Isolated Whistle live transcription with recoverable Whisper fallback."""
 
 from __future__ import annotations
 
 import base64
+import contextlib
 import ctypes
 import hashlib
 import json
@@ -12,12 +13,13 @@ import logging
 import math
 import os
 import queue
+import re
 import subprocess
 import sys
-import tempfile
 import threading
 import time
 from collections.abc import Callable, Collection, Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, Any, Protocol, cast
 
@@ -28,6 +30,39 @@ _LOG = logging.getLogger(__name__)
 WEIGHTS_SHA256 = "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dffeb"
 LIBRARY_SHA256 = "de2e2c39cd311fbd9971fad4736abc329ed970653674c203e149c4ef27fd1c62"
 _FALLBACK_RETRY_COOLDOWN_SECONDS = 30.0
+_WHISTLE_REQUEST_TIMEOUT_SECONDS = 30.0
+_WHISPER_REQUEST_TIMEOUT_SECONDS = 10.0
+_SLOW_REQUEST_WARNING_SECONDS = 10.0
+_RECOVERY_INITIAL_COOLDOWN_SECONDS = 30.0
+_RECOVERY_MAX_COOLDOWN_SECONDS = 300.0
+_STDERR_RING_BYTES = 16 * 1024
+_STDERR_LOG_TAIL_CHARS = 2048
+
+
+@dataclass(slots=True)
+class _ChannelRecovery:
+    next_attempt_at: float
+    retries: int = 0
+    latest_chunk: AudioChunk | None = None
+    latest_vocabulary: CustomVocabulary | None = None
+
+
+def _recovery_retry_delay(retries: int) -> float:
+    """After the initial 30s cooldown, use 60/120/240s and cap at five minutes."""
+
+    exponent = min(max(retries - 1, 0), 3)
+    return min(
+        _RECOVERY_INITIAL_COOLDOWN_SECONDS * 2 * (2**exponent),
+        _RECOVERY_MAX_COOLDOWN_SECONDS,
+    )
+
+
+def _speech_request_timeout(engine: str) -> float:
+    return (
+        _WHISTLE_REQUEST_TIMEOUT_SECONDS
+        if engine == "whistle"
+        else _WHISPER_REQUEST_TIMEOUT_SECONDS
+    )
 
 
 class _SpeechWorker(Protocol):
@@ -57,7 +92,7 @@ class _SpeechProcess:
         weights: Path,
         library: Path,
         fallback_config: Mapping[str, object],
-        timeout: float = 10.0,
+        timeout: float | None = None,
     ) -> None:
         if os.name != "nt":
             raise RuntimeError("Whistle's pinned native engine requires Windows")
@@ -70,14 +105,18 @@ class _SpeechProcess:
         import win32process
         import win32security
 
-        self._timeout = timeout
+        self._engine = engine
+        self._timeout = timeout if timeout is not None else _speech_request_timeout(engine)
         self._lock = threading.Lock()
         self._close_lock = threading.Lock()
         self._responses: queue.Queue[dict[str, object]] = queue.Queue(maxsize=1)
         self._sequence = 0
         self._process: subprocess.Popen[str] | None = None
         self._job: Any | None = None
-        self._stderr = tempfile.TemporaryFile()  # noqa: SIM115 -- owned across requests; close() releases it
+        self._stderr: IO[str] | None = None
+        self._stderr_tail = bytearray()
+        self._stderr_tail_lock = threading.Lock()
+        self._stderr_thread: threading.Thread | None = None
         self._closed = False
         try:
             token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), 8)
@@ -164,13 +203,14 @@ class _SpeechProcess:
                 argv,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                stderr=self._stderr,
                 text=True,
                 encoding="utf8",
                 env=env,
+                stderr=subprocess.PIPE,
                 creationflags=0x4 | 0x08000000 | 0x4000,
             )
             self._process = process
+            self._stderr = cast(IO[str], process.stderr)
             process_handle = win32api.OpenProcess(0x501, False, process.pid)
             try:
                 win32job.AssignProcessToJobObject(self._job, process_handle)
@@ -186,6 +226,10 @@ class _SpeechProcess:
                     thread_handle.Close()
             finally:
                 process_handle.Close()
+            self._stderr_thread = threading.Thread(
+                target=self._drain_stderr, daemon=True, name="caption-child-stderr"
+            )
+            self._stderr_thread.start()
             threading.Thread(target=self._read, daemon=True, name="caption-child-response").start()
             ready = self._receive(30)
             if ready.get("ready") != engine:
@@ -215,20 +259,153 @@ class _SpeechProcess:
             if not self._closed:
                 self._responses.put({"error": str(exc)})
 
-    def _receive(self, timeout: float) -> dict[str, object]:
+    def _drain_stderr(self) -> None:
+        stream = self._stderr
+        if stream is None:
+            return
+        reader = getattr(getattr(stream, "buffer", None), "read1", stream.read)
         try:
-            result = self._responses.get(timeout=timeout)
-        except queue.Empty as exc:
-            raise TimeoutError("isolated speech child missed its deadline") from exc
+            while True:
+                raw = reader(4096)
+                if not raw:
+                    return
+                data = raw.encode("utf8", "replace") if isinstance(raw, str) else raw
+                with self._stderr_tail_lock:
+                    self._stderr_tail.extend(data)
+                    del self._stderr_tail[:-_STDERR_RING_BYTES]
+        except (OSError, ValueError):
+            return
+
+    def _receive(
+        self,
+        timeout: float,
+        *,
+        deadline_at: float | None = None,
+        slow_warning_at: float | None = None,
+        request_context: tuple[str, str, int] | None = None,
+        request_started_at: float | None = None,
+    ) -> dict[str, object]:
+        deadline = deadline_at if deadline_at is not None else time.monotonic() + timeout
+        warned = False
+        while True:
+            now = time.monotonic()
+            remaining = deadline - now
+            if remaining <= 0:
+                raise TimeoutError("isolated speech child missed its deadline")
+            wait_for = remaining
+            if slow_warning_at is not None and not warned:
+                wait_for = min(wait_for, max(0.001, slow_warning_at - now))
+            try:
+                result = self._responses.get(timeout=wait_for)
+                if slow_warning_at is not None and not warned:
+                    now = time.monotonic()
+                    if now >= slow_warning_at:
+                        self._log_slow_request(
+                            request_context,
+                            "response",
+                            now - (request_started_at if request_started_at is not None else now),
+                        )
+                break
+            except queue.Empty as exc:
+                now = time.monotonic()
+                if slow_warning_at is not None and not warned and now >= slow_warning_at:
+                    warned = True
+                    self._log_slow_request(
+                        request_context,
+                        "response",
+                        now - (request_started_at if request_started_at is not None else now),
+                    )
+                if now >= deadline:
+                    raise TimeoutError("isolated speech child missed its deadline") from exc
         if "error" in result:
             raise RuntimeError(result["error"])
         return result
+
+    def _log_slow_request(
+        self,
+        context: tuple[str, str, int] | None,
+        phase: str,
+        elapsed: float,
+    ) -> None:
+        if context is None:
+            _LOG.warning("Whistle request is slow: phase=%s elapsed_s=%.3f", phase, elapsed)
+            return
+        channel, chunk_id, request_id = context
+        _LOG.warning(
+            "Whistle request is slow: channel=%s request_id=%s chunk=%s phase=%s elapsed_s=%.3f",
+            channel,
+            request_id,
+            chunk_id,
+            phase,
+            elapsed,
+        )
+
+    def _record_child_failure(
+        self,
+        context: tuple[str, str, int],
+        phase: str,
+        started_at: float,
+        error: BaseException,
+    ) -> None:
+        process = self._process
+        exit_status: int | None = None
+        pid = getattr(process, "pid", None)
+        if process is not None:
+            with contextlib.suppress(Exception):
+                exit_status = process.poll()
+        cpu_user: float | None = None
+        cpu_system: float | None = None
+        private_bytes: int | None = None
+        if pid is not None:
+            with contextlib.suppress(Exception):
+                import psutil
+
+                child = psutil.Process(pid)
+                cpu = child.cpu_times()
+                memory = child.memory_info()
+                cpu_user = round(float(cpu.user), 3)
+                cpu_system = round(float(cpu.system), 3)
+                private_value = getattr(memory, "private", None)
+                if private_value is not None:
+                    private_bytes = int(private_value)
+        stderr_tail = ""
+        stderr_lock = getattr(self, "_stderr_tail_lock", None)
+        if stderr_lock is not None:
+            with stderr_lock:
+                stderr_tail = bytes(
+                    getattr(self, "_stderr_tail", bytearray())[-_STDERR_LOG_TAIL_CHARS:]
+                ).decode("utf8", "replace")
+        channel, chunk_id, request_id = context
+        _LOG.error(
+            "Speech child request failed: engine=%s channel=%s request_id=%s chunk=%s elapsed_s=%.3f "
+            "phase=%s exception=%s error=%s exit_status=%s cpu_user_s=%s cpu_system_s=%s "
+            "private_bytes=%s stderr_tail=%s",
+            getattr(self, "_engine", "unknown"),
+            channel,
+            request_id,
+            chunk_id,
+            max(0.0, time.monotonic() - started_at),
+            phase,
+            type(error).__name__,
+            _sanitize_diagnostic_text(str(error), 512),
+            exit_status,
+            cpu_user,
+            cpu_system,
+            private_bytes,
+            _sanitize_diagnostic_text(stderr_tail, _STDERR_LOG_TAIL_CHARS),
+        )
 
     def request(self, chunk: AudioChunk, vocabulary: CustomVocabulary | None) -> object:
         with self._lock:
             if self._closed:
                 raise RuntimeError("speech child is closed")
             self._sequence += 1
+            started_at = time.monotonic()
+            deadline = started_at + self._timeout
+            warning_at = started_at + _SLOW_REQUEST_WARNING_SECONDS
+            channel = chunk.chunk_id.rsplit("-tap-", 1)[0]
+            context = (channel, chunk.chunk_id, self._sequence)
+            phase = "input"
             request: dict[str, object] = {
                 "id": self._sequence,
                 "chunk": chunk.model_dump(exclude={"pcm_s16le"}),
@@ -236,7 +413,6 @@ class _SpeechProcess:
                 "vocabulary": vocabulary.model_dump() if vocabulary else None,
             }
             try:
-                deadline = time.monotonic() + self._timeout
                 sent, errors = threading.Event(), []
 
                 def send() -> None:
@@ -251,15 +427,42 @@ class _SpeechProcess:
                         sent.set()
 
                 threading.Thread(target=send, daemon=True, name="caption-child-input").start()
-                if not sent.wait(self._timeout):
-                    raise TimeoutError("isolated speech child missed its input deadline")
+                warned = False
+                while not sent.is_set():
+                    now = time.monotonic()
+                    remaining = deadline - now
+                    if remaining <= 0:
+                        raise TimeoutError("isolated speech child missed its input deadline")
+                    wait_for = remaining
+                    if getattr(self, "_engine", "whistle") == "whistle" and not warned:
+                        wait_for = min(wait_for, max(0.001, warning_at - now))
+                    if sent.wait(wait_for):
+                        break
+                    now = time.monotonic()
+                    if (
+                        getattr(self, "_engine", "whistle") == "whistle"
+                        and not warned
+                        and now >= warning_at
+                    ):
+                        warned = True
+                        self._log_slow_request(context, phase, now - started_at)
                 if errors:
                     raise errors[0]
-                result = self._receive(max(0.001, deadline - time.monotonic()))
+                phase = "response"
+                result = self._receive(
+                    max(0.001, deadline - time.monotonic()),
+                    deadline_at=deadline,
+                    slow_warning_at=(
+                        warning_at if getattr(self, "_engine", "whistle") == "whistle" else None
+                    ),
+                    request_context=context,
+                    request_started_at=started_at,
+                )
                 if result.get("id") != self._sequence:
                     raise RuntimeError("speech child response identity mismatch")
                 return result["result"]
-            except BaseException:
+            except BaseException as exc:
+                self._record_child_failure(context, phase, started_at, exc)
                 self.close()
                 raise
 
@@ -288,20 +491,40 @@ class _SpeechProcess:
                             if pipe:
                                 pipe.close()
                 finally:
-                    self._stderr.close()
+                    stderr = getattr(self, "_stderr", None)
+                    stderr_thread = getattr(self, "_stderr_thread", None)
+                    if (
+                        stderr_thread is not None
+                        and stderr_thread is not threading.current_thread()
+                    ):
+                        stderr_thread.join(timeout=0.2)
+                    if stderr is not None:
+                        stderr.close()
+
+
+def _sanitize_diagnostic_text(value: str, limit: int) -> str:
+    """Keep bounded child diagnostics useful without exposing paths or controls."""
+
+    text = "".join(char for char in value if char in "\t\n\r" or char.isprintable())
+    text = re.sub(r"(?i)[A-Z]:[\\/][^\s\"']+", "<path>", text)
+    text = re.sub(r"\\\\[^\s\"']+", "<path>", text)
+    return re.sub(r"\s+", " ", text).strip()[-limit:]
 
 
 class WhistleRuntime:
-    """Per-channel primary isolation with a sticky switch to Whisper fallback.
+    """Per-channel Whistle isolation with recoverable Whisper fallback.
 
-    It never retries a failing native engine or emits partial primary results.
-    Failed fallback workers get one immediate replay, then a cooldown before retry.
+    Failed primary results are discarded. Recovery probes run in the background,
+    share the station-wide primary lock, and never publish their probe transcript.
     """
 
     channel_workers = 3
     device = "cpu"
     compute_type = "cactus-quants"
     num_workers = 3
+    caption_backlog_grace_seconds = int(
+        (channel_workers * 2 + 1) * _WHISTLE_REQUEST_TIMEOUT_SECONDS
+    )
 
     def __init__(
         self,
@@ -317,11 +540,17 @@ class WhistleRuntime:
         )
         self._primaries: dict[str, _SpeechWorker] = {}
         self._fallback: _SpeechWorker | None = None
-        self._failed: set[str] = set()
+        self._recoveries: dict[str, _ChannelRecovery] = {}
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.RLock()
         self._fallback_lock = threading.Lock()
         self._primary_lock = threading.Lock()
+        self._recovery_cancel = threading.Event()
+        self._recovery_token = 0
+        self._recovery_active_token: int | None = None
+        self._recovery_channel: str | None = None
+        self._recovery_worker: _SpeechWorker | None = None
+        self._recovery_thread: threading.Thread | None = None
         self._closed = False
         self._primary_error: str | None = None
         self._fallback_retry_after = 0.0
@@ -330,20 +559,29 @@ class WhistleRuntime:
         return False  # Whistle itself is always CPU, regardless of fallback.
 
     def live_provider_status(self, channel: str) -> tuple[str, int | None]:
-        """Return the selected live ASR path without probing or changing it."""
+        """Return the selected engine and recovery countdown without blocking."""
 
         # Fallback construction holds this guard while Whisper starts. Status
         # reporting must not make the caption scan wait on that initialization.
         if not self._guard.acquire(blocking=False):
             return "unknown", None
         try:
-            if self._primary_error or channel in self._failed:
+            if self._closed:
+                return "unknown", None
+            recovery = self._recoveries.get(channel)
+            if recovery is not None:
+                if self._fallback is None:
+                    retry_in = self._fallback_retry_after - time.monotonic()
+                    return "unknown", math.ceil(retry_in) if retry_in > 0 else None
+                if self._recovery_channel == channel:
+                    return "whistle-recovering", None
+                retry_in = max(0.0, recovery.next_attempt_at - time.monotonic())
+                return "whistle-recovery-cooldown", math.ceil(retry_in)
+            if self._primary_error:
                 if self._fallback is not None:
                     return "whisper-fallback", None
                 retry_in = self._fallback_retry_after - time.monotonic()
-                if retry_in > 0:
-                    return "fallback-cooldown", math.ceil(retry_in)
-                return "fallback-retry-ready", 0
+                return "unknown", math.ceil(retry_in) if retry_in > 0 else None
             return "whistle-primary", None
         finally:
             self._guard.release()
@@ -458,8 +696,143 @@ class WhistleRuntime:
             chunk.chunk_id,
             phase,
             type(error).__name__,
-            error,
+            _sanitize_diagnostic_text(str(error), 512),
         )
+
+    def _start_recovery_if_due(
+        self,
+        channel: str,
+        chunk: AudioChunk,
+        vocabulary: CustomVocabulary | None,
+    ) -> None:
+        with self._guard:
+            if self._closed or self._primary_error:
+                return
+            recovery = self._recoveries.get(channel)
+            if recovery is None:
+                return
+            recovery.latest_chunk = chunk
+            recovery.latest_vocabulary = vocabulary
+            if (
+                self._recovery_active_token is not None
+                or time.monotonic() < recovery.next_attempt_at
+            ):
+                return
+            self._recovery_token += 1
+            token = self._recovery_token
+            self._recovery_active_token = token
+            self._recovery_channel = channel
+            worker = threading.Thread(
+                target=self._run_recovery_probe,
+                args=(channel, token),
+                daemon=True,
+                name="civiccast-whistle-recovery",
+            )
+            self._recovery_thread = worker
+        try:
+            worker.start()
+        except RuntimeError as exc:
+            with self._guard:
+                recovery = self._recoveries.get(channel)
+                if recovery is not None and self._recovery_active_token == token:
+                    recovery.retries += 1
+                    recovery.next_attempt_at = time.monotonic() + _recovery_retry_delay(
+                        recovery.retries
+                    )
+                    self._recovery_active_token = None
+                    self._recovery_channel = None
+            _LOG.error("Whistle recovery worker could not start: channel=%s error=%s", channel, exc)
+
+    def _run_recovery_probe(self, channel: str, token: int) -> None:
+        replacement: _SpeechWorker | None = None
+        probe_chunk: AudioChunk | None = None
+        try:
+            with self._primary_lock:
+                with self._guard:
+                    recovery = self._recoveries.get(channel)
+                    if (
+                        self._closed
+                        or self._recovery_cancel.is_set()
+                        or self._recovery_active_token != token
+                        or recovery is None
+                    ):
+                        return
+                    probe_chunk = recovery.latest_chunk
+                    vocabulary = recovery.latest_vocabulary
+                if probe_chunk is None:
+                    return
+
+                replacement = self._factory("whistle")
+                with self._guard:
+                    if (
+                        self._closed
+                        or self._recovery_cancel.is_set()
+                        or self._recovery_active_token != token
+                    ):
+                        should_close = True
+                    else:
+                        self._recovery_worker = replacement
+                        should_close = False
+                if should_close:
+                    return
+
+                started = time.monotonic()
+                payload = replacement.request(probe_chunk, vocabulary)
+                _hypotheses(probe_chunk, payload)
+                with self._guard:
+                    if (
+                        self._closed
+                        or self._recovery_cancel.is_set()
+                        or self._recovery_active_token != token
+                    ):
+                        promoted = False
+                    else:
+                        self._primaries[channel] = replacement
+                        self._recoveries.pop(channel, None)
+                        self._recovery_worker = None
+                        promoted = True
+                if promoted:
+                    _LOG.info(
+                        "Whistle recovery succeeded: channel=%s probe_chunk=%s seconds=%.3f; "
+                        "next chunk uses primary",
+                        channel,
+                        probe_chunk.chunk_id,
+                        time.monotonic() - started,
+                    )
+                    replacement = None
+        except Exception as exc:
+            with self._guard:
+                recovery = self._recoveries.get(channel)
+                if (
+                    not self._closed
+                    and recovery is not None
+                    and self._recovery_active_token == token
+                ):
+                    recovery.retries += 1
+                    retry_seconds = _recovery_retry_delay(recovery.retries)
+                    recovery.next_attempt_at = time.monotonic() + retry_seconds
+                else:
+                    retry_seconds = None
+            _LOG.warning(
+                "Whistle recovery failed: channel=%s probe_chunk=%s retry_in_seconds=%s "
+                "exception=%s error=%s",
+                channel,
+                probe_chunk.chunk_id if probe_chunk is not None else "unknown",
+                retry_seconds,
+                type(exc).__name__,
+                _sanitize_diagnostic_text(str(exc), 512),
+            )
+        finally:
+            if replacement is not None:
+                try:
+                    replacement.close()
+                except Exception:
+                    _LOG.exception("Failed Whistle recovery child cleanup failed")
+            with self._guard:
+                if self._recovery_active_token == token:
+                    self._recovery_active_token = None
+                    self._recovery_channel = None
+                    self._recovery_worker = None
 
     def _primary_request(
         self, channel: str, chunk: AudioChunk, vocabulary: CustomVocabulary | None
@@ -522,25 +895,52 @@ class WhistleRuntime:
                 if len(self._locks) > self.channel_workers:
                     raise RuntimeError("Whistle live runtime supports at most three channels")
             with lock:
-                try:
-                    if self._primary_error:
-                        raise RuntimeError(self._primary_error)
-                    if channel in self._failed:
-                        raise RuntimeError("primary previously failed")
-                    payload = self._primary_request(channel, chunk, vocabulary)
-                    results = _hypotheses(chunk, payload)
-                except Exception as exc:
-                    if channel not in self._failed:
+                with self._guard:
+                    if self._closed:
+                        raise RuntimeError("caption runtime has been closed")
+                    primary_error = self._primary_error
+                    recovering = channel in self._recoveries
+                use_fallback = primary_error is not None or recovering
+                if recovering:
+                    self._start_recovery_if_due(channel, chunk, vocabulary)
+
+                if not use_fallback:
+                    try:
+                        payload = self._primary_request(channel, chunk, vocabulary)
+                        results = _hypotheses(chunk, payload)
+                    except Exception as exc:
+                        with self._guard:
+                            if self._closed:
+                                raise RuntimeError("caption runtime has been closed") from exc
+                            recovery = self._recoveries.get(channel)
+                            if recovery is None:
+                                recovery = _ChannelRecovery(
+                                    next_attempt_at=(
+                                        time.monotonic() + _RECOVERY_INITIAL_COOLDOWN_SECONDS
+                                    ),
+                                    latest_chunk=chunk,
+                                    latest_vocabulary=vocabulary,
+                                )
+                                self._recoveries[channel] = recovery
+                            else:
+                                recovery.latest_chunk = chunk
+                                recovery.latest_vocabulary = vocabulary
+                            worker = self._primaries.pop(channel, None)
                         _LOG.warning(
-                            "Whistle failed for %s; switching to Whisper: %s", channel, exc
+                            "Whistle failed for %s; switching to Whisper: %s",
+                            channel,
+                            _sanitize_diagnostic_text(str(exc), 512),
                         )
-                        self._failed.add(channel)
-                        worker = self._primaries.pop(channel, None)
                         if worker is not None:
                             worker.close()
+                        use_fallback = True
+
+                if use_fallback:
                     with self._guard:
                         if self._closed:
-                            raise RuntimeError("caption runtime has been closed") from exc
+                            raise RuntimeError("caption runtime has been closed")
+                    if primary_error is None:
+                        self._start_recovery_if_due(channel, chunk, vocabulary)
                     payload = self._fallback_request(channel, chunk, vocabulary)
                     fallback_hypotheses = cast(list[dict[str, object]], payload)
                     results = [
@@ -556,10 +956,21 @@ class WhistleRuntime:
 
     def close(self) -> None:
         with self._guard:
+            if self._closed:
+                return
             self._closed = True
-            workers = list(self._primaries.values()) + ([self._fallback] if self._fallback else [])
+            self._recovery_cancel.set()
+            workers = list(self._primaries.values())
+            if self._fallback is not None:
+                workers.append(self._fallback)
+            if self._recovery_worker is not None:
+                workers.append(self._recovery_worker)
             self._primaries.clear()
             self._fallback = None
+            self._recoveries.clear()
+            self._recovery_worker = None
+            self._recovery_active_token = None
+            self._recovery_channel = None
         for worker in workers:
             try:
                 worker.close()
@@ -572,6 +983,7 @@ class MixedCaptionRuntime:
 
     channel_workers = 3
     num_workers = 3
+    caption_backlog_grace_seconds = WhistleRuntime.caption_backlog_grace_seconds
     device = "mixed"
     compute_type = "mixed"
 

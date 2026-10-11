@@ -18,6 +18,7 @@ import os
 import subprocess
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -36,20 +37,16 @@ from scripts.release.candidate_manual import (
 )
 
 SOURCE_SHA = "a" * 40
-# publish_beta_candidate.verify_version_identity fail-closed-compares the
-# tag against the REAL, live civiccast._native_version.__version__ (see
-# get_native_source_version()) -- not a fixture/mock -- so these constants
-# must track the repo's actual current source version or every publish-path
-# test refuses with a version-identity mismatch that has nothing to do with
-# what each test is actually exercising. Derived through the script's own
-# seam rather than hardcoded: a release-prep bump (source version moves to
-# the next candidate while release-truth.yaml's `current` stays on the
-# published tag) must not break these tests, and the publisher publishes
-# whatever tag it is handed -- it never assumes a `staging` entry is the tag
-# being published. The release-truth.yaml these tests exercise is the
-# self-contained fixture in _base_repo_root(), not the repo's real file.
-VERSION = m.get_native_source_version()
+# Historical publisher fixtures exercise Beta 12's supported evidence contracts.
+# Pin their identity independently of the source tree's next release version;
+# the explicit Beta 13 case below exercises its separate upgrade/repair contract.
+VERSION = "1.0.0-beta.12"
 TAG = f"v{VERSION}"
+
+
+@pytest.fixture(autouse=True)
+def _historical_source_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(m, "get_native_source_version", lambda: VERSION)
 
 
 def test_run_powershell_isolates_only_psmodulepath(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,12 +132,13 @@ def _write_kit(
             "artifacts": artifacts,
         }
         (manual_dir / MANIFEST_FILENAME).write_text(json.dumps(manifest), encoding="utf-8")
-        create_candidate_manual_receipt(
-            manual_dir=manual_dir,
-            source_sha=SOURCE_SHA,
-            workflow_run_id="111",
-            repo_root=m.REPO_ROOT,
-        )
+        with patch("scripts.release.candidate_manual._candidate_version", return_value=VERSION):
+            create_candidate_manual_receipt(
+                manual_dir=manual_dir,
+                source_sha=SOURCE_SHA,
+                workflow_run_id="111",
+                repo_root=m.REPO_ROOT,
+            )
     return setup
 
 
@@ -320,6 +318,7 @@ DIRECT_BETA11_STATION_INDEX_SHA256 = (
     "9f107d1fc2f141bdc7ebd1b46aaca3639e624e3f24a4a34a34cc9d7e51952e84"
 )
 DIRECT_BETA11_VERSION = "1.0.0-beta.11"
+DIRECT_BETA13_VERSION = "1.0.0-beta.13"
 DIRECT_BETA12_CONSUMER_CONTRACT = "beta11-to-beta12-interrupted-upgrade-v1"
 DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT = "beta11-to-beta12-upgrade-and-d4-repair-v1"
 
@@ -415,12 +414,13 @@ def _write_direct_kit(
         ),
         encoding="utf-8",
     )
-    create_candidate_manual_receipt(
-        manual_dir=manual_dir,
-        source_sha=source_sha,
-        workflow_run_id=build_run_id,
-        repo_root=m.REPO_ROOT,
-    )
+    with patch("scripts.release.candidate_manual._candidate_version", return_value=candidate_version):
+        create_candidate_manual_receipt(
+            manual_dir=manual_dir,
+            source_sha=source_sha,
+            workflow_run_id=build_run_id,
+            repo_root=m.REPO_ROOT,
+        )
 
     members = [
         {
@@ -519,7 +519,7 @@ def _write_direct_consumer_receipt(
         evidence_dir = tmp_path / "consumer-evidence"
         manifest = {
             "civiccast": {
-                "version": VERSION.replace("-beta.", "b"),
+                "version": candidate_version.replace("-beta.", "b"),
                 "source_state": {"head": source_sha, "dirty": False},
             },
             "files": [],
@@ -538,7 +538,7 @@ def _write_direct_consumer_receipt(
             "setup_authenticode": {
                 "status": "Valid",
                 "signer_subject": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US",
-                "file_version": VERSION,
+                "file_version": candidate_version,
             },
             "installer_exit_code": 0,
             "before": {
@@ -557,13 +557,13 @@ def _write_direct_consumer_receipt(
                 },
             },
             "after": {
-                "display_version": VERSION,
+                "display_version": candidate_version,
                 "service_state": "Running",
                 "schedule_loop_enabled": True,
                 "install_location": "C:/Program Files/CivicCast (Native)",
                 "health": {
                     "status": "healthy",
-                    "version": VERSION,
+                    "version": candidate_version,
                     "schema": "current",
                     "live_captions": "healthy",
                     "schema_db_revision": "0089_contribution_media_control_requests",
@@ -612,7 +612,7 @@ def _write_direct_consumer_receipt(
                         "utc": sample_at.isoformat().replace("+00:00", "Z"),
                         "health": {
                             "status": "healthy",
-                            "version": VERSION,
+                            "version": candidate_version,
                             "schema": "current",
                             "live_captions": "healthy",
                         },
@@ -1212,12 +1212,12 @@ def _write_beta12_separate_upgrade_repair_contract(
     )
     normal_progress = _write_bound_text(
         evidence_dir / "normal-upgrade-install-progress-final.txt",
-        """[2026-10-09 05:20:00] step d3-engine: begin (old=1.0.0-beta.11)
+        f"""[2026-10-09 05:20:00] step d3-engine: begin (old=1.0.0-beta.11)
 [2026-10-09 05:22:00] step d3-engine: evidence route=UPGRADE engine_exit=0
 [2026-10-09 05:25:00] step d4-provision: returned 0
 [2026-10-09 05:26:00] step d4-service-registration: returned 0
 [2026-10-09 05:27:00] step d4-firewall-rule: returned 0
-[2026-10-09 05:28:00] postinstall: SUCCESS (InstalledVersion 1.0.0-beta.12 recorded)
+[2026-10-09 05:28:00] postinstall: SUCCESS (InstalledVersion {candidate_version} recorded)
 """,
     )
     evidence["beta11_to_beta12_upgrade"] = {
@@ -1609,6 +1609,33 @@ def test_beta12_direct_receipt_verifies_separate_upgrade_and_d4_repair_contract(
         "runtime": "PASS (five minutes, three channels before and after repair)",
         "caption_performance_advisory": "No caption-performance findings observed; these observations are not an automatic publisher gate.",
     }
+
+
+def test_beta13_direct_receipt_accepts_the_stable_separate_upgrade_and_repair_contract(
+    tmp_path,
+):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path,
+        kit_dir,
+        candidate_version=DIRECT_BETA13_VERSION,
+        sandbox_contract="beta12-separate",
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    setup, packs, summary = m.verify_consumer_evidence_receipt(
+        receipt_path=receipt_path,
+        kit_dir=kit_dir,
+        artifact_source_sha=DIRECT_SOURCE_SHA,
+        build_run_id="333",
+        candidate_version=DIRECT_BETA13_VERSION,
+    )
+
+    assert setup.name == f"CivicCast (Native)_{DIRECT_BETA13_VERSION}_x64-setup.exe"
+    assert len(packs) == 5
+    assert receipt["consumer_contract"] == DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT
+    assert summary["beta11_to_beta12_upgrade"] == "PASS"
+    assert summary["beta12_interrupted_install_repair"] == "PASS"
 
 
 def test_beta12_d4_repair_accepts_caption_only_degraded_precondition_health(tmp_path):
@@ -3055,6 +3082,9 @@ def test_live_publish_draft_verify_undraft_order_and_release_truth(tmp_path, mon
         DOCX_FILENAME,
         MANIFEST_FILENAME,
         "candidate-manual-receipt.json",
+        "station-models.zip.001",
+        "station-models.json",
+        "download_windows_release_artifacts.ps1",
         "SHA256SUMS.txt",
         f"{setup.name}.sidecar.json",
     ]

@@ -123,6 +123,12 @@ class _BlockingRuntime(_ScriptedRuntime):
         yield from super().transcribe(chunks, vocabulary=vocabulary)
 
 
+class _WhistleBacklogRuntime(_BlockingRuntime):
+    """Blocking runtime with Whistle's three-channel backlog allowance."""
+
+    caption_backlog_grace_seconds = 210.0
+
+
 class _FakeClock:
     """A ``time.monotonic``-shaped clock the test drives explicitly.
 
@@ -2814,6 +2820,94 @@ class TestAsyncCaptionQueue:
             time.sleep(0.02)
         assert not worker._channel_futures
         assert list((channel_dir / "processed").glob("*.wav"))
+
+    @pytest.mark.parametrize(
+        ("elapsed_seconds", "expected_dropped"),
+        [(30.0, 0), (210.0, 1)],
+        ids=("brief-slow-cycle", "grace-expired"),
+    )
+    def test_whistle_backlog_waits_for_its_finite_grace_before_shedding(
+        self,
+        tmp_path: Path,
+        elapsed_seconds: float,
+        expected_dropped: int,
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        channel = "public"
+        channel_dir = tap_root / channel
+        channel_dir.mkdir(parents=True)
+        runtime = _WhistleBacklogRuntime()
+        clock = _FakeClock()
+        worker = CaptionTapWorker(
+            retain_review_evidence=False,
+            tap_root=tap_root,
+            caption_work_dir=tmp_path / "egress",
+            runtime=runtime,
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            max_channel_workers=1,
+            monotonic=clock,
+        )
+
+        try:
+            for index in range(2):
+                _write_wav(channel_dir / f"chunk-{index:06d}.wav", seconds=5.0)
+            worker.run_once(wait_for_results=False)
+            assert runtime.started.wait(timeout=2.0)
+
+            # The first two chunks are in the blocked batch. Three further
+            # settled chunks exceed the tap's ordinary max-2 backlog while the
+            # request runs. Fifteen scans reproduce the shipped 30s threshold.
+            for index in range(2, 5):
+                _write_wav(channel_dir / f"chunk-{index:06d}.wav", seconds=5.0)
+            for _ in range(_OVERLOAD_PERSISTENCE_WINDOW):
+                worker.run_once(wait_for_results=False)
+
+            clock.advance(elapsed_seconds)
+            runtime.release.set()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and worker._channel_futures:
+                time.sleep(0.02)
+            assert not worker._channel_futures
+
+            result = worker.run_once(wait_for_results=False)
+            assert result.dropped_overload_segments == expected_dropped
+            assert result.overloaded_channels == ()
+        finally:
+            runtime.release.set()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and worker._channel_futures:
+                time.sleep(0.02)
+            worker._shutdown_channel_executor()
+
+    @pytest.mark.parametrize("retain_review_evidence", [False, True])
+    def test_whistle_waiting_audio_cap_matches_its_grace_in_both_retention_modes(
+        self,
+        tmp_path: Path,
+        retain_review_evidence: bool,
+    ) -> None:
+        tap_root = tmp_path / "tap"
+        channel_dir = tap_root / "public"
+        channel_dir.mkdir(parents=True)
+        runtime = _WhistleBacklogRuntime()
+        worker = CaptionTapWorker(
+            retain_review_evidence=retain_review_evidence,
+            tap_root=tap_root,
+            caption_work_dir=tmp_path / "egress",
+            runtime=runtime,
+            review_store=InMemoryCaptionReviewStore(),
+            segment_seconds=5.0,
+            atomic_segments=True,
+            max_channel_workers=1,
+        )
+        for index in range(45):
+            _write_wav(channel_dir / f"chunk-{index:06d}.wav", seconds=5.0)
+
+        settled = worker._settled_segments(channel_dir)
+
+        assert len(settled) == 42
+        assert settled[0][0] == 3
 
 
 class TestPublishFailureDoesNotAbortThePass:

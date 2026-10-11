@@ -37,6 +37,15 @@ toccolor: black
 > release state -- read it rather than any version number quoted in prose,
 > including this one.
 >
+> `v1.0.0-beta.13` is an unpublished candidate. Its candidate verification is
+> pending the final signed installer and bound installation evidence; Beta 12
+> remains the current published release and download target.
+>
+> **Beta 13 candidate.** `v1.0.0-beta.13` is being prepared but is not
+> published. Its candidate verification record remains pending final signed
+> installer identity and bound installation evidence. Beta 12 remains the
+> current published download target.
+>
 > The `v1.0.0-rcNN` line this document used to describe is the RETIRED
 > WSL2/Linux deployment, published from the archived repository. Its release
 > and verification artifacts are not in this repository and its rc numbering
@@ -94,7 +103,15 @@ console" below). Selection is also exposed over the staff API at
 The current defaults and component identities are:
 
 1. **Live captions** use the included Whistle CPU engine as the primary and
-   Whisper fallback. **Recorded-media captions** use the selected local
+   Whisper fallback. In the Beta 13 candidate, failed Whistle probes use a
+   30-second initial cooldown followed by capped delays of 60, 120, 240 and
+   300 seconds; retries continue while the affected channel has audio. A
+   10-second slow warning is emitted, and the 30-second watchdog terminates
+   an unresponsive child. The 210-second queue bound is `(3 × 2 + 1) × 30`
+   seconds of serialized request allowance; it is not a delivery guarantee.
+   The default queue holds at most 42 five-second WAV chunks, and catch-up
+   after sustained overload is finite. Diagnostics are bounded; audio is not
+   archived. **Recorded-media captions** use the selected local
    faster-whisper model; Medium is the required tier and Large is optional.
    Check the current catalog on the station for the actual selection.
 2. **Summary** uses an *adaptive* local default gated on GPU presence AND RAM,
@@ -1159,7 +1176,7 @@ questions, and monitoring setups should not confuse them.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.12","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.13","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the

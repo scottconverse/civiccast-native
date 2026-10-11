@@ -1,13 +1,17 @@
-# CivicCast beta.12 - Field-Test Quick Start
+# CivicCast beta.13 candidate - Field-Test Quick Start
 
 This is a field-test guide for the native Windows beta. It is not a production
-cutover instruction. `v1.0.0-beta.12` is the current published GitHub
+cutover instruction. `v1.0.0-beta.13` is an unpublished candidate; `v1.0.0-beta.12` remains the current published GitHub
 pre-release, published October 10, 2026, with the station-download distribution
 repair added October 11. The candidate is source
 `a0c98cb7367dc106042ec89d35a91905470d350c`, producer run `38097350705`.
 See the [Beta 12 verification record](releases/v1.0.0-beta.12-verification.md)
 for observed results and limits. Follow only the exact procedure in the
 owner-authorized tester handoff.
+
+Beta 13 candidate verification is pending the final signed installer and
+candidate-bound evidence. Use only the Beta 12 release page for downloads until
+the Beta 13 release is published.
 
 ## Before you begin
 
@@ -131,6 +135,16 @@ pass. Supported NVIDIA CUDA systems may accelerate Whisper work, but CPU-only
 Medium Whisper fallback has not demonstrated real-time capacity. AMD or Intel
 graphics do not imply Whisper GPU acceleration.
 
+The Beta 13 candidate automatically retries Whistle while Whisper supplies
+backup captions. Failed probes use a 30-second initial cooldown, then capped
+delays of 60, 120, 240 and 300 seconds; retries continue while the affected
+channel has audio. It reports a slow warning after 10 seconds, and the
+30-second watchdog terminates an unresponsive child. The 210-second queue
+bound is `(3 × 2 + 1) × 30` seconds of serialized request allowance, not a
+delivery guarantee. The default queue holds up to 42 five-second WAV chunks;
+catch-up after sustained overload is finite. Diagnostics are bounded and no
+audio archive is created.
+
 See the [Beta 12 verification record](releases/v1.0.0-beta.12-verification.md)
 for package scope and limitations. SDI hardware, a cable headend and production
 cutover require separate evidence.
@@ -139,7 +153,8 @@ cutover require separate evidence.
 
 Keep the signed kit, trusted handoff, installer log, recovery-kit confirmation,
 and candidate-bound tester evidence together. A successful local installation
-or soak is evidence for the named candidate only. Beta 12 is the current public
-pre-release, with the incomplete verification scope described above. Field
+or soak is evidence for the named candidate only. Beta 12 remains the current
+public pre-release, with the incomplete verification scope described above;
+Beta 13 is not published and its verification is pending. Field
 results inform suitability for your station; production cutover remains the
 station owner's decision.

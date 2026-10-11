@@ -2,6 +2,8 @@
 
 The current release is **`v1.0.0-beta.12`**, the signed native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
 
+`v1.0.0-beta.13` is an unpublished candidate. This guide and its download commands continue to target the published Beta 12 package until Beta 13 has a signed release and completed verification.
+
 [Beta 12 downloads](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.12) · [User manual](docs/USER-MANUAL.md) · [Package verification](docs/releases/v1.0.0-beta.12-verification.md)
 
 ## Download and install the complete station
@@ -30,7 +32,7 @@ Open **CivicCast Operator Console** from the desktop or Start menu, or visit <ht
 2. Print or save the recovery kit somewhere safe.
 3. Open **System Health**, then configure storage, channels and media or live sources.
 
-Whistle is the CPU primary for live captions. Whisper supplies recorded transcription and live fallback; supported NVIDIA hardware can accelerate Whisper. The installation path does not require a dedicated GPU.
+The Beta 13 candidate automatically retries Whistle while Whisper supplies backup captions. Whistle is the CPU primary for live captions. Whisper supplies recorded transcription and live fallback; supported NVIDIA hardware can accelerate Whisper. The installation path does not require a dedicated GPU.
 
 ## Existing or partially installed stations
 

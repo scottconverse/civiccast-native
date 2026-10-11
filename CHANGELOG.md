@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `v1.0.0-beta.13` candidate: automatically retry Whistle while Whisper supplies backup captions. Candidate verification and publication are pending.
 - Clarify visible caption setup and AI-model help: Whistle is the included CPU live primary; Whisper Medium/Large are fallback and recording models. Remove old trim-editor sprint forecasts. These source changes require a replacement package before they appear in installed software.
 
 ## [1.0.0-beta.12] - 2026-10-10
