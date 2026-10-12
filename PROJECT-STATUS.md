@@ -10,19 +10,21 @@
 > are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
 > source audit, not the current defect list.
 
-> **Current published release: v1.0.0-beta.13**, a GitHub pre-release, not a
-> production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
-> The signed package is bound to source 8053fb1cf05b989fb1f23e650893cc6abfa659d4
-> and producer run [38160778457](https://github.com/scottconverse/civiccast-native/actions/runs/38160778457).
-> The release has 26 assets. The normal Beta 11-to-Beta 13 upgrade, one repair
-> after an interrupted install, and a fresh install each completed a five-minute
-> observation across all three channels. See the
-> [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
+> **Current published release: v1.0.0-beta.14**, a signed GitHub pre-release, not a
+> production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14).
+> The signed package is bound to source `44525c14265d21ae461c2435d4d5a9a6acd58af3`
+> and producer run [38217950172](https://github.com/scottconverse/civiccast-native/actions/runs/38217950172).
+> The installer SHA-256 is `e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f`.
+> The [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md)
+> is authoritative for package integrity, installation evidence and limits.
 
-Beta 14 is in development on `codex/beta14-field-fixes`. The
-[execution record](docs/ops/beta14-task-completion.md) tracks all 28 goals,
-initial Sandbox installation and final real host installation. No Beta 14
-build, installation or publication is claimed yet.
+The [Beta 14 execution record](docs/ops/beta14-task-completion.md) tracks
+the owner-authorized field fixes and their completion evidence. The release
+verification record states which installation checks were completed and what
+those observations do and do not establish; no extended soak is claimed. A fresh
+offline Sandbox install and one normal development-host upgrade both exited 0.
+After the host upgrade, the service was healthy at Beta 14 schema 89, with all
+three channels Whistle-primary and within capacity.
 
 ## Historical Beta 11 package and evidence
 

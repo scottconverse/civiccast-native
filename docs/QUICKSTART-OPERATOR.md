@@ -1,11 +1,10 @@
 # CivicCast Beta 14 - Field-Test Quick Start
 
-Beta 13 remains the current published release. Beta 14 is an unpublished
-candidate; its [verification record](releases/v1.0.0-beta.14-verification.md)
-currently reports focused component results and no built installer, Sandbox
-installation, real-host installation or publication. Follow the exact release
-handoff when a Beta 14 kit is available; do not treat Beta 13 as the Beta 14
-candidate.
+This quick start covers CivicCast Beta 14 and its complete kit: signed
+installer, matching runtime packs, and the complete signed station-model
+bundle. See the [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md)
+for package identity and installation results, and the
+[release-truth manifest](releases/release-truth.yaml) for published releases.
 
 ## Before you begin
 
@@ -29,9 +28,8 @@ candidate.
    `-Install`. It stages runtime packs under `packs\`, verifies and extracts
    the station bundle into `station\`, then runs `setup.exe /S`. Keep the
    verified files together; do not substitute a source ZIP, older release or
-   generic latest download. Beta 14 has no installer or installation result yet;
-   the verification record is the current source for its evidence and pending
-   checks.
+   generic latest download. The verification record is the source for Beta 14's
+   installation evidence.
 2. If Windows shows **Windows protected your PC**, choose **More info** and
    confirm the publisher is Scott Converse before continuing. If the publisher,
    filename or hash is wrong, choose **Don't run** and contact your technical

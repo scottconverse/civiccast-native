@@ -2200,6 +2200,88 @@ def test_direct_physical_host_install_uses_host_evidence_without_sandbox_claims(
     assert "not an automatic publisher gate" in notes
 
 
+@pytest.mark.parametrize(
+    "tamper", (None, "missing-check", "false-check", "unbound-driver", "wrong-process")
+)
+def test_physical_host_accepts_only_bound_original_precondition_attestation(
+    tmp_path, monkeypatch, tamper
+):
+    kit_dir = tmp_path / "direct-kit"
+    receipt_path, _ = _write_direct_consumer_receipt(
+        tmp_path, kit_dir, consumer_mode="physical-host", candidate_version="1.0.0-beta.14"
+    )
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    install_ref = receipt["evidence"]["host_install"]["receipt"]
+    install_path = Path(install_ref["path"])
+    install = json.loads(install_path.read_text(encoding="utf-8"))
+    # The preserved driver is source evidence, not a fabricated before snapshot.
+    driver = tmp_path / "original-driver.ps1"
+    driver.write_text("preserved original observer source", encoding="utf-8")
+    monkeypatch.setattr(m, "_BETA14_ORIGINAL_HOST_DRIVER_SHA256", m.sha256_file(driver))
+    failure = {
+        "kind": "civiccast-native-exact-host-install",
+        "stage": "failed",
+        "candidate_version": "1.0.0-beta.14",
+        "source_sha": DIRECT_SOURCE_SHA,
+        "build_run_id": "333",
+        "script_stack_trace": "at <ScriptBlock>, run-host-install.ps1: line 266",
+        "error": "Installed native app-payload verification failed with exit code 1. See original log",
+    }
+    process = {
+        "kind": "civiccast-native-exact-host-install",
+        "stage": "installer-exited",
+        "candidate_version": "1.0.0-beta.14",
+        "source_sha": DIRECT_SOURCE_SHA,
+        "build_run_id": "333",
+        "setup_sha256": install["setup_sha256"],
+        "installer_exit_code": 0,
+    }
+    if tamper == "wrong-process":
+        process["setup_sha256"] = "f" * 64
+    attestation = {
+        "kind": "civiccast-host-preconditions-from-original-control-flow",
+        "expected_before_version": "1.0.0-beta.11",
+        "original_driver": {"path": str(driver), "sha256": m.sha256_file(driver)},
+        "original_failure": _write_bound_json(tmp_path / "original-failure.json", failure),
+        "installer_process": _write_bound_json(tmp_path / "original-process.json", process),
+        "checks": dict.fromkeys(
+            (
+                "service_running",
+                "schedule_loop_enabled",
+                "accepted_health",
+                "schema_current",
+                "schema_revision_pair_matches",
+                "install_location_unchanged",
+                "database_data_path_unchanged",
+                "database_data_present_before_and_after",
+            ),
+            True,
+        ),
+    }
+    if tamper == "missing-check":
+        attestation["checks"].pop("accepted_health")
+    elif tamper == "false-check":
+        attestation["checks"]["schema_current"] = False
+    elif tamper == "unbound-driver":
+        attestation["original_driver"]["sha256"] = "f" * 64
+    install["before"] = {"precondition_attestation": attestation}
+    install_ref.update(_write_bound_json(install_path, install))
+    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+    kwargs = {
+        "receipt_path": receipt_path,
+        "kit_dir": kit_dir,
+        "artifact_source_sha": DIRECT_SOURCE_SHA,
+        "build_run_id": "333",
+        "candidate_version": "1.0.0-beta.14",
+    }
+    if tamper:
+        with pytest.raises(m.PublishError):
+            m.verify_consumer_evidence_receipt(**kwargs)
+    else:
+        _, _, summary = m.verify_consumer_evidence_receipt(**kwargs)
+        assert summary["consumer_mode"] == "physical-host"
+
+
 def test_direct_physical_host_accepts_runtime_status_without_channel_state(tmp_path, monkeypatch):
     repo_root = _base_repo_root(tmp_path)
     kit_dir = tmp_path / "direct-kit"

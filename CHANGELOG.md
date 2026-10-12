@@ -2,9 +2,9 @@
 
 ## [Unreleased]
 
-### v1.0.0-beta.14 - 2026-10-12
+## [1.0.0-beta.14] - 2026-10-12
 
-Unpublished candidate; package installation and publication are pending.
+Published as a signed GitHub pre-release. A fresh offline Windows Sandbox install and one normal development-host upgrade both exited 0; after the host upgrade, the service was healthy at schema 89 with all three channels Whistle-primary and within capacity. The [verification record](docs/releases/v1.0.0-beta.14-verification.md) binds the exact package and records the evidence limits.
 
 - Make optional installer selections control downloads and resolve Whistle from the signed station configuration independently of the Whisper tier.
 - Honor the saved Whisper model selection and distinguish it from the live runtime's service-start model. Explain when a service restart is needed; show actual installation, database and media paths.

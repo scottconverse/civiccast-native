@@ -7,23 +7,20 @@
 
 ## Current Release State
 
-`v1.0.0-beta.13` is the current signed GitHub pre-release, not a production
-release. Its exact source is `8053fb1cf05b989fb1f23e650893cc6abfa659d4`,
-producer run [38160778457](https://github.com/scottconverse/civiccast-native/actions/runs/38160778457).
-The 19-member kit passed exact hash/size and signed station-index verification.
-The installer SHA-256 is
-`cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16`; its
-Authenticode signature is valid and names Scott Converse. The complete kit
-includes the signed installer, five runtime packs, six station packs, manuals,
-checksums and release-matched helper. The [Beta 13 verification
-record](../releases/v1.0.0-beta.13-verification.md) records passing normal-upgrade,
-one-interruption repair and fresh-install scenarios, each with five-minute
-observations across all three channels. Download from the [Beta 13 release
-page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
-Historical Beta 12 evidence remains in its [verification record](../releases/v1.0.0-beta.12-verification.md).
-[release-truth.yaml](../releases/release-truth.yaml) is the authored
-release-state record. Watch the official native release page, not
-`scottconverse/civiccast` (the retired, separate WSL2-line repository) and
+`v1.0.0-beta.14` is the current signed GitHub pre-release, not a production
+release. Its exact signed source is
+`44525c14265d21ae461c2435d4d5a9a6acd58af3`, produced by hosted run
+[38217950172](https://github.com/scottconverse/civiccast-native/actions/runs/38217950172).
+The verified kit has 19 members; the signed installer SHA-256 is
+`e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f`. Its
+Authenticode signature is valid and names Scott Converse. The [Beta 14
+verification record](../releases/v1.0.0-beta.14-verification.md) binds the
+package and records its installation evidence and limits. Download from the
+[Beta 14 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14).
+A fresh offline Windows Sandbox install and one normal development-host upgrade both exited 0; the host service was healthy at schema 89 with all three channels Whistle-primary and within capacity. The [verification record](../releases/v1.0.0-beta.14-verification.md) documents exact observations and limits. Beta 13 installation results remain in their [own verification record](../releases/v1.0.0-beta.13-verification.md)
+and do not describe Beta 14. [release-truth.yaml](../releases/release-truth.yaml)
+is the authored release-state record. Watch the official native release page,
+not `scottconverse/civiccast` (the retired, separate WSL2-line repository) and
 not any `v1.0.0-rcNN` tag, which belongs to that other repository.
 
 `v1.0.0-beta.11` and earlier published betas are superseded. Beta 8 and 9
@@ -84,22 +81,22 @@ report `Valid` and the approved publisher; a local `NotSigned` engineering build
 is suitable only for an explicitly authorized local acceptance run and must not
 be distributed as a public beta.
 
-## Download The Complete Beta 13 Kit
+## Download The Complete Beta 14 Kit
 
 Use the helper asset from the exact tagged release. Download the helper and
 `SHA256SUMS.txt`, then verify the helper's own hash before executing it:
 
 ```powershell
-$tag = "v1.0.0-beta.13"
+$tag = "v1.0.0-beta.14"
 $base = "https://github.com/scottconverse/civiccast-native/releases/download/$tag"
-$helper = Join-Path $env:TEMP "CivicCast-Install-Beta13.ps1"
-$sums = Join-Path $env:TEMP "CivicCast-Beta13-SHA256SUMS.txt"
+$helper = Join-Path $env:TEMP "CivicCast-Install-Beta14.ps1"
+$sums = Join-Path $env:TEMP "CivicCast-Beta14-SHA256SUMS.txt"
 Invoke-WebRequest -UseBasicParsing "$base/download_windows_release_artifacts.ps1" -OutFile $helper
 Invoke-WebRequest -UseBasicParsing "$base/SHA256SUMS.txt" -OutFile $sums
 $expected = ((Get-Content $sums) | Where-Object { $_ -match '\s+download_windows_release_artifacts\.ps1$' } | Select-Object -First 1) -replace '^([0-9a-fA-F]{64})\s+.*$', '$1'
 $actual = (Get-FileHash $helper -Algorithm SHA256).Hash
 if ($actual -ne $expected) { throw "Downloader hash does not match the release checksum list." }
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -Tag $tag -Version $tag.TrimStart('v') -Install -Destination (Join-Path $env:USERPROFILE "Downloads\CivicCast-Beta13")
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $helper -Tag $tag -Version $tag.TrimStart('v') -Install -Destination (Join-Path $env:USERPROFILE "Downloads\CivicCast-Beta14")
 ```
 
 With `-Install`, the helper downloads and checks all five runtime packs,
@@ -113,7 +110,7 @@ successful download as installation or operating proof.
 
 ## Verify The Download With PowerShell
 
-1. For the complete Beta 13 download, use the release-matched helper and
+1. For the complete Beta 14 download, use the release-matched helper and
    choose `-IncludePacks` to stage without installing or `-Install` to run setup
    after verification. The destination contains `setup.exe`, its sidecar,
    `SHA256SUMS.txt`, five runtime packs under `packs\`, station files under
