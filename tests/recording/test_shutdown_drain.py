@@ -72,7 +72,7 @@ class _StubPipeline:
     def arm(self, *, job_id, source, encoder_profile, loudness_regime) -> None:
         self.live.add(job_id)
 
-    def start(self, job_id) -> None:
+    def start(self, job_id, *, duration_seconds: float | None = None) -> None:
         pass
 
     def finalize(self, job_id) -> CaptureResult:

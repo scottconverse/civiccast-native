@@ -82,7 +82,7 @@ def build_idle_page(channel_id: str = "public") -> IdlePage:
         message="No meeting is live right now. The next scheduled broadcast will start here.",
         next_broadcast_label="Next broadcast: Public Meetings test broadcast",
         action_label="View published recordings",
-        action_url="/",
+        action_url="#/recordings",
     )
 
 

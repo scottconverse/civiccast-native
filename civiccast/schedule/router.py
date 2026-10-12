@@ -21,13 +21,20 @@ POST handler catches the exception and translates it to
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import ipaddress
+import json
 import logging
+import mimetypes
 import os
 import re
+import secrets
 import shutil
 import threading
 import uuid
-from datetime import UTC, datetime
+from collections import OrderedDict
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, cast
 from urllib.parse import quote
@@ -44,10 +51,11 @@ from fastapi import (
     UploadFile,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.auth.roles import require_any_role
+from civiccast.live.recording_paths import REHEARSAL_RECORDING_TARGET_ID, local_recording_path
 from civiccast.platform.stores import resolve_app_store
 from civiccast.schedule.ingest import (
     FfmpegNotFoundError,
@@ -84,6 +92,168 @@ _PACKAGE_ADMISSION = threading.BoundedSemaphore(value=1)
 # both are safe to package. This mirrors ``_AIRABLE_ASSET_STATES`` in
 # schedule/commit_service.py, which already treats the two states together.
 _PACKAGEABLE_ASSET_STATES: tuple[str, ...] = (ASSET_STATE_VALIDATED, ASSET_STATE_RECORDED)
+
+_SOURCE_PLAYBACK_TTL = timedelta(minutes=15)
+_SOURCE_PLAYBACK_MAX_GRANTS = 256
+_SOURCE_PLAYBACK_COOKIE_PREFIX = "cc_source_playback_"
+_SOURCE_PLAYBACK_LOCK = threading.Lock()
+_SOURCE_PLAYBACK_ROLES = ("records_clerk", "meeting_operator", "support_admin")
+_SOURCE_ASSET_ID = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
+_SOURCE_HLS_CONTENT_TYPES = {
+    ".m3u8": "application/vnd.apple.mpegurl",
+    ".ts": "video/mp2t",
+    ".m4s": "video/mp4",
+    ".mp4": "video/mp4",
+    ".vtt": "text/vtt",
+}
+_SOURCE_PLAYBACK_HEADERS = {
+    "Cache-Control": "private, no-store",
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+    "Vary": "Cookie",
+}
+
+
+@dataclass(frozen=True)
+class _SourcePlaybackGrant:
+    asset_id: str
+    source_path: Path
+    allowed_roots: tuple[Path, ...]
+    package_root: Path | None
+    source_offset_seconds: float
+    expires_at: datetime
+
+
+source_media_router = APIRouter(prefix="/media/staff-source", tags=["staff", "media"])
+
+
+def _source_playback_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _source_playback_cookie_name(asset_id: str) -> str:
+    asset_hash = hashlib.sha256(asset_id.encode("utf-8")).hexdigest()[:16]
+    return f"{_SOURCE_PLAYBACK_COOKIE_PREFIX}{asset_hash}"
+
+
+def _source_playback_store(request: Request) -> OrderedDict[str, _SourcePlaybackGrant]:
+    """Return a lazily created, process-local bounded grant map for this app."""
+    with _SOURCE_PLAYBACK_LOCK:
+        grants = getattr(request.app.state, "source_playback_grants", None)
+        if not isinstance(grants, OrderedDict):
+            grants = OrderedDict()
+            request.app.state.source_playback_grants = grants
+        return cast(OrderedDict[str, _SourcePlaybackGrant], grants)
+
+
+def _configured_source_roots(recording_target_store: Any) -> tuple[Path, ...]:
+    roots: set[Path] = set()
+    upload_root = resolve_upload_root()
+    if upload_root is not None:
+        roots.add(upload_root.resolve())
+    if recording_target_store is not None:
+        for target in recording_target_store.list():
+            target_id = getattr(target, "recording_target_id", None)
+            target_uri = getattr(target, "target_uri", None)
+            if target_id == REHEARSAL_RECORDING_TARGET_ID or not isinstance(target_uri, str):
+                continue
+            local_path = local_recording_path(target_uri)
+            if local_path is not None:
+                roots.add(local_path.expanduser().resolve())
+    return tuple(sorted(roots, key=str))
+
+
+def _allowed_source_path(file_path: str | None, roots: tuple[Path, ...]) -> Path | None:
+    if not file_path:
+        return None
+    source = Path(file_path).expanduser().resolve()
+    if not source.is_file() or not any(source.is_relative_to(root) for root in roots):
+        return None
+    return source
+
+
+def _source_media_type(source: Path) -> str:
+    return _SOURCE_HLS_CONTENT_TYPES.get(source.suffix.lower()) or (
+        mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+    )
+
+
+def _package_preview_marker_path(asset_id: str, package_parent: Path) -> Path:
+    digest = hashlib.sha256(asset_id.encode("utf-8")).hexdigest()[:20]
+    return package_parent / f".civiccast-preview-{digest}.json"
+
+
+def _packaged_preview_root(
+    asset: StaffAssetRow,
+    source: Path,
+    roots: tuple[Path, ...],
+    finalization_worker: Any,
+) -> tuple[Path | None, float]:
+    """Find only a completed local package belonging to this exact asset."""
+    candidates: list[tuple[Path, float, bool]] = []
+    if asset.source_live_session_id and finalization_worker is not None:
+        try:
+            finalized = finalization_worker.get_status(asset.source_live_session_id)
+        except Exception:
+            finalized = None
+        if (
+            finalized is not None
+            and finalized.state == "completed"
+            and finalized.asset_id == asset.asset_id
+            and finalized.packaged_trim_in_seconds == asset.trim_in_seconds
+            and finalized.packaged_trim_out_seconds == asset.trim_out_seconds
+            and finalized.local_package_manifest_path
+        ):
+            manifest = Path(finalized.local_package_manifest_path).expanduser().resolve()
+            candidate = manifest.parent
+            if (
+                manifest.name == "playlist.m3u8"
+                and manifest.is_file()
+                and any(candidate.is_relative_to(root) for root in roots)
+            ):
+                candidates.append((candidate, max(0.0, float(asset.trim_in_seconds or 0.0)), False))
+
+    upload_root = resolve_upload_root()
+    if asset.manifest_url and upload_root is not None and source.is_relative_to(upload_root):
+        package_root = resolve_vod_package_root(upload_root)
+        if package_root.is_relative_to(upload_root):
+            candidates.append(
+                (
+                    (package_root / asset.asset_id).resolve(),
+                    max(0.0, float(asset.trim_in_seconds or 0.0)),
+                    True,
+                )
+            )
+    for candidate, source_offset, needs_marker in candidates:
+        if not any(candidate.is_relative_to(root) for root in roots):
+            continue
+        manifest = (candidate / "playlist.m3u8").resolve()
+        if not manifest.is_relative_to(candidate) or not manifest.is_file():
+            continue
+        if not needs_marker:
+            return candidate, source_offset
+        marker_path = _package_preview_marker_path(asset.asset_id, candidate.parent)
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            # Only current packages with known trim/source provenance may be
+            # used to map transcript times onto the rebased HLS timeline.
+            continue
+        try:
+            current = source.stat()
+            fresh = (
+                marker.get("asset_id") == asset.asset_id
+                and marker.get("source_path") == str(source)
+                and marker.get("source_size_bytes") == current.st_size
+                and marker.get("source_mtime_ns") == current.st_mtime_ns
+                and marker.get("trim_in_seconds") == asset.trim_in_seconds
+                and marker.get("trim_out_seconds") == asset.trim_out_seconds
+            )
+        except (OSError, AttributeError):
+            fresh = False
+        if fresh:
+            return candidate, source_offset
+    return None, 0.0
 
 
 def get_asset_store(request: Request) -> AssetStore:
@@ -370,6 +540,239 @@ def get_staff_asset(
 
 
 @staff_router.post(
+    "/assets/{asset_id}/playback-grant",
+    summary="Issue short-lived private playback access for an asset source",
+    dependencies=[Depends(require_any_role(*_SOURCE_PLAYBACK_ROLES))],
+    responses={
+        404: {"description": "Asset not found or source media is unavailable"},
+        409: {"description": "Asset has no source file within configured media storage"},
+        503: {"description": _DB_NOT_READY_DESCRIPTION},
+    },
+)
+def grant_staff_asset_playback(
+    asset_id: str,
+    request: Request,
+    postgres_store: Any = Depends(get_postgres_store),
+) -> JSONResponse:
+    """Grant this browser short-lived cookie access to one local asset source.
+
+    Native media elements cannot attach CivicCast's staff bearer header. This
+    exchange keeps bearer auth on the grant request, then binds an opaque,
+    HttpOnly cookie to exactly one asset and its configured local source path.
+    The same cookie can read that asset's completed private HLS package; the
+    original source URL remains available for absolute transcript timestamps.
+    """
+    if not _SOURCE_ASSET_ID.fullmatch(asset_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
+    if postgres_store is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=_DB_NOT_READY_DETAIL,
+        )
+    asset = postgres_store.get_staff_row(asset_id)
+    if asset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Asset not found.")
+    if asset.state not in _PACKAGEABLE_ASSET_STATES:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Playback is available after source media has been validated or recorded.",
+        )
+    if not asset.file_path:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This asset has no local source file available for playback.",
+        )
+
+    # Import the live dependency keys only when the playback route is called.
+    # Importing live.router at module load creates a cycle through live
+    # finalization -> schedule package initialization during narrow tooling
+    # imports (for example, caption embed verification without create_app).
+    from civiccast.live.router import get_live_finalization_worker, get_recording_target_store
+
+    overrides = request.app.dependency_overrides
+    recording_target_provider = overrides.get(
+        get_recording_target_store, get_recording_target_store
+    )
+    finalization_provider = overrides.get(
+        get_live_finalization_worker, get_live_finalization_worker
+    )
+    recording_target_store = recording_target_provider()
+    finalization_worker = finalization_provider()
+
+    roots = _configured_source_roots(recording_target_store)
+    if not roots:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Local media storage is not configured for source playback.",
+        )
+    source_unresolved = Path(asset.file_path).expanduser().resolve()
+    if not any(source_unresolved.is_relative_to(root) for root in roots):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The asset source is outside configured CivicCast media storage.",
+        )
+    source = _allowed_source_path(asset.file_path, roots)
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The source media file is unavailable. Relink or restore the file, then retry.",
+        )
+
+    package_root, source_offset_seconds = _packaged_preview_root(
+        asset,
+        source,
+        roots,
+        finalization_worker,
+    )
+    now = _source_playback_now()
+    expires_at = now + _SOURCE_PLAYBACK_TTL
+    grant = _SourcePlaybackGrant(
+        asset_id=asset_id,
+        source_path=source,
+        allowed_roots=roots,
+        package_root=package_root,
+        source_offset_seconds=source_offset_seconds,
+        expires_at=expires_at,
+    )
+    token = secrets.token_urlsafe(32)
+    token_digest = hashlib.sha256(token.encode("ascii")).hexdigest()
+    grants = _source_playback_store(request)
+    with _SOURCE_PLAYBACK_LOCK:
+        for old_digest, old_grant in list(grants.items()):
+            if old_grant.expires_at <= now:
+                grants.pop(old_digest, None)
+        while len(grants) >= _SOURCE_PLAYBACK_MAX_GRANTS:
+            grants.popitem(last=False)
+        grants[token_digest] = grant
+
+    response = JSONResponse(
+        {
+            "url": f"/media/staff-source/{asset_id}/source",
+            "packaged_url": (
+                f"/media/staff-source/{asset_id}/hls/playlist.m3u8"
+                if package_root is not None
+                else None
+            ),
+            "playback_kind": "hls" if package_root is not None else "source",
+            "source_content_type": _source_media_type(source),
+            "source_offset_seconds": grant.source_offset_seconds,
+            "expires_at": expires_at.isoformat(),
+        },
+        headers=_SOURCE_PLAYBACK_HEADERS,
+    )
+    peer = request.client.host if request.client is not None else ""
+    try:
+        peer_is_loopback = ipaddress.ip_address(peer).is_loopback
+    except ValueError:
+        peer_is_loopback = False
+    secure = request.url.scheme.lower() == "https"
+    if not secure and not peer_is_loopback:
+        with _SOURCE_PLAYBACK_LOCK:
+            grants.pop(token_digest, None)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Private source playback requires HTTPS for remote stations. "
+                "Use the local CivicCast station console or configure a trusted HTTPS proxy."
+            ),
+        )
+    response.set_cookie(
+        key=_source_playback_cookie_name(asset_id),
+        value=token,
+        max_age=int(_SOURCE_PLAYBACK_TTL.total_seconds()),
+        expires=expires_at,
+        path=f"/media/staff-source/{asset_id}/",
+        secure=secure,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
+
+
+def _get_staff_source_grant(request: Request, asset_id: str) -> _SourcePlaybackGrant:
+    token = request.cookies.get(_source_playback_cookie_name(asset_id))
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Source playback access is missing or expired. Request a new playback grant.",
+        )
+    digest = hashlib.sha256(token.encode("ascii", errors="ignore")).hexdigest()
+    grants = _source_playback_store(request)
+    now = _source_playback_now()
+    with _SOURCE_PLAYBACK_LOCK:
+        grant = grants.get(digest)
+        if grant is None or grant.asset_id != asset_id or grant.expires_at <= now:
+            grants.pop(digest, None)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Source playback access is missing or expired. Request a new playback grant.",
+            )
+        grants.move_to_end(digest)
+    return grant
+
+
+def _private_media_file(
+    file_path: Path,
+    *,
+    root: Path,
+) -> FileResponse:
+    candidate = file_path.resolve()
+    if not candidate.is_relative_to(root) or not candidate.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The source media file is unavailable.",
+        )
+    media_type = _SOURCE_HLS_CONTENT_TYPES.get(candidate.suffix.lower())
+    if media_type is None:
+        media_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+    return FileResponse(candidate, media_type=media_type, headers=_SOURCE_PLAYBACK_HEADERS)
+
+
+@source_media_router.api_route(
+    "/{asset_id}/source",
+    methods=["GET", "HEAD"],
+    include_in_schema=False,
+)
+def get_staff_source_media(asset_id: str, request: Request) -> FileResponse:
+    """Stream one granted source file with native Range/seek support."""
+    grant = _get_staff_source_grant(request, asset_id)
+    source_root = next(
+        (root for root in grant.allowed_roots if grant.source_path.is_relative_to(root)),
+        None,
+    )
+    if source_root is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The source media file is unavailable.",
+        )
+    return _private_media_file(grant.source_path, root=source_root)
+
+
+@source_media_router.api_route(
+    "/{asset_id}/hls/{file_path:path}",
+    methods=["GET", "HEAD"],
+    include_in_schema=False,
+)
+def get_staff_packaged_media(asset_id: str, file_path: str, request: Request) -> FileResponse:
+    """Serve only files inside this grant's configured, completed HLS package."""
+    grant = _get_staff_source_grant(request, asset_id)
+    if grant.package_root is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed local HLS package is available for this asset.",
+        )
+    candidate = (grant.package_root / file_path).resolve()
+    if not candidate.is_relative_to(grant.package_root) or not any(
+        grant.package_root.is_relative_to(root) for root in grant.allowed_roots
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The requested packaged media file is unavailable.",
+        )
+    return _private_media_file(candidate, root=grant.package_root)
+
+
+@staff_router.post(
     "/assets/{asset_id}/package",
     response_model=StaffAssetRow,
     summary="Package validated or recorded local media for resident playback",
@@ -455,6 +858,8 @@ async def package_staff_asset(
             ),
         )
 
+    marker_path = _package_preview_marker_path(asset_id, package_dir.parent)
+    marker_temp = marker_path.with_name(f"{marker_path.name}.{uuid.uuid4().hex}.tmp")
     try:
         result = await asyncio.to_thread(
             pack_vod_asset,
@@ -471,15 +876,32 @@ async def package_staff_asset(
         staged_manifest = Path(result.manifest_path).resolve()
         if not staged_manifest.is_relative_to(staging_dir) or not staged_manifest.is_file():
             raise PackagingError("The packager did not produce a usable manifest.")
+        source_stat = source.stat()
+        marker_temp.write_text(
+            json.dumps(
+                {
+                    "asset_id": asset_id,
+                    "source_path": str(source),
+                    "source_size_bytes": source_stat.st_size,
+                    "source_mtime_ns": source_stat.st_mtime_ns,
+                    "trim_in_seconds": asset.trim_in_seconds,
+                    "trim_out_seconds": asset.trim_out_seconds,
+                },
+                separators=(",", ":"),
+            ),
+            encoding="utf-8",
+        )
         if package_dir.exists():
             package_dir.rename(backup_dir)
         staging_dir.rename(package_dir)
+        marker_temp.replace(marker_path)
         if backup_dir.exists():
             shutil.rmtree(backup_dir)
     except Exception as exc:
         _PACKAGE_ADMISSION.release()
         if staging_dir.exists():
             shutil.rmtree(staging_dir, ignore_errors=True)
+        marker_temp.unlink(missing_ok=True)
         if backup_dir.exists() and not package_dir.exists():
             backup_dir.rename(package_dir)
         _LOG.exception("Asset packaging failed for %s.", asset_id)

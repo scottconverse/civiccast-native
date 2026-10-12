@@ -1190,13 +1190,12 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # cases in test_admin_recovery.py now carry windows_only in addition to
     # their runtime skip guards. That checkpoint collected 1957 pure and
     # 2168 total tests.
-    # 2026-10-10 Beta 12 closure cases add 11 native tests. The subsequent
-    # runtime-closure trace coverage adds 16 collected cases in
-    # test_closure_verifier.py. The current tree collects 1984 pure and 2195
-    # total; the Windows non-integration collection is 2192. ci-test.yml
-    # floors 1934 and 2142 preserve the existing 50-test margin for the two
+    # 2026-10-12 Beta 14 caption/GStreamer regression coverage adds one
+    # platform-independent native case. The current tree collects 1985 pure
+    # and 2196 total; the Windows non-integration collection is 2193.
+    # ci-test.yml floors 1935 and 2143 preserve the 50-test margin for the two
     # executed collections.
-    assert (collect("not windows_only"), collect()) == (1984, 2195)
+    assert (collect("not windows_only"), collect()) == (1985, 2196)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:

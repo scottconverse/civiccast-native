@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -28,6 +29,9 @@ DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 # entirely, the same durable-job pattern the offline caption worker uses, so an
 # operator is never blocked on a live HTTP request for minutes either way.
 DEFAULT_GENERATE_TIMEOUT_SECONDS = 600
+# Local generate requests share one resident Ollama process. Serialize CivicCast's
+# callers so a summary and translation cannot load competing models at once.
+_GENERATE_LOCK = threading.Lock()
 # The short budget for cheap, fast metadata calls (/api/tags, /api/version,
 # /api/ps) that must fail fast when Ollama is genuinely down rather than hang.
 DEFAULT_TIMEOUT_SECONDS = 120
@@ -124,11 +128,13 @@ def generate_with_ollama(
         "model": model,
         "prompt": prompt,
         "stream": False,
+        "keep_alive": 0,
         "options": {"temperature": 0},
     }
-    response = _request_json(
-        "POST", f"{base_url.rstrip('/')}/api/generate", payload, timeout=timeout
-    )
+    with _GENERATE_LOCK:
+        response = _request_json(
+            "POST", f"{base_url.rstrip('/')}/api/generate", payload, timeout=timeout
+        )
     text = response.get("response")
     if not isinstance(text, str):
         raise OllamaRuntimeUnavailableError("Ollama /api/generate returned no response text.")

@@ -114,24 +114,34 @@ def _empty_bulletin_queue(channel_id: str) -> CgBulletinQueue:
     )
 
 
-def _durable_ticker_zone(zone: CgZone, feeds: CgFeedCatalog, bulletins: CgBulletinQueue) -> CgZone:
+def _durable_ticker_zone(
+    zone: CgZone,
+    feeds: CgFeedCatalog,
+    bulletins: CgBulletinQueue,
+    *,
+    manual_text: str | None = None,
+    manual_configured: bool = False,
+) -> CgZone:
     """Build the ticker zone's content from the already-resolved durable feed
     catalog and approved bulletin queue instead of hard-coded sample strings
     (WP-06 follow-up). ``feeds``/``bulletins`` are resolved once per request
     by the caller (durable store, or -- only under CIVICCAST_CG_DEMO_FEEDS=1
-    -- the sample catalog/queue), so this never invents content on its own:
-    zero durable/demo sources bound to "ticker" simply yields an empty,
-    actionable ``{"items": [], "empty": True}`` rather than static filler.
+    -- the sample catalog/queue). A saved manual ticker is authoritative when
+    configured; otherwise zero sources yields an honest empty ticker.
     """
 
-    items = [
-        submission.title
-        for submission in bulletins.submissions
-        if submission.target_zone_kind == "ticker"
-    ]
-    for adapter in feeds.adapters:
-        if "ticker" in adapter.target_zone_kinds:
-            items.extend(item.title for item in adapter.items)
+    if manual_configured:
+        text = manual_text.strip() if manual_text else ""
+        items = [text] if text else []
+    else:
+        items = [
+            submission.title
+            for submission in bulletins.submissions
+            if submission.target_zone_kind == "ticker"
+        ]
+        for adapter in feeds.adapters:
+            if "ticker" in adapter.target_zone_kinds:
+                items.extend(item.title for item in adapter.items)
     content: dict[str, object] = {"items": items}
     if not items:
         content["empty"] = True
@@ -464,10 +474,37 @@ def _resolve_durable_snapshot(
     else:
         upcoming = []
 
+    manual_ticker_configured = False
+    manual_ticker_text: str | None = None
+    if service is not None:
+        board_view_reader = getattr(service, "get_board_view", None)
+        board_view = board_view_reader(channel_id) if callable(board_view_reader) else None
+        if board_view is not None:
+            manual_ticker = next(
+                (
+                    configured_zone
+                    for configured_zone in board_view.zones
+                    if configured_zone.zone_kind == "ticker"
+                    and configured_zone.content_source == "manual"
+                ),
+                None,
+            )
+            if manual_ticker is not None:
+                manual_ticker_configured = True
+                manual_ticker_text = manual_ticker.manual_text
+
     zones: list[CgZone] = []
     for zone in base.zones:
         if zone.kind == "ticker":
-            zones.append(_durable_ticker_zone(zone, feeds, bulletins))
+            zones.append(
+                _durable_ticker_zone(
+                    zone,
+                    feeds,
+                    bulletins,
+                    manual_text=manual_ticker_text,
+                    manual_configured=manual_ticker_configured,
+                )
+            )
         elif zone.kind == "schedule":
             zones.append(
                 zone if upcoming is None else _durable_schedule_zone(zone, upcoming, now=now)

@@ -50,6 +50,11 @@ const profile = {
     recordings: 'C:\\Users\\tester\\AppData\\Local\\CivicCast\\recordings',
     backups: 'C:\\Users\\tester\\AppData\\Local\\CivicCast\\backups',
   },
+  runtime_paths: {
+    installation_root: 'C:\\Program Files\\CivicCast',
+    database_data: 'C:\\ProgramData\\CivicCast\\data\\pgdata',
+    media_uploads: 'C:\\ProgramData\\CivicCast\\data\\uploads',
+  },
   channel_count: 3,
   channel_profiles: [
     {
@@ -476,6 +481,9 @@ describe('SetupScreen first-admin recovery kit gate', () => {
       expect(screen.getByText('Setup complete')).toBeTruthy()
     })
     expect(screen.getByText('First-run defaults')).toBeTruthy()
+    expect(screen.getByText('Installation: C:\\Program Files\\CivicCast')).toBeTruthy()
+    expect(screen.getByText('Database: C:\\ProgramData\\CivicCast\\data\\pgdata')).toBeTruthy()
+    expect(screen.getByText('Media uploads: C:\\ProgramData\\CivicCast\\data\\uploads')).toBeTruthy()
     expect(screen.getByText('America/Denver')).toBeTruthy()
     expect(screen.getByText('Test mode')).toBeTruthy()
     expect(screen.getByText('Not ready')).toBeTruthy()

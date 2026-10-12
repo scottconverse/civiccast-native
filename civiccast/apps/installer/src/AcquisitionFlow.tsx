@@ -584,7 +584,7 @@ function useAcquisitionComponents(selectedIds: readonly ComponentId[]) {
     // here keeps that guarantee from ever being exercised in the normal
     // case, and matches the one-shot "the user just reached this screen"
     // semantics described in AcquisitionFlow's module doc comment.
-    void startAcquisition().then((result) => {
+    void startAcquisition(selectedIds.filter((id) => catalogComponent(id).deliverable)).then((result) => {
       if (!cancelled && !result.ok) {
         setStartError(result.message);
       }

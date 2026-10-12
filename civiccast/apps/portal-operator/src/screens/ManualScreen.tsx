@@ -11,7 +11,11 @@ function apiMessage(error: unknown, fallback: string): string {
   return fallback
 }
 
-function TocList({ entries, activeId }: { entries: ManualTocEntry[]; activeId: string | null }) {
+function TocList({ entries, activeId, onSelect }: {
+  entries: ManualTocEntry[]
+  activeId: string | null
+  onSelect: () => void
+}) {
   return (
     <ol className="m-0 grid gap-0.5 p-0 text-sm" style={{ listStyle: 'none' }}>
       {entries.map((entry) => (
@@ -26,6 +30,12 @@ function TocList({ entries, activeId }: { entries: ManualTocEntry[]; activeId: s
               effect below reacts to. */}
           <Link
             to={manualLink(entry.id)}
+            onClick={(event) => {
+              // Keep modified and non-primary clicks native.
+              if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+                onSelect()
+              }
+            }}
             aria-current={activeId === entry.id ? 'location' : undefined}
             className="block truncate rounded-md px-2 py-1"
             style={{
@@ -49,6 +59,7 @@ export function ManualScreen() {
   const contentRef = useRef<HTMLDivElement | null>(null)
   const [filter, setFilter] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [tocSelection, setTocSelection] = useState(0)
   const manualQuery = useQuery({
     queryKey: ['operator-manual'],
     queryFn: getManual,
@@ -112,7 +123,7 @@ export function ManualScreen() {
       }
     })
     return () => window.cancelAnimationFrame(raf)
-  }, [manualQuery.isSuccess, location.hash])
+  }, [manualQuery.isSuccess, location.hash, tocSelection])
 
   return (
     <div className="grid gap-4 px-6 py-5">
@@ -163,7 +174,11 @@ export function ManualScreen() {
                 No section title matches &quot;{filter}&quot;.
               </p>
             ) : (
-              <TocList entries={filteredToc} activeId={activeId} />
+              <TocList
+                entries={filteredToc}
+                activeId={activeId}
+                onSelect={() => setTocSelection((selection) => selection + 1)}
+              />
             )}
           </nav>
 

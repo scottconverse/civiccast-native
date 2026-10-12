@@ -26,11 +26,11 @@ function apiMessage(err: unknown, fallback: string): string {
 }
 
 const FILTERS: ReadonlyArray<{
-  id: 'all' | PublishDashboardState
+  id: 'all' | 'needs_operator_action' | PublishDashboardState
   label: string
 }> = [
   { id: 'all', label: 'All' },
-  { id: 'failed_needs_action', label: stateLabel('failed_needs_action') },
+  { id: 'needs_operator_action', label: 'Needs action' },
   { id: 'draft', label: stateLabel('draft') },
   { id: 'archive_pending', label: stateLabel('archive_pending') },
   { id: 'archive_verified', label: stateLabel('archive_verified') },
@@ -825,7 +825,7 @@ function LoadingState() {
 }
 
 export function PublishDashboardScreen() {
-  const [filter, setFilter] = useState<'all' | PublishDashboardState>('all')
+  const [filter, setFilter] = useState<(typeof FILTERS)[number]['id']>('all')
   const queryClient = useQueryClient()
   const staffIdentityQuery = useQuery({
     queryKey: ['staff-identity'],
@@ -871,9 +871,11 @@ export function PublishDashboardScreen() {
 
   const visible = useMemo(() => {
     const assets = query.data?.assets ?? []
-    return filter === 'all'
-      ? assets
-      : assets.filter((asset) => asset.dashboard_state === filter)
+    if (filter === 'all') return assets
+    if (filter === 'needs_operator_action') {
+      return assets.filter((asset) => asset.needs_operator_action)
+    }
+    return assets.filter((asset) => asset.dashboard_state === filter)
   }, [filter, query.data])
 
   return (

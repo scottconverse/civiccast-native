@@ -1832,13 +1832,12 @@ class CaptionTapWorker:
                     # would let a station that is still behind walk its
                     # escalation ladder back down -- and then trip again at the
                     # base window, the exact flap the ladder exists to prevent.
-                    # The operator-visible status is unchanged (still
-                    # "within-capacity": this unit adds no new state), and the
-                    # deferral is reported in the log and the batch diagnostic.
+                    # Publish the queue remaining NOW, including new arrivals
+                    # during inference; a finished batch is not the backlog.
                     self._publish_status(
                         channel_id,
                         state="within-capacity",
-                        backlog_segments=len(segments),
+                        backlog_segments=len(self._settled_segments(channel_dir)),
                     )
                 else:
                     transition = self._backoff.record_within_capacity(channel_id)
@@ -1857,7 +1856,7 @@ class CaptionTapWorker:
                     self._publish_status(
                         channel_id,
                         state="within-capacity",
-                        backlog_segments=len(segments),
+                        backlog_segments=len(self._settled_segments(channel_dir)),
                     )
         return _ChannelScanResult(
             published_cues=published,
@@ -2377,6 +2376,22 @@ class CaptionTapWorker:
         """
 
         now = self._monotonic()
+        if state == "within-capacity" and backlog_segments > 0:
+            pending = self._pending_since_at.get(channel_id)
+            age = max(0.0, (datetime.now(UTC) - pending).total_seconds()) if pending else 0.0
+            age_limit = max(
+                self._caption_backlog_grace_seconds,
+                self._max_backlog_segments * self._segment_seconds,
+            )
+            over_limit = backlog_segments > self._max_backlog_segments or age > age_limit
+            if over_limit:
+                started = self._overload_started_at.get(channel_id, now)
+                sustained = (
+                    self._overload_scan_streak.get(channel_id, 0)
+                    >= self._overload_persistence_scans
+                    and now - started >= self._caption_backlog_grace_seconds
+                )
+                state = "overloaded" if sustained or age > age_limit else "delayed"
         provider_status = getattr(self._runtime, "live_provider_status", None)
         provider_state = "unknown"
         provider_retry_in_seconds: int | None = None

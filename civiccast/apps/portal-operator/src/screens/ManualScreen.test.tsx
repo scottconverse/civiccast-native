@@ -153,6 +153,21 @@ describe('ManualScreen', () => {
     expect(activeLink?.getAttribute('aria-current')).toBe('location')
   })
 
+  it('scrolls again when the already-selected TOC entry is clicked', async () => {
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView
+    vi.mocked(getManual).mockResolvedValue(manual())
+    renderScreen()
+
+    const nav = await screen.findByRole('navigation', { name: /manual contents/i })
+    const glossary = within(nav).getByText('Glossary')
+    fireEvent.click(glossary)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1))
+
+    fireEvent.click(glossary)
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(2))
+  })
+
   it('keeps an injected manual fragment link inside HashRouter and scrolls to its section', async () => {
     const scrollIntoView = vi.fn()
     Element.prototype.scrollIntoView = scrollIntoView

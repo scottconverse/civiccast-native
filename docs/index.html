@@ -38,7 +38,7 @@
 
 <main id="main">
 
-<aside class="wrap" aria-label="Release status"><p><strong>Current signed native Windows pre-release: v1.0.0-beta.13.</strong> Normal upgrade, one-interruption repair and fresh installation passed, each with five-minute observations across all three channels. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md">verification record</a> and <a href="https://github.com/scottconverse/civiccast-native/blob/main/CHANGELOG.md">release notes</a>.</p></aside>
+<aside class="wrap" aria-label="Release status"><p><strong>Beta 14 development: v1.0.0-beta.14 is an unpublished candidate.</strong> Beta 13 remains the current signed native Windows pre-release. Its normal upgrade, one-interruption repair and fresh installation passed. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md">Beta 14 development record</a> and <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md">published Beta 13 verification</a>.</p></aside>
 
 <section class="hero on-dark" id="top">
   <div class="wrap">
@@ -47,6 +47,7 @@
         <p class="release-tag"><span>v1.0.0-beta.13</span> &middot; signed native Windows pre-release</p>
         <h1>Public meetings, <em>on the air.</em></h1>
         <p class="lede">CivicCast is open-source software for public-access stations and small cities. It schedules your channels and keeps them on the air, records and captions your meetings, and publishes them to a portal where residents can watch. It runs on one Windows PC that you control.</p>
+        <p class="lede"><strong>72 hours. Three channels. 99.78% live caption-input coverage.</strong> Read the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md">72-hour host report</a>.</p>
         <div class="btn-row">
           <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13">Get Beta.13</a>
           <a class="button ghost" href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.13/USER-MANUAL.pdf">Read the manual</a>
@@ -67,7 +68,7 @@
         <li><strong>Open source</strong>Code under Apache-2.0, documentation under CC BY 4.0.</li>
         <li><strong>One Windows PC</strong>Installs as a Windows service on hardware you own.</li>
         <li><strong>Whistle CPU captions</strong>When live captions are enabled, Whistle is the CPU primary; Whisper backs up the affected channel, with optional NVIDIA acceleration for Whisper.</li>
-        <li><strong>48-hour, three-channel soak</strong>A Beta 11 station ran public, government and education channels together on one Windows PC. <a href="#evidence">See the results.</a></li>
+        <li><strong>72-hour, three-channel run</strong>Public, Government and Education ran together with 99.78% live caption-input coverage. <a href="#evidence">See the results.</a></li>
         <li><strong>Free to use</strong>Local captioning without a per-minute service charge.</li>
       </ul>
     </div>
@@ -94,7 +95,7 @@
   <div class="wrap">
     <p class="eyebrow">What it does</p>
     <h2>The whole path from agenda to archive.</h2>
-    <p class="lede">Schedule, broadcast, record, caption, publish and monitor from one staff console.</p>
+    <p class="lede">Schedule, broadcast, record, caption, publish and monitor from one staff console. Across three channels, a 72-hour run recorded <strong>99.78% live caption-input coverage</strong>.</p>
     <ul class="caps">
       <li>
         <div><h3>Schedule and air</h3><span class="tag proven">Three channels</span></div>
@@ -241,20 +242,20 @@
 <section id="evidence">
   <div class="wrap">
     <p class="eyebrow">Runtime results</p>
-    <h2>Three channels. Forty-eight hours.</h2>
-    <p class="lede">A CivicCast Beta 11 station ran public, government and education programming together on one Windows PC for a 48-hour soak. All three channels were on air and captioning at the milestone check.</p>
+    <h2>72 hours across three channels.</h2>
+    <p class="lede">A CivicCast station ran public, government and education programming together for 72 hours, recording 99.78% live caption-input coverage.</p>
     <div class="ev-grid">
       <div>
         <table class="ev-table">
           <thead><tr><th scope="col">Measure</th><th scope="col">Result</th><th scope="col">Run</th></tr></thead>
           <tbody>
-            <tr><td>Channels running together</td><td>3: public, government and education</td><td>48-hour soak</td></tr>
-            <tr><td>Live caption-input coverage</td><td><strong>99.88%</strong></td><td>Three-channel, 48-hour Beta 11 soak</td></tr>
-            <tr><td>Continuous station runtime</td><td>48 hours without a service restart</td><td>Beta 11 host</td></tr>
-            <tr><td>Scheduled health observations</td><td>144 healthy application checkpoints</td><td>Same 48-hour run</td></tr>
+            <tr><td>Channels running together</td><td>3: public, government and education</td><td>72-hour run</td></tr>
+            <tr><td>Live caption-input coverage</td><td><strong>99.78%</strong></td><td>Three-channel, 72-hour run</td></tr>
+            <tr><td>Continuous station runtime</td><td>72 hours without a service restart</td><td>Three-channel run</td></tr>
+            <tr><td>Scheduled health observations</td><td>216 of 216 healthy checkpoints</td><td>Three-channel run</td></tr>
           </tbody>
         </table>
-        <p class="fine" style="margin-top:1rem">The <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md">48-hour soak report</a> records historical Beta 11 host measurements. Current package checks are in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md">Beta 13 verification record</a>.</p>
+        <p class="fine" style="margin-top:1rem">The <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md">72-hour host report</a> gives the channel totals and measurement. The earlier <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md">48-hour report</a> preserves the preceding window's 99.88% result. Current package checks are in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md">Beta 13 verification record</a>.</p>
       </div>
       <aside class="limits" aria-labelledby="limits-h">
         <h3 id="limits-h">Plan your station</h3>

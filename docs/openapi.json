@@ -3,7 +3,7 @@
   "info": {
     "title": "CivicCast",
     "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, FastAPI standard). Integrators should branch on status code first, then on the type of `detail`.",
-    "version": "1.0.0-beta.13"
+    "version": "1.0.0-beta.14"
   },
   "paths": {
     "/health": {
@@ -1791,6 +1791,75 @@
           },
           "503": {
             "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/assets/{asset_id}/playback-grant": {
+      "post": {
+        "tags": [
+          "staff"
+        ],
+        "summary": "Issue short-lived private playback access for an asset source",
+        "description": "Grant this browser short-lived cookie access to one local asset source.\n\nNative media elements cannot attach CivicCast's staff bearer header. This\nexchange keeps bearer auth on the grant request, then binds an opaque,\nHttpOnly cookie to exactly one asset and its configured local source path.\nThe same cookie can read that asset's completed private HLS package; the\noriginal source URL remains available for absolute transcript timestamps.",
+        "operationId": "grant_staff_asset_playback_api_staff_assets__asset_id__playback_grant_post",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "404": {
+            "description": "Asset not found or source media is unavailable"
+          },
+          "409": {
+            "description": "Asset has no source file within configured media storage"
+          },
+          "503": {
+            "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           },
           "401": {
             "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
@@ -18966,7 +19035,7 @@
             }
           },
           "503": {
-            "description": "Local Ollama AI runtime is not reachable. Start Ollama and retry, or configure a different summary model in AI model settings."
+            "description": "Local Ollama is unavailable or summary generation was deferred to preserve broadcast memory headroom."
           },
           "422": {
             "description": "Validation Error",
@@ -23364,7 +23433,7 @@
           "agenda"
         ],
         "summary": "Seed agenda items from the meeting asset's chapter markers",
-        "description": "Project ``Asset.chapters_json`` for the agenda's meeting asset into\ndraft items (DC-3). Idempotent: items at an existing ``(agenda_id, order)``\nare skipped \u2014 operator edits survive a re-sync. Returns the items the\nservice wrote on this call.",
+        "description": "Project ``Asset.chapters_json`` for the agenda's meeting asset into\ndraft items (DC-3). Idempotent: items at an existing ``(agenda_id, order)``\nare skipped \u2014 operator edits survive a re-sync. Returns the items the\nservice wrote on this call, and identifies chapter markers skipped because\nan agenda item already occupies their ordered position.",
         "operationId": "sync_from_chapters_api_staff_agendas__agenda_id__sync_from_chapters_post",
         "parameters": [
           {
@@ -23383,11 +23452,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/AgendaItem"
-                  },
-                  "title": "Response Sync From Chapters Api Staff Agendas  Agenda Id  Sync From Chapters Post"
+                  "$ref": "#/components/schemas/AgendaChapterSyncResult"
                 }
               }
             }
@@ -31627,6 +31692,64 @@
         "title": "AffidavitAiring",
         "description": "One aired second of one spot for one underwriter."
       },
+      "AgendaChapterSyncResult": {
+        "properties": {
+          "chapter_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Chapter Count"
+          },
+          "added_items": {
+            "items": {
+              "$ref": "#/components/schemas/AgendaItem"
+            },
+            "type": "array",
+            "title": "Added Items"
+          },
+          "skipped_existing": {
+            "items": {
+              "$ref": "#/components/schemas/AgendaChapterSyncSkip"
+            },
+            "type": "array",
+            "title": "Skipped Existing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "chapter_count"
+        ],
+        "title": "AgendaChapterSyncResult",
+        "description": "Detailed, idempotent chapter-sync outcome for the operator UI."
+      },
+      "AgendaChapterSyncSkip": {
+        "properties": {
+          "order": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Order"
+          },
+          "chapter_title": {
+            "type": "string",
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Chapter Title"
+          },
+          "existing_item_title": {
+            "type": "string",
+            "maxLength": 400,
+            "minLength": 1,
+            "title": "Existing Item Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "order",
+          "chapter_title",
+          "existing_item_title"
+        ],
+        "title": "AgendaChapterSyncSkip",
+        "description": "One source chapter left untouched because its agenda position is occupied."
+      },
       "AgendaImportExternalRequest": {
         "properties": {
           "source": {
@@ -37618,6 +37741,8 @@
               "inactive",
               "waiting",
               "processing",
+              "delayed",
+              "overloaded",
               "caught-up",
               "silent",
               "stalled",
@@ -44413,6 +44538,52 @@
               }
             ],
             "title": "Model Present"
+          },
+          "live_runtime_model_key": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 120
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Runtime Model Key"
+          },
+          "live_runtime_model_loaded_at_startup": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Live Runtime Model Loaded At Startup"
+          },
+          "translation_generated_cue_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Generated Cue Count"
+          },
+          "translation_last_generated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Translation Last Generated At"
           },
           "detail": {
             "type": "string",
@@ -52668,6 +52839,13 @@
             ],
             "title": "Started At"
           },
+          "program_timeline": {
+            "items": {
+              "$ref": "#/components/schemas/PublicProgramTransition"
+            },
+            "type": "array",
+            "title": "Program Timeline"
+          },
           "manifest_url": {
             "anyOf": [
               {
@@ -52696,7 +52874,7 @@
           "state"
         ],
         "title": "PublicLiveStatus",
-        "description": "Resident-safe live-session projection for the public portal.\n\n``state`` is one of ``offline`` / ``on_air`` / ``on_air_no_web_output`` /\n``standing_by``. ``reason`` is set for the last two and names, in plain\nwords, why there is no ``manifest_url`` although the channel is on air, or\nwhy a channel with a manifest is not called on air (it is on its slate)."
+        "description": "Resident-safe live-session projection for the public portal.\n\n``state`` includes ``offline`` / ``on_air`` / ``on_air_no_web_output`` /\n``standing_by`` / ``starting`` / ``failed`` / ``interrupted``. ``reason``\nnames in plain\nwords, why there is no ``manifest_url`` although the channel is on air, or\nwhy a channel with a manifest is not called on air (it is on its slate)."
       },
       "PublicMeetingAgenda": {
         "properties": {
@@ -52779,6 +52957,24 @@
         ],
         "title": "PublicPlaybackPolicyEvaluationRequest",
         "description": "Unauthenticated playback decision request from public clients."
+      },
+      "PublicProgramTransition": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "started_at"
+        ],
+        "title": "PublicProgramTransition"
       },
       "PublicSearchAsset": {
         "properties": {
@@ -59774,6 +59970,16 @@
           "storage_locations": {
             "$ref": "#/components/schemas/StationStorageLocations"
           },
+          "runtime_paths": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StationRuntimePaths"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "channel_count": {
             "type": "integer",
             "maximum": 12.0,
@@ -59967,6 +60173,37 @@
         ],
         "title": "StationRecoveryRequest",
         "description": "One-code local first-admin recovery request."
+      },
+      "StationRuntimePaths": {
+        "properties": {
+          "installation_root": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Installation Root"
+          },
+          "database_data": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Database Data"
+          },
+          "media_uploads": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Media Uploads"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "installation_root",
+          "database_data",
+          "media_uploads"
+        ],
+        "title": "StationRuntimePaths",
+        "description": "Resolved paths used by the installed service, reported read-only."
       },
       "StationSetupState": {
         "properties": {

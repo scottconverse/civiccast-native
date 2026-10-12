@@ -12,7 +12,7 @@ import threading
 import wave
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from math import exp
+from math import exp, isfinite
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, Protocol
@@ -444,7 +444,9 @@ def _tier_for_model_directory(model_path: Path) -> str | None:
     return None
 
 
-def _resolve_packaged_model_tier(model_path: Path) -> tuple[str | None, tuple[str, ...]]:
+def _resolve_packaged_model_tier(
+    model_path: Path, *, declared_tier: str | None = None
+) -> tuple[str | None, tuple[str, ...]]:
     """Resolve ``(tier_id, required_files)`` for a packaged model directory.
 
     The station's DECLARED tier wins, and when the directory basename also
@@ -460,7 +462,7 @@ def _resolve_packaged_model_tier(model_path: Path) -> tuple[str | None, tuple[st
     it simply stops one tier's shape from standing in for all of them.
     """
 
-    declared = os.environ.get(CAPTION_TIER_ENV_VAR, "").strip()
+    declared = declared_tier or os.environ.get(CAPTION_TIER_ENV_VAR, "").strip()
     on_disk = _tier_for_model_directory(model_path)
     if declared:
         # The DECLARATION is validated first: an unknown or unbound tier id is
@@ -656,8 +658,13 @@ class FasterWhisperRuntime:
         task: str = "transcribe",
         vad_filter: bool = True,
         live: bool = False,
+        packaged_model_path: str | None = None,
+        packaged_model_tier: str | None = None,
     ) -> None:
-        packaged_model = os.environ.get("CIVICCAST_WHISPER_MODEL_PATH", "").strip()
+        packaged_model = (
+            packaged_model_path or os.environ.get("CIVICCAST_WHISPER_MODEL_PATH", "").strip()
+        )
+        declared_tier = packaged_model_tier or None
         self._local_files_only = False
         if os.environ.get("CIVICCAST_NATIVE_STATION", "").strip() == "1" and not packaged_model:
             raise FasterWhisperRuntimeUnavailableError(
@@ -667,7 +674,9 @@ class FasterWhisperRuntime:
             )
         if packaged_model:
             model_path = Path(packaged_model).resolve()
-            tier_id, required = _resolve_packaged_model_tier(model_path)
+            tier_id, required = _resolve_packaged_model_tier(
+                model_path, declared_tier=declared_tier
+            )
             if tier_id is not None:
                 missing = _missing_packaged_model_files(model_path, required)
                 tier_label = f" (caption tier {tier_id!r})"
@@ -977,6 +986,12 @@ class FasterWhisperRuntime:
 
                 start_seconds = chunk.start_seconds + float(getattr(segment, "start", 0.0))
                 end_seconds = chunk.start_seconds + float(getattr(segment, "end", 0.0))
+                if not isfinite(start_seconds) or not isfinite(end_seconds):
+                    continue
+                if end_seconds <= chunk.start_seconds or start_seconds >= chunk.end_seconds:
+                    continue
+                start_seconds = max(start_seconds, chunk.start_seconds)
+                end_seconds = min(end_seconds, chunk.end_seconds)
                 if end_seconds <= start_seconds:
                     continue
 
@@ -990,11 +1005,21 @@ class FasterWhisperRuntime:
                 if self._live:
                     live_segments.append(hypothesis)
                     for word in getattr(segment, "words", None) or []:
+                        word_start = chunk.start_seconds + float(word.start)
+                        word_end = chunk.start_seconds + float(word.end)
+                        if not isfinite(word_start) or not isfinite(word_end):
+                            continue
+                        if word_end <= chunk.start_seconds or word_start >= chunk.end_seconds:
+                            continue
+                        word_start = max(word_start, chunk.start_seconds)
+                        word_end = min(word_end, chunk.end_seconds)
+                        if word_end <= word_start:
+                            continue
                         live_words.append(
                             CaptionWord(
                                 text=str(word.word),
-                                start_seconds=chunk.start_seconds + float(word.start),
-                                end_seconds=chunk.start_seconds + float(word.end),
+                                start_seconds=word_start,
+                                end_seconds=word_end,
                                 confidence=float(word.probability),
                             )
                         )

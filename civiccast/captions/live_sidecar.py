@@ -23,6 +23,7 @@ from civiccast.captions.webvtt import render_webvtt
 #: policy -- can be typed against the same set instead of casting into it.
 CaptionRuntimeState = Literal[
     "within-capacity",
+    "delayed",
     "overloaded",
     "storage-refused",
     "paused",

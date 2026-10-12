@@ -22,7 +22,7 @@ from sqlalchemy.pool import StaticPool
 from civiccast.app import create_app
 from civiccast.app_platform.router import get_app_platform_config_store
 from civiccast.app_platform.store import AppPlatformConfigStore
-from civiccast.cg.board_service import CgBoardService, FeedInput, ZoneInput
+from civiccast.cg.board_service import CgBoardService, FeedInput, ZoneInput, ZoneUpdateInput
 from civiccast.cg.board_store import CgBoardStore
 from civiccast.cg.bulletin_store import PostgresCgBulletinStore
 from civiccast.cg.models import CgBulletinSubmission, EmergencyOverlay
@@ -630,6 +630,40 @@ def test_portal_display_durable_ticker_and_bulletins(
     bulletins = client.get("/api/public/cg/channels/public/bulletins")
     assert bulletins.status_code == 200
     assert [s["submission_id"] for s in bulletins.json()["submissions"]] == ["sub-1"]
+
+
+def test_manual_ticker_text_flows_from_saved_board_to_public_snapshot(
+    _durable_factory: Callable[[], Session],
+) -> None:
+    app, service = _durable_public_app(_durable_factory)
+    client = TestClient(app)
+    service.create_board("public", template_id="standard-community-board", operator_id="op_a")
+    zone = service.add_zone(
+        "public",
+        payload=ZoneInput(
+            region="lower",
+            zone_kind="ticker",
+            content_source="manual",
+            manual_text="Public hearing moved to 6 PM",
+        ),
+        operator_id="op_a",
+    )
+
+    snapshot = client.get("/api/public/cg/channels/public/snapshot")
+    assert snapshot.status_code == 200
+    ticker = next(z for z in snapshot.json()["zones"] if z["kind"] == "ticker")
+    assert ticker["content"]["items"] == ["Public hearing moved to 6 PM"]
+
+    service.update_zone(
+        "public",
+        zone.zone_id,
+        payload=ZoneUpdateInput(manual_text="Meeting moved to 6:30 PM"),
+        operator_id="op_a",
+    )
+    updated = client.get("/api/public/cg/channels/public/display")
+    assert updated.status_code == 200
+    ticker = next(z for z in updated.json()["snapshot"]["zones"] if z["kind"] == "ticker")
+    assert ticker["content"]["items"] == ["Meeting moved to 6:30 PM"]
 
 
 def test_portal_display_demo_mode_requires_explicit_env_flag(monkeypatch: MonkeyPatch) -> None:

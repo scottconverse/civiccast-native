@@ -26,7 +26,7 @@ from civiccast.summary.job import (
     enqueue_summary_job,
 )
 from civiccast.summary.models import OperatorApproval, SummaryDraft
-from civiccast.summary.ollama import OllamaSummaryModel
+from civiccast.summary.ollama import OllamaSummaryModel, SummaryResourceDeferredError
 from civiccast.summary.store import (
     SummaryStore,
     SummaryStoreConflictError,
@@ -169,7 +169,14 @@ def edit_summary(
     status_code=status.HTTP_201_CREATED,
     summary="Generate a sourced summary draft from committed transcript cues",
     dependencies=[Depends(require_any_role("records_clerk", "support_admin"))],
-    responses={503: {"description": OLLAMA_NOT_CONFIGURED_MESSAGE}},
+    responses={
+        503: {
+            "description": (
+                "Local Ollama is unavailable or summary generation was deferred to preserve "
+                "broadcast memory headroom."
+            )
+        }
+    },
 )
 def generate_summary(
     payload: SummaryGenerateRequest,
@@ -181,6 +188,10 @@ def generate_summary(
             meeting_id=payload.meeting_id,
             cues=payload.cues,
         )
+    except SummaryResourceDeferredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        ) from exc
     except OllamaRuntimeUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=OLLAMA_NOT_CONFIGURED_MESSAGE

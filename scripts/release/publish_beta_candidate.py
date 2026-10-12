@@ -178,6 +178,7 @@ DIRECT_CONSUMER_RECEIPT_KIND = "civiccast-native-beta-direct-consumer-evidence"
 DIRECT_BETA11_VERSION = "1.0.0-beta.11"
 DIRECT_BETA12_VERSION = "1.0.0-beta.12"
 DIRECT_BETA13_VERSION = "1.0.0-beta.13"
+DIRECT_BETA14_VERSION = "1.0.0-beta.14"
 DIRECT_BETA12_CONSUMER_CONTRACT = "beta11-to-beta12-interrupted-upgrade-v1"
 DIRECT_BETA12_SEPARATE_CONSUMER_CONTRACT = "beta11-to-beta12-upgrade-and-d4-repair-v1"
 DIRECT_BETA11_BASELINE_INSTALLER_SHA256 = (
@@ -224,6 +225,7 @@ DIRECT_HOST_RUNTIME_MIN_SPAN_SECONDS = 30.0
 DIRECT_CAPTION_RUNTIME_STATES = {
     "within-capacity",
     "overloaded",
+    "delayed",
     "storage-refused",
     "paused",
     "disabled",
@@ -926,7 +928,11 @@ def verify_consumer_evidence_receipt(
     if consumer_mode not in {"sandbox", "physical-host"}:
         raise PublishError(f"unsupported direct consumer evidence mode: {consumer_mode!r}")
     runtime_proof_scope = doc.get("runtime_proof_scope", "three-channel-capacity")
-    beta12_candidate = candidate_version in {DIRECT_BETA12_VERSION, DIRECT_BETA13_VERSION}
+    beta12_candidate = candidate_version in {
+        DIRECT_BETA12_VERSION,
+        DIRECT_BETA13_VERSION,
+        DIRECT_BETA14_VERSION,
+    }
     beta12_sandbox = consumer_mode == "sandbox" and candidate_version in {
         DIRECT_BETA12_VERSION,
         DIRECT_BETA13_VERSION,
@@ -2777,7 +2783,7 @@ def _run(args: argparse.Namespace) -> None:
         if direct_verification.get("consumer_mode") == "physical-host":
             print(
                 "publish_beta_candidate: exact physical-host install/output proof passed; "
-                "Sandbox lanes and Gate A were not run"
+                "this receipt establishes host checks only; Gate A workflow was not run"
             )
         else:
             print(
@@ -2912,7 +2918,8 @@ def _run(args: argparse.Namespace) -> None:
     if direct_verification is not None:
         direct_truth = (
             f"direct physical-host consumer receipt {direct_receipt}; "
-            "Sandbox clean-install, repair, and Beta 10 upgrade lanes not run; Gate A not run."
+            "This receipt covers the host installation and output only; "
+            "consult the release verification record for separate Sandbox checks. Gate A not run."
             if direct_verification.get("consumer_mode") == "physical-host"
             else f"direct Sandbox consumer receipt {direct_receipt}; Gate A not run."
         )

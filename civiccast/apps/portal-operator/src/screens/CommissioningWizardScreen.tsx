@@ -435,6 +435,24 @@ function OutputProofStep({
             Verdict: {runMut.data.verdict}
           </Banner>
           {runMut.data.detail && <p>{runMut.data.detail}</p>}
+          {runMut.data.compliance_probe_result && (
+            <div className="mt-2 space-y-1" aria-label="TSDuck output checks">
+              <p className="font-semibold">
+                TSDuck: {runMut.data.compliance_probe_result.verdict}
+                {runMut.data.compliance_probe_result.tsduck_version
+                  ? ' (' + runMut.data.compliance_probe_result.tsduck_version + ')'
+                  : ''}
+              </p>
+              {runMut.data.compliance_probe_result.detail && (
+                <p>{runMut.data.compliance_probe_result.detail}</p>
+              )}
+              {(runMut.data.compliance_probe_result.checks ?? []).map((check) => (
+                <p key={check.check}>
+                  {check.check}: {check.status} — {check.detail}
+                </p>
+              ))}
+            </div>
+          )}
           {(runMut.data.blockers ?? []).map((b) => (
             <p key={b} style={{ color: 'var(--cc-warn)' }}>
               {b}

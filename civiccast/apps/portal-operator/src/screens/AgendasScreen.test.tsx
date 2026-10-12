@@ -134,7 +134,11 @@ beforeEach(() => {
     }),
   )
   vi.mocked(deleteAgendaItem).mockResolvedValue(undefined)
-  vi.mocked(syncAgendaFromChapters).mockResolvedValue([item({ item_id: 'item-02', order: 1 })])
+  vi.mocked(syncAgendaFromChapters).mockResolvedValue({
+    chapter_count: 1,
+    added_items: [item({ item_id: 'item-02', order: 1 })],
+    skipped_existing: [],
+  })
   vi.mocked(importAgendaFromDoc).mockResolvedValue([
     item({ item_id: 'item-i-01', order: 0 }),
     item({ item_id: 'item-i-02', order: 1 }),
@@ -198,13 +202,39 @@ describe('AgendasScreen stale-list warning (UX-4)', () => {
     await findByText('Call to order')
     // Trigger a refetch by hitting Sync from chapters; the mock above fails
     // on subsequent listAgendaItems calls.
-    vi.mocked(syncAgendaFromChapters).mockResolvedValue([])
+    vi.mocked(syncAgendaFromChapters).mockResolvedValue({
+      chapter_count: 0,
+      added_items: [],
+      skipped_existing: [],
+    })
     fireEvent.click(
       await findByRole('button', { name: /sync agenda items from chapter markers/i }),
     )
     expect(
       await findByText(/Items list may be stale — last refresh failed/i),
     ).toBeTruthy()
+  })
+})
+
+describe('AgendasScreen chapter sync outcome', () => {
+  it('explains when a source chapter is skipped because its agenda position is occupied', async () => {
+    vi.mocked(syncAgendaFromChapters).mockResolvedValue({
+      chapter_count: 1,
+      added_items: [],
+      skipped_existing: [
+        {
+          order: 0,
+          chapter_title: 'Roll call',
+          existing_item_title: 'Operator-edited roll call',
+        },
+      ],
+    })
+    const { findByRole, findByText } = renderScreen()
+
+    fireEvent.click(await findByRole('button', { name: /sync agenda items from chapter markers/i }))
+
+    expect(await findByText(/No new items added from 1 chapter marker/i)).toBeTruthy()
+    expect(await findByText(/Roll call → Operator-edited roll call/i)).toBeTruthy()
   })
 })
 
@@ -331,7 +361,7 @@ describe('AgendasScreen sync from chapters', () => {
     await waitFor(() =>
       expect(vi.mocked(syncAgendaFromChapters)).toHaveBeenCalledWith('council-2026-01'),
     )
-    expect(await findByText(/Synced 1 new item from chapter markers/i)).toBeTruthy()
+    expect(await findByText(/Added 1 new item from 1 chapter marker/i)).toBeTruthy()
   })
 })
 

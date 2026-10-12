@@ -2,7 +2,7 @@
 
 This chapter is for the IT person who connects CivicCast to the outside world: the cable company's equipment, a content delivery network, other servers on the internet, weather and emergency feeds, and other software that wants to talk to the station. It describes current source behavior and identifies connections that remain **off by default**.
 
-> **Note:** Beta 12 is a GitHub pre-release, not a production release. The [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) describes its package observations; it does not report acceptance by a real cable headend, CDN or outside publishing service. The source notes below explain configuration behavior, not field acceptance.
+> **Note:** This chapter describes Beta 14 configuration. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records package observations. Verify your configured external service or headend during station commissioning.
 
 ## Before you start
 
@@ -23,7 +23,7 @@ The audio controls act on the director's audio path; they do not establish that 
 
 A *headend* is the cable company's room of equipment that receives your channel and puts it on the cable. Many small stations send the headend a *UDP transport stream* (a continuous stream of MPEG packets sent over the network). CivicCast does this with an output of kind `udp-ts` and a destination address of the form `udp://host:port`.
 
-> **Verification limit:** The Beta 12 package record does not include acceptance by a real cable headend. The presets below come from vendor documents and the code says so ("Not field-proven against a real cable headend"). Agree the exact stream settings with your cable company before you rely on any of them.
+Agree the stream settings with your cable company, select the matching preset below, and use **Readiness** to inspect the local output proof. The cable company's receiving equipment must also be configured for that stream.
 
 ### Headend presets
 
@@ -122,7 +122,7 @@ There is a separate *surge switch* that would send the live stream to the CDN du
 
 If a CDN or other server sits in front of the portal and you use the analytics features, set `CIVICCAST_ANALYTICS_TRUSTED_PROXY_CIDRS` to the address ranges of that server so viewer addresses are counted correctly.
 
-> **Verification limit:** The Beta 12 package record does not include an end-to-end CDN upload. Test one recording and verify it at the CDN before relying on that path.
+After configuring a CDN, publish one recording and open it at the destination to confirm its credentials, destination path and playback settings.
 
 ### Publishing providers
 
@@ -375,7 +375,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 | 422 | The request body is wrong; `detail` is a list of field errors | Fix the fields. |
 | 429 | Too many failed tokens: 10 failures in 60 seconds from one address (by default). The `detail` reads "Too many failed staff authentication attempts. Wait and retry." | Wait; the `Retry-After` header gives the seconds. A request with no token at all does not count. |
 
-**Historical Beta 10 audit note:** A whole-repository audit reported test/feature divergence at that time. It is not a Beta 12 test result. Use the current verification record for this release's checks and try an integration on a test channel before automating it.
+**Historical Beta 10 audit note:** A whole-repository audit reported test/feature divergence at that time. It is not a test result for the current package. Use the current verification record for this release's checks and try an integration on a test channel before automating it.
 
 ## If it did not work
 

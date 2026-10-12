@@ -5,7 +5,9 @@
 from __future__ import annotations
 
 from importlib import import_module
+from types import SimpleNamespace
 
+import pytest
 from pytest import MonkeyPatch
 
 from civiccast.ai_runtime.ollama_client import OllamaModelManifest
@@ -51,3 +53,65 @@ class TestOllamaSummaryProvenance:
 
         assert result.status == "refused"
         assert "unsupported claim" in result.operator_action.lower()
+
+
+def _summary_adapter(summary_module):
+    return summary_module.OllamaSummaryModel(
+        model_tag="gemma4:12b",
+        provenance=summary_module.OllamaSummaryProvenance(
+            digest="sha256:" + ("a" * 64),
+            ollama_version="ollama test",
+            manifest_source="test",
+            evidence_line="runtime=ollama",
+        ),
+    )
+
+
+def test_summary_defers_before_generate_when_broadcast_headroom_is_short(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    summary_module = import_module("civiccast.summary.ollama")
+    called = False
+
+    def unexpected_generate(**_kwargs):
+        nonlocal called
+        called = True
+        return "{}"
+
+    monkeypatch.setattr(
+        summary_module,
+        "psutil",
+        SimpleNamespace(virtual_memory=lambda: SimpleNamespace(available=17 * 1024**3)),
+        raising=False,
+    )
+    monkeypatch.setattr(summary_module, "generate_with_ollama", unexpected_generate)
+
+    with pytest.raises(RuntimeError, match="smaller model"):
+        _summary_adapter(summary_module).generate(
+            meeting_id="meeting-1", cues=[], prompt_version="v1"
+        )
+
+    assert called is False
+
+
+def test_summary_runs_when_model_and_broadcast_headroom_are_available(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    summary_module = import_module("civiccast.summary.ollama")
+    monkeypatch.setattr(
+        summary_module,
+        "psutil",
+        SimpleNamespace(virtual_memory=lambda: SimpleNamespace(available=24 * 1024**3)),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        summary_module,
+        "generate_with_ollama",
+        lambda **_kwargs: '{"narrative":"ok","sourced_claims":[]}',
+    )
+
+    result = _summary_adapter(summary_module).generate(
+        meeting_id="meeting-1", cues=[], prompt_version="v1"
+    )
+
+    assert result["narrative"] == "ok"

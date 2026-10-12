@@ -238,7 +238,8 @@ def test_recently_completed_audio_is_caught_up_and_readiness_healthy(tmp_path: P
         ),
         ({"inference_inflight": True}, "processing"),
         ({"backlog_segments": 1}, "processing"),
-        ({"state": "overloaded"}, "failed"),
+        ({"state": "overloaded"}, "overloaded"),
+        ({"state": "delayed"}, "delayed"),
     ],
     ids=[
         "no-input",
@@ -248,6 +249,7 @@ def test_recently_completed_audio_is_caught_up_and_readiness_healthy(tmp_path: P
         "inference-pending",
         "backlog-pending",
         "capacity-failure",
+        "temporary-delay",
     ],
 )
 def test_caught_up_requires_recent_completed_audio_without_failure_or_pending_work(

@@ -8,15 +8,54 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import psutil
+
+from civiccast.ai_models.catalog import catalog_tiers_for
 from civiccast.ai_runtime.evidence import RuntimeEvidence
 from civiccast.ai_runtime.ollama_client import (
     DEFAULT_OLLAMA_BASE_URL,
+    OllamaRuntimeUnavailableError,
     generate_with_ollama,
     get_ollama_model_manifest,
 )
 from civiccast.captions import CaptionCue
 
 _SUMMARY_MODEL_TAG = "gemma4:e4b"
+# Keep this reserve fixed so a selected summary tier cannot consume the station's
+# memory budget for live broadcast work.
+_BROADCAST_HEADROOM_GB = 8
+_GIB = 1024**3
+
+
+class SummaryResourceDeferredError(OllamaRuntimeUnavailableError):
+    """Raised before inference when the selected tier would consume broadcast RAM."""
+
+
+def _require_summary_headroom(model_tag: str) -> None:
+    """Keep the selected tier's catalog RAM floor available alongside broadcast reserve."""
+
+    tiers = catalog_tiers_for("summary")
+    tier = next((candidate for candidate in tiers if candidate.model_id == model_tag), None)
+    model_floor_gb = tier.min_ram_gb if tier is not None else 8
+    required_available_gb = model_floor_gb + _BROADCAST_HEADROOM_GB
+    available_bytes = psutil.virtual_memory().available
+    if available_bytes < required_available_gb * _GIB:
+        available_gb = available_bytes / _GIB
+        smaller_tier = next(
+            (candidate for candidate in tiers if candidate.min_ram_gb < model_floor_gb), None
+        )
+        recovery_action = "Wait for station memory to recover before retrying."
+        if smaller_tier is not None:
+            recovery_action = (
+                "Wait for station memory to recover or select the smaller model "
+                f"({smaller_tier.model_id})."
+            )
+        raise SummaryResourceDeferredError(
+            f"Summary generation was deferred before loading {model_tag}: "
+            f"{available_gb:.1f} GiB is available, while this tier needs "
+            f"{model_floor_gb} GiB plus {_BROADCAST_HEADROOM_GB} GiB reserved for broadcast. "
+            + recovery_action
+        )
 
 
 @dataclass(frozen=True)
@@ -73,6 +112,7 @@ class OllamaSummaryModel:
     ) -> dict[str, Any]:
         """Generate structured summary JSON with the live local Ollama model."""
 
+        _require_summary_headroom(self.model_tag)
         prompt = _summary_prompt(
             meeting_id=meeting_id,
             cues=cues,

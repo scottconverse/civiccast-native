@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import wave
 from pathlib import Path
 
 import pytest
@@ -30,6 +31,14 @@ def _cue(*, start: float = 65.1, end: float = 68.9) -> CaptionCue:
         confidence=0.62,
         low_confidence=True,
     )
+
+
+def _write_clip(path: Path, seconds: float) -> None:
+    with wave.open(str(path), "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(16000)
+        output.writeframes(b"\0\0" * round(seconds * 16000))
 
 
 def test_retains_and_verifies_the_exact_live_audio_window(tmp_path: Path) -> None:
@@ -97,7 +106,7 @@ def test_builds_bounded_mono_wav_around_the_cue(tmp_path: Path) -> None:
     def runner(args: list[str], *, timeout: float | None = None) -> FfmpegResult:
         captured["args"] = args
         captured["timeout"] = timeout
-        Path(args[-1]).write_bytes(b"RIFF-review-clip")
+        _write_clip(Path(args[-1]), float(args[args.index("-t") + 1]))
         return FfmpegResult(returncode=0, stdout="", stderr="")
 
     clip = build_caption_review_clip(source, _cue(), ffmpeg_runner=runner)
@@ -111,12 +120,13 @@ def test_builds_bounded_mono_wav_around_the_cue(tmp_path: Path) -> None:
         assert args[args.index("-i") + 1] == str(source.resolve())
         assert args[-8:-1] == ["-vn", "-ac", "1", "-ar", "16000", "-f", "wav"]
         assert captured["timeout"] == 30.0
-        assert clip.read_bytes() == b"RIFF-review-clip"
+        with wave.open(str(clip)) as audio:
+            assert audio.getnframes() / audio.getframerate() == pytest.approx(7.8)
     finally:
         clip.unlink(missing_ok=True)
 
 
-def test_caps_long_cues_to_fifteen_seconds(tmp_path: Path) -> None:
+def test_long_review_clip_includes_the_complete_cue(tmp_path: Path) -> None:
     source = tmp_path / "meeting.mp4"
     source.write_bytes(b"source")
     captured: list[str] = []
@@ -124,14 +134,30 @@ def test_caps_long_cues_to_fifteen_seconds(tmp_path: Path) -> None:
     def runner(args: list[str], *, timeout: float | None = None) -> FfmpegResult:
         del timeout
         captured.extend(args)
-        Path(args[-1]).write_bytes(b"RIFF")
+        _write_clip(Path(args[-1]), float(args[args.index("-t") + 1]))
         return FfmpegResult(returncode=0, stdout="", stderr="")
 
     clip = build_caption_review_clip(source, _cue(start=5.0, end=90.0), ffmpeg_runner=runner)
     try:
-        assert captured[captured.index("-t") + 1] == "15.000"
+        assert captured[captured.index("-t") + 1] == "89.000"
     finally:
         clip.unlink(missing_ok=True)
+
+
+def test_refuses_a_cue_longer_than_the_bounded_review_limit(tmp_path):
+    with pytest.raises(CaptionReviewClipError, match="120 seconds"):
+        build_caption_review_clip(tmp_path / "meeting.mp4", _cue(start=5, end=126))
+
+
+def test_review_clip_reports_source_audio_that_ends_before_the_cue(tmp_path):
+    def runner(args, **kwargs):
+        _write_clip(Path(args[-1]), 3)
+        return FfmpegResult(returncode=0, stdout="", stderr="")
+
+    with pytest.raises(CaptionReviewClipError, match="ends before the selected cue"):
+        build_caption_review_clip(
+            tmp_path / "meeting.mp4", _cue(start=65, end=69), ffmpeg_runner=runner
+        )
 
 
 def test_removes_partial_output_when_ffmpeg_fails(tmp_path: Path) -> None:

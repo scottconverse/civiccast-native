@@ -1,5 +1,29 @@
 # Current continuation state
 
+Beta 14 implementation is active on `codex/beta14-field-fixes`, based on
+merged main `3c3ac6ba4a1e185a475a48aa3733a0d1a79a9d1e`. The owner authorized
+all 28 goals in `C:\Users\scott\Desktop\Goals\CIVICCAST GOALS B14.md` and
+shipment of a working Beta 14. The active requirement/evidence record is
+[Beta 14 task completion](docs/ops/beta14-task-completion.md).
+
+The goal document additionally requires initial Windows Sandbox testing and
+a final real installation on this machine. That final installation is an
+authorized host change; keep the existing station running until the candidate
+has passed the initial isolated installation and the final installation is
+ready. No extended soak, extra harness or unrelated feature work is included.
+The prepared 72-hour positive marketing/documentation batch is applied to this
+development branch, including the README; it is not yet published.
+
+Installer/model and caption groups have focused checks; the independent
+caption/model review found and confirmed the correction for a lost selected
+tier at the fallback child-process boundary. Luna workers continue
+live/recording/playback, PDF/Help, and adaptation of existing release tools.
+Ordinary work uses Luna Extra High; difficult caption-clock work and focused
+independent review use Sol 6.1 Medium. Shared generated files, versioning, documentation
+integration and publication are coordinator-owned. Preserve unrelated
+untracked `ops/beta10-oversight/evidence/`. No Beta 14 build, installation,
+signature or publication result exists yet.
+
 The current published release is Beta 13. For its package identity and
 recorded evidence, use [PROJECT-STATUS.md](PROJECT-STATUS.md) and the
 [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).

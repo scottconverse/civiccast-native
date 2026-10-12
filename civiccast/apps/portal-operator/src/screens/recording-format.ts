@@ -94,13 +94,15 @@ export function formatPlannedStart(isoString: string): string {
   return d.toLocaleString()
 }
 
-/** Job duration: prefer real start/end, fall back to planned span. Returns
- *  HH:MM:SS for the table. */
-export function jobDuration(job: RecordingJob): string {
-  const startIso = job.started_at ?? job.planned_start
-  const endIso = job.ended_at ?? job.planned_end
-  if (!startIso || !endIso) return '—'
-  const start = new Date(startIso).getTime()
+/** Wall-clock time the capture job has actually run, separate from media
+ * duration. A queued or prearmed job has no elapsed capture time yet. */
+export function jobDuration(job: RecordingJob, now: Date = new Date()): string {
+  if (!job.started_at) return '—'
+  const endIso =
+    job.ended_at ??
+    (job.state === 'recording' || job.state === 'finalizing' ? now.toISOString() : null)
+  if (!endIso) return '—'
+  const start = new Date(job.started_at).getTime()
   const end = new Date(endIso).getTime()
   if (Number.isNaN(start) || Number.isNaN(end)) return '—'
   return formatDurationHMS(Math.max(0, Math.floor((end - start) / 1000)))

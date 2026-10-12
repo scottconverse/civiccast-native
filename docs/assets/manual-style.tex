@@ -125,4 +125,13 @@
 % Inline code and code blocks: light panel instead of bare monospace.
 \usepackage{fvextra}
 \fvset{breaklines=true, breakanywhere=true, fontsize=\small}
+% Pandoc emits unhighlighted fenced blocks as the basic `verbatim` environment,
+% which does not inherit fvextra's line-breaking settings. Rebind that
+% environment so report templates and other prose-like blocks wrap in print.
+\RecustomVerbatimEnvironment{verbatim}{Verbatim}{breaklines,breakanywhere,fontsize=\small}
+
+% Long inline paths and command strings are emitted as \path by the manual's
+% Lua filter; xurl gives those values legal break points without changing the
+% source text or hyperlink destinations.
+\usepackage{xurl}
 \definecolor{shadecolor}{HTML}{F4F6F8}

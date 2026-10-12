@@ -17,6 +17,8 @@ for the feature is a 400; an unknown feature is a 404; an unwired service is a
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from civiccast.ai_models.models import (
@@ -61,6 +63,7 @@ _READ_ROLES_EXTRA = {"x-required-roles": list(_READ)}
 _WRITE_ROLES_EXTRA = {"x-required-roles": list(_WRITE)}
 
 staff_router = APIRouter(prefix="/api/staff/ai-models", tags=["staff", "ai-models"])
+_LOG = logging.getLogger(__name__)
 
 
 # --- DI seam (overridden by the app factory) --------------------------------
@@ -103,6 +106,7 @@ def list_all_models(
     responses={503: {"description": _DB_NOT_READY}},
 )
 def get_model_availability(
+    request: Request,
     svc: AiModelService | None = Depends(get_ai_model_service),
 ) -> AiModelAvailability:
     """Per-feature availability of the effective model (present/absent + reachability).
@@ -112,7 +116,30 @@ def get_model_availability(
     (Q2/U4). Routed BEFORE ``/{feature}`` so the literal path is not captured as a
     feature name.
     """
-    return _require_service(svc).get_availability()
+    availability = _require_service(svc).get_availability()
+    captions = availability.features.get("captions")
+    runtime_key = getattr(request.app.state, "caption_live_model_key", None)
+    if captions is not None and runtime_key:
+        captions.live_runtime_model_key = runtime_key
+        captions.live_runtime_model_loaded_at_startup = getattr(
+            request.app.state, "caption_live_runtime_model_loaded_at_startup", None
+        )
+    translation = availability.features.get("translation")
+    store_bundle = getattr(request.app.state, "store_bundle", None)
+    review_store_factory = getattr(store_bundle, "caption_review_store", None)
+    if translation is not None and callable(review_store_factory):
+        try:
+            spanish_rows = review_store_factory().list(language="es")
+        except Exception:
+            # Activity is an optional status hint. A review-store outage must not
+            # hide otherwise-available model configuration from the operator.
+            _LOG.warning("Could not read saved Spanish caption activity for AI Models.")
+        else:
+            translation.translation_generated_cue_count = len(spanish_rows)
+            translation.translation_last_generated_at = max(
+                (row.created_at for row in spanish_rows), default=None
+            )
+    return availability
 
 
 @staff_router.put(

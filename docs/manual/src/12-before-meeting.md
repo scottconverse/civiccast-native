@@ -2,7 +2,7 @@
 
 This chapter covers the work you do before a meeting starts and before a program airs. You will put programs on a channel's schedule, repeat a program every week, let CivicCast fill a time of day by rule, set up automatic recording of a meeting, publish an agenda that residents can read next to the video, and review programs that residents and community producers send in. Station staff with the publish operator, meeting operator, or records clerk role normally do this work.
 
-> **Note:** This chapter describes the Beta.12 screens and program behavior. Beta.12 is a GitHub pre-release, not a production release. A **Known issue** note names the version in which its behavior was checked; read its version scope before applying it to another release. See the [Beta.12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) for package-specific checks and limits.
+> **Note:** This chapter describes the Beta 14 screens and program behavior. Beta 14 is a GitHub pre-release, not a production release. A **Known issue** note names the version in which its behavior was checked; read its version scope before applying it to another release. See the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for package-specific checks and limits.
 
 ## Before you start
 
@@ -154,6 +154,19 @@ You should see the message "Cancelled." and the row's state label change to Canc
 > **Warning:** This cannot be undone. The box says you would need to create a new scheduled item to air it again.
 
 > **Known issue (beta.11):** A **Published** row has no **Cancel** button on this screen. To take a program that you approved by hand off the air, use **Take off air** on the Channels screen ([Chapter 4](#ch-running-meeting)); it asks for a reason. Programs that Auto-schedule placed have no approval record, and the console has no button to remove one. The station's programming interface can cancel a Published item; ask your IT person ([Part II, Integrations](#ch-integrations)).
+
+## Keep a channel running continuously
+
+For a repeating rotation of two recordings:
+
+1. Add both recordings to **Schedule** on the same channel. Give each item its intended duration and put the second immediately after the first: its start is the first item's start plus its duration.
+2. Use **Publish to residents** or the channel's **Commit to Air** control to approve both items. Items left **Scheduled** do not air.
+3. Ask the station administrator to set `CIVICCAST_SCHEDULE_LOOP=1` in the Windows service environment, then restart the service between programs. The default is a finite schedule; loop mode repeats the published sequence. See [service environment settings](#configuration-env-how).
+4. Watch the first transition on the channel. The loop preserves gaps between schedule entries, so use contiguous entries for uninterrupted programming.
+
+For an automatically maintained schedule, use **Auto-schedule** below: create a saved search, a daypart and an enabled rule, then **Preview** and **Compile now**. The worker extends the rolling schedule hourly unless `CIVICCAST_AUTOSCHEDULE=off`. Daypart times use the station's configured time zone.
+
+In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from the engine's source-transition proof. The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
 
 ## Repeat a program on a schedule (Program Guide)
 
@@ -312,7 +325,7 @@ A *recording schedule* is a saved plan: one source, one time pattern, one length
    - For a network stream, type the address in **URI** (the placeholder is `rtsp://camera.local/stream`).
 6. Under **Recurrence**, choose **One-shot** (one capture) or **Weekly**.
 7. For **One-shot**, type **Start (UTC)**. For **Weekly**, click **Weekdays**, **Weekend**, **Every day** or **Clear**, tick the day boxes you want, and type **Time (HH:MM UTC)**, for example `19:00`. See the warning below.
-8. In **Duration (HH:MM:SS)**, type the length with two digits in each part. It starts at `01:00:00`. A value such as `1:5:0` is refused; type `01:05:00`.
+8. In **Duration (HH:MM:SS)**, type the length with two digits in each part. It starts at `01:00:00`. The minimum is one minute (`00:01:00`). A value such as `1:5:0` is refused; type `01:05:00`.
 9. In **Quality preset (encoder profile)**, leave `default`, or type a name your administrator gave you. The screen suggests default, copy, h264-1080p, h264-720p, hw-h264-1080p and hw-h264-720p.
 10. In **Loudness regime**, choose how loud the recording should be. The choices are **Inherit station default**, **Copy source audio**, **Cable / ATSC A/85 (-24 LKFS)**, **Broadcast / EBU R128 (-23 LUFS)** and **Streaming (-16 LUFS)**. One line under the choice explains it.
 11. Leave **Target series (optional)** blank unless your administrator tells you what to put there. We could not confirm what it does.
@@ -332,7 +345,7 @@ You should see the new schedule appear in the **Schedules** table above the form
 
 > **For IT staff:** the capture-device list, recording folders and the runtime switch are described in [Part II, Running it day to day](#ch-operations).
 
-By default, CivicCast adds a row for each planned capture to the **Recordings** table up to ten minutes before its start time, and gets the input ready about 30 seconds before the start. The job moves through these states:
+By default, CivicCast adds a row for each planned capture to the **Recordings** table up to ten minutes before its start time, and prepares it about 30 seconds before the start. Preparing does not record extra video: capture starts at the scheduled time and is bounded by the remaining recording window. If an input stalls or reconnects, the resulting playable media can be shorter than the elapsed wall time; inspect the recording's outcome and media duration. The job moves through these states:
 
 | State | Meaning |
 | --- | --- |
@@ -426,7 +439,7 @@ You should see the item in the **Agenda items** table. Use **Edit** on a row to 
 
 The **Bulk actions** section has four ways to fill an agenda without typing each item.
 
-- **Sync from chapters** makes one item for each *chapter marker* on the recording: a named point in time added in the trim editor (open it from the recording's page on **Assets**). It reads "Synced N new item(s) from chapter markers." Items whose Order already exists are skipped, so your edits survive running it again.
+- **Sync from chapters** makes an item for each eligible *chapter marker* on the recording: a named point in time added in the trim editor (open it from the recording's page on **Assets**). The result shows the number of source chapters, new items and skipped items with their reasons. Existing occupied positions are preserved; repeated synchronization does not duplicate them. A zero-new-item result therefore explains whether chapters were absent or their positions were already occupied.
 - **Import from doc (paste plain-text agenda, one item per line)**: paste the agenda text and click **Import**. Each non-blank line becomes one draft item. A leading number such as "3.a" or "VII" becomes the **Number**. It reads "Imported N item(s)." and the help line says "Taken literally, one item per line — nothing to review." Lines whose position already has an item are skipped.
 - **Or upload a PDF agenda…**: choose a PDF and click **Import PDF**. CivicCast makes a best-effort guess from the text in the PDF (numbered items, ALL-CAPS headings and times). Each item gets a **Confidence** mark: green is 90% or more, amber 50 to 89%, red under 50%. If any item is under 90%, the banner says "Some items were a best-effort guess (see the Confidence marks below) — review them before publishing." A PDF that is a scan of paper, with no text in it, finds nothing: "Couldn't find any recognizable items in that PDF. Try pasting the agenda's text instead."
 - **Import from an external agenda system**: look up a meeting in Legistar, PrimeGov, CivicClerk, or a "JS-rendered portal (CivicPlus, Granicus, other)" and import it. See the Known issue below.

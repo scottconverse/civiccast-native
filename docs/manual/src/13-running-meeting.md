@@ -2,7 +2,7 @@
 
 This chapter is for the people who work the room on meeting night: the camera operator, the meeting operator, and the volunteer who watches the screen while the council meets. It shows you how to check that the station is ready, run a live session, start and stop a channel, take a channel live from a camera, put scheduled programs on the air, drive the production control room, show community announcements between programs, and bring in remote guests. It also tells you, control by control, what each button really does. In this version of CivicCast several buttons that sound like "go on air" do something smaller than their names say, and a few things happen without any "Are you sure?" box.
 
-> **Note:** CivicCast Beta.12 is a GitHub pre-release, not a production release. This chapter explains the current controls and their behavior; a **Known issue** box names the version in which a mismatch was checked and says whether it remains current. Package-specific checks and limits are in the [Beta.12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
+> **Note:** This chapter describes Beta 14 controls. For package identity, installation observations and publication status, use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) and the releases page. Known-issue notes retain the version in which their behavior was checked.
 
 ## Before you start
 
@@ -71,7 +71,7 @@ Do this early on meeting night, before anyone is in the room. The same screen is
 
 You should see a card titled "Broadcast readiness check result" with a line "Rehearsal result" that reads **Passed**, **Failed** or **Not run**.
 
-> **Warning:** **Check broadcast readiness** has no confirmation box. It creates a private test live session called "Private first-broadcast rehearsal" on the channel `government`, copies the sample test video that was set up during first setup (if there is none, the result reads **Not run**), and saves a short test recording. If they do not already exist, it also adds a source called "CivicCast sample test source" (see the Known issue under "Choose and check a meeting source") and a test recording location. In the code we read, the test session is marked "On air" for a moment and then ended, and the portal home page reads the live session record, so residents could briefly see the test session as on air. We have not watched this happen. We could not confirm whether the test recording shows up in the Assets list. Do not run this check while a real meeting is on air.
+> **Warning:** **Check broadcast readiness** has no confirmation box. It creates a private test live session called "Private first-broadcast rehearsal" on the channel `government`, copies the bundled sample video (if there is none, the result reads **Not run**), and saves a short test recording. If needed, it also creates the sample source and test recording location. The resident portal reconciles live-session state with actual program output. Run this rehearsal before a real meeting rather than during one.
 
 > **Known issue (beta.11):** the Readiness page has no Refresh button. Only the "On air right now" banner updates by itself. The checklist, the feed cards and the other panels change only after you use one of their own buttons or reopen the page.
 
@@ -92,7 +92,7 @@ You should see the source's tag change to **Delivering** and text such as "Check
 
 > **Known issue (beta.12; first recorded in beta.11):** The **On-air preview** still never shows source video or an audio meter. The panel always renders its unavailable message, even after a source check; this is not the result of that check. Use **Check source** and **Run pre-flight** for source status, and watch your own monitor or the channel output for the picture.
 
-For rehearsal, the unchanged bundled sample source uses its validated local sample video. After changing that source's channel, type, address or credentials, pre-flight checks the configured live source instead. An edited source cannot pass by reusing an unrelated sample file. For a meeting, select a valid, reachable source on the session's channel and make sure its fresh check passes.
+Live Room pre-flight checks the selected source's configured network address, including the sample source. A sample file cannot substitute for an unreachable live input. The installer's separate private rehearsal uses the bundled local sample. For a meeting, select a valid, reachable source on the session's channel and make sure its fresh check passes.
 
 If a Setup admin needs to change a source's address, they click **Edit source**, change the fields and click **Save source**. CivicCast warns: "Saving this change clears what CivicCast knows about this source. You will need to choose Check source again before it can take air." That warning appears only after you change the address, the type or the stored credential. Anyone else sees "Editing a source needs the setup admin role. Ask your station admin to change the address or type."
 
@@ -112,7 +112,7 @@ A live session is CivicCast's record of one meeting being broadcast. These steps
 
 You should see the session tag change to **On air**. If the checks fail at this moment, a red box titled "Live action failed." says "Go on air blocked: a fresh source-bound server-side pre-flight did not pass. No broadcast was started. Correct the failed checks and run pre-flight again." CivicCast runs the checks again, including a new source check, when you click, so the click can take several seconds.
 
-> **Warning:** **Start Live Stream** has **no confirmation box**. It sets the live session to "On air". The resident portal's home page then tells residents "Council live room is on air." and shows State "On air", whether or not the channel is actually broadcasting. Click it only when the channel's feed really is running (see [Start a channel](#start-a-channel)).
+> **Warning:** **Start Live Stream** has **no confirmation box**. The resident portal checks the session against the channel's outgoing feed. An absent, stopped or non-program feed is shown as starting, interrupted or failed rather than as a working live broadcast. Watch the channel's actual output when starting a meeting (see [Start a channel](#start-a-channel)).
 
 > **Known issue (beta.11):** in the code we read, **Start Live Stream** changes the session record and the public status only. It does not start the channel's feed, and it does not put your source on the channel. The error message above says "No broadcast was started", but a successful click does not start one either. To put a camera on a channel, use **Take live** on the Channels screen. If the channel's own feed is running, residents see it whether or not you press **Start Live Stream**.
 
@@ -209,7 +209,7 @@ What "Keep this channel on air" really does, from the code we read:
 
 Live captions are a station setting, not a control on the Live screen. On a new station, **Show live captions on air** is off. A Setup admin can enable it in **Station Profile**; see [Live captions: what the settings change](#live-captions-what-the-settings-change).
 
-Beta.11 uses Whistle on the CPU for live recognition and sends first-pass captions without waiting for a second recognition to agree. It serializes caption inference across channels on one station runtime to give playout priority. If Whistle fails or exceeds its 10-second request deadline, that channel uses Whisper until the live runtime restarts. Whisper is also used for recording transcription. NVIDIA CUDA is optional acceleration for Whisper, not a requirement for Whistle. Captions are best-effort and may have gaps under load.
+Whistle runs live recognition on the CPU and sends first-pass captions without waiting for a second recognition to agree. Primary inference is serialized across the station's channels. If Whistle fails or exceeds its 30-second request deadline, Whisper supplies backup captions while CivicCast automatically tries a fresh Whistle process. A successful recovery returns that channel to Whistle without restarting the station. Whisper also transcribes recordings and can use supported NVIDIA CUDA acceleration. On **System Health**, temporary delay is distinguished from sustained overload so an operator can see when captioning is catching up.
 
 Beta.12 starts Whistle without loading the Whisper backup first. A backup that cannot load therefore does not prevent Whistle from starting. Whisper loads when a channel actually needs fallback; that first switch can take longer, and insufficient memory or a backup startup failure can still interrupt that channel's captions.
 
@@ -396,6 +396,8 @@ Two more previews need a channel chosen in **Target channel**: **Preview schedul
 *CG* is short for "character generator", the part of a broadcast system that puts text and graphics on screen. In CivicCast the **CG Board** is the "community board" a channel can show between programs: a card with station and community announcements. It is **not** the lower-third banner (that is on **Channels**, see above).
 
 The board is shown in the gaps between programs when the channel's filler is set to **Community bulletins** (on **Channels**, in "Run this channel 24/7", under "Between programs, show"). Otherwise it shows the **Station slate**. If no bulletins are approved, the channel falls back to the slate.
+
+Saved manual ticker text is included in the public board snapshot and the outgoing board picture. Changes appear when the board next refreshes. If a bulletin cannot be rendered, CivicCast reports the preparation error and uses the station slate rather than repeatedly relaunching a broken bulletin encoder.
 
 1. In the left menu, under **Run Meeting**, click **CG Board**.
 2. Use the **Channel** menu to choose a channel ("Public board" is the first choice).

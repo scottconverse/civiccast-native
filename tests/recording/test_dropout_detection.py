@@ -184,8 +184,12 @@ def test_check_dropout_detects_crashed_process_and_reconnects(tmp_path: Path, mo
     _engine, factory, _target_dir = _make_store_and_dirs(tmp_path)
 
     handles: list[_ScriptedHandle] = []
+    captured_args: list[list[str]] = []
+    monotonic_now = [100.0]
+    monkeypatch.setattr("civiccast.recording.runtime.time.monotonic", lambda: monotonic_now[0])
 
     def fake_start_ffmpeg(args: list[str], **_kwargs) -> _ScriptedHandle:
+        captured_args.append(list(args))
         handle = _ScriptedHandle(Path(args[-1]))
         handles.append(handle)
         return handle
@@ -199,7 +203,7 @@ def test_check_dropout_detects_crashed_process_and_reconnects(tmp_path: Path, mo
 
     source = RecordingSource(kind="hls", uri="https://example.test/live.m3u8")
     pipeline.arm(job_id="job-1", source=source, encoder_profile="copy", loudness_regime="inherit")
-    pipeline.start("job-1")
+    pipeline.start("job-1", duration_seconds=60)
     assert len(handles) == 1
     first_handle = handles[0]
     first_handle.write(1000)
@@ -210,6 +214,7 @@ def test_check_dropout_detects_crashed_process_and_reconnects(tmp_path: Path, mo
 
     # Source hangs up: the ffmpeg child exits non-zero.
     first_handle.kill(returncode=1)
+    monotonic_now[0] = 150.0
     result = pipeline.check_dropout("job-1")
     assert result.dropout_detected is True
     assert result.reconnected is True
@@ -217,13 +222,21 @@ def test_check_dropout_detects_crashed_process_and_reconnects(tmp_path: Path, mo
 
     # A second ffmpeg process was launched for the reconnect.
     assert len(handles) == 2
+    assert captured_args[1][captured_args[1].index("-t") + 1] == "10.000"
     second_handle = handles[1]
     assert second_handle is not first_handle
-    second_handle.write(500)
+    # A reconnect may find that the source has already disappeared. Keep the
+    # complete first segment instead of failing finalization because the new
+    # segment remained empty.
+    second_handle.output_path.unlink()
+    second_handle.kill(returncode=1)
+    monotonic_now[0] = 160.0
+    assert pipeline.check_dropout("job-1").dropout_detected is False
+    assert len(handles) == 2
 
     captured = pipeline.stop("job-1")
-    assert captured.bytes_written == 1000 + 500
-    assert Path(captured.capture_path).read_bytes() == b"x" * 1000 + b"x" * 500
+    assert captured.bytes_written == 1000
+    assert Path(captured.capture_path).read_bytes() == b"x" * 1000
 
 
 def test_check_dropout_detects_stalled_source_after_threshold(tmp_path: Path) -> None:
@@ -458,7 +471,7 @@ def test_poll_active_recordings_is_noop_without_check_dropout_support(tmp_path: 
         def arm(self, **_kwargs) -> None:
             return None
 
-        def start(self, job_id: str) -> None:
+        def start(self, job_id: str, *, duration_seconds: float | None = None) -> None:
             return None
 
         def finalize(self, job_id: str):

@@ -144,6 +144,7 @@ class CaptureResult(BaseModel):
     bytes_written: int = Field(ge=0)
     capture_path: str = Field(min_length=1, max_length=2000)
     sha256: str | None = Field(default=None, max_length=64)
+    capture_ended_at: datetime | None = None
 
 
 class DropoutCheckResult(BaseModel):
@@ -232,7 +233,7 @@ class CapturePipelineProtocol(Protocol):
         loudness_regime: str,
     ) -> None: ...
 
-    def start(self, job_id: str) -> None: ...
+    def start(self, job_id: str, *, duration_seconds: float | None = None) -> None: ...
 
     def finalize(self, job_id: str) -> CaptureResult: ...
 
@@ -537,8 +538,17 @@ class RecordingService:
             )
         pipeline = self._require_pipeline("start")
         now = self._clock()
+        remaining_seconds = (job.planned_end - now).total_seconds()
+        if remaining_seconds <= 0:
+            return self._fail_job(
+                job_id,
+                phase="start",
+                exc=RuntimeError("The planned recording window elapsed before capture started."),
+                schedule_id=job.schedule_id,
+                station_id=job.station_id,
+            )
         try:
-            pipeline.start(job_id)
+            pipeline.start(job_id, duration_seconds=remaining_seconds)
         except Exception as exc:
             return self._fail_job(
                 job_id,
@@ -592,7 +602,7 @@ class RecordingService:
         return self._store.set_job_state(
             job_id,
             "done",
-            ended_at=self._clock(),
+            ended_at=result.capture_ended_at or self._clock(),
             asset_id=asset_id,
             bytes_written=result.bytes_written,
         )
@@ -705,7 +715,7 @@ class RecordingService:
         return self._store.set_job_state(
             job_id,
             "done",
-            ended_at=self._clock(),
+            ended_at=result.capture_ended_at or self._clock(),
             asset_id=asset_id,
             bytes_written=result.bytes_written,
         )
@@ -1103,11 +1113,9 @@ class RecordingService:
                 started_count += 1
             elif started.state == "failed":
                 failed_count += 1
-        # Item 6: poll every still-recording job for a source dropout BEFORE
-        # the window-end finalize sweep below, so a dropout is observed and
-        # reconnected within this tick rather than only surfacing once the
-        # window closes.
-        dropouts_detected = self.poll_active_recordings(station_id)
+        # Close due capture windows before dropout polling so an expected
+        # FFmpeg duration exit cannot be mistaken for a source failure and
+        # reconnected beyond the scheduled boundary.
         due_recordings = self._store.list_jobs(
             station_id, state="recording", limit=self._max_jobs_per_tick
         )
@@ -1123,6 +1131,7 @@ class RecordingService:
                 finalized_count += 1
             elif finalized.state == "failed":
                 failed_count += 1
+        dropouts_detected = self.poll_active_recordings(station_id)
         return TickCounters(
             expanded=expanded,
             armed=armed_count,

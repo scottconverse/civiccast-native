@@ -48,6 +48,28 @@ def test_prime_reserves_before_enqueue_and_retains_initial_gap(caption_engine: A
     assert caption_engine._caption_gap_gate.pending is not None
 
 
+def test_delivery_receipt_uses_accepted_rebased_pts_only(caption_engine, engine_module, tmp_path):  # noqa: F811
+    import json
+
+    from civiccast.egress.gst.caption_clock import CaptionDeliveryClock
+
+    engine_module.Gst.Buffer = SimpleNamespace(
+        new_allocate=lambda *args: SimpleNamespace(fill=Mock())
+    )
+    engine_module.Gst.FlowReturn = SimpleNamespace(OK=0)
+    caption_engine.caption_appsrc.emit = Mock(return_value=0)
+    receipt = tmp_path / "delivered.json"
+    caption_engine.caption_delivery_clock = CaptionDeliveryClock(receipt)
+    assert caption_engine.push_caption_cue(text="HELLO", pts_seconds=36 * 3600, duration_seconds=2)
+    pages = json.loads(receipt.read_text())
+    assert pages == [{"text": "HELLO", "start_seconds": 3601.25, "end_seconds": 3603.25}]
+    caption_engine.caption_appsrc.emit.return_value = -1
+    assert not caption_engine.push_caption_cue(
+        text="REJECTED", pts_seconds=36 * 3600, duration_seconds=2
+    )
+    assert json.loads(receipt.read_text()) == pages
+
+
 def test_heartbeat_does_not_enqueue_or_advance_while_gap_waits(caption_engine: Any) -> None:
     assert caption_engine._caption_gap_gate.reserve(99)
     caption_engine._caption_stream_position_ms = 250

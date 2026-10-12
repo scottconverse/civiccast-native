@@ -227,14 +227,25 @@ describe('CommissioningWizardScreen', () => {
         destination: '192.168.1.100:5000',
       },
     })
-    vi.mocked(runCommissioningOutputProof).mockResolvedValue(proofRun())
+    vi.mocked(runCommissioningOutputProof).mockResolvedValue(proofRun({
+      verdict: 'fail',
+      blockers: ['TSDuck found continuity errors.'],
+      compliance_probe_result: {
+        verdict: 'fail',
+        detail: 'The probe found transport errors.',
+        checks: [
+          { check: 'continuity', status: 'fail', detail: 'Packets 12 and 19 are missing.' },
+        ],
+      },
+    }))
     const { findByText, findAllByText } = renderScreen()
     fireEvent.click(await findByText('Start proof run'))
     const confirmButtons = await findAllByText('Start proof run')
     fireEvent.click(confirmButtons[confirmButtons.length - 1])
     await waitFor(() => expect(vi.mocked(runCommissioningOutputProof)).toHaveBeenCalled())
-    expect(await findByText(/Verdict: pass/i)).toBeTruthy()
+    expect(await findByText(/Verdict: fail/i)).toBeTruthy()
     expect(await findByText(/Headend\/format proof only/i)).toBeTruthy()
+    expect(await findByText(/Packets 12 and 19 are missing/i)).toBeTruthy()
   })
 
   it('builds the final report and shows the ready-for-broadcast banner', async () => {

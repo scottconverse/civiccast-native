@@ -20,6 +20,7 @@ from __future__ import annotations
 import math
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -28,6 +29,7 @@ from starlette.applications import Starlette
 from starlette.staticfiles import StaticFiles
 
 from civiccast.common.trusted_proxy import reset_trusted_proxy_cache
+from civiccast.egress.router import get_egress_store
 from civiccast.load.cache_edge import CachingEdgeASGI
 from civiccast.load.lab import RollingStation
 from civiccast.load.switch_lab import (
@@ -76,6 +78,16 @@ def _clean_proxy_env(monkeypatch: Any) -> Any:
     reset_trusted_proxy_cache()
     yield
     reset_trusted_proxy_cache()
+
+
+def _set_lab_channel_on_air(lab: Any) -> None:
+    """Give the public live route the lab's real on-air emitter state."""
+    store = lab.app.dependency_overrides[get_egress_store]()
+    store.read_state = lambda channel_id: (
+        SimpleNamespace(channel_id=channel_id, state="ON_AIR")
+        if channel_id == lab.channel_id
+        else None
+    )
 
 
 class _FakeOrigin:
@@ -192,6 +204,7 @@ def test_manifest_freshness_bound_after_switch(tmp_path: Path, _clean_proxy_env:
         clock=clock,
         cache_edge=True,
     )
+    _set_lab_channel_on_air(lab)
     client = TestClient(lab.app)
     bound = math.ceil(_MAX_AGE_MANIFEST / tick_interval)
 
@@ -226,6 +239,7 @@ def test_origin_offload_scales_with_time_not_viewer_count(
         clock=clock,
         cache_edge=True,
     )
+    _set_lab_channel_on_air(lab)
     client = TestClient(_PerRequestPeerASGI(lab.app))
     requested_segments: set[str] = set()
 
@@ -277,6 +291,7 @@ def test_eviction_safety_bounded_blips_through_full_cycle(
         clock=clock,
         cache_edge=True,
     )
+    _set_lab_channel_on_air(lab)
 
     engaged = simulate_switch(lab, clock, viewers=6, cycles=6, tick_interval=1.0)
     assert engaged.final_state == "cdn"

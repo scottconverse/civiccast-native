@@ -1130,6 +1130,25 @@ export function getStaffAsset(assetId: string): Promise<AssetRow> {
   return request<AssetRow>(`/api/staff/assets/${encodeURIComponent(assetId)}`)
 }
 
+export interface StaffAssetPlaybackGrant {
+  url: string
+  packaged_url: string | null
+  playback_kind: 'hls' | 'source'
+  source_content_type: string | null
+  source_offset_seconds: number
+  expires_at: string
+}
+
+/** Issue a short-lived, same-origin cookie grant for native source preview. */
+export function getStaffAssetPlaybackGrant(
+  assetId: string,
+): Promise<StaffAssetPlaybackGrant> {
+  return request<StaffAssetPlaybackGrant>(
+    `/api/staff/assets/${encodeURIComponent(assetId)}/playback-grant`,
+    { method: 'POST' },
+  )
+}
+
 export function packageStaffAsset(assetId: string): Promise<AssetRow> {
   return request<AssetRow>(
     `/api/staff/assets/${encodeURIComponent(assetId)}/package`,
@@ -3459,15 +3478,25 @@ export function deleteAgendaItem(agendaId: string, itemId: string): Promise<void
   )
 }
 
+export interface AgendaChapterSyncResult {
+  chapter_count: number
+  added_items: AgendaItem[]
+  skipped_existing: Array<{
+    order: number
+    chapter_title: string
+    existing_item_title: string
+  }>
+}
+
 /**
  * POST /api/staff/agendas/{agenda_id}/sync-from-chapters — seed items from
  * the meeting asset's chapter markers (DC-3). Idempotent: an existing item
  * at the same (agenda_id, order) is skipped — operator edits survive a
- * re-sync. Returns the items the service wrote on this call (the
- * "newly-seeded count" for the success banner).
+ * re-sync. Returns the created items and explains every chapter skipped
+ * because its agenda position was already occupied.
  */
-export function syncAgendaFromChapters(agendaId: string): Promise<AgendaItem[]> {
-  return request<AgendaItem[]>(
+export function syncAgendaFromChapters(agendaId: string): Promise<AgendaChapterSyncResult> {
+  return request<AgendaChapterSyncResult>(
     `${AGENDAS}/${encodeURIComponent(agendaId)}/sync-from-chapters`,
     { method: 'POST' },
   )

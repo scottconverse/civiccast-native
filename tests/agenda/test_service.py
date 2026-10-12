@@ -153,12 +153,14 @@ class TestSyncFromChapters:
         ]
         svc = AgendaService(store, asset_chapter_provider=_provider(chapters))
         out = svc.sync_from_chapters("ag-1")
-        assert [i.title for i in out] == ["Call to order", "Roll call", "New business"]
-        assert [i.order for i in out] == [0, 1, 2]
+        assert out.chapter_count == 3
+        assert [i.title for i in out.added_items] == ["Call to order", "Roll call", "New business"]
+        assert [i.order for i in out.added_items] == [0, 1, 2]
+        assert out.skipped_existing == []
         # Timecodes coerced to int(seconds).
-        assert [i.video_timecode_s for i in out] == [0, 125, 900]
+        assert [i.video_timecode_s for i in out.added_items] == [0, 125, 900]
         # Item IDs follow the agreed naming.
-        assert [i.item_id for i in out] == ["ag-1-ch-0", "ag-1-ch-1", "ag-1-ch-2"]
+        assert [i.item_id for i in out.added_items] == ["ag-1-ch-0", "ag-1-ch-1", "ag-1-ch-2"]
 
     def test_preserves_operator_edits_on_resync(self, store: AgendaStore) -> None:
         store.upsert_agenda(_agenda())
@@ -178,9 +180,14 @@ class TestSyncFromChapters:
             Chapter(t=900.0, name="New business"),
         ]
         svc = AgendaService(store, asset_chapter_provider=_provider(chapters))
-        written = svc.sync_from_chapters("ag-1")
+        result = svc.sync_from_chapters("ag-1")
         # Only orders 0 + 2 should have been written; order=1 (operator-edited) skipped.
-        assert [i.order for i in written] == [0, 2]
+        assert [i.order for i in result.added_items] == [0, 2]
+        assert result.chapter_count == 3
+        assert [
+            (skip.order, skip.chapter_title, skip.existing_item_title)
+            for skip in result.skipped_existing
+        ] == [(1, "Roll call (chapter version)", "Operator's renamed item")]
         # The operator's custom item survives untouched.
         survivor = store.get_item("custom-1")
         assert survivor is not None
@@ -229,18 +236,17 @@ class TestSyncFromChapters:
             return out
 
         svc = AgendaService(store, asset_chapter_provider=provider)
-        written = svc.sync_from_chapters("ag-1")
+        result = svc.sync_from_chapters("ag-1")
         # The two valid chapters land; the two malformed ones are skipped.
-        assert len(written) == 2
-        assert [i.title for i in written] == ["Call to order", "Adjourn"]
+        assert result.chapter_count == 2
+        assert len(result.added_items) == 2
+        assert [i.title for i in result.added_items] == ["Call to order", "Adjourn"]
+        assert result.skipped_existing == []
         # And the sync did NOT raise — that's the regression guard.
 
     def test_resync_is_noop_when_all_orders_taken(self, store: AgendaStore) -> None:
-        """T-4 — calling ``sync_from_chapters`` twice in a row must return
-        ``[]`` on the second call (every order is already taken), and no
-        new items get written. Guards against a regression where the
-        skip-by-order rule changes to skip-by-item-id and the second sync
-        ends up colliding on the ``(agenda_id, order)`` unique constraint."""
+        """T-4 — a second sync writes no new items, reports occupied positions,
+        and does not collide on the agenda-order unique constraint."""
         store.upsert_agenda(_agenda())
         chapters = [
             Chapter(t=0.0, name="Call to order"),
@@ -249,9 +255,10 @@ class TestSyncFromChapters:
         ]
         svc = AgendaService(store, asset_chapter_provider=_provider(chapters))
         first = svc.sync_from_chapters("ag-1")
-        assert [i.order for i in first] == [0, 1, 2]
+        assert [i.order for i in first.added_items] == [0, 1, 2]
         second = svc.sync_from_chapters("ag-1")
-        assert second == []
+        assert second.added_items == []
+        assert [skip.order for skip in second.skipped_existing] == [0, 1, 2]
         # All three items survive untouched.
         assert len(store.list_items("ag-1")) == 3
 

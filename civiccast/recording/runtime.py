@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import threading
+import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
@@ -86,7 +87,7 @@ class _ActiveCapture:
     beyond ``handle``/``output_path`` exist so ``check_dropout`` can relaunch
     an equivalent ffmpeg process against a new segment on the same source)."""
 
-    handle: FfmpegProcessHandle
+    handle: FfmpegProcessHandle | None
     output_path: Path
     source: RecordingSource
     encoder_profile: str
@@ -105,6 +106,8 @@ class _ActiveCapture:
     # (~10s cadence) for the rest of the recording window — see that
     # method's docstring.
     exhausted: bool = False
+    capture_deadline_monotonic: float | None = None
+    capture_deadline_wall: datetime | None = None
 
 
 # Item 6: a source is considered dropped if the output file hasn't grown
@@ -205,16 +208,8 @@ class FfmpegScheduledCapturePipeline:
             capture_dir.mkdir(parents=True, exist_ok=True)
             output_path = self._segment_path(capture_dir, job_id, segment=0)
             output_path.unlink(missing_ok=True)
-            handle = self._launch(
-                job_id=job_id,
-                source=source,
-                encoder_profile=encoder_profile,
-                loudness_regime=loudness_regime,
-                capture_dir=capture_dir,
-                output_path=output_path,
-            )
             self._active[job_id] = _ActiveCapture(
-                handle=handle,
+                handle=None,
                 output_path=output_path,
                 source=source,
                 encoder_profile=encoder_profile,
@@ -223,11 +218,52 @@ class FfmpegScheduledCapturePipeline:
             )
             self._stall_streak[job_id] = 0
 
-    def start(self, job_id: str) -> None:
-        with self._lock:
-            active = self._require_active(job_id)
-        if active.handle.poll() is not None:
-            raise RuntimeError(f"ffmpeg exited before recording started for job {job_id!r}.")
+    def start(self, job_id: str, *, duration_seconds: float | None = None) -> None:
+        with self._job_lock:
+            with self._lock:
+                active = self._require_active(job_id)
+                if active.handle is not None:
+                    if active.handle.poll() is None:
+                        return
+                    raise RuntimeError(
+                        f"ffmpeg exited before recording started for job {job_id!r}."
+                    )
+            if duration_seconds is not None and duration_seconds <= 0:
+                raise RuntimeError(
+                    f"Recording window elapsed before capture started for job {job_id!r}."
+                )
+            deadline_wall = (
+                datetime.now(UTC) + timedelta(seconds=duration_seconds)
+                if duration_seconds is not None
+                else None
+            )
+            try:
+                handle = self._launch(
+                    job_id=job_id,
+                    source=active.source,
+                    encoder_profile=active.encoder_profile,
+                    loudness_regime=active.loudness_regime,
+                    capture_dir=active.capture_dir,
+                    output_path=active.output_path,
+                    duration_seconds=duration_seconds,
+                )
+            except Exception:
+                with self._lock:
+                    self._active.pop(job_id, None)
+                    self._stall_streak.pop(job_id, None)
+                raise
+            with self._lock:
+                active.handle = handle
+                active.capture_deadline_monotonic = (
+                    time.monotonic() + duration_seconds if duration_seconds is not None else None
+                )
+                active.capture_deadline_wall = deadline_wall
+            if handle.poll() is not None:
+                with self._lock:
+                    self._active.pop(job_id, None)
+                    self._stall_streak.pop(job_id, None)
+                handle.terminate(grace_seconds=1.0)
+                raise RuntimeError(f"ffmpeg exited before recording started for job {job_id!r}.")
 
     def finalize(self, job_id: str) -> CaptureResult:
         return self.stop(job_id)
@@ -247,13 +283,19 @@ class FfmpegScheduledCapturePipeline:
                 active = self._require_active(job_id)
                 self._active.pop(job_id, None)
                 self._stall_streak.pop(job_id, None)
+            if active.handle is None:
+                raise RuntimeError(f"Recording capture was not started for job {job_id!r}.")
             active.handle.terminate(grace_seconds=10.0)
+            capture_ended_at = datetime.now(UTC)
+            if active.capture_deadline_wall is not None:
+                capture_ended_at = min(capture_ended_at, active.capture_deadline_wall)
         capture_path = self._finalize_segments(job_id, active)
         size = capture_path.stat().st_size
         return CaptureResult(
             bytes_written=size,
             capture_path=str(capture_path),
             sha256=_sha256_file(capture_path),
+            capture_ended_at=capture_ended_at,
         )
 
     def stop_arming(self, job_id: str) -> None:
@@ -263,7 +305,8 @@ class FfmpegScheduledCapturePipeline:
                 self._stall_streak.pop(job_id, None)
             if active is None:
                 return
-            active.handle.terminate(grace_seconds=5.0)
+            if active.handle is not None:
+                active.handle.terminate(grace_seconds=5.0)
 
     def check_dropout(self, job_id: str) -> DropoutCheckResult:
         """Item 6: poll one job's live capture for a source dropout.
@@ -318,6 +361,15 @@ class FfmpegScheduledCapturePipeline:
                 # segments/output_path again for this job.
                 return DropoutCheckResult(dropout_detected=False)
 
+            if (
+                active.capture_deadline_monotonic is not None
+                and time.monotonic() >= active.capture_deadline_monotonic
+            ):
+                active.exhausted = True
+                return DropoutCheckResult(dropout_detected=False)
+            if active.handle is None:
+                return DropoutCheckResult(dropout_detected=False)
+
             exited = active.handle.poll() is not None
             current_size = active.output_path.stat().st_size if active.output_path.exists() else 0
             if not exited:
@@ -363,6 +415,18 @@ class FfmpegScheduledCapturePipeline:
                 active.capture_dir, job_id, segment=len(active.segments) + 1
             )
             next_output.unlink(missing_ok=True)
+            remaining_seconds = (
+                max(0.0, active.capture_deadline_monotonic - time.monotonic())
+                if active.capture_deadline_monotonic is not None
+                else None
+            )
+            if remaining_seconds is not None and remaining_seconds <= 0:
+                active.exhausted = True
+                return DropoutCheckResult(
+                    dropout_detected=True,
+                    reconnected=False,
+                    detail=f"{detail} The scheduled recording window has ended.",
+                )
             try:
                 new_handle = self._launch(
                     job_id=job_id,
@@ -372,6 +436,7 @@ class FfmpegScheduledCapturePipeline:
                     capture_dir=active.capture_dir,
                     output_path=next_output,
                     segment=len(active.segments) + 1,
+                    duration_seconds=remaining_seconds,
                 )
             except Exception as exc:  # ffmpeg-not-found, arg error, etc.
                 # A relaunch that can't even start is not something a 10s
@@ -421,19 +486,13 @@ class FfmpegScheduledCapturePipeline:
         file so finalize/stop always hand the service one path.
         """
         segments = [*active.segments, active.output_path]
-        for segment in segments:
-            if not segment.exists():
-                raise RuntimeError(f"ffmpeg did not create a recording segment for job {job_id!r}.")
-        if len(segments) == 1:
-            size = segments[0].stat().st_size
-            if size <= 0:
-                raise RuntimeError(f"ffmpeg created a zero-byte recording file for job {job_id!r}.")
-            return segments[0]
-        non_empty = [s for s in segments if s.stat().st_size > 0]
+        non_empty = [s for s in segments if s.exists() and s.stat().st_size > 0]
         if not non_empty:
             raise RuntimeError(
                 f"ffmpeg created only zero-byte recording segments for job {job_id!r}."
             )
+        if len(non_empty) == 1:
+            return non_empty[0]
         merged_path = active.capture_dir / f"{_safe_filename(job_id)}-merged.ts"
         concat_list_path = active.capture_dir / f"{_safe_filename(job_id)}-concat.txt"
         # ffmpeg's concat demuxer quotes each path in single quotes; a
@@ -483,6 +542,7 @@ class FfmpegScheduledCapturePipeline:
         capture_dir: Path,
         output_path: Path,
         segment: int = 0,
+        duration_seconds: float | None = None,
     ) -> FfmpegProcessHandle:
         args = [
             "-hide_banner",
@@ -513,6 +573,7 @@ class FfmpegScheduledCapturePipeline:
             # of up to a quarter-megabyte of the most recent capture.
             "-flush_packets",
             "1",
+            *(["-t", f"{duration_seconds:.3f}"] if duration_seconds is not None else []),
             "-f",
             "mpegts",
             str(output_path),

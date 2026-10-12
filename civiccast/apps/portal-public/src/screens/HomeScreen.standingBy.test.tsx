@@ -88,13 +88,34 @@ describe('HomeScreen when the channel is standing by on its slate', () => {
       title: 'Back soon',
       message: 'The next meeting starts at 6 pm.',
       next_broadcast_label: 'Council meeting, 6:00 pm',
-      action_label: 'See the schedule',
-      action_url: '/schedule',
+      action_label: 'View published recordings',
+      action_url: '#/recordings',
     }
     render(<HomeScreen />)
 
     expect(await screen.findByText('Standing by')).toBeTruthy()
     expect(screen.getByLabelText('Between-streams idle page')).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: 'View published recordings' }).getAttribute('href'),
+    ).toBe('#/recordings')
+    expect(screen.queryByTestId('player-src')).toBeNull()
+  })
+
+  it('shows an active session as interrupted when its output has stopped', async () => {
+    liveBody = {
+      state: 'interrupted',
+      live_session_id: 'council-2026-05-15',
+      channel_id: 'public',
+      title: 'Council meeting',
+      started_at: '2026-09-08T18:00:00+00:00',
+      manifest_url: null,
+      reason: 'Broadcast output is not running.',
+    }
+    render(<HomeScreen />)
+
+    expect((await screen.findAllByText(/The broadcast is interrupted/i)).length).toBe(2)
+    expect(screen.getByText('Broadcast interrupted')).toBeTruthy()
+    expect(screen.queryByText('Council meeting is on air.')).toBeNull()
     expect(screen.queryByTestId('player-src')).toBeNull()
   })
 
@@ -123,7 +144,9 @@ describe('HomeScreen when the channel is standing by on its slate', () => {
       '/media/live/public/playlist.m3u8',
     )
     expect(screen.getByText('On air')).toBeTruthy()
-    expect(screen.getByText('Council meeting is on air.')).toBeTruthy()
+    expect(
+      screen.getByText('Live video is on air. Program information follows the playback position.'),
+    ).toBeTruthy()
     expect(screen.queryByText('Standing by')).toBeNull()
   })
 })

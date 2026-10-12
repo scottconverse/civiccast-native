@@ -37,6 +37,7 @@ from civiccast.installer.models import (
     StationOperationMode,
     StationProfile,
     StationRecoveryRequest,
+    StationRuntimePaths,
     StationSetupState,
     StationStorageLocations,
 )
@@ -670,6 +671,7 @@ def complete_first_admin_setup(
         public_base_url=request.public_base_url.strip() if request.public_base_url else None,
         station_timezone=request.station_timezone.strip(),
         storage_locations=request.storage_locations or _default_storage_locations(),
+        runtime_paths=_station_runtime_paths(),
         channel_count=request.channel_count,
         channel_profiles=_build_channel_profiles(request.channel_count),
         sample_content_enabled=request.sample_content_enabled,
@@ -1121,6 +1123,7 @@ def _profile_from_state(raw: dict[str, Any]) -> StationProfile | None:
             ),
             station_timezone=str(station.get("station_timezone") or "local"),
             storage_locations=_storage_locations_from_state(station.get("storage_locations")),
+            runtime_paths=_station_runtime_paths(),
             channel_count=int(station.get("channel_count") or 3),
             channel_profiles=_channel_profiles_from_state(
                 station.get("channel_profiles"),
@@ -1155,9 +1158,32 @@ def _default_storage_root() -> Path:
     configured = os.getenv("CIVICCAST_STATION_STORAGE_ROOT")
     if configured:
         return Path(configured).expanduser()
+    if os.getenv("CIVICCAST_NATIVE_STATION") == "1":
+        from civiccast.native.supervisor.install_layout import resolve_install_layout
+
+        return resolve_install_layout().civiccast_data_root / "data"
     if os.name == "nt":
         return Path(os.getenv("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "CivicCast"
     return Path(os.getenv("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "civiccast"
+
+
+def _station_runtime_paths() -> StationRuntimePaths | None:
+    """Report the same install, database and media paths the service uses."""
+
+    if os.getenv("CIVICCAST_NATIVE_STATION") != "1":
+        return None
+    from civiccast.native.supervisor.children import default_upload_dir
+    from civiccast.native.supervisor.install_layout import resolve_install_layout
+
+    layout = resolve_install_layout()
+    upload_dir = os.environ.get("CIVICCAST_UPLOAD_DIR") or default_upload_dir(
+        program_data_root=str(layout.program_data_root)
+    )
+    return StationRuntimePaths(
+        installation_root=str(layout.install_root),
+        database_data=str(layout.postgres_data_dir),
+        media_uploads=str(Path(upload_dir)),
+    )
 
 
 def _default_storage_locations() -> StationStorageLocations:

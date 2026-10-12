@@ -852,6 +852,40 @@ class TestRuntimeBoundary:
             (w.text, w.start_seconds, w.end_seconds, w.confidence) for w in hypothesis.words
         ] == [(" motion", 10.25, 11.2, 0.8), (" carries", 11.2, 12.5, 0.7)]
 
+    def test_runtime_clamps_hypothesis_and_word_times_to_the_audio_chunk(self) -> None:
+        runtime = FasterWhisperRuntime(model_size_or_path="tiny", device="cpu", live=True)
+        runtime._model = SimpleNamespace(
+            transcribe=lambda *args, **kwargs: (
+                [
+                    SimpleNamespace(
+                        start=-1.0,
+                        end=0.5,
+                        text=" clipped start",
+                        words=[
+                            SimpleNamespace(word=" clipped", start=-1.0, end=0.25, probability=0.8),
+                            SimpleNamespace(word=" outside", start=5.0, end=6.0, probability=0.7),
+                        ],
+                    ),
+                    SimpleNamespace(start=3.0, end=5.0, text="clipped end", words=[]),
+                    SimpleNamespace(start=5.0, end=6.0, text="outside", words=[]),
+                    SimpleNamespace(start=float("nan"), end=1.0, text="invalid", words=[]),
+                ],
+                object(),
+            )
+        )
+
+        chunk = self._audio_chunk()
+        hypothesis = next(iter(runtime.transcribe([chunk])))
+        assert hypothesis.text == "clipped start clipped end"
+        assert (hypothesis.start_seconds, hypothesis.end_seconds) == (
+            chunk.start_seconds,
+            chunk.end_seconds,
+        )
+        assert hypothesis.words is not None
+        assert [(word.start_seconds, word.end_seconds) for word in hypothesis.words] == [
+            (chunk.start_seconds, 10.25)
+        ]
+
     def test_live_runtime_hands_16khz_pcm_to_the_model_as_a_float32_array(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -919,7 +953,13 @@ class TestRuntimeBoundary:
             [0.0, 1 / 32768, -1 / 32768, 0.5, -0.5, -1.0, 32767 / 32768]
         )
         assert hypotheses[0].text == "motion carries"
-        assert (hypotheses[0].start_seconds, hypotheses[0].end_seconds) == (0.0, 1.0)
+        # The fake model returns a one-second window for a one-millisecond
+        # chunk; keep the source-boundary assertion while exercising the PCM
+        # passthrough above.
+        assert (hypotheses[0].start_seconds, hypotheses[0].end_seconds) == (
+            chunk.start_seconds,
+            chunk.end_seconds,
+        )
 
     def test_live_runtime_keeps_the_wav_round_trip_for_a_non_16khz_chunk(self) -> None:
         """Only the passthrough rate skips the decoder; a 48 kHz chunk needs it."""

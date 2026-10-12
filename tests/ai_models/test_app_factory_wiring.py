@@ -235,6 +235,8 @@ def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
 ) -> None:
     from civiccast.app import create_app
     from civiccast.captions.runtime import REQUIRED_LOCAL_MODEL_FILES
+    from civiccast.native import station_runtime
+    from civiccast.native.caption_tiers import LARGE_V3_TIER_ID
 
     tap_dir = durable_app_env / "caption-tap"
     model_dir = durable_app_env / "captions-large-v3"
@@ -242,7 +244,18 @@ def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
     model_dir.mkdir()
     for name in REQUIRED_LOCAL_MODEL_FILES:
         (model_dir / name).write_bytes(b"test-model-file")
+    _store_over_db().set_selection("captions", model_key="whisper-large-v3-faster", tier="local")
+    resolved: dict[str, str] = {}
+
+    def resolve_model(_root: str, tier_id: str, *, acquisition_root: Path):
+        resolved["tier"] = tier_id
+        resolved["acquisition_root"] = str(acquisition_root)
+        return model_dir, {"model.bin": {"bytes": 4, "sha256": "synthetic"}}
+
+    monkeypatch.setattr(station_runtime, "resolve_caption_model_for_tier", resolve_model)
     monkeypatch.setenv("CIVICCAST_NATIVE_STATION", "1")
+    monkeypatch.setenv("CIVICCAST_NATIVE_STATION_ROOT", str(durable_app_env / "station"))
+    monkeypatch.setenv("CIVICCAST_CAPTION_TIER", "floor")
     monkeypatch.setenv("CIVICCAST_CAPTION_TAP", "inline")
     monkeypatch.setenv("CIVICCAST_CAPTION_TAP_DIR", str(tap_dir))
     monkeypatch.setenv("CIVICCAST_CAPTION_RUNTIME", "faster-whisper")
@@ -262,6 +275,7 @@ def test_native_station_startup_enables_caption_tap_feed_and_decode_back_proof(
         "civiccast-caption-proof",
     } <= names
     worker = app.state.caption_tap_worker
+    assert resolved["tier"] == LARGE_V3_TIER_ID
     assert worker._runtime.model_size_or_path == str(model_dir.resolve())
     assert worker._runtime.device == "cuda"
     assert worker._runtime.compute_type == "int8_float16"

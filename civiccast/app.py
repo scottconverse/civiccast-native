@@ -363,6 +363,9 @@ from civiccast.schedule.router import (
     public_router as schedule_public_router,
 )
 from civiccast.schedule.router import (
+    source_media_router as schedule_source_media_router,
+)
+from civiccast.schedule.router import (
     staff_router as schedule_staff_router,
 )
 from civiccast.schedule.store import (
@@ -920,6 +923,10 @@ def _prewarm_native_live_caption_runtime(app: FastAPI) -> None:
         return
 
     app.state.caption_runtime_prewarmed = True
+    whisper_runtime = getattr(runtime, "_whisper", runtime)
+    app.state.caption_live_runtime_model_loaded_at_startup = (
+        getattr(whisper_runtime, "_model", None) is not None
+    )
     from civiccast.captions.tap_worker import _resolved_runtime_identity
 
     identity = _resolved_runtime_identity(runtime)
@@ -1585,6 +1592,8 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # Exposed so app-factory wiring tests can assert the operator-selected
         # translation/caption models reached the running worker (T3/T4).
         app.state.caption_tap_worker = tap_worker
+        app.state.caption_live_model_key = ai_model_service.effective_selection("captions").tier.key
+        app.state.caption_live_runtime_model_loaded_at_startup = False
         app.state.background_supervisors.append(
             ThreadSupervisor(
                 name="civiccast-caption-tap-worker",
@@ -2152,6 +2161,45 @@ def _reported_version() -> str:
     return os.getenv(NATIVE_REPORTED_VERSION_ENV_VAR, "").strip() or __version__
 
 
+def _make_agenda_chapter_provider(asset_store: Any) -> Callable[[str], list[Any]]:
+    """Read and validate chapter markers from the operator asset projection."""
+    from pydantic import ValidationError
+
+    from civiccast.schedule.models import Chapter
+
+    def _chapter_provider(meeting_asset_id: str) -> list[Any]:
+        row = asset_store.get_staff_row(meeting_asset_id)
+        if row is None:
+            return []
+        chapters_attr = getattr(row, "chapters_json", None) or getattr(row, "chapters", None) or []
+        if isinstance(chapters_attr, str):
+            import json as _json
+
+            try:
+                chapters_attr = _json.loads(chapters_attr)
+            except _json.JSONDecodeError:
+                chapters_attr = []
+        if not isinstance(chapters_attr, list):
+            return []
+        # A single malformed persisted chapter must not block valid chapter
+        # markers, but ``StaffAssetRow.chapters`` already contains Chapter
+        # instances. model_validate accepts both those and legacy dictionaries.
+        chapters: list[Any] = []
+        for raw in chapters_attr:
+            try:
+                chapters.append(Chapter.model_validate(raw))
+            except (ValidationError, TypeError) as exc:
+                _LOG.error(
+                    "Skipping malformed chapter in meeting asset %r: %r (payload=%r)",
+                    meeting_asset_id,
+                    exc,
+                    raw,
+                )
+        return chapters
+
+    return _chapter_provider
+
+
 def create_app() -> FastAPI:
     """Build the FastAPI app. Lives behind a factory so tests can pin
     fresh app instances and so configuration injection has a clean seam.
@@ -2529,6 +2577,7 @@ def create_app() -> FastAPI:
     # route-ordering note in civiccast.schedule.media_lifecycle_router).
     app.include_router(media_lifecycle_staff_router)
     app.include_router(schedule_staff_router)
+    app.include_router(schedule_source_media_router)
     app.include_router(playout_staff_router)
     app.include_router(autoschedule_staff_router)
     app.include_router(programlog_staff_router)
@@ -2817,33 +2866,12 @@ def _wire_durable_stores(app: FastAPI) -> None:
         # probe via `source_probe_override` (civiccast/installer/service.py);
         # this is the probe every other caller -- i.e. a real station -- gets.
         #
-        # B1 fix: route the unchanged source configuration CivicCast creates (the
-        # bundled sample-rehearsal source) to the same validated-local-file
-        # probe the installer's rehearsal already uses, instead of the real
-        # network probe -- the sample's placeholder RTMP endpoint has no
-        # listener anywhere in this product, so the network probe could
-        # never pass for it (field evidence, native beta candidate #17).
-        # Every other, real source still gets the genuine network probe.
-        #
         # B3 fix: network + storage probes run here too, so "Run pre-flight"
         # answers its own "not probed" questions instead of depending on a
         # caller (the operator UI) that never actually probed.
-        from civiccast.installer.service import (
-            build_sample_rehearsal_source_probe,
-            is_sample_rehearsal_source,
-        )
-
-        network_source_probe = build_source_probe()
-        sample_source_probe = build_sample_rehearsal_source_probe()
-
-        def _live_source_probe(source: Any) -> tuple[bool, str | None]:
-            if is_sample_rehearsal_source(source):
-                return sample_source_probe(source)
-            return network_source_probe(source)
-
         return PreflightEvaluator(
             _session_factory,
-            source_probe=_live_source_probe,
+            source_probe=build_source_probe(),
             network_probe=build_network_probe(),
             storage_probe=build_storage_probe(),
         )
@@ -3295,50 +3323,9 @@ def _wire_durable_stores(app: FastAPI) -> None:
 
     def _resolve_agenda_service() -> AgendaService:
         asset_store = PostgresAssetStore(_session_factory)
-
-        def _chapter_provider(meeting_asset_id: str):  # type: ignore[no-untyped-def]
-            from pydantic import ValidationError
-
-            from civiccast.schedule.models import Chapter
-
-            row = asset_store.get_staff_row(meeting_asset_id)
-            if row is None:
-                return []
-            chapters_attr = (
-                getattr(row, "chapters_json", None) or getattr(row, "chapters", None) or []
-            )
-            if isinstance(chapters_attr, str):
-                import json as _json
-
-                try:
-                    chapters_attr = _json.loads(chapters_attr)
-                except _json.JSONDecodeError:
-                    chapters_attr = []
-            if not isinstance(chapters_attr, list):
-                return []
-            # T-3 — fail forward on malformed chapter dicts. A single bad
-            # row in ``chapters_json`` would otherwise raise
-            # ``pydantic.ValidationError`` here, escape the service's
-            # ``AgendaServiceError`` handler, and 500 the entire
-            # sync-from-chapters request. Skip the bad ones, log them,
-            # and proceed with the valid chapters so an operator can
-            # still seed the agenda.
-            chapters: list[Chapter] = []
-            for raw in chapters_attr:
-                try:
-                    chapters.append(Chapter(**raw))
-                except (ValidationError, TypeError) as exc:
-                    _LOG.error(
-                        "Skipping malformed chapter in meeting asset %r: %r (payload=%r)",
-                        meeting_asset_id,
-                        exc,
-                        raw,
-                    )
-            return chapters
-
         return AgendaService(
             AgendaStore(_session_factory),
-            asset_chapter_provider=_chapter_provider,
+            asset_chapter_provider=_make_agenda_chapter_provider(asset_store),
         )
 
     app.dependency_overrides[get_agenda_store] = _resolve_agenda_store

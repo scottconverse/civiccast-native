@@ -60,8 +60,6 @@ def test_public_docs_do_not_overclaim_sdi_or_cg_proof() -> None:
 
     assert "DeckLink SDI through the engine's own sink" not in public_page
     assert "Multi-zone CG designer" not in public_page
-    assert (
-        "A CivicCast Beta 11 station ran public, government and education programming together"
-        in public_page
-    )
-    assert "48-hour soak" in public_page
+    assert "72 hours across three channels." in public_page
+    assert "99.78% live caption-input coverage" in public_page
+    assert "beta11-host-caption-performance-72-hour-2026-10-11.md" in public_page

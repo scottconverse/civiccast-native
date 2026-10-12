@@ -52,6 +52,13 @@ import {
 const READ_ROLES = ['setup_admin', 'meeting_operator']
 const WRITE_ROLES = ['setup_admin']
 
+type ModelFeatureAvailability = FeatureModelAvailability & {
+  live_runtime_model_key?: string | null
+  live_runtime_model_loaded_at_startup?: boolean | null
+  translation_generated_cue_count?: number | null
+  translation_last_generated_at?: string | null
+}
+
 const TONE_COLORS: Record<Tone, { bg: string; bd: string }> = {
   neutral: { bg: 'var(--cc-surface-2)', bd: 'var(--cc-line)' },
   ok: { bg: 'var(--cc-ok-soft)', bd: 'var(--cc-ok)' },
@@ -126,7 +133,7 @@ export function FeatureModelCard({
   registry: FeatureModelRegistry
   canWrite: boolean
   onSelect: (feature: string, modelKey: string, consent: boolean) => void
-  availability?: FeatureModelAvailability
+  availability?: ModelFeatureAvailability
   boxRamGb?: number
   pending?: boolean
   /** Per-provider "is an API key stored" map (from GET /credentials/{provider}).
@@ -177,6 +184,8 @@ export function FeatureModelCard({
   }
 
   const availMessage = availabilityWarning(availability)
+  const liveRuntimeAvailability = availability as ModelFeatureAvailability | undefined
+  const liveRuntimeModelKey = liveRuntimeAvailability?.live_runtime_model_key
   const isStagedPreview = staged !== effectiveKey
   const stagedLicenseUrl = stagedTier?.license_url ?? null
 
@@ -203,6 +212,29 @@ export function FeatureModelCard({
         </div>
       )}
 
+      {registry.feature === 'captions' && liveRuntimeModelKey && (
+        <div
+          role="status"
+          className="rounded-md p-2 text-xs"
+          style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+        >
+          <strong>Live fallback at service start:</strong>{' '}
+          <span className="cc-mono">{liveRuntimeModelKey}</span>
+          {liveRuntimeAvailability?.live_runtime_model_loaded_at_startup ? (
+            <> was loaded when this service started.</>
+          ) : (
+            <> was configured when this service started; its fallback load was not confirmed then.</>
+          )}
+          {liveRuntimeModelKey !== effectiveKey && (
+            <>
+              {' '}The saved selection is <span className="cc-mono">{effectiveKey}</span>; restart the
+              service to apply the new live fallback. Future recorded-caption jobs read the saved
+              selection when each job starts.
+            </>
+          )}
+        </div>
+      )}
+
       {/* U4/Q2/M3: spec §6.3 degraded-state surface — TEXT, not color-only. */}
       {availMessage && <AvailabilityHint message={availMessage} />}
 
@@ -214,21 +246,45 @@ export function FeatureModelCard({
           — it says where the selection shows up, because a setting whose
           effect is invisible is the thing operators distrust. */}
       {registry.feature === 'translation' && (
-        <div
-          role="status"
-          className="rounded-md p-2 text-xs"
-          style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
-        >
-          This model translates a published recording&rsquo;s approved English
-          captions into Spanish, and the Spanish cues then go to the caption
-          review queue for their own approval. The recording is public
-          immediately; captions attach after review — both languages together,
-          never English alone. Live broadcasts are captioned in English only.
-        </div>
+        <>
+          <div
+            role="note"
+            className="rounded-md p-2 text-xs"
+            style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+          >
+            This model translates a published recording&rsquo;s approved English
+            captions into Spanish, and the Spanish cues then go to the caption
+            review queue for their own approval. The recording is public
+            immediately; captions attach after review — both languages together,
+            never English alone. Live broadcasts are captioned in English only.
+          </div>
+          <p
+            role="status"
+            className="rounded-md p-2 text-xs"
+            style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}
+          >
+            <strong>Saved translation activity:</strong>{' '}
+            {availability?.translation_generated_cue_count == null ? (
+              <>Activity is unavailable right now.</>
+            ) : availability.translation_generated_cue_count === 0 ? (
+              <>No Spanish cues are recorded in caption review yet.</>
+            ) : (
+              <>
+                {availability.translation_generated_cue_count} Spanish cues are recorded in caption
+                review.
+                {availability.translation_last_generated_at && (
+                  <> Latest added: {new Date(availability.translation_last_generated_at).toLocaleString()}.</>
+                )}
+              </>
+            )}
+          </p>
+        </>
       )}
 
       <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
-        <dt style={{ color: 'var(--cc-ink-3)' }}>Current model</dt>
+        <dt style={{ color: 'var(--cc-ink-3)' }}>
+          {registry.feature === 'captions' ? 'Saved selection' : 'Current model'}
+        </dt>
         <dd className="cc-mono">{effectiveKey}</dd>
         {/* U5: human-readable notes as a secondary line under the slug. */}
         {effectiveTier?.notes ? (

@@ -21,6 +21,9 @@ include-in-header:
 resource-path:
   - docs
 
+filters:
+  - docs/assets/manual-long-code.lua
+
 variables:
   documentclass: article
   # Gives \maketitle a standalone cover page instead of crowding the title,

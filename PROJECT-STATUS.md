@@ -19,6 +19,11 @@
 > observation across all three channels. See the
 > [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
 
+Beta 14 is in development on `codex/beta14-field-fixes`. The
+[execution record](docs/ops/beta14-task-completion.md) tracks all 28 goals,
+initial Sandbox installation and final real host installation. No Beta 14
+build, installation or publication is claimed yet.
+
 ## Historical Beta 11 package and evidence
 
 The historical Beta 11 installer and bundled manual were built from
@@ -41,12 +46,12 @@ the development overlay. They are useful runtime evidence for that overlay,
 not installation or capacity proof for the corrected release package. See
 [soak results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md).
 
-A separate 48-hour observation of one host running Beta 11 recorded 635
-discarded caption-input seconds over 518,400 nominal channel-seconds across
-three channels: 99.877507716% (99.88% rounded) logged input coverage. This is
-runtime evidence, not transcript-word accuracy or installer/Beta 12
-qualification. See the [48-hour host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md)
-and its [milestone snapshot](docs/ops/evidence/beta11-host-48-hour-milestone-2026-10-10.json).
+A 72-hour observation of the Beta 11 host recorded 1,695 discarded
+caption-input seconds out of 777,600 nominal channel-seconds across Public,
+Government, and Education: 99.782021605% (**99.78% rounded**) live
+caption-input coverage. Per-channel discarded totals were Public 575,
+Government 555, and Education 565 seconds. See the [72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md)
+for measurement and method.
 
 ## Beta 12 release and upgrade observation
 

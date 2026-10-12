@@ -130,6 +130,24 @@ describe('AssetsScreen action labels', () => {
     await waitFor(() => expect(packageStaffAsset).toHaveBeenCalledWith('sample-asset'))
   })
 
+  it('lets an operator package a recorded capture for resident playback', async () => {
+    const row = asset('captured-meeting')
+    vi.mocked(listStaffAssets).mockResolvedValue([row])
+    vi.mocked(packageStaffAsset).mockResolvedValue({
+      ...row,
+      manifest_url: 'http://127.0.0.1:8000/media/vod/captured-meeting/playlist.m3u8',
+    })
+    const { findByRole } = renderScreen()
+
+    fireEvent.click(
+      await findByRole('button', {
+        name: /Package Scheduled recording .*captured-meeting.* for resident playback/,
+      }),
+    )
+
+    await waitFor(() => expect(packageStaffAsset).toHaveBeenCalledWith('captured-meeting'))
+  })
+
   it('shows but disables packaging when the signed-in role cannot package media', async () => {
     const row = { ...asset('sample-asset'), state: 'validated' as const }
     vi.mocked(listStaffAssets).mockResolvedValue([row])

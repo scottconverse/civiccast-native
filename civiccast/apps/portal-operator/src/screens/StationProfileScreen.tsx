@@ -252,6 +252,11 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
   }
 
   const canSave = canWrite && dirty && fields.station_name.trim().length > 0 && !saveMut.isPending
+  const resolvedPaths = (
+    profileQuery.data as StationProfile & {
+      runtime_paths?: { installation_root: string; database_data: string; media_uploads: string } | null
+    }
+  ).runtime_paths
 
   return (
     <section
@@ -372,18 +377,28 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
         </div>
       </div>
 
+      {resolvedPaths && (
+        <div className="grid gap-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          <div className="text-[10px] font-semibold uppercase" style={{ color: 'var(--cc-ink-3)' }}>
+            Resolved service paths
+          </div>
+          <div className="break-all">Installation: {resolvedPaths.installation_root}</div>
+          <div className="break-all">Database: {resolvedPaths.database_data}</div>
+          <div className="break-all">Media uploads: {resolvedPaths.media_uploads}</div>
+        </div>
+      )}
+
       <p className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-        These are the Windows service account&apos;s own paths, not your personal
-        <span className="cc-mono"> C:\Users\...</span> folders &mdash; that is why browsing to them
-        yourself may not work. You do not need file access to find a recording: use{' '}
-        <strong>Assets</strong> instead. If you do need the files, use Copy path above, then paste
-        into File Explorer&apos;s address bar; ask an administrator if it says access is denied.{' '}
+        These are the station&apos;s configured library, recording and backup roots. The read-only
+        resolved service paths below show where CivicCast is installed, stores its database and
+        receives media uploads. Use <strong>Assets</strong> to find a recording in CivicCast. If you
+        need a configured folder, use Copy path above and paste it into File Explorer; ask an
+        administrator if Windows denies access.{' '}
         <Link to={manualLink('configuration-storage')} style={{ color: 'var(--cc-brand)' }}>
           Read more in the manual
         </Link>
-        . An env-var override (CIVICCAST_STATION_TZ, CIVICCAST_STATION_NAME,
-        CIVICCAST_STATION_MEDIA_LIBRARY / _RECORDINGS / _BACKUPS) always wins over what is saved
-        here — this form shows the value currently in effect.
+        . An environment override for the storage roots wins over what is saved here — this form
+        shows the value currently in effect.
       </p>
 
       {/* Live captions. A real switch for a feature that, on an activated

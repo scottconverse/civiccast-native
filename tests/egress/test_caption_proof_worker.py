@@ -69,6 +69,66 @@ def test_worker_persists_pass_for_matching_captions(tmp_path) -> None:
     assert sample.mode == "cea-708"
 
 
+def _video_pts_packet(seconds: float) -> bytes:
+    pts = round(seconds * 90000) % (1 << 33)
+    encoded = bytes(
+        [
+            0x21 | ((pts >> 29) & 14),
+            (pts >> 22) & 255,
+            1 | ((pts >> 14) & 254),
+            (pts >> 7) & 255,
+            1 | ((pts << 1) & 254),
+        ]
+    )
+    pes = b"\0\0\x01\xe0\0\0\x80\x80\x05" + encoded
+    return b"\x47\x41\x00\x10" + pes + b"\xff" * (184 - len(pes))
+
+
+def test_proof_uses_real_capture_pts_and_keeps_missing_and_wrong_cues_detectable(tmp_path):
+    from civiccast.egress.gst.caption_clock import TS_CLOCK_WRAP_SECONDS
+
+    seg = tmp_path / "seg.ts"
+    # 36-hour pipeline plus the mux's documented one-hour transport epoch.
+    origin = 36 * 3600 + 3600
+    seg.write_bytes(_video_pts_packet(origin) + _video_pts_packet(origin + 6))
+    expected = [
+        _cue().model_copy(update={"start_seconds": origin + 0.2, "end_seconds": origin + 1.5})
+    ]
+    decoded_origin = origin % TS_CLOCK_WRAP_SECONDS
+    from civiccast.captions.webvtt import render_webvtt
+
+    decoded = render_webvtt(
+        [
+            _cue().model_copy(
+                update={
+                    "start_seconds": decoded_origin + 0.2,
+                    "end_seconds": decoded_origin + 1.5,
+                }
+            )
+        ]
+    )
+    store = InMemoryEgressStore()
+    worker = _worker(store, expected=expected, runner=_runner(decoded), segment=seg)
+    worker._align_transport_clock = True
+    assert worker.run_once().passed == 1
+    worker._runner = _runner("")
+    assert worker.run_once().failed == 1
+    worker._runner = _runner(decoded.replace("HELLO CIVICCAST", "WRONG CAPTION"))
+    assert worker.run_once().failed == 1
+    # A partial boundary page cannot establish a PASS by itself.
+    worker._expected_cues_provider = lambda _ch: [
+        expected[0].model_copy(
+            update={
+                "start_seconds": origin - 1,
+                "end_seconds": origin + 1,
+            }
+        )
+    ]
+    worker._runner = _runner(decoded)
+    assert worker.run_once().failed == 1
+    assert store.latest_caption_proof_sample("gov").expected_cue_count == 0
+
+
 def test_worker_fails_when_captions_do_not_survive(tmp_path) -> None:
     store = InMemoryEgressStore()
     seg = tmp_path / "seg.ts"

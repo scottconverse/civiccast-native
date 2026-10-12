@@ -1595,6 +1595,17 @@ class GstPlayoutEngine:
                 self._caption_stream_position_ms,
                 aligned_pts_ms + duration_ms,
             )
+            delivery_clock = getattr(self, "caption_delivery_clock", None)
+            if delivery_clock is not None:
+                try:
+                    delivery_clock.record(text, aligned_pts_ms / 1000.0, duration_ms / 1000.0)
+                except OSError as exc:
+                    # Metadata failure must not re-send an already accepted page.
+                    print(
+                        f"WARN: caption delivery clock unavailable: {exc}",
+                        file=sys.stderr,
+                        flush=True,
+                    )
         return pushed
 
     def _pipeline_running_time_ns(self) -> int | None:

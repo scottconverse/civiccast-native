@@ -1,8 +1,8 @@
 # Troubleshooting matrix {#ch-troubleshooting}
 
-This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It lists what can go wrong in beta.11, how to tell which problem you have by looking at a screen, a log line or a command result, and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**. Where we could not find a fix in the code, the table says so instead of guessing.
+This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It explains how to identify a problem from a screen, log line or command result and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**.
 
-> **Note:** Beta 12 is a published GitHub pre-release, not a production release. Its verification record describes one normal upgrade from Beta 11 and a post-upgrade recorder failure; it does not establish a fresh install, repair, a completed five-snapshot check or a soak. Use it for package-specific proof status, and treat this chapter as current troubleshooting guidance rather than a guarantee that every failure is listed.
+> **Package checks:** See the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for this package's installation and operating observations.
 
 ## Before you start
 
@@ -70,7 +70,7 @@ Setup returns a number when it fails. Interactive setup shows a dialog with word
 
 > **Known issue (beta.11):** Interactive failure dialogs explain the step but do not show its numeric exit code. Read `install-progress.log` for the code; the installer table in [Chapter 10](#ch-installing) lists the current codes.
 
-> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 12 startup. Use `/health`, the channel's output and the current [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) to assess the exact package and station.
+> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 13 startup. Use `/health`, the channel's output and the current [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) to assess the exact package and station.
 
 ## Sign-in
 
@@ -149,7 +149,7 @@ A program change is the moment a channel moves from one scheduled item to the ne
 | A single dropped frame at a join between two pieces | A known single-frame drop. | `CTRL mux diagnostic: dropped future-dated video arrival`. | None. It is one frame. |
 | A change aired only the tail of the closing item | The plan was resolved against a short remainder. | `Plan for <channel> resolved to a N.Ns tail of the closing scheduled item`. | Check the schedule's times. Remember that times typed on schedule screens are UTC. |
 
-> **Historical Beta 10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the Beta 12 package. Keep the logs if you see an unexplained rebuild.
+> **Historical Beta 10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the current package. Keep the logs if you see an unexplained rebuild.
 
 ## No audio, low audio, loudness
 
@@ -171,16 +171,18 @@ There are two separate caption paths. **Live captions** are off by default in be
 
 ### Live captions and recovery
 
-The native live runtime uses Whistle on CPU by default. It publishes the first recognition without waiting for another reading to agree, and serializes primary inference across channels on the station. A Whistle request has a 10-second deadline. If it fails or times out, that channel switches to Whisper and remains there until the live runtime restarts. Whisper is also the recorded-caption engine. CUDA is optional acceleration for Whisper; it is not required for Whistle.
+The native live runtime uses Whistle on CPU by default. It publishes the first recognition without waiting for another reading to agree, and serializes primary inference across channels on the station. A Whistle request has a 30-second deadline. If it fails or times out, Whisper supplies backup captions while CivicCast automatically starts a fresh Whistle process for a recovery attempt. Successful recognition switches that channel back to Whistle. Whisper is also the recorded-caption engine. Supported NVIDIA CUDA acceleration is optional for Whisper; Whistle uses the CPU.
+
+Whisper fallback allows 120 seconds per request by default. `CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS` accepts finite values from 1 to 600 seconds. This deadline permits slower CPU responses to finish while still containing a stalled process. It does not expand the bounded audio queue. Caption status distinguishes temporary delay from sustained overload and paused recognition.
 
 The audio tap has bounded queues and can discard older working audio or pause caption recognition under sustained overload to keep playout responsive. If captions lag, pause, or show gaps, use the table below to check the logs and reduce competing CPU or disk work.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
 | No captions on the live picture at all | Live captions are off by default, the service override is `off`, or the current channel has not started since the switch was enabled. | Station Profile checkbox **Show live captions on air**; the **Channels** caption status card; confirm `CIVICCAST_CAPTION_TAP` is not `off`. | Enable the profile switch; recognition resumes on the next worker scan. Then stop and start the channel so its video includes captions. |
-| `Whistle failed for <channel>; switching to Whisper` appears | Whistle failed or missed its 10-second deadline; that channel is using sticky fallback. | Search `C:\ProgramData\CivicCast\logs\control_plane-app.log*` for `Whistle inference failed` and `switching to Whisper`. | Captions continue on Whisper when available. A failed Whisper child gets one immediate replay; after a repeated replacement failure, the runtime waits 30 seconds before trying again. Restart the CivicCast service outside a meeting to reset the primary engine to Whistle. |
+| `Whistle failed for <channel>; switching to Whisper` appears | Whistle failed or missed its 30-second deadline; that channel is using backup captioning during recovery. | Check the engine and recovery countdown on **System Health**; search `C:\ProgramData\CivicCast\logs\control_plane-app.log*` for the failure and recovery messages. | CivicCast retries Whistle after 30 seconds, with further failed probes backing off to at most 300 seconds. Successful recognition restores Whistle automatically. A failed Whisper child gets one immediate replay, then a 30-second cooldown after another failure. Bounded failure diagnostics are retained for investigation. |
 | Captions have gaps and the log says `Caption tap catch-up ... Discarded` | Recognition fell behind and the bounded tap shed old working audio to preserve playout. | `Select-String -Path C:\ProgramData\CivicCast\logs\control_plane-app.log* -Pattern "Caption tap"`. | Reduce other heavy work on the station and watch the output. An NVIDIA GPU is optional for Whisper and does not accelerate Whistle. Do not treat a gap-free run as established until it has been observed under your workload. |
-| The log says `Caption tap overload` or the status shows paused | Sustained backlog engaged the tap's overload pause for that channel. | Search the control-plane log for `Caption tap overload` and check the **Channels** caption status. | The pause protects playout. Reduce competing CPU/disk work; captioning resumes according to its backoff. Restart the channel only if its caption state does not recover. |
+| Caption status shows delayed, overloaded or paused | Delayed means the queue is temporarily behind; overloaded indicates sustained backlog; paused means the tap has engaged its protective pause. | Check queue depth, queue age and engine recovery on **System Health**, and search the control-plane log for `Caption tap overload`. | Let a temporary delay catch up. For persistent overload, reduce competing CPU/disk work; caption recognition resumes according to its backoff. Restart the channel only if its caption state does not recover. |
 | The caption status card says "Not verified" or "Caption proof failed" | The decode-back proof is absent, stale or failed. | Check the card on **Channels** and search the control-plane log around the same time. | Check the live-caption rows above and the channel logs. |
 | Captions on H.265 channels | The caption inserter is H.264 only on native Windows. | The log: "HEVC/H.265 cannot embed captions on native Windows -- the caption inserter is H.264-only...". | Use H.264 for channels that must carry captions. |
 
@@ -369,6 +371,12 @@ Child codes seen: 64 arguments, 65 report write, 66 pack missing or untrusted, 6
 | `degrading egress to the FFmpeg concat engine` | `supervisor.log` | Station will not start |
 | `station could not start:` | `supervisor.log` | Station will not start |
 | `singleton not acquired` | `supervisor.log` | Station will not start |
+
+## Rotation and source-preview checks
+
+- If a channel stops after the last scheduled program, check that its items are published and that `CIVICCAST_SCHEDULE_LOOP=1` is set in the service environment for a repeating rotation. The loop preserves gaps: adjoining entries need contiguous start times and durations. See [the continuous scheduling recipe](#ch-before-meeting).
+- If the trim or summary source preview cannot play, confirm the original file remains available and package the recording for HLS playback. Use the preview's retry or renewal action after correcting the source. A summary citation outside a trimmed copy needs a package covering that passage; it should not be reviewed against a different time range.
+- If **Publish** counts items needing action, its **Needs action** filter includes required blocked outputs as well as failed outputs. Open each listed next step to resolve it.
 
 ## If it did not work
 

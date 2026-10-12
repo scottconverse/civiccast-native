@@ -149,9 +149,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
+      # Beta 14 updates only the native collection floor; this workflow binding
+      # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2da1768615c07660dde779477e1797bae6dadd9b
+        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -227,9 +229,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
+      # Beta 14 updates only the native collection floor; this workflow binding
+      # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2da1768615c07660dde779477e1797bae6dadd9b
+        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -282,9 +286,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
+      # Beta 14 updates only the native collection floor; this workflow binding
+      # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2da1768615c07660dde779477e1797bae6dadd9b
+        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -345,9 +351,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
+      # Beta 14 updates only the native collection floor; this workflow binding
+      # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2da1768615c07660dde779477e1797bae6dadd9b
+        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -1067,11 +1075,15 @@ entries:
       # detection; it does not promote the historical decision-gate evidence.
       # Beta12 emergency delta: docs/evidence/beta12-emergency-current-source-review.md.
       # Reviewed-source tripwire renewal only; historical/service acceptance unchanged.
+      # Beta14 current-source review tripwires only: changed worker/engine inputs are
+      # reviewed in docs/releases/v1.0.0-beta.14-verification.md and
+      # docs/ops/evidence/beta14-independent-review-2026-10-12.md. This does not renew
+      # historical hardware/service acceptance; the Beta14 host install remains pending.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: e420d099f7126f9946713de26696737d0ce43048
+          blob: 5b66c0aed93303befe20b60078af935b50d12a35
         - path: civiccast/egress/gst/engine.py
-          blob: 1c339902ad46909e9ca489442fecc885946facac
+          blob: 173520dd44dc26a90adf6ead81fffb0e1d4e6ddd
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -1094,9 +1106,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
+      # Beta 14 updates only the native collection floor; this workflow binding
+      # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2da1768615c07660dde779477e1797bae6dadd9b
+        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -1982,11 +1996,15 @@ entries:
       # detection; it does not promote the historical pre-login observation.
       # Beta12 emergency delta: docs/evidence/beta12-emergency-current-source-review.md.
       # Reviewed-source tripwire renewal only; historical/service acceptance unchanged.
+      # Beta14 current-source review tripwires only: changed worker/engine inputs are
+      # reviewed in docs/releases/v1.0.0-beta.14-verification.md and
+      # docs/ops/evidence/beta14-independent-review-2026-10-12.md. This does not renew
+      # historical hardware/service acceptance; the Beta14 host install remains pending.
       code:
         - path: civiccast/egress/gst/worker.py
-          blob: e420d099f7126f9946713de26696737d0ce43048
+          blob: 5b66c0aed93303befe20b60078af935b50d12a35
         - path: civiccast/egress/gst/engine.py
-          blob: 1c339902ad46909e9ca489442fecc885946facac
+          blob: 173520dd44dc26a90adf6ead81fffb0e1d4e6ddd
         - path: civiccast/egress/gst/caption_flow.py
           blob: c0c981dfa050e8ca196533c791a99028302c5ca5
         - path: civiccast/egress/gst/decode_policy.py
@@ -2009,9 +2027,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
+      # Beta 14 updates only the native collection floor; this workflow binding
+      # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: 2da1768615c07660dde779477e1797bae6dadd9b
+        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1

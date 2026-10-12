@@ -35,7 +35,7 @@ def test_idle_page_is_actionable_between_streams() -> None:
     assert page.channel_id == "gov-ch12"
     assert "No meeting is live" in page.message
     assert page.action_label == "View published recordings"
-    assert page.action_url == "/"
+    assert page.action_url == "#/recordings"
 
 
 def test_emergency_overlay_is_assertive_and_cellular_ready() -> None:

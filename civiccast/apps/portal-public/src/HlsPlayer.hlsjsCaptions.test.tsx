@@ -59,6 +59,7 @@ class FakeHls {
   private listeners = new Map<string, Array<(event: string, data: unknown) => void>>()
   private _subtitleTracks: FakeSubtitleTrack[] = []
   private _subtitleTrack = -1
+  playingDate: Date | null = null
   subtitleDisplay = true
 
   on(event: string, cb: (event: string, data: unknown) => void) {
@@ -129,6 +130,49 @@ afterEach(() => {
 })
 
 describe('HlsPlayer hls.js captions', () => {
+  it('shows the title for the buffered playback time instead of the newest source title', async () => {
+    render(
+      <HlsPlayer
+        manifestUrl="/live/playlist.m3u8"
+        programTimeline={[
+          { title: 'Earlier program', started_at: '2026-10-12T18:00:00Z' },
+          { title: 'Current program', started_at: '2026-10-12T18:01:00Z' },
+        ]}
+      />,
+    )
+
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    const hls = lastInstance as FakeHls
+    hls.playingDate = new Date('2026-10-12T18:00:40Z')
+    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    Object.defineProperty(video, 'readyState', { configurable: true, value: 3 })
+    fireEvent.canPlay(video)
+    fireEvent.timeUpdate(video)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Program at playback position').textContent).toBe(
+        'Now playing: Earlier program',
+      )
+    })
+  })
+
+  it('resumes playback after the manifest source changes while the viewer was watching', async () => {
+    const { rerender } = render(<HlsPlayer manifestUrl="/first/playlist.m3u8" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+
+    const video = screen.getByLabelText('Meeting video player') as HTMLVideoElement
+    const play = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(video, 'paused', { configurable: true, value: false })
+    Object.defineProperty(video, 'ended', { configurable: true, value: false })
+    Object.defineProperty(video, 'play', { configurable: true, value: play })
+
+    rerender(<HlsPlayer manifestUrl="/cdn/playlist.m3u8" />)
+    await waitFor(() => expect(lastInstance).toBeDefined())
+    video.dispatchEvent(new Event('canplay'))
+
+    await waitFor(() => expect(play).toHaveBeenCalledOnce())
+  })
+
   it('derives the default selection from the manifest, not from a stale hls.subtitleTrack read', async () => {
     render(<HlsPlayer manifestUrl="/hlsjs-captioned/playlist.m3u8" />)
 

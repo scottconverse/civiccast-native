@@ -195,6 +195,30 @@ class TestBulletinFiller:
             generator(_config())
         assert len(attempts) == 2, "expected a no-text retry before failing"
 
+    def test_image_only_retry_keeps_ffmpeg_unavailable_in_fail_open_contract(
+        self, tmp_path: Path
+    ) -> None:
+        attempts: list[list[str]] = []
+
+        def missing_after_text_failure(args: list[str]) -> FfmpegResult:
+            attempts.append(args)
+            if len(attempts) == 1:
+                return FfmpegResult(returncode=1, stdout="", stderr="font unavailable")
+            raise FfmpegNotFoundError("ffmpeg disappeared before retry")
+
+        generator = BulletinFillerSourceGenerator(
+            work_dir=tmp_path,
+            bulletins_provider=lambda _cid: [_bulletin("cgb-1")],
+            branding_provider=lambda _cid: _BRANDING,
+            ffmpeg_runner=missing_after_text_failure,
+        )
+
+        with pytest.raises(SourcePrepareError, match="FFmpeg is unavailable") as exc_info:
+            generator(_config())
+
+        assert isinstance(exc_info.value.__cause__, FfmpegNotFoundError)
+        assert len(attempts) == 2
+
     def test_ffmpeg_not_found_fails_open_as_source_prepare_error(self, tmp_path: Path) -> None:
         # Pins the gate's Blocker fix (QA-1): run_ffmpeg raises
         # FfmpegNotFoundError/FfmpegError BEFORE returning a result when the

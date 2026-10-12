@@ -256,6 +256,16 @@ class StationStorageLocations(BaseModel):
     backups: Annotated[str, Field(min_length=1, max_length=260)]
 
 
+class StationRuntimePaths(BaseModel):
+    """Resolved paths used by the installed service, reported read-only."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    installation_root: Annotated[str, Field(min_length=1, max_length=1024)]
+    database_data: Annotated[str, Field(min_length=1, max_length=1024)]
+    media_uploads: Annotated[str, Field(min_length=1, max_length=1024)]
+
+
 class StationChannelProfile(BaseModel):
     """Generated local channel profile for first-run commissioning."""
 
@@ -288,6 +298,7 @@ class StationProfile(BaseModel):
     public_base_url: Annotated[str, Field(min_length=1, max_length=240)] | None = None
     station_timezone: Annotated[str, Field(min_length=1, max_length=120)] = "local"
     storage_locations: StationStorageLocations
+    runtime_paths: StationRuntimePaths | None = None
     channel_count: Annotated[int, Field(ge=1, le=12)] = 3
     channel_profiles: list[StationChannelProfile] = Field(default_factory=list)
     sample_content_enabled: bool = True

@@ -192,6 +192,22 @@ class AgendaItem(BaseModel):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class AgendaChapterSyncSkip(BaseModel):
+    """One source chapter left untouched because its agenda position is occupied."""
+
+    order: int = Field(ge=0)
+    chapter_title: Annotated[str, Field(min_length=1, max_length=400)]
+    existing_item_title: Annotated[str, Field(min_length=1, max_length=400)]
+
+
+class AgendaChapterSyncResult(BaseModel):
+    """Detailed, idempotent chapter-sync outcome for the operator UI."""
+
+    chapter_count: int = Field(ge=0)
+    added_items: list[AgendaItem] = Field(default_factory=list)
+    skipped_existing: list[AgendaChapterSyncSkip] = Field(default_factory=list)
+
+
 class AgendaItemInput(BaseModel):
     """Create-an-item request body."""
 
@@ -336,6 +352,8 @@ class AgendaItemDb(Base):
 
 __all__ = [
     "AGENDA_STATUSES",
+    "AgendaChapterSyncResult",
+    "AgendaChapterSyncSkip",
     "AgendaItem",
     "AgendaItemDb",
     "AgendaItemInput",

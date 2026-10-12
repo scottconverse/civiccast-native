@@ -21,12 +21,11 @@ CURRENT_VERSION = (
 )
 CURRENT_CANDIDATE_TAG = f"v{CURRENT_VERSION}"
 # The source version can be the next owner-held candidate while the published
-# release remains current. Public download targets come from the authored
-# release-truth manifest, not civiccast/_version.py.
+# public release remains current. Public release links come from the authored
+# release-truth manifest; the helper's default tag follows the source version.
 PUBLISHED_RELEASE_TAG = yaml.safe_load(
     (ROOT / "docs" / "releases" / "release-truth.yaml").read_text(encoding="utf-8")
 )["current"]
-PUBLISHED_RELEASE_VERSION = PUBLISHED_RELEASE_TAG.removeprefix("v")
 
 ACTIVE_RELEASE_SURFACES = [
     ROOT / "README.md",
@@ -114,8 +113,8 @@ def test_current_release_identity_is_consistent_across_runtime_and_installer() -
     downloader = (ROOT / "scripts" / "download_windows_release_artifacts.ps1").read_text(
         encoding="utf-8"
     )
-    assert f'$Tag = "{PUBLISHED_RELEASE_TAG}"' in downloader
-    assert f'$Version = "{PUBLISHED_RELEASE_VERSION}"' in downloader
+    assert f'$Tag = "{CURRENT_CANDIDATE_TAG}"' in downloader
+    assert f'$Version = "{CURRENT_VERSION}"' in downloader
 
 
 def test_retired_wsl_install_docs_are_explicitly_historical() -> None:
@@ -142,12 +141,16 @@ def test_readme_keeps_source_and_field_proof_distinct() -> None:
     assert PUBLISHED_RELEASE_TAG.casefold() in normalized
     assert f"releases/tag/{PUBLISHED_RELEASE_TAG}".casefold() in normalized
     if CURRENT_CANDIDATE_TAG.casefold() != PUBLISHED_RELEASE_TAG.casefold():
-        assert "unpublished candidate" in normalized
-        assert "no published installer or release evidence yet" in normalized
-    assert "99.88%" in normalized
-    assert "separate beta 11 host" in normalized
-    assert "it is not a beta 13 soak, general service-uptime percentage" in normalized
-    assert "package qualification" in normalized
+        assert f"`{CURRENT_CANDIDATE_TAG}` is an unpublished candidate".casefold() in normalized
+        assert "remains the published download until" in normalized
+    assert "72 hours. three channels. 99.78% live caption-input coverage" in normalized
+    assert (
+        "a beta 11 host ran public, government and education together without a service restart"
+        in normalized
+    )
+    assert "with 216 healthy scheduled checkpoints" in normalized
+    assert "verification record" in normalized
+    assert "72-hour host report" in normalized
 
 
 def test_architecture_doc_names_current_release() -> None:

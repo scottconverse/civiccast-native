@@ -870,7 +870,7 @@ export const START_ACQUISITION_FAILED_MESSAGE =
   "CivicCast could not start downloading its components. Nothing is being downloaded " +
   "right now. Use Open installer log below and send that log to support.";
 
-export async function startAcquisition(): Promise<AcquisitionStartResult> {
+export async function startAcquisition(componentIds: readonly string[]): Promise<AcquisitionStartResult> {
   if (!nativeInstallerBridgeAvailable()) {
     // No native bridge at all (a browser preview): NOT a failure of the
     // product -- keep the existing honest preview wording and do not raise a
@@ -884,7 +884,7 @@ export async function startAcquisition(): Promise<AcquisitionStartResult> {
     const message = await invokeNativeInstallerAny<string>([
       "start_acquisition",
       "startAcquisition"
-    ]);
+    ], { componentIds: [...componentIds] });
     return { ok: true, message };
   } catch {
     return { ok: false, message: START_ACQUISITION_FAILED_MESSAGE };

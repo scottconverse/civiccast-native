@@ -6,7 +6,12 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { fetchJson, formatDateTime, formatDuration, postForm, postJson } from '../api'
 import { HlsPlayer } from '../HlsPlayer'
 import { buildRecordingsHash, buildWatchHash } from '../router'
-import { LIVE_POLL_SECONDS, LIVE_REASON_HLS_NOT_SERVING, sameLiveStatus } from './homeLive'
+import {
+  COMING_UP_POLL_SECONDS,
+  LIVE_POLL_SECONDS,
+  LIVE_REASON_HLS_NOT_SERVING,
+  sameLiveStatus,
+} from './homeLive'
 import type {
   AssetMetadata,
   ContributorSubmissionReceipt,
@@ -153,6 +158,50 @@ export function HomeScreen() {
     void loadPortal()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // The Coming Up list is time-sensitive: an item that was future on page
+  // load must disappear after its scheduled start even if the resident keeps
+  // Home open. The API already limits this response to future premieres.
+  useEffect(() => {
+    let cancelled = false
+    let pending = false
+    const refreshComingUp = () => {
+      if (pending) return
+      pending = true
+      fetchJson<ScheduleItem[]>('/api/public/schedule/coming-up')
+        .then((comingUp) => {
+          if (cancelled) return
+          setData((previous) => {
+            const unchanged =
+              previous.comingUp.length === comingUp.length &&
+              previous.comingUp.every((item, index) => {
+                const next = comingUp[index]
+                return (
+                  next !== undefined &&
+                  item.id === next.id &&
+                  item.scheduled_at === next.scheduled_at &&
+                  item.channel_id === next.channel_id
+                )
+              })
+            return unchanged ? previous : { ...previous, comingUp }
+          })
+        })
+        .catch(() => {
+          // Keep the last good schedule through a transient network failure.
+        })
+        .finally(() => {
+          pending = false
+        })
+    }
+    const timer = window.setInterval(
+      refreshComingUp,
+      COMING_UP_POLL_SECONDS * 1000,
+    )
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
     }
   }, [])
 
@@ -342,7 +391,12 @@ export function HomeScreen() {
   // The pipeline is up on its fallback slate, not a program. That is not
   // "On air": the idle page stays up and the slate manifest is not autoplayed.
   const liveStandingBy = data.live?.state === 'standing_by'
-  const liveManifest = liveStandingBy ? null : data.live?.manifest_url
+  const liveSessionState = data.live?.state
+  const liveOutputUnavailable =
+    liveSessionState === 'starting' ||
+    liveSessionState === 'failed' ||
+    liveSessionState === 'interrupted'
+  const liveManifest = liveStandingBy || liveOutputUnavailable ? null : data.live?.manifest_url
   // On air on the headend, but the station has not enabled an HLS web output
   // for this channel. Say exactly that rather than "Offline" (beta.5
   // walkthrough: the channel was visibly on air while Home said Offline).
@@ -354,15 +408,27 @@ export function HomeScreen() {
   const liveWebPreviewPending =
     liveNoWebOutput && data.live?.reason === LIVE_REASON_HLS_NOT_SERVING
   const liveStateLabel =
-    data.live?.state === 'on_air'
-      ? 'On air'
-      : liveWebPreviewPending
-        ? 'On air (web preview starting)'
-        : liveNoWebOutput
-          ? 'On air (no web preview)'
-          : liveStandingBy
-            ? 'Standing by'
-            : 'Offline'
+    liveSessionState === 'starting'
+      ? 'Starting'
+      : liveSessionState === 'failed'
+        ? 'Broadcast unavailable'
+        : liveSessionState === 'interrupted'
+          ? 'Broadcast interrupted'
+          : liveSessionState === 'on_air'
+            ? 'On air'
+            : liveWebPreviewPending
+              ? 'On air (web preview starting)'
+              : liveNoWebOutput
+                ? 'On air (no web preview)'
+                : liveStandingBy
+                  ? 'Standing by'
+                  : 'Offline'
+  const liveOutputMessage =
+    liveSessionState === 'starting'
+      ? 'The broadcast is starting.'
+      : liveSessionState === 'failed'
+        ? 'The broadcast is not available right now.'
+        : 'The broadcast is interrupted.'
   const isPartial = state === 'ready' && errors.length > 0
   // "Nothing is posted yet" is for a station with no live output, no
   // schedule and no recordings. A channel that is on air (with or without a
@@ -370,7 +436,7 @@ export function HomeScreen() {
   // already says what (review round 2 delta, MINOR 6: standing by and
   // "Nothing is posted yet" used to render together on a bare station).
   const liveIsSomething =
-    Boolean(liveManifest) || liveNoWebOutput || liveStandingBy
+    Boolean(liveManifest) || liveNoWebOutput || liveStandingBy || liveOutputUnavailable
   const isEmpty =
     state === 'ready' &&
     !liveIsSomething &&
@@ -417,19 +483,22 @@ export function HomeScreen() {
             </h2>
             <p className="text-sm text-stone-300">
               {data.live?.state === 'on_air'
-                ? `${data.live.title ?? 'Broadcast'} is on air.`
+                ? 'Live video is on air. Program information follows the playback position.'
                 : liveWebPreviewPending
                   ? `${data.live?.title ?? 'The station'} is on air. The web preview is turned on but not serving yet.`
                   : liveNoWebOutput
                     ? `${data.live?.title ?? 'The station'} is on air, but web preview is not enabled for this channel.`
                     : liveStandingBy
                       ? 'The station is standing by. No program is on air right now.'
-                      : 'No live broadcast is on air.'}
+                      : liveOutputUnavailable
+                        ? liveOutputMessage
+                        : 'No live broadcast is on air.'}
             </p>
           </div>
           {liveManifest ? (
             <HlsPlayer
               manifestUrl={liveManifest}
+              programTimeline={data.live?.program_timeline ?? []}
               analytics={{ channelId: data.live?.channel_id ?? null }}
             />
           ) : liveWebPreviewPending ? (
@@ -457,6 +526,16 @@ export function HomeScreen() {
               <span className="text-stone-300">
                 The broadcast is going out on the cable channel. Ask the station to turn on
                 HLS web output to watch it here.
+              </span>
+            </div>
+          ) : liveOutputUnavailable ? (
+            <div
+              role="status"
+              className="flex aspect-video flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-amber-500/60 bg-[#172018] p-6 text-center text-sm text-stone-200"
+            >
+              <span className="font-semibold text-stone-100">{liveOutputMessage}</span>
+              <span className="text-stone-300">
+                {data.live?.reason ?? 'The station output is not currently available.'}
               </span>
             </div>
           ) : idlePage ? (

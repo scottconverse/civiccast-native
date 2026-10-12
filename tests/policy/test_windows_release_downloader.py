@@ -14,21 +14,24 @@ from pathlib import Path
 import pytest
 import yaml
 
+from civiccast._version import __version__ as CURRENT_VERSION
+
 ROOT = Path(__file__).resolve().parents[2]
 DOWNLOADER = ROOT / "scripts" / "download_windows_release_artifacts.ps1"
 INSTALL_DOC = ROOT / "INSTALL-WINDOWS.md"
 RELEASE_TRUTH = ROOT / "docs" / "releases" / "release-truth.yaml"
-# Download defaults and public installation guidance track the published
-# release, which can differ from the next source candidate in `_version.py`.
-# release-truth.yaml is the authored source for that public target.
+# The helper's default candidate mode follows the canonical source version.
+# Public installation guidance remains pinned to the published release in
+# release-truth.yaml.
+CURRENT_CANDIDATE_TAG = f"v{CURRENT_VERSION}"
 PUBLISHED_RELEASE_TAG = yaml.safe_load(RELEASE_TRUTH.read_text(encoding="utf-8"))["current"]
-PUBLISHED_RELEASE_VERSION = PUBLISHED_RELEASE_TAG.removeprefix("v")
 
 
 def test_windows_release_downloader_verifies_manifest_hashes() -> None:
     source = DOWNLOADER.read_text(encoding="utf-8")
 
-    assert f'$Version = "{PUBLISHED_RELEASE_VERSION}"' in source
+    assert f'$Tag = "{CURRENT_CANDIDATE_TAG}"' in source
+    assert f'$Version = "{CURRENT_VERSION}"' in source
     assert 'release-artifacts-manifest.json"' in source
     assert 'clean-windows-proof-kit.zip"' in source
     assert 'windows-tester-package.zip"' in source
@@ -114,7 +117,7 @@ def test_station_archive_verification_and_safe_extraction(tmp_path: Path, scenar
     }
     index = {
         "manifest": {
-            "product_version": PUBLISHED_RELEASE_VERSION,
+            "product_version": CURRENT_VERSION,
             "packs": [
                 {
                     "filename": Path(path).name,

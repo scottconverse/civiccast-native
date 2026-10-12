@@ -139,7 +139,7 @@ function PartialState({ summaries }: { summaries: SummaryDraft[] }) {
 
 function SummaryCard({
   summary,
-  activeCueId,
+  activeCitation,
   exportResult,
   verificationResults,
   busy,
@@ -153,11 +153,11 @@ function SummaryCard({
   canReview,
 }: {
   summary: SummaryDraft
-  activeCueId: string | null
+  activeCitation: { summaryId: string; range: TranscriptRange } | null
   exportResult: RecordExportResponse | null
   verificationResults: Record<string, RecordExportResponse>
   busy: boolean
-  onSeek: (cueId: string) => void
+  onSeek: (range: TranscriptRange) => void
   onApprove: (summary: SummaryDraft) => void
   onSaveEdit: (summary: SummaryDraft, narrative: string) => Promise<void>
   onExport: (summary: SummaryDraft) => void
@@ -185,6 +185,7 @@ function SummaryCard({
     () => (summary.sourced_claims ?? []).flatMap((claim) => claim.transcript_ranges ?? []),
     [summary.sourced_claims],
   )
+  const activeRange = activeCitation?.summaryId === summary.summary_id ? activeCitation.range : null
   const canApprove = summary.status === 'pending_review' && (summary.sourced_claims ?? []).length > 0
   const canExport = summary.status === 'approved'
   return (
@@ -232,8 +233,16 @@ function SummaryCard({
       )}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <SourcedClaimList claims={summary.sourced_claims ?? []} onSeek={onSeek} />
-        <TranscriptCuePlayer ranges={ranges} activeCueId={activeCueId} />
+        <SourcedClaimList
+          claims={summary.sourced_claims ?? []}
+          activeRange={activeRange}
+          onSeek={onSeek}
+        />
+        <TranscriptCuePlayer
+          assetId={summary.meeting_id}
+          ranges={ranges}
+          activeRange={activeRange}
+        />
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -417,7 +426,10 @@ function SummaryCard({
 }
 
 export function SummaryReviewScreen() {
-  const [activeCueId, setActiveCueId] = useState<string | null>(null)
+  const [activeCitation, setActiveCitation] = useState<{
+    summaryId: string
+    range: TranscriptRange
+  } | null>(null)
   const [exportResults, setExportResults] = useState<Record<string, RecordExportResponse>>({})
   const [verificationResults, setVerificationResults] = useState<Record<string, RecordExportResponse>>({})
   const queryClient = useQueryClient()
@@ -551,11 +563,11 @@ export function SummaryReviewScreen() {
             <SummaryCard
               key={summary.summary_id}
               summary={summary}
-              activeCueId={activeCueId}
+              activeCitation={activeCitation}
               exportResult={exportResults[summary.summary_id] ?? null}
               verificationResults={verificationResults}
               busy={busy}
-              onSeek={setActiveCueId}
+              onSeek={(range) => setActiveCitation({ summaryId: summary.summary_id, range })}
               onApprove={(target) => approveMutation.mutate(target)}
               onSaveEdit={async (target, narrative) => {
                 await editMutation.mutateAsync({ summary: target, narrative })

@@ -114,18 +114,26 @@ def render_pdfa_record(
     pdf.setTitle(f"CivicCast signed record {summary.summary_id}")
     pdf.setAuthor("CivicCast")
     pdf.setSubject("PDF/A-3B signed-record export")
-    pdf.setFont(PDFA_FONT_NAME, 10)
-    pdf.setFillGray(0)
-    pdf.drawString(72, 740, "CivicCast PDF/A-3B signed-record export")
-    pdf.drawString(72, 720, f"Summary: {summary.summary_id}")
-    pdf.drawString(72, 700, f"Meeting: {summary.meeting_id}")
-    pdf.drawString(72, 680, f"Audit fingerprint: {summary.audit_fingerprint}")
-    pdf.drawString(72, 660, "Embedded metadata names:")
-    y = 640
+    page_width, _page_height = letter
+    # Leave an extra 12pt of horizontal room for glyph-width rounding after
+    # the embedded font is subset into the saved PDF.
+    text_width = page_width - 156
+    y = 740.0
+    y = _draw_wrapped_pdf_text(
+        pdf, "CivicCast PDF/A-3B signed-record export", y=y, width=text_width
+    )
+    y -= 6
+    y = _draw_wrapped_pdf_text(pdf, f"Summary: {summary.summary_id}", y=y, width=text_width)
+    y = _draw_wrapped_pdf_text(pdf, f"Meeting: {summary.meeting_id}", y=y, width=text_width)
+    y = _draw_wrapped_pdf_text(
+        pdf, f"Audit fingerprint: {summary.audit_fingerprint}", y=y, width=text_width
+    )
+    y -= 6
+    y = _draw_wrapped_pdf_text(pdf, "Embedded metadata names:", y=y, width=text_width)
     for name in ("sourced-claims.json", "provenance.json", "approval.json", "timestamp-token.der"):
-        pdf.drawString(96, y, name)
-        y -= 18
-    pdf.drawString(72, y - 12, summary.narrative[:480])
+        y = _draw_wrapped_pdf_text(pdf, name, y=y - 2, width=text_width, indent=24)
+    y -= 8
+    _draw_wrapped_pdf_text(pdf, summary.narrative, y=y, width=text_width, continuation=True)
     pdf.showPage()
     pdf.save()
 
@@ -189,6 +197,81 @@ def render_pdfa_record(
             xmp["xmpMM:InstanceID"] = instance_id
         document.save(normalized, min_version="1.7")
     return normalized.getvalue()
+
+
+def _draw_wrapped_pdf_text(
+    pdf: canvas.Canvas,
+    text: str,
+    *,
+    y: float,
+    width: float,
+    indent: float = 0,
+    continuation: bool = False,
+    font_size: float = 10,
+    leading: float = 14,
+) -> float:
+    """Draw text within the page width, advancing to another page as needed."""
+
+    left = 72 + indent
+    usable_width = max(1, width - indent)
+    lines = _wrap_pdf_text(text, width=usable_width, font_size=font_size)
+    for line in lines:
+        if y < 82:
+            pdf.showPage()
+            pdf.setFont(PDFA_FONT_NAME, font_size)
+            pdf.setFillGray(0)
+            if continuation:
+                pdf.drawString(72, 740, "CivicCast PDF/A-3B signed-record export (continued)")
+                y = 720
+            else:
+                y = 740
+        pdf.drawString(left, y, line)
+        y -= leading
+    return y
+
+
+def _wrap_pdf_text(text: str, *, width: float, font_size: float) -> list[str]:
+    """Wrap paragraphs to *width*, breaking oversized unspaced tokens safely."""
+
+    lines: list[str] = []
+    for paragraph in text.splitlines():
+        words = paragraph.split()
+        if not words:
+            lines.append("")
+            continue
+        line = ""
+        for word in words:
+            if pdfmetrics.stringWidth(word, PDFA_FONT_NAME, font_size) > width:
+                if line:
+                    lines.append(line)
+                    line = ""
+                fragments: list[str] = []
+                fragment = ""
+                for character in word:
+                    candidate = fragment + character
+                    if (
+                        fragment
+                        and pdfmetrics.stringWidth(candidate, PDFA_FONT_NAME, font_size) > width
+                    ):
+                        fragments.append(fragment)
+                        fragment = character
+                    else:
+                        fragment = candidate
+                if fragment:
+                    fragments.append(fragment)
+                lines.extend(fragments[:-1])
+                line = fragments[-1] if fragments else ""
+                continue
+
+            candidate = f"{line} {word}" if line else word
+            if pdfmetrics.stringWidth(candidate, PDFA_FONT_NAME, font_size) <= width:
+                line = candidate
+            else:
+                lines.append(line)
+                line = word
+        if line:
+            lines.append(line)
+    return lines
 
 
 def embed_timestamp_token(pdf_bytes: bytes, token_der: bytes) -> bytes:

@@ -1530,8 +1530,14 @@ function SelectedAgendaSection({
           </div>
           {syncMut.isSuccess && (
             <Banner tone="ok">
-              Synced {syncMut.data?.length ?? 0} new item
-              {(syncMut.data?.length ?? 0) === 1 ? '' : 's'} from chapter markers.
+              {syncMut.data?.chapter_count === 0
+                ? 'No chapter markers are saved on this meeting asset.'
+                : syncMut.data?.added_items.length
+                  ? `Added ${syncMut.data.added_items.length} new item${syncMut.data.added_items.length === 1 ? '' : 's'} from ${syncMut.data.chapter_count} chapter marker${syncMut.data.chapter_count === 1 ? '' : 's'}.`
+                  : `No new items added from ${syncMut.data?.chapter_count ?? 0} chapter marker${syncMut.data?.chapter_count === 1 ? '' : 's'}.`}
+              {syncMut.data?.skipped_existing.length
+                ? ` ${syncMut.data.skipped_existing.length} skipped because an agenda item already occupies that position: ${syncMut.data.skipped_existing.map((skip) => `${skip.chapter_title} → ${skip.existing_item_title}`).join('; ')}.`
+                : ''}
             </Banner>
           )}
           {syncMut.isError && (

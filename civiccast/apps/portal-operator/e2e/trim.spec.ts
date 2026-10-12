@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
+import { readFileSync } from 'node:fs'
 
 /**
  * Trim/chapter editor accessibility + interaction gate.
@@ -56,9 +57,19 @@ const MOCK_ASSET = {
 
 async function mockBackend(
   page: import('@playwright/test').Page,
-  options: { patchBodies?: unknown[] } = {},
+  options: { patchBodies?: unknown[]; packagedPreview?: boolean } = {},
 ) {
-  let currentAsset = { ...MOCK_ASSET }
+  let currentAsset = {
+    ...MOCK_ASSET,
+    ...(options.packagedPreview
+      ? {
+          file_path: 'C:/station-media/source.ts',
+          duration_seconds: 4,
+          trim_in_seconds: 0.5,
+          trim_out_seconds: 2.5,
+        }
+      : {}),
+  }
   await page.route('**/api/staff/assets', async (route) => {
     await route.fulfill({
       status: 200,
@@ -88,6 +99,59 @@ async function mockBackend(
       body: JSON.stringify(currentAsset),
     })
   })
+  if (options.packagedPreview) {
+    await page.addInitScript(() => {
+      window.localStorage.setItem('civiccast.staffToken', 'ccst_trim_preview_operator')
+    })
+    await page.route('**/api/staff/auth/me', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          operator_id: 'trim-preview-operator',
+          display_name: 'Trim Preview Operator',
+          roles: ['setup_admin', 'meeting_operator', 'records_clerk', 'publish_operator'],
+        }),
+      })
+    })
+    await page.route('**/api/staff/assets/council-2026-05-08/playback-grant', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          url: '/media/staff-source/council-2026-05-08/source',
+          packaged_url: '/media/staff-source/council-2026-05-08/hls/playlist.m3u8',
+          playback_kind: 'hls',
+          source_content_type: 'video/mp2t',
+          source_offset_seconds: 0.5,
+          expires_at: '2026-10-12T18:15:00Z',
+        }),
+      })
+    })
+    await page.route('**/media/staff-source/council-2026-05-08/hls/playlist.m3u8', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/vnd.apple.mpegurl',
+        body: [
+          '#EXTM3U',
+          '#EXT-X-VERSION:3',
+          '#EXT-X-TARGETDURATION:2',
+          '#EXT-X-PLAYLIST-TYPE:VOD',
+          '#EXTINF:2.000,',
+          'seg000.ts',
+          '#EXT-X-ENDLIST',
+          '',
+        ].join('\n'),
+      })
+    })
+    const segment = Buffer.from(
+      readFileSync('../portal-public/e2e/fixtures/seg000.ts.b64', 'utf8'),
+      'base64',
+    )
+    await page.route('**/media/staff-source/council-2026-05-08/hls/seg000.ts', async (route) => {
+      await route.fulfill({ status: 200, contentType: 'video/mp2t', body: segment })
+    })
+  }
 }
 
 async function navigateToAssets(page: import('@playwright/test').Page) {
@@ -116,6 +180,36 @@ async function openEditor(page: import('@playwright/test').Page) {
 }
 
 test.describe('trim editor', () => {
+  test('plays the packaged TS preview and maps its playhead to source time', async ({ page }) => {
+    await mockBackend(page, { packagedPreview: true })
+    await page.goto('/')
+    await navigateToAssets(page)
+    await page.getByRole('button', { name: /Edit trim and chapters/ }).click()
+    const dialog = page.getByRole('dialog', { name: /Council/ })
+    const video = dialog.getByLabel('Packaged preview for Council — May 8, 2026')
+
+    await page.waitForFunction(
+      () => {
+        const element = document.querySelector('video')
+        return !!element && element.readyState >= 3 && element.videoWidth > 0
+      },
+      undefined,
+      { timeout: 15_000 },
+    )
+    await video.evaluate(async (element: HTMLVideoElement) => element.play())
+    await expect
+      .poll(async () => {
+        const currentTime = await video.evaluate((element: HTMLVideoElement) => element.currentTime)
+        const label = await dialog.getByLabel(/Preview time/).getAttribute('aria-label')
+        const match = label?.match(/Preview time (\d+):(\d+):(\d+)\.(\d+)/)
+        if (!match) return false
+        const displayedTime =
+          Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]) + Number(`0.${match[4]}`)
+        return Math.abs(displayedTime - (currentTime + 0.5)) < 0.2
+      })
+      .toBe(true)
+  })
+
   test('opens with role=dialog, asset name, and prefilled in/out', async ({
     page,
   }) => {

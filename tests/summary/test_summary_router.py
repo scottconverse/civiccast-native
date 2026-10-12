@@ -8,13 +8,20 @@ from collections.abc import Iterator
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from civiccast.ai_runtime.ollama_client import OllamaRuntimeUnavailableError
 from civiccast.app import create_app
 from civiccast.captions import CaptionCue
 from civiccast.summary.generate import DeterministicSummaryModel
-from civiccast.summary.router import get_summary_model, get_summary_store
+from civiccast.summary.ollama import SummaryResourceDeferredError
+from civiccast.summary.router import (
+    SummaryGenerateRequest,
+    generate_summary,
+    get_summary_model,
+    get_summary_store,
+)
 from civiccast.summary.store import InMemorySummaryStore
 
 _CUE = {
@@ -163,6 +170,27 @@ class TestSummaryRouter:
 
         assert response.status_code == 503
         assert "ollama" in response.json()["detail"].lower()
+
+    def test_generate_summary_explains_resource_deferral(self) -> None:
+        class _DeferredModel:
+            def generate(
+                self, *, meeting_id: str, cues: list[CaptionCue], prompt_version: str
+            ) -> dict[str, Any]:
+                raise SummaryResourceDeferredError(
+                    "Summary generation was deferred before loading gemma4:12b: "
+                    "17.0 GiB is available; preserve broadcast headroom or select the smaller model."
+                )
+
+        with pytest.raises(HTTPException) as exc_info:
+            generate_summary(
+                SummaryGenerateRequest(meeting_id="meeting-1", cues=[]),
+                _DeferredModel(),  # type: ignore[arg-type]
+                InMemorySummaryStore(),
+            )
+
+        assert exc_info.value.status_code == 503
+        assert "deferred before loading" in exc_info.value.detail
+        assert "broadcast headroom" in exc_info.value.detail
 
     def test_approve_rejects_missing_summary_actionably(self, client: TestClient) -> None:
         response = client.post(
