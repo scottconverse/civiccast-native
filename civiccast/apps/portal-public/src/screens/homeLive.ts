@@ -9,6 +9,7 @@ import type { PublicLiveStatus } from '../types'
 // real audience — this poll IS that load signal (see the /current backend), and
 // a stale count would make the switch's release decision unsafe.
 export const LIVE_POLL_SECONDS = 4
+export const COMING_UP_POLL_SECONDS = 30
 
 // `reason` strings /api/public/live/current sends with `on_air_no_web_output`
 // (civiccast/live/router.py PUBLIC_LIVE_REASON_*). The state covers two
@@ -26,6 +27,8 @@ export function sameLiveStatus(a: PublicLiveStatus | null, b: PublicLiveStatus):
     a.manifest_url === b.manifest_url &&
     a.live_session_id === b.live_session_id &&
     a.title === b.title &&
+    a.started_at === b.started_at &&
+    JSON.stringify(a.program_timeline ?? []) === JSON.stringify(b.program_timeline ?? []) &&
     // The reason changes the copy (see above) even when nothing else does.
     (a.reason ?? null) === (b.reason ?? null)
   )

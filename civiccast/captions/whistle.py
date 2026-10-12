@@ -31,7 +31,7 @@ WEIGHTS_SHA256 = "b6e02f048568ac5d01a2042556c658061e699acbc0aa2a1439f52f3d461dff
 LIBRARY_SHA256 = "de2e2c39cd311fbd9971fad4736abc329ed970653674c203e149c4ef27fd1c62"
 _FALLBACK_RETRY_COOLDOWN_SECONDS = 30.0
 _WHISTLE_REQUEST_TIMEOUT_SECONDS = 30.0
-_WHISPER_REQUEST_TIMEOUT_SECONDS = 10.0
+_WHISPER_REQUEST_TIMEOUT_SECONDS = 120.0
 _SLOW_REQUEST_WARNING_SECONDS = 10.0
 _RECOVERY_INITIAL_COOLDOWN_SECONDS = 30.0
 _RECOVERY_MAX_COOLDOWN_SECONDS = 300.0
@@ -60,11 +60,21 @@ def _recovery_retry_delay(retries: int) -> float:
 
 
 def _speech_request_timeout(engine: str) -> float:
-    return (
-        _WHISTLE_REQUEST_TIMEOUT_SECONDS
-        if engine == "whistle"
-        else _WHISPER_REQUEST_TIMEOUT_SECONDS
-    )
+    if engine == "whistle":
+        return _WHISTLE_REQUEST_TIMEOUT_SECONDS
+    try:
+        timeout = float(
+            os.environ.get(
+                "CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS", str(_WHISPER_REQUEST_TIMEOUT_SECONDS)
+            )
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "Whisper fallback timeout must be finite and between 1 and 600 seconds"
+        ) from exc
+    if not math.isfinite(timeout) or not 1 <= timeout <= 600:
+        raise ValueError("Whisper fallback timeout must be finite and between 1 and 600 seconds")
+    return timeout
 
 
 class _SpeechWorker(Protocol):

@@ -1,6 +1,6 @@
 # Running it day to day: service, logs, backups, updates {#ch-operations}
 
-This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes Beta 12, a GitHub pre-release rather than a production release. Where the code and a convenient assumption disagree, a **Known issue** callout explains the current source behavior; package-specific observations remain limited to the verification record.
+This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes Beta 14, a GitHub pre-release rather than a production release. Where the code and a convenient assumption disagree, a **Known issue** callout explains the current source behavior; package-specific observations remain limited to the verification record.
 
 ## Before you start
 
@@ -13,7 +13,7 @@ You need:
 
 > **Note:** Earlier descriptions of CivicCast mention a message bus called NATS. NATS JetStream was removed from the product and is not part of beta.11. Do not look for it, monitor it or open a firewall port for it.
 
-> **Note:** Package status is in the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md). One normal upgrade from the pinned Beta 11 baseline exited 0 and recorded a healthy service/API and initial three-channel HLS/Whistle output. The post-upgrade recorder failed during its first JSON save; no five-snapshot PASS, fresh-install or repair result, or Beta 12 soak is claimed. Historical measurements are separated in [Appendix H](#app-evidence).
+> **Note:** The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records the current package and its installation observations. Historical station measurements are collected in [Appendix H](#app-evidence).
 
 ## What the service runs
 
@@ -232,7 +232,7 @@ The **conform cache** is a folder where CivicCast keeps ready-to-play copies of 
 - **Too small a cap:** if one video's conformed copy cannot fit in the budget, preparation of that video fails with: `Conform-cache budget too small to retain '<name>'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset.` Raise `CIVICCAST_CONFORM_CACHE_GB` in the service environment and restart.
 - **Failed background conforms:** after a failed or timed-out background (warm-up) conform the station waits 6 hours before trying that asset again. The time allowed for a background conform scales with the length of the asset and is capped at 7,200 seconds.
 
-Historical measurement: in an eight-hour lab run on an earlier development build (three channels), the cache reached 46 GB of the 60 GB cap on a drive with 810 GB free, and the longest single preparation took 389 seconds. That is not Beta 12 package evidence or a sizing rule. Size the cap from your own library: it should hold the conformed copies of everything you expect to air in the next several days.
+Historical measurement: in an eight-hour lab run on an earlier development build (three channels), the cache reached 46 GB of the 60 GB cap on a drive with 810 GB free, and the longest single preparation took 389 seconds. That is not a measurement of the current package or a sizing rule. Size the cap from your own library: it should hold the conformed copies of everything you expect to air in the next several days.
 
 > **Known issue (beta.11):** There is no free-space guard on the conform cache. The 60 GB figure is a cap on the cache, not a promise that the disk has that much room. Make sure the drive has more free space than the cap plus the database, uploads and logs, and watch the **low disk** alert (which may have no destination).
 
@@ -247,7 +247,7 @@ The playout engine stores health telemetry in the database. Nothing trims it aut
 
 ### Caption data
 
-**Beta.11 live captions:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
+**Live captions:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Whistle's working-file ceiling is 42 waiting five-second segments per channel (210 seconds), plus in-flight inputs and the segment being written. Runtimes without Whistle's processing grace use a 12-segment ceiling. A small previous-audio overlap remains in memory for recognition. This finite file ceiling and the sustained-overload threshold serve different purposes.
 
 The live caption file and delivery bookkeeping retain a rolling 300-second window with at most 512 cues. The live worker does not scan the caption-review archive, and archive evidence does not gate broadcast readiness. These bounds replace manual weekly live-caption cleanup. If working files exceed these bounds, report a fault rather than treating routine deletion by an operator as normal operation.
 
@@ -367,7 +367,7 @@ It writes `upgrade-engine.log`, `upgrade-journal.json` and, if a rollback itself
 
 Related provisioning exits: 75 maps to setup exit 116, 87 to 135 (another CivicCast product or the WSL runtime is present), 85 to 127.
 
-> **Upgrade evidence (Beta 12):** One normal upgrade from the pinned Beta 11 baseline exited 0, left the service/API healthy with current schema 0089, saved the preservation marker, and showed initial HLS audio/video plus Whistle observations on three channels. The post-upgrade recorder failed during its first JSON save, so its five-snapshot check did not pass. Fresh-install and repair checks remain unrun, and no sustained-operation result is claimed. Before upgrading an on-air station, take a separate backup and schedule a window in which you can use the recovery path. See the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
+> **Upgrade verification:** Read the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for the exact installer and completed checks. Before upgrading an on-air station, take a separate backup and schedule a maintenance window with the recovery kit available.
 
 > **Warning:** Do not upgrade during a meeting. The upgrade stops the service and takes every channel off the air.
 
@@ -375,12 +375,12 @@ After any upgrade, run through the daily routine, then run the drill.
 
 ## Capacity guidance
 
-Historical measurements and current package checks have different scopes. The old eight-hour development run and the separate Beta 11 48-hour host observation are not Beta 12 package measurements. The Beta 12 upgrade observation and limits are described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
+The 72-hour three-channel host measurement is recorded in the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). Historical Beta 12 upgrade observations are described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
 - The cache cap default is 60 GB. A 3-channel, 8-hour lab run used 46 GB of it.
 - The longest conform in that run took 389 seconds.
 - That run used a single service process and had 0 holes in 50 program changes.
-- Known limits from the same evidence: live-caption audio can be dropped under heavy load (13 catch-up discards in 8 hours), there were two program-change aborts that recovered themselves, and one single-frame drop. DeckLink SDI output and a real cable headend are unproven. It is not a 24-hour or 72-hour soak.
+- Known limits from the same evidence: live-caption audio can be dropped under heavy load (13 catch-up discards in 8 hours), there were two program-change aborts that recovered themselves, and one single-frame drop. DeckLink SDI output and a real cable headend are unproven. The separate 72-hour, three-channel host measurement is documented in the [72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md).
 
 Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning) and is not repeated here.
 

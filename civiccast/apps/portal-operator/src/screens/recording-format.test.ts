@@ -14,9 +14,51 @@ import {
   localTimezoneShortName,
   nextOneShotFireTimes,
   nextWeeklyFireTimes,
+  jobDuration,
   utcDateTimeLocalToLocalEcho,
   utcHHMMToLocalEcho,
 } from './recording-format'
+import type { RecordingJob } from '../api/client'
+
+const recordingJob = (overrides: Partial<RecordingJob> = {}): RecordingJob => ({
+  job_id: 'capture-1',
+  station_id: 'station-1',
+  schedule_id: 'weekly',
+  planned_start: '2026-10-12T12:00:00Z',
+  planned_end: '2026-10-12T12:01:00Z',
+  state: 'recording',
+  started_at: '2026-10-12T12:00:00Z',
+  ended_at: null,
+  asset_id: null,
+  bytes_written: 0,
+  failure_reason: null,
+  source_snapshot: { kind: 'hls', uri: 'https://example.test/live.m3u8' },
+  encoder_profile: 'copy',
+  loudness_regime: 'inherit',
+  target_series: null,
+  custom_field_values: {},
+  created_at: '2026-10-12T11:59:30Z',
+  updated_at: '2026-10-12T12:00:00Z',
+  ...overrides,
+})
+
+describe('jobDuration', () => {
+  it('shows actual elapsed capture time instead of the planned window', () => {
+    const running = recordingJob()
+    expect(jobDuration(running, new Date('2026-10-12T12:00:17Z'))).toBe('00:00:17')
+
+    const finished = recordingJob({
+      state: 'done',
+      started_at: '2026-10-12T12:00:02Z',
+      ended_at: '2026-10-12T12:00:48Z',
+    })
+    expect(jobDuration(finished)).toBe('00:00:46')
+  })
+
+  it('does not show planned time as elapsed before capture starts', () => {
+    expect(jobDuration(recordingJob({ state: 'arming', started_at: null }))).toBe('—')
+  })
+})
 
 describe('localTimezoneShortName', () => {
   it('returns a non-empty short timezone label in a normal Intl env', () => {

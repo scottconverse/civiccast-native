@@ -734,6 +734,11 @@ def main() -> int:
         commit_timeout_s=commit_timeout,
     )
     swaps = int(os.environ.get("SWAPS", "0"))
+    from civiccast.egress.gst.caption_clock import CaptionDeliveryClock
+
+    engine_instance.caption_delivery_clock = CaptionDeliveryClock(
+        Path(sys.argv[1]).parent / "captions" / "delivered.json"
+    )
     # U41: the daemon's live-channel launcher (strategy._default_worker_launcher)
     # marks its child with WORKER_PERSISTENT_ENV=1; the engine arms its plan-EOS
     # slate hold only for that. Unset -- a smoke SWAPS run, a test harness, the

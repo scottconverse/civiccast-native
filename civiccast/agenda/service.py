@@ -41,6 +41,8 @@ import re
 from collections.abc import Callable
 
 from civiccast.agenda.models import (
+    AgendaChapterSyncResult,
+    AgendaChapterSyncSkip,
     AgendaItem,
     MeetingAgenda,
     PublicAgendaItem,
@@ -150,7 +152,7 @@ class AgendaService:
 
     # --- sync from chapters --------------------------------------------
 
-    def sync_from_chapters(self, agenda_id: str) -> list[AgendaItem]:
+    def sync_from_chapters(self, agenda_id: str) -> AgendaChapterSyncResult:
         """Seed items from the meeting asset's ``chapters_json``.
 
         Each chapter becomes a draft item:
@@ -170,12 +172,22 @@ class AgendaService:
         agenda = self._store.get_agenda(agenda_id)
         if agenda is None:
             raise AgendaNotFoundError(f"Meeting agenda {agenda_id!r} not found.")
-        existing = self._store.list_items(agenda_id, order_by="order")
-        taken_orders = {item.order for item in existing}
+        existing_by_order = {
+            item.order: item for item in self._store.list_items(agenda_id, order_by="order")
+        }
         chapters = self._chapter_provider(agenda.meeting_asset_id)
         written: list[AgendaItem] = []
+        skipped: list[AgendaChapterSyncSkip] = []
         for idx, chapter in enumerate(chapters):
-            if idx in taken_orders:
+            existing_item = existing_by_order.get(idx)
+            if existing_item is not None:
+                skipped.append(
+                    AgendaChapterSyncSkip(
+                        order=idx,
+                        chapter_title=chapter.name,
+                        existing_item_title=existing_item.title,
+                    )
+                )
                 continue
             item = AgendaItem(
                 item_id=f"{agenda_id}-ch-{idx}",
@@ -185,7 +197,11 @@ class AgendaService:
                 video_timecode_s=int(chapter.t),
             )
             written.append(self._store.upsert_item(item))
-        return written
+        return AgendaChapterSyncResult(
+            chapter_count=len(chapters),
+            added_items=written,
+            skipped_existing=skipped,
+        )
 
     # --- import from operator-uploaded doc ------------------------------
 

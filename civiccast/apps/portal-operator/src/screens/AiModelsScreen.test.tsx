@@ -126,6 +126,13 @@ function config(): AiModelConfiguration {
   }
 }
 
+type LiveCaptionAvailability = FeatureModelAvailability & {
+  live_runtime_model_key?: string | null
+  live_runtime_model_loaded_at_startup?: boolean | null
+  translation_generated_cue_count?: number | null
+  translation_last_generated_at?: string | null
+}
+
 // --- pure-view tests (no QueryClient) ---------------------------------------
 
 describe('FeatureModelCard', () => {
@@ -157,6 +164,29 @@ describe('FeatureModelCard', () => {
     expect(text).toContain('approved English')
     expect(text).toContain('Spanish')
     expect(text).toContain('caption review')
+  })
+
+  it('shows persisted Spanish caption activity on the translation card', () => {
+    const { container } = render(
+      <FeatureModelCard
+        registry={registry({ feature: 'translation' })}
+        canWrite={false}
+        onSelect={() => {}}
+        availability={{
+          feature: 'translation',
+          effective_model_key: 'translategemma-4b-ollama',
+          band: 'local',
+          requires_network: false,
+          translation_generated_cue_count: 3,
+          translation_last_generated_at: '2026-10-11T18:30:00Z',
+        } as LiveCaptionAvailability}
+      />,
+    )
+
+    const text = container.textContent ?? ''
+    expect(text).toContain('Saved translation activity')
+    expect(text).toContain('3 Spanish cues are recorded in caption review')
+    expect(text).toContain('Latest added')
   })
 
   it('a non-translation card carries no translation explainer', () => {
@@ -478,8 +508,8 @@ function availability(
 }
 
 function featureAvailability(
-  overrides: Partial<FeatureModelAvailability> = {},
-): FeatureModelAvailability {
+  overrides: Partial<LiveCaptionAvailability> = {},
+): LiveCaptionAvailability {
   return {
     feature: 'summary',
     effective_model_key: 'gemma4-12b-ollama',
@@ -539,6 +569,43 @@ describe('AiModelsScreen', () => {
         model_key: 'gemma4-e4b-ollama',
       }),
     )
+  })
+
+  it('shows the saved caption choice separately from the live model still running', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const nextConfig = config()
+    const captions = nextConfig.features?.captions
+    if (!captions) throw new Error('captions registry fixture is missing')
+    captions.available_tiers = [
+      ...(captions.available_tiers ?? []),
+      tier({
+        key: 'whisper-medium-faster',
+        provider: 'external',
+        model_id: 'whisper-medium',
+        min_ram_gb: 4,
+      }),
+    ]
+    captions.operator_selected_key = 'whisper-medium-faster'
+    captions.effective_model_key = 'whisper-medium-faster'
+    vi.mocked(getAiModelConfiguration).mockResolvedValue(nextConfig)
+    vi.mocked(getAiModelAvailability).mockResolvedValue(
+      availability({
+        captions: featureAvailability({
+          feature: 'captions',
+          effective_model_key: 'whisper-medium-faster',
+          band: 'local',
+          live_runtime_model_key: 'whisper-large-v3-faster',
+          live_runtime_model_loaded_at_startup: true,
+        }),
+      }),
+    )
+
+    const { findAllByText, findByText } = renderScreen()
+    expect(await findByText('Saved selection')).toBeTruthy()
+    expect(await findAllByText('whisper-medium-faster')).toHaveLength(2)
+    expect(await findByText('whisper-large-v3-faster')).toBeTruthy()
+    expect(await findByText(/was loaded when this service started/i)).toBeTruthy()
+    expect(await findByText(/restart the service to apply the new live fallback/i)).toBeTruthy()
   })
 
   it('does NOT POST a cloud selection until the TOS box is checked, then does', async () => {

@@ -57,6 +57,11 @@ function profile(overrides: Partial<StationProfile> = {}): StationProfile {
       recordings: 'C:/CivicCast/recordings',
       backups: 'C:/CivicCast/backups',
     },
+    runtime_paths: {
+      installation_root: 'C:/Program Files/CivicCast',
+      database_data: 'C:/ProgramData/CivicCast/data/pgdata',
+      media_uploads: 'C:/ProgramData/CivicCast/data/uploads',
+    },
     recovery_kit_id: 'rk_abc123',
     recovery_kit_generated_at: '2026-06-01T00:00:00Z',
     ...overrides,
@@ -179,10 +184,11 @@ describe('StationProfileScreen', () => {
 
   it('renders the station identity read-only for a meeting operator', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['meeting_operator']))
-    const { findByLabelText } = renderScreen()
+    const { findByLabelText, findByText } = renderScreen()
     const nameField = (await findByLabelText('Station name')) as HTMLInputElement
     expect(nameField.value).toBe('Pinegrove School Board')
     expect(nameField.disabled).toBe(true)
+    expect(await findByText('Database: C:/ProgramData/CivicCast/data/pgdata')).toBeTruthy()
   })
 
   it('still lets a read-only meeting operator copy a storage-root path (not trapped in a disabled fieldset)', async () => {
@@ -242,8 +248,8 @@ describe('StationProfileScreen', () => {
     const { findByLabelText, findByText, findAllByText } = renderScreen()
     await findByLabelText('Recordings path')
 
-    expect(await findByText(/you do not need file access to find a recording/i)).toBeTruthy()
-    expect(await findByText(/not your personal/i)).toBeTruthy()
+    expect(await findByText(/configured library, recording and backup roots/i)).toBeTruthy()
+    expect(await findByText(/read-only resolved service paths below/i)).toBeTruthy()
 
     const copyButtons = await findAllByText('Copy path')
     fireEvent.click(copyButtons[1]) // Recordings is the second storage-root field

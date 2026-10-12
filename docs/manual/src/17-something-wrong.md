@@ -10,7 +10,7 @@ The four screens live in the left sidebar under **System Health**: **Readiness**
 
 > **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
-> **Note:** These procedures describe Beta 12. A **Known issue (version)** identifies the version in which a behavior was checked. For installer identity and recorded package observations, see the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
+> **Note:** These procedures describe Beta 14. A **Known issue (version)** identifies the version in which a behavior was checked. For installer identity and recorded package observations, see the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md).
 
 ## Check whether the station is ready (Readiness)
 
@@ -43,6 +43,8 @@ After the word you may see "on safety slate" (the channel is showing its fallbac
 When live captions are enabled, the channel tile also reports the caption worker state, its last heartbeat, and which recognition provider is selected. **Digital silence in latest processed audio** means the latest processed audio chunk contained zero-valued samples; it does not claim that speech was recognized. **Worker stalled** means the expected worker has stopped reporting fresh progress. A missing or stale worker heartbeat remains unknown during the first 180 seconds after a channel goes on air; after that, a heartbeat older than 90 seconds is stalled. If audio remains pending for more than 120 seconds without a chunk completing, the worker is stalled; starting another batch retry does not reset this clock. A recent heartbeat with no pending audio is not a failure. Channels that are stopped or have live captions switched off are not caption failures.
 
 The public `/health` probe continues to return HTTP 200 while the process answers. Its `status` is **degraded** when the schema is not current or live-caption readiness is failed, stalled, or not yet known. Its `live_captions` value is only a station-wide state; it never includes channel names. Signed-in staff see the per-channel worker details in **On air right now**.
+
+Caption capacity distinguishes **Within capacity**, **Temporarily behind** and **Sustained caption backlog**. Temporary delay means captions can continue catching up within the runtime's recovery allowance. Sustained overload means the queue depth or age has remained beyond that allowance. Read these alongside the queue measurements and current provider rather than treating every late caption as a failure.
 
 > **Known issue (beta.11):** A yellow station can show two different verdicts at once. The small pill at the top says **Check before meeting**, while the card below can say **Ready with optional items**. Both mean the required checks passed and an optional item needs a look. The second wording is not one of the five standard phrases.
 
@@ -326,7 +328,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 ## Report a beta issue
 
-CivicCast is a beta. Beta.12 was published on 2026-10-10 as a GitHub pre-release; its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) lists the package checks and limits. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status. Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
+CivicCast is a beta. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records package checks; the [releases page](https://github.com/scottconverse/civiccast-native/releases) shows publication status. Support is community-driven, with no contract and no guaranteed response time. Problems that stop broadcasting or installation, lose data or expose a secret are handled first.
 
 1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.

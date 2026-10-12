@@ -208,6 +208,36 @@ describe('ReportsScreen empty + deploy-day states', () => {
   })
 })
 
+describe('ReportsScreen as-run timing', () => {
+  it('shows the planned start separately from on-air start and reports its variance', async () => {
+    vi.mocked(getAsRunReport).mockResolvedValue(
+      asRun([
+        {
+          entry: {
+            entry_id: 'asrun-1',
+            station_id: 'civiccast-station',
+            channel_id: 'gov-1',
+            scheduled_start: '2026-06-01T12:00:00Z',
+            actual_start: '2026-06-01T11:59:47Z',
+            actual_end: '2026-06-01T12:30:00Z',
+            duration_s: 1813,
+            source_kind: 'program',
+          },
+        },
+      ]),
+    )
+    const { findByRole, findByText } = renderScreen()
+    fireEvent.click(await findByRole('tab', { name: 'As-Run' }))
+
+    expect(await findByText('Planned start (UTC)')).toBeTruthy()
+    expect(await findByText('Actual on-air start (UTC)')).toBeTruthy()
+    expect(await findByText('13s early')).toBeTruthy()
+    expect(
+      await findByText(/VOD playback preroll does not change when a program went on air/i),
+    ).toBeTruthy()
+  })
+})
+
 describe('ReportsScreen tabs ARIA wiring', () => {
   it('renders each tab linked to a tabpanel via aria-controls', async () => {
     const { findByRole, getAllByRole } = renderScreen()

@@ -1,12 +1,14 @@
 # CivicCast
 
+**Beta 14 development: `v1.0.0-beta.14` is an unpublished candidate.** Its [field-fix execution record](docs/ops/beta14-task-completion.md) tracks the owner-authorized work and installation checks. Beta 13 remains the published download until Beta 14 is verified and released.
+
 **CivicCast `v1.0.0-beta.13` is the current signed native Windows pre-release.** CivicCast is a station-in-a-box for public-access and local-government media: record and broadcast meetings, review captions, prepare sourced summaries, schedule programs, and publish recordings to a resident portal. Optional cloud services may charge their own usage fees; CivicCast has no per-minute software fee.
 
 The [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) provides the signed installer, runtime packs, complete signed station-model download, manuals, and checksums. The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md) binds the package to its source and records what has and has not been observed. Start with [Install CivicCast on Windows](INSTALL-WINDOWS.md), the [User Manual](docs/USER-MANUAL.md), or the [FAQ](FAQ.md).
 
 A normal Beta 11-to-Beta 13 upgrade exited 0 and preserved saved station state. The same signed installer also passed one controlled D4 interruption and repair, and a separate fresh installation exited 0. Five-minute observations after upgrade, repair and fresh setup each covered all three channels; the fresh run had Whistle primary and within capacity in all 15 samples, with five distinct caption samples per channel. See the [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md) and its [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json) for exact scope and limits.
 
-A separate **Beta 11 host** ran public, government, and education channels together for 48 hours and achieved **99.88% live caption-input coverage**. This is a positive operating result for that host and release; it is not a Beta 13 soak, general service-uptime percentage, transcript accuracy, or package qualification. See the [host report](docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurement and method.
+**72 hours. Three channels. 99.78% live caption-input coverage.** A Beta 11 host ran Public, Government and Education together without a service restart, with 216 healthy scheduled checkpoints. See the [72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the recorded measurements.
 
 Beta 13 automatically retries Whistle while Whisper supplies backup captions. Whistle remains the CPU live-caption primary; supported NVIDIA CUDA applies to Whisper only. The native installer registers a Windows service and supervises the control plane, PostgreSQL, and media workers from the bundled runtime. This repository is the native Windows product line; it has no WSL, Docker, or Linux installation target. See [BRANCHES.md](BRANCHES.md) for project history.
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 from fastapi import FastAPI, Request, Response
 from fastapi.testclient import TestClient
@@ -21,11 +22,14 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from civiccast.ai_models.router import get_ai_model_service, staff_router
+from civiccast.ai_models.models import AiModelAvailability, FeatureModelAvailability
+from civiccast.ai_models.router import get_ai_model_service, get_model_availability, staff_router
 from civiccast.ai_models.secrets import ProviderSecretStoreError
 from civiccast.ai_models.service import AiModelService
 from civiccast.ai_models.store import AiModelStore
 from civiccast.auth.models import OperatorIdentity
+from civiccast.captions.models import CaptionCue
+from civiccast.captions.review import CaptionReviewItemCreate, InMemoryCaptionReviewStore
 from civiccast.db import Base
 
 
@@ -166,6 +170,42 @@ def test_list_all_models_forbidden_for_records_clerk() -> None:
     assert _client(scopes=("records_clerk",)).get("/api/staff/ai-models").status_code == 403
 
 
+def test_availability_reports_the_live_caption_runtime_selection() -> None:
+    app = FastAPI()
+    app.state.caption_live_model_key = "whisper-large-v3-faster"
+    app.state.caption_live_runtime_model_loaded_at_startup = True
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/staff/ai-models/availability",
+            "query_string": b"",
+            "headers": [],
+            "app": app,
+        }
+    )
+
+    class Service:
+        def get_availability(self) -> AiModelAvailability:
+            return AiModelAvailability(
+                features={
+                    "captions": FeatureModelAvailability(
+                        feature="captions",
+                        effective_model_key="whisper-medium-faster",
+                        band="local",
+                        requires_network=False,
+                    )
+                }
+            )
+
+    availability = get_model_availability(request, Service())  # type: ignore[arg-type]
+
+    captions = availability.features["captions"]
+    assert captions.effective_model_key == "whisper-medium-faster"
+    assert captions.live_runtime_model_key == "whisper-large-v3-faster"
+    assert captions.live_runtime_model_loaded_at_startup is True
+
+
 # --- select persistence + adaptive default -----------------------------------
 
 
@@ -261,6 +301,52 @@ def test_availability_endpoint_reports_per_feature_state() -> None:
     features = r.json()["features"]
     assert set(features) == {"captions", "summary", "translation"}
     assert features["summary"]["band"] == "local"
+
+
+def test_availability_reports_persisted_translation_output_activity() -> None:
+    app, _store, _service = _build(scopes=("setup_admin",))
+    review_store = InMemoryCaptionReviewStore()
+    app.state.store_bundle = SimpleNamespace(caption_review_store=lambda: review_store)
+    client = TestClient(app)
+
+    initial = client.get("/api/staff/ai-models/availability")
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["features"]["translation"].get("translation_generated_cue_count") == 0
+
+    review_store.create(
+        CaptionReviewItemCreate(
+            review_item_id="asset-1:cue-1:es:hash",
+            asset_id="asset-1",
+            cue=CaptionCue(
+                cue_id="cue-1",
+                start_seconds=1.0,
+                end_seconds=2.0,
+                text="La reunión comienza.",
+                confidence=0.92,
+            ),
+            language="es",
+        )
+    )
+    review_store.create(
+        CaptionReviewItemCreate(
+            review_item_id="asset-1:cue-2:en:hash",
+            asset_id="asset-1",
+            cue=CaptionCue(
+                cue_id="cue-2",
+                start_seconds=2.0,
+                end_seconds=3.0,
+                text="The meeting continues.",
+                confidence=0.96,
+            ),
+            language="en",
+        )
+    )
+
+    refreshed = client.get("/api/staff/ai-models/availability")
+    assert refreshed.status_code == 200, refreshed.text
+    translation = refreshed.json()["features"]["translation"]
+    assert translation["translation_generated_cue_count"] == 1
+    assert translation["translation_last_generated_at"]
 
 
 def test_availability_endpoint_requires_a_read_role() -> None:

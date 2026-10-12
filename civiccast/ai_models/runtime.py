@@ -25,10 +25,16 @@ always resolves to whatever the catalog currently names as each feature's defaul
 
 from __future__ import annotations
 
+import logging
+import os
+
 from civiccast.ai_models.service import AiModelService
 from civiccast.captions.runtime import CaptionRuntime
+from civiccast.native.caption_tiers import FLOOR_TIER_ID, LARGE_V3_TIER_ID
 from civiccast.summary.generate import SummaryModel
 from civiccast.translate.service import TranslationProvider
+
+logger = logging.getLogger(__name__)
 
 # faster-whisper loads the bare size id (``large-v3``), but the catalog model_id is
 # namespaced ``whisper-large-v3`` so the registry/UI tag is unambiguous. Strip the
@@ -115,12 +121,47 @@ def build_caption_runtime(service: AiModelService, *, live: bool = False) -> Cap
     """
     from civiccast.captions.runtime import FasterWhisperRuntime
 
+    model_tag = resolve_runtime_tag(service, "captions")
+    runtime_model: dict[str, str] = {}
+    if os.environ.get("CIVICCAST_NATIVE_STATION", "").strip() == "1":
+        from pathlib import Path
+
+        from civiccast.native.station_runtime import resolve_caption_model_for_tier
+
+        desired_tier = {"medium": FLOOR_TIER_ID, "large-v3": LARGE_V3_TIER_ID}.get(model_tag)
+        if desired_tier is None:
+            raise ValueError(f"Unsupported configured native caption model: {model_tag!r}")
+        active_tier = os.environ.get("CIVICCAST_CAPTION_TIER", "").strip()
+        active_path = os.environ.get("CIVICCAST_WHISPER_MODEL_PATH", "").strip()
+        if active_tier == desired_tier and active_path:
+            # station_runtime already verified this exact path while loading
+            # the signed activation configuration.
+            selected_path = Path(active_path)
+        else:
+            station_root = os.environ.get("CIVICCAST_NATIVE_STATION_ROOT", "").strip()
+            if not station_root:
+                raise RuntimeError("Native station did not provide its resolved installation root")
+            program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "CivicCast"
+            selected_path, _receipt = resolve_caption_model_for_tier(
+                station_root, desired_tier, acquisition_root=program_data
+            )
+            logger.info(
+                "Configured caption tier %s overrides activation default %s; loaded the verified configured model",
+                desired_tier,
+                active_tier or "unspecified",
+            )
+        runtime_model = {
+            "packaged_model_path": str(selected_path),
+            "packaged_model_tier": desired_tier,
+        }
+
     fallback = FasterWhisperRuntime(
-        model_size_or_path=resolve_runtime_tag(service, "captions"),
+        model_size_or_path=model_tag,
         live=live,
+        packaged_model_path=runtime_model.get("packaged_model_path"),
+        packaged_model_tier=runtime_model.get("packaged_model_tier"),
     )
     if live:
-        import os
         from pathlib import Path
 
         backend = os.environ.get("CIVICCAST_LIVE_CAPTION_ENGINE", "").strip().lower()
@@ -154,6 +195,9 @@ def build_caption_runtime(service: AiModelService, *, live: bool = False) -> Cap
                 )
             }
             config["live"] = True
+            # The isolated fallback inherits activation environment variables.
+            # Preserve the verified operator selection across that boundary.
+            config.update(runtime_model)
             config["beam_size"] = 1  # The measured real-time fallback profile, on CPU and CUDA.
             config["num_workers"] = 1  # Isolated fallback requests are serialized.
             primary = WhistleRuntime(

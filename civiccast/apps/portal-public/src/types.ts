@@ -65,8 +65,14 @@ export interface PublicLiveStatus {
   channel_id: string | null
   title: string | null
   started_at: string | null
+  program_timeline?: PublicProgramTransition[]
   manifest_url: string | null
   reason?: string | null
+}
+
+export interface PublicProgramTransition {
+  title: string
+  started_at: string
 }
 
 export interface IdlePage {

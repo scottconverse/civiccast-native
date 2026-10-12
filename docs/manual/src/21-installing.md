@@ -1,33 +1,29 @@
 # Installing, first run, upgrading, uninstalling {#ch-installing}
 
-This chapter walks through the Beta 12 Windows setup, its first-run window and first setup in the operator console. It also covers setup exit codes, logs, upgrade, repair and uninstall. The steps below are based on current installer and runtime sources. For exact package identity and observed results, use the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md). Read [Chapter 9](#ch-planning) first.
+This chapter walks through the Beta 14 Windows setup, its first-run window and first setup in the operator console. It also covers setup exit codes, logs, upgrade, repair and uninstall. The steps below are based on current installer and runtime sources. For exact package identity and observed results, use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md). Read [Chapter 9](#ch-planning) first.
 
 ## Before you start
 
-- For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Beta 12 now provides `station-models.json` and all matching `station-models.zip.*` parts. The helper's `-Install` option verifies and assembles the full kit before running setup with `/S`. The earlier R9 field attempt lacked four required signed station packs and failed activation with exit 123; the October 11 distribution repair supplies those files.
+- For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Its `-Install` option verifies `station-models.json` and every matching `station-models.zip.*` part, assembles the complete kit, then runs setup with `/S`.
 - You checked the installer's hash and signature ([Chapter 9](#ch-planning), "Download and verify what you need").
 - You have a Windows administrator account. Allow about 55 GB on the install drive for a prepared offline kit, or about 100 GB when the download preparation and installation share one drive, plus space for media and recordings.
 - The computer will stay on, awake and connected to power for the whole install.
 - For an upgrade, you also have a backup and you accept that the station goes off air while setup runs.
 
-> **Note:** Beta 12 is a GitHub pre-release. Use the complete-kit helper for installation and the linked verification record for current package observations. Keep a separate backup and a station recovery path before upgrading.
+> **Note:** Beta 14 is a GitHub pre-release. Use the complete-kit helper for installation and the linked verification record for current package observations. Keep a separate backup and a station recovery path before upgrading.
 
-## What the Beta 12 release and local kit contain, and what has been checked
+## What the release and local kit contain
 
 Setup has two phases. The **Windows setup** (`setup.exe`) runs with administrator rights and does the installation work: it copies the program, checks components, provisions the database, activates the station and registers the Windows service. Then the **first-run window** ("CivicCast (Native) Setup") opens as a normal user and offers a separate acquisition flow. Silent `/S` setup does not open that GUI or automatically fetch its models. A GUI download is not proof that a model is active.
 
-| What you start with | Installer behavior from current source | Package evidence |
+| What you start with | Installer behavior | Package evidence |
 | --- | --- | --- |
-| **Complete local offline kit**: setup, five runtime packs under `packs\`, signed station index and six station packs under `station\` | Stages signed runtime packs and activates from the signed station index and station packs | A 19-member kit was recorded locally by the producer; R9 did not have that matching kit, so installation from it was not verified |
-| Beta 12 release files fetched during R9 | Included setup, five runtime packs, manual files, checksums and sidecar, but no station-model archive or manifest | This exact fetched set failed activation with exit 123 because four required signed station packs were missing and embedded URLs were empty |
-| October 11 repaired public station-model distribution | `station-models.json` and all 12 matching `station-models.zip.*` parts | Use the release helper with `-Install` to verify and assemble the complete kit before setup; the verification record tracks the public-download installation check |
-| `setup.exe` plus the five public runtime packs under `packs\`, **no** `station\`, with no prior station cache | Runtime-pack staging completes; station activation fails with **exit 123** when required signed station packs are missing | Observed in the R9 Beta 12 field attempt; the installed service did not start |
-| `setup.exe` **alone** | Pack staging stops with **exit 110** when a required signed runtime pack is missing | Source-derived behavior; no package test claim |
-| Normal upgrade from the pinned Beta 11 baseline | Setup exited 0; service/API healthy, schema current, preservation marker saved, and initial HLS audio/video plus Whistle observations on three channels. The first JSON save by the post-upgrade recorder failed, so no five-snapshot PASS was recorded | One limited observation; see the Beta 12 verification record |
-| Repair, five-snapshot completion, sustained operation | Not established for Beta 12; do not infer from the upgrade observation | See the Beta 12 verification record |
-| Reinstall after uninstall without `station\` | Activation can stop with exit 123 when uninstall has removed the cached station packs | Source-derived behavior; no package test claim |
+| Complete offline kit: setup, runtime packs under `packs\`, signed index and station packs under `station\` | Verifies signed components and activates the local station | The matching Beta 14 verification record identifies the exact kit and results |
+| Release download helper with `-Install` | Downloads and verifies the complete set, creates the folder layout, then runs setup | Use all matching archive parts and release checksum metadata |
+| Raw caption or AI model downloads from the first-run GUI | Acquires required and selected optional components | Does not replace signed activation packs |
+| Incomplete kit or mismatched station resources | Reports the missing or invalid component; activation cannot complete | Obtain the matching complete kit before retrying |
 
-The producer's local kit inventory has five runtime packs and a signed station index with six required station packs. Whistle is part of the signed station pack set; it is not a separate first-run download. The R9 field attempt did not have a matching complete kit; the release helper now assembles that kit from the public release.
+The complete kit has five runtime packs and a signed station index with six station packs. Whistle is part of that signed set. The release helper assembles the complete kit from the matching release assets.
 
 ```text
 CivicCast-kit\
@@ -49,7 +45,7 @@ CivicCast-kit\
   QUICKSTART-OPERATOR.md
 ```
 
-Place runtime packs in the `packs\` subfolder beside `setup.exe`; a Beta 12 field attempt with the same files flat beside the installer stopped at pack staging (child code 74). The four runtime packs other than `native-cuda-runtime.ccpack` are required; the CUDA pack is optional. The producer's station index lists six station components: `core`, `captions-whistle`, `captions-floor`, `summary-gemma4-12b`, `summary-gemma4-e4b` and `translation-translategemma-4b`. The archive contains the matching `.ccpack` filenames shown in the tree. The R9 setup's embedded index contained only `core` and Whistle, with empty URLs for the other four required packs. Check public release files against the Beta 12 release checksums; the producer's local kit has its own receipt and station-resource hashes.
+Place runtime packs in the `packs\` subfolder beside `setup.exe`. The four runtime packs other than `native-cuda-runtime.ccpack` are required; CUDA is optional. The signed station index lists `core`, `captions-whistle`, `captions-floor`, `summary-gemma4-12b`, `summary-gemma4-e4b` and `translation-translategemma-4b`. The helper places their matching `.ccpack` files under `station\`. Verify files against the matching release metadata or local kit receipt.
 
 > **Note:** Windows setup stages signed runtime packs under the `packs\` subfolder beside `setup.exe`. The release helper verifies and assembles the separate station-model archive into the kit; setup itself does not fetch missing station packs. The first-run window's model and caption acquisition does not replace the signed station index or station packs needed for activation. Silent `/S` setup skips that GUI acquisition flow.
 
@@ -96,7 +92,7 @@ If WebView2 is missing, setup installs the full offline copy it carries (the bui
 
 ### Step 2: The "Already Installed" page (only if CivicCast is on the computer)
 
-You see **Already Installed** with the installed version in its message (for the Beta 12 package, `1.0.0-beta.12`) and the choices **Add/Reinstall components** and **Uninstall CivicCast (Native)**. If the installed version is older, the page says "An older version of CivicCast (Native) is installed on your system. It's recommended that you uninstall the current version before installing..." with **Uninstall before installing** and **Do not uninstall**. If it is newer, the warning begins "A newer version of CivicCast (Native) is already installed! It is not recommended that you install an older version."
+You see **Already Installed** with the installed version in its message (for this package, `1.0.0-beta.14`) and the choices **Add/Reinstall components** and **Uninstall CivicCast (Native)**. If the installed version is older, the page says "An older version of CivicCast (Native) is installed on your system. It's recommended that you uninstall the current version before installing..." with **Uninstall before installing** and **Do not uninstall**. If it is newer, the warning begins "A newer version of CivicCast (Native) is already installed! It is not recommended that you install an older version."
 
 For an upgrade, choose the option that does **not** uninstall first. See "Upgrade" below for why. A silent run over a newer install stops with "Downgrades are disabled for this installer, can't proceed with the silent installer, please use the graphical interface installer instead."
 
@@ -131,7 +127,7 @@ Setup can take time while it extracts components and runs its self-test. Keep th
 
 #### The activation step and its self-test
 
-Activation turns the extracted files into a working station. The setup program looks for `<setup folder>\station\station-index.json` first (the kit). If that is missing, it uses a small copy embedded in `setup.exe` and the model packs from the pack cache `<install folder>\packs\.station-cache`. If neither index is available, setup stops with exit 123. In the Beta 12 public build the embedded index has empty URLs for four required station packs. During the R9 field attempt those missing packs (`captions-floor.ccpack`, `summary-gemma4-12b.ccpack`, `summary-gemma4-e4b.ccpack` and `translation-translategemma-4b.ccpack`) caused activation to fail with exit 123; first-run GUI model acquisition did not provide the signed station packs.
+Activation turns the extracted files into a working station. Setup looks for `<setup folder>\station\station-index.json` first. Otherwise it uses the embedded index and the model pack cache `<install folder>\packs\.station-cache`. Missing or invalid required signed resources stop activation with exit 123. The complete release helper prepares the matching resources; first-run raw-model acquisition is a separate workflow.
 
 Activation then:
 
@@ -169,7 +165,7 @@ After setup, the window titled **CivicCast (Native) Setup** appears (the final s
 
 **What CivicCast Needs.** "Whistle is included with the signed station components and is the CPU primary for live captions. The Whisper models listed here provide live-caption fallback and recording transcription: Medium is required and Large is optional." It lists seven rows with sizes: CivicCast application runtime, Database & messaging services, Video and audio tools (installed by Windows setup), Whisper Medium (required), Whisper Large (optional), Whisper GPU acceleration (optional) and Local AI model (summaries & translation). The footer shows the total for required and selected optional downloads and **Continue**.
 
-The GUI shows optional choices and reports found-local components. In the R9 Beta 12 field attempt, Large Whisper downloaded even though its checkbox was unchecked. Do not rely on that checkbox alone to prevent a transfer; review the active rows before leaving the download screen. Model acquisition does not provide the missing signed station packs needed for activation.
+The GUI shows optional choices and reports found-local components. Its download plan includes your selected optional components and all required components. Leave Large Whisper unchecked to omit that optional transfer. Raw-model acquisition and signed station resources are separate: use the complete release download helper so activation has the signed packs it requires.
 
 **Downloading** (or **Setting Up** if everything is found locally). "Keep CivicCast Installer open. If a download is interrupted, use Resume download." Each row shows a state:
 
@@ -286,7 +282,7 @@ Exit 123 covers every activation failure. The inner code in the log line "step d
 | Inner code | Meaning | What to do |
 | --- | --- | --- |
 | (no index) | No `station-index.json` beside setup or embedded | Obtain `station-models.json` and all matching archive parts from the release page, then run `scripts\download_windows_release_artifacts.ps1 -Install` to assemble the kit before retrying |
-| 66 | The index or a pack could not be obtained or verified | The details list names the missing pack or failed check. The Beta 12 public index has empty URLs for four required station packs; first-run model downloads do not replace signed packs. Obtain a supported matching station bundle before retrying |
+| 66 | The index or a pack could not be obtained or verified | Read the missing component or verification reason. Use the complete matching signed station kit; raw model downloads do not replace activation packs |
 | 67 | Any error after the packs verified: no free space, extraction failure, a missing file, or a self-test failure | Read the details list for the exact line. Free space if that is the cause |
 | 78 | The embedded signing key was refused | This copy of setup is not a valid release build. Download it again from the release page |
 | 64, 65 | The setup program is defective | Download it again |
@@ -330,11 +326,11 @@ Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
 - Settings, Apps shows **CivicCast (Native)**, version 1.0.0-beta.12.
 - The operator console and the resident portal at `http://127.0.0.1:8000/` both load on the station.
 
-Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station; the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) records the package-specific observations and unrun checks.
+Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station; the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records the package-specific observations and unrun checks.
 
 ## Upgrade
 
-To upgrade, run the newer `setup.exe` over the existing installation. The project release helper assembles the runtime `packs\` and signed `station\` folders from the release files; use it when preparing either an install or upgrade kit. The [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) records one successful normal upgrade from Beta 11 with the post-upgrade recorder check incomplete; the R9 fresh-install attempt failed at activation and repair was not tested. Make a separate backup first ([Chapter 12](#ch-operations)); the installer's upgrade backup is not your only recovery copy.
+To upgrade, run the newer `setup.exe` over the existing installation. Use the release helper to assemble the runtime `packs\` and signed `station\` folders. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies its actual upgrade observations. Make a separate backup first ([Chapter 12](#ch-operations)); the installer's upgrade backup is not your only recovery copy.
 
 > **Warning:** Setup stops the CivicCast service before it replaces any file. That takes every channel off the air until setup finishes and the service starts again. Do not run an upgrade during a meeting or a scheduled program.
 

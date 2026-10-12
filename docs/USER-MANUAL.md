@@ -1,23 +1,23 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.13 candidate (native Windows line)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.14 (native Windows line)
 author: The CivicCast Authors
-date: 2026-10-11
+date: 2026-10-12
 urlcolor: blue
 toccolor: black
 ---
 
 # About this manual {#about}
 
-This is the CivicCast User Manual for the **CivicCast (Native) 1.0.0-beta.13 candidate**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.14**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
-This manual describes **Beta 13**, a native Windows pre-release. Consult the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) for availability and the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for the exact package identity, checks and limits. Create the station administrator on the station computer after installation. Whistle provides CPU live captioning with automatic recovery; Whisper supplies fallback and recorded captions. A separate Beta 11 host run measured **99.88% live caption-input coverage across three channels over 48 hours**; that result belongs to that run. Earlier history remains in the evidence appendix and dated verification records.
+This manual describes **Beta 14**, the native Windows version. Start with the complete download helper in [Chapter 10](#ch-installing), then create the station administrator on the station computer. Whistle provides CPU live captioning; Whisper supplies fallback and recorded captions. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records package identity and installation observations as they are completed. A 72-hour run across Public, Government, and Education recorded **99.78% live caption-input coverage**. See the [72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and measurement. Earlier history remains in the evidence appendix and dated verification records.
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
 
-A **historical beta.10 observation** describes behavior or evidence from the superseded release. A **Known issue (version)** names the version in which the behavior was checked. The label alone does not say whether it remains true now: follow any explicit later-version status in the note, and check the current screen and release record when the behavior affects an on-air decision. Beta.11 and Beta.12 findings are not Beta 13 verification results.
+A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked. The label alone does not say whether it remains true now: follow any explicit later-version status in the note, and check the current screen and release record when the behavior affects an on-air decision. Historical host measurements remain distinct from installation checks of the current package.
 
 ## Who Reads What
 
@@ -45,7 +45,7 @@ Earlier releases split this manual into separate guides. Their names are still u
 
 > **Warning:** something that can change what is on the air, delete data, or cannot be undone.
 
-> **Known issue (version):** behavior checked in the named version differs from what the screen suggests; the note gives its scope and a safe next step. An explicit version scope describes that version; an older label alone is historical. Consult the current screen and release record for Beta 13.
+> **Known issue (version):** behavior checked in the named version differs from what the screen suggests; the note gives its scope and a safe next step. An explicit current-version statement describes a current limitation; an older label alone is historical.
 
 > **For IT staff:** a pointer from the non-technical part to the technical chapter that has the detail.
 
@@ -64,7 +64,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Where to get help and report problems
 
-Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) for downloads and publication status, then read the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for the exact package you use. Earlier release verification records remain historical evidence for their named packages.
+Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) covers this version; the dated records for earlier packages remain available as release history.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.12-verification.md; docs/releases/v1.0.0-beta.11-verification.md (historical host evidence); docs/releases/v1.0.0-beta.10-verification.md (historical appendix only); docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->
 
@@ -198,13 +198,13 @@ These are the words used most in Part I. Each is explained again where it first 
 | **Test mode** | The mode a new station starts in. The First-run defaults card on First Setup shows a **Mode** heading with "Test mode" under it. |
 | **Headend** | The cable company's equipment that receives a channel's signal. |
 
-### What is and is not proven for the beta.13 candidate
+### What is and is not proven in beta.12
 
-CivicCast **Beta 13 is a pre-release**. Consult the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) for availability and the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for installer identity and candidate-bound installation observations. This manual describes the software and installation procedure; historical results remain tied to their named release.
+CivicCast **Beta 14** is the native Windows version described by this manual. Use the complete download and installation instructions in [Chapter 10](#ch-installing). The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records package identity and installation observations; the releases page shows publication status. Historical results retain their named release.
 
-**A useful earlier operating result:** a separate Beta.11 host ran public, government, and education channels together for 48 hours and recorded **99.88% live caption-input coverage**. See the [48-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurement and method. This is a positive result for that Beta.11 host run; it is not a Beta.12 soak, generic service uptime, transcript-word accuracy, or package qualification.
+**72-hour operating result:** a CivicCast station ran public, government, and education channels together for 72 hours and recorded **99.78% live caption-input coverage**. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
-**Live captions:** The Beta 13 candidate uses Whistle as the CPU primary, publishes first-pass recognition, and loads Whisper fallback only for the affected channel when needed. After a failure, Whistle recovery starts with a 30-second cooldown. Failed probes use delays of 60, 120, 240 and then 300 seconds; retries continue while the channel has audio. A slow warning appears after 10 seconds, and the 30-second watchdog terminates an unresponsive child. The 210-second backlog grace accounts for serialized request allowance and bounds the default waiting queue to 42 five-second chunks; it does not guarantee delivery under sustained overload. Failure diagnostics are bounded and do not archive audio. Optional NVIDIA CUDA applies to supported Whisper work; Whistle remains CPU-only.
+**Live captions:** Beta.12 uses Whistle as the CPU primary, publishes first-pass recognition, and loads Whisper fallback only for the affected channel when needed. Optional NVIDIA CUDA applies to supported Whisper work; Whistle remains CPU-only.
 
 The [evidence appendix](#app-evidence) separates current package evidence from historical Beta.10 measurements and development-station results.
 
@@ -293,7 +293,7 @@ The **Sign out** button appears only after the console has confirmed who you are
 
 #### The top bar
 
-The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the installed version number, such as `v1.0.0-beta.13`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
+The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the installed version number, such as `v1.0.0-beta.12`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
 
 Hover over the round badge to see your name and your roles, in the form "&lt;your display name&gt; / &lt;your role names&gt;". The console shows your roles nowhere else.
 
@@ -538,7 +538,7 @@ The role message lists raw role names. They map to the names in the console like
 
 This chapter covers the work you do before a meeting starts and before a program airs. You will put programs on a channel's schedule, repeat a program every week, let CivicCast fill a time of day by rule, set up automatic recording of a meeting, publish an agenda that residents can read next to the video, and review programs that residents and community producers send in. Station staff with the publish operator, meeting operator, or records clerk role normally do this work.
 
-> **Note:** This chapter describes Beta 13 screens and program behavior. A **Known issue** note names the version in which its behavior was checked; read its version scope before applying it to another release. See the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for package-specific checks and limits.
+> **Note:** This chapter describes the Beta 14 screens and program behavior. Beta 14 is a GitHub pre-release, not a production release. A **Known issue** note names the version in which its behavior was checked; read its version scope before applying it to another release. See the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for package-specific checks and limits.
 
 ### Before you start
 
@@ -680,6 +680,19 @@ You should see the message "Cancelled." and the row's state label change to Canc
 > **Warning:** This cannot be undone. The box says you would need to create a new scheduled item to air it again.
 
 > **Known issue (beta.11):** A **Published** row has no **Cancel** button on this screen. To take a program that you approved by hand off the air, use **Take off air** on the Channels screen ([Chapter 4](#ch-running-meeting)); it asks for a reason. Programs that Auto-schedule placed have no approval record, and the console has no button to remove one. The station's programming interface can cancel a Published item; ask your IT person ([Part II, Integrations](#ch-integrations)).
+
+### Keep a channel running continuously
+
+For a repeating rotation of two recordings:
+
+1. Add both recordings to **Schedule** on the same channel. Give each item its intended duration and put the second immediately after the first: its start is the first item's start plus its duration.
+2. Use **Publish to residents** or the channel's **Commit to Air** control to approve both items. Items left **Scheduled** do not air.
+3. Ask the station administrator to set `CIVICCAST_SCHEDULE_LOOP=1` in the Windows service environment, then restart the service between programs. The default is a finite schedule; loop mode repeats the published sequence. See [service environment settings](#configuration-env-how).
+4. Watch the first transition on the channel. The loop preserves gaps between schedule entries, so use contiguous entries for uninterrupted programming.
+
+For an automatically maintained schedule, use **Auto-schedule** below: create a saved search, a daypart and an enabled rule, then **Preview** and **Compile now**. The worker extends the rolling schedule hourly unless `CIVICCAST_AUTOSCHEDULE=off`. Daypart times use the station's configured time zone.
+
+In **Reports**, planned UTC is the schedule time; actual on-air UTC comes from the engine's source-transition proof. The difference is shown as early, on time or late. VOD playback preroll is separate; a preroll time is not stored as an additional as-run timestamp.
 
 ### Repeat a program on a schedule (Program Guide)
 
@@ -838,7 +851,7 @@ A *recording schedule* is a saved plan: one source, one time pattern, one length
    - For a network stream, type the address in **URI** (the placeholder is `rtsp://camera.local/stream`).
 6. Under **Recurrence**, choose **One-shot** (one capture) or **Weekly**.
 7. For **One-shot**, type **Start (UTC)**. For **Weekly**, click **Weekdays**, **Weekend**, **Every day** or **Clear**, tick the day boxes you want, and type **Time (HH:MM UTC)**, for example `19:00`. See the warning below.
-8. In **Duration (HH:MM:SS)**, type the length with two digits in each part. It starts at `01:00:00`. A value such as `1:5:0` is refused; type `01:05:00`.
+8. In **Duration (HH:MM:SS)**, type the length with two digits in each part. It starts at `01:00:00`. The minimum is one minute (`00:01:00`). A value such as `1:5:0` is refused; type `01:05:00`.
 9. In **Quality preset (encoder profile)**, leave `default`, or type a name your administrator gave you. The screen suggests default, copy, h264-1080p, h264-720p, hw-h264-1080p and hw-h264-720p.
 10. In **Loudness regime**, choose how loud the recording should be. The choices are **Inherit station default**, **Copy source audio**, **Cable / ATSC A/85 (-24 LKFS)**, **Broadcast / EBU R128 (-23 LUFS)** and **Streaming (-16 LUFS)**. One line under the choice explains it.
 11. Leave **Target series (optional)** blank unless your administrator tells you what to put there. We could not confirm what it does.
@@ -858,7 +871,7 @@ You should see the new schedule appear in the **Schedules** table above the form
 
 > **For IT staff:** the capture-device list, recording folders and the runtime switch are described in [Part II, Running it day to day](#ch-operations).
 
-By default, CivicCast adds a row for each planned capture to the **Recordings** table up to ten minutes before its start time, and gets the input ready about 30 seconds before the start. The job moves through these states:
+By default, CivicCast adds a row for each planned capture to the **Recordings** table up to ten minutes before its start time, and prepares it about 30 seconds before the start. Preparing does not record extra video: capture starts at the scheduled time and is bounded by the remaining recording window. If an input stalls or reconnects, the resulting playable media can be shorter than the elapsed wall time; inspect the recording's outcome and media duration. The job moves through these states:
 
 | State | Meaning |
 | --- | --- |
@@ -872,7 +885,7 @@ By default, CivicCast adds a row for each planned capture to the **Recordings** 
 
 These labels appear in lower case on the screen.
 
-In beta.13, a job prepared ahead of time remains in `arming` until its planned start. The scheduler checks it again on later passes, moves it into `recording` when due, and finishes it at the planned end. A scheduled job should not remain in `arming` throughout its recording window.
+In beta.12, a job prepared ahead of time remains in `arming` until its planned start. The scheduler checks it again on later passes, moves it into `recording` when due, and finishes it at the planned end. A scheduled job should not remain in `arming` throughout its recording window.
 
 If you disable the schedule before capture starts, both scheduled and prearmed jobs become `skipped`; CivicCast also stops a prearmed capture process. Disabling the schedule leaves a recording that has already started running. Use **Stop** on that recording if you want to finish it early.
 
@@ -952,7 +965,7 @@ You should see the item in the **Agenda items** table. Use **Edit** on a row to 
 
 The **Bulk actions** section has four ways to fill an agenda without typing each item.
 
-- **Sync from chapters** makes one item for each *chapter marker* on the recording: a named point in time added in the trim editor (open it from the recording's page on **Assets**). It reads "Synced N new item(s) from chapter markers." Items whose Order already exists are skipped, so your edits survive running it again.
+- **Sync from chapters** makes an item for each eligible *chapter marker* on the recording: a named point in time added in the trim editor (open it from the recording's page on **Assets**). The result shows the number of source chapters, new items and skipped items with their reasons. Existing occupied positions are preserved; repeated synchronization does not duplicate them. A zero-new-item result therefore explains whether chapters were absent or their positions were already occupied.
 - **Import from doc (paste plain-text agenda, one item per line)**: paste the agenda text and click **Import**. Each non-blank line becomes one draft item. A leading number such as "3.a" or "VII" becomes the **Number**. It reads "Imported N item(s)." and the help line says "Taken literally, one item per line — nothing to review." Lines whose position already has an item are skipped.
 - **Or upload a PDF agenda…**: choose a PDF and click **Import PDF**. CivicCast makes a best-effort guess from the text in the PDF (numbered items, ALL-CAPS headings and times). Each item gets a **Confidence** mark: green is 90% or more, amber 50 to 89%, red under 50%. If any item is under 90%, the banner says "Some items were a best-effort guess (see the Confidence marks below) — review them before publishing." A PDF that is a scan of paper, with no text in it, finds nothing: "Couldn't find any recognizable items in that PDF. Try pasting the agenda's text instead."
 - **Import from an external agenda system**: look up a meeting in Legistar, PrimeGov, CivicClerk, or a "JS-rendered portal (CivicPlus, Granicus, other)" and import it. See the Known issue below.
@@ -1124,7 +1137,7 @@ There are **no confirmation boxes**. Each click acts at once.
 
 This chapter is for the people who work the room on meeting night: the camera operator, the meeting operator, and the volunteer who watches the screen while the council meets. It shows you how to check that the station is ready, run a live session, start and stop a channel, take a channel live from a camera, put scheduled programs on the air, drive the production control room, show community announcements between programs, and bring in remote guests. It also tells you, control by control, what each button really does. In this version of CivicCast several buttons that sound like "go on air" do something smaller than their names say, and a few things happen without any "Are you sure?" box.
 
-> **Note:** CivicCast Beta 13 is a pre-release. This chapter explains the current controls and their behavior; a **Known issue** box names the version in which a mismatch was checked. Package-specific checks and limits are in the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md).
+> **Note:** This chapter describes Beta 14 controls. For package identity, installation observations and publication status, use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) and the releases page. Known-issue notes retain the version in which their behavior was checked.
 
 ### Before you start
 
@@ -1193,7 +1206,7 @@ Do this early on meeting night, before anyone is in the room. The same screen is
 
 You should see a card titled "Broadcast readiness check result" with a line "Rehearsal result" that reads **Passed**, **Failed** or **Not run**.
 
-> **Warning:** **Check broadcast readiness** has no confirmation box. It creates a private test live session called "Private first-broadcast rehearsal" on the channel `government`, copies the sample test video that was set up during first setup (if there is none, the result reads **Not run**), and saves a short test recording. If they do not already exist, it also adds a source called "CivicCast sample test source" (see the Known issue under "Choose and check a meeting source") and a test recording location. In the code we read, the test session is marked "On air" for a moment and then ended, and the portal home page reads the live session record, so residents could briefly see the test session as on air. We have not watched this happen. We could not confirm whether the test recording shows up in the Assets list. Do not run this check while a real meeting is on air.
+> **Warning:** **Check broadcast readiness** has no confirmation box. It creates a private test live session called "Private first-broadcast rehearsal" on the channel `government`, copies the bundled sample video (if there is none, the result reads **Not run**), and saves a short test recording. If needed, it also creates the sample source and test recording location. The resident portal reconciles live-session state with actual program output. Run this rehearsal before a real meeting rather than during one.
 
 > **Known issue (beta.11):** the Readiness page has no Refresh button. Only the "On air right now" banner updates by itself. The checklist, the feed cards and the other panels change only after you use one of their own buttons or reopen the page.
 
@@ -1214,7 +1227,7 @@ You should see the source's tag change to **Delivering** and text such as "Check
 
 > **Known issue (beta.12; first recorded in beta.11):** The **On-air preview** still never shows source video or an audio meter. The panel always renders its unavailable message, even after a source check; this is not the result of that check. Use **Check source** and **Run pre-flight** for source status, and watch your own monitor or the channel output for the picture.
 
-For rehearsal, the unchanged bundled sample source uses its validated local sample video. After changing that source's channel, type, address or credentials, pre-flight checks the configured live source instead. An edited source cannot pass by reusing an unrelated sample file. For a meeting, select a valid, reachable source on the session's channel and make sure its fresh check passes.
+Live Room pre-flight checks the selected source's configured network address, including the sample source. A sample file cannot substitute for an unreachable live input. The installer's separate private rehearsal uses the bundled local sample. For a meeting, select a valid, reachable source on the session's channel and make sure its fresh check passes.
 
 If a Setup admin needs to change a source's address, they click **Edit source**, change the fields and click **Save source**. CivicCast warns: "Saving this change clears what CivicCast knows about this source. You will need to choose Check source again before it can take air." That warning appears only after you change the address, the type or the stored credential. Anyone else sees "Editing a source needs the setup admin role. Ask your station admin to change the address or type."
 
@@ -1234,7 +1247,7 @@ A live session is CivicCast's record of one meeting being broadcast. These steps
 
 You should see the session tag change to **On air**. If the checks fail at this moment, a red box titled "Live action failed." says "Go on air blocked: a fresh source-bound server-side pre-flight did not pass. No broadcast was started. Correct the failed checks and run pre-flight again." CivicCast runs the checks again, including a new source check, when you click, so the click can take several seconds.
 
-> **Warning:** **Start Live Stream** has **no confirmation box**. It sets the live session to "On air". The resident portal's home page then tells residents "Council live room is on air." and shows State "On air", whether or not the channel is actually broadcasting. Click it only when the channel's feed really is running (see [Start a channel](#start-a-channel)).
+> **Warning:** **Start Live Stream** has **no confirmation box**. The resident portal checks the session against the channel's outgoing feed. An absent, stopped or non-program feed is shown as starting, interrupted or failed rather than as a working live broadcast. Watch the channel's actual output when starting a meeting (see [Start a channel](#start-a-channel)).
 
 > **Known issue (beta.11):** in the code we read, **Start Live Stream** changes the session record and the public status only. It does not start the channel's feed, and it does not put your source on the channel. The error message above says "No broadcast was started", but a successful click does not start one either. To put a camera on a channel, use **Take live** on the Channels screen. If the channel's own feed is running, residents see it whether or not you press **Start Live Stream**.
 
@@ -1331,9 +1344,9 @@ What "Keep this channel on air" really does, from the code we read:
 
 Live captions are a station setting, not a control on the Live screen. On a new station, **Show live captions on air** is off. A Setup admin can enable it in **Station Profile**; see [Live captions: what the settings change](#live-captions-what-the-settings-change).
 
-Beta.11 uses Whistle on the CPU for live recognition and sends first-pass captions without waiting for a second recognition to agree. It serializes caption inference across channels on one station runtime to give playout priority. If Whistle fails or exceeds its 10-second request deadline, that channel uses Whisper until the live runtime restarts. Whisper is also used for recording transcription. NVIDIA CUDA is optional acceleration for Whisper, not a requirement for Whistle. Captions are best-effort and may have gaps under load.
+Whistle runs live recognition on the CPU and sends first-pass captions without waiting for a second recognition to agree. Primary inference is serialized across the station's channels. If Whistle fails or exceeds its 30-second request deadline, Whisper supplies backup captions while CivicCast automatically tries a fresh Whistle process. A successful recovery returns that channel to Whistle without restarting the station. Whisper also transcribes recordings and can use supported NVIDIA CUDA acceleration. On **System Health**, temporary delay is distinguished from sustained overload so an operator can see when captioning is catching up.
 
-Beta 13 starts Whistle without loading the Whisper backup first. A backup that cannot load therefore does not prevent Whistle from starting. Whisper loads when a channel actually needs fallback; that first switch can take longer, and insufficient memory or a backup startup failure can still interrupt that channel's captions. Beta 13 automatically retries failed Whistle probes after a 30-second initial cooldown, then uses capped delays of 60, 120, 240 and 300 seconds. Retries continue while the affected channel has audio. A slow warning appears after 10 seconds; the 30-second watchdog terminates an unresponsive child. The 210-second queue bound is `(3 × 2 + 1) × 30` seconds of serialized request allowance, not a delivery guarantee. The default queue holds at most 42 five-second WAV chunks; catch-up after sustained overload is finite. Diagnostics are bounded and no audio archive is created.
+Beta.12 starts Whistle without loading the Whisper backup first. A backup that cannot load therefore does not prevent Whistle from starting. Whisper loads when a channel actually needs fallback; that first switch can take longer, and insufficient memory or a backup startup failure can still interrupt that channel's captions.
 
 When the switch is enabled, recognition resumes on the next worker scan, but the channel's caption route is added when the channel next starts. Stop and start each affected channel after enabling it. When switched off, recognition stops and queued audio drains on the next worker scan; the graph route is removed at the next channel start. The switch does not affect captions created later for recordings. For overload and fallback recovery steps, see [Captions late or missing](#captions-late-or-missing).
 
@@ -1519,6 +1532,8 @@ Two more previews need a channel chosen in **Target channel**: **Preview schedul
 
 The board is shown in the gaps between programs when the channel's filler is set to **Community bulletins** (on **Channels**, in "Run this channel 24/7", under "Between programs, show"). Otherwise it shows the **Station slate**. If no bulletins are approved, the channel falls back to the slate.
 
+Saved manual ticker text is included in the public board snapshot and the outgoing board picture. Changes appear when the board next refreshes. If a bulletin cannot be rendered, CivicCast reports the preparation error and uses the station slate rather than repeatedly relaunching a broken bulletin encoder.
+
 1. In the left menu, under **Run Meeting**, click **CG Board**.
 2. Use the **Channel** menu to choose a channel ("Public board" is the first choice).
 3. The **Template library** shows three layouts, and **Read-only board preview** shows a preview of the board's zones. Clicking a template only changes this preview.
@@ -1637,7 +1652,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 | What you see | What it means and what to do |
 | --- | --- |
 | "Live-room controls require the meeting operator role. Source status and readiness checks remain visible." | Your sign-in lacks the Meeting operator role. Ask your Setup admin. |
-| "Source preview unavailable - CivicCast has not verified incoming video or audio from &lt;source&gt;." | The Live preview panel remains unavailable in Beta 13 and does not show whether the latest source check passed. Run **Check source** and **Run pre-flight** for current source status; use your own monitor or channel output for video. |
+| "Source preview unavailable - CivicCast has not verified incoming video or audio from &lt;source&gt;." | The Live preview panel remains unavailable in Beta.12 and does not show whether the latest source check passed. Run **Check source** and **Run pre-flight** for current source status; use your own monitor or channel output for video. |
 | A red box titled "Live action failed." | Ask the station administrator to check the CivicCast service and database. Keep this screen open during an active session; refreshing can lose the in-page session. |
 | "Go on air blocked: a fresh source-bound server-side pre-flight did not pass." | A required checklist row failed when you clicked. Fix it, run **Run pre-flight**, try again. |
 | "LiveSession already exists: council-live-room" | A live session has already been created on this station. See the Known issue in "Run a live session". Ask IT. |
@@ -1692,6 +1707,7 @@ CivicCast gives each person one or more roles. The role decides which buttons wo
 | See the Assets list, open a recording, read the Review queue | Any signed-in staff member |
 | Upload a video | records_clerk, meeting_operator, support_admin |
 | Edit title, description, meeting body, retention | records_clerk, meeting_operator, support_admin |
+| Edit trim and chapters; preview source media | records_clerk, meeting_operator, support_admin |
 | Package for playback; replace the source file | publish_operator, setup_admin |
 | Place or clear a legal hold | records_clerk, support_admin |
 | Approve, edit or reject a caption cue; retry a failed caption job | records_clerk |
@@ -1774,7 +1790,7 @@ Trimming sets where the video starts and ends. It does not change the original f
 4. To mark a chapter, move to that moment and click **+ Mark**, then type a name for it. Remove a chapter with its remove button.
 5. Click **Save trim & chapters**. A toast says "Saved." and the editor closes. To leave without saving, click **Discard**.
 
-> **Known issue (beta.11):** The editor does not play the video. The preview area shows only the current time and the text "Packaged manifest lands at Sprint 0.4". You choose points by time, not by watching the picture. Play the video elsewhere to find the times, then type or step to them.
+The preview has video playback controls. Use **Play selected trim** to inspect the chosen IN/OUT range. For packaged recordings, CivicCast plays the HLS copy and translates its playhead into the original source timeline, so trim points and chapter times retain their source positions. If the preview fails, use its retry action; the original recording is preserved.
 
 > **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). Do not promise residents chapter marks from this editor.
 
@@ -1786,14 +1802,14 @@ If saving fails with a message about another writer, someone else changed the vi
 
 ### Package a video for playback
 
-1. On the Assets screen, find a Validated row that says **Not packaged yet**.
+1. On the Assets screen, find a Validated or Recorded row that has a stored source file and says **Not packaged yet**.
 2. Click **Package for playback**. The button says "Packaging..." while it works.
 
 You should see the Status change to **Packaged**. This needs the publish_operator or setup_admin role; otherwise the row says "A publish operator or setup administrator must package this recording."
 
 CivicCast packages one video at a time. If another is already running you see "Another recording is already being packaged…". Wait and try again. If packaging fails, the message is the server's text or "Packaging failed. The original file was kept; try again."
 
-> **Known issue (beta.11):** The list shows **Package for playback** only on Validated rows that have a stored file and no streamable copy yet. **Edit trim** shows on every Validated row, packaged or not. Live recordings are finished and packaged by CivicCast itself.
+The list offers **Package for playback** for Validated and Recorded assets with a stored source file and no streamable copy yet. This also lets you package a recording whose automatic packaging did not finish.
 
 Packaged is not the same as published. Next, go to the Publish screen ([Publishing, and what residents see](#ch-publishing)).
 
@@ -1884,7 +1900,7 @@ Approved and Edited cues both become captions, using the reviewed text. Rejected
 
 A cue the machine was unsure of carries a **Low confidence** badge, and a yellow bar at the top says how many need attention. For these cues, **Approve** stays disabled until you do two things:
 
-1. Click **Load review audio**. CivicCast fetches a short clip around the cue and shows an audio player. Play it.
+1. Click **Load review audio**. CivicCast fetches a clip covering the complete cue, with nearby context where available, and shows an audio player. Play it. The clip is bounded to 120 seconds. If the source cannot cover the whole cue, the message explains the missing coverage and how to regenerate or restore the needed source; a partial clip is not presented as complete evidence.
 2. Tick **I compared this low-confidence cue with its audio evidence.** This box becomes available only after the audio can play.
 
 This audio check applies to **Approve** only. **Save edit** has no such check, so a low-confidence cue can be edited and counted as decided without anyone playing the audio.
@@ -1921,9 +1937,11 @@ If there are no approved cues the card says "No committed transcript cues yet. A
 
 #### Look at a summary
 
+Local generation checks memory before loading the summary model and reserves 8 GiB for station operation. A resource-deferral message explains how to recover; wait for memory to become available or choose a smaller model before retrying. CivicCast unloads the local generation model after the request completes.
+
 1. In the left menu, click **Summary review** (page heading "Summary review", label "Summary + signed records").
 2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are buttons labeled with a cue ID and its time range.
-3. Click a cue button. The **Inline transcript player** box highlights that range. It shows cue IDs and times only; to read the caption text, open the recording or Review queue.
+3. Click a cue button. The **Inline transcript player** highlights the range and loads the private source recording with playback controls. The player seeks to the cited source time; press Play to listen. Packaged recordings map the trimmed playback timeline back to source time. If the cited passage lies outside the available copy, the player explains that rather than seeking to a different passage. Use **Renew playback** if access expires. To read caption text, open the recording or Review queue.
 
 The page shows **Pending review**, **Approved** and **Needs evidence** items. Approved summaries remain on the page so you can export or revisit their signed records. A **Needs evidence** card has a message explaining that the model's output could not be tied to caption cues with timestamps. A yellow bar counts items that need more evidence.
 
@@ -2255,7 +2273,7 @@ The **Submit a program** form lower on Home lets a producer send a program to th
 
 This chapter covers the "business side" of a station: how many residents watched, what aired and when, the schedule file that outside TV-guide services read, sponsor messages, the resident apps, and the optional paid-access feature. A PEG station employee, a records clerk or a station manager normally uses these screens. You do not need any technical background, but a few steps need an IT person, and this chapter says so each time.
 
-Read the "Known issue" boxes for their version scope. Some describe current Beta 13 limits; an older version label identifies an observation from that release, not automatically a current defect.
+Read the "Known issue" boxes for their version scope. Some describe current behavior; an older version label identifies an observation from that release, not automatically a current defect.
 
 ### Before you start
 
@@ -2274,7 +2292,7 @@ CivicCast gives each person one or more *roles*. A role is a named set of permis
 
 > **Note:** In a normal station, everyone signs in with the first administrator account made during First Setup. That account carries all five roles, so you will see every screen and every button. The limits in the table matter only if your IT person made narrower sign-in passes for some staff.
 
-> **Note:** Beta.12 was published on 2026-10-10 as a GitHub pre-release. The [Beta.12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) identifies the package and its checks. A normal upgrade from Beta.11 completed and initially showed output on three channels; the post-upgrade recorder failed on its first JSON save, so no five-snapshot PASS is claimed. An October 11 first-install attempt using the exact public artifacts failed activation with setup exit 123 because four signed station packs required by the embedded index were missing from the public bundle; the index's URLs were empty. Raw-model acquisition does not satisfy those signed-pack requirements. Interrupted repair was not run. This chapter describes source-backed screen behavior; it does not claim that every feature was exercised on a live station. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
+> **Note:** This chapter describes Beta 14 operation. Use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for package identity and installation observations, and the releases page for publication status.
 
 > **Warning:** Several screens in this chapter ask you to type dates. CivicCast treats those dates as **UTC**, the world reference clock. In the United States UTC is several hours ahead of local time. Mountain daylight time is 6 hours behind UTC. A meeting that starts at 7 p.m. Mountain daylight time is already 1 a.m. UTC *the next day*. When a report looks one day off, this is almost always why.
 
@@ -2374,10 +2392,10 @@ The page opens on today's date through tomorrow's, UTC midnight to UTC midnight.
 | Tab | Columns | Use it to |
 | --- | --- | --- |
 | **Shows** | Asset, Plays, Total airtime, First aired (UTC), Last aired (UTC) | See each recording once, with how many times it aired |
-| **As-Run** | Channel, Start (UTC), End (UTC), Duration, Source, Asset, Category, Verified | See every change on air, in order |
+| **As-Run** | Channel, Planned start (UTC), Actual on-air start (UTC), Start variance, End (UTC), Duration, Source, Asset, Category, Verified | Compare the intended schedule with each actual change on air |
 | **Hours by Category** | Category, Entries, Total airtime, Hours | See airtime per category, such as "Council" |
 
-The **Asset** column shows the recording's id, not its title. The **Shows** tab leaves out anything without a library recording (filler, slate and live).
+The **Asset** column shows the recording's id, not its title. The **Shows** tab leaves out anything without a library recording (filler, slate and live). **Actual on-air start** comes from the engine's source-transition proof; **Start variance** shows how early or late it was against the planned start. VOD playback preroll does not change that timestamp. CivicCast does not persist a separate preroll timestamp.
 
 The **Source** column uses these words:
 
@@ -2564,7 +2582,7 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
-> **Warning:** Do not use the paywall for live paid access in Beta 13. The operator can configure its gate, but resident purchase and account workflows are incomplete: the magic-link sender does not send email, the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The Beta 13 screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
+> **Warning:** Do not use the paywall for live paid access in Beta.12. The operator can configure its gate, but resident purchase and account workflows are incomplete: the magic-link sender does not send email, the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The Beta.12 screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
 
 > **For IT staff:** See [Chapter 15](#ch-integrations) before enabling this on a live station.
 
@@ -2610,7 +2628,7 @@ The four screens live in the left sidebar under **System Health**: **Readiness**
 
 > **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
-> **Note:** These procedures describe Beta 13. A **Known issue (version)** identifies the version in which a behavior was checked. For installer identity and recorded package observations, see the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md).
+> **Note:** These procedures describe Beta 14. A **Known issue (version)** identifies the version in which a behavior was checked. For installer identity and recorded package observations, see the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md).
 
 ### Check whether the station is ready (Readiness)
 
@@ -2643,6 +2661,8 @@ After the word you may see "on safety slate" (the channel is showing its fallbac
 When live captions are enabled, the channel tile also reports the caption worker state, its last heartbeat, and which recognition provider is selected. **Digital silence in latest processed audio** means the latest processed audio chunk contained zero-valued samples; it does not claim that speech was recognized. **Worker stalled** means the expected worker has stopped reporting fresh progress. A missing or stale worker heartbeat remains unknown during the first 180 seconds after a channel goes on air; after that, a heartbeat older than 90 seconds is stalled. If audio remains pending for more than 120 seconds without a chunk completing, the worker is stalled; starting another batch retry does not reset this clock. A recent heartbeat with no pending audio is not a failure. Channels that are stopped or have live captions switched off are not caption failures.
 
 The public `/health` probe continues to return HTTP 200 while the process answers. Its `status` is **degraded** when the schema is not current or live-caption readiness is failed, stalled, or not yet known. Its `live_captions` value is only a station-wide state; it never includes channel names. Signed-in staff see the per-channel worker details in **On air right now**.
+
+Caption capacity distinguishes **Within capacity**, **Temporarily behind** and **Sustained caption backlog**. Temporary delay means captions can continue catching up within the runtime's recovery allowance. Sustained overload means the queue depth or age has remained beyond that allowance. Read these alongside the queue measurements and current provider rather than treating every late caption as a failure.
 
 > **Known issue (beta.11):** A yellow station can show two different verdicts at once. The small pill at the top says **Check before meeting**, while the card below can say **Ready with optional items**. Both mean the required checks passed and an optional item needs a look. The second wording is not one of the five standard phrases.
 
@@ -2763,7 +2783,7 @@ The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours en
 
 > **Warning:** Do not click **Delete** on a destination unless you mean it. The first click turns the button into **Confirm delete?**, and a second click deletes right away. There is no cancel and no timeout.
 
-#### What happens in beta.13 when no destination is wired
+#### What happens in beta.12 when no destination is wired
 
 > **Known issue (beta.12):** A rule with no enabled destination assigned cannot deliver its alert. Set up routing on the rule card before relying on email, text or webhook notifications.
 >
@@ -2778,7 +2798,7 @@ The destination form has **Quiet hours start (UTC, HH:MM)** and **Quiet hours en
 
 > **For IT staff:** A rule takes `channel_ids` (the ids of destinations) through `PUT /api/staff/alert-rules/{rule_id}`, with the Setup admin role. The 14 rules that exist come with ids like `default:off-air`. See [Chapter 14](#ch-troubleshooting) and [Chapter 15](#ch-integrations).
 
-> **Role permissions (beta.13):** Active alerts are visible to every operator role. Setup admins and Support admins can view alert rules and destinations, but only Setup admins can change them. Publish operators and Records clerks can read active alerts but do not see the rule and destination editors.
+> **Role permissions (beta.12):** Active alerts are visible to every operator role. Setup admins and Support admins can view alert rules and destinations, but only Setup admins can change them. Publish operators and Records clerks can read active alerts but do not see the rule and destination editors.
 
 ### Understand emergency alerts (Emergency Alerts)
 
@@ -2792,7 +2812,7 @@ The feeds come from the National Weather Service (NWS), the federal alert system
 
 | Situation | What happens |
 | --- | --- |
-| A Beta 13 station with default settings | Nothing is polled and nothing airs by itself. The page says "No alert sources are configured. Ask your station administrator to configure an NWS, AMBER, or IPAWS (COG) feed." |
+| A Beta.12 station with default settings | Nothing is polled and nothing airs by itself. The page says "No alert sources are configured. Ask your station administrator to configure an NWS, AMBER, or IPAWS (COG) feed." |
 | IT staff turn on alert polling | CivicCast reads the configured feeds, by default once a minute, and lists active alerts under **Active alerts** |
 | IT staff also turn on automatic display | Every active **severe** alert goes on every channel that is on air as a **crawl**. Every active **extreme** alert goes on as an **overlay**. A full-screen takeover is never automatic |
 | An operator presses a button | The station queues a crawl, an overlay or (after a tick box) a full-screen takeover for the selected channel's next output update |
@@ -2818,7 +2838,7 @@ When an alert changes, CivicCast prepares the replacement before removing the pr
 3. Under **Active alerts**, read each alert: the event, a severity badge (extreme, severe, moderate, minor or unknown), a headline and the areas.
 4. Under **On-channel now**, see what is currently shown on the channel you picked in **Channel**. Each line gives the channel name and the display type (`crawl`, `overlay` or `forced_slate`), not the alert's name.
 
-> **Known issue (beta.13):** **polling** only means the source is switched on; a feed that is failing can still say **polling**. A failing feed raises an **eas source unavailable** alert on the Alerts screen. Beta 13 includes a warning rule for this alert, but a notification is delivered only after an administrator assigns an enabled destination and the delivery service is configured and working.
+> **Known issue (beta.12):** **polling** only means the source is switched on; a feed that is failing can still say **polling**. A failing feed raises an **eas source unavailable** alert on the Alerts screen. Beta.12 includes a warning rule for this alert, but a notification is delivered only after an administrator assigns an enabled destination and the delivery service is configured and working.
 
 #### Show an alert on a channel
 
@@ -2926,7 +2946,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 ### Report a beta issue
 
-CivicCast Beta 13 is a pre-release. Consult the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) for publication status and the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for package checks and limits. Support is community-driven, with no contract and no guaranteed response time. Reports are sorted by how serious they are. Problems that stop you from broadcasting or installing, or that lose data or expose a secret, are handled first.
+CivicCast is a beta. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records package checks; the [releases page](https://github.com/scottconverse/civiccast-native/releases) shows publication status. Support is community-driven, with no contract and no guaranteed response time. Problems that stop broadcasting or installation, lose data or expose a secret are handled first.
 
 1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
@@ -2934,7 +2954,7 @@ CivicCast Beta 13 is a pre-release. Consult the [Beta 13 release page](https://g
 
 In every report, include:
 
-- The CivicCast version. It is shown at the top of the console, for example `v1.0.0-beta.13`.
+- The CivicCast version. It is shown at the top of the console, for example `v1.0.0-beta.12`.
 - Your Windows version.
 - The screen where it happened.
 - The exact message.
@@ -2996,25 +3016,19 @@ You need three decisions and one fact:
 - **Who will sit at the station computer** for first setup. The first administrator can only be created from a browser running on the station computer itself ([Chapter 10](#ch-installing), "First setup in the operator console").
 - **The fact that decides everything else:** use the project's release helper to assemble a supported package with its station-model resources: `scripts\download_windows_release_artifacts.ps1 -Install`. It verifies `station-models.json` and all matching `station-models.zip.*` parts before starting setup with `/S`. The R9 field attempt used an earlier public asset set without those resources and failed activation with exit 123; see [Chapter 10](#ch-installing) for that historical boundary and the current procedure.
 
-### Know what has and has not been proven
+### Plan from the matching release and measured results
 
-Historical Beta 12 package observations follow. CivicCast 1.0.0-beta.12 was published on 2026-10-10 as a **GitHub pre-release**, not a production release. Its exact source, package, observed upgrade and limits are in the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md). For Beta 13 installation evidence, consult the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md).
+This manual describes Beta 14. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies the signed package and its installation checks. Use the complete release helper for either a first installation or an upgrade.
 
-| What was tested | Result |
+| Evidence | Result |
 | --- | --- |
-| Normal Beta 11-to-Beta 12 upgrade | Setup exited 0; service/API were healthy and the preservation marker was saved. Initial HLS audio/video and Whistle observations were recorded on three channels. The post-upgrade recorder failed during its first JSON save; the five-snapshot check did not pass. See the verification record |
-| Beta 12 fresh-install attempt using the R9-fetched public assets | Failed activation with exit 123: four required signed station packs were missing; embedded download URLs were empty. The matching complete kit was not available in that field attempt |
-| Repair, five-snapshot completion, sustained Beta 12 operation | Not established; see the verification record for exact limits |
-| 48-hour live-caption host observation | A separate Beta 11 host ran three channels and reached 99.88% nominal caption-input coverage. See the [host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md). Historical runtime evidence, not Beta 12 qualification or supported-capacity proof |
-| Operation at a real station; physical SDI capture; real cable-operator acceptance | **Not established** |
+| 72-hour, three-channel host run | Public, Government and Education ran together without a service restart, recording **99.78% live caption-input coverage**. See the [72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) |
+| Earlier 48-hour host window | **99.88% live caption-input coverage**, preserved in the [48-hour report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) |
+| Exact Beta 14 installation and operation | See the Beta 14 verification record for its completed Sandbox and host checks |
 
-The table above preserves Beta 12 observations. For the Beta 13 package, consult the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md); do not transfer an earlier upgrade, installation or runtime result to another package.
+The host measurements retain their original Beta 11 identity. Package verification identifies the version actually installed. Back up an existing station and keep its recovery information before upgrading.
 
-> **Note:** The Gate A sandbox was configured without a virtual graphics card, but the project's own log records that the sandbox guest could still see the host computer's NVIDIA card. Do not read the Gate A pass as proof that a computer *without* a graphics card works. This chapter marks every place where we have no measurement.
-
-![Figure 9.1. The R9 public-asset fresh-install attempt failed activation because required signed station packs were missing; use the release helper for a complete package.](manual/diagrams/1d08cec805a9.png){width=68%}
-
-The left branch is a first install: use the release helper to obtain and verify the matching signed station resources before setup. The earlier R9 asset set lacked those files and failed activation; do not use unsigned or substitute model files. The right branch is an upgrade of a machine that already runs CivicCast. Check the Beta 13 verification record for package-specific upgrade observations and limits; back up first and keep a recovery path available.
+![Figure 9.1. Use the complete signed kit for a first installation or an upgrade.](manual/diagrams/12d6dc891f4b.png){width=69%}
 
 ### Choose the computer
 
@@ -3050,7 +3064,7 @@ One more rule of thumb: dedicate the computer. The station runs a database, a we
 
 #### Graphics card: what it changes
 
-**Beta.11 live captions use Whistle on the CPU by default.** Whistle publishes its first recognition without waiting for a second reading to agree. One station-wide lock serializes Whistle recognition across that station's channels. Each request has a 10-second deadline; if Whistle fails or times out, that channel switches to Whisper for the rest of the runtime. Restarting the CivicCast service resets the live runtime. This is a release behavior; the published-package check only sampled output briefly and does not establish capacity.
+**Live captions use Whistle on the CPU by default.** Whistle publishes its first recognition without waiting for a second reading to agree. One station-wide lock serializes primary recognition across the station's channels. Requests have a 30-second deadline. If Whistle fails or times out, Whisper supplies backup captions while CivicCast automatically attempts to restore Whistle, one channel at a time. No service restart is needed after a successful recovery. Whisper fallback allows up to 120 seconds per request by default so slower CPU recognition can finish; its deadline and audio queues remain finite.
 
 Whisper remains the engine for recorded-media captions and the configured fallback for Whistle. It can also be selected as the live primary through the service environment. CUDA is optional Whisper acceleration; it is not needed for the Whistle primary. AMD and Intel graphics do not provide CUDA acceleration. If `CIVICCAST_WHISPER_DEVICE` is unset, the service uses CUDA only when a supported NVIDIA GPU with at least 8 GB and the staged CUDA runtime are both present; otherwise Whisper runs on CPU. Set `CIVICCAST_WHISPER_DEVICE=cuda` or `cpu` to choose explicitly. `CIVICCAST_LIVE_CAPTION_ENGINE=whistle` selects the default Whistle primary with Whisper fallback; `whisper` selects Whisper for live captions. Restart the service after changing these settings. Needle usage telemetry is disabled; speech processing and model assets remain local.
 
@@ -3068,7 +3082,7 @@ These Whisper choices affect the fallback, recorded captions, or an explicitly s
 
 > **Note:** The rule uses video memory as a stand-in for card capability. The code records that an older NVIDIA card with enough memory but no tensor cores can be *slower* on the card than on the processor (one older card missed all 30 deadlines in testing). The station operator can override the device with the `CIVICCAST_WHISPER_DEVICE` environment variable; see [Chapter 11](#ch-configuration).
 
-> **Historical beta.10 behavior:** The older native live path selected the highest installed Whisper tier. Beta 13 defaults to Whistle with Whisper fallback. The October 11 R9 report found that the separate acquisition screen downloaded Large Whisper despite an unchecked option. Use the complete release helper and its supported silent setup path; it does not depend on that acquisition screen.
+> **Historical beta.10 behavior:** The older native live path selected the highest installed Whisper tier. Beta.12 defaults to Whistle with Whisper fallback. The October 11 R9 report found that the separate acquisition screen downloaded Large Whisper despite an unchecked option. Use the complete release helper and its supported silent setup path; it does not depend on that acquisition screen.
 
 The AI that writes summaries and translations is chosen by a second rule.
 
@@ -3079,7 +3093,7 @@ The AI that writes summaries and translations is chosen by a second rule.
 
 Do not assume every model is present on every station. Silent setup does not launch the first-run GUI acquisition flow or automatically fetch its models; the GUI offers acquisition separately. A displayed download or completed transfer does not by itself prove that a model was activated. The installed runtime tags and the installer pack-component IDs are different identifiers; use the installed model/runtime status when troubleshooting. The product catalog lists a minimum of 16 GB of memory for the 12B model and 8 GB for the smaller one. A historical no-dedicated-GPU benchmark used a computer with 32 GB of memory and 16 cores (32 threads): the smaller model finished a summary in 94 seconds warm and 128 seconds cold, while the 12B model took 366 seconds once and then failed twice. We have no measurement on a smaller computer.
 
-**The default video encoder runs on the processor.** CivicCast uses OpenH264 software encoding by default. Compatible NVIDIA or Media Foundation hardware encoders can be configured when present; the channel profile and pre-flight determine whether one is used or a CPU fallback is allowed. The default output profile is 1280 x 720, 30 frames per second, H.264 at 6,000 kbps and AAC audio at 192 kbps. A three-channel, 48-hour observation on one beta.11 host is not a channel-capacity result; test the planned number of channels on the intended computer.
+**The default video encoder runs on the processor.** CivicCast uses OpenH264 software encoding by default. Compatible NVIDIA or Media Foundation hardware encoders can be configured when present; the channel profile and pre-flight determine whether one is used or a CPU fallback is allowed. The default output profile is 1280 x 720, 30 frames per second, H.264 at 6,000 kbps and AAC audio at 192 kbps. For multiple live channels with captions, size the processor for video playout and Whistle's station-wide serialized recognition, then observe the planned workload on the intended computer.
 
 #### What was measured on the lab station
 
@@ -3095,7 +3109,7 @@ The three-channel evidence in the verification record came from one lab computer
 
 These follow from the evidence above. They are not tested minimums, because the project has not published any.
 
-1. **For several live channels with captions**, size the processor for video playout and Whistle's station-wide serialized recognition, then observe the actual workload. The 48-hour beta.11 host observation is runtime history, not a supported-capacity result; test the workload on the intended computer.
+1. **For several live channels with captions**, size the processor for video playout and Whistle's station-wide serialized recognition, then observe and measure the planned workload on the intended computer.
 2. **Without an NVIDIA card**, Whistle live captions still run on CPU. An NVIDIA card can accelerate Whisper fallback/recorded captions and may allow the larger summary model; neither the GPU nor CUDA is required for Whistle. Test the summary and caption workload on the intended machine.
 3. **Do not run other large programs on the station** during meetings.
 
@@ -3131,7 +3145,7 @@ Do not open the internal ports on the firewall. If another program on the same c
 
 The station does not need the internet to run. The Gate A run had networking disabled, and its station installed, came up and passed its checks. The code even hides the built-in `/docs` page because "a council-chamber station is frequently firewalled outbound and sometimes air-gapped".
 
-The first-run GUI has a separate model-and-caption acquisition flow. Silent setup does not launch it or automatically fetch models, and GUI acquisition does not provide the signed station packs needed for activation. A Beta 12 field run downloaded Large Whisper even though its optional checkbox was unchecked; do not rely on the checkbox alone to stop that transfer. A completed GUI download is not proof that a model was activated.
+The first-run GUI has a separate model-and-caption acquisition flow. Its optional selections control that download plan; required components remain included. Silent setup uses the complete signed kit rather than opening this GUI. A downloaded raw model directory does not replace the signed station resources needed for activation.
 
 If a security appliance does TLS inspection or an allow-list, allow the destinations above needed by the selected GUI acquisitions, or use a complete local kit where available and block outbound access.
 
@@ -3146,7 +3160,7 @@ CivicCast keeps the program under the install folder (default `C:\Program Files\
 | Program, runtime, video tools, AI engine | `<install folder>` | Five signed runtime packs are staged here; check the beta.11 release checksum and package manifest for exact sizes |
 | Model packs: cached copy | `<install folder>\packs\.station-cache` | "about 21 GB" (the uninstall notice) |
 | Model packs: extracted copy | `<install folder>\packs\captions-floor`, `components\`, `models\ollama\` | Extraction is about 1 to 1 with the pack size (code constant). The cached copy stays on disk too, so models take about twice the pack size |
-| First-run downloads, if any | `C:\ProgramData\CivicCast\packs` and `components` | Caption and model files may be acquired separately; a Beta 12 field run downloaded Large Whisper while its optional checkbox was unchecked |
+| First-run downloads, if any | `C:\ProgramData\CivicCast\packs` and `components` | The download plan includes required components and the optional models selected in the GUI |
 | Database | `C:\ProgramData\CivicCast\data\pgdata` | Holds records, not video; grows with use. We have no measured figure |
 | Uploads and finished packages | `C:\ProgramData\CivicCast\data\uploads` | Operator-uploaded media |
 | Conform cache (ready-to-play copies of programs) and working files | `C:\ProgramData\CivicCast\data\egress` (cache in `conform-cache`) | Budget **60 GB** by default; set `CIVICCAST_CONFORM_CACHE_GB` to change it (zero or less turns the cache off). Another budget keeps the three newest plan folders and about 5 GB (`CIVICCAST_PREPARED_PLAN_DIR_BUDGET_GB`) |
@@ -3155,7 +3169,7 @@ CivicCast keeps the program under the install folder (default `C:\Program Files\
 | Logs | `C:\ProgramData\CivicCast\logs` | Supervisor, application and raw control-plane/PostgreSQL logs rotate at 10 MiB with 10 older copies. Older oversized raw logs may remain until rotation replaces them; `ollama.log` is not bounded. See [Chapter 12](#ch-operations) |
 | Backups | A folder you choose | You decide |
 
-Use the checksums on the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) and the delivery receipt for any local kit you received; pack sizes can change between releases. Activation checks staged station-pack sizes plus 2 GB of working room and reports "Not enough free disk space to activate this station..." when short. Add the conform cache budget (60 GB by default) and recording storage on top. These source-derived estimates are not measured package requirements; see the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for actual package evidence.
+Use the checksums for the matching release and the receipt for any local kit you received; pack sizes can change between releases. Activation checks staged station-pack sizes plus 2 GB of working room and reports "Not enough free disk space to activate this station..." when short. Add the conform cache budget (60 GB by default) and recording storage. The matching verification record identifies measured package observations.
 
 > **Tip:** Do not rely on the default 60 GB cache fitting on a small system drive. Either give the station a large drive, or lower `CIVICCAST_CONFORM_CACHE_GB` before the first busy week. A single prepared program larger than the whole budget cannot be kept. The station then refuses it with the error "Conform-cache budget too small to retain '&lt;file name&gt;'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset."
 
@@ -3179,11 +3193,11 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 #### What is on the release page
 
-The Beta 13 download target is the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13). Consult that page for availability, the station-model manifest and every archive part before installing. Use the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for package-specific observations.
+The Beta 14 release page is <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14>. Use its download helper to obtain the installer, runtime packs and matching signed station-model resources together.
 
-The producer recorded a complete 19-member offline kit locally for Beta 12; the R9 field install attempt could not obtain it. The supported release procedure uses `station-models.json` and the matching `station-models.zip.*` files with `scripts\download_windows_release_artifacts.ps1 -Install`. The earlier R9 installer embedded an index with empty URLs for four required station packs and failed activation with exit 123. The helper verifies and assembles the full kit before setup; do not substitute raw model downloads or unsigned files. Verify the remaining public release downloads against their checksums and sidecar.
+The complete offline kit contains 19 required files, including the signed station index and model packs. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
-The assembled kit includes the station folder with its signed index and station packs. Whistle and Medium Whisper are in that signed set. Large Whisper is marked optional in the GUI, but the Beta 12 field run downloaded it while unchecked; monitor actual transfer rows. See [Chapter 10](#ch-installing) for the install procedure and limitations.
+The assembled kit includes Whistle and the signed station-model resources. The first-run GUI separately offers optional model downloads; leaving Large unchecked excludes it from that GUI plan. See [Chapter 10](#ch-installing) for the complete-kit and GUI workflows.
 
 #### Check the files
 
@@ -3224,7 +3238,7 @@ Windows may show a blue **Windows protected your PC** screen. That screen is abo
 - [ ] Security software will not quarantine `C:\Program Files\CivicCast (Native)` or `C:\ProgramData\CivicCast`.
 - [ ] I know the plan for backups ([Chapter 12](#ch-operations)) and where the recovery kit will be kept.
 - [ ] Someone will be at the station to create the first administrator in a browser on that computer.
-- [ ] If this is an upgrade, I have a separate backup and recovery path and have read the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for the exact package result.
+- [ ] If this is an upgrade, I have a separate backup and recovery path. Beta 12 has one observed normal upgrade from Beta 11 with the recorder check incomplete; see its verification record for the exact result.
 - [ ] I have a way to copy text out of the setup window and out of `C:\ProgramData\CivicCast\install-progress.log` to send to support.
 
 ### If it did not work
@@ -3252,34 +3266,30 @@ Windows may show a blue **Windows protected your PC** screen. That screen is abo
 
 ## Installing, first run, upgrading, uninstalling {#ch-installing}
 
-This chapter walks through the Beta 13 Windows setup, its first-run window and first setup in the operator console. It also covers setup exit codes, logs, upgrade, repair and uninstall. The steps below are based on current installer and runtime sources. For exact package identity and observed results, use the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md). Read [Chapter 9](#ch-planning) first.
+This chapter walks through the Beta 14 Windows setup, its first-run window and first setup in the operator console. It also covers setup exit codes, logs, upgrade, repair and uninstall. The steps below are based on current installer and runtime sources. For exact package identity and observed results, use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md). Read [Chapter 9](#ch-planning) first.
 
 ### Before you start
 
-- For a first install, obtain the release-matched helper from the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) and run `scripts\download_windows_release_artifacts.ps1 -Tag v1.0.0-beta.13 -Version 1.0.0-beta.13 -Install`. Explicit tag and version arguments select Beta 13 even when the helper defaults to an earlier published release. The helper uses `station-models.json` and all matching `station-models.zip.*` parts, verifies and assembles the full kit, then runs setup with `/S`. Consult the release page for artifact availability.
+- For a first install, use the release-matched helper linked in [Install CivicCast on Windows](https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md). Its `-Install` option verifies `station-models.json` and every matching `station-models.zip.*` part, assembles the complete kit, then runs setup with `/S`.
 - You checked the installer's hash and signature ([Chapter 9](#ch-planning), "Download and verify what you need").
 - You have a Windows administrator account. Allow about 55 GB on the install drive for a prepared offline kit, or about 100 GB when the download preparation and installation share one drive, plus space for media and recordings.
 - The computer will stay on, awake and connected to power for the whole install.
 - For an upgrade, you also have a backup and you accept that the station goes off air while setup runs.
 
-> **Note:** Beta 13 is a pre-release. Use the complete-kit helper with explicit Beta 13 tag and version arguments for installation and the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for package observations. Keep a separate backup and a station recovery path before upgrading.
+> **Note:** Beta 14 is a GitHub pre-release. Use the complete-kit helper for installation and the linked verification record for current package observations. Keep a separate backup and a station recovery path before upgrading.
 
-### Release-matched kit contents and historical Beta 12 installation observations
+### What the release and local kit contain
 
 Setup has two phases. The **Windows setup** (`setup.exe`) runs with administrator rights and does the installation work: it copies the program, checks components, provisions the database, activates the station and registers the Windows service. Then the **first-run window** ("CivicCast (Native) Setup") opens as a normal user and offers a separate acquisition flow. Silent `/S` setup does not open that GUI or automatically fetch its models. A GUI download is not proof that a model is active.
 
-| What you start with | Installer behavior from current source | Package evidence |
+| What you start with | Installer behavior | Package evidence |
 | --- | --- | --- |
-| **Complete local offline kit**: setup, five runtime packs under `packs\`, signed station index and six station packs under `station\` | Stages signed runtime packs and activates from the signed station index and station packs | A 19-member kit was recorded locally by the producer; R9 did not have that matching kit, so installation from it was not verified |
-| Beta 12 release files fetched during R9 | Included setup, five runtime packs, manual files, checksums and sidecar, but no station-model archive or manifest | This exact fetched set failed activation with exit 123 because four required signed station packs were missing and embedded URLs were empty |
-| October 11 repaired public station-model distribution | `station-models.json` and all 12 matching `station-models.zip.*` parts | Use the release helper with `-Install` to verify and assemble the complete kit before setup; the verification record tracks the public-download installation check |
-| `setup.exe` plus the five public runtime packs under `packs\`, **no** `station\`, with no prior station cache | Runtime-pack staging completes; station activation fails with **exit 123** when required signed station packs are missing | Observed in the R9 Beta 12 field attempt; the installed service did not start |
-| `setup.exe` **alone** | Pack staging stops with **exit 110** when a required signed runtime pack is missing | Source-derived behavior; no package test claim |
-| Normal upgrade from the pinned Beta 11 baseline | Setup exited 0; service/API healthy, schema current, preservation marker saved, and initial HLS audio/video plus Whistle observations on three channels. The first JSON save by the post-upgrade recorder failed, so no five-snapshot PASS was recorded | One limited observation; see the Beta 12 verification record |
-| Repair, five-snapshot completion, sustained operation | Not established for Beta 12; do not infer from the upgrade observation | See the Beta 12 verification record |
-| Reinstall after uninstall without `station\` | Activation can stop with exit 123 when uninstall has removed the cached station packs | Source-derived behavior; no package test claim |
+| Complete offline kit: setup, runtime packs under `packs\`, signed index and station packs under `station\` | Verifies signed components and activates the local station | The matching Beta 14 verification record identifies the exact kit and results |
+| Release download helper with `-Install` | Downloads and verifies the complete set, creates the folder layout, then runs setup | Use all matching archive parts and release checksum metadata |
+| Raw caption or AI model downloads from the first-run GUI | Acquires required and selected optional components | Does not replace signed activation packs |
+| Incomplete kit or mismatched station resources | Reports the missing or invalid component; activation cannot complete | Obtain the matching complete kit before retrying |
 
-The producer's local kit inventory has five runtime packs and a signed station index with six required station packs. Whistle is part of the signed station pack set; it is not a separate first-run download. The R9 field attempt did not have a matching complete kit; the release helper now assembles that kit from the public release.
+The complete kit has five runtime packs and a signed station index with six station packs. Whistle is part of that signed set. The release helper assembles the complete kit from the matching release assets.
 
 ```text
 CivicCast-kit\
@@ -3301,7 +3311,7 @@ CivicCast-kit\
   QUICKSTART-OPERATOR.md
 ```
 
-Place runtime packs in the `packs\` subfolder beside `setup.exe`; a Beta 12 field attempt with the same files flat beside the installer stopped at pack staging (child code 74). The four runtime packs other than `native-cuda-runtime.ccpack` are required; the CUDA pack is optional. The producer's station index lists six station components: `core`, `captions-whistle`, `captions-floor`, `summary-gemma4-12b`, `summary-gemma4-e4b` and `translation-translategemma-4b`. The archive contains the matching `.ccpack` filenames shown in the tree. The R9 setup's embedded index contained only `core` and Whistle, with empty URLs for the other four required packs. Check public release files against the Beta 13 release checksums; the producer's local kit has its own receipt and station-resource hashes.
+Place runtime packs in the `packs\` subfolder beside `setup.exe`. The four runtime packs other than `native-cuda-runtime.ccpack` are required; CUDA is optional. The signed station index lists `core`, `captions-whistle`, `captions-floor`, `summary-gemma4-12b`, `summary-gemma4-e4b` and `translation-translategemma-4b`. The helper places their matching `.ccpack` files under `station\`. Verify files against the matching release metadata or local kit receipt.
 
 > **Note:** Windows setup stages signed runtime packs under the `packs\` subfolder beside `setup.exe`. The release helper verifies and assembles the separate station-model archive into the kit; setup itself does not fetch missing station packs. The first-run window's model and caption acquisition does not replace the signed station index or station packs needed for activation. Silent `/S` setup skips that GUI acquisition flow.
 
@@ -3311,7 +3321,7 @@ Place runtime packs in the `packs\` subfolder beside `setup.exe`; a Beta 12 fiel
 
 ![Figure 10.1. The order of the Windows setup steps and the first-run window.](manual/diagrams/7ea8e49d7826.png){width=100%}
 
-Each box is a step that writes a line before and after to `C:\ProgramData\CivicCast\install-progress.log`. If a step fails, setup stops, shows a dialog (when it is not silent) and exits with that step's code. After files are replaced, any failure also **stops the CivicCast service and sets it to manual start**, so that it cannot start on a half-updated install. Re-running setup is the supported recovery after correcting a recoverable cause. Re-running with the historical incomplete Beta 12 R9 asset set cannot supply the four missing signed station packs; obtain a supported matching bundle first.
+Each box is a step that writes a line before and after to `C:\ProgramData\CivicCast\install-progress.log`. If a step fails, setup stops, shows a dialog (when it is not silent) and exits with that step's code. After files are replaced, any failure also **stops the CivicCast service and sets it to manual start**, so that it cannot start on a half-updated install. Re-running setup is the supported recovery after correcting a recoverable cause. Re-running with the same incomplete Beta 12 public assets cannot supply the four missing signed station packs; obtain a supported matching bundle first.
 
 ### Install from the kit
 
@@ -3319,7 +3329,7 @@ The page order of the standard Windows setup comes from a template that is not i
 
 #### Step 1: Start setup and approve the prompt
 
-1. Use the downloaded release helper with `-Tag v1.0.0-beta.13 -Version 1.0.0-beta.13 -Install`. For an already prepared complete offline kit, run `Start-Process .\setup.exe -ArgumentList '/S' -Verb RunAs -Wait -PassThru` in PowerShell from the kit folder and check that `ExitCode` is 0. This supported route skips the separate acquisition window described below.
+1. Use the downloaded release helper with `-Install`. For an already prepared complete offline kit, run `Start-Process .\setup.exe -ArgumentList '/S' -Verb RunAs -Wait -PassThru` in PowerShell from the kit folder and check that `ExitCode` is 0. This supported route skips the separate acquisition window described below.
 2. If Windows shows **Windows protected your PC**, follow [Chapter 9](#ch-planning) (check hash and signature first, then **More info**, then **Run anyway**).
 3. Approve the administrator (UAC) prompt.
 
@@ -3329,7 +3339,7 @@ If WebView2 is missing, setup installs the full offline copy it carries (the bui
 
 #### Step 2: The "Already Installed" page (only if CivicCast is on the computer)
 
-You see **Already Installed** with the installed version in its message (for the Beta 13 package, `1.0.0-beta.13`) and the choices **Add/Reinstall components** and **Uninstall CivicCast (Native)**. If the installed version is older, the page says "An older version of CivicCast (Native) is installed on your system. It's recommended that you uninstall the current version before installing..." with **Uninstall before installing** and **Do not uninstall**. If it is newer, the warning begins "A newer version of CivicCast (Native) is already installed! It is not recommended that you install an older version."
+You see **Already Installed** with the installed version in its message (for this package, `1.0.0-beta.14`) and the choices **Add/Reinstall components** and **Uninstall CivicCast (Native)**. If the installed version is older, the page says "An older version of CivicCast (Native) is installed on your system. It's recommended that you uninstall the current version before installing..." with **Uninstall before installing** and **Do not uninstall**. If it is newer, the warning begins "A newer version of CivicCast (Native) is already installed! It is not recommended that you install an older version."
 
 For an upgrade, choose the option that does **not** uninstall first. See "Upgrade" below for why. A silent run over a newer install stops with "Downgrades are disabled for this installer, can't proceed with the silent installer, please use the graphical interface installer instead."
 
@@ -3357,14 +3367,14 @@ Start the install. The details list fills with lines. Setup also writes each ste
 | "Activating the CivicCast (Native) station (K1)..." then "CivicCast (Native): using the station bundle beside setup.exe (`<folder>\station`)." | Extracts the speech and AI models and runs the self-test (next section). This is the longest step |
 | "Registering the CivicCast (Native) supervisor service (D4)..." | Registers the service, starts it and waits for it to answer |
 | "Registering the CivicCast (Native) portal/API firewall rule (D4)..." | Adds the firewall rule |
-| "CivicCast (Native): recorded InstalledVersion 1.0.0-beta.13 for the next install/upgrade run." | The last step before success |
+| "CivicCast (Native): recorded InstalledVersion 1.0.0-beta.12 for the next install/upgrade run." | The last step before success |
 | "CivicCast (Native) bootstrap install complete: required component packs staged and D2-verified, D3 install/upgrade engine run, PostgreSQL provisioned, service and firewall rule registered." | Setup finished |
 
 Setup can take time while it extracts components and runs its self-test. Keep the window open and check `C:\ProgramData\CivicCast\install-progress.log` if the details list is quiet. Do not interrupt setup while a step is still running.
 
 ##### The activation step and its self-test
 
-Activation turns the extracted files into a working station. The setup program looks for `<setup folder>\station\station-index.json` first (the kit). If that is missing, it uses a small copy embedded in `setup.exe` and the model packs from the pack cache `<install folder>\packs\.station-cache`. If neither index is available, setup stops with exit 123. In the Beta 12 public build the embedded index has empty URLs for four required station packs. During the R9 field attempt those missing packs (`captions-floor.ccpack`, `summary-gemma4-12b.ccpack`, `summary-gemma4-e4b.ccpack` and `translation-translategemma-4b.ccpack`) caused activation to fail with exit 123; first-run GUI model acquisition did not provide the signed station packs.
+Activation turns the extracted files into a working station. Setup looks for `<setup folder>\station\station-index.json` first. Otherwise it uses the embedded index and the model pack cache `<install folder>\packs\.station-cache`. Missing or invalid required signed resources stop activation with exit 123. The complete release helper prepares the matching resources; first-run raw-model acquisition is a separate workflow.
 
 Activation then:
 
@@ -3402,7 +3412,7 @@ After setup, the window titled **CivicCast (Native) Setup** appears (the final s
 
 **What CivicCast Needs.** "Whistle is included with the signed station components and is the CPU primary for live captions. The Whisper models listed here provide live-caption fallback and recording transcription: Medium is required and Large is optional." It lists seven rows with sizes: CivicCast application runtime, Database & messaging services, Video and audio tools (installed by Windows setup), Whisper Medium (required), Whisper Large (optional), Whisper GPU acceleration (optional) and Local AI model (summaries & translation). The footer shows the total for required and selected optional downloads and **Continue**.
 
-The GUI shows optional choices and reports found-local components. In the R9 Beta 12 field attempt, Large Whisper downloaded even though its checkbox was unchecked. Do not rely on that checkbox alone to prevent a transfer; review the active rows before leaving the download screen. Model acquisition does not provide the missing signed station packs needed for activation.
+The GUI shows optional choices and reports found-local components. Its download plan includes your selected optional components and all required components. Leave Large Whisper unchecked to omit that optional transfer. Raw-model acquisition and signed station resources are separate: use the complete release download helper so activation has the signed packs it requires.
 
 **Downloading** (or **Setting Up** if everything is found locally). "Keep CivicCast Installer open. If a download is interrupted, use Resume download." Each row shows a state:
 
@@ -3519,7 +3529,7 @@ Exit 123 covers every activation failure. The inner code in the log line "step d
 | Inner code | Meaning | What to do |
 | --- | --- | --- |
 | (no index) | No `station-index.json` beside setup or embedded | Obtain `station-models.json` and all matching archive parts from the release page, then run `scripts\download_windows_release_artifacts.ps1 -Install` to assemble the kit before retrying |
-| 66 | The index or a pack could not be obtained or verified | The details list names the missing pack or failed check. The historical Beta 12 R9 public index had empty URLs for four required station packs; first-run model downloads do not replace signed packs. Obtain a supported matching station bundle before retrying |
+| 66 | The index or a pack could not be obtained or verified | Read the missing component or verification reason. Use the complete matching signed station kit; raw model downloads do not replace activation packs |
 | 67 | Any error after the packs verified: no free space, extraction failure, a missing file, or a self-test failure | Read the details list for the exact line. Free space if that is the cause |
 | 78 | The embedded signing key was refused | This copy of setup is not a valid release build. Download it again from the release page |
 | 64, 65 | The setup program is defective | Download it again |
@@ -3551,23 +3561,23 @@ Run these on the station, then open the console. Each check says what a good ans
 Get-Service CivicCastSupervisor | Format-List Name, DisplayName, Status, StartType
 Invoke-RestMethod http://127.0.0.1:8000/health
 Get-NetFirewallRule -DisplayName "CivicCast (Native) Portal/API (TCP 8000)"
-Test-Path "C:\Program Files\CivicCast (Native)\station-set.json","C:\Program Files\CivicCast (Native)\activation-self-test.json"
-Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
+Test-Path "`C:\Program` Files\CivicCast (Native)\station-set.json","`C:\Program` Files\CivicCast (Native)\activation-self-test.json"
+Get-Content `C:\ProgramData\CivicCast\install-progress.log` -Tail 5
 ```
 
 - The service is **CivicCast Native Supervisor**, `Status` **Running**, `StartType` **Automatic**.
-- `/health` answers `status: healthy`, `schema: current` and `version: 1.0.0-beta.13`. The HTTP status is always 200 while the process answers. A `degraded` body means database readiness or live-caption processing needs attention; inspect `schema` and `live_captions`, then authenticated System Health for details.
+- `/health` answers `status: healthy`, `schema: current` and `version: 1.0.0-beta.12`. The HTTP status is always 200 while the process answers. A `degraded` body means database readiness or live-caption processing needs attention; inspect `schema` and `live_captions`, then authenticated System Health for details.
 - The firewall rule exists.
 - Both `station-set.json` and `activation-self-test.json` exist in the install folder.
-- The last log lines include "postinstall: SUCCESS (InstalledVersion 1.0.0-beta.13 recorded)".
-- Settings, Apps shows **CivicCast (Native)**, version 1.0.0-beta.13.
+- The last log lines include "postinstall: SUCCESS (InstalledVersion 1.0.0-beta.12 recorded)".
+- Settings, Apps shows **CivicCast (Native)**, version 1.0.0-beta.12.
 - The operator console and the resident portal at `http://127.0.0.1:8000/` both load on the station.
 
-Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station; the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) records the package-specific observations and unrun checks.
+Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station; the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records the package-specific observations and unrun checks.
 
 ### Upgrade
 
-To upgrade, run the newer `setup.exe` over the existing installation. Prepare the Beta 13 kit with `scripts\download_windows_release_artifacts.ps1 -Tag v1.0.0-beta.13 -Version 1.0.0-beta.13 -Install`; the helper assembles the runtime `packs\` and signed `station\` folders from the release files. Consult the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for exact upgrade observations and limits. Make a separate backup first ([Chapter 12](#ch-operations)); the installer's upgrade backup is not your only recovery copy.
+To upgrade, run the newer `setup.exe` over the existing installation. Use the release helper to assemble the runtime `packs\` and signed `station\` folders. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies its actual upgrade observations. Make a separate backup first ([Chapter 12](#ch-operations)); the installer's upgrade backup is not your only recovery copy.
 
 > **Warning:** Setup stops the CivicCast service before it replaces any file. That takes every channel off the air until setup finishes and the service starts again. Do not run an upgrade during a meeting or a scheduled program.
 
@@ -3603,7 +3613,7 @@ There is no separate repair button that does the work. Two paths exist.
 **The repair command.** For an operator working outside the setup window, the installed program has a repair mode. It checks every installed tree against its signed pack, re-lays corrupted files, repairs the runtime selector and re-registers the service. It never touches data. From an elevated PowerShell window, with the kit folder as `--installer-dir` (the folder that contains `packs\`):
 
 ```powershell
-& "C:\Program Files\CivicCast (Native)\CivicCast Native.exe" --civiccast-repair "C:\Program Files\CivicCast (Native)" --installer-dir "D:\CivicCast-kit" | Out-String
+& "`C:\Program` Files\CivicCast (Native)\CivicCast Native.exe" --civiccast-repair "`C:\Program` Files\CivicCast (Native)" --installer-dir "`D:\CivicCast-kit`" | Out-String
 ```
 
 It prints a JSON report. The exit code is 0 if every tree already verified, 76 if something was repaired and now verifies, and 79 if something could not be repaired locally (the report names the remedy). Piping to `Out-String` makes PowerShell wait for this Windows-subsystem program. If repair stopped the service to rebuild a tree, it does **not** restart it: it prints the line to run, `sc.exe start CivicCastSupervisor`. Its "everything verified" answer does not check the database schema or the activation files. Use the verification record for package-specific test results.
@@ -3666,7 +3676,7 @@ Because the database password is deleted from the registry, the surviving databa
 
 This chapter is for the person at the city who owns the CivicCast computer. It walks through every place a station is configured: First Setup and the admin account, the Station Profile, channels and their outputs, loudness, the playout engine, captions, AI models, cable commissioning, the Control Room, custom fields, the paywall, certificates and network exposure, storage, and the environment variables that sit behind all of it. Most of it is done once, before the first public meeting, by someone with the `setup_admin` role. A few things (the environment variables, the registry) need Administrator rights on the Windows computer itself.
 
-> **Note:** CivicCast 1.0.0-beta.13 is a pre-release; consult the release page for availability. The [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) lists package-specific observations and limits. This chapter describes source behavior; it does not claim that every path was observed on a live station.
+> **Note:** This chapter describes CivicCast Beta 14. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies its package and completed checks; the release page establishes publication status.
 
 ### Before you start
 
@@ -3907,6 +3917,10 @@ What you can tune (all optional, all in the service environment; defaults are wh
 
 > **Known issue (beta.11):** The text under **Stop** on the Channels screen says residents lose the stream until the feed is started again. With **Keep this channel on air** ticked, channel automation may start a stopped channel again after its retry cooldown. Untick **Keep this channel on air** and save the automation settings before you stop a channel you want to keep off the air. Saving that box ticked on an enabled channel can also put the channel on air without anyone pressing Start; the Save button has no confirmation.
 
+#### Repeat the published schedule
+
+`CIVICCAST_SCHEDULE_LOOP=1` repeats the channel's published premiere sequence. The default is off, so a finite schedule ends after its last item. The loop preserves intentional gaps; make adjacent start times and durations contiguous for continuous programming. Set this variable through the service environment procedure below and restart between programs. Auto-schedule uses the station time zone, with `CIVICCAST_STATION_TZ` as the environment fallback. See the two-recording recipe in [Before the meeting](#ch-before-meeting).
+
 ### Configure captions {#configuration-captions}
 
 CivicCast captions in two different ways and they are configured separately. Native live captions use Whistle on the CPU by default; recorded-media captions use the separate Whisper workflow.
@@ -3926,15 +3940,17 @@ The speech model comes in two **tiers**:
 - **Medium** (`faster-whisper-medium`) is the required Whisper floor for fallback and recorded captions. It is staged by the signed station pack and runs on the CPU.
 - **Large-v3** (`faster-whisper-large-v3`) is optional. The first-run wizard offers it as a checkbox and may preselect it when an NVIDIA card with at least 8 GB of video memory is found. CUDA runtime files are optional and accelerate Whisper only; they are not required by Whistle.
 
-At service start the station validates the staged Whisper tier and self-test receipt. The selected Whisper tier is passed as `CIVICCAST_CAPTION_TIER`; it applies to Whisper fallback, recorded captions and explicitly selected Whisper live-primary mode. The native live default remains Whistle regardless of whether Large is installed.
+At service start the station validates the staged Whisper tier and self-test receipt. The **saved selection** in AI Models controls the verified Whisper model used when a runtime is created. An activation default cannot silently override a different saved choice. The native live default remains Whistle regardless of whether Large is installed; Whistle's assets are resolved independently of the Whisper model directory.
+
+The live caption runtime is created when the service starts. **AI Models** shows its service-start fallback tier separately from the saved selection. If you change the selection, restart CivicCast during a maintenance window to apply it to the live runtime. New recorded-caption jobs use the saved selection when they start; an already-running job keeps its existing model.
 
 The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service** environment, if set, wins in either direction (`cuda` or `cpu`), with `CIVICCAST_WHISPER_COMPUTE_TYPE` (default `float16` for cuda, `int8` for cpu). Otherwise the station uses the GPU only when an NVIDIA adapter with at least 8 GB is found **and** both CUDA runtime libraries are staged; anything else is CPU with `int8`.
 
-> **Note:** The AI Models caption selection concerns Whisper tiers. It does not change the native live engine from Whistle. In the Beta 12 R9 field attempt, Large Whisper downloaded even though its optional first-run checkbox was unchecked; check active transfer rows instead of relying on that checkbox to prevent a download.
+> **Note:** The AI Models caption selection concerns Whisper tiers. It does not change the native live engine from Whistle. The installer's optional-component choices control which optional models are downloaded.
 
 #### Live captions: what the settings change
 
-**Beta.11 live runtime:** Native stations use Whistle on CPU as the primary engine, with Whisper as fallback. Whistle inference is serialized by one station-wide lock across channels. The first recognition is published immediately, including low-confidence text; overlap is deduplicated without requiring two readings to agree. Each request has a 10-second deadline. If it fails or times out, that channel switches to Whisper for the rest of the service runtime. If a Whisper fallback child fails, the runtime closes it and makes one immediate replay; after another replacement failure, it waits 30 seconds before trying a new child. Restart the service outside a meeting to reset the primary engine to Whistle. `CIVICCAST_LIVE_CAPTION_ENGINE=whisper` selects Whisper as the primary engine instead.
+**Live runtime:** Native stations use Whistle on CPU as the primary engine, with Whisper as fallback. Whistle inference is serialized by one station-wide lock across channels. The first recognition is published immediately, including low-confidence text; overlap is deduplicated without requiring two readings to agree. Whistle requests have a 30-second deadline. On failure, Whisper supplies backup captions while a fresh Whistle process is tried after an initial 30-second cooldown. Further failed recovery attempts back off to 60, 120, 240 and at most 300 seconds. Only one recovery probe runs at a time, and successful recognition restores that channel to Whistle automatically. Whisper fallback requests allow 120 seconds by default; set `CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS` to a finite value from 1 to 600 seconds to change that deadline. A failed Whisper child is closed and replayed once immediately; a repeated replacement failure starts a 30-second retry cooldown. `CIVICCAST_LIVE_CAPTION_ENGINE=whisper` selects Whisper as the primary engine instead.
 
 Live captions are produced by the caption tap. The native station turns it on (`CIVICCAST_CAPTION_TAP=inline`) unless the service environment says `CIVICCAST_CAPTION_TAP=off`, in which case the tap does not run at all. The console switch is the safe-direction override: `off` in the environment forces live captions off whatever the profile says, but no environment value can turn them on against a profile that is off. When you turn the profile switch off, queued audio drains and speech recognition stops on the next tap-worker scan; caption routing is removed from the video when each channel next starts. When you turn it on, recognition resumes on the next scan, and each channel needs to start again before its video includes captions.
 
@@ -3952,7 +3968,7 @@ When a recording is published, a job transcribes it in 30-second chunks (`CIVICC
 
 #### Caption evidence and retention
 
-Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. Ordinary beta.11 live operation does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. Each channel keeps at most 12 queued completed segments, plus inputs currently being processed and the segment being written. At the default five-second cadence, the queued limit is 60 seconds.
+Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. Ordinary live operation does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. With Whistle, each channel retains at most 42 waiting completed five-second segments (210 seconds), plus in-flight inputs and the segment being written. The bound follows Whistle's finite processing grace. Other runtimes without that grace use a 12-segment working-file ceiling. This file ceiling is separate from the smaller backlog threshold used to detect sustained overload.
 
 The live caption window is limited to the most recent 300 seconds and at most 512 cues. Delivery tracking follows that window instead of accumulating for the whole on-air session. Archive-wide caption review/evidence discovery is not a live-caption or broadcast-readiness prerequisite. These are implementation bounds, not controls on the configuration screen.
 
@@ -3972,6 +3988,8 @@ The AI Models screen (Setup group; `setup_admin` changes, `meeting_operator` rea
 
 The rule behind the summary default is measured, not guessed. On a 32 GB computer with no graphics card the 12B model took 366 seconds for one summary and then failed twice with memory errors, while the e4b model finished every attempt in 94 to 128 seconds. So 12B is only the default when a GPU is present. A summary is queued as a background job (poll every 15 s, retry after 120 s, 3 attempts; `CIVICCAST_SUMMARY_JOB`, `..._POLL_SECONDS`, `..._BACKOFF_SECONDS`, `..._MAX_ATTEMPTS`) so one slow generation does not time out a web request.
 
+Before local summary generation, CivicCast requires the selected tier's catalog memory allowance plus 8 GiB of available RAM reserved for station work. If memory is insufficient, the job reports a recoverable deferral and explains whether to wait or select a smaller tier. CivicCast serializes its local Ollama generation requests and requests model unloading after generation, so an idle summary or translation model does not remain resident indefinitely.
+
 How the Ollama child starts. The service starts Ollama only when the program `dependencies\ollama\ollama.exe` exists and a staged model store exists with a `manifests` folder (`models\ollama` first, then `packs\local-ai-model\models`, then `C:\ProgramData\CivicCast\packs\local-ai-model\models`, where the first-run window saves its downloads). If either is missing the service logs one line ("ollama child skipped (degraded AI, service healthy): ...") and keeps running without AI. A skipped child is re-checked every 60 seconds, so models downloaded while the service is running are picked up without a restart. The child is started with `OLLAMA_NO_CLOUD=1`; hosted models are called by CivicCast directly over the internet, not through the local Ollama.
 
 - **Choosing a local model** saves at once, with no confirmation. Options that need more memory than the computer has are disabled and marked "(exceeds this box)"; the screen does not show how much memory the computer has.
@@ -3983,7 +4001,9 @@ For an air-gapped station, `civiccast model download --offline-bundle --bundle-d
 
 Recorded-caption translation uses the configured translation model to queue translated Spanish caption cues for review. This is a post-publication workflow; it does not translate the live English caption stream. Review the translated cues before attaching or publishing the translated track.
 
-> **Known issue (beta.11):** The cards show internal names such as `gemma4-e4b-ollama` and `whisper-medium-faster` with no plain-English description, and the "About" line for the 12B summary model shows engineering notes. A local choice changes what the next summary or caption job loads; we could not confirm what a job already running does.
+The translation card reports saved Spanish review cues and their latest creation time. This persists across reloads; it describes the cues currently stored, rather than a lifetime total of translation-provider requests.
+
+Model cards include identifiers such as `gemma4-e4b-ollama` and `whisper-medium-faster`. A saved caption-tier change applies to new recorded-caption jobs; an active job retains its original model. The live runtime keeps its service-start fallback tier until the service restarts. The screen reports that runtime separately from the saved selection and explains when a restart is needed.
 
 ### Provider setup and keys {#configuration-providers}
 
@@ -4112,7 +4132,7 @@ The service's child programs (the control plane, the playout workers) get the se
 2. Add the variable (this keeps the entries that are already there and replaces one of the same name):
 
    ```
-   $key = 'HKLM:\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor'
+   $key = 'HKL`M:\SYSTEM\CurrentControlSet\Services\CivicCastSupervisor`'
    $name = 'CIVICCAST_TS_RELAY'
    $value = 'off'
    $current = @()
@@ -4281,7 +4301,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 ## Running it day to day: service, logs, backups, updates {#ch-operations}
 
-This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes Beta 13, a GitHub pre-release rather than a production release. Where the code and a convenient assumption disagree, a **Known issue** callout explains the current source behavior; package-specific observations remain limited to the verification record.
+This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes Beta 14, a GitHub pre-release rather than a production release. Where the code and a convenient assumption disagree, a **Known issue** callout explains the current source behavior; package-specific observations remain limited to the verification record.
 
 ### Before you start
 
@@ -4294,7 +4314,7 @@ You need:
 
 > **Note:** Earlier descriptions of CivicCast mention a message bus called NATS. NATS JetStream was removed from the product and is not part of beta.11. Do not look for it, monitor it or open a firewall port for it.
 
-> **Note:** Package status and observations for Beta 13 are in the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md). Historical measurements and earlier package observations remain scoped to their named releases; see [Appendix H](#app-evidence).
+> **Note:** The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records the current package and its installation observations. Historical station measurements are collected in [Appendix H](#app-evidence).
 
 ### What the service runs
 
@@ -4391,7 +4411,7 @@ Other logs you may need:
 To follow a log live:
 
 ```powershell
-Get-Content C:\ProgramData\CivicCast\logs\supervisor.log -Tail 50 -Wait
+Get-Content `C:\ProgramData\CivicCast\logs\supervisor.log` -Tail 50 -Wait
 ```
 
 ### Check that the station is healthy
@@ -4447,7 +4467,7 @@ These need the CivicCast command-line program. Use the full path because the ins
 ```powershell
 $cc = "<INSTDIR>\runtime\Lib\site-packages\bin\civiccast.exe"
 & $cc doctor
-& $cc doctor --disk C:\ProgramData\CivicCast
+& $cc doctor --disk `C:\ProgramData\CivicCast`
 & $cc runtime status
 ```
 
@@ -4500,7 +4520,7 @@ The **conform cache** is a folder where CivicCast keeps ready-to-play copies of 
 - **Too small a cap:** if one video's conformed copy cannot fit in the budget, preparation of that video fails with: `Conform-cache budget too small to retain '<name>'; increase CIVICCAST_CONFORM_CACHE_GB or exclude this asset.` Raise `CIVICCAST_CONFORM_CACHE_GB` in the service environment and restart.
 - **Failed background conforms:** after a failed or timed-out background (warm-up) conform the station waits 6 hours before trying that asset again. The time allowed for a background conform scales with the length of the asset and is capped at 7,200 seconds.
 
-Historical measurement: in an eight-hour lab run on an earlier development build (three channels), the cache reached 46 GB of the 60 GB cap on a drive with 810 GB free, and the longest single preparation took 389 seconds. That is not Beta 12 package evidence or a sizing rule. Size the cap from your own library: it should hold the conformed copies of everything you expect to air in the next several days.
+Historical measurement: in an eight-hour lab run on an earlier development build (three channels), the cache reached 46 GB of the 60 GB cap on a drive with 810 GB free, and the longest single preparation took 389 seconds. That is not a measurement of the current package or a sizing rule. Size the cap from your own library: it should hold the conformed copies of everything you expect to air in the next several days.
 
 > **Known issue (beta.11):** There is no free-space guard on the conform cache. The 60 GB figure is a cap on the cache, not a promise that the disk has that much room. Make sure the drive has more free space than the cap plus the database, uploads and logs, and watch the **low disk** alert (which may have no destination).
 
@@ -4515,7 +4535,7 @@ The playout engine stores health telemetry in the database. Nothing trims it aut
 
 #### Caption data
 
-**Beta.11 live captions:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Each channel retains at most 12 queued completed segments, plus in-flight inputs and the segment being written; at the default cadence the waiting queue is limited to 60 seconds. A small previous-audio overlap remains in memory for recognition.
+**Live captions:** Ordinary live captioning creates no permanent per-cue review rows or evidence WAVs. Consumed audio is deleted after processing. Whistle's working-file ceiling is 42 waiting five-second segments per channel (210 seconds), plus in-flight inputs and the segment being written. Runtimes without Whistle's processing grace use a 12-segment ceiling. A small previous-audio overlap remains in memory for recognition. This finite file ceiling and the sustained-overload threshold serve different purposes.
 
 The live caption file and delivery bookkeeping retain a rolling 300-second window with at most 512 cues. The live worker does not scan the caption-review archive, and archive evidence does not gate broadcast readiness. These bounds replace manual weekly live-caption cleanup. If working files exceed these bounds, report a fault rather than treating routine deletion by an operator as normal operation.
 
@@ -4567,9 +4587,9 @@ Workaround, from an elevated PowerShell window on the station:
 ```powershell
 $inst = "<INSTDIR>"
 $env:PATH = "$inst\packs\native-server-binaries\payload\bin;$env:PATH"
-$env:DATABASE_URL = (Get-ItemProperty 'HKLM:\SOFTWARE\CivicCast\Native').DatabaseUrl
-& "$inst\runtime\Lib\site-packages\bin\civiccast.exe" dr run-drill --out D:\civiccast-dr\2026-10-05 --media-root D:\civiccast-media
-Remove-Item Env:\DATABASE_URL
+$env:DATABASE_URL = (Get-ItemProperty 'HKL`M:\SOFTWARE\CivicCast\Native`').DatabaseUrl
+& "$inst\runtime\Lib\site-packages\bin\civiccast.exe" dr run-drill --out `D:\civiccast-dr\2026-10-05` --media-root `D:\civiccast-media`
+Remove-Item En`v:\DATABASE_URL`
 ```
 
 > **Warning:** The database address contains the database password. Set it only in the window you are using, never write it to a file, a script or a support ticket, and clear it afterwards as shown.
@@ -4603,7 +4623,7 @@ Beta.11 has no supported command that restores into the live database. The only 
 
 The drill does not prove that you can rebuild a station from nothing. Plan on this order, and rehearse it:
 
-1. Prepare the replacement computer's Beta 13 kit with `scripts\download_windows_release_artifacts.ps1 -Tag v1.0.0-beta.13 -Version 1.0.0-beta.13 -Install`. The helper verifies and assembles signed station resources from the release manifest and archive parts before setup runs. See [Chapter 10](#ch-installing) and the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for package scope.
+1. Prepare the replacement computer's kit with `scripts\download_windows_release_artifacts.ps1 -Install`. The helper verifies and assembles the signed station resources from the release manifest and archive parts before setup runs. The R9 field attempt used an earlier release asset set that lacked those resources and failed activation; see [Chapter 10](#ch-installing) and the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) for exact package scope.
 2. Stop the service.
 3. Restore the database from your off-computer copy using Postgres's tools, as above.
 4. Restore the registry values, `station-state.json`, `subscribe-secrets.json` and the alert credentials file.
@@ -4635,7 +4655,7 @@ It writes `upgrade-engine.log`, `upgrade-journal.json` and, if a rollback itself
 
 Related provisioning exits: 75 maps to setup exit 116, 87 to 135 (another CivicCast product or the WSL runtime is present), 85 to 127.
 
-> **Upgrade evidence (Beta 12):** One normal upgrade from the pinned Beta 11 baseline exited 0, left the service/API healthy with current schema 0089, saved the preservation marker, and showed initial HLS audio/video plus Whistle observations on three channels. The post-upgrade recorder failed during its first JSON save, so its five-snapshot check did not pass. Fresh-install and repair checks remain unrun, and no sustained-operation result is claimed. Before upgrading an on-air station, take a separate backup and schedule a window in which you can use the recovery path. See the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
+> **Upgrade verification:** Read the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for the exact installer and completed checks. Before upgrading an on-air station, take a separate backup and schedule a maintenance window with the recovery kit available.
 
 > **Warning:** Do not upgrade during a meeting. The upgrade stops the service and takes every channel off the air.
 
@@ -4643,12 +4663,12 @@ After any upgrade, run through the daily routine, then run the drill.
 
 ### Capacity guidance
 
-Historical measurements and current package checks have different scopes. The old eight-hour development run and the separate Beta 11 48-hour host observation are not Beta 12 package measurements. The Beta 12 upgrade observation and limits are described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
+The 72-hour three-channel host measurement is recorded in the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). Historical Beta 12 upgrade observations are described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
 - The cache cap default is 60 GB. A 3-channel, 8-hour lab run used 46 GB of it.
 - The longest conform in that run took 389 seconds.
 - That run used a single service process and had 0 holes in 50 program changes.
-- Known limits from the same evidence: live-caption audio can be dropped under heavy load (13 catch-up discards in 8 hours), there were two program-change aborts that recovered themselves, and one single-frame drop. DeckLink SDI output and a real cable headend are unproven. It is not a 24-hour or 72-hour soak.
+- Known limits from the same evidence: live-caption audio can be dropped under heavy load (13 catch-up discards in 8 hours), there were two program-change aborts that recovered themselves, and one single-frame drop. DeckLink SDI output and a real cable headend are unproven. The separate 72-hour, three-channel host measurement is documented in the [72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md).
 
 Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning) and is not repeated here.
 
@@ -4687,9 +4707,9 @@ Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning
 
 ## Security and privacy {#ch-security}
 
-This chapter is for the IT person responsible for who can use CivicCast, what the station exposes to the network, what it records about residents, and how to operate its current Beta 13 security controls. It covers sign-in and roles, staff access tokens, the first-admin and recovery model, network exposure, reverse proxies and TLS, the public and staff parts of the web API, subscriber and viewer privacy, data retention, signing and checksums, and security limitations with practical precautions.
+This chapter is for the IT person responsible for who can use CivicCast, what the station exposes to the network, what it records about residents, and how to operate its Beta 14 security controls. It covers sign-in and roles, staff access tokens, the first-admin and recovery model, network exposure, reverse proxies and TLS, the public and staff parts of the web API, subscriber and viewer privacy, data retention, signing and checksums, and security limitations with practical precautions.
 
-Beta 13 is a pre-release. Consult the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) for publication status and the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for package observations and their limits. This manual does not claim the station is hardened for the open internet.
+The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records this package's installation and operating checks. Complete first setup on the station computer and follow the network-exposure guidance below before making its resident portal available remotely.
 
 ### Before you start
 
@@ -4699,7 +4719,7 @@ Beta 13 is a pre-release. Consult the [Beta 13 release page](https://github.com/
 
 ```powershell
 $cc = "<INSTDIR>\runtime\Lib\site-packages\bin\civiccast.exe"
-$env:DATABASE_URL = (Get-ItemProperty 'HKLM:\SOFTWARE\CivicCast\Native').DatabaseUrl
+$env:DATABASE_URL = (Get-ItemProperty 'HKL`M:\SOFTWARE\CivicCast\Native`').DatabaseUrl
 ```
 
 ### The security model in one page
@@ -4914,7 +4934,7 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 | Data | Kept | Source |
 | --- | --- | --- |
-| Live-caption working audio (native beta.11 runtime) | Processed chunks are deleted; at most 12 queued completed segments per channel, plus in-flight inputs and the segment being written. Native live operation does not run the optional age-based retention sweep. | `captions/tap_worker.py`, runtime wiring |
+| Live-caption working audio | Processed chunks are deleted. Whistle retains at most 42 waiting five-second segments per channel (210 seconds), plus in-flight inputs and the segment being written; runtimes without that processing grace use a 12-segment ceiling. Native live operation does not run the optional age-based retention sweep. | `captions/tap_worker.py`, runtime wiring |
 | Live-caption text and delivery tracking (native beta.11 runtime) | Rolling 300 seconds and at most 512 cues; no permanent per-cue review rows or evidence WAVs | `captions/stabilize.py`, `egress/caption_feed.py` |
 | Recorded-caption review and original recordings | Existing recording/review workflow remains unchanged; live working limits do not delete archived tracks or recordings | `captions/vod.py`, recording workflow |
 | Historical beta.10 caption-retention audit | The beta.10 audit found that `caption-retention-audit.jsonl` was not rotated. Native beta.11 live captioning does not enable the optional age-based retention sweep. | `captions/retention.py`, `captions/tap_worker.py` |
@@ -4924,7 +4944,7 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off. The native beta.11 runtime separates transient live caption work from recorded-caption review. It does not make the live worker or broadcast readiness depend on archive-wide review/evidence retention discovery. No live review/evidence archive is created by ordinary live captioning; this does not change recorded captions or original recordings.
 
-> **Historical finding (published Beta 10):** Audit findings B-003, B-004, B-005 and B-009 recorded unbounded live-caption evidence growth. The current native live path does not run that archive sweep, writes no per-cue evidence, deletes processed chunks and bounds the queued audio and rolling caption history. These are source behaviors, not a long-duration Beta 12 package observation. See the Beta 12 verification record for the exact package scope.
+> **Historical finding (published Beta 10):** Audit findings B-003, B-004, B-005 and B-009 recorded unbounded live-caption evidence growth. The current native live path does not run that archive sweep, writes no per-cue evidence, deletes processed chunks and bounds the queued audio and rolling caption history. These are source behaviors, not a long-duration observation of the current package. See the Beta 14 verification record for the exact package scope.
 
 Where residents' own data may be requested for deletion, we found no console screen or command that deletes a subscriber or a viewer's records. Ask the coder to confirm before you promise a deletion process.
 
@@ -4937,7 +4957,7 @@ Get-AuthenticodeSignature .\CivicCast-Setup.exe | Format-List Status, SignerCert
 Get-FileHash .\CivicCast-Setup.exe -Algorithm SHA256
 ```
 
-The status should read `Valid`. Compare the hash with the line for that file in `SHA256SUMS.txt` on the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13). Consult the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for the signature and hash checks recorded for the exact installer. Replace the file name with the real one.
+The status should read `Valid`. Compare the hash with the line for that file in `SHA256SUMS.txt` on the matching release page. Check that the installer signature is valid and its hash matches the published `SHA256SUMS.txt`. Replace the file name with the real one.
 
 - **Sidecar.** The release also has a `setup.exe.sidecar.json` file with checksum metadata. It is plain metadata and is not separately signed (`attestation` is `null`). `civiccast installer verify-package --artifact <file> --sidecar <file> [--json]` checks a file against it.
 - **Packs.** The large components (`.ccpack` files) carry ed25519 signatures that the installer verifies. The installer also checks a SHA-256 for each file, rejects names containing `..` and rejects reparse points (Windows links). The pack index is pinned to the product version, so an older pack cannot be offered to a newer product.
@@ -5009,9 +5029,9 @@ Report a suspected vulnerability privately, as `SECURITY.md` in the repository d
 
 ## Troubleshooting matrix {#ch-troubleshooting}
 
-This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It lists what can go wrong in beta.11, how to tell which problem you have by looking at a screen, a log line or a command result, and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**. Where we could not find a fix in the code, the table says so instead of guessing.
+This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It explains how to identify a problem from a screen, log line or command result and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**.
 
-> **Note:** Beta 13 is a pre-release. Use the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for package-specific proof status and the release page for availability. Treat this chapter as current troubleshooting guidance rather than a guarantee that every failure is listed.
+> **Package checks:** See the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for this package's installation and operating observations.
 
 ### Before you start
 
@@ -5043,8 +5063,8 @@ Everything below `C:\ProgramData\CivicCast` survives an uninstall and survives a
 Two commands you will use constantly:
 
 ```powershell
-Get-Content C:\ProgramData\CivicCast\logs\control_plane-app.log -Tail 200
-Select-String -Path C:\ProgramData\CivicCast\logs\control_plane-app.log* -Pattern "Caption tap"
+Get-Content `C:\ProgramData\CivicCast\logs\control_plane-app.log` -Tail 200
+Select-String -Path `C:\ProgramData\CivicCast\logs\control_plane-app.log`* -Pattern "Caption tap"
 ```
 
 And one to ask the running station how it is:
@@ -5079,7 +5099,7 @@ Setup returns a number when it fails. Interactive setup shows a dialog with word
 
 > **Known issue (beta.11):** Interactive failure dialogs explain the step but do not show its numeric exit code. Read `install-progress.log` for the code; the installer table in [Chapter 10](#ch-installing) lists the current codes.
 
-> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 12 startup. Use `/health`, the channel's output and the current [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) to assess the exact package and station.
+> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 13 startup. Use `/health`, the channel's output and the current [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) to assess the exact package and station.
 
 ### Sign-in
 
@@ -5158,7 +5178,7 @@ A program change is the moment a channel moves from one scheduled item to the ne
 | A single dropped frame at a join between two pieces | A known single-frame drop. | `CTRL mux diagnostic: dropped future-dated video arrival`. | None. It is one frame. |
 | A change aired only the tail of the closing item | The plan was resolved against a short remainder. | `Plan for <channel> resolved to a N.Ns tail of the closing scheduled item`. | Check the schedule's times. Remember that times typed on schedule screens are UTC. |
 
-> **Historical Beta 10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the Beta 12 package. Keep the logs if you see an unexplained rebuild.
+> **Historical Beta 10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the current package. Keep the logs if you see an unexplained rebuild.
 
 ### No audio, low audio, loudness
 
@@ -5180,16 +5200,18 @@ There are two separate caption paths. **Live captions** are off by default in be
 
 #### Live captions and recovery
 
-The native live runtime uses Whistle on CPU by default. It publishes the first recognition without waiting for another reading to agree, and serializes primary inference across channels on the station. A Whistle request has a 10-second deadline. If it fails or times out, that channel switches to Whisper and remains there until the live runtime restarts. Whisper is also the recorded-caption engine. CUDA is optional acceleration for Whisper; it is not required for Whistle.
+The native live runtime uses Whistle on CPU by default. It publishes the first recognition without waiting for another reading to agree, and serializes primary inference across channels on the station. A Whistle request has a 30-second deadline. If it fails or times out, Whisper supplies backup captions while CivicCast automatically starts a fresh Whistle process for a recovery attempt. Successful recognition switches that channel back to Whistle. Whisper is also the recorded-caption engine. Supported NVIDIA CUDA acceleration is optional for Whisper; Whistle uses the CPU.
+
+Whisper fallback allows 120 seconds per request by default. `CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS` accepts finite values from 1 to 600 seconds. This deadline permits slower CPU responses to finish while still containing a stalled process. It does not expand the bounded audio queue. Caption status distinguishes temporary delay from sustained overload and paused recognition.
 
 The audio tap has bounded queues and can discard older working audio or pause caption recognition under sustained overload to keep playout responsive. If captions lag, pause, or show gaps, use the table below to check the logs and reduce competing CPU or disk work.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
 | No captions on the live picture at all | Live captions are off by default, the service override is `off`, or the current channel has not started since the switch was enabled. | Station Profile checkbox **Show live captions on air**; the **Channels** caption status card; confirm `CIVICCAST_CAPTION_TAP` is not `off`. | Enable the profile switch; recognition resumes on the next worker scan. Then stop and start the channel so its video includes captions. |
-| `Whistle failed for <channel>; switching to Whisper` appears | Whistle failed or missed its 10-second deadline; that channel is using sticky fallback. | Search `C:\ProgramData\CivicCast\logs\control_plane-app.log*` for `Whistle inference failed` and `switching to Whisper`. | Captions continue on Whisper when available. A failed Whisper child gets one immediate replay; after a repeated replacement failure, the runtime waits 30 seconds before trying again. Restart the CivicCast service outside a meeting to reset the primary engine to Whistle. |
+| `Whistle failed for <channel>; switching to Whisper` appears | Whistle failed or missed its 30-second deadline; that channel is using backup captioning during recovery. | Check the engine and recovery countdown on **System Health**; search `C:\ProgramData\CivicCast\logs\control_plane-app.log*` for the failure and recovery messages. | CivicCast retries Whistle after 30 seconds, with further failed probes backing off to at most 300 seconds. Successful recognition restores Whistle automatically. A failed Whisper child gets one immediate replay, then a 30-second cooldown after another failure. Bounded failure diagnostics are retained for investigation. |
 | Captions have gaps and the log says `Caption tap catch-up ... Discarded` | Recognition fell behind and the bounded tap shed old working audio to preserve playout. | `Select-String -Path C:\ProgramData\CivicCast\logs\control_plane-app.log* -Pattern "Caption tap"`. | Reduce other heavy work on the station and watch the output. An NVIDIA GPU is optional for Whisper and does not accelerate Whistle. Do not treat a gap-free run as established until it has been observed under your workload. |
-| The log says `Caption tap overload` or the status shows paused | Sustained backlog engaged the tap's overload pause for that channel. | Search the control-plane log for `Caption tap overload` and check the **Channels** caption status. | The pause protects playout. Reduce competing CPU/disk work; captioning resumes according to its backoff. Restart the channel only if its caption state does not recover. |
+| Caption status shows delayed, overloaded or paused | Delayed means the queue is temporarily behind; overloaded indicates sustained backlog; paused means the tap has engaged its protective pause. | Check queue depth, queue age and engine recovery on **System Health**, and search the control-plane log for `Caption tap overload`. | Let a temporary delay catch up. For persistent overload, reduce competing CPU/disk work; caption recognition resumes according to its backoff. Restart the channel only if its caption state does not recover. |
 | The caption status card says "Not verified" or "Caption proof failed" | The decode-back proof is absent, stale or failed. | Check the card on **Channels** and search the control-plane log around the same time. | Check the live-caption rows above and the channel logs. |
 | Captions on H.265 channels | The caption inserter is H.264 only on native Windows. | The log: "HEVC/H.265 cannot embed captions on native Windows -- the caption inserter is H.264-only...". | Use H.264 for channels that must carry captions. |
 
@@ -5379,6 +5401,12 @@ Child codes seen: 64 arguments, 65 report write, 66 pack missing or untrusted, 6
 | `station could not start:` | `supervisor.log` | Station will not start |
 | `singleton not acquired` | `supervisor.log` | Station will not start |
 
+### Rotation and source-preview checks
+
+- If a channel stops after the last scheduled program, check that its items are published and that `CIVICCAST_SCHEDULE_LOOP=1` is set in the service environment for a repeating rotation. The loop preserves gaps: adjoining entries need contiguous start times and durations. See [the continuous scheduling recipe](#ch-before-meeting).
+- If the trim or summary source preview cannot play, confirm the original file remains available and package the recording for HLS playback. Use the preview's retry or renewal action after correcting the source. A summary citation outside a trimmed copy needs a package covering that passage; it should not be reviewed against a different time range.
+- If **Publish** counts items needing action, its **Needs action** filter includes required blocked outputs as well as failed outputs. Open each listed next step to resolve it.
+
 ### If it did not work
 
 If nothing here matches, do the following in order. First, run `curl.exe http://127.0.0.1:8000/health` and write down the answer. Second, read the last 200 lines of `control_plane-app.log` and `supervisor.log` and look for lines at WARNING, ERROR or CRITICAL level. Third, if the station is not on air and you are able to restart it, restart the service between programs. Fourth, collect the items in "What to collect before asking for help". Do not delete anything under `C:\ProgramData\CivicCast`; it holds the database and every recording.
@@ -5401,7 +5429,7 @@ If nothing here matches, do the following in order. First, run `curl.exe http://
 
 This chapter is for the IT person who connects CivicCast to the outside world: the cable company's equipment, a content delivery network, other servers on the internet, weather and emergency feeds, and other software that wants to talk to the station. It describes current source behavior and identifies connections that remain **off by default**.
 
-> **Note:** Beta 13 is a pre-release. The [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) identifies package observations and limits. The source notes below explain configuration behavior; consult that record for any acceptance by a real cable headend, CDN or outside publishing service.
+> **Note:** This chapter describes Beta 14 configuration. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records package observations. Verify your configured external service or headend during station commissioning.
 
 ### Before you start
 
@@ -5422,7 +5450,7 @@ The audio controls act on the director's audio path; they do not establish that 
 
 A *headend* is the cable company's room of equipment that receives your channel and puts it on the cable. Many small stations send the headend a *UDP transport stream* (a continuous stream of MPEG packets sent over the network). CivicCast does this with an output of kind `udp-ts` and a destination address of the form `udp://host:port`.
 
-> **Verification limit:** Consult the Beta 13 package record for any real cable-headend acceptance evidence. The presets below come from vendor documents and the code says so ("Not field-proven against a real cable headend"). Agree the exact stream settings with your cable company before you rely on any of them.
+Agree the stream settings with your cable company, select the matching preset below, and use **Readiness** to inspect the local output proof. The cable company's receiving equipment must also be configured for that stream.
 
 #### Headend presets
 
@@ -5513,7 +5541,7 @@ There is a separate *surge switch* that would send the live stream to the CDN du
 
 If a CDN or other server sits in front of the portal and you use the analytics features, set `CIVICCAST_ANALYTICS_TRUSTED_PROXY_CIDRS` to the address ranges of that server so viewer addresses are counted correctly.
 
-> **Verification limit:** Consult the Beta 13 package record for any end-to-end CDN upload evidence. Test one recording and verify it at the CDN before relying on that path.
+After configuring a CDN, publish one recording and open it at the destination to confirm its credentials, destination path and playback settings.
 
 #### Publishing providers
 
@@ -5557,7 +5585,7 @@ CivicCast turns federation on only when all of these are true: the mode is not `
 1. **Make a key.** In an Administrator PowerShell, from the install folder:
 
    ```powershell
-   .\runtime\python.exe -m civiccast.cli activitypub keygen --private-key-path "C:\ProgramData\CivicCast\federation\actor.pem" --base-url "https://your-public-address" --handle station --mode limited
+   .\runtime\python.exe -m civiccast.cli activitypub keygen --private-key-path "`C:\ProgramData\CivicCast\federation\actor.pem`" --base-url "https://your-public-address" --handle station --mode limited
    ```
 
    Store the key where only Administrators and SYSTEM can read it. The command prints the environment settings to add in the next step. The command is in the code; we did not run it on a station.
@@ -5682,7 +5710,7 @@ For scripts, issue an access key with the command line. (The console sign-in kee
 
 ```powershell
 cd "<install folder>"
-$env:DATABASE_URL = (Get-ItemProperty 'HKLM:\SOFTWARE\CivicCast\Native').DatabaseUrl
+$env:DATABASE_URL = (Get-ItemProperty 'HKL`M:\SOFTWARE\CivicCast\Native`').DatabaseUrl
 .\runtime\python.exe -m civiccast.cli token issue --operator-id integrations --display-name "Integrations script" --scopes operator --json
 ```
 
@@ -5766,7 +5794,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 | 422 | The request body is wrong; `detail` is a list of field errors | Fix the fields. |
 | 429 | Too many failed tokens: 10 failures in 60 seconds from one address (by default). The `detail` reads "Too many failed staff authentication attempts. Wait and retry." | Wait; the `Retry-After` header gives the seconds. A request with no token at all does not count. |
 
-**Historical Beta 10 audit note:** A whole-repository audit reported test/feature divergence at that time. It is not a Beta 12 test result. Use the current verification record for this release's checks and try an integration on a test channel before automating it.
+**Historical Beta 10 audit note:** A whole-repository audit reported test/feature divergence at that time. It is not a test result for the current package. Use the current verification record for this release's checks and try an integration on a test channel before automating it.
 
 ### If it did not work
 
@@ -5803,9 +5831,9 @@ This part explains how the system is put together, with diagrams, for IT staff, 
 
 This chapter explains how CivicCast is put together: which programs run on the station computer, what each one is responsible for, how a meeting recording and a 24-hour channel move through the system, and what the software does when something fails. It is written for the IT person at a city or station, for an integrator connecting CivicCast to other equipment, and for a technical reviewer who wants to check the design. You do not need to read it to run a station. The earlier chapters tell you what to click.
 
-Each figure has a caption, and a plain-English paragraph under it. The beta.11 architecture remains the baseline; Beta 12 introduced caption health, bounded raw logs, local administrator recovery, meeting controls, remote guest controls and emergency presentation. Beta 13 adds automatic Whistle recovery and finite backlog grace. Where a value is a default that a setting can change, the text says so. Source inspection is not the same as observing every behavior on an installed station.
+Each figure has a caption and a plain-English explanation. This chapter describes the Beta 14 architecture, including caption recovery, installation and model selection, recording and private source playback. Where a value is a default that a setting can change, the text says so. Package observations are recorded separately in the release verification record.
 
-> **Note (proof status of Beta 13):** Consult the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) for availability and the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for package-specific observations and limits. The separate Beta 11 host soak is historical runtime evidence. This chapter describes source behavior; it does not claim that every recovery path was observed on a station.
+> **Note:** This chapter describes Beta 14. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies the exact package and completed checks. The separate 72-hour host measurement retains its original Beta 11 run identity.
 
 ### How to read the figures {#arch-reading}
 
@@ -5820,11 +5848,11 @@ Figure 16-1 shows what talks to CivicCast. CivicCast runs on one Windows compute
 
 ![Figure 16-1. System context. Solid arrows are the normal flows. Dashed arrows are optional or occur only at install time.](manual/diagrams/6efd0747f615.png){width=100%}
 
-**What this shows.** Staff open the operator console in a browser at `/operator/` on the station. Residents open the resident portal at `/`. Both are served by the same CivicCast web server. The station can record from capture cards and network streams, pick up files from watch folders, and accept uploads. It plays out channels as a continuous video stream to downstream equipment, and it can publish finished recordings to the Internet Archive, a network storage location, YouTube and a federated social network (ActivityPub). Those outside publish surfaces run in a simulated mode until an administrator sets the provider to real and supplies its credentials, ActivityPub is off until it is enabled with a public address and a key, and subscriber-notification and podcast surfaces are not active in beta.11 (see [Chapter 15](#ch-integrations)). A content delivery network (CDN) is off by default; when a station turns one on, finished recordings are copied to it so that residents' video requests go there instead of to the station. Emergency and weather feeds are read and shown on screen; CivicCast is not an EAS device and does not relay the legally required Emergency Alert System signal (see [Chapter 15](#ch-integrations)). Most of the time the station needs no internet connection. The first-run window is a separate model-and-caption acquisition flow; it cannot replace the signed station resources required for activation. Whistle and the required Medium Whisper model are in the station bundle. In the Beta 12 R9 field attempt, Large Whisper downloaded despite its unchecked optional checkbox. The web server does not serve its own API documentation pages on a station because those pages would need the internet.
+**What this shows.** Staff open the operator console in a browser at `/operator/` on the station. Residents open the resident portal at `/`. Both are served by the same CivicCast web server. The station can record from capture cards and network streams, pick up files from watch folders, and accept uploads. It plays out channels as a continuous video stream to downstream equipment, and it can publish finished recordings to the Internet Archive, a network storage location, YouTube and a federated social network (ActivityPub). Those outside publish surfaces run in a simulated mode until an administrator sets the provider to real and supplies its credentials, ActivityPub is off until it is enabled with a public address and a key, and subscriber-notification and podcast surfaces are not active in beta.11 (see [Chapter 15](#ch-integrations)). A content delivery network (CDN) is off by default; when a station turns one on, finished recordings are copied to it so that residents' video requests go there instead of to the station. Emergency and weather feeds are read and shown on screen; CivicCast is not an EAS device and does not relay the legally required Emergency Alert System signal (see [Chapter 15](#ch-integrations)). Most of the time the station needs no internet connection. The first-run window is a separate model-and-caption acquisition flow; it cannot replace the signed station resources required for activation. Whistle and the required Medium Whisper model are in the station bundle. The acquisition plan includes selected optional models and required components; leaving Large Whisper unchecked omits that optional download. The web server does not serve its own API documentation pages on a station because those pages would need the internet.
 
 > **Known issue (beta.11):** The control plane listens on `127.0.0.1` only, so as shipped, the resident portal and operator console are reachable from the station computer itself. The installer also adds a Windows firewall rule that allows inbound TCP 8000. We found no setting that changes the listening address. Do not describe the portal as reachable from other computers on the network until this is confirmed on a real station. See [Chapter 9](#ch-planning) and the troubleshooting matrix.
 
-**Emergency presentation (introduced in Beta 12).** When an administrator enables `CIVICCAST_EAS` before starting a channel, the channel reserves an emergency layer in its existing video compositor. Channel health ticks select the applicable alert and send its presentation to the video worker. Clearing or expiring an alert removes only that emergency layer, preserving ordinary graphics. A forced full-screen slate requires explicit confirmation. The resident page separately polls the channel-specific emergency endpoint and removes its notice when that endpoint returns no active alert. Isolated CPU and D3D11 video captures and a browser check exercised these paths; this does not establish real CAP-feed reception or acceptance by a cable headend. See [Emergency alerts](#ch-integrations).
+**Emergency presentation in the beta.12 candidate.** When an administrator enables `CIVICCAST_EAS` before starting a channel, the channel reserves an emergency layer in its existing video compositor. Channel health ticks select the applicable alert and send its presentation to the video worker. Clearing or expiring an alert removes only that emergency layer, preserving ordinary graphics. A forced full-screen slate requires explicit confirmation. The resident page separately polls the channel-specific emergency endpoint and removes its notice when that endpoint returns no active alert. Isolated CPU and D3D11 video captures and a browser check exercised these paths; this does not establish real CAP-feed reception or acceptance by a cable headend. See [Emergency alerts](#ch-integrations).
 
 ### The programs that run on the station {#arch-deployment}
 
@@ -5928,7 +5956,7 @@ CivicCast keeps its data in a database, in folders of files, in a few small file
 | Database | PostgreSQL, database `civiccast`, schema `civiccast`, role `civiccast_svc`, files in `C:\ProgramData\CivicCast\data\pgdata` | everything that is a record rather than a file: assets, schedule items and program slots, recording schedules and jobs, live sessions, channel configuration, state, commands and the proof chain, caption review items, summaries and approvals, publish runs, signed-record exports, subscriptions, alerts, reports, staff token records |
 | Uploads and recordings | `C:\ProgramData\CivicCast\data\uploads` | uploaded and captured media, finished recordings (in a `recordings` folder), and the packaged VOD copies (HLS playlists and segments, in a hidden `.civiccast-packages` folder, one per asset) |
 | Channel work folder | `C:\ProgramData\CivicCast\data\egress` | the conform cache; for each channel the prepared plan folders, its worker logs and relay logs, the reload status file, generated slates and bulletin slides, and (for a channel that serves live HLS) its rolling segments; and the HLS relay's log files (5 MiB each, two kept) |
-| Caption tap | `C:\ProgramData\CivicCast\data\caption-tap` | Temporary five-second audio chunks, deleted after processing; at most 12 queued completed segments per channel plus in-flight inputs and the segment being written |
+| Caption tap | `C:\ProgramData\CivicCast\data\caption-tap` | Temporary five-second audio chunks, deleted after processing; Whistle retains at most 42 waiting segments per channel (210 seconds), plus in-flight inputs and the segment being written. Runtimes without that processing grace use a 12-segment ceiling. |
 | Logs | `C:\ProgramData\CivicCast\logs` | `supervisor.log`, `control_plane-app.log`, `control_plane.log` and `postgres.log` rotate at 10 MiB and retain 10 older files (up to 11 files each); the application log is written by the control plane, while the raw child logs are drained by the supervisor. |
 | Installer records | `C:\ProgramData\CivicCast` | `install-progress.log`, the upgrade engine's journal, backups and recovery document under `upgrade`, and the database provisioning journal and recovery documents under `provision` |
 | Downloaded components | `C:\ProgramData\CivicCast\packs` and `components` | optional Whisper and AI model files that the first-run wizard downloaded, because the installer window cannot write to the Program Files folder |
@@ -6097,19 +6125,19 @@ The loudness target is a setting of the channel and not a fixed number, because 
 
 CivicCast captions in two different ways, for two different needs. The *live* path captions a channel while it airs, so captions can be embedded in the stream. The *offline* path captions a finished recording after it is published, with a human review step before anything is attached. Figure 16-10 shows both, and marks the points where audio can be thrown away.
 
-**Current native live path:** The runtime uses Whistle as the CPU primary, with Whisper fallback, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. The Beta 13 package's source, hash and verification scope are in the release verification record above.
+**Current native live path:** The runtime uses Whistle as the CPU primary, with Whisper fallback, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. The Beta 14 package's identity and installation observations are in its release verification record.
 
 ![Figure 16-10. The caption pipelines. Boxes with a heavy red outline are where live audio can be shed under load. The offline path sheds nothing.](manual/diagrams/d47be929560a.png){width=100%}
 
 **The live path, step by step.**
 
 1. **The audio tap.** Inside each channel's worker, a copy of the program audio is split off before it is encoded, converted to mono 16 kHz, and placed in a queue that never blocks the program: if it is full, it drops the oldest audio. This exists only if live captions are switched on for the station and a caption folder is set.
-2. **Chunks on disk.** A writer collects the audio into five-second WAV files named `chunk-NNNNNN.wav` in `C:\ProgramData\CivicCast\data\caption-tap\<channel>`, writing each under a temporary name and renaming it so a half-written file is never read. The live tap keeps at most 42 completed five-second segments waiting per channel by default (210 seconds of finite backlog grace), plus inputs currently being processed and the segment being written. Consumed chunks are deleted; the previous overlap needed for recognition remains in memory.
+2. **Chunks on disk.** A writer collects the audio into five-second WAV files named `chunk-NNNNNN.wav` in `C:\ProgramData\CivicCast\data\caption-tap\<channel>`, writing each under a temporary name and renaming it so a half-written file is never read. Whistle's live tap retains at most 42 waiting completed segments (210 seconds) per channel, plus inputs currently being processed and the segment being written. Runtimes without Whistle's processing grace use a 12-segment working-file ceiling. Consumed chunks are deleted; the previous overlap needed for recognition remains in memory.
 3. **The tap worker** scans every 2 seconds, takes the finished chunks of each channel, adds a five-second overlap from the previous chunk, and sends them to the speech recognizer.
-4. **The recognizer** uses Whistle as the native live primary. Its child processes use the CPU; one station-wide inference lock allows one primary request at a time across the station's channels. A slow warning appears after 10 seconds; the 30-second watchdog terminates an unresponsive child. On failure, only the affected channel switches to Whisper. Whistle recovery probes begin after a 30-second initial cooldown; failed probes back off through 60, 120, 240 and then 300 seconds, continuing at the cap while the channel has audio. A successful probe restores Whistle; probe transcripts are not published. Whisper remains the recorded-caption engine and can use the staged NVIDIA CUDA runtime. Both engines run locally; neither is Ollama. Recording/offline model choices remain separate.
+4. **The recognizer** uses Whistle as the native live primary. Its child processes use the CPU; one station-wide inference lock allows one primary request at a time across that station's channels. A Whistle request has a 30-second deadline. On failure or timeout, the affected channel uses Whisper while an independent bounded recovery probe tries a fresh Whistle process. Only one channel is probed at a time; failed probes back off from 30 seconds to a maximum 300-second cooldown. Successful recognition restores the primary automatically. Whisper fallback requests have a configurable 120-second default deadline. A failed Whisper child is closed and replayed once immediately; a repeated replacement failure starts a 30-second cooldown before another child is created. Whisper remains the recorded-caption engine and can use the staged NVIDIA CUDA runtime. Both engines run locally; neither is Ollama. Recording/offline model choices remain separate.
 5. **The stabilizer** publishes the first recognition, including low-confidence text, and removes overlap already aired. It does not require two readings to agree. Recent cues are limited to 300 seconds and at most 512 cues. A per-session identifier and monotonic sequence distinguish fresh captions after a worker replacement without accumulating a session-long identifier map.
-6. **Output.** The rolling result is written to `active.vtt` in the channel's work folder. Live cues are not filed in a permanent review queue and do not generate evidence WAVs. A separate *caption feed* worker reads `active.vtt` every 2 seconds and sends each new cue to the running worker, which turns it into closed captions (CEA-608/708 data) and inserts them into the video, so the captions travel inside the emitted stream. Cues are split into pages of 32 columns by 2 rows without discarding words. Delivery acknowledgements are retained only while their cues remain in the provider's rolling window.
-7. **The proof.** A decode-back check reads the actual emitted stream and compares the captions it finds with what should have been sent. The channel's caption status is `on` only while a recent check has passed; a missing, stale or failed check reads `not-verified`, so the console does not claim captions it cannot prove (ADR 0018).
+6. **Output.** The rolling result is written to `active.vtt` in the channel's work folder. Live cues are not filed in a permanent review queue and do not generate evidence WAVs. A separate *caption feed* worker reads `active.vtt` every 2 seconds and sends each new cue to the running worker, which turns it into closed captions (CEA-608/708 data) and inserts them into the video. Cues are split into pages of 32 columns by 2 rows without discarding words. Accepted caption pages are recorded with their actual transport timestamps in a bounded `captions/delivered.json` receipt: at most 512 pages and 180 seconds, reset with the worker. This is timing metadata, not an audio archive.
+7. **The proof.** A decode-back check preserves the emitted MPEG-TS clock and maps both accepted and decoded captions to the actual capture's video timestamp origin. It compares captions wholly inside that captured window; missing clock information or no eligible expected captions cannot pass. The channel's caption status is `on` only while a recent check has passed; a missing, stale or failed check reads `not-verified` (ADR 0018).
 
 > **Note:** Live captions are switched off in a new station profile until an administrator turns them on. The caption tap runs in its mode `inline` on a native station, but the audio tap and the embed are built only when the station's live-captions setting is on. Live captions are English only: the live path has no translation step.
 
@@ -6119,14 +6147,14 @@ CivicCast captions in two different ways, for two different needs. The *live* pa
 | --- | --- | --- |
 | The audio tap in the worker | The oldest audio when the queue (200 buffers or about 10 MiB) is full, or when the next stage holds 32 buffers | A gap in the chunks; playout is unaffected |
 | The segment writer | The oldest waiting segment when its queue of 8 segments (about 40 seconds) is full | Missing five-second chunks; a slow disk is not fatal to air |
-| The tap worker's backlog gate: short overload | The oldest eligible chunks are processed while the remainder wait during the 210-second default grace; this allowance accounts for serialized recognition requests | Captions can arrive late; sustained overload is not guaranteed to catch up |
-| The backlog gate: catch-up shed | After the finite grace and overload-persistence limit, the oldest waiting chunks are deleted and only the newest 2 are kept | Captions resume from recent audio; skipped speech is never captioned |
-| The backlog gate: pause | Repeated catch-up sheds exhaust the finite shed budget. The window includes the configured grace periods (840 seconds by default); captions then pause for 120 seconds, then 240, 480 and so on up to 900 seconds | Captions are off for that channel; the status shows `paused` and the time to resume |
-| Queued working-audio limit | Oldest waiting completed segments beyond 42 by default; in-flight inputs and the segment being written are protected | Discards are reported without creating a permanent review archive; the queue bound is not a delivery guarantee |
+| The tap worker's backlog gate: short overload | Nothing yet. If a channel has more than 2 finished chunks waiting for fewer than 15 scans in a row (about 30 seconds), only the oldest 2 are processed and the rest wait | Captions continue, a little late |
+| The backlog gate: catch-up shed | After 15 scans in a row over the limit, the oldest waiting chunks are deleted and only the newest 2 are kept | Captions keep running from the newest audio; the skipped speech is never captioned, and one warning is logged |
+| The backlog gate: pause | If the station sheds 3 times within 5 minutes, the channel's captions are blanked and paused for 120 seconds, then 240, 480 and so on up to 900 seconds, with every new chunk deleted unrecognized during the pause | Captions are off for that channel; the status shows `paused` and the time to resume; the channel steps back down one rung at a time after sustained clean scans |
+| Queued working-audio limit | Oldest waiting completed segments beyond the finite working-file ceiling (42 with Whistle at five-second cadence; 12 without its grace); in-flight inputs and the segment being written are protected | Captions resume from retained audio; discards are reported, without creating a permanent review archive |
 | An operator switches captions off | Every chunk is deleted, the caption file is blanked | Captions off until switched on |
 | A new session or an unreadable chunk | Previous-session audio or unusable working audio is removed in ordinary live mode | Captions restart cleanly; the error is logged without accumulating an audio quarantine archive |
 
-> **Note:** Live captions remain best-effort. The tap can discard audio under sustained overload so playout keeps priority; first-pass publication does not guarantee that every spoken word will be captioned. Historical Beta 10 measurements are in [Appendix H](#app-evidence). Beta 13 package results and limits are in the Beta 13 verification record.
+> **Note:** Live captions remain best-effort. The tap can discard audio under sustained overload so playout keeps priority; first-pass publication does not guarantee that every spoken word will be captioned. Historical Beta 10 measurements are in [Appendix H](#app-evidence). Current package observations are in the Beta 14 verification record.
 
 **The offline path.** When a publish approval is recorded, a durable job row is queued for the asset. A worker polls every 60 seconds (retrying with a 300-second backoff, at most four attempts) and transcribes the whole recording from its audio in 30-second chunks, with nothing shed. Every cue goes to the review queue. A records clerk approves, edits or rejects each English cue; a cue with low confidence needs an explicit acknowledgement and valid audio evidence. When every English cue has been decided, the program translates the approved English to Spanish with the TranslateGemma model and queues the Spanish cues for their own review. Only when both languages are reviewed does it write the caption tracks (`captions.vtt` and `captions.es.vtt`, and the segmented tracks in the manifest) into the package and, if a CDN is on, upload them again.
 
@@ -6160,7 +6188,7 @@ The worker produces one MPEG-TS stream. A channel can have several *sinks* (outp
 
 **NDI and SDI.** NDI and SDI outputs depend on software the station brings itself. NDI cannot be bundled because of its licence, and SDI needs Blackmagic's driver and an ffmpeg build with the DeckLink muxer. When `CIVICCAST_NDI_FFMPEG` or `CIVICCAST_SDI_FFMPEG` names such a build and the channel has an NDI name or SDI device set, a separate supervised process reads the channel's local transport stream and republishes it as NDI or sends it to the card. It is a separate process on purpose: a dying relay must never take a cable channel off air. A relay that stops restarts after 5 seconds, then 15, then 60.
 
-> **Note (Beta 13 verification boundary):** The current verification record states whether any physical DeckLink SDI capture/output, real cable-headend acceptance or NDI interoperability was exercised for this exact package. A transport-stream capture inside Windows Sandbox is not the same as a headend accepting the signal.
+> **Note (package verification):** The current verification record states whether any physical DeckLink SDI capture/output, real cable-headend acceptance or NDI interoperability was exercised for this exact package. A transport-stream capture inside Windows Sandbox is not the same as a headend accepting the signal.
 
 **Live takeover.** An operator can put a live network source (SRT, UDP, RTMP, RTSP or HTTP) on air in place of the schedule, and hand it back. The control plane first writes an audit record, then queues a `takeover` command. Before either, it requires the live source to have been observed ready within the last 30 seconds (adjustable from 5 to 300 seconds); it re-probes if the observation is older, and refuses if anything is uncertain. The takeover is carried out as a seamless reload of the worker's source, not as a switch to a separate live input. While a takeover or a forced slate is active, the automation does not roll the channel over to the scheduled plan, so it does not fight the operator.
 
@@ -6240,7 +6268,7 @@ If the migration itself, or a step after it, fails, the engine restores the data
 - **A failed upgrade blocks the next one.** The journal of a run that ended in failure makes later runs stop (exit 128) until someone moves `upgrade-journal.json` aside; nothing removes it automatically.
 - **There is no manual restore tool in setup.** The exit 114 message mentions a manual path with operator acknowledgement; we did not find the steps for it.
 
-> **Warning:** Check the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for the exact package's upgrade observations and limits. Before any upgrade, take a full backup (the database and the whole of `C:\ProgramData\CivicCast`, plus the files in the note under Figure 16-4) and keep the station's recovery path available.
+> **Warning:** Check the Beta 14 verification record for the exact package and its completed installation checks. Before any upgrade, take a full backup (the database and the whole of `C:\ProgramData\CivicCast`, plus the files in the note under Figure 16-4) and keep the station's recovery path available.
 
 ### Building and publishing a release {#arch-release}
 
@@ -6258,7 +6286,7 @@ This is about how the files you download came to exist, and what checks stand be
 - **A software bill of materials** and a licence list are generated for the runtime and the application payload. The build refuses to produce them if any file has an unknown licence, and it rejects GPL-licensed GStreamer components.
 - **Gate A** is one Windows Sandbox acceptance protocol. The current publisher also accepts physical-host verification receipts through a separate path; it then creates a draft release, checks the asset names and sizes, publishes it and records the result.
 
-**Package evidence for this chain.** Consult the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for Beta 13 observations. The separate 48-hour Beta 11 host observation and Beta 12 upgrade observation are historical evidence for those named releases.
+**Package and runtime evidence.** The Beta 14 verification record identifies its installation and runtime checks. The three-channel, 72-hour host measurement recorded 99.78% live caption-input coverage and is preserved in the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md).
 
 ### Two example stations {#arch-topology}
 
@@ -6270,7 +6298,7 @@ CivicCast runs one station on one computer. Figure 16-16 shows two realistic sha
 
 **The larger station.** More channels and more video work share the same computer, so size the CPU and storage for the station's actual workload. An optional supported NVIDIA card and staged CUDA runtime can accelerate Whisper when used for recorded captions, fallback or direct live-primary mode; it is not required for Whistle. The original beta.10 eight-hour run and the separate dev7 soak describe earlier runtime history, not current-package capacity. A network storage target receives archive copies. A CDN, once turned on, serves the recorded video. A cable headend takes a UDP transport stream (unicast or multicast; if TSDuck is installed, its relay holds one continuous session across worker restarts) or an SRT feed; NDI and SDI outputs depend on an ffmpeg build the station brings itself, because the NDI and Blackmagic software cannot be bundled. Staff who are not at the machine use Remote Desktop to reach the console, because the console only works from the station itself.
 
-**What CivicCast does not do at any size.** It does not run one station across several computers. The control plane, the event bus, the rate limiter and the workers are all in one process on one computer; there is no failover computer and no shared database for a second control plane. If the one computer fails, the channels on it go off air until it is back. Consult the Beta 13 verification record for long-duration capacity evidence, real cable-operator acceptance and physical SDI capture/output observations for the exact package.
+**Station boundaries.** The control plane, event bus and workers run on the station computer. If that computer fails, its channels go off air until it returns. The release verification record identifies the package and equipment used for operating checks; configure capture and cable-output hardware for your station's actual connections.
 
 <!-- SOURCES: civiccast/auth/middleware.py:1-153; civiccast/auth/tokens.py:152-215; civiccast/auth/roles.py:14-100; civiccast/auth/rate_limit.py:66-105; civiccast/installer/router.py:1211-1263, 1353-1500; civiccast/installer/station_state.py:76, 645-842; civiccast/certs/authority.py; civiccast/app.py:2542-2549; inventory/screens/_shell-signin-and-session.md; inventory/screens/_shell-navigation-and-roles.md sections 3 and 5; ops fact sheet (app/auth); inventory/screens/installer-nsis-setup-wizard.md, installer-nsis-packs-and-verify.md, installer-nsis-upgrade-database.md, installer-nsis-activation-selftest.md, installer-nsis-service-finish.md, installer-component-catalog.md, installer-gui-checking-computer.md; civiccast/apps/installer/src-tauri/nsis-hooks-bootstrap.nsh (via fact sheet); civiccast/installer/native_packs.py:33-35, 232-252, 333-339; civiccast/native/provision/__main__.py:716-718, conf.py:62-135, port_select.py:140; civiccast/native/upgrade/orchestrator.py:19-30, 168-330, 410-445, 530-560; civiccast/native/upgrade/models.py:29-69; civiccast/native/upgrade/seams.py:100-215, 377-430; .github/workflows/native-beta-candidate-artifacts.yml; .github/workflows/sign-native-installer.yml; scripts/release/publish_beta_candidate.py (via fact sheet); native-windows-*.lock.json; CODE_SIGNING_POLICY.md; docs/adr/0022-sigstore-attestation-denied.md; civiccast/native/runtime_manifest.py; civiccast/native/runtime_closure.py; docs/releases/v1.0.0-beta.10-verification.md; civiccast/captions/tap_worker.py (default_max_channel_workers) -->
 
@@ -6311,7 +6339,7 @@ A technical reviewer should read this list before relying on the design. Each it
 - Live captions are off in a new station profile, are English only, and can lose audio under heavy load. Captions embedded in the stream are not proven for CEA-708 broadcast compliance, and a channel whose profile uses HEVC cannot embed captions.
 - Offline captions cannot finish without a Spanish review.
 - The Internet Archive, NAS and YouTube surfaces are simulated until a provider is set to real. Subscriber notifications and podcasts are not active. ActivityPub is off by default.
-- A summary's claims are checked against the cues' identifiers and times, not against their words. The signed-record export carries a placeholder timestamp and no digital signature that we could find.
+- Summary citations bind claims to transcript cue identifiers and times; staff review the wording against the source recording before approving it. Signed-record export embeds its timestamp proof in the PDF. Configure `CIVICCAST_TSA_URL` for an RFC 3161 timestamp authority; without a configured authority, the exporter uses its deterministic development timestamp. An embedded timestamp is separate from a PDF document-signing certificate.
 - The public-safety display reads alerts and shows them; it is not an EAS device and does not relay the legally required EAS signal.
 
 **Time.**
@@ -6320,11 +6348,11 @@ A technical reviewer should read this list before relying on the design. Each it
 
 **Proof.**
 
-- Beta 13 is a pre-release. Its source, hash and evidence scope belong in the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md); availability is on the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13). The Beta 11 host observation is historical evidence. Field operation, real cable-headend acceptance and physical SDI capture/output depend on the exact package record and the station's commissioning.
+- The Beta 14 verification record identifies its source, hash and completed checks. The Beta 11 host observation preserves the historical runtime measurement. Commission the station's selected hardware and outputs for its actual use.
 
 ### The design decisions behind the figures {#arch-adrs}
 
-The project records its major decisions as *architecture decision records* (ADRs). The table lists the ones this chapter relies on, the reason each gives, and whether the current Beta 13 source still matches. ADRs 0002 to 0007, 0009, 0012 and 0019 were not re-checked for this chapter.
+The project records its major decisions as *architecture decision records* (ADRs). The table lists the decisions behind this chapter and the source snapshot in which each was reviewed. The older beta.11 comparison column is historical; current behavior is described in the operating sections above.
 
 | ADR | Decision | Reason given | Still true in beta.11? |
 | --- | --- | --- | --- |
@@ -8408,7 +8436,7 @@ This is everything that belongs to your station. **Uninstalling does not delete 
 | `upgrade\` | `upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md` from the last upgrade. |
 | `provision\` | `PROVISION-RECOVERY.md`, `OWNERSHIP-RECOVERY.md`, `ownership-observation.txt` and the database set-up journal. |
 
-> **Warning:** Not everything the station needs is in `C:\ProgramData\CivicCast`. The station's own settings file `station-state.json` (the station profile, the first admin's sign-in record and the recovery-kit state) is read from `%LOCALAPPDATA%\CivicCast\` of the account the service runs as, unless `CIVICCAST_STATION_STATE_PATH` points elsewhere. The service runs as LocalSystem, so on a standard install that should be the system profile (`C:\Windows\System32\config\systemprofile\AppData\Local\CivicCast`; we did not inspect a running station to confirm it). The three default storage folders shown on Station Profile (`media`, `recordings`, `backups`) default to that same place. Include it in your backups, and check what Station Profile shows on your machine.
+> **For IT staff:** Setup and Station Profile show **Installation**, **Database** and **Media uploads** from the installed service's resolved configuration. Native first-run storage defaults are under `C:\ProgramData\CivicCast\data`; existing saved storage choices remain explicit station settings. Use the displayed runtime paths when locating the actual files. Include `station-state.json` in backups as well: `CIVICCAST_STATION_STATE_PATH` can relocate it, and the fallback location is `%LOCALAPPDATA%\CivicCast\` for the account running the service.
 
 #### Per-user files from the first-run wizard
 
@@ -8546,7 +8574,7 @@ Each surface (Portal, Internet Archive, local NAS copies, YouTube, cable file pa
 | Recording's caption job (Assets) | Transcribing..., Awaiting review, Complete, Failed | `pending`, `awaiting_review`, `complete`, `failed`. "Awaiting review" means the cues are in the review queue. |
 | Channel card, Captions row | On / Off (switched off in the station profile) / Not verified; open channel caption proof | Whether captions in the live output have been proven by decoding them back. |
 | Channel caption card | Captions off, Not verified, Captions on, Caption proof failed, Stale (older than 120 seconds) | The result of the decode-back proof. |
-| Live caption runtime (raw words in status data) | within-capacity, overloaded, storage-refused, paused, disabled | The live caption worker's state. "overloaded" means it is falling behind. |
+| Live caption runtime (raw words in status data) | within-capacity, delayed, overloaded, storage-refused, paused, disabled | The live caption worker's state. "delayed" means temporarily behind; "overloaded" means sustained backlog. |
 
 ### Summaries (Summary review screen)
 
@@ -8820,7 +8848,7 @@ From the current beta.11 server's checks. Read "any signed-in role" as: the serv
 
 This role-by-area matrix is a Beta 11 source snapshot and has not been independently rechecked for Beta 12. For each area it lists routes with a role requirement and which roles may call them; a dash means none in that snapshot. Routes with no role requirement are reads, plus `POST /api/staff/auth/sign-out`; any valid token may use them. Areas that have no role-gated route (`auth`, `first-run`, `release`, `doctor`) are not listed.
 
-How this was made: the application was loaded and each route's role requirement was read from the Beta 11 source. These counts are historical reference, not Beta 12 authorization evidence. For a current request, rely on the live server's authorization response and the generated API reference in [Appendix B](#app-api).
+How this was made: the application was loaded and each route's role requirement was read from the Beta 11 source. These counts are historical reference, not Beta 14 authorization evidence. For a current request, rely on the live server's authorization response and the generated API reference in [Appendix B](#app-api).
 
 | Area | Gated routes | S | M | R | P | A |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -8994,7 +9022,7 @@ Do this once before the first public meeting, and again after any reinstall.
 
 ### G.6 Before-upgrade checklist
 
-> **Warning:** Read the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for results tied to the exact package. Have a backup you have restored at least once before upgrading the station that is on the air.
+> **Warning:** Read the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for checks tied to that exact package. Before upgrading an on-air station, keep a separate backup and its recovery information.
 
 - [ ] Read the release notes and the verification record for the version you are installing. Note what was and was not proven.
 - [ ] Choose a time when no meeting is scheduled and no channel is needed.
@@ -9031,7 +9059,11 @@ Checklist:
 
 ## Appendix H: Measured evidence and known limits {#app-evidence}
 
-This appendix preserves **historical beta.10 evidence**: what was measured, on which older build, and what those measurements do not show. It is not the proof record for Beta 13. Use the [current Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for the source, hash and checks tied to the exact package you install. The historical beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+This appendix preserves historical evidence and its build identity. Use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for the source, hash and checks tied to that package. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+
+### Three channels, 72 hours, 99.78% live caption-input coverage
+
+Public, Government and Education ran together for 72 hours without a service restart. All 216 scheduled checkpoints reported healthy service status. Recorded live caption-input coverage was **99.78%**, calculated from 1,695 seconds of logged discarded input across 777,600 channel-seconds. The [72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves channel totals and the original Beta 11 run identity. Earlier 48-hour evidence remains linked in that report.
 
 ### H.1 Which build each result comes from
 
@@ -9077,9 +9109,9 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 3. **Quiet source material is reported, not leveled** when it is too quiet for the loudness control's maximum lift.
 4. **Eleven playout-engine unit tests fail** in the same way on the published tree and the installed tree; they were failing before this build and are unexplained.
 5. **An unexplained rebuild of a long cached program** was seen in the previous internal run and is unresolved.
-6. **Upgrades were not proven for beta.10.** Installing beta.10 over an earlier release was not tested; use the current Beta 13 verification record for the exact package paired with this manual.
+6. **Upgrades were not proven for beta.10.** Installing beta.10 over an earlier release was not tested; use the Beta 14 verification record for the exact package paired with this manual.
 7. **A first install with neither the full kit (installer plus its `packs` and `station` folders) nor an earlier install was not proven for beta.10.** The code requires the kit. See [Chapter 10](#ch-installing) for the current package contents and evidence link.
-8. **Several staff-console screens described behavior the beta.10 code did not have.** Current screen notes in Part I use Beta 13 scope where the mismatch remains.
+8. **Several staff-console screens described behavior the beta.10 code did not have.** Current screen notes in Part I use the current scope where the mismatch remains.
 
 ### H.5 What is not proven
 
@@ -9089,7 +9121,7 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 ### H.6 How to use this evidence
 
-Read these results as historical beta.10 evidence only. For Beta 13, read the Beta 13 verification record and the current operating chapters; do not transfer a beta.10 measurement to another source or package. If you rely on captions for legal compliance, plan a manual check of captions on the material that matters.
+Read sections H.1 through H.5 as historical beta.10 evidence. For Beta 14, read its verification record and the current operating chapters; keep each measured result associated with its recorded source and run.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; ops/beta10-oversight/OVERSIGHT-LOG.md entries 2026-10-01 14:12 and 14:22; ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md -->
 
@@ -9726,7 +9758,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 | Microsoft Visual C++ Redistributable | the installer's own copy | Proprietary (Microsoft's terms) | Required by the Windows programs. CivicCast has no right to reproduce the text; it ships a pointer to where the real terms are. |
 | NVIDIA CUDA and cuDNN libraries (optional GPU pack) | optional | NVIDIA's end-user license terms | Faster captions on an NVIDIA graphics card. The pack carries reference texts, not NVIDIA's copyrighted text. |
 
-> **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of a particular package are in its `LICENSE-BOM.md` files and the [current Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md); use those for that package's component inventory.
+> **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of a particular package are in its `LICENSE-BOM.md` files and the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md); use those for that package's component inventory.
 
 ### Where the license texts are
 
@@ -9752,13 +9784,15 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 ## Appendix K: Release history {#app-history}
 
-Published releases of the native Windows line of CivicCast, newest first. The authored source for this list is the project's release-truth file, checked against GitHub's release page. "Superseded" means a newer release replaced it; it does not mean it was bad.
+The native Windows release history and the version covered by this manual, newest first. The project's release-truth file and GitHub release page establish publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual describes **v1.0.0-beta.13**, a pre-release. Consult the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13) for availability and the [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) for exact package identity and installation observations. The table below preserves earlier release history. The 48-hour, three-channel **99.88% caption-input coverage** result is measured Beta 11 host evidence.
+> **Note:** This manual describes **v1.0.0-beta.14**. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies the package and installation observations; its release page establishes availability. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.12** | 2026-10-10 | Published GitHub pre-release | A normal Beta 11-to-12 upgrade was observed. The first post-upgrade recorder JSON save failed; the five-snapshot check did not pass. A fresh-install attempt failed activation on four missing signed station packs. See the Beta 12 verification record for exact scope. |
+| **v1.0.0-beta.14** | 2026-10-12 | See release page | Field fixes for installer/model selection, caption timing and recovery, recording, playback, resource protection and documentation. Exact checks are in the Beta 14 verification record. |
+| v1.0.0-beta.13 | 2026-10-11 | Published GitHub pre-release | Automatic Whistle recovery and bounded diagnostics. Fresh installation, normal Beta 11 upgrade and one interrupted-install repair passed their recorded three-channel observations. |
+| v1.0.0-beta.12 | 2026-10-10 | Superseded by beta.13 | Initial distribution and field failures, subsequent public package repair and upgrade observations are preserved in the Beta 12 verification record. |
 | v1.0.0-beta.11 | 2026-10-08 | Superseded by beta.12 | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the Beta 11 verification record for this package's source and exact historical evidence. |
 | v1.0.0-beta.10 | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Superseded by beta.11 | Added program-change, loudness, looping and relay/reload work. Its eight-hour lab run used an earlier internal build; its clean-install result belongs to the beta.10 package. See Appendix H for historical evidence and limits. |
 | v1.0.0-beta.9 | 2026-09-18 (changelog date) | Never published | A version bump and an installer rebuild; its work is in beta.10. |
@@ -9775,7 +9809,7 @@ The same release-truth file also lists tags from a **different, retired product*
 
 Pre-releases published after this manual was written are listed on the project's GitHub releases page: <https://github.com/scottconverse/civiccast-native/releases>.
 
-<!-- SOURCES: docs/releases/release-truth.yaml (current: v1.0.0-beta.12); docs/releases/v1.0.0-beta.12-verification.md (package source, observations and limits); docs/releases/v1.0.0-beta.11-verification.md (Beta 11 historical evidence); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
+<!-- SOURCES: docs/releases/release-truth.yaml (current: v1.0.0-beta.13); docs/releases/v1.0.0-beta.14-verification.md (package source, observations and limits); docs/releases/v1.0.0-beta.11-verification.md (Beta 11 historical evidence); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
 
 ## Appendix L: Index of screens {#app-screens}
 

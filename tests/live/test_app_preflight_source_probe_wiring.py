@@ -245,7 +245,7 @@ def test_go_on_air_still_fails_closed_when_ffprobe_itself_is_missing(
         {"live_source_id": "another-source"},
     ],
 )
-def test_only_unchanged_sample_source_uses_local_rehearsal_probe(
+def test_live_room_preflight_always_probes_selected_network_source(
     durable_app_env: Path, monkeypatch: pytest.MonkeyPatch, changes: dict[str, str]
 ) -> None:
     from civiccast.app import create_app
@@ -286,10 +286,6 @@ def test_only_unchanged_sample_source_uses_local_rehearsal_probe(
     inputs.live_source_id = selected_id
     result = evaluator.evaluate(inputs)
     check = {c.name: c for c in result.checks}[PREFLIGHT_CHECK_LIVE_SOURCE]
-    if changes:
-        assert check.status == PREFLIGHT_STATUS_FAIL
-        assert result.ready is False
-        assert probed == ["network"]
-    else:
-        assert check.status == PREFLIGHT_STATUS_PASS
-        assert probed == ["sample"]
+    assert check.status == PREFLIGHT_STATUS_FAIL
+    assert result.ready is False
+    assert probed == ["network"]

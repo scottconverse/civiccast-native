@@ -1,0 +1,48 @@
+{
+  "pdf": "C:\\Dev\\Claude\\civiccast-beta11-whistle\\docs\\USER-MANUAL.pdf",
+  "pdf_bytes": 7120014,
+  "page_count": 499,
+  "scan": "all non-whitespace characters in rawdict text spans; tested against each physical rendered page rectangle using infinite clip",
+  "nonwhitespace_characters": 794753,
+  "characters_outside_page": 0,
+  "characters_more_than_0_5pt_outside_page": 0,
+  "max_overflow_pt": 0.0,
+  "pages_with_overflow": [],
+  "visual_samples": [
+    {
+      "label": "reports-columns-table",
+      "pdf_page_1_based": 107,
+      "image": "C:\\Dev\\Claude\\civiccast-beta11-whistle\\outputs\\beta14-work\\manual-final\\representative-pages\\page-107-reports-columns-table-tracked-final.png"
+    },
+    {
+      "label": "windows-registry-table",
+      "pdf_page_1_based": 167,
+      "image": "C:\\Dev\\Claude\\civiccast-beta11-whistle\\outputs\\beta14-work\\manual-final\\representative-pages\\page-167-windows-registry-table-tracked-final.png"
+    },
+    {
+      "label": "long-powershell-commands",
+      "pdf_page_1_based": 196,
+      "image": "C:\\Dev\\Claude\\civiccast-beta11-whistle\\outputs\\beta14-work\\manual-final\\representative-pages\\page-196-long-powershell-commands-tracked-final.png"
+    },
+    {
+      "label": "windows-registry-glossary",
+      "pdf_page_1_based": 487,
+      "image": "C:\\Dev\\Claude\\civiccast-beta11-whistle\\outputs\\beta14-work\\manual-final\\representative-pages\\page-487-windows-registry-glossary-tracked-final.png"
+    },
+    {
+      "label": "first-page",
+      "pdf_page_1_based": 1,
+      "image": "C:\\Dev\\Claude\\civiccast-beta11-whistle\\outputs\\beta14-work\\manual-final\\representative-pages\\page-001-first-page-tracked-final.png"
+    }
+  ],
+  "command_space_check": {
+    "searched": "Restart-Service CivicCastSupervisor",
+    "pages": [
+      196,
+      239,
+      419
+    ],
+    "preserved": true
+  },
+  "visual_sample_anchor_missing": []
+}

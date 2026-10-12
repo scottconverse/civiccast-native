@@ -122,6 +122,8 @@ CaptionProcessingState = Literal[
     "inactive",
     "waiting",
     "processing",
+    "delayed",
+    "overloaded",
     "caught-up",
     "silent",
     "stalled",

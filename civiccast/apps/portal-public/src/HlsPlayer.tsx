@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import type Hls from 'hls.js'
 import { emitAnalyticsEvent, type AnalyticsContext } from './analytics'
+import type { PublicProgramTransition } from './types'
 
 type PlayerState = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -23,6 +24,8 @@ interface HlsPlayerProps {
   analytics?: AnalyticsContext
   /** Optional imperative handle for external seek (S25 agenda integration). */
   handleRef?: RefObject<HlsPlayerHandle | null>
+  /** Actual source handoffs, mapped against the HLS playback clock. */
+  programTimeline?: PublicProgramTransition[]
 }
 
 interface SubtitleTrackOption {
@@ -54,10 +57,16 @@ export function HlsPlayer({
   posterUrl,
   analytics,
   handleRef,
+  programTimeline = [],
 }: HlsPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const hlsRef = useRef<Hls | null>(null)
+  const resumeAfterSourceChangeRef = useRef(false)
+  const sourceReadyRef = useRef(false)
+  const programTimelineRef = useRef(programTimeline)
+  const syncPlaybackTitleRef = useRef<() => void>(() => {})
   const [state, setState] = useState<PlayerState>('idle')
+  const [playbackTitle, setPlaybackTitle] = useState<string | null>(null)
 
   // Publish/withdraw the imperative seek handle for the agenda sidebar
   // (S25 §6). Clamp to [0, duration] when known, so a stale agenda timecode
@@ -97,6 +106,45 @@ export function HlsPlayer({
   useEffect(() => {
     analyticsRef.current = analytics
   }, [analytics])
+
+  useEffect(() => {
+    programTimelineRef.current = programTimeline
+  }, [programTimeline])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    const syncPlaybackTitle = () => {
+      if (!sourceReadyRef.current) return
+      const hlsDate = hlsRef.current?.playingDate ?? null
+      const nativeStartDate = (video as HTMLVideoElement & { getStartDate?: () => Date }).getStartDate?.()
+      const playbackDate = hlsDate ?? (
+        nativeStartDate
+          ? new Date(nativeStartDate.getTime() + video.currentTime * 1000)
+          : null
+      )
+      if (!playbackDate || !Number.isFinite(playbackDate.getTime())) {
+        setPlaybackTitle(null)
+        return
+      }
+      const matchingTransition = programTimelineRef.current
+        .filter((transition) => Date.parse(transition.started_at) <= playbackDate.getTime())
+        .at(-1)
+      setPlaybackTitle(matchingTransition?.title ?? null)
+    }
+    syncPlaybackTitleRef.current = syncPlaybackTitle
+    video.addEventListener('timeupdate', syncPlaybackTitle)
+    video.addEventListener('seeked', syncPlaybackTitle)
+    video.addEventListener('loadedmetadata', syncPlaybackTitle)
+    return () => {
+      video.removeEventListener('timeupdate', syncPlaybackTitle)
+      video.removeEventListener('seeked', syncPlaybackTitle)
+      video.removeEventListener('loadedmetadata', syncPlaybackTitle)
+      if (syncPlaybackTitleRef.current === syncPlaybackTitle) {
+        syncPlaybackTitleRef.current = () => {}
+      }
+    }
+  }, [])
 
   // Playback analytics (audit sprint Stage G): start once per source, a
   // coarse heartbeat while playing, complete on ended, error on failure.
@@ -159,6 +207,21 @@ export function HlsPlayer({
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
+    sourceReadyRef.current = false
+    setPlaybackTitle(null)
+    let shouldResumeAfterSwitch = resumeAfterSourceChangeRef.current
+    resumeAfterSourceChangeRef.current = false
+    const onCanPlay = () => {
+      setState('ready')
+      sourceReadyRef.current = true
+      syncPlaybackTitleRef.current()
+      if (!shouldResumeAfterSwitch) return
+      shouldResumeAfterSwitch = false
+      void video.play().catch(() => {
+        // A browser may still reject programmatic playback; keep controls usable.
+      })
+    }
+    video.addEventListener('canplay', onCanPlay)
 
     setState('loading')
     setErrorMessage('')
@@ -200,21 +263,18 @@ export function HlsPlayer({
               tracks.findIndex((track) => track.mode === 'showing'),
             )
           }
-          const onCanPlay = () => setState('ready')
           const onError = () => {
             setState('error')
             setErrorMessage('The video could not be loaded. Please try again.')
           }
           syncNativeSubtitleTracks()
           video.addEventListener('loadedmetadata', syncNativeSubtitleTracks)
-          video.addEventListener('canplay', onCanPlay)
           video.addEventListener('error', onError)
           nativeTracks.addEventListener('addtrack', syncNativeSubtitleTracks)
           nativeTracks.addEventListener('removetrack', syncNativeSubtitleTracks)
           nativeTracks.addEventListener('change', syncNativeSubtitleTracks)
           cleanupNativeHls = () => {
             video.removeEventListener('loadedmetadata', syncNativeSubtitleTracks)
-            video.removeEventListener('canplay', onCanPlay)
             video.removeEventListener('error', onError)
             nativeTracks.removeEventListener('addtrack', syncNativeSubtitleTracks)
             nativeTracks.removeEventListener('removetrack', syncNativeSubtitleTracks)
@@ -297,6 +357,7 @@ export function HlsPlayer({
       hls.on(HlsCtor.Events.MANIFEST_PARSED, () => {
         syncSubtitleTracks()
         setState('ready')
+        if (video.readyState >= 3) onCanPlay()
       })
       hls.on(HlsCtor.Events.SUBTITLE_TRACKS_UPDATED, () => {
         syncSubtitleTracks()
@@ -326,6 +387,12 @@ export function HlsPlayer({
 
     return () => {
       cancelled = true
+      // A live source can switch between the station origin and its CDN while
+      // the resident is watching. Capture playback before tearing down the
+      // old HLS attachment, which may itself pause the media element.
+      resumeAfterSourceChangeRef.current =
+        shouldResumeAfterSwitch || (!video.paused && !video.ended)
+      video.removeEventListener('canplay', onCanPlay)
       cleanupNativeHls?.()
       hls?.destroy()
       if (hlsRef.current === hls) hlsRef.current = null
@@ -384,6 +451,14 @@ export function HlsPlayer({
             </div>
           </div>
         )}
+        <div
+          className="absolute bottom-3 left-3 max-w-[calc(100%-1.5rem)] rounded bg-black/75 px-3 py-1.5 text-xs text-white"
+          role="status"
+          aria-live="polite"
+          aria-label="Program at playback position"
+        >
+          {playbackTitle ? `Now playing: ${playbackTitle}` : 'Program information follows the stream clock'}
+        </div>
       </div>
 
       {subtitleTracks.length > 0 && (

@@ -195,6 +195,63 @@ def test_decode_embedded_captions_against_a_real_cea708_fixture() -> None:
 
 
 @requires_ffmpeg
+def test_real_caption_capture_preserves_long_running_clock(tmp_path):
+    from civiccast.egress.caption_proof_worker import capture_emitted_segment
+    from civiccast.egress.models import EgressConfig, EgressSinkSpec
+
+    shifted = tmp_path / "long-clock.ts"
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-copyts",
+            "-itsoffset",
+            "133200",
+            "-i",
+            str(_REAL_CAPTION_FIXTURE),
+            "-c",
+            "copy",
+            "-mpegts_copyts",
+            "1",
+            str(shifted),
+        ],
+        check=True,
+        timeout=15,
+        capture_output=True,
+    )
+    store = InMemoryEgressStore()
+    store.upsert_config(
+        EgressConfig(
+            channel_id="gov",
+            enabled=True,
+            slate_message="capture",
+            sinks=[EgressSinkSpec(kind="file", label="capture", uri=str(shifted))],
+        )
+    )
+    segment = capture_emitted_segment(store, "gov", work_dir=tmp_path, capture_seconds=6)
+    assert segment is not None
+    expected = _cue(1, 133201.4, 133203, _FIXTURE_CAPTION_TEXT)
+    sample = sample_caption_decode_back(
+        channel_id="gov",
+        emitted_stream_path=segment,
+        expected_cues=[expected],
+        mode="cea-708",
+        align_transport_clock=True,
+    )
+    assert sample.status == "PASS", sample
+    wrong = sample_caption_decode_back(
+        channel_id="gov",
+        emitted_stream_path=segment,
+        expected_cues=[expected.model_copy(update={"text": "WRONG CAPTION"})],
+        mode="cea-708",
+        align_transport_clock=True,
+    )
+    assert wrong.status == "FAIL"
+
+
+@requires_ffmpeg
 def test_decode_embedded_captions_empty_for_real_stream_without_captions() -> None:
     """Same real video, no embedded captions -- the parser must report zero cues,
     not fabricate one, when nothing was actually embedded."""

@@ -277,6 +277,52 @@ class TestCaptionsRuntimeSeam:
         # per OWNER-DECISION-caption-adaptive-tier.md (2026-07-30, BINDING).
         assert runtime.model_size_or_path == "medium"
 
+    @pytest.mark.parametrize("live", (False, True))
+    def test_native_runtime_uses_operator_selected_model_over_activation_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, live: bool
+    ) -> None:
+        from civiccast.ai_models.runtime import build_caption_runtime
+        from civiccast.captions.runtime import FasterWhisperRuntime, caption_tier_required_files
+        from civiccast.native import station_runtime
+        from civiccast.native.caption_tiers import LARGE_V3_TIER_ID
+
+        model_root = tmp_path / "verified-large"
+        model_root.mkdir()
+        for name in caption_tier_required_files(LARGE_V3_TIER_ID):
+            (model_root / name).write_bytes(b"test")
+
+        resolved: dict[str, str] = {}
+
+        def resolve(_root: str, tier_id: str, *, acquisition_root: Path):
+            resolved["tier"] = tier_id
+            return model_root, {"model.bin": {"bytes": 4, "sha256": "test"}}
+
+        monkeypatch.setattr(station_runtime, "resolve_caption_model_for_tier", resolve)
+        monkeypatch.setenv("CIVICCAST_NATIVE_STATION", "1")
+        monkeypatch.setenv("CIVICCAST_NATIVE_STATION_ROOT", str(tmp_path / "station"))
+        monkeypatch.setenv("CIVICCAST_CAPTION_TIER", "floor")
+        monkeypatch.setenv("CIVICCAST_WHISPER_MODEL_PATH", str(tmp_path / "activated-medium"))
+        monkeypatch.setenv("CIVICCAST_LIVE_CAPTION_ENGINE", "whistle")
+        monkeypatch.delenv("CIVICCAST_WHISTLE_CHANNELS", raising=False)
+        if live:
+            # Reconstruct the exact child config without starting a model or
+            # process, preserving the inherited activation environment.
+            monkeypatch.setattr(
+                "civiccast.captions.whistle.WhistleRuntime",
+                lambda *, weights, library, fallback_config: FasterWhisperRuntime(
+                    **fallback_config
+                ),
+            )
+
+        service = _service(tmp_path)
+        service.select_model("captions", "whisper-large-v3-faster")
+        runtime = build_caption_runtime(service, live=live)
+
+        assert isinstance(runtime, FasterWhisperRuntime)
+        assert resolved["tier"] == LARGE_V3_TIER_ID
+        assert runtime.model_size_or_path == str(model_root.resolve())
+        assert runtime._local_files_only is True
+
     def test_the_live_caption_runtime_is_sized_for_a_box_that_is_on_air(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

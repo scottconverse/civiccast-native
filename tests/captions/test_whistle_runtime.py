@@ -2,6 +2,8 @@
 # Copyright (c) The CivicCast Authors
 
 
+import pytest
+
 from civiccast.captions.models import AudioChunk
 from civiccast.captions.whistle import WhistleRuntime
 
@@ -427,21 +429,57 @@ def test_isolated_primary_allows_three_channel_dispatch(tmp_path):
 
 
 def test_native_live_factory_selects_whistle_but_batch_stays_whisper(tmp_path, monkeypatch):
+    import hashlib
     from types import SimpleNamespace
 
     from civiccast.ai_models.runtime import build_caption_runtime
     from civiccast.captions.runtime import FasterWhisperRuntime
+    from civiccast.native import station_runtime
+    from civiccast.native.caption_tiers import FLOOR_TIER_ID, CaptionTierSpec
 
+    station_root = tmp_path / "installed-native-root"
+    model_root = station_root / "packs" / "captions-floor" / "models" / "faster-whisper-medium"
+    model_root.mkdir(parents=True)
+    fixture_bodies = {
+        "config.json": b"floor-config",
+        "model.bin": b"floor-model-bytes",
+        "tokenizer.json": b"floor-tokenizer",
+        "vocabulary.txt": b"floor-vocab",
+    }
+    fixture_files = {}
+    for name, body in fixture_bodies.items():
+        (model_root / name).write_bytes(body)
+        fixture_files[name] = (len(body), hashlib.sha256(body).hexdigest())
+    floor_registry = {
+        **station_runtime.CAPTION_TIER_REGISTRY,
+        FLOOR_TIER_ID: CaptionTierSpec(
+            tier_id=FLOOR_TIER_ID,
+            model_directory="faster-whisper-medium",
+            model_repository="Systran/faster-whisper-medium",
+            model_revision="test-revision",
+            files=fixture_files,
+            pending=False,
+        ),
+    }
+    monkeypatch.setattr(station_runtime, "CAPTION_TIER_REGISTRY", floor_registry)
     monkeypatch.setenv("CIVICCAST_NATIVE_STATION", "1")
     monkeypatch.setenv("CIVICCAST_WHISTLE_ROOT", str(tmp_path))
+    monkeypatch.setenv("CIVICCAST_NATIVE_STATION_ROOT", str(station_root))
+    monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "program-data"))
+    monkeypatch.delenv("CIVICCAST_CAPTION_TIER", raising=False)
     monkeypatch.delenv("CIVICCAST_WHISPER_MODEL_PATH", raising=False)
-    # The fallback constructor retains its already-tested packaged-model checks;
-    # exercise the selection seam without pretending dummy files are a model.
-    monkeypatch.setattr(
-        FasterWhisperRuntime,
-        "__init__",
-        lambda self, **kw: self.__dict__.update(
-            model_size_or_path="medium",
+    monkeypatch.delenv("CIVICCAST_LIVE_CAPTION_ENGINE", raising=False)
+    monkeypatch.delenv("CIVICCAST_WHISTLE_CHANNELS", raising=False)
+    # Exercise the factory seam without loading Whisper weights. The production
+    # resolver still verifies every file in this small synthetic floor pack.
+    constructor_args = []
+
+    def fake_whisper_init(self, **kwargs):
+        constructor_args.append(kwargs.copy())
+        self.__dict__.update(
+            model_size_or_path=kwargs["model_size_or_path"],
+            packaged_model_path=kwargs["packaged_model_path"],
+            packaged_model_tier=kwargs["packaged_model_tier"],
             device="cpu",
             compute_type="int8",
             cpu_threads=1,
@@ -450,11 +488,21 @@ def test_native_live_factory_selects_whistle_but_batch_stays_whisper(tmp_path, m
             language="en",
             task="transcribe",
             vad_filter=True,
-        ),
+        )
+
+    monkeypatch.setattr(
+        FasterWhisperRuntime,
+        "__init__",
+        fake_whisper_init,
     )
     service = SimpleNamespace(effective_model_tag=lambda feature: "whisper-medium")
     assert isinstance(build_caption_runtime(service, live=True), WhistleRuntime)
-    assert isinstance(build_caption_runtime(service), FasterWhisperRuntime)
+    assert constructor_args[0]["packaged_model_path"] == str(model_root.resolve())
+    assert constructor_args[0]["packaged_model_tier"] == FLOOR_TIER_ID
+    batch = build_caption_runtime(service)
+    assert isinstance(batch, FasterWhisperRuntime)
+    assert batch.packaged_model_path == str(model_root.resolve())
+    assert batch.packaged_model_tier == FLOOR_TIER_ID
     from civiccast.captions.whistle import MixedCaptionRuntime
 
     monkeypatch.setenv("CIVICCAST_WHISTLE_CHANNELS", "public")
@@ -793,8 +841,9 @@ def test_audio_send_to_blocked_child_is_deadline_bounded():
     assert released.is_set()
 
 
-def test_whistle_request_warns_at_ten_seconds_and_expires_at_thirty_without_model(
-    monkeypatch, caplog
+@pytest.mark.parametrize("engine,deadline", [("whistle", 30.0), ("whisper", 120.0)])
+def test_speech_request_warns_at_ten_seconds_and_contains_a_stalled_child_without_model(
+    monkeypatch, caplog, engine, deadline
 ):
     import queue
     import threading
@@ -806,7 +855,7 @@ def test_whistle_request_warns_at_ten_seconds_and_expires_at_thirty_without_mode
     from civiccast.captions.whistle import _SpeechProcess
 
     assert whistle_module._speech_request_timeout("whistle") == 30
-    assert whistle_module._speech_request_timeout("whisper") == 10
+    assert whistle_module._speech_request_timeout("whisper") == 120
     now = [0.0]
     monkeypatch.setattr(whistle_module, "time", SimpleNamespace(monotonic=lambda: now[0]))
 
@@ -823,6 +872,9 @@ def test_whistle_request_warns_at_ten_seconds_and_expires_at_thirty_without_mode
 
         def get(self, timeout):
             self.calls.append(timeout)
+            if engine == "whisper":
+                now[0] += 15
+                return {"id": 1, "result": []}
             if len(self.calls) == 1:
                 now[0] += timeout
                 raise queue.Empty
@@ -831,11 +883,11 @@ def test_whistle_request_warns_at_ten_seconds_and_expires_at_thirty_without_mode
 
     def bare_child(responses):
         child = object.__new__(_SpeechProcess)
-        child._engine = "whistle"
+        child._engine = engine
         child._lock = threading.Lock()
         child._closed = False
         child._sequence = 0
-        child._timeout = 30.0
+        child._timeout = deadline
         child._responses = responses
         child._process = SimpleNamespace(stdin=Input(), pid=None, poll=lambda: None)
         child._stderr_tail = bytearray()
@@ -845,9 +897,13 @@ def test_whistle_request_warns_at_ten_seconds_and_expires_at_thirty_without_mode
 
     slow = SlowThenReady()
     assert bare_child(slow).request(chunk(), None) == []
-    assert slow.calls == [10.0, 20.0]
-    assert "Whistle request is slow" in caplog.text
-    assert "phase=response elapsed_s=10.000" in caplog.text
+    if engine == "whistle":
+        assert slow.calls == [10.0, deadline - 10.0]
+        assert "Whistle request is slow" in caplog.text
+        assert "phase=response elapsed_s=10.000" in caplog.text
+    else:
+        assert slow.calls == [120.0]
+        assert now[0] == 15.0
 
     class NeverReady:
         def __init__(self):
@@ -862,7 +918,21 @@ def test_whistle_request_warns_at_ten_seconds_and_expires_at_thirty_without_mode
     never = NeverReady()
     with pytest.raises(TimeoutError, match="missed its deadline"):
         bare_child(never).request(chunk(), None)
-    assert never.calls == [10.0, 20.0]
+    assert never.calls == ([10.0, deadline - 10.0] if engine == "whistle" else [120.0])
+
+
+def test_cpu_fallback_deadline_is_configurable_and_finite(monkeypatch):
+    import pytest
+
+    from civiccast.captions.whistle import _speech_request_timeout
+
+    monkeypatch.setenv("CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS", "75")
+    assert _speech_request_timeout("whisper") == 75
+    assert _speech_request_timeout("whistle") == 30
+    for value in ("nan", "inf", "0", "601", "invalid"):
+        monkeypatch.setenv("CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS", value)
+        with pytest.raises(ValueError, match="fallback timeout"):
+            _speech_request_timeout("whisper")
 
 
 def test_failed_child_diagnostics_are_bounded_sanitized_and_pre_kill(monkeypatch, caplog):

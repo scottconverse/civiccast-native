@@ -1336,6 +1336,44 @@ def test_first_admin_setup_persists_first_station_commissioning_defaults(
     assert raw["station"]["operation_mode"] == "test"
 
 
+def test_native_first_admin_reports_service_resolved_install_database_and_media_paths(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from civiccast.native.supervisor.install_layout import resolve_install_layout
+
+    monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(tmp_path / "station-state.json"))
+    monkeypatch.setenv("CIVICCAST_NATIVE_STATION", "1")
+    monkeypatch.setenv("PROGRAMDATA", str(tmp_path / "ProgramData"))
+    upload_dir = tmp_path / "ProgramData" / "CivicCast" / "data" / "uploads"
+    monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(upload_dir))
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/setup/first-admin",
+        json={
+            "station_name": "Pinegrove School Board",
+            "admin_display_name": "Avery Admin",
+            "admin_username": "avery",
+            "admin_password": "correct horse battery staple",
+            "recovery_kit_destination": "printed and stored in the clerk safe",
+            "station_timezone": "America/Denver",
+        },
+    )
+
+    assert response.status_code == 200
+    profile = response.json()["profile"]
+    layout = resolve_install_layout(program_data_root=tmp_path / "ProgramData")
+    assert profile["runtime_paths"] == {
+        "installation_root": str(layout.install_root),
+        "database_data": str(layout.postgres_data_dir),
+        "media_uploads": str(upload_dir),
+    }
+    assert profile["storage_locations"]["media_library"] == str(
+        tmp_path / "ProgramData" / "CivicCast" / "data" / "media"
+    )
+
+
 def test_station_login_and_recovery_keep_other_sessions_signed_in(monkeypatch, tmp_path) -> None:
     """Neither password login nor recovery may sign out other live sessions.
 

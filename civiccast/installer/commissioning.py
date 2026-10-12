@@ -211,7 +211,16 @@ def run_first_run_cable_checks(
     broker factory constructing successfully.
     """
 
-    profile = box_profile or probe_station_box_profile(deployment_profile=deployment_profile)
+    if box_profile is None:
+        # Keep backup setup/proof separate from durable-database readiness.
+        from civiccast.installer.service import build_backup_status
+
+        profile = probe_station_box_profile(
+            deployment_profile=deployment_profile,
+            backup_status=build_backup_status(),
+        )
+    else:
+        profile = box_profile
     cable_tier_targeted = deployment_profile == "peg-cable"
     premium_tier_targeted = profile.qualified_engine_tier.qualifies_for == "premium-cg"
 

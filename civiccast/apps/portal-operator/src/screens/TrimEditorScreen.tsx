@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type Hls from 'hls.js'
 import {
   ApiError,
+  getStaffAssetPlaybackGrant,
   getStaffAsset,
   updateStaffAsset,
 } from '../api/client'
@@ -97,10 +99,27 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
   const [chapters, setChapters] = useState<Chapter[]>(asset.chapters ?? [])
   const [renamingIdx, setRenamingIdx] = useState<number | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
+  const [previewState, setPreviewState] = useState<'loading' | 'ready' | 'unavailable'>(
+    'loading',
+  )
+  const [previewAttempt, setPreviewAttempt] = useState(0)
+  const [previewDuration, setPreviewDuration] = useState<number | null>(null)
   const trackRef = useRef<HTMLDivElement>(null)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const hlsRef = useRef<Hls | null>(null)
   const queryClient = useQueryClient()
   useFocusTrap(dialogRef)
+
+  const previewQuery = useQuery({
+    queryKey: ['staff-asset-playback-grant', asset.asset_id],
+    queryFn: () => getStaffAssetPlaybackGrant(asset.asset_id),
+    enabled: Boolean(asset.file_path),
+    retry: false,
+  })
+  const previewUrl = previewQuery.data?.packaged_url ?? null
+  const sourceOffset = previewQuery.data?.source_offset_seconds ?? 0
 
   const dirty = useMemo(() => {
     const sameIn = (asset.trim_in_seconds ?? 0) === roundTrim(inPt)
@@ -176,10 +195,10 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
   // without a re-subscribe per state change. ``onClose`` follows the same
   // pattern so the Escape handler always invokes the latest prop without
   // re-subscribing on every parent re-render.
-  const stateRef = useRef({ pos, dur, inPt, outPt, chapters })
+  const stateRef = useRef({ pos, dur, inPt, outPt, chapters, sourceOffset })
   const onCloseRef = useRef(onClose)
   useEffect(() => {
-    stateRef.current = { pos, dur, inPt, outPt, chapters }
+    stateRef.current = { pos, dur, inPt, outPt, chapters, sourceOffset }
     onCloseRef.current = onClose
   })
 
@@ -199,8 +218,20 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
       const s = stateRef.current
       if (e.key === ' ') {
         e.preventDefault()
-        // Play/pause is a future hook — for v0.3 the editor is a scrub-only
-        // metadata editor (no media playback yet).
+        const video = videoRef.current
+        if (video) {
+          if (video.paused) {
+            const minimum = Math.max(s.inPt, s.sourceOffset)
+            const sourceTime = video.currentTime + s.sourceOffset
+            if (sourceTime < minimum || sourceTime >= s.outPt) {
+              video.currentTime = Math.max(0, minimum - s.sourceOffset)
+              setPos(minimum)
+            }
+            void video.play().catch(() => {})
+          } else {
+            video.pause()
+          }
+        }
         return
       }
       if (e.key === 'ArrowLeft') {
@@ -237,6 +268,117 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !previewUrl) {
+      setPreviewState(previewUrl ? 'loading' : 'unavailable')
+      return
+    }
+    let cancelled = false
+    let hls: Hls | null = null
+    setPreviewState('loading')
+    setPreviewDuration(null)
+    setPreviewError(null)
+
+    const onLoadedMetadata = () => {
+      const mediaEnd = Number.isFinite(video.duration) ? video.duration : 0
+      const latest = stateRef.current
+      video.currentTime = Math.max(
+        0,
+        clamp(
+          latest.pos,
+          latest.sourceOffset,
+          latest.sourceOffset + mediaEnd,
+        ) - latest.sourceOffset,
+      )
+      setPreviewDuration(Number.isFinite(video.duration) ? video.duration : null)
+      setPreviewState('ready')
+    }
+    const onNativeError = () => {
+      setPreviewState('unavailable')
+      setPreviewError('The packaged preview could not be loaded. Repackage the asset or retry.')
+    }
+    video.addEventListener('loadedmetadata', onLoadedMetadata)
+    video.addEventListener('error', onNativeError)
+
+    void import('hls.js')
+      .then(({ default: HlsConstructor }) => {
+        if (cancelled) return
+        if (HlsConstructor.isSupported()) {
+          hls = new HlsConstructor({ enableWorker: true, lowLatencyMode: false })
+          hlsRef.current = hls
+          hls.on(HlsConstructor.Events.MANIFEST_PARSED, () => {
+            setPreviewState('ready')
+            if (video.readyState >= 1) onLoadedMetadata()
+          })
+          hls.on(HlsConstructor.Events.ERROR, (_event, data) => {
+            if (!data.fatal) return
+            setPreviewState('unavailable')
+            setPreviewError('The packaged preview could not be played. Repackage the asset or retry.')
+          })
+          hls.attachMedia(video)
+          hls.loadSource(previewUrl)
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = previewUrl
+        } else {
+          setPreviewState('unavailable')
+          setPreviewError('This browser does not support HLS video playback.')
+        }
+      })
+      .catch(() => {
+        if (cancelled) return
+        setPreviewState('unavailable')
+        setPreviewError('The HLS playback component could not be loaded. Refresh the page and retry.')
+      })
+
+    return () => {
+      cancelled = true
+      video.removeEventListener('loadedmetadata', onLoadedMetadata)
+      video.removeEventListener('error', onNativeError)
+      hls?.destroy()
+      if (hlsRef.current === hls) hlsRef.current = null
+      if (video.src === new URL(previewUrl, window.location.href).href) {
+        video.removeAttribute('src')
+        video.load()
+      }
+    }
+  }, [previewUrl, sourceOffset, previewAttempt])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || video.readyState < 1) return
+    const mediaEnd = Number.isFinite(video.duration) ? video.duration : outPt
+    const target = Math.max(
+      0,
+      clamp(pos, sourceOffset, sourceOffset + mediaEnd) - sourceOffset,
+    )
+    if (Math.abs(video.currentTime - target) > 0.15) video.currentTime = target
+  }, [pos, outPt, sourceOffset, previewUrl, previewState])
+
+  const handlePreviewTime = () => {
+    const video = videoRef.current
+    if (!video) return
+    const sourceTime = video.currentTime + sourceOffset
+    if (!video.paused && sourceTime >= outPt) {
+      video.pause()
+      video.currentTime = Math.max(0, outPt - sourceOffset)
+      setPos(roundTrim(outPt))
+      return
+    }
+    const mediaEnd = Number.isFinite(video.duration) ? video.duration : dur
+    setPos(roundTrim(clamp(sourceTime, sourceOffset, sourceOffset + mediaEnd)))
+  }
+
+  const packageEnd =
+    previewDuration !== null && Number.isFinite(previewDuration)
+      ? sourceOffset + previewDuration
+      : null
+  const selectedRangePackaged =
+    previewUrl !== null &&
+    packageEnd !== null &&
+    inPt >= sourceOffset - 0.05 &&
+    outPt <= packageEnd + 0.05
 
   const pct = (t: number) => `${(clamp(t, 0, dur) / dur) * 100}%`
 
@@ -361,33 +503,95 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
             aria-label="Preview"
             className="flex flex-col gap-3"
           >
-            <div
-              className="flex aspect-video items-center justify-center rounded-md"
-              style={{
-                background: 'var(--cc-ink)',
-                color: 'var(--cc-ink-inv)',
-              }}
-            >
-              <div className="px-4 text-center">
-                <div className="cc-mono text-[10px] uppercase tracking-wider" style={{ opacity: 0.6 }}>
-                  Preview
-                </div>
-                <div className="mt-1 text-sm font-semibold">
-                  Video preview is not available in this editor
-                </div>
-                <div
-                  className="cc-mono cc-tabular mt-3 text-2xl font-semibold"
-                >
-                  {fmtTCShort(pos)}
-                </div>
-                <div
-                  className="cc-mono mt-1 text-[11px]"
-                  style={{ opacity: 0.7 }}
-                >
-                  asset duration {fmtTCShort(dur)}
+            {previewUrl && !previewError ? (
+              <video
+                ref={videoRef}
+                controls
+                preload="metadata"
+                aria-label={`Packaged preview for ${asset.title}`}
+                onLoadedMetadata={handlePreviewTime}
+                onTimeUpdate={handlePreviewTime}
+                onPlay={() => {
+                  const video = videoRef.current
+                  if (!video) return
+                  const mediaEnd = Number.isFinite(video.duration) ? video.duration : 0
+                  if (inPt < sourceOffset - 0.05 || outPt > sourceOffset + mediaEnd + 0.05) {
+                    video.pause()
+                    return
+                  }
+                  const sourceTime = video.currentTime + sourceOffset
+                  if (sourceTime < inPt || sourceTime >= outPt) {
+                    video.currentTime = Math.max(0, inPt - sourceOffset)
+                    setPos(roundTrim(inPt))
+                  }
+                }}
+                onError={() =>
+                  setPreviewError(
+                    'The packaged preview could not be loaded. Repackage the asset or retry.',
+                  )
+                }
+                className="aspect-video w-full rounded-md"
+                style={{ background: 'var(--cc-ink)' }}
+              />
+            ) : (
+              <div
+                className="flex aspect-video items-center justify-center rounded-md p-4 text-center"
+                style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}
+              >
+                <div>
+                  <div className="cc-mono text-[10px] uppercase tracking-wider" style={{ opacity: 0.6 }}>
+                    Packaged preview
+                  </div>
+                  <div className="mt-2 text-sm font-semibold">
+                    {previewQuery.isLoading || (previewUrl && previewState === 'loading')
+                      ? 'Preparing packaged preview…'
+                      : previewQuery.isError || previewError
+                        ? 'Preview is unavailable'
+                        : previewQuery.data && !previewUrl
+                          ? 'This asset needs an HLS package before its trim can be previewed.'
+                          : 'This asset has no source file to preview.'}
+                  </div>
+                  {(previewQuery.isError || previewError) && (
+                    <>
+                      <div className="mt-1 text-xs" style={{ opacity: 0.8 }}>
+                        {previewError ??
+                          'Source preview needs an active staff account with source-view access. Sign in again or ask a station administrator.'}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          void previewQuery.refetch().then((result) => {
+                            setPreviewError(
+                              result.isError
+                                ? 'The secure preview could not be refreshed. Sign in again or ask a station administrator.'
+                                : null,
+                            )
+                            if (!result.isError && result.data?.packaged_url) {
+                              setPreviewAttempt((attempt) => attempt + 1)
+                            }
+                          })
+                        }}
+                        className="mt-3 rounded-md px-3 py-1.5 text-xs font-medium"
+                        style={{ background: 'var(--cc-surface)', color: 'var(--cc-ink)' }}
+                      >
+                        Retry preview
+                      </button>
+                    </>
+                  )}
+                  <div className="cc-mono cc-tabular mt-3 text-xl font-semibold">
+                    {fmtTCShort(pos)} / {fmtTCShort(dur)}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
+
+            {previewUrl && packageEnd !== null && !selectedRangePackaged && (
+              <p role="status" className="text-xs" style={{ color: 'var(--cc-warn-text)' }}>
+                This package contains source time {fmtTCShort(sourceOffset)}–
+                {fmtTCShort(packageEnd)}. The selected range extends beyond it; save the trim,
+                wait for packaging to finish, then reopen the editor to preview the full range.
+              </p>
+            )}
 
             <div
               className="flex items-center gap-2 rounded-md p-3 text-[11px]"
@@ -397,8 +601,8 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
               }}
             >
               <strong style={{ color: 'var(--cc-ink)' }}>Non-destructive.</strong>
-              The original file is never modified. This editor saves trim and
-              chapter metadata but does not package a preview. The live
+              The original file is never modified. Preview plays only the selected range;
+              saving trim and chapter metadata does not alter the source. The live
               finalization worker re-packages changed trims; other assets use
               their normal packaging flow.
             </div>
@@ -736,6 +940,7 @@ function TrimEditor({ asset, onClose, onSaved }: EditorProps) {
             <span
               className="cc-mono cc-tabular px-3 text-sm font-semibold"
               style={{ color: 'var(--cc-ink)' }}
+              aria-label={`Preview time ${fmtTC(pos)}`}
             >
               {fmtTC(pos)}
             </span>

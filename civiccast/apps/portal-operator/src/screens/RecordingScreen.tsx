@@ -199,7 +199,18 @@ const INPUT_STYLE: CSSProperties = {
 }
 
 function apiMessage(err: unknown, fallback: string): string {
-  if (err instanceof ApiError) return err.detail || err.message || fallback
+  if (err instanceof ApiError) {
+    const detail = err.detail || err.message || fallback
+    const normalized = detail.toLowerCase()
+    if (
+      err.status === 422 &&
+      normalized.includes('duration') &&
+      (normalized.includes('60') || normalized.includes('greater than or equal'))
+    ) {
+      return 'Recordings must be at least 00:01:00 (60 seconds).'
+    }
+    return detail
+  }
   if (err instanceof Error) return err.message || fallback
   return fallback
 }
@@ -842,11 +853,14 @@ function validateForm(
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(state.weekly_time.trim()))
       errs.recurrence = errs.recurrence ?? 'Time must be HH:MM (24h UTC).'
   }
-  if (parseDurationHMS(state.duration_text) == null) {
+  const durationSeconds = parseDurationHMS(state.duration_text)
+  if (durationSeconds == null) {
     // UX-9: spell out the rule the operator just hit. The parser requires
     // two-digit minute / second fields so "1:5:0" silently fails — name it.
     errs.duration =
       'Duration must be HH:MM:SS — minutes and seconds need two digits (e.g. 01:05:00 not 1:5:0).'
+  } else if (durationSeconds < 60) {
+    errs.duration = 'Recordings must be at least 00:01:00 (60 seconds).'
   }
   if (!state.encoder_profile.trim()) errs.encoder_profile = 'Quality preset is required.'
   return errs
@@ -1495,7 +1509,7 @@ function ScheduleForm({
         )}
 
         <label htmlFor={idDuration} className="grid gap-1 text-xs">
-          <span style={{ color: 'var(--cc-ink-3)' }}>Duration (HH:MM:SS)</span>
+          <span style={{ color: 'var(--cc-ink-3)' }}>Duration (HH:MM:SS), minimum 00:01:00</span>
           <input
             ref={durationRef}
             id={idDuration}
@@ -1815,7 +1829,9 @@ function JobsSection({
                 <th className="py-1 pr-3 font-semibold">Planned start</th>
                 <th className="py-1 pr-3 font-semibold">Source</th>
                 <th className="py-1 pr-3 font-semibold">State</th>
-                <th className="py-1 pr-3 font-semibold">Duration</th>
+                <th className="py-1 pr-3 font-semibold" title="Wall-clock capture time; media duration may be shorter after source interruptions.">
+                  Elapsed
+                </th>
                 <th className="py-1 pr-3 font-semibold">Bytes</th>
                 <th className="py-1 pr-3 font-semibold">Asset</th>
                 <th className="py-1 pr-3 font-semibold">Failure</th>

@@ -216,6 +216,24 @@ def _runtime_status(tap_root: Path, channel_id: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def test_capacity_status_distinguishes_transient_and_sustained_backlog(tmp_path):
+    tap_root = tmp_path / "tap"
+    clock = _FakeClock()
+    runtime = _WhistleBacklogRuntime()
+    worker = _worker(tap_root, runtime, InMemoryCaptionReviewStore(), monotonic=clock)
+    for index in range(3):
+        _write_wav(tap_root / "government" / f"chunk-{index:06d}.wav")
+    worker._publish_status("government", state="within-capacity", backlog_segments=3)
+    assert _runtime_status(tap_root, "government")["state"] == "delayed"
+    for _ in range(_OVERLOAD_PERSISTENCE_WINDOW):
+        worker._note_backlog_depth("government", 3)
+    clock.advance(211)
+    worker._publish_status("government", state="within-capacity", backlog_segments=3)
+    assert _runtime_status(tap_root, "government")["state"] == "overloaded"
+    worker._publish_status("government", state="within-capacity", backlog_segments=0)
+    assert _runtime_status(tap_root, "government")["state"] == "within-capacity"
+
+
 def test_idle_scan_publishes_processing_heartbeat_without_audio(tmp_path: Path) -> None:
     """An empty audio scan is observable without treating silence as a fault."""
     tap_root = tmp_path / "tap"

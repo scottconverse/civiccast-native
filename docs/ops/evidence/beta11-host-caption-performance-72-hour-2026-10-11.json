@@ -1,0 +1,105 @@
+{
+  "title": "Beta 11 host caption station: 72-hour measurement",
+  "window_start_mdt": "2026-10-08T14:14:47",
+  "window_end_mdt": "2026-10-11T14:14:47",
+  "nominal_channel_seconds": 777600,
+  "exact_72h": {
+    "discard": {
+      "public": {
+        "batches": 19,
+        "seconds": 575
+      },
+      "government": {
+        "batches": 17,
+        "seconds": 555
+      },
+      "education": {
+        "batches": 17,
+        "seconds": 565
+      },
+      "total_batches": 53,
+      "total_seconds": 1695
+    },
+    "retained_channel_seconds": 775905,
+    "retained_coverage_percent": 99.782021605,
+    "scheduled_checkpoints": 216,
+    "healthy_checkpoints": 216,
+    "excluded_rows": 0,
+    "nonzero_active_vtt_all_channels": 216,
+    "caption_verdicts": {
+      "ok": 209,
+      "one_channel_quiet": 7
+    },
+    "live_av_rows": {
+      "numeric_offset": 646,
+      "offset_na_with_audio_video_and_ok": 2
+    },
+    "quiet_av_offset_rows": [
+      "20261010-144707 education",
+      "20261011-134702 public"
+    ],
+    "primary_whistle_failures": 3,
+    "whisper_failed_attempts": {
+      "total": 86,
+      "bad_allocation": 60,
+      "child_deadline_timeout": 26,
+      "public": 24,
+      "government": 26,
+      "education": 36
+    },
+    "channel_caption_scan_failures": 101,
+    "whole_scan_errors": 8,
+    "caption_review_items": 0,
+    "offline_caption_jobs": 0,
+    "verifier_exit_value_1_count": 216,
+    "aggregate_loudness_verdict": "UNVERIFIED; observed 8-second sample below 120-second minimum"
+  },
+  "latest_snapshot": {
+    "timestamp_mdt": "2026-10-11T15:27:02.955",
+    "elapsed_after_start": "73h12m15.661s",
+    "supervisor_pid": 6208,
+    "application_pid": 5388,
+    "service_healthy": true,
+    "host_ram_free_gib": 13.83,
+    "c_free_gib": 409.86,
+    "broad_process_filter_working_set_gib": 3.92,
+    "broad_process_filter_private_bytes_gib": 7.32,
+    "cumulative_discard": {
+      "public": {
+        "batches": 20,
+        "seconds": 590
+      },
+      "government": {
+        "batches": 17,
+        "seconds": 555
+      },
+      "education": {
+        "batches": 18,
+        "seconds": 575
+      },
+      "total_batches": 55,
+      "total_seconds": 1720
+    }
+  },
+  "nearest_pre_cutoff_resource_checkpoint": {
+    "timestamp_mdt": "2026-10-11T14:07",
+    "minutes_before_cutoff": 7.77,
+    "supervisor_pid": 6208,
+    "application_pid": 5388,
+    "host_ram_free_gib": 4.94,
+    "c_free_gib": 342.16,
+    "broad_process_filter_working_set_gib": 4.52,
+    "broad_process_filter_private_bytes_gib": 7.03,
+    "caveat": "Host-wide filter included unrelated concurrent 9 GiB Sandbox upgrade-verification guest; not attributable station memory."
+  },
+  "sources": {
+    "existing_48h_report": "C:\\Dev\\Claude\\civiccast-beta11-whistle\\docs\\ops\\beta11-host-caption-performance-48-hour-2026-10-10.md",
+    "existing_status_markdown": "C:\\Users\\scott\\Documents\\Codex\\2026-10-04\\rea\\outputs\\HOST-STATION-STATUS-2026-10-11-0946.md",
+    "existing_status_json": "C:\\Users\\scott\\Documents\\Codex\\2026-10-04\\rea\\outputs\\HOST-STATION-STATUS-2026-10-11-0946.json",
+    "observer_root": "C:\\Users\\scott\\Documents\\Codex\\2026-10-04\\rea\\work\\station-observer",
+    "nearest_pre_cutoff_checkpoint": "20261011-140659",
+    "latest_checkpoint": "20261011-152701"
+  },
+  "repository_modified": false,
+  "station_modified": false
+}

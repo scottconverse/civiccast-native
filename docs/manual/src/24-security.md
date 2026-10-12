@@ -1,8 +1,8 @@
 # Security and privacy {#ch-security}
 
-This chapter is for the IT person responsible for who can use CivicCast, what the station exposes to the network, what it records about residents, and how to operate its current Beta 12 security controls. It covers sign-in and roles, staff access tokens, the first-admin and recovery model, network exposure, reverse proxies and TLS, the public and staff parts of the web API, subscriber and viewer privacy, data retention, signing and checksums, and security limitations with practical precautions.
+This chapter is for the IT person responsible for who can use CivicCast, what the station exposes to the network, what it records about residents, and how to operate its Beta 14 security controls. It covers sign-in and roles, staff access tokens, the first-admin and recovery model, network exposure, reverse proxies and TLS, the public and staff parts of the web API, subscriber and viewer privacy, data retention, signing and checksums, and security limitations with practical precautions.
 
-Beta 12 was published on 2026-10-10 as a GitHub pre-release, not as a production release. The [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) lists package observations and their limits. This manual does not claim the station is hardened for the open internet.
+The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records this package's installation and operating checks. Complete first setup on the station computer and follow the network-exposure guidance below before making its resident portal available remotely.
 
 ## Before you start
 
@@ -227,7 +227,7 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 | Data | Kept | Source |
 | --- | --- | --- |
-| Live-caption working audio (native beta.11 runtime) | Processed chunks are deleted; at most 12 queued completed segments per channel, plus in-flight inputs and the segment being written. Native live operation does not run the optional age-based retention sweep. | `captions/tap_worker.py`, runtime wiring |
+| Live-caption working audio | Processed chunks are deleted. Whistle retains at most 42 waiting five-second segments per channel (210 seconds), plus in-flight inputs and the segment being written; runtimes without that processing grace use a 12-segment ceiling. Native live operation does not run the optional age-based retention sweep. | `captions/tap_worker.py`, runtime wiring |
 | Live-caption text and delivery tracking (native beta.11 runtime) | Rolling 300 seconds and at most 512 cues; no permanent per-cue review rows or evidence WAVs | `captions/stabilize.py`, `egress/caption_feed.py` |
 | Recorded-caption review and original recordings | Existing recording/review workflow remains unchanged; live working limits do not delete archived tracks or recordings | `captions/vod.py`, recording workflow |
 | Historical beta.10 caption-retention audit | The beta.10 audit found that `caption-retention-audit.jsonl` was not rotated. Native beta.11 live captioning does not enable the optional age-based retention sweep. | `captions/retention.py`, `captions/tap_worker.py` |
@@ -237,7 +237,7 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off. The native beta.11 runtime separates transient live caption work from recorded-caption review. It does not make the live worker or broadcast readiness depend on archive-wide review/evidence retention discovery. No live review/evidence archive is created by ordinary live captioning; this does not change recorded captions or original recordings.
 
-> **Historical finding (published Beta 10):** Audit findings B-003, B-004, B-005 and B-009 recorded unbounded live-caption evidence growth. The current native live path does not run that archive sweep, writes no per-cue evidence, deletes processed chunks and bounds the queued audio and rolling caption history. These are source behaviors, not a long-duration Beta 12 package observation. See the Beta 12 verification record for the exact package scope.
+> **Historical finding (published Beta 10):** Audit findings B-003, B-004, B-005 and B-009 recorded unbounded live-caption evidence growth. The current native live path does not run that archive sweep, writes no per-cue evidence, deletes processed chunks and bounds the queued audio and rolling caption history. These are source behaviors, not a long-duration observation of the current package. See the Beta 14 verification record for the exact package scope.
 
 Where residents' own data may be requested for deletion, we found no console screen or command that deletes a subscriber or a viewer's records. Ask the coder to confirm before you promise a deletion process.
 
@@ -250,7 +250,7 @@ Get-AuthenticodeSignature .\CivicCast-Setup.exe | Format-List Status, SignerCert
 Get-FileHash .\CivicCast-Setup.exe -Algorithm SHA256
 ```
 
-The status should read `Valid`. Compare the hash with the line for that file in `SHA256SUMS.txt` on the Beta 12 release page. The current verification record states the published installer carries a valid signature and the public asset hashes match `SHA256SUMS.txt`. Replace the file name with the real one.
+The status should read `Valid`. Compare the hash with the line for that file in `SHA256SUMS.txt` on the matching release page. Check that the installer signature is valid and its hash matches the published `SHA256SUMS.txt`. Replace the file name with the real one.
 
 - **Sidecar.** The release also has a `setup.exe.sidecar.json` file with checksum metadata. It is plain metadata and is not separately signed (`attestation` is `null`). `civiccast installer verify-package --artifact <file> --sidecar <file> [--json]` checks a file against it.
 - **Packs.** The large components (`.ccpack` files) carry ed25519 signatures that the installer verifies. The installer also checks a SHA-256 for each file, rejects names containing `..` and rejects reparse points (Windows links). The pack index is pinned to the product version, so an older pack cannot be offered to a newer product.

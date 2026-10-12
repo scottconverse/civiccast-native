@@ -32,7 +32,7 @@ const RESIDENT_PORTAL_URL: &str = "http://127.0.0.1:8000/";
 const SERVICE_URL: &str = "http://127.0.0.1:8000";
 const SERVICE_HEALTH_ADDR: &str = "127.0.0.1:8000";
 const RUNTIME_HOST_MUTEX_ADDR: &str = "127.0.0.1:38474";
-const CIVICCAST_VERSION: &str = "1.0.0-beta.13";
+const CIVICCAST_VERSION: &str = "1.0.0-beta.14";
 const INSTALLER_SHUTDOWN_MARKER: &str = "shutdown-request";
 
 
@@ -2250,6 +2250,37 @@ try {{
     }
 
     #[test]
+    fn acquisition_selection_keeps_required_ids_and_omits_unselected_large() {
+        let selected = selected_production_component_ids(&[
+            "app_runtime".to_string(),
+            "server_binaries".to_string(),
+            "captions_medium".to_string(),
+            "local_ai_model".to_string(),
+        ])
+        .expect("deliverable selections are accepted");
+        assert_eq!(
+            selected,
+            ["app_runtime", "server_binaries", "captions_medium", "local_ai_model"]
+                .map(str::to_string)
+        );
+
+        let selected_with_large = selected_production_component_ids(&[
+            "app_runtime".to_string(),
+            "captions_large".to_string(),
+        ])
+        .expect("Large is a deliverable optional component");
+        assert!(selected_with_large.contains(&"captions_large".to_string()));
+        assert!(selected_with_large.contains(&"captions_medium".to_string()));
+        assert!(!selected.contains(&"captions_large".to_string()));
+    }
+
+    #[test]
+    fn acquisition_selection_rejects_non_deliverable_or_unknown_ids() {
+        assert!(selected_production_component_ids(&["media_tools".to_string()]).is_err());
+        assert!(selected_production_component_ids(&["unexpected".to_string()]).is_err());
+    }
+
+    #[test]
     fn component_bytes_total_hint_sums_pinned_items_but_is_none_if_any_item_is_unverified() {
         let all_pinned = acquisition_catalog::CatalogComponent {
             id: "test-only-hint-all-pinned".to_string(),
@@ -2538,7 +2569,10 @@ try {{
 
     #[test]
     fn mark_production_catalog_ids_errored_marks_exactly_the_production_ids() {
-        mark_production_catalog_ids_errored("no embedded pack signing key in this test build");
+        mark_production_catalog_ids_errored(
+            &acquisition_catalog::PRODUCTION_CATALOG_IDS.map(str::to_string),
+            "no embedded pack signing key in this test build",
+        );
         let snapshot = acquisition_state::snapshot_json().expect("store has entries");
         for id in acquisition_catalog::PRODUCTION_CATALOG_IDS {
             assert!(
@@ -3301,38 +3335,21 @@ fn component_locally_satisfied(component: &acquisition_catalog::CatalogComponent
             .all(catalog_item_locally_satisfied)
 }
 
-/// Field failure, candidate #16 (4eca729): the production catalog is a
-/// FIXED list (`acquisition_catalog::PRODUCTION_CATALOG_IDS`) run by a
-/// strictly sequential, single-threaded driver
-/// (`run_acquisition_components`) in that exact order --
-/// `app_runtime, server_binaries, captions_medium, captions_large,
-/// cuda_runtime, local_ai_model`. Two of the entries ahead of
-/// `local_ai_model` (`captions_large`, `cuda_runtime`) are OPTIONAL,
-/// large, and NOT guaranteed to be staged by the offline USB kit -- and
-/// the backend has no hardware- or selection-based gating on them at all
-/// (`start_acquisition` takes no arguments; every id in
-/// `PRODUCTION_CATALOG_IDS` always runs). On a station with poor or no
-/// internet, whichever of those isn't staged offline can sit downloading
-/// for hours (the download engine's own timeout is
-/// `component_acquisition.rs`'s `6 * 60 * 60` seconds) before the driver
-/// ever reaches `local_ai_model` -- even on a machine where station
-/// activation's `compose_ollama_model_store` already installed that exact
-/// model and `local_ai_model`'s own offline-first check
-/// (`acquisition_catalog::local_ai_model_items`'s `staged_at` candidates)
-/// would resolve it in milliseconds. The GUI showed "Local AI model" stuck
-/// on "Waiting" (`AcquisitionComponentState::Pending`) for the whole time,
-/// even though the model was already usable.
+/// Field failure, candidate #16 (4eca729): the fixed production catalog
+/// contains optional, large components that may not be staged by the
+/// offline kit. The UI used to pass no selection, so they always ran before
+/// `local_ai_model`; on a poor connection an unselected component could wait
+/// for hours before the already-staged AI model was reported.
 ///
 /// This pass runs the exact same no-network local checks
 /// (`catalog_item_locally_satisfied`) the sequential driver itself would
-/// use once it reaches each component, over EVERY component up front, and
-/// persists `found_locally` immediately for anything that already
-/// resolves -- so the GUI reflects real on-disk state within milliseconds
-/// of the driver starting, decoupled from whatever an unrelated, unstaged,
-/// optional component is doing on a slow connection. It does not skip or
-/// weaken any later verification: the sequential loop below still visits
-/// every component in the same order and performs its own real
-/// (network-capable) run when it gets there, which re-confirms the same
+/// use once it reaches each selected component, over the selected list up
+/// front, and persists `found_locally` immediately for anything that already
+/// resolves -- so the GUI reflects real on-disk state within milliseconds of
+/// the driver starting. It does not skip or weaken later verification: the
+/// sequential loop below still visits every selected component in production
+/// catalog order and performs its own real (network-capable) run when it gets
+/// there, which re-confirms the same
 /// local match at negligible cost for anything already marked here. No
 /// hash or signature check is bypassed by this pass -- it only moves an
 /// already-passing check's write earlier.
@@ -3640,21 +3657,21 @@ fn acquisition_download_root() -> PathBuf {
     acquisition_download_root_from(&program_data)
 }
 
-/// Marks every id in [`acquisition_catalog::PRODUCTION_CATALOG_IDS`] as a
-/// typed, loud error with `reason` as the detail -- used when the embedded
+/// Marks each selected production id as a typed, loud error with `reason`
+/// as the detail -- used when the embedded
 /// pack trust cannot be established at all (see [`run_production_acquisition`]).
 /// Reuses [`component_acquisition::AcquisitionError::NetworkFailed`] /
 /// [`classify_acquisition_error`] rather than inventing a sixth error kind
 /// the frontend's five-variant contract (`types.ts`'s `AcquisitionErrorKind`)
 /// has no slot for.
-fn mark_production_catalog_ids_errored(reason: &str) {
+fn mark_production_catalog_ids_errored(ids: &[String], reason: &str) {
     let (kind, detail) = classify_acquisition_error(&component_acquisition::AcquisitionError::NetworkFailed(
         reason.to_string(),
     ))
     .expect("a NetworkFailed is always a classified failure, never a cancel");
-    for id in acquisition_catalog::PRODUCTION_CATALOG_IDS {
+    for id in ids {
         acquisition_state::upsert(acquisition_state::AcquisitionComponentProgress {
-            id: id.to_string(),
+            id: id.clone(),
             state: acquisition_state::AcquisitionComponentState::Error,
             bytes_done: 0,
             bytes_total: None,
@@ -3679,7 +3696,30 @@ fn mark_production_catalog_ids_errored(reason: &str) {
 /// fails loud into every affected component's own error state instead of
 /// leaving the GUI stuck on "Waiting" forever, which is the exact defect
 /// this whole module exists to close.
-fn run_production_acquisition() {
+const REQUIRED_ACQUISITION_COMPONENT_IDS: [&str; 4] = [
+    "app_runtime",
+    "server_binaries",
+    "captions_medium",
+    "local_ai_model",
+];
+
+fn selected_production_component_ids(requested: &[String]) -> Result<Vec<String>, String> {
+    for id in requested {
+        if !acquisition_catalog::PRODUCTION_CATALOG_IDS.contains(&id.as_str()) {
+            return Err(format!("Unknown or unavailable acquisition component: {id}"));
+        }
+    }
+    Ok(acquisition_catalog::PRODUCTION_CATALOG_IDS
+        .iter()
+        .filter(|id| {
+            REQUIRED_ACQUISITION_COMPONENT_IDS.contains(id)
+                || requested.iter().any(|requested| requested.as_str() == **id)
+        })
+        .map(|id| (*id).to_string())
+        .collect())
+}
+
+fn run_production_acquisition(component_ids: Vec<String>) {
     let installer_dir = acquisition_installer_directory();
     let download_root = acquisition_download_root();
     match native_packs::embedded_pack_trust() {
@@ -3690,9 +3730,13 @@ fn run_production_acquisition() {
                 &trust,
                 CIVICCAST_VERSION,
             );
-            run_acquisition_components(&catalog);
+            let selected = catalog
+                .into_iter()
+                .filter(|component| component_ids.contains(&component.id))
+                .collect::<Vec<_>>();
+            run_acquisition_components(&selected);
         }
-        Err(reason) => mark_production_catalog_ids_errored(&reason),
+        Err(reason) => mark_production_catalog_ids_errored(&component_ids, &reason),
     }
 }
 
@@ -3738,11 +3782,12 @@ fn try_start_acquisition_once(started: &std::sync::atomic::AtomicBool) -> bool {
 }
 
 #[tauri::command(rename_all = "camelCase")]
-fn start_acquisition() -> Result<String, String> {
+fn start_acquisition(component_ids: Vec<String>) -> Result<String, String> {
+    let component_ids = selected_production_component_ids(&component_ids)?;
     if !try_start_acquisition_once(&ACQUISITION_DRIVER_STARTED) {
         return Ok("CivicCast is already downloading its components.".to_string());
     }
-    thread::spawn(run_production_acquisition);
+    thread::spawn(move || run_production_acquisition(component_ids));
     Ok("CivicCast started downloading its components.".to_string())
 }
 

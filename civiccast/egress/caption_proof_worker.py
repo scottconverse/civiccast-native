@@ -19,6 +19,7 @@ caption source). Follows the ``ThreadSupervisor`` ``run_forever``/``run_once`` s
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import subprocess
 import threading
@@ -32,7 +33,6 @@ from urllib.parse import urlsplit
 from sqlalchemy.orm import Session
 
 from civiccast.captions.models import CaptionCue
-from civiccast.egress.caption_embed import load_caption_cues_from_timed_text
 from civiccast.egress.caption_proof import (
     DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
     CaptionMode,
@@ -97,6 +97,7 @@ class CaptionProofWorker:
         clock: Clock = lambda: datetime.now(UTC),
         is_enabled: Callable[[], bool] | None = None,
         ffmpeg_timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
+        align_transport_clock: bool = False,
     ) -> None:
         self._store = store
         self._on_air_channels = on_air_channels
@@ -107,6 +108,7 @@ class CaptionProofWorker:
         self._clock = clock
         self._is_enabled = is_enabled or (lambda: True)
         self._ffmpeg_timeout_seconds = ffmpeg_timeout_seconds
+        self._align_transport_clock = align_transport_clock
         self._disabled_announced = False
 
     def run_forever(
@@ -158,6 +160,7 @@ class CaptionProofWorker:
                 runner=self._runner,
                 clock=self._clock,
                 timeout_seconds=self._ffmpeg_timeout_seconds,
+                align_transport_clock=self._align_transport_clock,
             )
             self._store.append_caption_proof_sample(sample)
             sampled.append(channel_id)
@@ -226,7 +229,13 @@ def capture_emitted_segment(
         args = ["-y", "-hide_banner", "-nostats", "-sseof", f"-{seconds}", "-i", uri]
     else:
         args = ["-y", "-hide_banner", "-nostats", "-i", uri]
-    args += ["-t", seconds, "-c", "copy", "-f", "mpegts", str(out)]
+    # Preserve the emitted transport clock, including wrap, rather than
+    # replacing the capture's epoch with ffmpeg's default near-zero clock.
+    args.insert(0, "-copyts")
+    # Input duration is relative to input start. Output -t with -copyts would
+    # stop immediately when a days-old PTS already exceeds six seconds.
+    args[args.index("-i") : args.index("-i")] = ["-t", seconds]
+    args += ["-c", "copy", "-mpegts_copyts", "1", "-f", "mpegts", str(out)]
     with contextlib.suppress(OSError):
         # Never let a failed/partial proof capture be mistaken for the prior
         # successful segment at this fixed path.
@@ -265,13 +274,14 @@ def build_caption_proof_worker(
     """Wire the production caption proof worker (Postgres store + live providers).
 
     ``on_air_channels`` reads channel state; ``capture_segment`` taps the emitted
-    stream (live edge); ``expected_cues_provider`` loads the channel's embedded cues
-    from its caption sidecar (``<work_dir>/<channel>/captions/active.vtt`` by default,
-    overridable via ``caption_sidecar_for``). Absent sidecar → no expected cues → the
-    sample fails closed (caption_status stays not-verified). ``is_enabled`` is the
+    stream (live edge); ``expected_cues_provider`` loads accepted caption-page
+    delivery times from ``<work_dir>/<channel>/captions/delivered.json``. Source
+    sidecars retain audio times and cannot substitute for these transport times.
+    ``caption_sidecar_for`` remains a compatibility argument; production proof
+    always uses the worker delivery receipt. Missing receipt or capture clock
+    fails closed (caption_status stays not-verified). ``is_enabled`` is the
     operator's live-captions switch, re-read every scan (``civiccast.app`` passes
-    ``resolve_live_captions_enabled``). The capture + the sidecar's production by the
-    captions pipeline are WSL/LPM-validated."""
+    ``resolve_live_captions_enabled``)."""
     from civiccast.egress.automation import default_egress_work_dir
     from civiccast.egress.store import PostgresEgressStore
 
@@ -297,14 +307,26 @@ def build_caption_proof_worker(
         )
 
     def _expected(channel_id: str) -> list[CaptionCue]:
-        sidecar = (
-            caption_sidecar_for(channel_id)
-            if caption_sidecar_for is not None
-            else resolved_work_dir / channel_id / "captions" / "active.vtt"
-        )
-        if sidecar.exists():
-            return load_caption_cues_from_timed_text(sidecar, source_id=channel_id)
-        return []
+        # Source-audio sidecars cannot predict the live appsrc's re-timing.
+        # Only pages actually accepted by that worker carry expected TS PTS.
+        receipt = resolved_work_dir / channel_id / "captions" / "delivered.json"
+        try:
+            pages = json.loads(receipt.read_text(encoding="utf-8"))
+            if not isinstance(pages, list) or len(pages) > 512:
+                return []
+            return [
+                CaptionCue(
+                    cue_id=f"{channel_id}-delivery-{index}",
+                    start_seconds=page["start_seconds"],
+                    end_seconds=page["end_seconds"],
+                    text=page["text"],
+                    confidence=1.0,
+                    low_confidence=False,
+                )
+                for index, page in enumerate(pages)
+            ]
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
 
     return CaptionProofWorker(
         store=store,
@@ -315,4 +337,5 @@ def build_caption_proof_worker(
         runner=runner,
         is_enabled=is_enabled,
         ffmpeg_timeout_seconds=ffmpeg_timeout_seconds,
+        align_transport_clock=True,
     )

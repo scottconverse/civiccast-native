@@ -739,6 +739,33 @@ def _resolve_caption_tier(
     return tier_id, tier_event, model_root, model_hash_receipt
 
 
+def resolve_caption_model_for_tier(
+    root: str | Path,
+    tier_id: str,
+    *,
+    acquisition_root: str | Path | None = None,
+) -> tuple[Path, dict[str, dict[str, int | str]]]:
+    """Resolve and verify the exact staged caption tier requested by config.
+
+    Activation's default tier is a startup policy; the AI Models selection is
+    the runtime policy. A configured tier may therefore differ from the
+    activation default, but it must be staged and pass the same pinned
+    inventory verification before faster-whisper can load it.
+    """
+
+    if tier_id not in (FLOOR_TIER_ID, LARGE_V3_TIER_ID):
+        raise NativeStationConfigurationError(f"Unknown configured caption tier: {tier_id!r}")
+    roots = caption_tier_search_roots(Path(root), acquisition_root=acquisition_root)
+    if _tier_base_root(roots, caption_tier_model_relative_root(tier_id)) is None:
+        raise NativeStationCaptionsUnavailableError(
+            f"Configured caption tier {tier_id!r} is not staged under "
+            + " or ".join(str(candidate) for candidate in roots)
+        )
+    if tier_id == LARGE_V3_TIER_ID:
+        return _validate_model_root(Path(root), acquisition_root=acquisition_root)
+    return validate_floor_caption_model_root(Path(root), acquisition_root=acquisition_root)
+
+
 def packaged_portal_environment(*, package_file: str | Path | None = None) -> dict[str, str]:
     """The two front-door variables ``civiccast.app._mount_packaged_portals``
     reads, derived from the ``civiccast`` package's own location.
@@ -1431,6 +1458,11 @@ def load_native_station_environment(
         ),
         "CIVICCAST_CAPTION_MODEL_HASH_RECEIPT": json.dumps(
             model_hash_receipt, sort_keys=True, separators=(",", ":")
+        ),
+        # This root comes from the validated signed runtime contract and is
+        # independent of Whisper's selected model directory.
+        "CIVICCAST_WHISTLE_ROOT": str(
+            root / Path(str(EXPECTED_RUNTIME_CONTRACT["whistle_assets_root"]))
         ),
         "CIVICCAST_WHISPER_MODEL_PATH": str(model_root),
         "CIVICCAST_WHISPER_DEVICE": whisper_device,

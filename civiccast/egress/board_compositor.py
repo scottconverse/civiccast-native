@@ -295,9 +295,16 @@ def _zone_text(
         ]
     if zone.kind == "ticker":
         items = zone.content.get("items", [])
-        if not isinstance(items, list) or not items:
+        titles = (
+            [item.get("title") for item in items if isinstance(item, dict)]
+            if isinstance(items, list)
+            else []
+        )
+        if not titles:
+            manual_text = zone.content.get("text")
+            if isinstance(manual_text, str) and manual_text.strip():
+                return [(_cap_ticker_item(manual_text.strip()), 0, True)]
             return []
-        titles = [item.get("title") for item in items if isinstance(item, dict)]
         capped = [_cap_ticker_item(title) for title in titles if isinstance(title, str)]
         text = "   |   ".join(capped)
         return [(text, 0, True)] if text else []

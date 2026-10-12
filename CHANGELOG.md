@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### v1.0.0-beta.14 - 2026-10-12
+
+Unpublished candidate; package installation and publication are pending.
+
+- Make optional installer selections control downloads and resolve Whistle from the signed station configuration independently of the Whisper tier.
+- Honor the saved Whisper model selection and distinguish it from the live runtime's service-start model. Explain when a service restart is needed; show actual installation, database and media paths.
+- Allow CPU Whisper fallback requests up to a configurable 120-second default while retaining finite process deadlines, bounded audio queues and automatic Whistle recovery.
+- Align caption verification to actual accepted transport timestamps, preserve captured MPEG-TS clocks and keep missing or incorrect captions detectable.
+- Distinguish temporary caption delay from sustained overload. Bound recognition timestamps to their source audio and preserve complete review cues within the review-clip limit.
+- Probe the actual selected live source and reconcile on-air session labels with actual output state.
+- Start scheduled capture at its planned boundary, bound recording/reconnect duration, retain completed segments and distinguish elapsed job time from measured media duration.
+- Expose recording packaging in the operator console, validate its minimum duration before submission and explain output-proof check failures. Reconcile commissioning backup readiness with the configured backup status.
+- Reserve broadcast memory before local summary generation, defer insufficient-resource requests clearly, serialize CivicCast's local generation calls and unload idle generation models.
+- Carry saved manual ticker text into public snapshots and board output; contain bulletin rendering errors in the existing slate fallback.
+- Report saved Spanish translation activity and its latest creation time on AI Models.
+- Play packaged recordings in the trim editor with source-time mapping and selected-range controls; provide protected source playback for summary citations.
+- Import stored chapters into agendas once and explain skipped positions. Align Publish's action count and filter, resident archive links and buffered program titles.
+- Wrap long signed-summary PDF content and manual code/path text; repair repeated Help contents navigation and show planned versus actual on-air times in Reports.
+- Present the measured 72-hour, three-channel, 99.78% live caption-input coverage prominently, retaining its original Beta 11 evidence.
+
 ## [1.0.0-beta.13] - 2026-10-11
 
 - Automatically recover the Whistle live-caption primary after transient probe failures. Retry delays begin at 30 seconds and then use capped 60/120/240/300-second backoff while the channel has audio; Whisper remains the channel fallback.

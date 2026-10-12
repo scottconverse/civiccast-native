@@ -20,6 +20,7 @@ CivicCast gives each person one or more roles. The role decides which buttons wo
 | See the Assets list, open a recording, read the Review queue | Any signed-in staff member |
 | Upload a video | records_clerk, meeting_operator, support_admin |
 | Edit title, description, meeting body, retention | records_clerk, meeting_operator, support_admin |
+| Edit trim and chapters; preview source media | records_clerk, meeting_operator, support_admin |
 | Package for playback; replace the source file | publish_operator, setup_admin |
 | Place or clear a legal hold | records_clerk, support_admin |
 | Approve, edit or reject a caption cue; retry a failed caption job | records_clerk |
@@ -102,7 +103,7 @@ Trimming sets where the video starts and ends. It does not change the original f
 4. To mark a chapter, move to that moment and click **+ Mark**, then type a name for it. Remove a chapter with its remove button.
 5. Click **Save trim & chapters**. A toast says "Saved." and the editor closes. To leave without saving, click **Discard**.
 
-> **Known issue (beta.11):** The editor does not play the video. The preview area shows only the current time and the text "Packaged manifest lands at Sprint 0.4". You choose points by time, not by watching the picture. Play the video elsewhere to find the times, then type or step to them.
+The preview has video playback controls. Use **Play selected trim** to inspect the chosen IN/OUT range. For packaged recordings, CivicCast plays the HLS copy and translates its playhead into the original source timeline, so trim points and chapter times retain their source positions. If the preview fails, use its retry action; the original recording is preserved.
 
 > **Known issue (beta.11):** Chapters you mark are saved with the video, but we found nothing in the packaging code that writes them into the packaged video. The resident portal shows the meeting's agenda, not these chapters (see [Publishing, and what residents see](#ch-publishing)). Do not promise residents chapter marks from this editor.
 
@@ -114,14 +115,14 @@ If saving fails with a message about another writer, someone else changed the vi
 
 ## Package a video for playback
 
-1. On the Assets screen, find a Validated row that says **Not packaged yet**.
+1. On the Assets screen, find a Validated or Recorded row that has a stored source file and says **Not packaged yet**.
 2. Click **Package for playback**. The button says "Packaging..." while it works.
 
 You should see the Status change to **Packaged**. This needs the publish_operator or setup_admin role; otherwise the row says "A publish operator or setup administrator must package this recording."
 
 CivicCast packages one video at a time. If another is already running you see "Another recording is already being packaged…". Wait and try again. If packaging fails, the message is the server's text or "Packaging failed. The original file was kept; try again."
 
-> **Known issue (beta.11):** The list shows **Package for playback** only on Validated rows that have a stored file and no streamable copy yet. **Edit trim** shows on every Validated row, packaged or not. Live recordings are finished and packaged by CivicCast itself.
+The list offers **Package for playback** for Validated and Recorded assets with a stored source file and no streamable copy yet. This also lets you package a recording whose automatic packaging did not finish.
 
 Packaged is not the same as published. Next, go to the Publish screen ([Publishing, and what residents see](#ch-publishing)).
 
@@ -212,7 +213,7 @@ Approved and Edited cues both become captions, using the reviewed text. Rejected
 
 A cue the machine was unsure of carries a **Low confidence** badge, and a yellow bar at the top says how many need attention. For these cues, **Approve** stays disabled until you do two things:
 
-1. Click **Load review audio**. CivicCast fetches a short clip around the cue and shows an audio player. Play it.
+1. Click **Load review audio**. CivicCast fetches a clip covering the complete cue, with nearby context where available, and shows an audio player. Play it. The clip is bounded to 120 seconds. If the source cannot cover the whole cue, the message explains the missing coverage and how to regenerate or restore the needed source; a partial clip is not presented as complete evidence.
 2. Tick **I compared this low-confidence cue with its audio evidence.** This box becomes available only after the audio can play.
 
 This audio check applies to **Approve** only. **Save edit** has no such check, so a low-confidence cue can be edited and counted as decided without anyone playing the audio.
@@ -249,9 +250,11 @@ If there are no approved cues the card says "No committed transcript cues yet. A
 
 ### Look at a summary
 
+Local generation checks memory before loading the summary model and reserves 8 GiB for station operation. A resource-deferral message explains how to recover; wait for memory to become available or choose a smaller model before retrying. CivicCast unloads the local generation model after the request completes.
+
 1. In the left menu, click **Summary review** (page heading "Summary review", label "Summary + signed records").
 2. Each card shows the asset ID, a status, the summary paragraph, and a list of **Sourced claims**. Under each claim are buttons labeled with a cue ID and its time range.
-3. Click a cue button. The **Inline transcript player** box highlights that range. It shows cue IDs and times only; to read the caption text, open the recording or Review queue.
+3. Click a cue button. The **Inline transcript player** highlights the range and loads the private source recording with playback controls. The player seeks to the cited source time; press Play to listen. Packaged recordings map the trimmed playback timeline back to source time. If the cited passage lies outside the available copy, the player explains that rather than seeking to a different passage. Use **Renew playback** if access expires. To read caption text, open the recording or Review queue.
 
 The page shows **Pending review**, **Approved** and **Needs evidence** items. Approved summaries remain on the page so you can export or revisit their signed records. A **Needs evidence** card has a message explaining that the model's output could not be tied to caption cues with timestamps. A yellow bar counts items that need more evidence.
 

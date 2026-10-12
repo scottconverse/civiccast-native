@@ -420,7 +420,9 @@ export function AssetsScreen({
                           Edit trim
                         </button>
                       )}
-                      {row.state === 'validated' && !row.manifest_url && row.file_path && (
+                      {(row.state === 'validated' || row.state === 'recorded') &&
+                        !row.manifest_url &&
+                        row.file_path && (
                         <button
                           type="button"
                           onClick={() => packageMutation.mutate(row.asset_id)}
@@ -438,7 +440,7 @@ export function AssetsScreen({
                             : 'Package for playback'}
                         </button>
                       )}
-                      {row.state === 'validated' &&
+                      {(row.state === 'validated' || row.state === 'recorded') &&
                         !row.manifest_url &&
                         row.file_path &&
                         identityQuery.isSuccess &&

@@ -18,7 +18,7 @@ from civiccast.stream._ffmpeg import FfmpegResult, run_ffmpeg
 
 _PRE_ROLL_SECONDS = 2.0
 _POST_ROLL_SECONDS = 2.0
-_MAX_CLIP_SECONDS = 15.0
+_MAX_CLIP_SECONDS = 120.0
 _FFMPEG_TIMEOUT_SECONDS = 30.0
 
 FfmpegRunner = Callable[..., FfmpegResult]
@@ -119,7 +119,12 @@ def verify_caption_review_audio_evidence_for_cue(
         or relative_end > audio_duration + frame_tolerance
     ):
         raise CaptionReviewClipError(
-            "The retained live-caption audio evidence does not cover the whole cue."
+            "The retained caption audio does not cover the whole cue "
+            f"({cue.start_seconds:.3f} to {cue.end_seconds:.3f}s); available audio covers "
+            f"{evidence.source_start_seconds:.3f} to "
+            f"{evidence.source_start_seconds + audio_duration:.3f}s. "
+            "Regenerate this recording's captions from its local source media. "
+            "If the source is unavailable, this cue cannot be verified."
         )
     return source
 
@@ -163,8 +168,15 @@ def build_caption_review_clip(
     review request cannot become an unbounded transcode or media download.
     """
 
-    clip_start = max(0.0, cue.start_seconds - _PRE_ROLL_SECONDS)
-    clip_end = cue.end_seconds + _POST_ROLL_SECONDS
+    cue_duration = cue.end_seconds - cue.start_seconds
+    if cue_duration > _MAX_CLIP_SECONDS:
+        raise CaptionReviewClipError(
+            "This cue exceeds the 120 seconds review limit. Split it into shorter cues."
+        )
+    # Spend the bounded window on the entire cue before adding context.
+    pre_roll = min(_PRE_ROLL_SECONDS, _MAX_CLIP_SECONDS - cue_duration)
+    clip_start = max(0.0, cue.start_seconds - pre_roll)
+    clip_end = min(cue.end_seconds + _POST_ROLL_SECONDS, clip_start + _MAX_CLIP_SECONDS)
     clip_duration = min(_MAX_CLIP_SECONDS, clip_end - clip_start)
     with tempfile.NamedTemporaryFile(
         prefix="civiccast-caption-review-",
@@ -202,6 +214,20 @@ def build_caption_review_clip(
         if result.returncode != 0 or not output.is_file() or output.stat().st_size == 0:
             raise CaptionReviewClipError(
                 "CivicCast could not decode the asset audio for caption review."
+            )
+        try:
+            with wave.open(str(output), "rb") as audio:
+                duration = audio.getnframes() / audio.getframerate()
+                tolerance = 1 / audio.getframerate()
+        except (OSError, EOFError, wave.Error, ZeroDivisionError) as exc:
+            raise CaptionReviewClipError(
+                "The decoded caption review audio is not readable."
+            ) from exc
+        if duration + tolerance < cue.end_seconds - clip_start:
+            raise CaptionReviewClipError(
+                "The available source audio ends before the selected cue finishes "
+                f"(audio ends at {clip_start + duration:.3f}s; cue ends at {cue.end_seconds:.3f}s). "
+                "Relink the complete recording or regenerate captions from the available media."
             )
         return output
     except Exception:

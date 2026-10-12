@@ -495,6 +495,51 @@ describe('RecordingScreen validation accessibility wiring', () => {
     )
   })
 
+  it('rejects a recording shorter than the server minimum before submit', async () => {
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
+      target: { value: 'short-recording' },
+    })
+    fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Short recording' } })
+    fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
+    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+      target: { value: '2026-06-20T19:00' },
+    })
+    fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {
+      target: { value: '00:00:20' },
+    })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    expect(await findByText(/at least 00:01:00 \(60 seconds\)/i)).toBeTruthy()
+    expect(vi.mocked(createRecordingSchedule)).not.toHaveBeenCalled()
+  })
+
+  it('translates the server minimum-duration validation into operator guidance', async () => {
+    vi.mocked(createRecordingSchedule).mockRejectedValueOnce(
+      new ApiError(
+        'Validation Error',
+        422,
+        '[{"type":"greater_than_equal","loc":["body","duration_seconds"],"msg":"Input should be greater than or equal to 60"}]',
+      ),
+    )
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
+      target: { value: 'server-minimum' },
+    })
+    fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Server minimum' } })
+    fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
+    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+      target: { value: '2026-06-20T19:00' },
+    })
+    fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {
+      target: { value: '00:01:00' },
+    })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+
+    await waitFor(() => expect(vi.mocked(createRecordingSchedule)).toHaveBeenCalled())
+    expect(await findByText(/at least 00:01:00 \(60 seconds\)/i)).toBeTruthy()
+  })
+
   it('clears aria-invalid once the field is corrected and resubmitted successfully', async () => {
     const { findByLabelText, findByRole } = renderScreen()
     // Grab every handle before the first (all-fields-empty) submit: once

@@ -48,11 +48,11 @@ import civiccast.live.models
 import civiccast.schedule.models  # noqa: F401
 from civiccast.app import create_app
 from civiccast.db import Base, bind_engine, reset_engine
-from civiccast.egress.models import EgressConfig, EgressSinkSpec, EgressStateRow
+from civiccast.egress.models import EgressConfig, EgressProofEvent, EgressSinkSpec, EgressStateRow
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.live.finalization_worker import LiveFinalizationWorker
-from civiccast.live.models import LiveFinalizationJob
+from civiccast.live.models import LiveFinalizationJob, LiveSessionCreate
 from civiccast.live.preflight import (
     PREFLIGHT_CHECK_LIVE_SOURCE,
     PREFLIGHT_CHECK_OPERATOR_CONFIRM,
@@ -359,6 +359,7 @@ class TestPublicCurrentLive:
             "channel_id": None,
             "title": None,
             "started_at": None,
+            "program_timeline": [],
             "manifest_url": None,
             "reason": None,
         }
@@ -396,15 +397,7 @@ class TestPublicCurrentLive:
         assert "notes" not in body
 
     def test_defaults_to_local_live_url_when_hls_sink_configured(self, client: TestClient) -> None:
-        egress_store = InMemoryEgressStore()
-        egress_store.upsert_config(
-            EgressConfig(
-                channel_id="gov-ch12",
-                enabled=True,
-                slate_message="Off air",
-                sinks=[EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir("gov-ch12"))],
-            )
-        )
+        egress_store = self._egress_store()
         client.app.dependency_overrides[get_egress_store] = lambda: egress_store  # type: ignore[attr-defined]
 
         _seed_source_and_target(client)
@@ -471,15 +464,7 @@ class TestPublicCurrentLive:
     def test_explicit_manifest_url_param_still_wins_over_local_default(
         self, client: TestClient
     ) -> None:
-        egress_store = InMemoryEgressStore()
-        egress_store.upsert_config(
-            EgressConfig(
-                channel_id="gov-ch12",
-                enabled=True,
-                slate_message="Off air",
-                sinks=[EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir("gov-ch12"))],
-            )
-        )
+        egress_store = self._egress_store()
         client.app.dependency_overrides[get_egress_store] = lambda: egress_store  # type: ignore[attr-defined]
 
         _seed_source_and_target(client)
@@ -509,15 +494,7 @@ class TestPublicCurrentLive:
         # malformed override must NOT be echoed in the resident-facing
         # manifest_url field. It is dropped and resolution falls through to the
         # local media-router URL (fail safe, not an error).
-        egress_store = InMemoryEgressStore()
-        egress_store.upsert_config(
-            EgressConfig(
-                channel_id="gov-ch12",
-                enabled=True,
-                slate_message="Off air",
-                sinks=[EgressSinkSpec(kind="hls", label="Web", uri=_hls_dir("gov-ch12"))],
-            )
-        )
+        egress_store = self._egress_store()
         client.app.dependency_overrides[get_egress_store] = lambda: egress_store  # type: ignore[attr-defined]
 
         _seed_source_and_target(client)
@@ -622,9 +599,62 @@ class TestPublicCurrentLive:
         assert body["live_session_id"] is None
         assert body["channel_id"] == "gov-ch12"
         assert body["title"] == "Council meeting 2026-05-15"
-        assert body["started_at"] == "2026-05-15T18:00:00+00:00"
+        # No handoff proof exists for this synthetic state; the heartbeat time
+        # is not misreported as the program's start.
+        assert body["started_at"] is None
+        assert body["program_timeline"] == []
         assert body["manifest_url"].endswith("/media/live/gov-ch12/playlist.m3u8")
         assert body["reason"] is None
+
+    def test_egress_live_status_exposes_only_actual_program_timeline_fields(
+        self, client: TestClient
+    ) -> None:
+        store = self._egress_store()
+        transition_at = datetime(2026, 5, 15, 18, 0, tzinfo=UTC)
+        store.append_proof_event(
+            EgressProofEvent(
+                event_id="egress-proof-current",
+                observed_at=transition_at,
+                channel_id="gov-ch12",
+                state="ON_AIR",
+                source_label="Council meeting",
+                source_path="C:/private/source.ts",
+                source_ref="asset-1",
+                proof_boundary="civiccast-egress-handoff-boundary",
+                machine_summary="CivicCast started the source.",
+            )
+        )
+        store.append_proof_event(
+            EgressProofEvent(
+                event_id="egress-orphan-reap-hidden",
+                observed_at=datetime(2026, 5, 15, 18, 1, tzinfo=UTC),
+                channel_id="gov-ch12",
+                state="STARTING",
+                source_label="Must not be public",
+                source_path="C:/private/sensitive-path",
+                source_ref=None,
+                proof_boundary="civiccast-egress-handoff-boundary",
+                machine_summary="internal worker diagnostic",
+            )
+        )
+        state = store.read_state("gov-ch12")
+        assert state is not None
+        state.current_proof_event_id = "egress-proof-current"
+        # This is a heartbeat write, not the program's handoff time.
+        state.updated_at = datetime(2026, 5, 15, 18, 2, tzinfo=UTC)
+        store.write_state(state)
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+
+        response = client.get("/api/public/live/current")
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["started_at"] == transition_at.isoformat()
+        assert body["program_timeline"] == [
+            {"title": "Council meeting", "started_at": transition_at.isoformat()}
+        ]
+        assert "source_path" not in body
+        assert "Must not be public" not in response.text
 
     # Review round 2, MAJOR 3: a FALLBACK_SLATE pipeline used to project as
     # ``on_air``, so a slate read "On air" to residents and hid the idle page.
@@ -640,7 +670,8 @@ class TestPublicCurrentLive:
         assert body["state"] != "on_air"
         assert body["channel_id"] == "gov-ch12"
         assert body["title"] == "Slate"
-        assert body["started_at"] == "2026-05-15T18:00:00+00:00"
+        assert body["started_at"] is None
+        assert body["program_timeline"] == []
         assert body["reason"] == "fallback slate, no program on air"
         # The slate IS being served, so the manifest is still reported.
         assert body["manifest_url"] == "/media/live/gov-ch12/playlist.m3u8"
@@ -870,6 +901,31 @@ class TestPublicCurrentLive:
         assert (
             body["title"] == "City Council Meeting"
         )  # the session's title, not the daemon's label
+
+    def test_on_air_session_does_not_mask_stopped_egress(self, client: TestClient) -> None:
+        store = self._egress_store(state="STOPPED", source_label="Council meeting")
+        client.app.dependency_overrides[get_egress_store] = lambda: store  # type: ignore[attr-defined]
+        session_store_factory = client.app.dependency_overrides[  # type: ignore[attr-defined]
+            get_live_session_store
+        ]
+        session_store = session_store_factory()
+        session_store.create_session(
+            LiveSessionCreate(
+                live_session_id="council-2026-05-15",
+                channel_id="gov-ch12",
+                title="City Council Meeting",
+            )
+        )
+        session_store.start_preflight("council-2026-05-15")
+        session_store.go_on_air("council-2026-05-15")
+
+        body = client.get("/api/public/live/current").json()
+
+        assert body["state"] == "interrupted"
+        assert body["live_session_id"] == "council-2026-05-15"
+        assert body["title"] == "City Council Meeting"
+        assert body["manifest_url"] is None
+        assert "not running" in body["reason"]
 
     def test_egress_channel_filter_and_web_enabled_preference(self, client: TestClient) -> None:
         store = InMemoryEgressStore()

@@ -10,7 +10,7 @@ Whistle is the CPU primary for live captions. Whisper provides per-channel fallb
 
 ## Measured operation
 
-A Beta 11 host ran public, government and education channels together for 48 hours, with **99.88% live caption-input coverage**. The [soak report](ops/beta11-host-caption-performance-48-hour-2026-10-10.md) records the measurements. This is a measured result from that run; the [Beta 13 verification record](releases/v1.0.0-beta.13-verification.md) separately records the current package's checks.
+A Beta 11 host ran Public, Government and Education channels together for 72 hours with **99.78% live caption-input coverage**. The [72-hour host report](ops/beta11-host-caption-performance-72-hour-2026-10-11.md) gives the channel totals and measurement. The [Beta 13 verification record](releases/v1.0.0-beta.13-verification.md) separately records the current package's checks.
 
 ## Next work
 

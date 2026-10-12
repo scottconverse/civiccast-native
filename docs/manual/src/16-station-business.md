@@ -2,7 +2,7 @@
 
 This chapter covers the "business side" of a station: how many residents watched, what aired and when, the schedule file that outside TV-guide services read, sponsor messages, the resident apps, and the optional paid-access feature. A PEG station employee, a records clerk or a station manager normally uses these screens. You do not need any technical background, but a few steps need an IT person, and this chapter says so each time.
 
-Read the "Known issue" boxes for their version scope. Some describe current Beta.12 limits; an older version label identifies an observation from that release, not automatically a current defect.
+Read the "Known issue" boxes for their version scope. Some describe current behavior; an older version label identifies an observation from that release, not automatically a current defect.
 
 ## Before you start
 
@@ -21,7 +21,7 @@ CivicCast gives each person one or more *roles*. A role is a named set of permis
 
 > **Note:** In a normal station, everyone signs in with the first administrator account made during First Setup. That account carries all five roles, so you will see every screen and every button. The limits in the table matter only if your IT person made narrower sign-in passes for some staff.
 
-> **Note:** Beta.12 was published on 2026-10-10 as a GitHub pre-release. The [Beta.12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) identifies the package and its checks. A normal upgrade from Beta.11 completed and initially showed output on three channels; the post-upgrade recorder failed on its first JSON save, so no five-snapshot PASS is claimed. An October 11 first-install attempt using the exact public artifacts failed activation with setup exit 123 because four signed station packs required by the embedded index were missing from the public bundle; the index's URLs were empty. Raw-model acquisition does not satisfy those signed-pack requirements. Interrupted repair was not run. This chapter describes source-backed screen behavior; it does not claim that every feature was exercised on a live station. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for current publication status.
+> **Note:** This chapter describes Beta 14 operation. Use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for package identity and installation observations, and the releases page for publication status.
 
 > **Warning:** Several screens in this chapter ask you to type dates. CivicCast treats those dates as **UTC**, the world reference clock. In the United States UTC is several hours ahead of local time. Mountain daylight time is 6 hours behind UTC. A meeting that starts at 7 p.m. Mountain daylight time is already 1 a.m. UTC *the next day*. When a report looks one day off, this is almost always why.
 
@@ -121,10 +121,10 @@ The page opens on today's date through tomorrow's, UTC midnight to UTC midnight.
 | Tab | Columns | Use it to |
 | --- | --- | --- |
 | **Shows** | Asset, Plays, Total airtime, First aired (UTC), Last aired (UTC) | See each recording once, with how many times it aired |
-| **As-Run** | Channel, Start (UTC), End (UTC), Duration, Source, Asset, Category, Verified | See every change on air, in order |
+| **As-Run** | Channel, Planned start (UTC), Actual on-air start (UTC), Start variance, End (UTC), Duration, Source, Asset, Category, Verified | Compare the intended schedule with each actual change on air |
 | **Hours by Category** | Category, Entries, Total airtime, Hours | See airtime per category, such as "Council" |
 
-The **Asset** column shows the recording's id, not its title. The **Shows** tab leaves out anything without a library recording (filler, slate and live).
+The **Asset** column shows the recording's id, not its title. The **Shows** tab leaves out anything without a library recording (filler, slate and live). **Actual on-air start** comes from the engine's source-transition proof; **Start variance** shows how early or late it was against the planned start. VOD playback preroll does not change that timestamp. CivicCast does not persist a separate preroll timestamp.
 
 The **Source** column uses these words:
 

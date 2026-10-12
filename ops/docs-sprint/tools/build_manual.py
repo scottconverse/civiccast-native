@@ -8,6 +8,7 @@ mermaid-cli (cached by content hash in docs/manual/diagrams/), and write the sin
 scripts/render_user_manual.py turns into PDF and DOCX.
 """
 
+import ast
 import hashlib
 import re
 import subprocess
@@ -19,7 +20,25 @@ SRC = ROOT / "docs" / "manual" / "src"
 DIAG = ROOT / "docs" / "manual" / "diagrams"
 OUT = ROOT / "docs" / "USER-MANUAL.md"
 MMDC_DIR = Path(r"C:\Users\scott\Documents\Codex\2026-09-16\re\mmd-tool")
-VERSION = "v1.0.0-beta.12"
+
+
+def read_version() -> str:
+    """Read the canonical product version without importing application code."""
+    version_file = ROOT / "civiccast" / "_version.py"
+    tree = ast.parse(version_file.read_text(encoding="utf-8"), filename=str(version_file))
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if any(
+            isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets
+        ):
+            if isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                return f"v{node.value.value}"
+            break
+    raise RuntimeError(f"{version_file} must assign a string literal to __version__")
+
+
+VERSION = read_version()
 
 PARTS = [
     ("Part I. Using CivicCast (for station staff and volunteers)", "1"),
@@ -58,10 +77,13 @@ def demote(text: str, by: int = 1) -> str:
 
 
 def read(name: str) -> str:
-    return (SRC / name).read_text(encoding="utf-8").strip() + "\n"
+    return wrap_paths((SRC / name).read_text(encoding="utf-8").strip()) + "\n"
 
 
-WIN_PATH = re.compile(r"((?:[A-Za-z]:|%[A-Za-z]+%)(?:\\[\w.\-]+)+)")
+WIN_PATH = re.compile(
+    r"((?:[A-Za-z]:|%[A-Za-z]+%|HKLM|HKCU|HKEY_LOCAL_MACHINE|HKEY_CURRENT_USER)"
+    r"(?:\\[\w.\-]+)+)"
+)
 
 
 def wrap_paths(body: str) -> str:
@@ -179,7 +201,7 @@ def main():
         "title: CivicCast User Manual\n"
         f"subtitle: For station staff, volunteers and city IT staff - {VERSION} (native Windows line)\n"
         "author: The CivicCast Authors\n"
-        "date: 2026-10-11\n"
+        "date: 2026-10-12\n"
         "urlcolor: blue\n"
         "toccolor: black\n"
         "---\n\n"

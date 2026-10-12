@@ -2,7 +2,7 @@
 
 This chapter is for the person at the city who owns the CivicCast computer. It walks through every place a station is configured: First Setup and the admin account, the Station Profile, channels and their outputs, loudness, the playout engine, captions, AI models, cable commissioning, the Control Room, custom fields, the paywall, certificates and network exposure, storage, and the environment variables that sit behind all of it. Most of it is done once, before the first public meeting, by someone with the `setup_admin` role. A few things (the environment variables, the registry) need Administrator rights on the Windows computer itself.
 
-> **Note:** CivicCast 1.0.0-beta.12 was published on 2026-10-10 as a GitHub pre-release, not a production release. The [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) lists package-specific observations and limits. This chapter describes source behavior; it does not claim that every path was observed on a live station.
+> **Note:** This chapter describes CivicCast Beta 14. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies its package and completed checks; the release page establishes publication status.
 
 ## Before you start
 
@@ -243,6 +243,10 @@ What you can tune (all optional, all in the service environment; defaults are wh
 
 > **Known issue (beta.11):** The text under **Stop** on the Channels screen says residents lose the stream until the feed is started again. With **Keep this channel on air** ticked, channel automation may start a stopped channel again after its retry cooldown. Untick **Keep this channel on air** and save the automation settings before you stop a channel you want to keep off the air. Saving that box ticked on an enabled channel can also put the channel on air without anyone pressing Start; the Save button has no confirmation.
 
+### Repeat the published schedule
+
+`CIVICCAST_SCHEDULE_LOOP=1` repeats the channel's published premiere sequence. The default is off, so a finite schedule ends after its last item. The loop preserves intentional gaps; make adjacent start times and durations contiguous for continuous programming. Set this variable through the service environment procedure below and restart between programs. Auto-schedule uses the station time zone, with `CIVICCAST_STATION_TZ` as the environment fallback. See the two-recording recipe in [Before the meeting](#ch-before-meeting).
+
 ## Configure captions {#configuration-captions}
 
 CivicCast captions in two different ways and they are configured separately. Native live captions use Whistle on the CPU by default; recorded-media captions use the separate Whisper workflow.
@@ -262,15 +266,17 @@ The speech model comes in two **tiers**:
 - **Medium** (`faster-whisper-medium`) is the required Whisper floor for fallback and recorded captions. It is staged by the signed station pack and runs on the CPU.
 - **Large-v3** (`faster-whisper-large-v3`) is optional. The first-run wizard offers it as a checkbox and may preselect it when an NVIDIA card with at least 8 GB of video memory is found. CUDA runtime files are optional and accelerate Whisper only; they are not required by Whistle.
 
-At service start the station validates the staged Whisper tier and self-test receipt. The selected Whisper tier is passed as `CIVICCAST_CAPTION_TIER`; it applies to Whisper fallback, recorded captions and explicitly selected Whisper live-primary mode. The native live default remains Whistle regardless of whether Large is installed.
+At service start the station validates the staged Whisper tier and self-test receipt. The **saved selection** in AI Models controls the verified Whisper model used when a runtime is created. An activation default cannot silently override a different saved choice. The native live default remains Whistle regardless of whether Large is installed; Whistle's assets are resolved independently of the Whisper model directory.
+
+The live caption runtime is created when the service starts. **AI Models** shows its service-start fallback tier separately from the saved selection. If you change the selection, restart CivicCast during a maintenance window to apply it to the live runtime. New recorded-caption jobs use the saved selection when they start; an already-running job keeps its existing model.
 
 The device is chosen the same way. `CIVICCAST_WHISPER_DEVICE` in the **service** environment, if set, wins in either direction (`cuda` or `cpu`), with `CIVICCAST_WHISPER_COMPUTE_TYPE` (default `float16` for cuda, `int8` for cpu). Otherwise the station uses the GPU only when an NVIDIA adapter with at least 8 GB is found **and** both CUDA runtime libraries are staged; anything else is CPU with `int8`.
 
-> **Note:** The AI Models caption selection concerns Whisper tiers. It does not change the native live engine from Whistle. In the Beta 12 R9 field attempt, Large Whisper downloaded even though its optional first-run checkbox was unchecked; check active transfer rows instead of relying on that checkbox to prevent a download.
+> **Note:** The AI Models caption selection concerns Whisper tiers. It does not change the native live engine from Whistle. The installer's optional-component choices control which optional models are downloaded.
 
 ### Live captions: what the settings change
 
-**Beta.11 live runtime:** Native stations use Whistle on CPU as the primary engine, with Whisper as fallback. Whistle inference is serialized by one station-wide lock across channels. The first recognition is published immediately, including low-confidence text; overlap is deduplicated without requiring two readings to agree. Each request has a 10-second deadline. If it fails or times out, that channel switches to Whisper for the rest of the service runtime. If a Whisper fallback child fails, the runtime closes it and makes one immediate replay; after another replacement failure, it waits 30 seconds before trying a new child. Restart the service outside a meeting to reset the primary engine to Whistle. `CIVICCAST_LIVE_CAPTION_ENGINE=whisper` selects Whisper as the primary engine instead.
+**Live runtime:** Native stations use Whistle on CPU as the primary engine, with Whisper as fallback. Whistle inference is serialized by one station-wide lock across channels. The first recognition is published immediately, including low-confidence text; overlap is deduplicated without requiring two readings to agree. Whistle requests have a 30-second deadline. On failure, Whisper supplies backup captions while a fresh Whistle process is tried after an initial 30-second cooldown. Further failed recovery attempts back off to 60, 120, 240 and at most 300 seconds. Only one recovery probe runs at a time, and successful recognition restores that channel to Whistle automatically. Whisper fallback requests allow 120 seconds by default; set `CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS` to a finite value from 1 to 600 seconds to change that deadline. A failed Whisper child is closed and replayed once immediately; a repeated replacement failure starts a 30-second retry cooldown. `CIVICCAST_LIVE_CAPTION_ENGINE=whisper` selects Whisper as the primary engine instead.
 
 Live captions are produced by the caption tap. The native station turns it on (`CIVICCAST_CAPTION_TAP=inline`) unless the service environment says `CIVICCAST_CAPTION_TAP=off`, in which case the tap does not run at all. The console switch is the safe-direction override: `off` in the environment forces live captions off whatever the profile says, but no environment value can turn them on against a profile that is off. When you turn the profile switch off, queued audio drains and speech recognition stops on the next tap-worker scan; caption routing is removed from the video when each channel next starts. When you turn it on, recognition resumes on the next scan, and each channel needs to start again before its video includes captions.
 
@@ -288,7 +294,7 @@ When a recording is published, a job transcribes it in 30-second chunks (`CIVICC
 
 ### Caption evidence and retention
 
-Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. Ordinary beta.11 live operation does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. Each channel keeps at most 12 queued completed segments, plus inputs currently being processed and the segment being written. At the default five-second cadence, the queued limit is 60 seconds.
+Live captioning uses `C:\ProgramData\CivicCast\data\caption-tap` as a temporary work area. Ordinary live operation does not create permanent review rows or evidence WAV clips for each live cue. Consumed audio chunks are deleted after processing; only the overlap needed for the next recognition is retained in memory. With Whistle, each channel retains at most 42 waiting completed five-second segments (210 seconds), plus in-flight inputs and the segment being written. The bound follows Whistle's finite processing grace. Other runtimes without that grace use a 12-segment working-file ceiling. This file ceiling is separate from the smaller backlog threshold used to detect sustained overload.
 
 The live caption window is limited to the most recent 300 seconds and at most 512 cues. Delivery tracking follows that window instead of accumulating for the whole on-air session. Archive-wide caption review/evidence discovery is not a live-caption or broadcast-readiness prerequisite. These are implementation bounds, not controls on the configuration screen.
 
@@ -308,6 +314,8 @@ The AI Models screen (Setup group; `setup_admin` changes, `meeting_operator` rea
 
 The rule behind the summary default is measured, not guessed. On a 32 GB computer with no graphics card the 12B model took 366 seconds for one summary and then failed twice with memory errors, while the e4b model finished every attempt in 94 to 128 seconds. So 12B is only the default when a GPU is present. A summary is queued as a background job (poll every 15 s, retry after 120 s, 3 attempts; `CIVICCAST_SUMMARY_JOB`, `..._POLL_SECONDS`, `..._BACKOFF_SECONDS`, `..._MAX_ATTEMPTS`) so one slow generation does not time out a web request.
 
+Before local summary generation, CivicCast requires the selected tier's catalog memory allowance plus 8 GiB of available RAM reserved for station work. If memory is insufficient, the job reports a recoverable deferral and explains whether to wait or select a smaller tier. CivicCast serializes its local Ollama generation requests and requests model unloading after generation, so an idle summary or translation model does not remain resident indefinitely.
+
 How the Ollama child starts. The service starts Ollama only when the program `dependencies\ollama\ollama.exe` exists and a staged model store exists with a `manifests` folder (`models\ollama` first, then `packs\local-ai-model\models`, then `C:\ProgramData\CivicCast\packs\local-ai-model\models`, where the first-run window saves its downloads). If either is missing the service logs one line ("ollama child skipped (degraded AI, service healthy): ...") and keeps running without AI. A skipped child is re-checked every 60 seconds, so models downloaded while the service is running are picked up without a restart. The child is started with `OLLAMA_NO_CLOUD=1`; hosted models are called by CivicCast directly over the internet, not through the local Ollama.
 
 - **Choosing a local model** saves at once, with no confirmation. Options that need more memory than the computer has are disabled and marked "(exceeds this box)"; the screen does not show how much memory the computer has.
@@ -319,7 +327,9 @@ For an air-gapped station, `civiccast model download --offline-bundle --bundle-d
 
 Recorded-caption translation uses the configured translation model to queue translated Spanish caption cues for review. This is a post-publication workflow; it does not translate the live English caption stream. Review the translated cues before attaching or publishing the translated track.
 
-> **Known issue (beta.11):** The cards show internal names such as `gemma4-e4b-ollama` and `whisper-medium-faster` with no plain-English description, and the "About" line for the 12B summary model shows engineering notes. A local choice changes what the next summary or caption job loads; we could not confirm what a job already running does.
+The translation card reports saved Spanish review cues and their latest creation time. This persists across reloads; it describes the cues currently stored, rather than a lifetime total of translation-provider requests.
+
+Model cards include identifiers such as `gemma4-e4b-ollama` and `whisper-medium-faster`. A saved caption-tier change applies to new recorded-caption jobs; an active job retains its original model. The live runtime keeps its service-start fallback tier until the service restarts. The screen reports that runtime separately from the saved selection and explains when a restart is needed.
 
 ## Provider setup and keys {#configuration-providers}
 

@@ -66,6 +66,7 @@ class StubCapturePipeline:
     ) -> None:
         self.arm_calls: list[dict] = []
         self.start_calls: list[str] = []
+        self.start_duration_calls: list[float | None] = []
         self.finalize_calls: list[str] = []
         self.stop_calls: list[str] = []
         self._raise_arm = raise_on_arm
@@ -95,8 +96,9 @@ class StubCapturePipeline:
         if self._raise_arm is not None:
             raise self._raise_arm
 
-    def start(self, job_id):
+    def start(self, job_id, *, duration_seconds: float | None = None):
         self.start_calls.append(job_id)
+        self.start_duration_calls.append(duration_seconds)
         if self._raise_start is not None:
             raise self._raise_start
 
@@ -876,6 +878,7 @@ class TestTick:
         assert job.state == "recording"
         assert job.started_at == planned_start
         assert pipeline.start_calls == [job.job_id]
+        assert pipeline.start_duration_calls == [60.0]
 
         now = job.planned_end + timedelta(seconds=1)
         finalized = svc.tick(_STATION, horizon=timedelta(hours=1))

@@ -2,7 +2,7 @@
 title: CivicCast Technical Operations Reference
 subtitle: Installation, configuration, command-line evidence, and recovery operations
 author: The CivicCast Authors
-date: 2026-10-11
+date: 2026-10-12
 documentclass: article
 geometry: margin=1in
 fontsize: 11pt
@@ -23,28 +23,16 @@ toccolor: black
 > operators and records clerks should start with the persona guides linked from
 > [User Manual](USER-MANUAL.md).
 >
-> **Release line.** This repository carries the native Windows product, whose
-> current published release is `v1.0.0-beta.12` (a GitHub pre-release,
-> published 2026-10-10), not a production release. Its exact source, package,
-> limited upgrade observation and remaining checks are recorded in
-> [the Beta 12 verification record](releases/v1.0.0-beta.12-verification.md).
-> A public-assets fresh-install attempt reached activation and failed with
-> exit 123 because four required signed station packs were missing; their
-> embedded index URLs are empty. The matching complete kit was not available
-> in that field attempt. Repair and sustained operation remain unestablished.
-> Beta 11 and earlier
-> published betas are superseded. `docs/releases/release-truth.yaml` is the authored source for
-> release state -- read it rather than any version number quoted in prose,
-> including this one.
->
-> `v1.0.0-beta.13` is an unpublished candidate. Its candidate verification is
-> pending the final signed installer and bound installation evidence; Beta 12
-> remains the current published release and download target.
->
-> **Beta 13 candidate.** `v1.0.0-beta.13` is being prepared but is not
-> published. Its candidate verification record remains pending final signed
-> installer identity and bound installation evidence. Beta 12 remains the
-> current published download target.
+> **Release line.** Beta 13 (`v1.0.0-beta.13`) remains the current published
+> native Windows release until Beta 14 is actually published. Beta 14 is an
+> unpublished candidate: its verification record contains focused component
+> results, but no Beta 14 installer, Windows Sandbox installation, real-host
+> installation, or publication result. See the
+> [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md) for
+> the candidate's current evidence and open installation checks. Do not treat
+> historical Beta 12/13 observations or component tests as Beta 14 installation
+> proof. `docs/releases/release-truth.yaml` is the authored source for release
+> state; read it rather than relying on a version number in prose.
 >
 > The `v1.0.0-rcNN` line this document used to describe is the RETIRED
 > WSL2/Linux deployment, published from the archived repository. Its release
@@ -58,9 +46,9 @@ toccolor: black
 >
 > **Station report note.** Readiness and handoff commands report what is
 > configured or observed on a particular station. Their output is operational
-> evidence, not a universal Beta 12 release-acceptance checklist. A configured
-> path or credential reference alone does not prove that an external service
-> accepted a real upload.
+> evidence, not a universal release-acceptance checklist. A configured path or
+> credential reference alone does not prove that an external service accepted
+> a real upload.
 
 ## Who this reference is for
 
@@ -87,9 +75,9 @@ CivicCast is open-source, self-hostable civic meeting recording and publication
 software. The application wires a production live-source probe into live
 pre-flight, in addition to the recorded-media and Portal workflows. A working
 probe is not proof that a particular station's source, hardware, output,
-archive, CDN or headend works end to end. Beta 12's verification record
-contains one limited normal-upgrade observation and no sustained-operation
-result; station-specific external services still require their own checks.
+archive, CDN or headend works end to end. The Beta 14 verification record
+separates focused component checks from the still-pending candidate installation;
+station-specific external services still require their own checks.
 
 ## AI models: defaults and operator selection
 
@@ -103,7 +91,7 @@ console" below). Selection is also exposed over the staff API at
 The current defaults and component identities are:
 
 1. **Live captions** use the included Whistle CPU engine as the primary and
-   Whisper fallback. In the Beta 13 candidate, failed Whistle probes use a
+   Whisper fallback. In the Beta 14 candidate, failed Whistle probes use a
    30-second initial cooldown followed by capped delays of 60, 120, 240 and
    300 seconds; retries continue while the affected channel has audio. A
    10-second slow warning is emitted, and the 30-second watchdog terminates
@@ -111,7 +99,10 @@ The current defaults and component identities are:
    seconds of serialized request allowance; it is not a delivery guarantee.
    The default queue holds at most 42 five-second WAV chunks, and catch-up
    after sustained overload is finite. Diagnostics are bounded; audio is not
-   archived. **Recorded-media captions** use the selected local
+   archived. Whisper fallback requests have a 120-second deadline by default;
+   set `CIVICCAST_WHISPER_FALLBACK_TIMEOUT_SECONDS` from 1 to 600 seconds to
+   change it. This is a per-request limit, not an end-to-end caption delivery
+   guarantee. **Recorded-media captions** use the selected local
    faster-whisper model; Medium is the required tier and Large is optional.
    Check the current catalog on the station for the actual selection.
 2. **Summary** uses an *adaptive* local default gated on GPU presence AND RAM,
@@ -151,8 +142,9 @@ The current defaults and component identities are:
    before attaching or publishing the translated track.
 
 Deterministic adapters are test infrastructure. Check the installed runtime
-and current station configuration before relying on an AI feature; the Beta 12
-verification record describes package evidence separately.
+and current station configuration before relying on an AI feature; the Beta 14
+verification record describes component evidence and pending installation
+checks separately.
 
 ### Cloud and frontier tiers (optional, default OFF)
 
@@ -189,6 +181,13 @@ provider terms and costs. Check the provider's current pricing. For the full
 local-vs-cloud and consent guidance written for the people who run the station, see the
 [Admin Guide](admin-guide.md) ("Cloud & frontier models") and the
 [Meeting Operator Guide](meeting-operator-guide.md).
+
+The selected model is the saved choice. An already-running live-caption runtime
+continues with the model loaded when the service started; if that differs from
+the saved live selection, restart the CivicCast service to apply the new live
+model and confirm the active model afterward. A recorded-caption job started
+after the choice is saved uses that saved model. Saving a selection alone does
+not switch an active live process.
 
 ## Installation
 
@@ -241,6 +240,16 @@ For linear-channel and headend-style output proof, use the
 [Channel Egress Operator And Tester Runbook](ops/channel-egress-runbook.md).
 It covers outgoing feed controls, FileSink continuity proof, SRT loopback proof,
 caption decode-back proof, emergency banner proof language, and report rules.
+For the native station, bundled `tsp.exe` is under
+`<install-root>\packs\native-server-binaries\payload\tsduck\bin`; the
+install root is derived from the service runtime. A channel using a UDP-TS
+headend sink needs TSDuck for its compliance check; installation alone is not
+output proof. If no UDP-TS channels are configured, headend verification is not
+applicable. When it is applicable but TSDuck is missing, install it or set
+`CIVICCAST_TSDUCK_PATH`, then run the channel's headend verification. The
+historical R7/R9 report available for Beta 14 does not include the raw proof
+folders, so its original failure cause is unknown; current candidate proof must
+be recorded separately in the verification record.
 
 For operating the recording-finalization worker (the service that turns an
 ended live broadcast into a recorded, packaged VOD asset), use the
@@ -258,11 +267,25 @@ For the ActivityPub delivery retry worker and the retention review worker
 (plus how they relate to the finalization worker's lifecycle), see
 [Background Workers](ops/background-workers.md).
 
-### Download and verify the Windows setup app
+### Download and verify the complete Windows kit
 
-Install only from the official GitHub Release or from a package repository your
-organization controls. Before running a Windows setup `.exe`, download the
-matching checksum or sidecar file and compare the SHA-256 hash:
+Install only from the official release or from a package repository your
+organization controls. Follow the exact release handoff and use its matching
+`download_windows_release_artifacts.ps1` helper. With `-Install`, the helper
+downloads and verifies `setup.exe`, all five runtime packs, and the complete
+station-model bundle before running setup with `/S`; `-IncludePacks` stages the
+complete kit without installing. Keep `setup.exe`, `packs\` and `station\`
+together. A standalone `setup.exe` download is not the complete install kit.
+Before running the helper, verify its own SHA-256 against the same release's
+`SHA256SUMS.txt`. See the [Windows Release Trust And Verification](install/windows-release-trust.md)
+checklist and the [operator quick start](QUICKSTART-OPERATOR.md). Beta 13 is
+currently published; Beta 14 remains an unpublished candidate with no installer
+or installation result yet. Its
+[verification record](releases/v1.0.0-beta.14-verification.md) is the current
+evidence reference.
+
+For a direct setup-app hash check when the handoff calls for one, compare it to
+the matching checksum entry:
 
 ```powershell
 Get-FileHash .\CivicCast-Setup.exe -Algorithm SHA256
@@ -315,6 +338,17 @@ For a beta or production-like setup:
    in the protected registry value. Standalone deployments may select a
    supported database explicitly with `DATABASE_URL` and apply migrations with
    `uv run alembic upgrade head`.
+
+On native Windows, station paths derive from `%PROGRAMDATA%` (normally
+`C:\ProgramData`), not the interactive user's profile. The default station data
+root is `%PROGRAMDATA%\CivicCast`: PostgreSQL data is under
+`data\pgdata`, media uploads and recordings under `data\uploads`, egress work
+under `data\egress`, logs under `logs`, and first-run acquired packs under
+`packs`. The installer progress log is
+`%PROGRAMDATA%\CivicCast\install-progress.log`. A custom `PROGRAMDATA` value
+changes these paths together. The service's installed binaries are rooted at
+the service executable's install directory; do not diagnose service dependencies
+using only the signed-in user's `PATH` or profile.
 
 The operator console, asset library, schedule, publish records, summaries,
 signed records, subscribers, podcast feeds, and beta-handoff evidence all
@@ -688,8 +722,8 @@ and failure-handling guidance.
 ### Start a live broadcast
 
 These steps require a configured source and station-specific output path. The
-Beta 12 package record does not establish a fresh-install or sustained live
-operation result.
+Beta 14 component checks do not establish an installation or sustained live
+operation result; see its verification record for pending evidence.
 
 1. Open the operator console and choose **Live**.
 2. Confirm that at least one live source appears. If the room says no live
@@ -860,7 +894,10 @@ handled by the v0.7 workflow below.
 2. Read the summary narrative and the **Sourced claims** list.
 3. For every quantitative claim, activate the cue timestamp link. The inline
    transcript player moves to that cue without moving focus away from the
-   review/export action you were using.
+   review/export action you were using. It requests private staff playback; a
+   provenance-verified package uses its HLS timeline and maps the playhead back
+   to the source timeline. If the cited range is outside the available media,
+   the player explains that instead of seeking to a different passage.
 4. If the summary has no source ranges or shows an evidence-refusal message,
    regenerate the summary after adding committed transcript evidence. Do not
    approve unsupported quantitative claims.
@@ -901,6 +938,18 @@ staff summary API. The CSV includes stable columns for cue id, start/end
 seconds, formatted timestamps, cue text, confidence, and the low-confidence
 flag. Use this when a clerk needs a spreadsheet-friendly transcript sidecar
 for review or archival intake.
+
+### Private source and packaged-media preview
+
+The cue player in Summary review uses a short-lived staff playback grant for
+the original recording. When a completed package has verified source and trim
+provenance, the player uses its private HLS copy and maps the HLS playhead back
+to the original source timeline. The Trim & Chapters editor previews the
+selected range from that verified package; if no current package is available,
+it reports that state instead of silently previewing another timeline. Use
+**Renew playback** if the staff grant expires. These previews do not publish the
+asset: residents can watch only an asset that is both packaged and explicitly
+published to the Portal surface.
 
 ## Publish to Portal; integrate other targets separately
 
@@ -954,12 +1003,17 @@ overridden.
 CivicCast backup planning separates the working media store from the archival
 record. Keep database backups, media originals, HLS outputs, local NAS archive
 copies, signed-record exports, and release evidence in separate retention
-sets. For the station's own recovery plan, identify:
+sets. The Setup backup status is a live storage check: `ready` means CivicCast
+wrote a temporary probe file to the selected destination, read it back and
+verified its hash, then removed it. A saved destination by itself is not proof
+that the directory is currently writable. This check is separate from database
+storage readiness and does not create or verify an actual backup. For the
+station's own recovery plan, identify:
 
 1. `CIVICCAST_NAS_ARCHIVE_PATH` points to a mounted archive directory.
-2. The backup-storage probe can write, copy, checksum and remove its small
-   manifest in the selected destination. This is a storage round-trip check,
-   not a station restore.
+2. The backup-storage probe can write, read/checksum and remove its temporary
+   file in the selected destination. This is a storage round-trip check, not a
+   backup job or station restore.
 3. A database drill has separately restored a dump into a throwaway database;
    that does not restore the live station or its media/configuration/provider
    state.
@@ -1167,8 +1221,10 @@ station-specific readiness and configured target status. Read the current
 command output and address the conditions relevant to the station. This report
 does not define universal release-acceptance criteria. A configured provider,
 credential reference, or destination path alone does not prove a real external
-write. The backup-storage probe is a manifest round-trip and does not restore
-the station database, media, or configuration.
+write. Database storage readiness requires the managed database and required
+media storage to be prepared; it is not satisfied by a configured backup
+destination. Backup `ready` means only that the current temporary write/read/hash
+probe succeeded; it does not restore the station database, media, or configuration.
 
 ### Monitoring the running service (`/health`)
 
@@ -1177,7 +1233,7 @@ questions, and monitoring setups should not confuse them.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.13","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.14","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the

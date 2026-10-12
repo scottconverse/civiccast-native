@@ -189,6 +189,7 @@ def test_station_environment_enables_mandatory_offline_captions(
     assert env["CIVICCAST_WHISPER_MODEL_PATH"] == str(
         version_root / "components" / "captions-large-v3" / "models" / "faster-whisper-large-v3"
     )
+    assert env["CIVICCAST_WHISTLE_ROOT"] == str(version_root / "packs" / "captions-whistle")
     assert env["CIVICCAST_WHISPER_DEVICE"] == "cpu"
     assert env["CIVICCAST_WHISPER_COMPUTE_TYPE"] == "int8"
     assert env["CIVICCAST_EGRESS_ENGINE"] == "gstreamer"
@@ -2390,3 +2391,29 @@ def test_resolve_whisper_device_operator_override_wins_in_both_directions(
 
     monkeypatch.setenv("CIVICCAST_WHISPER_COMPUTE_TYPE", "int8_float16")
     assert station_runtime.resolve_whisper_device() == ("cuda", "int8_float16")
+
+
+def test_configured_caption_tier_resolves_its_verified_model_independent_of_activation_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from civiccast.native import station_runtime
+
+    version_root, _large_files = _write_station(tmp_path, write_large_v3=False)
+    floor_files = _write_floor_tier_files(version_root)
+    registry = _fake_floor_registry(floor_files)
+    monkeypatch.setattr(station_runtime, "CAPTION_TIER_REGISTRY", registry)
+
+    model_root, receipt = station_runtime.resolve_caption_model_for_tier(
+        version_root,
+        station_runtime.FLOOR_TIER_ID,
+        acquisition_root=tmp_path / "ProgramData" / "CivicCast",
+    )
+
+    assert model_root == (
+        version_root / "packs" / "captions-floor" / "models" / "faster-whisper-medium"
+    )
+    assert set(receipt) == set(floor_files)
+    with pytest.raises(station_runtime.NativeStationCaptionsUnavailableError):
+        station_runtime.resolve_caption_model_for_tier(
+            version_root, station_runtime.LARGE_V3_TIER_ID
+        )

@@ -248,7 +248,7 @@ This is everything that belongs to your station. **Uninstalling does not delete 
 | `upgrade\` | `upgrade-engine.log`, `upgrade-journal.json` and `UPGRADE-RECOVERY.md` from the last upgrade. |
 | `provision\` | `PROVISION-RECOVERY.md`, `OWNERSHIP-RECOVERY.md`, `ownership-observation.txt` and the database set-up journal. |
 
-> **Warning:** Not everything the station needs is in `C:\ProgramData\CivicCast`. The station's own settings file `station-state.json` (the station profile, the first admin's sign-in record and the recovery-kit state) is read from `%LOCALAPPDATA%\CivicCast\` of the account the service runs as, unless `CIVICCAST_STATION_STATE_PATH` points elsewhere. The service runs as LocalSystem, so on a standard install that should be the system profile (`C:\Windows\System32\config\systemprofile\AppData\Local\CivicCast`; we did not inspect a running station to confirm it). The three default storage folders shown on Station Profile (`media`, `recordings`, `backups`) default to that same place. Include it in your backups, and check what Station Profile shows on your machine.
+> **For IT staff:** Setup and Station Profile show **Installation**, **Database** and **Media uploads** from the installed service's resolved configuration. Native first-run storage defaults are under `C:\ProgramData\CivicCast\data`; existing saved storage choices remain explicit station settings. Use the displayed runtime paths when locating the actual files. Include `station-state.json` in backups as well: `CIVICCAST_STATION_STATE_PATH` can relocate it, and the fallback location is `%LOCALAPPDATA%\CivicCast\` for the account running the service.
 
 ### Per-user files from the first-run wizard
 
@@ -386,7 +386,7 @@ Each surface (Portal, Internet Archive, local NAS copies, YouTube, cable file pa
 | Recording's caption job (Assets) | Transcribing..., Awaiting review, Complete, Failed | `pending`, `awaiting_review`, `complete`, `failed`. "Awaiting review" means the cues are in the review queue. |
 | Channel card, Captions row | On / Off (switched off in the station profile) / Not verified; open channel caption proof | Whether captions in the live output have been proven by decoding them back. |
 | Channel caption card | Captions off, Not verified, Captions on, Caption proof failed, Stale (older than 120 seconds) | The result of the decode-back proof. |
-| Live caption runtime (raw words in status data) | within-capacity, overloaded, storage-refused, paused, disabled | The live caption worker's state. "overloaded" means it is falling behind. |
+| Live caption runtime (raw words in status data) | within-capacity, delayed, overloaded, storage-refused, paused, disabled | The live caption worker's state. "delayed" means temporarily behind; "overloaded" means sustained backlog. |
 
 ## Summaries (Summary review screen)
 
@@ -660,7 +660,7 @@ From the current beta.11 server's checks. Read "any signed-in role" as: the serv
 
 This role-by-area matrix is a Beta 11 source snapshot and has not been independently rechecked for Beta 12. For each area it lists routes with a role requirement and which roles may call them; a dash means none in that snapshot. Routes with no role requirement are reads, plus `POST /api/staff/auth/sign-out`; any valid token may use them. Areas that have no role-gated route (`auth`, `first-run`, `release`, `doctor`) are not listed.
 
-How this was made: the application was loaded and each route's role requirement was read from the Beta 11 source. These counts are historical reference, not Beta 12 authorization evidence. For a current request, rely on the live server's authorization response and the generated API reference in [Appendix B](#app-api).
+How this was made: the application was loaded and each route's role requirement was read from the Beta 11 source. These counts are historical reference, not Beta 14 authorization evidence. For a current request, rely on the live server's authorization response and the generated API reference in [Appendix B](#app-api).
 
 | Area | Gated routes | S | M | R | P | A |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -834,7 +834,7 @@ Do this once before the first public meeting, and again after any reinstall.
 
 ## G.6 Before-upgrade checklist
 
-> **Warning:** Read the current [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) for results tied to the exact package. It records one normal Beta 11-to-12 upgrade and a failed R9 public-assets fresh-install attempt; it does not establish a successful fresh install, repair or sustained-operation result. Have a backup you have restored at least once before upgrading the station that is on the air.
+> **Warning:** Read the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for checks tied to that exact package. Before upgrading an on-air station, keep a separate backup and its recovery information.
 
 - [ ] Read the release notes and the verification record for the version you are installing. Note what was and was not proven.
 - [ ] Choose a time when no meeting is scheduled and no channel is needed.
@@ -1506,7 +1506,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 | Microsoft Visual C++ Redistributable | the installer's own copy | Proprietary (Microsoft's terms) | Required by the Windows programs. CivicCast has no right to reproduce the text; it ships a pointer to where the real terms are. |
 | NVIDIA CUDA and cuDNN libraries (optional GPU pack) | optional | NVIDIA's end-user license terms | Faster captions on an NVIDIA graphics card. The pack carries reference texts, not NVIDIA's copyrighted text. |
 
-> **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of a particular package are in its `LICENSE-BOM.md` files and the [current Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md); use those for that package's component inventory.
+> **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of a particular package are in its `LICENSE-BOM.md` files and the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md); use those for that package's component inventory.
 
 ## Where the license texts are
 
@@ -1532,13 +1532,15 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 # Appendix K: Release history {#app-history}
 
-Published releases of the native Windows line of CivicCast, newest first. The authored source for this list is the project's release-truth file, checked against GitHub's release page. "Superseded" means a newer release replaced it; it does not mean it was bad.
+The native Windows release history and the version covered by this manual, newest first. The project's release-truth file and GitHub release page establish publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** **v1.0.0-beta.12** is the current GitHub pre-release. The [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) contains the exact package identity, October 11 distribution repair and actual installation observations. The 48-hour, three-channel **99.88% caption-input coverage** result is measured Beta 11 host evidence, not a Beta 12 soak.
+> **Note:** This manual describes **v1.0.0-beta.14**. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies the package and installation observations; its release page establishes availability. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.12** | 2026-10-10 | Published GitHub pre-release | A normal Beta 11-to-12 upgrade was observed. The first post-upgrade recorder JSON save failed; the five-snapshot check did not pass. A fresh-install attempt failed activation on four missing signed station packs. See the Beta 12 verification record for exact scope. |
+| **v1.0.0-beta.14** | 2026-10-12 | See release page | Field fixes for installer/model selection, caption timing and recovery, recording, playback, resource protection and documentation. Exact checks are in the Beta 14 verification record. |
+| v1.0.0-beta.13 | 2026-10-11 | Published GitHub pre-release | Automatic Whistle recovery and bounded diagnostics. Fresh installation, normal Beta 11 upgrade and one interrupted-install repair passed their recorded three-channel observations. |
+| v1.0.0-beta.12 | 2026-10-10 | Superseded by beta.13 | Initial distribution and field failures, subsequent public package repair and upgrade observations are preserved in the Beta 12 verification record. |
 | v1.0.0-beta.11 | 2026-10-08 | Superseded by beta.12 | Native live captions use Whistle on CPU by default, with Whisper fallback; the installer includes Whistle and required Medium Whisper while Large Whisper and CUDA are optional. See the Beta 11 verification record for this package's source and exact historical evidence. |
 | v1.0.0-beta.10 | 2026-10-02 (20:31 Mountain; 2026-10-03 02:31 UTC) | Superseded by beta.11 | Added program-change, loudness, looping and relay/reload work. Its eight-hour lab run used an earlier internal build; its clean-install result belongs to the beta.10 package. See Appendix H for historical evidence and limits. |
 | v1.0.0-beta.9 | 2026-09-18 (changelog date) | Never published | A version bump and an installer rebuild; its work is in beta.10. |
@@ -1555,7 +1557,7 @@ The same release-truth file also lists tags from a **different, retired product*
 
 Pre-releases published after this manual was written are listed on the project's GitHub releases page: <https://github.com/scottconverse/civiccast-native/releases>.
 
-<!-- SOURCES: docs/releases/release-truth.yaml (current: v1.0.0-beta.12); docs/releases/v1.0.0-beta.12-verification.md (package source, observations and limits); docs/releases/v1.0.0-beta.11-verification.md (Beta 11 historical evidence); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
+<!-- SOURCES: docs/releases/release-truth.yaml (current: v1.0.0-beta.13); docs/releases/v1.0.0-beta.14-verification.md (package source, observations and limits); docs/releases/v1.0.0-beta.11-verification.md (Beta 11 historical evidence); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
 
 # Appendix L: Index of screens {#app-screens}
 

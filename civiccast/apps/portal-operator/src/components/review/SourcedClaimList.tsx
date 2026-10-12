@@ -1,4 +1,4 @@
-import type { SourcedClaim } from '../../types/api.generated'
+import type { SourcedClaim, TranscriptRange } from '../../types/api.generated'
 
 function fmtRange(startSeconds: number, endSeconds: number): string {
   const fmt = (value: number) => {
@@ -10,10 +10,12 @@ function fmtRange(startSeconds: number, endSeconds: number): string {
 
 export function SourcedClaimList({
   claims,
+  activeRange,
   onSeek,
 }: {
   claims: SourcedClaim[]
-  onSeek: (cueId: string) => void
+  activeRange: TranscriptRange | null
+  onSeek: (range: TranscriptRange) => void
 }) {
   if (claims.length === 0) {
     return (
@@ -36,28 +38,33 @@ export function SourcedClaimList({
         >
           <div className="text-sm font-semibold">{claim.text}</div>
           <div className="mt-2 flex flex-wrap gap-2">
-            {(claim.transcript_ranges ?? []).map((range) => (
-              <button
-                key={`${claim.claim_id}-${range.cue_id}-${range.start_seconds}`}
-                type="button"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  const active = document.activeElement
-                  onSeek(range.cue_id)
-                  if (active instanceof HTMLElement) {
-                    window.requestAnimationFrame(() => active.focus())
-                  }
-                }}
-                className="rounded-md px-2 py-1 text-xs font-semibold"
-                style={{
-                  background: 'var(--cc-surface)',
-                  border: '1px solid var(--cc-line-strong)',
-                  color: 'var(--cc-brand-2)',
-                }}
-              >
-                {range.cue_id} {fmtRange(range.start_seconds, range.end_seconds)}
-              </button>
-            ))}
+            {(claim.transcript_ranges ?? []).map((range) => {
+              const selected =
+                activeRange?.cue_id === range.cue_id && activeRange?.start_seconds === range.start_seconds
+              return (
+                <button
+                  key={`${claim.claim_id}-${range.cue_id}-${range.start_seconds}`}
+                  type="button"
+                  aria-pressed={selected}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    const active = document.activeElement
+                    onSeek(range)
+                    if (active instanceof HTMLElement) {
+                      window.requestAnimationFrame(() => active.focus())
+                    }
+                  }}
+                  className="rounded-md px-2 py-1 text-xs font-semibold"
+                  style={{
+                    background: selected ? 'var(--cc-brand-soft)' : 'var(--cc-surface)',
+                    border: selected ? '1px solid var(--cc-brand)' : '1px solid var(--cc-line-strong)',
+                    color: 'var(--cc-brand-2)',
+                  }}
+                >
+                  {range.cue_id} {fmtRange(range.start_seconds, range.end_seconds)}
+                </button>
+              )
+            })}
           </div>
         </article>
       ))}

@@ -64,7 +64,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from civiccast.auth.roles import require_any_role
 from civiccast.cable.channel import LOCAL_MEDIA_BASE_URL_ENV, local_live_manifest_path
@@ -209,6 +209,9 @@ PUBLIC_LIVE_STATE_ON_AIR_NO_WEB_OUTPUT = "on_air_no_web_output"
 # ``manifest_url`` is still filled in when an ``hls`` sink exists -- the slate
 # IS being served -- so a client that wants to show it can.
 PUBLIC_LIVE_STATE_STANDING_BY = "standing_by"
+PUBLIC_LIVE_STATE_STARTING = "starting"
+PUBLIC_LIVE_STATE_FAILED = "failed"
+PUBLIC_LIVE_STATE_INTERRUPTED = "interrupted"
 PUBLIC_LIVE_REASON_NO_HLS_OUTPUT = "no HLS output configured"
 # An ``hls`` sink IS configured but its playlist does not exist on disk yet
 # (the channel is running a pipeline built before the sink was added, the
@@ -234,11 +237,17 @@ _EGRESS_STATES_EMITTING = _EGRESS_STATES_PROGRAM | {_EGRESS_STATE_STANDING_BY}
 _LOG = logging.getLogger(__name__)
 
 
+class PublicProgramTransition(BaseModel):
+    title: str
+    started_at: str
+
+
 class PublicLiveStatus(BaseModel):
     """Resident-safe live-session projection for the public portal.
 
-    ``state`` is one of ``offline`` / ``on_air`` / ``on_air_no_web_output`` /
-    ``standing_by``. ``reason`` is set for the last two and names, in plain
+    ``state`` includes ``offline`` / ``on_air`` / ``on_air_no_web_output`` /
+    ``standing_by`` / ``starting`` / ``failed`` / ``interrupted``. ``reason``
+    names in plain
     words, why there is no ``manifest_url`` although the channel is on air, or
     why a channel with a manifest is not called on air (it is on its slate).
     """
@@ -248,6 +257,10 @@ class PublicLiveStatus(BaseModel):
     channel_id: str | None = None
     title: str | None = None
     started_at: str | None = None
+    # Actual source handoffs are used with HLS PROGRAM-DATE-TIME to select the
+    # title at the viewer's playback position. The endpoint intentionally
+    # projects only resident-safe title/time fields, never proof paths.
+    program_timeline: list[PublicProgramTransition] = Field(default_factory=list)
     manifest_url: str | None = None
     reason: str | None = None
 
@@ -320,6 +333,37 @@ def get_current_live_session(
             surge=surge,
         )
     current = rows[0]
+    # A durable live-session row records the operator's session, not whether
+    # its configured output process is still running. Once an egress config
+    # exists, its state is authoritative for resident-facing availability.
+    # Keep session metadata for context, but never advertise a stopped or
+    # failed output as live and never return a player URL for it.
+    if egress_store is not None:
+        config = egress_store.get_config(current.channel_id)
+        if config is not None:
+            egress_state = egress_store.read_state(current.channel_id)
+            if egress_state is None or egress_state.state not in _EGRESS_STATES_PROGRAM:
+                if egress_state is None or egress_state.state == "STARTING":
+                    public_state = PUBLIC_LIVE_STATE_STARTING
+                    reason = "Broadcast output is starting or has not reported a state yet."
+                elif egress_state.state == "ERROR":
+                    public_state = PUBLIC_LIVE_STATE_FAILED
+                    reason = "Broadcast output failed. The station has been notified."
+                else:
+                    public_state = PUBLIC_LIVE_STATE_INTERRUPTED
+                    reason = (
+                        "Broadcast output is on its fallback slate."
+                        if egress_state.state == _EGRESS_STATE_STANDING_BY
+                        else "Broadcast output is not running."
+                    )
+                return PublicLiveStatus(
+                    state=public_state,
+                    live_session_id=current.live_session_id,
+                    channel_id=current.channel_id,
+                    title=current.title,
+                    started_at=current.started_at.isoformat() if current.started_at else None,
+                    reason=reason,
+                )
     # Feed + advance the surge switch on every resolution poll, before reading
     # the resolved URL, so the delay buffer elapsing on this very poll hands the
     # viewer the CDN URL in the same response. Unlike the local-manifest observe,
@@ -343,6 +387,9 @@ def get_current_live_session(
         channel_id=current.channel_id,
         title=current.title,
         started_at=current.started_at.isoformat() if current.started_at else None,
+        program_timeline=_public_program_timeline(
+            _recent_public_program_events(egress_store, current.channel_id)
+        ),
         manifest_url=resolved_manifest_url,
     )
 
@@ -394,13 +441,30 @@ def _egress_live_status(
         or (surge.manifest_url(config.channel_id) if surge is not None and has_hls else None)
         or _local_live_manifest_url(config.channel_id, egress_store)
     )
-    started_at = row.updated_at.isoformat() if row.updated_at else None
+    program_events = _recent_public_program_events(egress_store, config.channel_id)
+    timeline = _public_program_timeline(program_events)
+    # EgressStateRow.updated_at is a worker-heartbeat timestamp: the daemon
+    # refreshes it on every healthy poll. Use the actual source-handoff proof
+    # for the public start marker instead of presenting that heartbeat as the
+    # program's start time.
+    current_transition = next(
+        (
+            event
+            for event in program_events
+            if event.state in {"ON_AIR", "FALLBACK_SLATE"}
+            and event.proof_boundary == "civiccast-egress-handoff-boundary"
+            and event.event_id == row.current_proof_event_id
+        ),
+        None,
+    )
+    started_at = current_transition.observed_at.isoformat() if current_transition else None
     if not is_program:
         return PublicLiveStatus(
             state=PUBLIC_LIVE_STATE_STANDING_BY,
             channel_id=config.channel_id,
             title=row.current_source_label,
             started_at=started_at,
+            program_timeline=timeline,
             manifest_url=resolved_manifest_url,
             reason=PUBLIC_LIVE_REASON_FALLBACK_SLATE,
         )
@@ -410,6 +474,7 @@ def _egress_live_status(
             channel_id=config.channel_id,
             title=row.current_source_label,
             started_at=started_at,
+            program_timeline=timeline,
             reason=(
                 PUBLIC_LIVE_REASON_HLS_NOT_SERVING if has_hls else PUBLIC_LIVE_REASON_NO_HLS_OUTPUT
             ),
@@ -419,8 +484,39 @@ def _egress_live_status(
         channel_id=config.channel_id,
         title=row.current_source_label,
         started_at=started_at,
+        program_timeline=timeline,
         manifest_url=resolved_manifest_url,
     )
+
+
+def _recent_public_program_events(egress_store: Any, channel_id: str) -> list[Any]:
+    """Read recent source handoffs for a resident-safe projection."""
+    recent = getattr(egress_store, "recent_proof_events", None)
+    if recent is None:
+        return []
+    return [
+        event
+        for event in recent(channel_id, 120)
+        if event.event_id.startswith("egress-proof-")
+        and event.state in {"ON_AIR", "FALLBACK_SLATE"}
+        and event.proof_boundary == "civiccast-egress-handoff-boundary"
+    ]
+
+
+def _public_program_timeline(events: list[Any]) -> list[PublicProgramTransition]:
+    """Project actual on-air handoffs without exposing source paths.
+
+    HLS segments carry PROGRAM-DATE-TIME. The resident player maps that media
+    clock to these proof-backed transition times so a buffered frame keeps its
+    own program title while the encoder has already moved to the next source.
+    """
+    return [
+        PublicProgramTransition(
+            title=event.source_label,
+            started_at=event.observed_at.isoformat(),
+        )
+        for event in reversed(events)
+    ]
 
 
 def _safe_override_url(url: str | None) -> str | None:

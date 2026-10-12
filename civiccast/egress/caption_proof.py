@@ -30,6 +30,7 @@ from civiccast.egress.caption_embed import (
     evaluate_caption_decode_back,
     parse_caption_cues_from_timed_text,
 )
+from civiccast.egress.gst.caption_clock import TS_CLOCK_WRAP_SECONDS, captured_video_pts_window
 from civiccast.egress.models import CaptionStatus, EgressCaptionProofSample
 from civiccast.egress.store import EgressStore
 from civiccast.stream._ffmpeg import FfmpegResult, run_ffmpeg
@@ -124,6 +125,7 @@ def decode_embedded_captions(
     runner: FfmpegRunner = run_ffmpeg,
     source_id: str = "decode-back",
     timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
+    preserve_timestamps: bool = False,
 ) -> list[CaptionCue]:
     """Extract embedded CEA-608/708 captions from an emitted TS as cues.
 
@@ -140,6 +142,7 @@ def decode_embedded_captions(
             [
                 "-hide_banner",
                 "-nostats",
+                *(["-copyts"] if preserve_timestamps else []),
                 "-f",
                 "lavfi",
                 "-i",
@@ -173,6 +176,7 @@ def sample_caption_decode_back(
     runner: FfmpegRunner = run_ffmpeg,
     clock: Clock = lambda: datetime.now(UTC),
     timeout_seconds: float | None = DEFAULT_CAPTION_PROOF_TIMEOUT_SECONDS,
+    align_transport_clock: bool = False,
 ) -> EgressCaptionProofSample:
     """Decode the emitted stream, compare to expected cues, build a proof sample."""
 
@@ -180,7 +184,40 @@ def sample_caption_decode_back(
         emitted_stream_path,
         runner=runner,
         timeout_seconds=timeout_seconds,
+        preserve_timestamps=align_transport_clock,
     )
+    if align_transport_clock:
+        try:
+            window = captured_video_pts_window(emitted_stream_path)
+        except OSError:
+            window = None
+        if window is None:
+            # An unknown clock cannot establish correspondence. Empty expected
+            # cues keeps the existing proof contract fail-closed.
+            expected_cues = []
+        else:
+            origin, end = window
+
+            def relative(cue: CaptionCue) -> CaptionCue | None:
+                start = cue.start_seconds
+                # Unwrap from the actual capture clock, independently of text.
+                start += round((origin - start) / TS_CLOCK_WRAP_SECONDS) * TS_CLOCK_WRAP_SECONDS
+                finish = start + cue.end_seconds - cue.start_seconds
+                # SRT/WebVTT quantize 90kHz PTS to milliseconds. Permit only
+                # that rounding at the capture boundary, never a fitted offset.
+                if start < origin - 0.001 or finish > end + 0.001 or finish <= start:
+                    return None
+                return cue.model_copy(
+                    update={
+                        "start_seconds": max(0.0, start - origin),
+                        "end_seconds": finish - origin,
+                    }
+                )
+
+            expected_cues = [
+                mapped for cue in expected_cues if (mapped := relative(cue)) is not None
+            ]
+            decoded = [mapped for cue in decoded if (mapped := relative(cue)) is not None]
     proof = evaluate_caption_decode_back(
         channel_id=channel_id,
         emitted_stream_path=emitted_stream_path,

@@ -379,7 +379,9 @@ class BulletinFillerSourceGenerator:
                 duration_seconds=self._slide_seconds,
                 include_text=False,
             )
-            result = self._ffmpeg_runner(args)
+            result = self._run_ffmpeg_or_fail_open(
+                args, what=f"image-only bulletin slide {bulletin.submission_id!r}"
+            )
         if result.returncode != 0:
             raise SourcePrepareError(
                 f"Could not render bulletin slide {bulletin.submission_id!r}; "

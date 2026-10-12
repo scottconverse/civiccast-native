@@ -249,10 +249,12 @@ def test_arm_and_start_pass_the_timeout_flag_through_to_the_real_ffmpeg_argv(
     pipeline.arm(
         job_id="job-timeout", source=source, encoder_profile="copy", loudness_regime="inherit"
     )
-    pipeline.start("job-timeout")
+    assert captured_args == []  # prearming creates no capture before the scheduled start
+    pipeline.start("job-timeout", duration_seconds=60)
 
     assert len(captured_args) == 1
     args = captured_args[0]
     assert "-timeout" in args
     assert args[args.index("-timeout") + 1] == str(_NETWORK_IO_TIMEOUT_MICROSECONDS)
     assert "-rtsp_transport" in args and args[args.index("-rtsp_transport") + 1] == "tcp"
+    assert args[args.index("-t") + 1] == "60.000"

@@ -262,6 +262,20 @@ beforeEach(() => {
 })
 
 describe('PublishDashboardScreen safety feedback', () => {
+  it('filters every asset counted as needing action, including a blocked required surface', async () => {
+    const response = dashboard('blocked')
+    response.summary.needs_operator_action = 1
+    response.assets[0].needs_operator_action = true
+    vi.mocked(listPublishAssets).mockResolvedValue(response)
+    const { findByRole, findByText } = renderScreen()
+
+    const filter = await findByRole('tab', { name: 'Needs action' })
+    fireEvent.click(filter)
+
+    expect(await findByText('Sample asset')).toBeTruthy()
+    expect(filter.getAttribute('aria-selected')).toBe('true')
+  })
+
   it('disables approval while a selected surface is blocked', async () => {
     vi.mocked(listPublishAssets).mockResolvedValue(dashboard('blocked'))
     const { findByRole, findByText } = renderScreen()

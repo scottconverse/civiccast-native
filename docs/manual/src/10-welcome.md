@@ -136,9 +136,9 @@ These are the words used most in Part I. Each is explained again where it first 
 
 ## What is and is not proven in beta.12
 
-CivicCast **Beta 12** is the current native Windows GitHub pre-release. Use the complete download and installation instructions in [Chapter 10](#ch-installing). Package identity and observed installation results are recorded in the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md). Historical results remain tied to their named release.
+CivicCast **Beta 14** is the native Windows version described by this manual. Use the complete download and installation instructions in [Chapter 10](#ch-installing). The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records package identity and installation observations; the releases page shows publication status. Historical results retain their named release.
 
-**A useful earlier operating result:** a separate Beta.11 host ran public, government, and education channels together for 48 hours and recorded **99.88% live caption-input coverage**. See the [48-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the measurement and method. This is a positive result for that Beta.11 host run; it is not a Beta.12 soak, generic service uptime, transcript-word accuracy, or package qualification.
+**72-hour operating result:** a CivicCast station ran public, government, and education channels together for 72 hours and recorded **99.78% live caption-input coverage**. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
 **Live captions:** Beta.12 uses Whistle as the CPU primary, publishes first-pass recognition, and loads Whisper fallback only for the affected channel when needed. Optional NVIDIA CUDA applies to supported Whisper work; Whistle remains CPU-only.
 

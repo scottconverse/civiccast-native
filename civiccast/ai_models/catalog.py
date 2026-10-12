@@ -142,10 +142,8 @@ _CATALOG: dict[AiFeature, list[ModelTier]] = {
             license_url=_GEMMA4_LICENSE,
             notes=(
                 "Local TranslateGemma 4B — Spanish translation default (never gemma4:4b). "
-                "NOT YET CONNECTED (audit finding, 2026-08-29): no caller supplies a "
-                "translation target, so this model is never actually invoked and no "
-                "translated caption track is published. Selecting it has no visible "
-                "effect yet; see AiModelsScreen's translation banner."
+                "Used for Spanish caption cues on published recordings; generated cues "
+                "enter the caption review queue for their own approval."
             ),
         ),
         _GEMMA4_31B_CLOUD,

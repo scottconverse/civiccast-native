@@ -144,6 +144,8 @@ def derive_live_caption_processing_status(
     }
     if egress_state != "ON_AIR":
         return ChannelCaptionProcessingStatus(processing_state="inactive", **common)
+    if capacity_state == "overloaded":
+        return ChannelCaptionProcessingStatus(processing_state="overloaded", **common)
     if capacity_state in _CAPTION_FAILURE_CAPACITY_STATES:
         return ChannelCaptionProcessingStatus(processing_state="failed", **common)
 
@@ -189,6 +191,8 @@ def derive_live_caption_processing_status(
         )
     ):
         processing_state = "silent"
+    elif capacity_state == "delayed":
+        processing_state = "delayed"
     elif pending:
         processing_state = "processing"
     elif (
@@ -273,7 +277,10 @@ def live_caption_readiness(
     except Exception:
         _LOG.debug("Could not aggregate live-caption readiness", exc_info=True)
         return "unknown"
-    if any(status.processing_state in {"failed", "stalled"} for status in statuses):
+    if any(
+        status.processing_state in {"failed", "stalled", "overloaded", "delayed"}
+        for status in statuses
+    ):
         return "degraded"
     if any(status.processing_state in {"unknown", "waiting"} for status in statuses):
         return "unknown"

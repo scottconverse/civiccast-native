@@ -2226,10 +2226,11 @@ def test_direct_physical_host_accepts_runtime_status_without_channel_state(tmp_p
     assert m.main(_direct_args(tmp_path, kit_dir, receipt_path, repo_root=repo_root)) == 0
 
 
-def test_beta12_physical_host_caption_performance_is_advisory(tmp_path):
+@pytest.mark.parametrize("candidate_version", (VERSION, "1.0.0-beta.14"))
+def test_beta12_physical_host_caption_performance_is_advisory(tmp_path, candidate_version):
     kit_dir = tmp_path / "direct-kit"
     receipt_path, _ = _write_direct_consumer_receipt(
-        tmp_path, kit_dir, consumer_mode="physical-host"
+        tmp_path, kit_dir, consumer_mode="physical-host", candidate_version=candidate_version
     )
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     install_ref = receipt["evidence"]["host_install"]["receipt"]
@@ -2268,7 +2269,7 @@ def test_beta12_physical_host_caption_performance_is_advisory(tmp_path):
         kit_dir=kit_dir,
         artifact_source_sha=DIRECT_SOURCE_SHA,
         build_run_id="333",
-        candidate_version=VERSION,
+        candidate_version=candidate_version,
     )
 
     advisory = summary["caption_performance_advisory"]

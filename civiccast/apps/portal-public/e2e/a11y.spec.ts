@@ -233,6 +233,7 @@ async function mockCaptionedHls(page: import('@playwright/test').Page) {
         '#EXT-X-VERSION:3',
         '#EXT-X-TARGETDURATION:2',
         '#EXT-X-PLAYLIST-TYPE:VOD',
+        '#EXT-X-PROGRAM-DATE-TIME:2026-10-12T18:00:00.000Z',
         '#EXTINF:2.000,',
         '/captioned/240p/seg000.ts',
         '#EXT-X-ENDLIST',
@@ -315,6 +316,40 @@ async function expectNoWcagAxeViolations(page: import('@playwright/test').Page) 
 }
 
 test.describe('public portal accessibility', () => {
+  test('live program title follows the real HLS TS playback time', async ({ page }) => {
+    let segmentRequests = 0
+    page.on('request', (request) => {
+      if (request.url().includes('/captioned/240p/seg000.ts')) segmentRequests += 1
+    })
+    await mockPortal(page, {
+      live: {
+        ...liveOnAir,
+        manifest_url: '/captioned/playlist.m3u8',
+        program_timeline: [
+          { title: 'Buffered program', started_at: '2026-10-12T18:00:00.000Z' },
+          { title: 'Next program', started_at: '2026-10-12T18:01:00.000Z' },
+        ],
+      },
+    })
+    await mockCaptionedHls(page)
+    await page.goto('/')
+
+    const video = page.getByLabel('Meeting video player')
+    await page.waitForFunction(
+      () => {
+        const element = document.querySelector('video')
+        return !!element && element.readyState >= 3 && element.videoWidth > 0
+      },
+      undefined,
+      { timeout: 15_000 },
+    )
+    await expect.poll(() => segmentRequests).toBeGreaterThan(0)
+    await video.evaluate(async (element: HTMLVideoElement) => element.play())
+    await expect(
+      page.getByRole('status', { name: 'Program at playback position' }),
+    ).toHaveText('Now playing: Buffered program')
+  })
+
   test('success state has zero WCAG axe violations', async ({ page }) => {
     const consoleErrors: string[] = []
     page.on('console', (message) => {

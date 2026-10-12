@@ -487,8 +487,39 @@ def test_sync_from_chapters_seeds_items() -> None:
     r = client.post("/api/staff/agendas/ag-jan-2026/sync-from-chapters")
     assert r.status_code == 200
     body = r.json()
-    assert [it["title"] for it in body] == ["Call to order", "Roll call", "New business"]
-    assert [it["video_timecode_s"] for it in body] == [0, 120, 360]
+    assert body["chapter_count"] == 3
+    assert [it["title"] for it in body["added_items"]] == [
+        "Call to order",
+        "Roll call",
+        "New business",
+    ]
+    assert [it["video_timecode_s"] for it in body["added_items"]] == [0, 120, 360]
+    assert body["skipped_existing"] == []
+
+
+def test_sync_from_chapters_reports_occupied_positions() -> None:
+    app, _, _ = _build(chapter_provider=lambda _: [Chapter(t=120.0, name="Roll call")])
+    client = TestClient(app)
+    client.post("/api/staff/agendas", json=_agenda_payload())
+    client.post(
+        "/api/staff/agendas/ag-jan-2026/items",
+        json=_item_payload(order=0, title="Operator-edited roll call"),
+    )
+
+    response = client.post("/api/staff/agendas/ag-jan-2026/sync-from-chapters")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "chapter_count": 1,
+        "added_items": [],
+        "skipped_existing": [
+            {
+                "order": 0,
+                "chapter_title": "Roll call",
+                "existing_item_title": "Operator-edited roll call",
+            }
+        ],
+    }
 
 
 def test_sync_from_chapters_missing_agenda_returns_404() -> None:

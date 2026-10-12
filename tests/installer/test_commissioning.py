@@ -165,6 +165,50 @@ def _box_profile(
 
 
 class TestFirstRunCableChecks:
+    def test_default_profile_uses_backup_configuration_and_probe_result(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from civiccast.installer.models import BackupStatus
+
+        observed: dict[str, object] = {}
+        profile = _box_profile(engine_ok=True, sdi_ok=True, tsduck_ok=True)
+
+        def backup_status() -> BackupStatus:
+            return BackupStatus(
+                generated_at=datetime.now(UTC),
+                status="ready",
+                destination="D:/station-backups",
+                message="Backup destination accepted a write/read/delete proof.",
+                next_step="Keep this folder available.",
+            )
+
+        def probe_profile(**kwargs: object) -> StationBoxProfile:
+            observed.update(kwargs)
+            status = kwargs["backup_status"]
+            return profile.model_copy(
+                update={
+                    "backup_destination": BackupDestinationRef(
+                        configured=True,
+                        reachable=status.status == "ready",  # type: ignore[union-attr]
+                        destination=status.destination,  # type: ignore[union-attr]
+                    )
+                }
+            )
+
+        monkeypatch.setattr("civiccast.installer.service.build_backup_status", backup_status)
+        monkeypatch.setattr(
+            "civiccast.installer.commissioning.probe_station_box_profile", probe_profile
+        )
+        report = run_first_run_cable_checks(
+            storage_status=type("S", (), {"status": "ready", "operator_message": "ok"})(),
+            event_bus_ready=True,
+        )
+
+        backup_check = {item.id: item for item in report.checks}["backup"]
+        assert observed["backup_status"].status == "ready"  # type: ignore[union-attr]
+        assert backup_check.status == "pass"
+        assert backup_check.detail == "D:/station-backups"
+
     def test_all_pass_reports_ready(self) -> None:
         box = _box_profile(engine_ok=True, sdi_ok=True, tsduck_ok=True)
         report = run_first_run_cable_checks(

@@ -5,14 +5,18 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from io import BytesIO
 
 import pytest
 from fastapi.testclient import TestClient
+from pypdf import PdfReader
+from reportlab.pdfbase import pdfmetrics
 
 from civiccast.app import create_app
 from civiccast.auth.models import OperatorIdentity
 from civiccast.records.exporter import SignedRecordExporter
 from civiccast.records.models import RecordExportResponse
+from civiccast.records.pdfa import PDFA_FONT_NAME
 from civiccast.records.router import get_record_store
 from civiccast.records.store import InMemoryRecordStore
 from civiccast.records.timestamp import DeterministicTimestampAuthority
@@ -56,6 +60,70 @@ def client_and_store() -> Iterator[tuple[TestClient, InMemoryRecordStore]]:
 
 
 class TestRecordsRouter:
+    def test_long_summary_narrative_is_paginated_and_verifies(
+        self, client_and_store: tuple[TestClient, InMemoryRecordStore]
+    ) -> None:
+        client, store = client_and_store
+        narrative = " ".join(
+            f"The council reviewed agenda item {index} and recorded its decision."
+            for index in range(400)
+        )
+        summary = _summary().model_copy(
+            update={
+                "summary_id": "summary-long-narrative",
+                "meeting_id": "meeting-long-narrative",
+                "status": "approved",
+                "narrative": narrative,
+            }
+        )
+        summary_store = InMemorySummaryStore()
+        summary_store.create_summary(summary)
+        exporter = SignedRecordExporter(
+            summary_store=summary_store,
+            timestamp_authority=DeterministicTimestampAuthority(),
+        )
+        record = exporter.export(
+            summary_id=summary.summary_id,
+            operator_identity=_TEST_OPERATOR,
+        )
+        store.create_record(record, artifact_bytes=record.pdf_bytes)
+
+        pages = PdfReader(BytesIO(record.pdf_bytes)).pages
+        rendered_text = " ".join(
+            " ".join((page.extract_text() or "").split()) for page in pages
+        ).replace("CivicCast PDF/A-3B signed-record export (continued)", "")
+        narrative_start = rendered_text.find(narrative.split()[0])
+        rendered_narrative = rendered_text[narrative_start:].split()
+
+        assert len(pages) > 1
+        assert rendered_narrative == narrative.split()
+        assert summary.audit_fingerprint in rendered_text
+        out_of_bounds: list[str] = []
+        for page_number, page in enumerate(pages, start=1):
+
+            def check_text_bounds(
+                text: str,
+                _cm: object,
+                text_matrix: tuple[float, ...],
+                _font: object,
+                font_size: float,
+                current_page: int = page_number,
+            ) -> None:
+                if not text.strip():
+                    return
+                x, y = text_matrix[4], text_matrix[5]
+                right = x + pdfmetrics.stringWidth(text, PDFA_FONT_NAME, font_size)
+                if x < 71.5 or right > 540.5 or y < 81.5 or y > 740.5:
+                    out_of_bounds.append(
+                        f"page {current_page}: text at ({x:.1f}, {y:.1f}) reaches x={right:.1f}"
+                    )
+
+            page.extract_text(visitor_text=check_text_bounds)
+        assert not out_of_bounds, "; ".join(out_of_bounds)
+        verified = client.get(f"/api/staff/records/{record.record_id}/verify")
+        assert verified.status_code == 200
+        assert verified.json()["status"] == "verified"
+
     def test_list_returns_previously_exported_records(
         self, client_and_store: tuple[TestClient, InMemoryRecordStore]
     ) -> None:

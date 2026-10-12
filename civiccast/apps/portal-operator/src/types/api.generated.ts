@@ -105,6 +105,18 @@ export interface AffidavitAiring {
   placement_id?: string | null
 }
 
+export interface AgendaChapterSyncResult {
+  chapter_count: number
+  added_items?: Array<AgendaItem>
+  skipped_existing?: Array<AgendaChapterSyncSkip>
+}
+
+export interface AgendaChapterSyncSkip {
+  order: number
+  chapter_title: string
+  existing_item_title: string
+}
+
 export interface AgendaImportExternalRequest {
   source: 'legistar' | 'primegov' | 'civicclerk' | 'js_portal'
   client_code: string
@@ -997,7 +1009,7 @@ export interface ChannelBrandingUpdate {
 }
 
 export interface ChannelCaptionProcessingStatus {
-  processing_state?: 'disabled' | 'inactive' | 'waiting' | 'processing' | 'caught-up' | 'silent' | 'stalled' | 'failed' | 'unknown'
+  processing_state?: 'disabled' | 'inactive' | 'waiting' | 'processing' | 'delayed' | 'overloaded' | 'caught-up' | 'silent' | 'stalled' | 'failed' | 'unknown'
   worker_heartbeat_at?: string | null
   last_input_at?: string | null
   last_processed_at?: string | null
@@ -2037,6 +2049,10 @@ export interface FeatureModelAvailability {
   requires_network: boolean
   runtime_reachable?: boolean | null
   model_present?: boolean | null
+  live_runtime_model_key?: string | null
+  live_runtime_model_loaded_at_startup?: boolean | null
+  translation_generated_cue_count?: number | null
+  translation_last_generated_at?: string | null
   detail?: string
 }
 
@@ -3348,6 +3364,7 @@ export interface PublicLiveStatus {
   channel_id?: string | null
   title?: string | null
   started_at?: string | null
+  program_timeline?: Array<PublicProgramTransition>
   manifest_url?: string | null
   reason?: string | null
 }
@@ -3363,6 +3380,11 @@ export interface PublicPlaybackPolicyEvaluationRequest {
   asset_id: string
   channel_id: string
   viewer_token?: string | null
+}
+
+export interface PublicProgramTransition {
+  title: string
+  started_at: string
 }
 
 export interface PublicSearchAsset {
@@ -4418,6 +4440,7 @@ export interface StationProfile {
   public_base_url?: string | null
   station_timezone?: string
   storage_locations: StationStorageLocations
+  runtime_paths?: StationRuntimePaths | null
   channel_count?: number
   channel_profiles?: Array<StationChannelProfile>
   sample_content_enabled?: boolean
@@ -4443,6 +4466,12 @@ export interface StationRecoveryRequest {
   admin_username: string
   recovery_code: string
   new_admin_password: string
+}
+
+export interface StationRuntimePaths {
+  installation_root: string
+  database_data: string
+  media_uploads: string
 }
 
 export interface StationSetupState {

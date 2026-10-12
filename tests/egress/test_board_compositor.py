@@ -193,6 +193,17 @@ class TestSegmentArgs:
         # a crawl needs a time-driven x expression, not a static placement
         assert "mod(" in joined and "t*" in joined
 
+    def test_ticker_zone_scrolls_saved_manual_text(self) -> None:
+        zones = _zones()
+        zones[1] = zones[1].model_copy(
+            update={"source": "manual", "content": {"text": "Public hearing moved to 6 PM"}}
+        )
+
+        joined = _joined(_args(board=_board(zones=zones)))
+
+        assert "Public hearing moved to 6 PM" in joined
+        assert "mod(" in joined and "t*" in joined
+
     def test_ticker_item_title_is_capped_before_drawtext(self) -> None:
         # Gate finding F-5 (cosmetic/defensive): an unbounded feed-item title
         # would otherwise scroll a single, ever-longer line forever.

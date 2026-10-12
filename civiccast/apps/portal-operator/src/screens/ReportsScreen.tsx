@@ -105,6 +105,20 @@ function dateInputToIso(d: string): string {
   return d.length === 10 ? `${d}T00:00:00Z` : d
 }
 
+function startVariance(scheduledStart: string | null | undefined, actualStart: string): string {
+  if (!scheduledStart) return 'No planned start'
+  const scheduledMs = Date.parse(scheduledStart)
+  const actualMs = Date.parse(actualStart)
+  if (!Number.isFinite(scheduledMs) || !Number.isFinite(actualMs)) return 'Unknown'
+  const deltaSeconds = Math.round((actualMs - scheduledMs) / 1000)
+  if (deltaSeconds === 0) return 'On time'
+  const absolute = Math.abs(deltaSeconds)
+  const duration = absolute < 60
+    ? `${absolute}s`
+    : `${Math.floor(absolute / 60)}m ${absolute % 60}s`
+  return `${duration} ${deltaSeconds < 0 ? 'early' : 'late'}`
+}
+
 function saveBlob(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
@@ -435,11 +449,17 @@ function AsRunTable({ rows }: { rows: AsRunReport['rows'] }) {
   }
   return (
     <div className="overflow-auto">
+      <p className="mb-2 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        Planned start and actual on-air start are separate timestamps. VOD playback preroll does
+        not change when a program went on air.
+      </p>
       <table className="w-full text-sm" aria-label="As-run report">
         <thead>
           <tr style={{ color: 'var(--cc-ink-3)' }}>
             <th className="px-2 py-1 text-left">Channel</th>
-            <th className="px-2 py-1 text-left">Start (UTC)</th>
+            <th className="px-2 py-1 text-left">Planned start (UTC)</th>
+            <th className="px-2 py-1 text-left">Actual on-air start (UTC)</th>
+            <th className="px-2 py-1 text-left">Start variance</th>
             <th className="px-2 py-1 text-left">End (UTC)</th>
             <th className="px-2 py-1 text-right">Duration</th>
             <th className="px-2 py-1 text-left">Source</th>
@@ -455,7 +475,11 @@ function AsRunTable({ rows }: { rows: AsRunReport['rows'] }) {
               style={{ borderTop: '1px solid var(--cc-line)' }}
             >
               <td className="cc-mono px-2 py-1 text-xs">{row.entry.channel_id}</td>
+              <td className="cc-mono px-2 py-1 text-xs">{row.entry.scheduled_start ?? '—'}</td>
               <td className="cc-mono px-2 py-1 text-xs">{row.entry.actual_start}</td>
+              <td className="px-2 py-1 text-xs">
+                {startVariance(row.entry.scheduled_start, row.entry.actual_start)}
+              </td>
               <td className="cc-mono px-2 py-1 text-xs">{row.entry.actual_end}</td>
               <td className="cc-tabular px-2 py-1 text-right">{formatHms(row.entry.duration_s)}</td>
               <td className="px-2 py-1 text-xs">{row.entry.source_kind}</td>

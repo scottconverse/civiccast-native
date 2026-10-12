@@ -456,6 +456,11 @@ function CommissioningDefaultsPanel({
   if (!profile) return null
   const channels = profile.channel_profiles ?? []
   const storage = profile.storage_locations
+  const resolvedPaths = (
+    profile as StationAuthResponse['profile'] & {
+      runtime_paths?: { installation_root: string; database_data: string; media_uploads: string } | null
+    }
+  ).runtime_paths
   const roles = profile.default_roles ?? []
   const channelCount = profile.channel_count ?? (channels.length || 1)
   return (
@@ -526,6 +531,16 @@ function CommissioningDefaultsPanel({
           <div className="break-all">Media: {storage.media_library}</div>
           <div className="break-all">Recordings: {storage.recordings}</div>
           <div className="break-all">Backups: {storage.backups}</div>
+        </div>
+      )}
+      {resolvedPaths && (
+        <div className="grid gap-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
+          <div className="text-[10px] font-semibold uppercase" style={{ color: 'var(--cc-ink-3)' }}>
+            Resolved service paths
+          </div>
+          <div className="break-all">Installation: {resolvedPaths.installation_root}</div>
+          <div className="break-all">Database: {resolvedPaths.database_data}</div>
+          <div className="break-all">Media uploads: {resolvedPaths.media_uploads}</div>
         </div>
       )}
       <div className="grid gap-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>

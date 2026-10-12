@@ -100,6 +100,10 @@ class FeatureModelAvailability(BaseModel):
     requires_network: bool
     runtime_reachable: bool | None = None
     model_present: bool | None = None
+    live_runtime_model_key: Annotated[str | None, Field(max_length=120)] = None
+    live_runtime_model_loaded_at_startup: bool | None = None
+    translation_generated_cue_count: int | None = None
+    translation_last_generated_at: datetime | None = None
     detail: Annotated[str, Field(max_length=400)] = ""
 
 

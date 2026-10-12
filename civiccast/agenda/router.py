@@ -32,6 +32,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from civiccast.agenda.models import (
+    AgendaChapterSyncResult,
     AgendaItem,
     AgendaItemInput,
     AgendaItemUpdate,
@@ -440,7 +441,7 @@ def delete_item(
 
 @staff_router.post(
     "/agendas/{agenda_id}/sync-from-chapters",
-    response_model=list[AgendaItem],
+    response_model=AgendaChapterSyncResult,
     summary="Seed agenda items from the meeting asset's chapter markers",
     dependencies=[Depends(require_any_role(*_AUTHOR))],
     openapi_extra=_AUTHOR_EXTRA,
@@ -452,11 +453,12 @@ def delete_item(
 def sync_from_chapters(
     agenda_id: str,
     svc: AgendaService | None = Depends(get_agenda_service),
-) -> list[AgendaItem]:
+) -> AgendaChapterSyncResult:
     """Project ``Asset.chapters_json`` for the agenda's meeting asset into
     draft items (DC-3). Idempotent: items at an existing ``(agenda_id, order)``
     are skipped — operator edits survive a re-sync. Returns the items the
-    service wrote on this call."""
+    service wrote on this call, and identifies chapter markers skipped because
+    an agenda item already occupies their ordered position."""
     resolved = _require_service(svc)
     try:
         return resolved.sync_from_chapters(agenda_id)

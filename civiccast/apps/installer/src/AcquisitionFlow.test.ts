@@ -84,6 +84,9 @@ describe("DownloadingScreen entry calls start_acquisition exactly once", () => {
     });
 
     expect(startAcquisitionCallCount(invokeMock)).toBe(1);
+    expect(invokeMock.mock.calls.find(([command]) => command === "start_acquisition")?.[1]).toEqual({
+      componentIds: ["app_runtime", "server_binaries"]
+    });
 
     // Advance well past several poll intervals (500ms while any component
     // is "downloading"/"verifying", 2s otherwise -- see pollIntervalMs).

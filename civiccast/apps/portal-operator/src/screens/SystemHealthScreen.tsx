@@ -285,6 +285,8 @@ function liveCaptionDetail(channel: ChannelRuntimeStatus): string | null {
     inactive: 'not processing while channel is stopped',
     waiting: 'waiting for audio',
     processing: 'processing audio',
+    delayed: 'temporarily behind; captions continue while catching up',
+    overloaded: 'sustained caption backlog; recovery allowance exceeded',
     'caught-up': 'caught up; waiting for new audio',
     silent: 'digital silence in latest processed audio',
     stalled: 'worker stalled',
