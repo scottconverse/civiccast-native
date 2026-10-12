@@ -2227,7 +2227,10 @@ def test_direct_physical_host_accepts_runtime_status_without_channel_state(tmp_p
 
 
 @pytest.mark.parametrize("candidate_version", (VERSION, "1.0.0-beta.14"))
-def test_beta12_physical_host_caption_performance_is_advisory(tmp_path, candidate_version):
+@pytest.mark.parametrize("runtime_state", ("overloaded", "delayed"))
+def test_beta12_physical_host_caption_performance_is_advisory(
+    tmp_path, candidate_version, runtime_state
+):
     kit_dir = tmp_path / "direct-kit"
     receipt_path, _ = _write_direct_consumer_receipt(
         tmp_path, kit_dir, consumer_mode="physical-host", candidate_version=candidate_version
@@ -2253,7 +2256,7 @@ def test_beta12_physical_host_caption_performance_is_advisory(tmp_path, candidat
         for channel in snapshot["channels"]:
             channel.update(
                 {
-                    "caption_runtime_status": {"state": "overloaded"},
+                    "caption_runtime_status": {"state": runtime_state},
                     "caption_runtime_available": True,
                     "caption_runtime_unavailable_reason": None,
                     "vtt_available": True,
@@ -2274,7 +2277,7 @@ def test_beta12_physical_host_caption_performance_is_advisory(tmp_path, candidat
 
     advisory = summary["caption_performance_advisory"]
     assert "not an automatic publisher gate" in advisory
-    assert "overloaded" in advisory
+    assert runtime_state in advisory
     assert "physical-host pre-install health reports live_captions=unknown" in advisory
     assert "zero cues" in advisory
     assert "VTT hash did not change" in advisory

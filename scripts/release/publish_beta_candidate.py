@@ -225,6 +225,7 @@ DIRECT_HOST_RUNTIME_MIN_SPAN_SECONDS = 30.0
 DIRECT_CAPTION_RUNTIME_STATES = {
     "within-capacity",
     "overloaded",
+    "delayed",
     "storage-refused",
     "paused",
     "disabled",

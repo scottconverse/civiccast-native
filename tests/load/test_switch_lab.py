@@ -11,11 +11,13 @@ freeze once the switch stops being driven by local-manifest polls).
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from civiccast.common.trusted_proxy import reset_trusted_proxy_cache
+from civiccast.egress.router import get_egress_store
 from civiccast.load.switch_lab import ManualClock, build_switch_lab, simulate_switch
 
 
@@ -38,7 +40,7 @@ def _clean_proxy_env(monkeypatch: Any) -> Any:
 def _build(
     tmp_path: Path, clock: ManualClock, *, threshold: int, buffer_seconds: float = 0.0
 ) -> Any:
-    return build_switch_lab(
+    lab = build_switch_lab(
         tmp_path / "live",
         tmp_path / "cdn",
         threshold=threshold,
@@ -46,6 +48,13 @@ def _build(
         tick_interval=1.0,
         clock=clock,
     )
+    store = lab.app.dependency_overrides[get_egress_store]()
+    store.read_state = lambda channel_id: (
+        SimpleNamespace(channel_id=channel_id, state="ON_AIR")
+        if channel_id == lab.channel_id
+        else None
+    )
+    return lab
 
 
 def test_ramp_engages_the_switch_to_cdn(tmp_path: Path, _clean_proxy_env: Any) -> None:

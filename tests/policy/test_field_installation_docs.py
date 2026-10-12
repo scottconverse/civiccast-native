@@ -77,10 +77,14 @@ def test_field_delivery_docs_do_not_claim_plain_metadata_is_signed() -> None:
 def test_readme_separates_published_downloads_from_field_evidence() -> None:
     readme = _normalized_plaintext(ROOT / "README.md")
     assert PUBLISHED_RELEASE_LINK in readme
-    assert "99.88% live caption-input coverage" in readme
-    assert "separate beta 11 host" in readme
-    assert "it is not a beta 13 soak, general service-uptime percentage" in readme
-    assert "package qualification" in readme
+    assert "72 hours. three channels. 99.78% live caption-input coverage" in readme
+    assert (
+        "a beta 11 host ran public, government and education together without a service restart"
+        in readme
+    )
+    assert "with 216 healthy scheduled checkpoints" in readme
+    assert "verification record" in readme
+    assert "72-hour host report" in readme
 
 
 def test_quickstart_uses_the_release_helper_and_verifies_its_exact_inputs() -> None:
@@ -111,9 +115,12 @@ def test_quickstart_keeps_smartscreen_conditional_and_installation_distinct_from
     assert "recovery codes" in quickstart
     assert "system health is green" in quickstart
     assert "installation check, not yet a beta release or production-readiness claim" in quickstart
-    assert "not a production cutover instruction" in quickstart
     assert "wait for the station owner s cutover decision" in quickstart
     assert "successful setup exit alone does not prove" in quickstart
+    assert (
+        "do not treat reaching the operator console, an installer exit code of zero, or a version number as proof"
+        in quickstart
+    )
     _assert_no_false_completion_claims(quickstart)
 
 
