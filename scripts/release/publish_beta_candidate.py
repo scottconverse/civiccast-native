@@ -553,6 +553,77 @@ def _caption_advisory(findings: set[str]) -> str:
     )
 
 
+_BETA14_ORIGINAL_HOST_DRIVER_SHA256 = (
+    "118c4a53df53909ff2583ed0ad00e3c07c7ca1d655d83108f4b4a034b7fc442b"
+)
+
+
+def _verify_host_precondition_attestation(
+    before: dict[str, Any], *, receipt_dir: Path, install: dict[str, Any], candidate_version: str
+) -> None:
+    """Accept preserved control-flow predicates without inventing a raw before snapshot.
+
+    This exceptional Beta14 continuation is tied to the unchanged original driver
+    and its recorded final observer failure, after all preservation checks passed.
+    """
+    _record_keys(before, {"precondition_attestation"}, label="attested host pre-install state")
+    attestation = _record(before["precondition_attestation"], label="host preconditions")
+    if (
+        candidate_version != DIRECT_BETA14_VERSION
+        or attestation.get("kind") != "civiccast-host-preconditions-from-original-control-flow"
+        or attestation.get("expected_before_version") != "1.0.0-beta.11"
+    ):
+        raise PublishError("unsupported host precondition attestation")
+    checks = _record(attestation.get("checks"), label="host precondition checks")
+    required = {
+        "service_running",
+        "schedule_loop_enabled",
+        "accepted_health",
+        "schema_current",
+        "schema_revision_pair_matches",
+        "install_location_unchanged",
+        "database_data_path_unchanged",
+        "database_data_present_before_and_after",
+    }
+    _record_keys(checks, required, label="host precondition checks")
+    if any(checks[key] is not True for key in required):
+        raise PublishError("host precondition attestation contains an unproved predicate")
+    driver = _bound_path(
+        receipt_dir, attestation.get("original_driver"), label="original host driver"
+    )
+    if sha256_file(driver) != _BETA14_ORIGINAL_HOST_DRIVER_SHA256:
+        raise PublishError(
+            "host precondition attestation does not bind the original checked driver"
+        )
+    _, failure = _bound_json(
+        receipt_dir, attestation.get("original_failure"), label="original host failure"
+    )
+    _, process = _bound_json(
+        receipt_dir, attestation.get("installer_process"), label="original installer process"
+    )
+    for record in (failure, process):
+        if (
+            record.get("kind") != "civiccast-native-exact-host-install"
+            or record.get("candidate_version") != candidate_version
+            or record.get("source_sha") != install.get("source_sha")
+            or str(record.get("build_run_id")) != str(install.get("build_run_id"))
+        ):
+            raise PublishError("host precondition evidence does not bind this candidate")
+    if (
+        failure.get("stage") != "failed"
+        or not str(failure.get("script_stack_trace", "")).endswith("run-host-install.ps1: line 266")
+        or not str(failure.get("error", "")).startswith(
+            "Installed native app-payload verification failed with exit code 1. See "
+        )
+        or process.get("stage") != "installer-exited"
+        or process.get("installer_exit_code") != 0
+        or process.get("setup_sha256") != install.get("setup_sha256")
+    ):
+        raise PublishError(
+            "host precondition evidence is not the completed install's final observer failure"
+        )
+
+
 def _verify_physical_host_consumer(
     *,
     receipt_dir: Path,
@@ -617,11 +688,26 @@ def _verify_physical_host_consumer(
 
     before = _record(install.get("before"), label="host pre-install state")
     after = _record(install.get("after"), label="host post-install state")
-    before_health = _record(before.get("health"), label="host pre-install health")
+    attested_before = "precondition_attestation" in before
+    if attested_before:
+        _verify_host_precondition_attestation(
+            before, receipt_dir=receipt_dir, install=install, candidate_version=candidate_version
+        )
+    before_health = (
+        {} if attested_before else _record(before.get("health"), label="host pre-install health")
+    )
     after_health = _record(after.get("health"), label="host post-install health")
     caption_findings: set[str] = set()
-    before_version = before.get("display_version")
-    if (
+    before_version = (
+        before["precondition_attestation"]["expected_before_version"]
+        if attested_before
+        else before.get("display_version")
+    )
+    if attested_before:
+        # The original accepted class is known, but its raw status/caption fields
+        # were not saved. Do not synthesize those observations.
+        before_caption_finding = None
+    elif (
         beta12_candidate
         and before_health.get("status") == "healthy"
         and isinstance(before_version, str)
@@ -660,11 +746,18 @@ def _verify_physical_host_consumer(
     if after_caption_finding is not None:
         caption_findings.add(after_caption_finding)
     if (
-        before.get("service_state") != "Running"
-        or (not beta12_candidate and before_health.get("status") != "healthy")
-        or not isinstance(before.get("display_version"), str)
-        or not before.get("display_version")
-        or before_health.get("version") != before.get("display_version")
+        (
+            not attested_before
+            and (
+                before.get("service_state") != "Running"
+                or (not beta12_candidate and before_health.get("status") != "healthy")
+                or not isinstance(before.get("display_version"), str)
+                or not before.get("display_version")
+                or before_health.get("version") != before.get("display_version")
+                or before.get("install_location") != after.get("install_location")
+                or before.get("schedule_loop_enabled") is not True
+            )
+        )
         or after.get("service_state") != "Running"
         or after.get("display_version") != candidate_version
         or (
@@ -675,8 +768,6 @@ def _verify_physical_host_consumer(
                 or after_health.get("schema") != "current"
             )
         )
-        or before.get("install_location") != after.get("install_location")
-        or before.get("schedule_loop_enabled") is not True
         or after.get("schedule_loop_enabled") is not True
     ):
         raise PublishError(
@@ -870,7 +961,7 @@ def _verify_physical_host_consumer(
         "consumer_mode": "physical-host",
         "host_install": (
             f"PASS (exact signed {candidate_version} installer; existing "
-            f"{before['display_version']} host updated in place)"
+            f"{before_version} host updated in place)"
         ),
         "host_preservation": "PASS (install location and service-loop setting retained; schema current)",
         "host_runtime": (

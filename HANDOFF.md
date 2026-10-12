@@ -1,113 +1,37 @@
-# Current continuation state
+# CivicCast Beta 14 publication handoff
 
-Beta 14 implementation is active on `codex/beta14-field-fixes`, based on
-merged main `3c3ac6ba4a1e185a475a48aa3733a0d1a79a9d1e`. The owner authorized
-all 28 goals in `C:\Users\scott\Desktop\Goals\CIVICCAST GOALS B14.md` and
-shipment of a working Beta 14. The active requirement/evidence record is
-[Beta 14 task completion](docs/ops/beta14-task-completion.md).
+Beta 14 is published: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14
+Published 2026-10-12 10:25:01 UTC. All 26 assets passed name/size and SHA-256
+digest verification. Six actual public downloads matched SHA-256; the
+downloaded installer has a Valid Scott Converse Authenticode signature.
 
-The goal document additionally requires initial Windows Sandbox testing and
-a final real installation on this machine. That final installation is an
-authorized host change; keep the existing station running until the candidate
-has passed the initial isolated installation and the final installation is
-ready. No extended soak, extra harness or unrelated feature work is included.
-The prepared 72-hour positive marketing/documentation batch is applied to this
-development branch, including the README; it is not yet published.
+Signed source: `44525c14265d21ae461c2435d4d5a9a6acd58af3`; build `38217950172`.
+Release target / merged PR 240: `ed2f5069004abb6c3c6b4375ac82a07fcabe9a7b`.
+Installer SHA: `e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f`.
+Bookkeeping branch: `codex/beta14-publication-record`.
 
-Installer/model and caption groups have focused checks; the independent
-caption/model review found and confirmed the correction for a lost selected
-tier at the fallback child-process boundary. Luna workers continue
-live/recording/playback, PDF/Help, and adaptation of existing release tools.
-Ordinary work uses Luna Extra High; difficult caption-clock work and focused
-independent review use Sol 6.1 Medium. Shared generated files, versioning, documentation
-integration and publication are coordinator-owned. Preserve unrelated
-untracked `ops/beta10-oversight/evidence/`. No Beta 14 build, installation,
-signature or publication result exists yet.
+All 28 requested product goals have focused evidence in
+[task completion](docs/ops/beta14-task-completion.md). Exact package passed
+fresh offline Sandbox installation, five three-channel observations and
+installed Help inspection. Sandbox closed. Same installer ran once on host,
+exited 0, and passed component verification and two three-channel observations.
+Host remains running: Whistle primary, H.264/AAC, advancing HLS and captions.
+No extended Beta 14 soak requested or claimed. Original observer failures are
+preserved; corrections did not rerun setup or rebuild the signed application.
+Final receipt: `outputs/beta14-work/host-runtime-final/consumer-evidence-receipt.json`.
+Raw pre-install snapshot was not retained; account/schedule rows not compared.
+Historical R9 TSDuck cause and one unavailable recording segment cause remain
+unknown; focused current fixes are evidenced separately.
 
-The current published release is Beta 13. For its package identity and
-recorded evidence, use [PROJECT-STATUS.md](PROJECT-STATUS.md) and the
-[Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
-The normal Beta 11 upgrade, one repair after an interrupted install, and a
-fresh install each passed a five-minute observation across all three channels.
-The October 10 checkpoint below predates publication and remains history only.
+D: kit: `D:\CivicCast-Beta14-Kit-44525c14`, 19 members, 26,916,076,058 bytes.
+Assembly and USB receipts alongside; both installation prompts name Beta 14.
+Assembly SHA: `2338fddc987b4cb73bfbea4947901899a11ef0338231b24772f2a756604f77a4`.
+Redundant closed Sandbox expansion and twelve uploaded archive parts removed;
+evidence/component manifest and working C:/D: kits retained. C: free 403.9 GB.
 
-## Historical October 10 Beta 12 pre-publication checkpoint
-
-- At this checkpoint the full twelve-item Beta 12 implementation/build/release goal was active. Branch `codex/beta12-reliability`, draft [PR #236](https://github.com/scottconverse/civiccast-native/pull/236). Beta 11 was then published; Beta 12 had not yet been published.
-- This integrated follow-up to `c6f0864becfb93444853c754cfc50f4226267209` adds lazy Whisper backup startup, due prearmed-recording starts and cancellation on schedule disable, canonical-sample-only local preflight, and truthful station-index/six-pack publication evidence. Sensitive regressions, affected checks and independent reviews are recorded in [Beta 12 verification](docs/releases/v1.0.0-beta.12-verification.md).
-- The c6 signed diagnostic producer `38031718156` succeeded and its 19-member kit was checked. Required c6 source checks passed; informational mutation was cancelled. That kit predates these follow-ups. Build one combined candidate and use the retained offline CPU-only guest's prepared Beta 11 baseline for upgrade/repair and preservation evidence. Do not recreate the baseline or claim historical F93 checks qualify the new package.
-- Manual chapters, in-app Help, Markdown, PDF, Word and the in-app manual are synchronized. Tracked-download, renderer currentness and release-identity checks passed for Beta 12.
-- The MSI i7/16GB/RTX4050 6GB Beta 11 field report arrived. Its fallback startup issue is addressed by lazy backup initialization; its short GPU decode and later three-channel captions are not a formal sustained soak. Scott cancelled the Ryzen/R7 report: none will arrive, and it is not a release requirement.
-- Caption percentages are reporting references only. Scott decides release acceptability even below 98%; consult him BEFORE treating caption performance as a release blocker. Accurate late captions count as successful. The separate host-run report records approximately 99.87% by discarded-input coverage, not transcript word accuracy.
-- A final scope review found the requested Remote Contribution Off air media control missing. The bounded paired audio/camera mute correction and truthful guest-audio labels now pass all 26 affected screen tests, scoped lint and independent review. A real pinned-provider check observed muted guest audio and a disabled camera while the connection remained open; provider completion is not acknowledged. External OBS/GStreamer composition remains an explicit integration boundary, not a newly added native-compositor requirement. Producer `38073908014` continues unchanged for its existing source; it cannot qualify this later app/manual change. Final installation checks must use the completed integrated candidate.
-- Release tooling now reports Beta 12 fallback, caption-only degraded health and missing/empty/late caption observations as advisory, including the D4 and physical-host paths. Malformed evidence and installation/data/video failures retain validation. The signed application producer `38073908014` remains pinned to `688b2dcdc79dd001ca6cf620ea2b0ad14929e87b`; this tooling/documentation follow-up does not change application or bundled-manual source. Preserve separate tag-target and artifact-source identities when publishing.
-- Leave the running host station, credentials, models, GPU and settings untouched. Preserve untracked `ops/beta10-oversight/evidence/`. Detailed working state: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\beta11-documentation-sync\CURRENT-HANDOFF.md`.
-
-## Historical October 9 development checkpoint
-
-This section supersedes every older status entry below.
-
-- Owner authorized the full twelve-item Beta 12 punch list and build. Branch: `codex/beta12-reliability`; source checkpoint `f44ca32808c51495eb88f50c471a7b895d12de5c`; draft [PR #236](https://github.com/scottconverse/civiccast-native/pull/236). Beta 12 is unpublished; Beta 11 remains the public download.
-- Affected-source verification passed 1,178 backend tests with six Windows skips for POSIX FIFO contracts, 155 operator screen tests, operator/public production builds, all 690 mypy source files, and 65 release-identity/documentation checks. API, in-app manual and PDF/Word were regenerated and currentness checked. These results are separate from whole-repository CI and package qualification.
-- Hosted CI at that checkpoint found three operator browser failures and two Windows recovery-permission assertions. Follow-up work fixes missing session-lookup mocks, distinguishes stale-summary conflicts from record-export errors, corrects Control Room helper contrast, and verifies effective Windows ACL principals including a guarded OWNER RIGHTS alias. Production permission hardening is unchanged. Record final follow-up checks and commit before calling these CI findings closed.
-- Provisional signed build `37996681227` was cancelled so the final producer can include the fixes. Only its exact-source manual artifact was downloaded; no Beta 12 kit is assembled or qualified. Dispatch a new exact-source build after the CI findings are resolved, then verify the complete offline kit and exercise fresh installation, repair and cross-version preservation on isolated Windows targets.
-- Follow-up source `875834818b73bfbd091f93ee1e3490dce3cf3388` passed hosted operator accessibility and Windows native CI. Its signed build `37998508533` was cancelled after a real local HTTP alert check exposed dispatch-before-commit and uncommitted transport/retry outcomes. Both runs' downloaded manuals are historical only. The alert transaction fix and real loopback regressions passed 70 affected tests; independent review passed all 256 alerting tests and received valid-HMAC firing then resolved HTTP messages with persisted outcomes. The final producer remains pending. Keep the existing optimistic-send crash window and latest-committed-state payload limitations explicit.
-- Actual Ryzen iGPU and Intel/NVIDIA installation/walkthrough/three-channel reports remain pending. Owner says installation is starting now. The corrected Beta 11 package and older development soak do not qualify Beta 12.
-- Keep the running host station, credentials, models and settings untouched. No host installation or restart is authorized. Preserve unrelated untracked `ops/beta10-oversight/evidence/`.
-- Detailed working evidence and continuation state: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\beta11-documentation-sync\CURRENT-HANDOFF.md`. Candidate scope and limits: [Beta 12 verification](docs/releases/v1.0.0-beta.12-verification.md).
-
-## Historical Beta 11 documentation/help checkpoint
-
-This section supersedes every older status entry below.
-
-- Owner authorized full Beta 11 documentation/help reconciliation, regeneration, corrected packaging, necessary Sandbox installation, and publication. Keep the existing host station and independent observer running; no host install or restart.
-- Branch: `codex/beta11-doc-release-metadata`, based on merged main `1388b8b28be78ba8a3992c9d66a565f5f09762f3`. Application/bundled-manual producer: `400cff08f72a4555f9de57e790a298ecefdb0cce`, signed hosted preparation [37857705750](https://github.com/scottconverse/civiccast-native/actions/runs/37857705750). [PR #234](https://github.com/scottconverse/civiccast-native/pull/234) merged after all 21 applicable checks passed on source head `60214a5e`.
-- The Beta 11 documentation/help asset revision is published. All 12 asset sizes/digests match the verified kit. Actual public GETs of setup, PDF, Word, receipt, render manifest, sidecar and checksums matched. Downloaded setup signature is valid Scott Converse; PDF is 467 pages. Tag `v1.0.0-beta.11` still targets `79e6431dfea248b11b079cff69408192ef22816a`; automatic source archives follow that old tag, so use producer `400cff08` for revised application source.
-- Current manual source SHA-256: `17e72b647b8bd6977c11c14cd8e4087fabd3a2aaef50617716c78f42e3f03f99`. Manual, contextual help across all 40 operator routes and recursive operator/resident/installer production sources, architecture/support, README, install guides and public release claims were reconciled. Historical audit/soak records remain labeled historical. Website PDF and Word public downloads also match their same-source render manifest.
-- Exact-package fresh CPU-only Windows Sandbox installation passed with the complete local kit, network/vGPU disabled and 9 GiB guest RAM. Setup exited 0 after 30m34s; offline AI and CPU speech self-tests passed. The first 10 GiB attempt was guard-cancelled before completion and has no installation result.
-- Existing five-minute single-channel Whistle output check passed: healthy Beta 11/current schema, fresh H.264/AAC HLS, changing captions, 60 final cues, no fallback and bounded backlog. Installed Help matched the exact manifest/API: 636 TOC entries, 29 images, 97 unique internal targets with none missing; JS/CSS returned 200. Browser clicks were verified in the built-source preview separately, not automated in guest. Check-only path/hash/UTF-8/schema mistakes are retained as diagnostics; no product file was changed to fit a check.
-- Guest and its guard are closed; host service PID6208 and all three streams stayed healthy. The original installed host manual remains unchanged until an owner-authorized installation. Fresh install results do not establish repair, Beta 10 upgrade, GPU, capacity, field acceptance, or a new soak.
-- Corrected kit: `D:\CivicCast-Beta11-Documentation-Kit-400cff08`; all 19 copied members (26915294076 bytes) match the assembly receipt by size and SHA-256. Copy receipt is in `outputs/beta11-candidate-400cff08/copy-to-D-receipt.json` under the session workspace, SHA-256 `eb8350f003e32503bf99035093fa4927ac301ba335bb2b56a769e27d6bcd22d5`. Original rollback kit `D:\CivicCast-Beta11-Fixed-Kit-b7cc3e7c` is retained.
-- Final publication-metadata checks: 51 policy tests passed; earlier local/source, rendered-manual, browser/navigation, focused independent reviews and CI are recorded in the [verification record](docs/releases/v1.0.0-beta.11-verification.md). Informational mutation fixture-copy failure produced no score and remains a deferred CI-reporting issue.
-- Final publication metadata is documentation-only; it does not change producer `400cff08`. The session's `outputs/beta11-documentation-sync/CURRENT-HANDOFF.md` records the final pushed metadata SHA, deployed website read-back, and full-scope completion result. Preserve the running station and observer.
-- Standing rule: no test theater, invented gates, extra scope or elaborate harnesses. Prefer Luna for bounded coder work; no DeepSeek. Preserve unrelated untracked `ops/beta10-oversight/evidence/`.
-
-## Historical handoff entries (superseded status)
-
-# HANDOFF
-
-This file is a pointer, not a log.
-
-Current checkpoint October 8: branch `codex/beta11-whistle`, PR233; use `git rev-parse HEAD` for the current revision. Latest assembled package: source `0166a7ba`, build `37782949172`, setup SHA-256 `066bfe2c87c7ffe4b0a2190997b239b199267d4c2ad5ce50f416d645b8c7a83c`; no lifecycle qualification is recorded for that kit. The working tree now also contains a supervisor child-start/readiness serialization fix, not included in that package. Beta 10 remains published; Beta 11 is not merged/tagged/published. Owner authorized completing CI/security fixes, documentation, publication wiring and release. The last stored read-only host observations found healthy HLS with empty active VTTs after Whistle/Whisper child failures; no claim that either fix recovered that station. Preserve the running station and observer. The 0166 package contains the fallback fix but has not passed lifecycle qualification; the supervisor fix remains source-only. The earlier accepted 36-hour milestone is historical and does not establish current caption health. The supervisor lock spans readiness, so a recovery tick can wait through the existing 180-second control-plane budget; the D7 caller timeout remains 30 seconds. The earlier host failure's root cause is not established. The 48-hour checkpoint is not a release gate or stop time.
-
-Definitive continuation handoff: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CivicCast-BETA11-RELEASE-COMPACTION-HANDOFF-2026-10-08.md`. Normal CI, claims, security, lint/types, randomized and reproducibility checks passed on the prior source; the informational mutation statistics failure produced no mutation result. The 9b setup-only Beta 10 upgrade and preservation passed, but its three-channel guest caption run shed audio and paused. Build 37782949172 later produced and assembled the 0166 package (setup SHA above); fresh/repair/upgrade qualification for that package is not recorded. Source changes made after it include a bounded Whistle fallback cooldown and the supervisor child-start/readiness serialization fix. The fallback fix is in the 0166 package with no lifecycle result; the supervisor fix has two RED/GREEN race checks, 212 focused supervisor tests and an independent 17-node review but is not yet packaged. The host's earlier empty-VTT incident remains unresolved, and neither fix proves its root cause or recovery. Beta 10 remains published. Do not start the self-hosted runner. Later entries below are historical and do not override this state.
-
-- October 7: Beta 11 package preparation is authorized. Keep the current station and 20-minute monitor running. Frozen package source `31298ce8492826d9987aff55ebe3658f8ff54559`, hosted preparation run `37671057029`, passed; exact-run manuals, all six station packs, installer signature/version/hash and all five runtime packs are verified locally. Complete kit: `C:\Dev\Claude\civiccast-beta11-whistle\outputs\beta11-candidate-31298ce8\kit`, 26.91 GB, 19 copied-file hashes verified. Four overlapping failures from the 129-failure hosted unit run were corrected in tests only and pass focused checks; broad CI remains open. [Candidate verification](docs/releases/v1.0.0-beta.11-verification.md) records source/artifact identity and remaining install/CI checks. The current installation gate needs a separate suitable host and recovery of its approved Beta 5 baseline. No publication or station upgrade has occurred. Do not start the offline desktop runner or launch Sandbox during the continuing soak.
-
-- October 7: owner accepted the **24-hour three-station caption soak as sufficient soak evidence for Beta 11 release**. [Results and limits](docs/ops/beta11-dev7-24-hour-caption-soak-2026-10-07.md). Station and monitor remain running. This supersedes the eight-hour result as the latest soak milestone; packaged installer verification remains separate.
-
-- Latest compaction checkpoint, October 7 about 05:00 MDT: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CivicCast-COMPACTION-HANDOFF-2026-10-07.md`. Station and independent 20-minute monitor remain running; 51 eligible completed caption checks passed. Read that checkpoint for owner-directed gaming exclusion, current evidence locations and unresolved whole-drive disk attribution; re-query runtime before reporting fresh status.
-
-- October 6 at 18:01 MDT: owner accepted a **successful eight-hour three-station caption soak**. All 66 sampled channel checks passed; no supervisor restart or logged caption-audio loss/pauses/fallback. Record: [eight-hour dev7 soak](docs/ops/beta11-dev7-eight-hour-caption-soak-2026-10-06.md). Leave the station and monitor running; owner plans to check again tomorrow. This supersedes the earlier four-hour outcome as the latest caption milestone, while preserving its historical defects and current non-caption limitations.
-
-- Owner-directed continuous observation is active from October 6: leave the station running until the owner ends it. Windows task `CivicCast-beta11-readonly-20minute-observer` records every20minutes indefinitely, with no service control or model inference. Measurements and instructions: `C:\Users\scott\Documents\Codex\2026-10-04\rea\work\station-observer\README.md`. First checkpoint completed10:48:38MDT, task result0 and caption checks passed. When the owner ends observation, use these records to write the full performance report; stopping the monitor alone does not authorize stopping the station.
-
-- October 6 bounded-live implementation supersedes the earlier "not implemented" diagnosis below: local dev7 is installed; automatic live review/evidence and retention readiness gates are removed; history is bounded to 300 seconds/512 cues and waiting audio to 12 completed chunks plus owned/writer inputs. Descriptor cleanup is fixed; disposable beta caption tables and files were reset. Whistle primary, Whisper backup and the global inference lock are preserved. Current verification report: `C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\CivicCast-beta11-bounded-live-implementation-2026-10-06.md`. The 15-minute comparison completed at 10:10:25: 543 Whistle calls, zero logged discards/fallback/pauses, six successful sampled caption-delivery checks; no long-term reliability or public-release claim is made.
-
-- Current beta.11 caption decision and local candidate: [`docs/ops/beta11-whistle-test-candidate.md`](docs/ops/beta11-whistle-test-candidate.md). Whistle primary, Whisper backup/GPU option; dev6 global lock restored; four-hour soak completed October 6 at 02:07 MDT: no fallback; 23/23 output checks passed, but 85s caption audio loss and unresolved loudness/I/O findings prevent a clean pass.
-
-- Historical October 6 overnight diagnosis is recorded in that candidate document: full-table retention reconstruction (1,023,540 review rows; only 24,592 with audio evidence) dominates two captured Python/GIL profiles; stale descriptor cleanup was independently reproduced. At 08:35, that earlier run had discarded 2,480 seconds across three stations. Its repair proposals have now been implemented in local dev7 as described above.
-
-- Current project status: [`PROJECT-STATUS.md`](PROJECT-STATUS.md).
-- Current coordinator handoff (decisions, rules, how to resume):
-  [`ops/beta10-oversight/HANDOFF-2026-10-01.md`](ops/beta10-oversight/HANDOFF-2026-10-01.md).
-- Release evidence: [`docs/releases/v1.0.0-beta.10-verification.md`](docs/releases/v1.0.0-beta.10-verification.md).
-
-`v1.0.0-beta.10` is the current published release (a GitHub pre-release,
-published 2026-10-02; Gate A clean-install lane passed 10 of 10, upgrade and
-download-only lanes not run, waived by the owner); `v1.0.0-beta.7` is
-superseded; `v1.0.0-beta.8` and `v1.0.0-beta.9` were never published.
-
-The long beta.5 to beta.8 handoff log that used to live here is kept, for the
-record only, in
-[`docs/history/HANDOFF-2026-09.md`](docs/history/HANDOFF-2026-09.md).
+Goal ACTIVE until this final record lands and live Pages verification finishes.
+Only owner may pause. Publisher session 8097 finished; do not restart/build.
+Next: land reconciliation, verify live landing page, then mark goal complete.
+72-hour/three-channel/99.78% result remains Beta 11 history.
+Live release-truth alarm has 17 absent historical releases, none Beta 14.
+Preserve unrelated `ops/beta10-oversight/evidence/`.

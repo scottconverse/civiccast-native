@@ -1,9 +1,9 @@
 # CivicCast FAQ
 
-> **Release state:** `v1.0.0-beta.13` is the current signed native Windows
+> **Release state:** `v1.0.0-beta.14` is the current signed native Windows
 > pre-release, not a production release. See the
-> [Beta 13 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13),
-> [verification record](docs/releases/v1.0.0-beta.13-verification.md), and
+> [Beta 14 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14),
+> [verification record](docs/releases/v1.0.0-beta.14-verification.md), and
 > [current User Manual](docs/USER-MANUAL.md). Earlier package records remain
 > historical and apply only to their named release. See
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
@@ -35,9 +35,11 @@ Optional cloud AI providers may charge for usage.
 
 ## How do I install it?
 
-Follow [Install CivicCast on Windows](INSTALL-WINDOWS.md). The Beta 13 helper downloads the installer, five runtime packs and six required signed station packs, verifies them, creates the correct folders and runs setup. You do not need Git, Python, Docker, WSL or a separate Ollama installation. Open **CivicCast Operator Console** after setup completes and create the first administrator on the station computer.
+Follow [Install CivicCast on Windows](INSTALL-WINDOWS.md). The Beta 14 helper downloads the installer, the matching runtime packs and complete signed station-model bundle, verifies them, creates the correct folders and runs setup. You do not need Git, Python, Docker, WSL or a separate Ollama installation. Open **CivicCast Operator Console** after setup completes and create the first administrator on the station computer.
 
-The normal Beta 11-to-Beta 13 upgrade, one controlled interruption followed by same-candidate repair, and a separate fresh installation all passed. Each scenario has five-minute observations across public, government and education; the Beta 13 verification record links the evidence and states its limits. Optional raw-model downloads in the separate acquisition screen cannot substitute for signed activation packs. The earlier Beta 12 distribution history is recorded in its [verification record](docs/releases/v1.0.0-beta.12-verification.md).
+The Beta 14 package passed a fresh offline Windows Sandbox installation and one normal development-host upgrade; setup exited 0 in both. After the host upgrade, the service was healthy at Beta 14 schema 89, with all three channels using Whistle as primary and within capacity. See the [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md) for exact scope and limits.
+
+Beta 13's earlier normal upgrade, controlled interruption and repair, and separate fresh-install observations are historical and apply only to that release. See its [verification record](docs/releases/v1.0.0-beta.13-verification.md) and [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json). Optional raw-model downloads in the separate acquisition screen cannot substitute for signed activation packs. The earlier Beta 12 distribution history is recorded in its [verification record](docs/releases/v1.0.0-beta.12-verification.md).
 
 Use the same complete kit for a new station or an existing installation. Back up a working station and plan the upgrade interruption. The installation guide includes supported local administrator-password recovery for previous test installs.
 
@@ -112,7 +114,7 @@ be backed by transcript timestamps before approval. Spanish translation can
 publish an additional WebVTT track while keeping the original English captions
 available.
 
-Beta 13 automatically retries Whistle while Whisper supplies
+The live-caption path automatically retries Whistle while Whisper supplies
 backup captions. The 30-second initial cooldown and capped backoff delays
 (60, 120, 240, then 300 seconds) govern failed probes; retries continue while
 the affected channel has audio. A slow warning appears after 10 seconds. At

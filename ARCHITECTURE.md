@@ -1,17 +1,15 @@
 # CivicCast Architecture
 
-> **Current native release: `v1.0.0-beta.13`**, a signed GitHub pre-release,
-> not a production or SLA-backed field release. Its signed source is
-> `8053fb1cf05b989fb1f23e650893cc6abfa659d4`, from producer run
-> [38160778457](https://github.com/scottconverse/civiccast-native/actions/runs/38160778457).
+> **Current native release: `v1.0.0-beta.14`**, a signed GitHub pre-release,
+> not a production or SLA-backed release. Its signed source is
+> `44525c14265d21ae461c2435d4d5a9a6acd58af3`, from producer run
+> [38217950172](https://github.com/scottconverse/civiccast-native/actions/runs/38217950172).
+> The installer SHA-256 is
+> `e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f`, signed by
+> Scott Converse. The [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md)
+> identifies the exact package, installation evidence and limits. Get the
+> package from the [Beta 14 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14). A fresh offline Sandbox install and one normal development-host upgrade both exited 0; the host service was healthy at schema 89, with all three channels Whistle-primary and within capacity. See the verification record for exact scope and limits.
 > The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
-> binds the 19-member kit and installer to that source; the installer SHA-256
-> is `cabafba7dae85de7f05e40ba84bbfb022f7edb33caaf432f56487060cc44ed16`,
-> signed by Scott Converse. Normal upgrade, one-interruption repair and fresh
-> installation passed; each has a five-minute, three-channel observation. The
-> [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
-> describes the measured scope. Get the package from the [Beta 13 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
-> The [Beta 12 verification record](docs/releases/v1.0.0-beta.12-verification.md)
 > remains available for historical package evidence. See [BRANCHES.md](BRANCHES.md)
 > for release identity and status.
 >
@@ -176,8 +174,10 @@ timeout moves that channel to the faster-whisper runtime until the station
 runtime restarts. Recorded-media captions use faster-whisper. Needle usage
 telemetry is disabled, and the speech models run locally. Live captions,
 SDI/NDI hardware paths, and cable-headend delivery are described with their
-evidence boundaries in the [User Manual](docs/USER-MANUAL.md) and the
-  [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
+evidence boundaries in the [User Manual](docs/USER-MANUAL.md) and the current
+[Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md).
+Historical Beta 13 package observations remain in the [Beta 13 verification
+record](docs/releases/v1.0.0-beta.13-verification.md).
 
 ## Data And Durability
 
@@ -289,7 +289,7 @@ supersedes ADR 0001's NATS JetStream choice).
 ## Current Source Contracts
 
 These describe current source behavior and test coverage. Package acceptance
-remains scoped to the [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md):
+remains scoped to the [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md):
 
 - Staff-write stores fail closed without managed durable storage or `DATABASE_URL` unless ephemeral mode
   is explicitly acknowledged for local development.

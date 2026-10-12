@@ -1,0 +1,19 @@
+{
+  "kind": "civiccast-beta14-local-transport-analysis",
+  "result": "passed",
+  "candidate_version": "1.0.0-beta.14",
+  "source_sha": "44525c14265d21ae461c2435d4d5a9a6acd58af3",
+  "build_run_id": "38217950172",
+  "recorded_utc": "2026-10-12T09:59:28.2068143Z",
+  "tool": "TSDuck tsp 3.44-4676",
+  "channel": "public",
+  "input": "One finalized live HLS MPEG-TS segment",
+  "exit_code": 0,
+  "bytes": 345356,
+  "packets": 1837,
+  "invalid_syncs": 0,
+  "transport_errors": 0,
+  "service_count": 1,
+  "analysis_sha256": "aa2e0ad00979111a4e8d788cb0dfa4d36b40623eb6c0caa7fc3e80c9d68f3a03",
+  "scope": "Read-only local segment analysis. Does not establish a UDP sink, headend receipt or cable commissioning compliance. Original R7/R9 check-level failure logs were not supplied; their historical cause remains unknown."
+}

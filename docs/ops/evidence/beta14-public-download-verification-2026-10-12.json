@@ -1,0 +1,208 @@
+{
+  "result": "PASS",
+  "checked_utc": "2026-10-12T10:25:47.892157+00:00",
+  "release_url": "https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14",
+  "published_at": "2026-10-12T10:25:01Z",
+  "asset_count": 26,
+  "assets": [
+    {
+      "name": "candidate-manual-receipt.json",
+      "size": 694,
+      "sha256": "50a92c44189677cf4cafe10d63708fcff6c429dfc6efd61cab37e4c25606d5b8",
+      "github_digest_matches": true
+    },
+    {
+      "name": "download_windows_release_artifacts.ps1",
+      "size": 21556,
+      "sha256": "b7794087f31eb71a8054054db291f2e36d7cfa015a80bfd1f2f1382af1065376",
+      "github_digest_matches": true
+    },
+    {
+      "name": "native-app-payload.ccpack",
+      "size": 574389494,
+      "sha256": "e89cd2075d0ccdba2db391d8573e8cef0c572f4a1f873c96fdc1b771ea95c1b6",
+      "github_digest_matches": true
+    },
+    {
+      "name": "native-cuda-runtime.ccpack",
+      "size": 1893729051,
+      "sha256": "d332e3b55cbf9c1875172a0ec464a9d8ba481b7a4ed7b0f6083bccfcce5186ad",
+      "github_digest_matches": true
+    },
+    {
+      "name": "native-ffmpeg-runtime.ccpack",
+      "size": 144130093,
+      "sha256": "68b558dc39e80611300b9603f1ec07c77fd069f9fb19b45fa0c47d92d87b17ba",
+      "github_digest_matches": true
+    },
+    {
+      "name": "native-ollama-runtime.ccpack",
+      "size": 1941233058,
+      "sha256": "33632bf614ed4a54f6fed671f73e509b77c450e681caf8550174bcc11b13b607",
+      "github_digest_matches": true
+    },
+    {
+      "name": "native-server-binaries.ccpack",
+      "size": 76249023,
+      "sha256": "bfe60a3f92f607607d4261a92b2122f6475cc21878131a680aaffd79a4e6ce4e",
+      "github_digest_matches": true
+    },
+    {
+      "name": "setup.exe",
+      "size": 260527176,
+      "sha256": "e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f",
+      "github_digest_matches": true
+    },
+    {
+      "name": "setup.exe.sidecar.json",
+      "size": 154,
+      "sha256": "5f9a3391798b61724bb0b81f662727df892ffbc49e051447238822adae763425",
+      "github_digest_matches": true
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "size": 2157,
+      "sha256": "41df1e7fedb1a00717c0236c6ef3fc235edcea1431cbd8188537d94a873cd279",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.json",
+      "size": 3766,
+      "sha256": "4fe1e39885526c968e1b15c8880c96c86cf03d93b658013687c50ef34cbf1908",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.001",
+      "size": 1900000000,
+      "sha256": "cfdab7363d286c0553afe4e96c9481ac2c120fe81b775ebe3ddceb52ed1e73f8",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.002",
+      "size": 1900000000,
+      "sha256": "188dc2ab38548bb2680e1893edd50e580bc42e80a76dd803cca267264a28f1db",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.003",
+      "size": 1900000000,
+      "sha256": "db2d512495f1c7905988edefdd1119820ac69f920273c400488b2ab4ccaa0083",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.004",
+      "size": 1900000000,
+      "sha256": "fe57b9928cc33bcec0cdf958b87a57888cce78941e0ed0a810a7c3dd33bdb44d",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.005",
+      "size": 1900000000,
+      "sha256": "8f0c8f51ff65dbb8e20c5eee904d512759a85c8c85abbffaea7814a698adb7dd",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.006",
+      "size": 1900000000,
+      "sha256": "67beb3ec4c55c5ebca2417dfc55d314af4afeea85ceff96cbe1fafffc5dbd93c",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.007",
+      "size": 1900000000,
+      "sha256": "52bf9fb9da3a4011a8b023aae4c36d1f82c6fe39a0fdf64145f5f74a3f62d2a7",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.008",
+      "size": 1900000000,
+      "sha256": "de8d9feb187dc3ca0a93011c68523cf278ba8552983045147359769f582b70e4",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.009",
+      "size": 1900000000,
+      "sha256": "7fac7997ed6ebfb63c72198b2678075113a5a493eece2358912fa918c73b32a2",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.010",
+      "size": 1900000000,
+      "sha256": "d0184cebf91c5ee444bf0e8c876dab8e21d82fb1f163f74da9bccf8adb5af1e0",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.011",
+      "size": 1900000000,
+      "sha256": "19e83df87951ab817f22750fba507556f6af75184e18ad31d3d0d2001c62f11a",
+      "github_digest_matches": true
+    },
+    {
+      "name": "station-models.zip.012",
+      "size": 1113106169,
+      "sha256": "3f05437ab5a0a185a185ca399e65bbdb166170d929b06b2e81a4e4e3a288d044",
+      "github_digest_matches": true
+    },
+    {
+      "name": "USER-MANUAL.docx",
+      "size": 5548621,
+      "sha256": "140b8ca974d09654403116294c1ff1238560ea5b2daecb74d35e5c832aaf6b83",
+      "github_digest_matches": true
+    },
+    {
+      "name": "USER-MANUAL.pdf",
+      "size": 7155782,
+      "sha256": "ef14b21ee2c6b2b976e2e8e2390d07396d6fce814b546de94d25770f98a05d23",
+      "github_digest_matches": true
+    },
+    {
+      "name": "USER-MANUAL.render.json",
+      "size": 537,
+      "sha256": "86fbe58aa240a67df376d81998289c7c420d988e96890f6352a5fe90e4a737a5",
+      "github_digest_matches": true
+    }
+  ],
+  "actual_public_downloads": [
+    {
+      "name": "setup.exe",
+      "bytes": 260527176,
+      "sha256": "e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f",
+      "http_status": 200
+    },
+    {
+      "name": "USER-MANUAL.pdf",
+      "bytes": 7155782,
+      "sha256": "ef14b21ee2c6b2b976e2e8e2390d07396d6fce814b546de94d25770f98a05d23",
+      "http_status": 200
+    },
+    {
+      "name": "download_windows_release_artifacts.ps1",
+      "bytes": 21556,
+      "sha256": "b7794087f31eb71a8054054db291f2e36d7cfa015a80bfd1f2f1382af1065376",
+      "http_status": 200
+    },
+    {
+      "name": "SHA256SUMS.txt",
+      "bytes": 2157,
+      "sha256": "41df1e7fedb1a00717c0236c6ef3fc235edcea1431cbd8188537d94a873cd279",
+      "http_status": 200
+    },
+    {
+      "name": "station-models.json",
+      "bytes": 3766,
+      "sha256": "4fe1e39885526c968e1b15c8880c96c86cf03d93b658013687c50ef34cbf1908",
+      "http_status": 200
+    },
+    {
+      "name": "setup.exe.sidecar.json",
+      "bytes": 154,
+      "sha256": "5f9a3391798b61724bb0b81f662727df892ffbc49e051447238822adae763425",
+      "http_status": 200
+    }
+  ],
+  "scope": "All 26 GitHub SHA-256 asset digests match local publication files; six actual unauthenticated public downloads match SHA-256. Large runtime/model assets were not redownloaded.",
+  "downloaded_installer_signature": {
+    "status": "Valid",
+    "signer": "CN=Scott Converse, O=Scott Converse, L=Longmont, S=co, C=US"
+  }
+}

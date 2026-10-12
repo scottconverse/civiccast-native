@@ -1,0 +1,364 @@
+{
+  "kind": "civiccast-beta14-fresh-sandbox-observation",
+  "result": "PASS",
+  "source_sha": "44525c14265d21ae461c2435d4d5a9a6acd58af3",
+  "build_run_id": "38217950172",
+  "candidate_version": "1.0.0-beta.14",
+  "networking_enabled": false,
+  "vgpu_enabled": false,
+  "guest_memory_mib": 9216,
+  "installer_exit_code": 0,
+  "installer_sha256": "E22D1CB9AE064841C45BED64A37E8CE9BD1E5176E0FF80945EDCCC362447082F",
+  "started": "2026-10-12T02:58:56.2275443-06:00",
+  "finished": "2026-10-12T03:27:17.6689237-06:00",
+  "observations": [
+    {
+      "minute": 1,
+      "utc": "2026-10-12T09:28:46.9038981Z",
+      "snapshot_sha256": "70e542a9598a3a7f9fb53b335bd4d9a6f908d7248cd7ad23666729f7f938aa00",
+      "health": {
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "revision_pair_matches": true,
+        "version": "1.0.0-beta.14",
+        "classification": "caption-degraded",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "live_captions": "degraded",
+        "schema": "current",
+        "status": "degraded",
+        "caption_health_available": true
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 1,
+          "vtt_cue_count": 6,
+          "vtt_sha256": "dd1067383815e8f033dea2b281acbc71ecceff78f84ae08927c77dddd8dde086",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 1,
+          "vtt_cue_count": 6,
+          "vtt_sha256": "b69ebfccb98fda975c11c317059047786e4ae1aef4dfd2235918528ac9459fbf",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 0.3,
+          "vtt_cue_count": 7,
+          "vtt_sha256": "2da2acf6122c96fe2cb38a4bd2b18224b65fdb40508bac2546a565bf6df1923d",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        }
+      ],
+      "whisper_fallback_seen": {
+        "education": false,
+        "public": false,
+        "government": false
+      }
+    },
+    {
+      "minute": 2,
+      "utc": "2026-10-12T09:29:48.5428152Z",
+      "snapshot_sha256": "775899712059bcb28ef8172ddf9abc2f9f9b5d818f52f733adc677bcc480803a",
+      "health": {
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "revision_pair_matches": true,
+        "version": "1.0.0-beta.14",
+        "classification": "caption-degraded",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "live_captions": "degraded",
+        "schema": "current",
+        "status": "degraded",
+        "caption_health_available": true
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 0.7,
+          "vtt_cue_count": 19,
+          "vtt_sha256": "b6d2726142e59b8eb5446b2d92fcfc58dcc70987ef796f48fcbab9daf9994fcb",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 0.7,
+          "vtt_cue_count": 19,
+          "vtt_sha256": "d2239892e19875bd1cb596af772ad03b80024062b00f8d48b78f0272014e2eaf",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 1.6,
+          "vtt_cue_count": 19,
+          "vtt_sha256": "1ece9e7cf3b2c629ac096d510d6ecf6011b8ee6a78cbea2dd7850a11cf2b6536",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        }
+      ],
+      "whisper_fallback_seen": {
+        "education": false,
+        "public": false,
+        "government": false
+      }
+    },
+    {
+      "minute": 3,
+      "utc": "2026-10-12T09:30:50.1345716Z",
+      "snapshot_sha256": "62cefd8cf6fd37345016f254b0744ce9771b9bfa3d635e07fe63e8fcc618e80f",
+      "health": {
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "revision_pair_matches": true,
+        "version": "1.0.0-beta.14",
+        "classification": "caption-degraded",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "live_captions": "degraded",
+        "schema": "current",
+        "status": "degraded",
+        "caption_health_available": true
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 0,
+          "vtt_cue_count": 31,
+          "vtt_sha256": "6333a2ecdf045b71bb55beb74d25bfcd84dca856fd3b9e19462c38071a8516ec",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 0.4,
+          "vtt_cue_count": 31,
+          "vtt_sha256": "7f5e65d834fe4dd584d7ea3c98aa5dceacd93ba6e891d67cf7a551a885375cc9",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 1.3,
+          "vtt_cue_count": 32,
+          "vtt_sha256": "1ce9d4037566f95d7280d9f917d9f27108b5404231c84473737451cd69b8186e",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        }
+      ],
+      "whisper_fallback_seen": {
+        "education": false,
+        "public": false,
+        "government": false
+      }
+    },
+    {
+      "minute": 4,
+      "utc": "2026-10-12T09:31:51.7064763Z",
+      "snapshot_sha256": "782cca90859846e05d41ba982b5fa71da6cc93c78a233d5df6af4d7a934c2035",
+      "health": {
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "revision_pair_matches": true,
+        "version": "1.0.0-beta.14",
+        "classification": "caption-degraded",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "live_captions": "degraded",
+        "schema": "current",
+        "status": "degraded",
+        "caption_health_available": true
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 1.6,
+          "vtt_cue_count": 43,
+          "vtt_sha256": "a1a8e973441ea7a9defd72bc8698097578114fa14cb86a9138e8017ce380498f",
+          "caption_state": "overloaded",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 1.7,
+          "vtt_cue_count": 44,
+          "vtt_sha256": "cf6b654743f6280dfef347e75e3306839ff63adababa0815b1492fa111a13c7c",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 0.6,
+          "vtt_cue_count": 45,
+          "vtt_sha256": "827a102544a0efb16cb5f19bb6fe2daa41dd590283771a5dd1ed8ad8b4432b6f",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        }
+      ],
+      "whisper_fallback_seen": {
+        "education": false,
+        "public": false,
+        "government": false
+      }
+    },
+    {
+      "minute": 5,
+      "utc": "2026-10-12T09:32:53.4385999Z",
+      "snapshot_sha256": "67939c5a3da1884b682ef490e76be0045dc54d7e59aea5a390744460dfb33cb3",
+      "health": {
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "revision_pair_matches": true,
+        "version": "1.0.0-beta.14",
+        "classification": "caption-degraded",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "live_captions": "degraded",
+        "schema": "current",
+        "status": "degraded",
+        "caption_health_available": true
+      },
+      "channels": [
+        {
+          "id": "public",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 1.4,
+          "vtt_cue_count": 56,
+          "vtt_sha256": "ef126a412b853818105c6376fd585fe3db078618341ce7f1719085600ba00b5a",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "government",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 1.5,
+          "vtt_cue_count": 56,
+          "vtt_sha256": "1f05fcf84b3d27d8070982a2c0c7efeed6b84ff0078f55c10a6eb6bd565ffbaa",
+          "caption_state": "delayed",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "education",
+          "state": "ON_AIR",
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "playlist_age_seconds": 0.5,
+          "vtt_cue_count": 57,
+          "vtt_sha256": "00408d2043c695135f0f2a131fbaa0a5fa52f8d01a00fbf40f575dfbbd73c52a",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        }
+      ],
+      "whisper_fallback_seen": {
+        "education": false,
+        "public": false,
+        "government": false
+      }
+    }
+  ],
+  "help": {
+    "result": "PASS",
+    "scope": "installed manual/API, in-product Help shell and UI assets",
+    "manual_source_sha256": "b0bbafe7f3a4232713fcdba8f4dd296ca200e05fcb970548b14d6a89c80cedce",
+    "manual_path": "C:\\TestStore\\install\\runtime\\Lib\\site-packages\\civiccast\\docsite\\manual.json",
+    "manual_file_sha256": "4e16f725dea08308f05473e455cebc28b0a1908aae0dee555761834d7e17de16",
+    "app_payload_manifest_path": "C:\\TestStore\\install\\runtime\\app-payload-manifest.json",
+    "app_version": "1.0.0b14",
+    "app_source_head": "44525c14265d21ae461c2435d4d5a9a6acd58af3",
+    "app_source_dirty": false,
+    "candidate_version": "1.0.0-beta.14",
+    "source_sha": "44525c14265d21ae461c2435d4d5a9a6acd58af3",
+    "workflow_run_id": "38217950172",
+    "candidate_identity_sha256": "062426b1fbe88347bf73279a5abf2e9f503fa2d914b92f7a39c688e90db1c6c8",
+    "manual_title": "CivicCast (Native) 1.0.0-beta.14",
+    "required_headings": [
+      "What state this software is in",
+      "Where to get help and report problems"
+    ],
+    "embedded_image_count": 29,
+    "internal_help_link_targets": 100,
+    "missing_internal_help_targets": 0,
+    "help_shell_url": "http://127.0.0.1:8000/operator/#/help",
+    "help_shell_http_status": 200,
+    "operator_assets_checked": 2,
+    "operator_asset_urls": [
+      "/operator/assets/index-BxTuOZeE.js",
+      "/operator/assets/index-EHl0UBm7.css"
+    ],
+    "admin_reset_cli_help": "PASS (availability only; no reset performed)",
+    "admin_reset_cli_help_command": "runtime/python.exe -I -m civiccast.cli admin reset-password --help",
+    "admin_reset_cli_help_exit_code": 0,
+    "admin_reset_cli_help_output_path": "C:\\TestEvidence\\Beta14\\installed-admin-reset-help.log",
+    "admin_reset_cli_help_output_sha256": "18aa6556092cbb67a0bb7f42b1ecac863600d0a86c4771156de30935e58437e9",
+    "browser_clicks": "not tested in guest; built-source preview navigation was checked separately"
+  },
+  "scope": "Fresh offline installation, five three-channel video/audio/caption snapshots, and installed Help/API/CLI availability. Caption delay/overload readings are recorded as advisory. Not an extended soak or an interactive click-through of every feature.",
+  "sandbox_closed_after_pass": true
+}

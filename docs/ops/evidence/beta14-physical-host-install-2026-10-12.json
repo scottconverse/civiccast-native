@@ -1,0 +1,126 @@
+{
+  "kind": "civiccast-beta14-physical-host-install-and-output",
+  "result": "passed",
+  "source_sha": "44525c14265d21ae461c2435d4d5a9a6acd58af3",
+  "build_run_id": "38217950172",
+  "candidate_version": "1.0.0-beta.14",
+  "installer_sha256": "e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f",
+  "installer_exit_code": 0,
+  "installer_runs": 1,
+  "previous_version": "1.0.0-beta.11",
+  "installed_manifest_sha256": "f707524ffaab190c36a53c4a74e4bdc9289caa7d0303677e18074d7bebd85932",
+  "installed_manifest_verified": true,
+  "preinstall_evidence": "Preserved original observer control-flow attestation. Raw before snapshot was not saved; original failure and exit receipts remain preserved.",
+  "observations": [
+    {
+      "utc": "2026-10-12T10:10:34.7351869Z",
+      "snapshot_sha256": "17d38dc8284ad0cfd0977f5072bca72218a3504b5b220abc055f27de18fd409c",
+      "health": {
+        "status": "healthy",
+        "version": "1.0.0-beta.14",
+        "schema": "current",
+        "live_captions": "healthy",
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "mode": "normal"
+      },
+      "channels": [
+        {
+          "id": "public",
+          "newest_segment": "seg000000656.ts",
+          "playlist_age_seconds": 0.005,
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "vtt_cue_count": 60,
+          "vtt_sha256": "8cd8e7f328464aa1de8a86f4656e3cf441315790a57bca188e730bc23c6ccbb7",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "government",
+          "newest_segment": "seg000000655.ts",
+          "playlist_age_seconds": 1.993,
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "vtt_cue_count": 60,
+          "vtt_sha256": "85e411cf32e4438bd247ae01316ba26c2033d34b1458dbf7a2e65fbd4642605f",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "education",
+          "newest_segment": "seg000000657.ts",
+          "playlist_age_seconds": 0.047,
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "vtt_cue_count": 60,
+          "vtt_sha256": "15d19005f46a010866174798a690518e4085c9bd0009daa2eb05022ebf799262",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        }
+      ]
+    },
+    {
+      "utc": "2026-10-12T10:11:10.0257845Z",
+      "snapshot_sha256": "bcdbdfbb82e6137a60ea4a0252c42a624a6f9ca9de5590eafe66f3e14bf10f7f",
+      "health": {
+        "status": "healthy",
+        "version": "1.0.0-beta.14",
+        "schema": "current",
+        "live_captions": "healthy",
+        "schema_db_revision": "0089_contribution_media_control_requests",
+        "schema_expected_head": "0089_contribution_media_control_requests",
+        "mode": "normal"
+      },
+      "channels": [
+        {
+          "id": "public",
+          "newest_segment": "seg000000674.ts",
+          "playlist_age_seconds": 1.228,
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "vtt_cue_count": 60,
+          "vtt_sha256": "056568791d62b1d7941c4c9df04ff2b26c9cbcdfb3032111abc7da37473d4580",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "government",
+          "newest_segment": "seg000000673.ts",
+          "playlist_age_seconds": 1.337,
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "vtt_cue_count": 60,
+          "vtt_sha256": "6b9cf0e86c426220c6a8326a719994bc32f12f093329795b21e6dabdaf67ae69",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        },
+        {
+          "id": "education",
+          "newest_segment": "seg000000674.ts",
+          "playlist_age_seconds": 1.456,
+          "codecs": [
+            "h264",
+            "aac"
+          ],
+          "vtt_cue_count": 60,
+          "vtt_sha256": "b74da6fde047027b94b6d701e747f441bb12780ca67e89d4e08c00021cd21aeb",
+          "caption_state": "within-capacity",
+          "provider_state": "whistle-primary"
+        }
+      ]
+    }
+  ],
+  "full_consumer_receipt_sha256": "ece5ce0805eb449b90a1a5c7f0fc65ba5ab2c8401e91d0562f87642a36cef83c",
+  "scope": "One actual in-place host upgrade plus two three-channel observations 35.291 seconds apart. Not an extended soak or full installed UI walkthrough. Separate fresh Sandbox and focused behavior checks are recorded independently."
+}

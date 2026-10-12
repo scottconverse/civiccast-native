@@ -23,16 +23,13 @@ toccolor: black
 > operators and records clerks should start with the persona guides linked from
 > [User Manual](USER-MANUAL.md).
 >
-> **Release line.** Beta 13 (`v1.0.0-beta.13`) remains the current published
-> native Windows release until Beta 14 is actually published. Beta 14 is an
-> unpublished candidate: its verification record contains focused component
-> results, but no Beta 14 installer, Windows Sandbox installation, real-host
-> installation, or publication result. See the
-> [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md) for
-> the candidate's current evidence and open installation checks. Do not treat
-> historical Beta 12/13 observations or component tests as Beta 14 installation
-> proof. `docs/releases/release-truth.yaml` is the authored source for release
-> state; read it rather than relying on a version number in prose.
+> **Release line.** Beta 14 (`v1.0.0-beta.14`) is the current signed
+> native Windows pre-release, not a production release. Its exact package
+> identity, installation evidence and limits are in the
+> [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md). A fresh offline Sandbox install and one normal development-host upgrade both exited 0; the host service was healthy at schema 89, with all three channels Whistle-primary and within capacity.
+> Beta 13 results remain tied to their own release record. Consult
+> `docs/releases/release-truth.yaml` for the authored release state; this
+> reference does not claim an extended soak or general service-uptime result.
 >
 > The `v1.0.0-rcNN` line this document used to describe is the RETIRED
 > WSL2/Linux deployment, published from the archived repository. Its release
@@ -278,11 +275,9 @@ complete kit without installing. Keep `setup.exe`, `packs\` and `station\`
 together. A standalone `setup.exe` download is not the complete install kit.
 Before running the helper, verify its own SHA-256 against the same release's
 `SHA256SUMS.txt`. See the [Windows Release Trust And Verification](install/windows-release-trust.md)
-checklist and the [operator quick start](QUICKSTART-OPERATOR.md). Beta 13 is
-currently published; Beta 14 remains an unpublished candidate with no installer
-or installation result yet. Its
-[verification record](releases/v1.0.0-beta.14-verification.md) is the current
-evidence reference.
+checklist and the [operator quick start](QUICKSTART-OPERATOR.md). The
+[Beta 14 verification record](releases/v1.0.0-beta.14-verification.md) is the
+source for current package identity, installation evidence and limits.
 
 For a direct setup-app hash check when the handoff calls for one, compare it to
 the matching checksum entry:

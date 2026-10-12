@@ -1,13 +1,15 @@
 # CivicCast — Capability Matrix and Evidence History
 
-> **Current release:** v1.0.0-beta.13, published 2026-10-11 as a GitHub
-> pre-release. Its [verification record](docs/releases/v1.0.0-beta.13-verification.md)
-> binds the signed package to source 8053fb1cf05b989fb1f23e650893cc6abfa659d4
-> and producer run 38160778457. The public release has 26 assets. The normal
-> Beta 11 upgrade, one repair after an interrupted install, and a fresh install
-> each passed a five-minute observation across all three channels. See
-> [release-truth.yaml](docs/releases/release-truth.yaml) for current and
-> historical release identities.
+> **Current release:** v1.0.0-beta.14, a signed GitHub pre-release, not a
+> production release. Its [verification record](docs/releases/v1.0.0-beta.14-verification.md)
+> binds the package to signed source `44525c14265d21ae461c2435d4d5a9a6acd58af3`,
+> producer run `38217950172`, and installer SHA-256
+> `e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f`. It records
+> exact installation evidence and limits. See [release-truth.yaml](docs/releases/release-truth.yaml)
+> for current and historical release identities. A fresh offline Sandbox install
+> and one normal development-host upgrade both exited 0; the upgraded host was
+> healthy at Beta 14 schema 89 with all three channels Whistle-primary and within
+> capacity. See the verification record for exact scope and limits.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -22,7 +24,7 @@
 This matrix distinguishes implemented components, wired workflows, and the
 limits of the evidence available for them. It contains entries from different
 development and release dates; any row naming Beta 10, Beta 11, or an earlier
-milestone is historical evidence for that scope, not a Beta 13 measurement.
+milestone is historical evidence for that scope, not a Beta 14 measurement.
 Rows not tied to a current package or source check should be treated as
 engineering history until revalidated. Do not infer package qualification,
 station capacity, or external-provider acceptance from a component state.
