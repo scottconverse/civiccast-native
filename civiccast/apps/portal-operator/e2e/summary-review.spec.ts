@@ -1,9 +1,14 @@
 import { expect, test } from '@playwright/test'
 import AxeBuilder from '@axe-core/playwright'
-import { mkdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { mkdirSync, readFileSync } from 'node:fs'
 
 const WCAG_TAGS = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 const evidenceDir = process.env.CIVICCAST_EVIDENCE_DIR ?? 'test-results/evidence'
+const sourceSegment = Buffer.from(
+  readFileSync('../portal-public/e2e/fixtures/seg000.ts.b64', 'utf8'),
+  'base64',
+)
 mkdirSync(evidenceDir, { recursive: true })
 
 const summary = {
@@ -158,6 +163,55 @@ async function mockSummaryBackend(
   })
   await page.route('**/api/staff/assets', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) })
+  })
+  const sourceAssetId = summary.meeting_id
+  const sourcePath = `/media/staff-source/${sourceAssetId}`
+  const sourceCookieHash = createHash('sha256').update(sourceAssetId).digest('hex').slice(0, 16)
+  const sourceCookieName = `cc_source_playback_${sourceCookieHash}`
+  const sourceCookie = `${sourceCookieName}=e2e-summary-playback`
+  const sourcePlaylist = [
+    '#EXTM3U',
+    '#EXT-X-VERSION:3',
+    '#EXT-X-TARGETDURATION:2',
+    '#EXT-X-PLAYLIST-TYPE:VOD',
+    '#EXTINF:2.000,',
+    'seg000.ts',
+    '#EXT-X-ENDLIST',
+    '',
+  ].join('\n')
+  await page.route(`**/api/staff/assets/${sourceAssetId}/playback-grant`, async (route) => {
+    expect(route.request().method()).toBe('POST')
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      headers: {
+        'set-cookie': `${sourceCookie}; Max-Age=900; Path=${sourcePath}/; HttpOnly; SameSite=Strict`,
+      },
+      body: JSON.stringify({
+        url: `${sourcePath}/source`,
+        packaged_url: `${sourcePath}/hls/playlist.m3u8`,
+        playback_kind: 'hls',
+        source_content_type: 'video/mp2t',
+        source_offset_seconds: 0,
+        expires_at: '2026-10-12T18:15:00Z',
+      }),
+    })
+  })
+  await page.route(`**${sourcePath}/source`, async (route) => {
+    expect(route.request().headers().cookie).toContain(sourceCookie)
+    await route.fulfill({ status: 200, contentType: 'video/mp2t', body: sourceSegment })
+  })
+  await page.route(`**${sourcePath}/hls/playlist.m3u8`, async (route) => {
+    expect(route.request().headers().cookie).toContain(sourceCookie)
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/vnd.apple.mpegurl',
+      body: sourcePlaylist,
+    })
+  })
+  await page.route(`**${sourcePath}/hls/seg000.ts`, async (route) => {
+    expect(route.request().headers().cookie).toContain(sourceCookie)
+    await route.fulfill({ status: 200, contentType: 'video/mp2t', body: sourceSegment })
   })
   await page.route('**/api/staff/summaries/review-items', async (route) => {
     if (options.delayList) await new Promise((resolve) => setTimeout(resolve, 500))
