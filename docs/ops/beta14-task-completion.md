@@ -10,7 +10,9 @@ outcomes; earlier Beta 13 results do not prove them.
 
 Base: merged main `3c3ac6ba4a1e185a475a48aa3733a0d1a79a9d1e`.
 Branch: `codex/beta14-field-fixes`. Published version remains Beta 13.
-No Beta 14 candidate has been built or installed.
+PR 240 candidate source `44525c14265d21ae461c2435d4d5a9a6acd58af3` is being built
+in hosted run `38217950172`; its manual has passed. Installer execution, Windows Sandbox installation,
+host installation and publication remain pending.
 
 The Desktop goal document owns each description, fix and definition of done.
 This record tracks execution and evidence without narrowing those criteria.
@@ -37,7 +39,7 @@ or an assertion that unchanged code proves the field failure still occurs.
 | 14 | Bulletin-filler continuity | Focused render-failure containment checks passed; integration pending |
 | 15 | Signed-summary PDF wrapping | Focused checks passed; final manual/candidate integration pending |
 | 16 | Summary source playback | Focused checks passed; final manual/candidate integration pending |
-| 17 | Complete manual PDF clipping correction | Canonical 499-page PDF scan and visual checks passed; candidate artifact scan pending |
+| 17 | Complete manual PDF clipping correction | Complete; canonical and exact candidate 499-page PDF scans and visual checks passed |
 | 18 | Help contents navigation | Focused checks passed; final manual/candidate integration pending |
 | 19 | Chapter-to-agenda synchronization | Focused checks passed; candidate integration pending |
 | 20 | Publish count/filter agreement | Focused checks passed; candidate integration pending |
@@ -170,6 +172,8 @@ Independent source review returned scoped PASS after correcting the live fallbac
 
 The remaining UI group passed 79 focused operator assertions; actual MPEG-TS trim playback and resident playback-title timing each passed a Chromium check. The production agenda provider and service/router group passed 94 checks. Two existing two-program schedule-loop checks passed, and the manual now contains the supported continuous-rotation recipe and planned/actual-time explanation. Summary citation playback passed two focused UI checks and independent review.
 
-The API/OpenAPI and bundled Help manual were regenerated. All 691 Python source files passed mypy after consolidated mechanical corrections. The full source-built PDF scan, affected Python suite, final candidate build, Sandbox installation, host installation and publication are being completed; those remain required outcomes.
+The API/OpenAPI and bundled Help manual were regenerated. All 691 Python source files passed mypy after consolidated mechanical corrections. The exact hosted candidate manual has now passed its full 499-page boundary scan and representative visual checks; see the candidate receipt under `docs/ops/evidence/`. Installer execution, Windows Sandbox installation, host installation and publication remain pending.
 
-Final canonical manual: 499 pages, 794,753 non-whitespace characters, zero outside-page characters. Representative tables/commands/path samples were visually checked and command spaces retained. Public scan and independent review receipts are under `docs/ops/evidence/`. Consolidated affected Python run: 1087 passed, five stale fixtures failed; corrected fixture selections passed 26 caption/runtime and 29 public-current checks. Both portals build, generated API/Help currentness, release identity, mypy691 and affected Ruff checks pass. No repeat broad suite is required by these fixture corrections.
+Final canonical manual: 499 pages, 794,753 non-whitespace characters, zero outside-page characters. The exact candidate PDF from source `44525c14265d21ae461c2435d4d5a9a6acd58af3`, hosted run `38217950172`, PR 240, has 499 pages and 794,755 non-whitespace characters, zero outside-page characters and SHA-256 `ef14b21ee2c6b2b976e2e8e2390d07396d6fce814b546de94d25770f98a05d23`. Candidate scan and visual samples are in `docs/ops/evidence/beta14-candidate-manual-boundary-scan-2026-10-12.json`. Command spaces are preserved.
+
+The summary-review browser fixture correction at commit `c314a3a` passed its one affected Playwright case. It changes tests only; this result is not a full CI pass and the signed candidate was preserved without a rebuild. Consolidated affected Python run: 1,087 passed, five stale fixtures failed; corrected fixture selections passed 26 caption/runtime and 29 public-current checks. Both portals build, generated API/Help currentness, release identity, mypy 691 and affected Ruff checks pass. No repeat broad suite is required by these fixture corrections.
