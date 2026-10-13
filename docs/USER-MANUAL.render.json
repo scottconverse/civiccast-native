@@ -4,13 +4,13 @@
   "artifacts": [
     {
       "path": "docs/USER-MANUAL.pdf",
-      "sha256": "31d859bd9be6f05ac6bc977d291a593c8c3c26c6874ec0a7b09f842ea819ac9f",
-      "size_bytes": 7165711
+      "sha256": "75eee5bd0fd7e6b5777bd7d3a09b25600b1d802d3a456d82df06f27294eb78f8",
+      "size_bytes": 7165720
     },
     {
       "path": "docs/USER-MANUAL.docx",
-      "sha256": "5124c2daf8a2d336158f030c895901031746bf1e7fdfe1a8a6b0568fffeaeae0",
-      "size_bytes": 5552006
+      "sha256": "29281d192d9ae8e6e9dca145a46dc7f88b4936a84d73da4ffd9a083eadb4d6cc",
+      "size_bytes": 5552007
     }
   ]
 }
