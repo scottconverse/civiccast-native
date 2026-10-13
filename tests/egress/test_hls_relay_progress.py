@@ -37,7 +37,6 @@ from pathlib import Path
 import pytest
 
 from civiccast.egress.daemon import (
-    _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S,
     _FREEZE_ESCALATION_RESTART_BUDGET,
     EgressDaemon,
 )
@@ -628,8 +627,9 @@ def test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm(
         criticals = _critical_lines(caplog)
         assert len(criticals) == 1
         assert "budget exhausted" in criticals[0]
-        assert "moving to the fallback slate for a bounded cooldown before one program retry" in (
-            criticals[0]
+        assert (
+            "moving to the fallback slate for a bounded cooldown before one program retry"
+            in (criticals[0])
         )
         assert not worker_procs[-1].terminated
 
