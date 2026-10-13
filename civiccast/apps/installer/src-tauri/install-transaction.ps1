@@ -182,15 +182,13 @@ function Copy-RecoveryTree([string]$source, [string]$target, [string[]]$exclude 
             if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Force }
         }
     }
-    # A failed candidate can have a different alias topology. Detach existing
-    # destination links before robocopy writes, including links to files outside
-    # this tree, so restoring one file cannot overwrite another preserved file.
-    # Capture the whole set first: querying during deletion would leave its
-    # last member once the link count drops to one, retaining the old bytes.
-    $linked = @(Get-RecoveryFiles $target $exclude | Where-Object {
-        (Get-RecoveryFileId $_.FullName -LinkCount) -gt 1
-    })
-    foreach ($file in $linked) {
+    # Reproducible packages can have different bytes with identical size/time.
+    # Remove destination files before copying so robocopy cannot skip them by
+    # metadata. This also detaches hardlinks without writing through aliases
+    # outside this tree. The independent source remains intact for retry, and
+    # excluded immutable cache files are never returned by Get-RecoveryFiles.
+    $destinationFiles = @(Get-RecoveryFiles $target $exclude)
+    foreach ($file in $destinationFiles) {
         Assert-ChildPath $file.FullName $target
         Remove-Item -LiteralPath $file.FullName -Force
     }

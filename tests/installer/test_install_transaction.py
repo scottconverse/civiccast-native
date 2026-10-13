@@ -107,7 +107,14 @@ def test_interrupted_restore_keeps_recovery_point_and_retries_idempotently(tmp_p
     run_recovery(
         tmp_path,
         r"""
+$main = "$app\CivicCast Native.exe"
+$stamp = [DateTime]::new(2024, 1, 1, 0, 0, 0, [DateTimeKind]::Utc)
+[IO.File]::WriteAllText($main, 'old-main-exe')
+[IO.File]::SetLastWriteTimeUtc($main, $stamp)
+$priorAttributes = [IO.File]::GetAttributes($main)
 Snapshot-Transaction $state
+[IO.File]::WriteAllText($main, 'new-main-exe')
+[IO.File]::SetLastWriteTimeUtc($main, $stamp)
 Set-Content "$app\runtime\python.exe" 'candidate-runtime'
 Set-Content "$data\data\pgdata\database.bin" 'partly-migrated-db'
 $script:copyTree = ${function:Copy-RecoveryTree}
@@ -124,7 +131,13 @@ catch { Assert ($_.Exception.Message -eq 'controlled restore interruption') 'wro
 Assert ((Read-Transaction).Phase -eq 'Restoring') 'retry state lost'
 Assert (Test-Path "$StateRoot\backup\app\runtime\python.exe") 'recovery point consumed during restore'
 Assert (-not $script:events.Contains('restart-checked')) 'service started on partial restore'
+Assert ((Get-Content $main) -eq 'old-main-exe') 'same-size same-time candidate executable not restored'
+[IO.File]::WriteAllText($main, 'new-main-exe')
+[IO.File]::SetLastWriteTimeUtc($main, $stamp)
+[IO.File]::SetAttributes($main, $priorAttributes -bor [IO.FileAttributes]::Hidden)
 Restore-Transaction (Read-Transaction)
+Assert ((Get-Content $main) -eq 'old-main-exe') 'same-size same-time executable not restored on retry'
+Assert ([IO.File]::GetAttributes($main) -eq $priorAttributes) 'prior executable attributes not restored'
 Assert ((Read-Transaction).Phase -eq 'Restored') 'retry failed'
 """,
     )
