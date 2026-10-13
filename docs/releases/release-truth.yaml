@@ -40,14 +40,15 @@ entries:
   - tag: v1.0.0-beta.15
     status: current
     notes: >-
-      Beta 15 scoped package observations are recorded in
-      docs/releases/v1.0.0-beta.15-verification.md. The original execution-test
-      candidate was source 7899ee9234428b0b3c93b369392ae5114d292533, build
-      38341135764, setup SHA-256
-      877f344d9ac1b2dfe8b24ecb9f91ba936d4b4b87eb26a2427cf4abcedcfbd37d; these
-      observations do not verify the refreshed manual/Help payload. Add the
-      publication build identity separately; no normal cross-version upgrade,
-      extended soak, or automatic late-failure rollback is claimed.
+      Release producer dc4a9e63a1bcf58b28818ee06ea7a5e631dd1ca8, successful
+      signed build 38365155889, setup SHA-256
+      6f053356027fc899d57136b0407306f179ec46372fb0f3c28542c93d5a056189.
+      Exact-source manual verification passed. Package execution observations
+      from the earlier producer 7899ee9234428b0b3c93b369392ae5114d292533 remain
+      separately identified in docs/releases/v1.0.0-beta.15-verification.md;
+      they do not verify these refreshed bytes. Public-download install and
+      uninstall checks are pending. Automatic late-failure restoration and
+      repeated-rollover state recovery remain unfinished.
   - tag: v1.0.0-beta.14
     status: superseded
     superseded_by: v1.0.0-beta.15
