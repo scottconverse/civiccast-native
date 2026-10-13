@@ -2,7 +2,7 @@
 
 This chapter covers the work you do before a meeting starts and before a program airs. You will put programs on a channel's schedule, repeat a program every week, let CivicCast fill a time of day by rule, set up automatic recording of a meeting, publish an agenda that residents can read next to the video, and review programs that residents and community producers send in. Station staff with the publish operator, meeting operator, or records clerk role normally do this work.
 
-> **Note:** This chapter describes the unpublished Beta 15 candidate's screens and program behavior. Beta 14 remains the latest published pre-release; its package-specific checks and limits are in the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md). Beta 15 package verification is pending. A **Known issue** note names the version in which its behavior was checked; read its version scope before applying it to another release.
+> **Note:** This chapter describes Beta 15 screens and program behavior. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) states the package-specific checks and limits. A **Known issue** note names the version in which its behavior was checked; read its version scope before applying it to another release.
 
 ## Before you start
 

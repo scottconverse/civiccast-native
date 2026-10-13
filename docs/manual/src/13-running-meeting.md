@@ -2,7 +2,7 @@
 
 This chapter is for the people who work the room on meeting night: the camera operator, the meeting operator, and the volunteer who watches the screen while the council meets. It shows you how to check that the station is ready, run a live session, start and stop a channel, take a channel live from a camera, put scheduled programs on the air, drive the production control room, show community announcements between programs, and bring in remote guests. It also tells you, control by control, what each button really does. In this version of CivicCast several buttons that sound like "go on air" do something smaller than their names say, and a few things happen without any "Are you sure?" box.
 
-> **Note:** This chapter describes the unpublished Beta 15 candidate's controls. Beta 14 remains the latest published package; its identity and installation observations are in the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md). Beta 15 package verification is pending. Known-issue notes retain the version in which their behavior was checked.
+> **Note:** This chapter describes Beta 15 controls. Its package identity and installation observations are in the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md). Known-issue notes retain the version in which their behavior was checked.
 
 ## Before you start
 

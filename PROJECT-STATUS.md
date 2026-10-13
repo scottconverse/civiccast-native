@@ -10,21 +10,18 @@
 > are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
 > source audit, not the current defect list.
 
-> **Current published release: v1.0.0-beta.14**, a signed GitHub pre-release, not a
-> production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14).
-> The signed package is bound to source `44525c14265d21ae461c2435d4d5a9a6acd58af3`
-> and producer run [38217950172](https://github.com/scottconverse/civiccast-native/actions/runs/38217950172).
-> The installer SHA-256 is `e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f`.
-> The [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md)
-> is authoritative for package integrity, installation evidence and limits.
+> **Current release: v1.0.0-beta.15**, a signed GitHub pre-release, not a
+> production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15).
+> The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
+> identifies the exact package and separates original candidate execution
+> evidence from the refreshed Help bytes in this release edition.
 
-The [Beta 14 execution record](docs/ops/beta14-task-completion.md) tracks
-the owner-authorized field fixes and their completion evidence. The release
-verification record states which installation checks were completed and what
-those observations do and do not establish; no extended soak is claimed. A fresh
-offline Sandbox install and one normal development-host upgrade both exited 0.
-After the host upgrade, the service was healthy at Beta 14 schema 89, with all
-three channels Whistle-primary and within capacity.
+The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
+states which installation checks were completed and what they do and do not
+establish. The original signed candidate passed one fresh offline Sandbox
+install; no normal cross-version upgrade or extended soak is claimed. Earlier
+Beta 14 field-fix evidence remains in its dated [execution record](docs/ops/beta14-task-completion.md)
+and [verification record](docs/releases/v1.0.0-beta.14-verification.md).
 
 ## Historical Beta 11 package and evidence
 

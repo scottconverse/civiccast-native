@@ -1,20 +1,19 @@
 # CivicCast Architecture
 
-> **Latest published native release: `v1.0.0-beta.14`**, a signed GitHub pre-release,
-> not a production or SLA-backed release. Its signed source is
-> `44525c14265d21ae461c2435d4d5a9a6acd58af3`, from producer run
-> [38217950172](https://github.com/scottconverse/civiccast-native/actions/runs/38217950172).
-> The installer SHA-256 is
-> `e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f`, signed by
-> Scott Converse. The [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md)
-> identifies the exact package, installation evidence and limits. Get the
-> package from the [Beta 14 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14). A fresh offline Sandbox install and one normal development-host upgrade both exited 0; the host service was healthy at schema 89, with all three channels Whistle-primary and within capacity. See the verification record for exact scope and limits.
-> The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
-> remains available for historical package evidence. See [BRANCHES.md](BRANCHES.md)
-> for release identity and status.
->
-> This source tree is being prepared as an unpublished Beta 15 candidate.
-> Beta 15 package verification is pending, and there is no Beta 15 download.
+> **Current native release: `v1.0.0-beta.15`**, a signed GitHub pre-release,
+> not a production or SLA-backed release. Download its exact package and
+> checksums from the [Beta 15 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15).
+> The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
+> identifies the original tested candidate: source
+> `7899ee9234428b0b3c93b369392ae5114d292533`, build `38341135764`, setup SHA-256
+> `877f344d9ac1b2dfe8b24ecb9f91ba936d4b4b87eb26a2427cf4abcedcfbd37d`, with a
+> valid Scott Converse Authenticode signature. That candidate passed one fresh
+> offline Sandbox install. Its execution results do not transfer to the
+> refreshed manual/Help bytes in this release edition; the record states the
+> boundary and limits. No normal cross-version upgrade or extended soak is
+> claimed. Beta 14 and Beta 13 package results remain in their [own records](docs/releases/v1.0.0-beta.14-verification.md)
+> and [Beta 13 record](docs/releases/v1.0.0-beta.13-verification.md). See
+> [BRANCHES.md](BRANCHES.md) for release identity and status.
 >
 > **Historical Beta 10 evidence:** the published Beta 10 package passed its
 > Gate A clean-install lane (10 of 10 criteria in Windows Sandbox on
@@ -183,8 +182,8 @@ required, and successful recovery is not guaranteed by a fixed deadline.
 Recorded-media captions use faster-whisper. Needle usage telemetry is disabled,
 and the speech models run locally. Live captions, SDI/NDI hardware paths, and
 cable-headend delivery are described with their evidence boundaries in the
-[User Manual](docs/USER-MANUAL.md) and the latest published
-[Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md).
+[User Manual](docs/USER-MANUAL.md) and the current
+[Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md).
 Historical Beta 13 package observations remain in the [Beta 13 verification
 record](docs/releases/v1.0.0-beta.13-verification.md).
 

@@ -2,9 +2,9 @@
 
 This chapter explains how CivicCast is put together: which programs run on the station computer, what each one is responsible for, how a meeting recording and a 24-hour channel move through the system, and what the software does when something fails. It is written for the IT person at a city or station, for an integrator connecting CivicCast to other equipment, and for a technical reviewer who wants to check the design. You do not need to read it to run a station. The earlier chapters tell you what to click.
 
-Each figure has a caption and a plain-English explanation. This chapter describes the Beta 15 candidate's architecture, including caption recovery, installation and model selection, recording and private source playback. Where a value is a default that a setting can change, the text says so. Package observations are recorded separately in the release verification record.
+Each figure has a caption and a plain-English explanation. This chapter describes the Beta 15 architecture, including caption recovery, installation and model selection, recording and private source playback. Where a value is a default that a setting can change, the text says so. Package observations are recorded separately in the release verification record.
 
-> **Note:** This chapter describes the unpublished Beta 15 candidate. Beta 14 remains the latest published package; its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies that exact package and its completed checks. Beta 15 package verification is pending. The separate 72-hour host measurement retains its original Beta 11 run identity.
+> **Note:** This chapter describes Beta 15. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) identifies the package checks and limits. The separate 72-hour host measurement retains its original Beta 11 run identity.
 
 ## How to read the figures {#arch-reading}
 
@@ -486,7 +486,7 @@ The loudness target is a setting of the channel and not a fixed number, because 
 
 CivicCast captions in two different ways, for two different needs. The *live* path captions a channel while it airs, so captions can be embedded in the stream. The *offline* path captions a finished recording after it is published, with a human review step before anything is attached. Figure 16-10 shows both, and marks the points where audio can be thrown away.
 
-**Current native live path:** The runtime uses Whistle as the CPU primary, with Whisper fallback, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. Beta 14 remains the latest published package; its identity and installation observations are in that release verification record. Beta 15 package verification is pending.
+**Current native live path:** The runtime uses Whistle as the CPU primary, with Whisper fallback, immediate first-pass publication, and bounded temporary working state. It does not create permanent per-cue review records or evidence WAVs, and review-archive discovery is not a live-caption or broadcast-readiness prerequisite. Recorded captions still use their separate review workflow. The Beta 15 verification record identifies the package checks and limits; the historical Beta 11 host measurement is separate evidence.
 
 ```mermaid
 flowchart TB
@@ -542,7 +542,7 @@ flowchart TB
 | An operator switches captions off | Every chunk is deleted, the caption file is blanked | Captions off until switched on |
 | A new session or an unreadable chunk | Previous-session audio or unusable working audio is removed in ordinary live mode | Captions restart cleanly; the error is logged without accumulating an audio quarantine archive |
 
-> **Note:** Live captions remain best-effort. The tap can discard audio under sustained overload so playout keeps priority; first-pass publication does not guarantee that every spoken word will be captioned. Historical Beta 10 measurements are in [Appendix H](#app-evidence). Beta 14 is the latest published package; its observations are in the Beta 14 verification record. Beta 15 candidate package observations are pending.
+> **Note:** Live captions remain best-effort. The tap can discard audio under sustained overload so playout keeps priority; first-pass publication does not guarantee that every spoken word will be captioned. Historical Beta 10 measurements are in [Appendix H](#app-evidence). The Beta 15 verification record states the current package observations and limits.
 
 **The offline path.** When a publish approval is recorded, a durable job row is queued for the asset. A worker polls every 60 seconds (retrying with a 300-second backoff, at most four attempts) and transcribes the whole recording from its audio in 30-second chunks, with nothing shed. Every cue goes to the review queue. A records clerk approves, edits or rejects each English cue; a cue with low confidence needs an explicit acknowledgement and valid audio evidence. When every English cue has been decided, the program translates the approved English to Spanish with the TranslateGemma model and queues the Spanish cues for their own review. Only when both languages are reviewed does it write the caption tracks (`captions.vtt` and `captions.es.vtt`, and the segmented tracks in the manifest) into the package and, if a CDN is on, upload them again.
 
@@ -594,7 +594,7 @@ flowchart LR
 
 **NDI and SDI.** NDI and SDI outputs depend on software the station brings itself. NDI cannot be bundled because of its licence, and SDI needs Blackmagic's driver and an ffmpeg build with the DeckLink muxer. When `CIVICCAST_NDI_FFMPEG` or `CIVICCAST_SDI_FFMPEG` names such a build and the channel has an NDI name or SDI device set, a separate supervised process reads the channel's local transport stream and republishes it as NDI or sends it to the card. It is a separate process on purpose: a dying relay must never take a cable channel off air. A relay that stops restarts after 5 seconds, then 15, then 60.
 
-> **Note (package verification):** The verification record for the package you install states whether any physical DeckLink SDI capture/output, real cable-headend acceptance or NDI interoperability was exercised for that exact package. The Beta 14 record covers the latest published package; Beta 15 candidate checks are pending. A transport-stream capture inside Windows Sandbox is not the same as a headend accepting the signal.
+> **Note (package verification):** The verification record for the package you install states whether any physical DeckLink SDI capture/output, real cable-headend acceptance or NDI interoperability was exercised for that exact package. The Beta 15 record identifies the checks and limits for this release. A transport-stream capture inside Windows Sandbox is not the same as a headend accepting the signal.
 
 **Live takeover.** An operator can put a live network source (SRT, UDP, RTMP, RTSP or HTTP) on air in place of the schedule, and hand it back. The control plane first writes an audit record, then queues a `takeover` command. Before either, it requires the live source to have been observed ready within the last 30 seconds (adjustable from 5 to 300 seconds); it re-probes if the observation is older, and refuses if anything is uncertain. The takeover is carried out as a seamless reload of the worker's source, not as a switch to a separate live input. While a takeover or a forced slate is active, the automation does not roll the channel over to the scheduled plan, so it does not fight the operator.
 
@@ -696,7 +696,7 @@ Each of these steps writes a time-stamped line before and after to `C:\ProgramDa
 
 **Why it is built this way.** Every pack is signed and checked twice because the installer runs with full rights and the packs contain programs that will run as `LocalSystem`. The self-test exists so a station that looks installed but cannot caption or summarize is stopped at setup rather than discovered at the first meeting. The service refuses to start without the activation records for the same reason.
 
-> **Known issue (beta.11):** When the activation self-test fails, the dialog tells you to find the cause in `install-progress.log`, but the cause is shown only in the setup details pane, and exit 67 is also used for a full disk. A new install on a computer with a surviving data folder is handled by resetting the database password. Package-specific clean-install and upgrade evidence is in the matching release verification record. The Beta 14 record covers the latest published package; source behavior here does not imply either path was exercised for Beta 15. See [Chapter 10](#ch-installing).
+> **Known issue (beta.11):** When the activation self-test fails, the dialog tells you to find the cause in `install-progress.log`, but the cause is shown only in the setup details pane, and exit 67 is also used for a full disk. A new install on a computer with a surviving data folder is handled by resetting the database password. Package-specific clean-install and upgrade evidence is in the matching release verification record. See [Chapter 10](#ch-installing).
 
 ## Updating, and going back {#arch-upgrade}
 
@@ -736,7 +736,7 @@ If the migration itself, or a step after it, fails, the engine restores the data
 - **A failed upgrade blocks the next one.** The journal of a run that ended in failure makes later runs stop (exit 128) until someone moves `upgrade-journal.json` aside; nothing removes it automatically.
 - **There is no manual restore tool in setup.** The exit 114 message mentions a manual path with operator acknowledgement; we did not find the steps for it.
 
-> **Warning:** Check the Beta 14 verification record for the exact package and its completed installation checks. Before any upgrade, take a full backup (the database and the whole of `C:\ProgramData\CivicCast`, plus the files in the note under Figure 16-4) and keep the station's recovery path available.
+> **Warning:** Check the Beta 15 verification record for the exact package and its completed installation checks. Before any upgrade, take a full backup (the database and the whole of `C:\ProgramData\CivicCast`, plus the files in the note under Figure 16-4) and keep the station's recovery path available.
 
 ## Building and publishing a release {#arch-release}
 
@@ -766,7 +766,7 @@ flowchart LR
 - **A software bill of materials** and a licence list are generated for the runtime and the application payload. The build refuses to produce them if any file has an unknown licence, and it rejects GPL-licensed GStreamer components.
 - **Gate A** is one Windows Sandbox acceptance protocol. The current publisher also accepts physical-host verification receipts through a separate path; it then creates a draft release, checks the asset names and sizes, publishes it and records the result.
 
-**Package and runtime evidence.** The Beta 14 verification record identifies its installation and runtime checks. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement.
+**Package and runtime evidence.** The Beta 15 verification record identifies its installation checks and limits. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement.
 
 ## Two example stations {#arch-topology}
 
@@ -849,7 +849,7 @@ A technical reviewer should read this list before relying on the design. Each it
 
 **Proof.**
 
-- The Beta 14 verification record identifies its source, hash and completed checks. The Beta 11 host observation preserves the historical runtime measurement. Commission the station's selected hardware and outputs for its actual use.
+- The Beta 15 verification record identifies its source, package checks and limits. The Beta 11 host observation preserves the historical runtime measurement. Commission the station's selected hardware and outputs for its actual use.
 
 ## The design decisions behind the figures {#arch-adrs}
 

@@ -28,7 +28,7 @@ The installer puts a shortcut named **CivicCast Operator Console** on the Deskto
 
 > **For IT staff:** The console and portal addresses, the Windows service that runs them, and how to make the portal reachable from residents' own devices are covered in [Installing, first run, upgrading, uninstalling](#ch-installing) and [Planning your station](#ch-planning).
 
-> **Note:** This manual source is prepared for the unpublished Beta 15 candidate. Beta 11/10 notes below are historical observations scoped to those releases; they do not state current Beta 15 behavior unless the note says it was rechecked later.
+> **Note:** This manual describes Beta 15. Beta 11/10 notes below are historical observations scoped to those releases; they do not state current Beta 15 behavior unless the note says it was rechecked later.
 
 ## The people and their roles
 
@@ -134,11 +134,11 @@ These are the words used most in Part I. Each is explained again where it first 
 | **Test mode** | The mode a new station starts in. The First-run defaults card on First Setup shows a **Mode** heading with "Test mode" under it. |
 | **Headend** | The cable company's equipment that receives a channel's signal. |
 
-## What is and is not proven for the Beta 15 candidate
+## What is and is not proven for Beta 15
 
-This manual source describes the **Beta 15 candidate**, which is not published and has no completed package verification. Beta 14 remains the latest published native Windows release; its package identity and observations are in the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md). Use the complete download and installation instructions in [Chapter 10](#ch-installing) only with a package listed on the [releases page](https://github.com/scottconverse/civiccast-native/releases). Historical results retain their named release.
+This manual describes **Beta 15**. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) identifies the signed package, observed installation behavior, and evidence limits. Use the complete download and installation instructions in [Chapter 10](#ch-installing) only with a package listed on the [releases page](https://github.com/scottconverse/civiccast-native/releases). Historical results retain their named release.
 
-**Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This is a Beta 11 host measurement, not a Beta 15 candidate soak. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
+**Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This is a Beta 11 host measurement, not a Beta 15 soak. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
 **Live captions:** Whistle is the CPU primary, publishes first-pass recognition, and uses Whisper fallback for the affected channel when needed. CivicCast automatically probes Whistle recovery after an initial 30-second cooldown and retries with bounded backoff; a successful probe returns later chunks to Whistle without a service restart. Probe timing is not a fixed recovery guarantee. Optional NVIDIA CUDA applies to supported Whisper work; Whistle remains CPU-only.
 

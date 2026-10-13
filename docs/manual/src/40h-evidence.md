@@ -1,10 +1,10 @@
 # Appendix H: Measured evidence and known limits {#app-evidence}
 
-This appendix preserves historical evidence and its build identity. Beta 14 is the latest published package; use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for the source, hash and checks tied to that package. Beta 15 is an unpublished candidate with verification pending. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+This appendix preserves historical evidence and its build identity. Use the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for the current package identity, checks, and limits. Earlier package records remain tied to their named releases. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
 
 ## Historical Beta 11: three channels, 72 hours, 99.78% live caption-input coverage
 
-Public, Government and Education ran together for 72 hours without a service restart. All 216 scheduled checkpoints reported healthy service status. Recorded live caption-input coverage was **99.78%**, calculated from 1,695 seconds of logged discarded input across 777,600 channel-seconds. This is a historical Beta 11 measurement, not a Beta 15 candidate result. The [Beta 11 72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves channel totals and the run identity. Earlier Beta 11 48-hour evidence remains linked in that report.
+Public, Government and Education ran together for 72 hours without a service restart. All 216 scheduled checkpoints reported healthy service status. Recorded live caption-input coverage was **99.78%**, calculated from 1,695 seconds of logged discarded input across 777,600 channel-seconds. This is a historical Beta 11 measurement, not a Beta 15 measurement. The [Beta 11 72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves channel totals and the run identity. Earlier Beta 11 48-hour evidence remains linked in that report.
 
 ## H.1 Which build each result comes from
 
@@ -50,7 +50,7 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 3. **Quiet source material is reported, not leveled** when it is too quiet for the loudness control's maximum lift.
 4. **Eleven playout-engine unit tests fail** in the same way on the published tree and the installed tree; they were failing before this build and are unexplained.
 5. **An unexplained rebuild of a long cached program** was seen in the previous internal run and is unresolved.
-6. **Upgrades were not proven for beta.10.** Installing beta.10 over an earlier release was not tested; use the Beta 14 verification record for the exact package paired with this manual.
+6. **Upgrades were not proven for beta.10.** Installing beta.10 over an earlier release was not tested; use the Beta 15 verification record for the exact package paired with this manual.
 7. **A first install with neither the full kit (installer plus its `packs` and `station` folders) nor an earlier install was not proven for beta.10.** The code requires the kit. See [Chapter 10](#ch-installing) for the current package contents and evidence link.
 8. **Several staff-console screens described behavior the beta.10 code did not have.** Current screen notes in Part I use the current scope where the mismatch remains.
 
@@ -62,6 +62,6 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 ## H.6 How to use this evidence
 
-Read sections H.1 through H.5 as historical beta.10 evidence. For Beta 14, read its verification record and the current operating chapters; keep each measured result associated with its recorded source and run.
+Read sections H.1 through H.5 as historical beta.10 evidence. For Beta 15, read its verification record and the current operating chapters; keep each measured result associated with its recorded source and run.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; ops/beta10-oversight/OVERSIGHT-LOG.md entries 2026-10-01 14:12 and 14:22; ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md -->

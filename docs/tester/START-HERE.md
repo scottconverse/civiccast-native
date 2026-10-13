@@ -1,25 +1,26 @@
 # CivicCast Tester Packet - Start Here
 
-> **Current published native release:** CivicCast `v1.0.0-beta.14` is the
-> latest signed GitHub pre-release, not a production release. Beta 15 is an
-> unpublished candidate; its package and release verification are pending.
+> **Current published native release:** CivicCast `v1.0.0-beta.15` is the
+> current signed GitHub pre-release, not a production release. Its verification
+> record distinguishes the exact original candidate tested from the refreshed
+> manual/Help bytes in this release edition.
 > Follow the
 > [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
 > [Windows release-trust guide](../install/windows-release-trust.md), and the
-> exact [Beta 14 verification record](../releases/v1.0.0-beta.14-verification.md).
+> exact [Beta 15 verification record](../releases/v1.0.0-beta.15-verification.md).
 > Install only a package listed on the releases page or named by the active
 > owner-authorized handoff. The Beta 11/Beta 10 notes below are historical and
-> do not qualify Beta 14.
+> do not qualify Beta 15.
 > The rc-numbered appendix at the bottom describes the retired WSL2 product.
 
 ## Current Release
 
-`v1.0.0-beta.14` is the latest signed GitHub pre-release. Its source, build,
-installer and kit are identified in the [Beta 14 verification
-record](../releases/v1.0.0-beta.14-verification.md). That record covers a fresh
-offline Sandbox installation, one normal development-host upgrade and bounded
-three-channel observations; it does not claim a long soak or every installer
-lifecycle path. Use the release-matched helper in the [Windows release-trust
+`v1.0.0-beta.15` is the current signed GitHub pre-release. The [Beta 15
+verification record](../releases/v1.0.0-beta.15-verification.md) identifies
+the source, build and setup hash of the original tested candidate, plus the
+release-edition Help boundary. It covers one fresh offline Sandbox installation
+and scoped package checks; it does not claim a normal cross-version upgrade, a
+long soak or every installer lifecycle path. Use the release-matched helper in the [Windows release-trust
 guide](../install/windows-release-trust.md) and follow the active
 owner-authorized handoff for assigned checks. Historical Beta 13 and Beta 12
 package results remain in their [Beta 13](../releases/v1.0.0-beta.13-verification.md)
@@ -117,8 +118,8 @@ before clicking through it.
   [Field-Test Quick Start](../QUICKSTART-OPERATOR.md) and the current manual.
   Use the active handoff for the exact package procedure.
 - **Technical tester or station admin:** use
-  the [Beta 14 verification record](../releases/v1.0.0-beta.14-verification.md)
-  for package evidence and limits, plus the active handoff for assigned
+   the [Beta 15 verification record](../releases/v1.0.0-beta.15-verification.md)
+   for package evidence and limits, plus the active handoff for assigned
   checks.
 - **Meeting-night dry run:** use
   [first-broadcast-checklist.md](first-broadcast-checklist.md).
@@ -142,14 +143,14 @@ before clicking through it.
    the complete kit and runs setup with `/S`. The helper is documented in
    the [Windows release-trust guide](../install/windows-release-trust.md). A
    successful download does not prove that the installation or station is
-   ready. The Beta 14 verification record reports a fresh offline Sandbox
-   installation, one normal development-host upgrade and bounded three-channel
-   observations. It does not establish every lifecycle path or a long soak.
+   ready. The Beta 15 verification record reports one fresh offline Sandbox
+   installation and scoped observations. It does not establish a normal
+   cross-version upgrade, every lifecycle path or a long soak.
 3. Follow the active owner-authorized handoff for the named package and checks.
-   Use the [Beta 14 verification record](../releases/v1.0.0-beta.14-verification.md)
-   for the latest published package's exact identity and results. Beta 15 is
-   an unpublished candidate; do not install it unless it appears on the
-   releases page or the owner-authorized handoff names its exact package.
+   Use the [Beta 15 verification record](../releases/v1.0.0-beta.15-verification.md)
+   for the current release's exact identity and results. Follow its package
+   boundary when comparing execution evidence with the refreshed manual/Help
+   bytes in the release edition.
    Beta 13 and Beta 12 results remain in their historical verification records.
 4. Open the operator console on the station itself (the **Open operator
    console** button, or the **CivicCast Operator Console** shortcut).

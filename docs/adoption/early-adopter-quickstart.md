@@ -38,10 +38,10 @@ This whole document is historical (retired WSL2 line). For the native line
 this repository ships, read [START-HERE](../tester/START-HERE.md),
 [INSTALL-WINDOWS.md](../../INSTALL-WINDOWS.md), and
 [Windows Release Trust And Verification](../install/windows-release-trust.md)
-instead -- they carry the current `v1.0.0-beta.1` (USB-delivered) /
-`v1.0.0-beta.3` (next, downloadable) release-state story. `v1.0.0-beta.2`
-was never published -- it exists only as an internal Gate A
-upgrade-baseline kit.
+instead -- they carry the current `v1.0.0-beta.15` release guidance. The
+Beta 15 verification record distinguishes original candidate observations from
+the refreshed manual/Help bytes in this release edition. The historical native
+release identities below remain background only.
 
 ## Historical: Installer Status (retired WSL2 line)
 

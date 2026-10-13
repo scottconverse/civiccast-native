@@ -1,12 +1,11 @@
 # "Windows protected your PC" — what to expect, and what to do
 
-> **Latest published native installer:** `v1.0.0-beta.14` is the current
-> GitHub pre-release, not a production release. Beta 15 is an unpublished
-> candidate without completed package verification. Follow the [current User
+> **Current published native installer:** `v1.0.0-beta.15` is the signed
+> GitHub pre-release, not a production release. Follow the [current User
 > Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
 > [Windows release-trust guide](../install/windows-release-trust.md), and the
 > exact owner-authorized handoff. The Beta 10 release details below are a
-> historical snapshot and do not qualify Beta 14.
+> historical snapshot and do not qualify Beta 15.
 
 ## Historical Beta 10 release state (October 2, 2026 snapshot)
 

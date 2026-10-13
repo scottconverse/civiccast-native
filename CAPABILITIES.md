@@ -1,15 +1,12 @@
 # CivicCast — Capability Matrix and Evidence History
 
-> **Current release:** v1.0.0-beta.14, a signed GitHub pre-release, not a
-> production release. Its [verification record](docs/releases/v1.0.0-beta.14-verification.md)
-> binds the package to signed source `44525c14265d21ae461c2435d4d5a9a6acd58af3`,
-> producer run `38217950172`, and installer SHA-256
-> `e22d1cb9ae064841c45bed64a37e8ce9bd1e5176e0ff80945edccc362447082f`. It records
-> exact installation evidence and limits. See [release-truth.yaml](docs/releases/release-truth.yaml)
-> for current and historical release identities. A fresh offline Sandbox install
-> and one normal development-host upgrade both exited 0; the upgraded host was
-> healthy at Beta 14 schema 89 with all three channels Whistle-primary and within
-> capacity. See the verification record for exact scope and limits.
+> **Current release:** v1.0.0-beta.15, a signed GitHub pre-release, not a
+> production release. Its [verification record](docs/releases/v1.0.0-beta.15-verification.md)
+> identifies the tested candidate source, build and setup hash, and distinguishes
+> that candidate's execution evidence from the refreshed manual/Help bytes in
+> this release edition. A fresh offline Sandbox install passed for the original
+> candidate; no normal cross-version upgrade or extended soak is claimed. See
+> [release-truth.yaml](docs/releases/release-truth.yaml) for release identities.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"

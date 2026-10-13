@@ -2,7 +2,7 @@
 
 This chapter is for the person at the city who owns the CivicCast computer. It walks through every place a station is configured: First Setup and the admin account, the Station Profile, channels and their outputs, loudness, the playout engine, captions, AI models, cable commissioning, the Control Room, custom fields, the paywall, certificates and network exposure, storage, and the environment variables that sit behind all of it. Most of it is done once, before the first public meeting, by someone with the `setup_admin` role. A few things (the environment variables, the registry) need Administrator rights on the Windows computer itself.
 
-> **Note:** This chapter describes the unpublished Beta 15 candidate's configuration. Beta 14 remains the latest published package; its identity and checks are in the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md). Beta 15 package verification is pending; the release page establishes which packages are available.
+> **Note:** This chapter describes Beta 15 configuration. Its identity and package checks are in the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md); the release page establishes which packages are available.
 
 ## Before you start
 
