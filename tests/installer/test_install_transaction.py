@@ -219,11 +219,22 @@ $unique = $logical - 2 * (Get-Item "$app\components\model\blob").Length
 Assert ((Get-TreeBytes $app @('.station-cache')) -eq $unique) 'snapshot counts hardlink aliases twice'
 Snapshot-Transaction $state
 Assert (-not (Test-Path "$StateRoot\backup\app\packs\.station-cache")) 'hardlink cache copied'
-# Candidate topology can differ: an independent prior file is now an alias.
-Remove-Item -LiteralPath "$app\models\separate-copy"
-New-Item -ItemType HardLink -Path "$app\models\separate-copy" -Target "$app\components\model\blob" | Out-Null
+Remove-Item -LiteralPath "$app\packs\.station-cache\excluded-alias"
 [IO.File]::WriteAllText("$app\models\alias-one", 'candidate-model-bytes')
 Assert ((Get-Content "$StateRoot\backup\app\components\model\blob") -eq 'old-model-bytes') 'live writes changed backup'
+$script:nativeCopy = ${function:Invoke-RecoveryTreeCopy}
+$script:appCopyCount = 0
+function Invoke-RecoveryTreeCopy($arguments) {
+    if ($arguments[0] -eq "$StateRoot\backup\app") {
+        Assert (-not (Test-Path "$app\models\alias-one")) 'old model alias retained when byte copy starts'
+        Assert (-not (Test-Path "$app\models\alias-two")) 'last old model alias retains large bytes during copy'
+        if ($script:appCopyCount -gt 0) {
+            Assert (-not (Test-Path "$app\models\separate-copy")) 'changed candidate alias retains large bytes during retry'
+        }
+        $script:appCopyCount++
+    }
+    & $script:nativeCopy $arguments
+}
 # Fail after restoring the app: backup topology and independence must survive retry.
 $script:copyTree = ${function:Copy-RecoveryTree}
 $script:failOnce = $true
@@ -235,7 +246,10 @@ function Copy-RecoveryTree($source, $target, $exclude) {
     & $script:copyTree $source $target $exclude
 }
 try { Restore-Transaction (Read-Transaction); throw 'expected interruption' }
-catch { Assert ($_.Exception.Message -eq 'controlled hardlink restore interruption') 'wrong restore failure' }
+catch { if ($_.Exception.Message -ne 'controlled hardlink restore interruption') { throw } }
+# Candidate topology can differ: an independent prior file is now an alias.
+Remove-Item -LiteralPath "$app\models\separate-copy"
+New-Item -ItemType HardLink -Path "$app\models\separate-copy" -Target "$app\components\model\blob" | Out-Null
 [IO.File]::WriteAllText("$app\models\alias-two", 'interrupted-live-write')
 Assert ((Get-Content "$StateRoot\backup\app\models\alias-one") -eq 'old-model-bytes') 'restore linked live bytes to backup'
 # Check backup topology by changing one alias, then put the recovery point back.
@@ -244,6 +258,7 @@ Assert ((Get-Content "$StateRoot\backup\app\models\alias-two") -eq 'backup-link-
 Assert ((Get-Content "$StateRoot\backup\app\models\separate-copy") -eq 'old-model-bytes') 'equal contents incorrectly deduplicated'
 [IO.File]::WriteAllText("$StateRoot\backup\app\models\alias-one", 'old-model-bytes')
 Restore-Transaction (Read-Transaction)
+Assert ($script:appCopyCount -eq 2) 'native copy boundary not checked on restore and retry'
 Assert ((Get-Content "$app\components\model\blob") -eq 'old-model-bytes') 'retry did not restore model'
 [IO.File]::WriteAllText("$app\models\alias-one", 'restored-link-check')
 Assert ((Get-Content "$app\models\alias-two") -eq 'restored-link-check') 'restored hardlinks expanded into copies'
