@@ -63,6 +63,8 @@ code { background: rgba(65, 97, 128, .1); padding: .08em .35em; border-radius: 3
 .wrap { width: min(var(--wide), 100% - 2 * var(--s3)); margin-inline: auto; }
 section { padding-block: var(--s6); }
 .on-dark { background: var(--night); color: var(--white); }
+.on-dark a:not(.button) { color: #a9d1f5; }
+.on-dark a:not(.button):hover { color: #c6e2ff; }
 .band { background: var(--white); }
 
 /* ---------- header ---------- */
@@ -167,6 +169,7 @@ section { padding-block: var(--s6); }
 /* ---------- quick start ---------- */
 .steps { counter-reset: s; list-style: none; padding: 0; margin: var(--s3) 0 0; max-width: 820px; }
 .steps li { counter-increment: s; padding: 0 0 var(--s3) 3.2rem; position: relative; }
+.steps code { overflow-wrap: anywhere; }
 .steps li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 2.2rem; height: 2.2rem; border-radius: 50%; border: 2px solid var(--record); color: var(--record); font: 700 1.15rem/2rem var(--font-head); text-align: center; }
 .steps b { display: block; font: 700 1.3rem var(--font-head); letter-spacing: .02em; color: var(--night); }
 .callout { border-left: 6px solid var(--record); background: var(--white); padding: var(--s2) var(--s3); border-radius: 0 var(--radius) var(--radius) 0; max-width: 820px; margin-top: var(--s2); }

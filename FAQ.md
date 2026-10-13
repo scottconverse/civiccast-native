@@ -1,9 +1,9 @@
 # CivicCast FAQ
 
-> **Release state:** `v1.0.0-beta.14` is the current signed native Windows
+> **Release state:** `v1.0.0-beta.15` is the current signed native Windows
 > pre-release, not a production release. See the
-> [Beta 14 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14),
-> [verification record](docs/releases/v1.0.0-beta.14-verification.md), and
+> [Beta 15 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15),
+> [verification record](docs/releases/v1.0.0-beta.15-verification.md), and
 > [current User Manual](docs/USER-MANUAL.md). Earlier package records remain
 > historical and apply only to their named release. See
 > [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
@@ -35,9 +35,9 @@ Optional cloud AI providers may charge for usage.
 
 ## How do I install it?
 
-Follow [Install CivicCast on Windows](INSTALL-WINDOWS.md). The Beta 14 helper downloads the installer, the matching runtime packs and complete signed station-model bundle, verifies them, creates the correct folders and runs setup. You do not need Git, Python, Docker, WSL or a separate Ollama installation. Open **CivicCast Operator Console** after setup completes and create the first administrator on the station computer.
+Follow [Install CivicCast on Windows](INSTALL-WINDOWS.md). The Beta 15 helper downloads the installer, the matching runtime packs and complete signed station-model bundle, verifies them, creates the correct folders and runs setup. You do not need Git, Python, Docker, WSL or a separate Ollama installation. Open **CivicCast Operator Console** after setup completes and create the first administrator on the station computer.
 
-The Beta 14 package passed a fresh offline Windows Sandbox installation and one normal development-host upgrade; setup exited 0 in both. After the host upgrade, the service was healthy at Beta 14 schema 89, with all three channels using Whistle as primary and within capacity. See the [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md) for exact scope and limits.
+The original Beta 15 signed candidate passed one fresh offline Windows Sandbox installation, with setup exiting 0 after 14 minutes 49 seconds. The service registered, activated the station and reported healthy at the current schema. That candidate also passed the scoped wizard, Help, ACL, downgrade-refusal and Welcome playback checks in the [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md). No normal cross-version upgrade or extended soak is claimed, and that record distinguishes the tested candidate from the refreshed manual and Help bytes in this release edition.
 
 Beta 13's earlier normal upgrade, controlled interruption and repair, and separate fresh-install observations are historical and apply only to that release. See its [verification record](docs/releases/v1.0.0-beta.13-verification.md) and [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json). Optional raw-model downloads in the separate acquisition screen cannot substitute for signed activation packs. The earlier Beta 12 distribution history is recorded in its [verification record](docs/releases/v1.0.0-beta.12-verification.md).
 

@@ -1564,15 +1564,18 @@ def test_non_interactive_failure_reports_never_block_a_silent_install() -> None:
     an audit found 21 MessageBox sites with ZERO silent guards. Every
     non-interactive failure report must route through CIVICCAST_ALERT,
     which logs + DetailPrints always and shows a dialog only when NOT
-    silent. The ONE allowed exception is the MB_YESNO ActiveRuntime
-    ownership-transfer prompt: it asks a question silent mode cannot
-    answer, so it must fail loud rather than guess.
+    silent. The version-preflight macro also has two MB_OK dialogs, each
+    explicitly gated on non-silent mode. The ONE unguarded exception is the
+    MB_YESNO ActiveRuntime ownership-transfer prompt: it asks a question
+    silent mode cannot answer, so it must fail loud rather than guess.
 
     CIVICCAST_NOTICE (CRITICAL fix, 2026-07-30 adversarial review, D3
     clean-rollback) is silent-safe by the same construction -- breadcrumb +
     DetailPrint always, a dialog only when NOT silent -- so its macro body is
     excluded from the stray-dialog scan below exactly like CIVICCAST_ALERT's,
-    and is checked for the same non-silent-mode gate."""
+    and is checked for the same non-silent-mode gate. The separate
+    CIVICCAST_VERSION_PREFLIGHT macro is also excluded only after the test
+    verifies both of its MB_OK dialogs are inside `${IfNot} ${Silent}`."""
     hooks_text = NATIVE_HOOKS.read_text(encoding="utf-8")
 
     macro_body_start = hooks_text.index("!macro CIVICCAST_ALERT")
@@ -1583,14 +1586,49 @@ def test_non_interactive_failure_reports_never_block_a_silent_install() -> None:
     notice_body_end = hooks_text.index("!macroend", notice_body_start)
     notice_body = hooks_text[notice_body_start:notice_body_end]
 
+    preflight_body_start = hooks_text.index("!macro CIVICCAST_VERSION_PREFLIGHT")
+    preflight_body_end = hooks_text.index("!macroend", preflight_body_start)
+    preflight_body = hooks_text[preflight_body_start:preflight_body_end]
+
+    # Version refusal and comparison-error dialogs are safe in /S because
+    # each is nested under the non-silent guard, while its DetailPrint remains
+    # available to unattended logs.
+    preflight_dialogs = []
+    guard_stack = []
+    for line in preflight_body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("${If"):
+            guard_stack.append(stripped)
+        if "MessageBox" in line and not stripped.startswith(";"):
+            assert "MB_OK" in line, f"unexpected preflight dialog: {stripped}"
+            assert "${IfNot} ${Silent}" in guard_stack, (
+                f"every version-preflight dialog must be suppressed in silent mode: {stripped}"
+            )
+            preflight_dialogs.append(stripped)
+        if stripped.startswith("${EndIf}"):
+            assert guard_stack, "unmatched ${EndIf} in version-preflight macro"
+            guard_stack.pop()
+    assert not guard_stack, f"unclosed NSIS condition in version-preflight macro: {guard_stack}"
+    assert len(preflight_dialogs) == 2, (
+        f"expected exactly two silent-gated version-preflight dialogs, found {preflight_dialogs}"
+    )
+
     outside_macro = (
         hooks_text[:macro_body_start]
         + hooks_text[macro_body_end:notice_body_start]
         + hooks_text[notice_body_end:]
     )
+    # Exclude the version-preflight macro only after validating every dialog
+    # in it above; the only remaining unguarded dialog must be the deliberate
+    # ownership-transfer question.
+    preflight_start_after_notices = outside_macro.index("!macro CIVICCAST_VERSION_PREFLIGHT")
+    preflight_end_after_notices = outside_macro.index("!macroend", preflight_start_after_notices)
+    outside_macro = (
+        outside_macro[:preflight_start_after_notices] + outside_macro[preflight_end_after_notices:]
+    )
 
-    # The macro itself is the ONE place a plain MB_OK dialog may appear, and
-    # it must be gated on non-silent mode.
+    # The reporting macros own their plain MB_OK dialogs and gate them on
+    # non-silent mode; the preflight macro's two dialogs were checked above.
     assert "MessageBox MB_OK" in macro_body
     assert "${IfNot} ${Silent}" in macro_body, (
         "CIVICCAST_ALERT must gate its dialog on non-silent mode"

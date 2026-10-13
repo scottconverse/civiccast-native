@@ -1,11 +1,11 @@
 # "Windows protected your PC" — what to expect, and what to do
 
-> **Current native installer:** `v1.0.0-beta.12` is the current published
+> **Current published native installer:** `v1.0.0-beta.15` is the signed
 > GitHub pre-release, not a production release. Follow the [current User
 > Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
 > [Windows release-trust guide](../install/windows-release-trust.md), and the
 > exact owner-authorized handoff. The Beta 10 release details below are a
-> historical snapshot and do not qualify Beta 12.
+> historical snapshot and do not qualify Beta 15.
 
 ## Historical Beta 10 release state (October 2, 2026 snapshot)
 

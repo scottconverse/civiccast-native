@@ -2,7 +2,7 @@
 
 This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It explains how to identify a problem from a screen, log line or command result and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**.
 
-> **Package checks:** See the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for this package's installation and operating observations.
+> **Package checks:** The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) states the current package's installation observations and limits.
 
 ## Before you start
 
@@ -70,7 +70,7 @@ Setup returns a number when it fails. Interactive setup shows a dialog with word
 
 > **Known issue (beta.11):** Interactive failure dialogs explain the step but do not show its numeric exit code. Read `install-progress.log` for the code; the installer table in [Chapter 10](#ch-installing) lists the current codes.
 
-> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 13 startup. Use `/health`, the channel's output and the current [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) to assess the exact package and station.
+> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 15 startup. Use `/health`, the channel's output and the verification record matching the installed package; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) states its package limits.
 
 ## Sign-in
 
@@ -148,6 +148,8 @@ A program change is the moment a channel moves from one scheduled item to the ne
 | The worker said the commit did not finish | The reload commit did not complete. | `gst-worker.stderr.log`: `CTRL reload: commit did not finish`. | The daemon falls back. |
 | A single dropped frame at a join between two pieces | A known single-frame drop. | `CTRL mux diagnostic: dropped future-dated video arrival`. | None. It is one frame. |
 | A change aired only the tail of the closing item | The plan was resolved against a short remainder. | `Plan for <channel> resolved to a N.Ns tail of the closing scheduled item`. | Check the schedule's times. Remember that times typed on schedule screens are UTC. |
+
+> **Known issue (Beta 15):** In one observation, a 60-second scheduled slot containing the 20-second Welcome sample ended the sample and continued slate output, while the daemon remained in **Changing source** and logged repeated rollover attempts. This observation did not establish an indefinite stall. A separate 20-second slot played and returned to slate normally. The behavior was not fixed in Beta 15; if the status persists, preserve the service and worker logs and confirm the actual HLS output before deciding whether the channel stopped.
 
 > **Historical Beta 10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the current package. Keep the logs if you see an unexplained rebuild.
 

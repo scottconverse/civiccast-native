@@ -1,27 +1,30 @@
 # CivicCast Tester Packet - Start Here
 
-> **Current native testers:** CivicCast `v1.0.0-beta.13` is the current
-> signed GitHub pre-release, not a production release. Follow the
+> **Current published native release:** CivicCast `v1.0.0-beta.15` is the
+> current signed GitHub pre-release, not a production release. Its verification
+> record distinguishes the exact original candidate tested from the refreshed
+> manual/Help bytes in this release edition.
+> Follow the
 > [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
 > [Windows release-trust guide](../install/windows-release-trust.md), and the
-> exact [Beta 13 verification record](../releases/v1.0.0-beta.13-verification.md).
-> The Beta 11/Beta 10 notes below are historical and do not qualify Beta 13.
+> exact [Beta 15 verification record](../releases/v1.0.0-beta.15-verification.md).
+> Install only a package listed on the releases page or named by the active
+> owner-authorized handoff. The Beta 11/Beta 10 notes below are historical and
+> do not qualify Beta 15.
 > The rc-numbered appendix at the bottom describes the retired WSL2 product.
 
 ## Current Release
 
-`v1.0.0-beta.13` is the current signed GitHub pre-release. Its source, build,
-installer and 19-member kit are identified in the [Beta 13 verification
-record](../releases/v1.0.0-beta.13-verification.md). The normal Beta 11-to-13
-upgrade and five post-upgrade observations passed across all three channels.
-Whistle remained within capacity in all 15 runtime samples, with five distinct
-caption samples per channel and expected words observed. The one-interruption
-same-candidate repair and separate fresh installation also passed, each with
-five-minute observations across all three channels. Use the release-matched helper
-in the [Windows release-trust guide](../install/windows-release-trust.md) and
-follow the active owner-authorized handoff for assigned checks. Historical
-Beta 12 package results remain in the [Beta 12 verification
-record](../releases/v1.0.0-beta.12-verification.md).
+`v1.0.0-beta.15` is the current signed GitHub pre-release. The [Beta 15
+verification record](../releases/v1.0.0-beta.15-verification.md) identifies
+the source, build and setup hash of the original tested candidate, plus the
+release-edition Help boundary. It covers one fresh offline Sandbox installation
+and scoped package checks; it does not claim a normal cross-version upgrade, a
+long soak or every installer lifecycle path. Use the release-matched helper in the [Windows release-trust
+guide](../install/windows-release-trust.md) and follow the active
+owner-authorized handoff for assigned checks. Historical Beta 13 and Beta 12
+package results remain in their [Beta 13](../releases/v1.0.0-beta.13-verification.md)
+and [Beta 12](../releases/v1.0.0-beta.12-verification.md) records.
 ## Historical Beta 11 release snapshot (October 8, 2026)
 
 <details>
@@ -115,14 +118,14 @@ before clicking through it.
   [Field-Test Quick Start](../QUICKSTART-OPERATOR.md) and the current manual.
   Use the active handoff for the exact package procedure.
 - **Technical tester or station admin:** use
-  the [Beta 13 verification record](../releases/v1.0.0-beta.13-verification.md)
-  for package evidence and limits, plus the active handoff for assigned
+   the [Beta 15 verification record](../releases/v1.0.0-beta.15-verification.md)
+   for package evidence and limits, plus the active handoff for assigned
   checks.
 - **Meeting-night dry run:** use
   [first-broadcast-checklist.md](first-broadcast-checklist.md).
 - **Longmont Public Media beta:** use
   the active owner-authorized handoff; this repository's older LPM handoff is
-  historical and is not the Beta 13 procedure.
+  historical and is not the Beta 14 procedure.
 - **Before reporting a problem:** create a support bundle and use
   [bug-report-template.md](bug-report-template.md).
 - **Closed or lost the recovery kit:** use
@@ -134,20 +137,21 @@ before clicking through it.
 1. Verify the release Windows proof kit or setup executable against its
    matching delivery manifest or, for a GitHub download, its sidecar and
    checksum (`SHA256SUMS.txt`).
-2. Download and install only the exact Beta 13 set named by the active handoff.
+2. Download and install only the exact published package named by the active handoff.
    The release helper `download_windows_release_artifacts.ps1` with `-Install`
    verifies the installer, runtime packs and multipart station bundle, extracts
    the complete kit and runs setup with `/S`. The helper is documented in
    the [Windows release-trust guide](../install/windows-release-trust.md). A
    successful download does not prove that the installation or station is
-    ready. The Beta 13 normal upgrade, one-interruption repair and fresh install
-    passed, each with five-minute observations across all three channels. See
-    the verification record for exact package identity and captured results.
+   ready. The Beta 15 verification record reports one fresh offline Sandbox
+   installation and scoped observations. It does not establish a normal
+   cross-version upgrade, every lifecycle path or a long soak.
 3. Follow the active owner-authorized handoff for the named package and checks.
-    Upgrade, one-interruption repair and fresh-install observations are recorded
-    in the Beta 13 verification record. No extended Beta 13 soak is claimed.
-   Beta 12's package-specific results remain in its historical verification
-   record.
+   Use the [Beta 15 verification record](../releases/v1.0.0-beta.15-verification.md)
+   for the current release's exact identity and results. Follow its package
+   boundary when comparing execution evidence with the refreshed manual/Help
+   bytes in the release edition.
+   Beta 13 and Beta 12 results remain in their historical verification records.
 4. Open the operator console on the station itself (the **Open operator
    console** button, or the **CivicCast Operator Console** shortcut).
 5. Create the first admin and save the recovery kit.

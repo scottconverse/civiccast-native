@@ -756,6 +756,10 @@ class EgressSourceSegment(BaseModel):
     label: Annotated[str, Field(min_length=1, max_length=200)]
     path: Annotated[str, Field(min_length=1, max_length=1000)]
     duration_seconds: Annotated[float, Field(gt=0)]
+    #: Full playable media window after asset trims, before join-in-progress,
+    #: schedule-slot, or preparation-horizon clipping. Unknown for plans that
+    #: do not carry measured/recorded media provenance.
+    playable_duration_seconds: Annotated[float | None, Field(default=None, gt=0)] = None
     kind: EgressSourceKind = "program"
     source_ref: Annotated[str | None, Field(default=None, max_length=200)] = None
     #: Opaque credential HANDLE for a live segment whose protocol supports one

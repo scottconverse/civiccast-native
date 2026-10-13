@@ -143,9 +143,12 @@ def test_readme_keeps_source_and_field_proof_distinct() -> None:
     if CURRENT_CANDIDATE_TAG.casefold() != PUBLISHED_RELEASE_TAG.casefold():
         assert f"`{CURRENT_CANDIDATE_TAG}` is an unpublished candidate".casefold() in normalized
         assert "remains the published download until" in normalized
-    assert "72 hours. three channels. 99.78% live caption-input coverage" in normalized
     assert (
-        "a beta 11 host ran public, government and education together without a service restart"
+        "historical beta 11 host result: 72 hours, three channels, 99.78% live caption-input coverage"
+        in normalized
+    )
+    assert (
+        "the host ran public, government and education together without a service restart"
         in normalized
     )
     assert "with 216 healthy scheduled checkpoints" in normalized

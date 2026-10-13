@@ -41,9 +41,9 @@ After the 72-hour cutoff and through the 15:27 checkpoint, two additional discar
 
 ## Evidence pointers
 
-- Existing 48-hour report: C:\Dev\Claude\civiccast-beta11-whistle\docs\ops\beta11-host-caption-performance-48-hour-2026-10-10.md
-- Existing 67.5-hour status and summary: C:\Users\scott\Documents\Codex\2026-10-04\rea\outputs\HOST-STATION-STATUS-2026-10-11-0946.md and .json
-- Observer evidence root: C:\Users\scott\Documents\Codex\2026-10-04\rea\work\station-observer
-- Nearest pre-cutoff checkpoint: 20261011-140659; latest checkpoint: 20261011-152701
+- The related [Beta 11 48-hour report](beta11-host-caption-performance-48-hour-2026-10-10.md) is public and includes its own measurement summary.
+- The aggregate [72-hour measurement receipt](evidence/beta11-host-caption-performance-72-hour-2026-10-11.json) is public and records the interval totals and checkpoint counts.
+- The 67.5-hour status snapshot and station-observer captures are internal owner-workspace artifacts. They are not published with this report, and no public copies are available.
+- Nearest pre-cutoff checkpoint: `20261011-140659`; latest checkpoint: `20261011-152701`. The per-checkpoint observer files are internal and are not publicly retained.
 
 No repository files or station settings were changed for this report. The exact 72-hour resource reading is the preceding scheduled checkpoint; interval discard counts were cut at the exact endpoint.

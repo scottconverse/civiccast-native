@@ -1,6 +1,6 @@
 # Running it day to day: service, logs, backups, updates {#ch-operations}
 
-This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. It describes Beta 14, a GitHub pre-release rather than a production release. Where the code and a convenient assumption disagree, a **Known issue** callout explains the current source behavior; package-specific observations remain limited to the verification record.
+This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) states the package-specific observations and limits. Where the code and a convenient assumption disagree, a **Known issue** callout explains the current source behavior.
 
 ## Before you start
 
@@ -13,7 +13,7 @@ You need:
 
 > **Note:** Earlier descriptions of CivicCast mention a message bus called NATS. NATS JetStream was removed from the product and is not part of beta.11. Do not look for it, monitor it or open a firewall port for it.
 
-> **Note:** The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records the current package and its installation observations. Historical station measurements are collected in [Appendix H](#app-evidence).
+> **Note:** The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) records the package installation observations and limits. Historical station measurements are collected in [Appendix H](#app-evidence).
 
 ## What the service runs
 
@@ -367,7 +367,7 @@ It writes `upgrade-engine.log`, `upgrade-journal.json` and, if a rollback itself
 
 Related provisioning exits: 75 maps to setup exit 116, 87 to 135 (another CivicCast product or the WSL runtime is present), 85 to 127.
 
-> **Upgrade verification:** Read the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for the exact installer and completed checks. Before upgrading an on-air station, take a separate backup and schedule a maintenance window with the recovery kit available.
+> **Upgrade verification:** Read the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for the exact installer and completed checks. It does not claim a normal cross-version upgrade. Before upgrading an on-air station, take a separate backup and schedule a maintenance window with the recovery kit available.
 
 > **Warning:** Do not upgrade during a meeting. The upgrade stops the service and takes every channel off the air.
 

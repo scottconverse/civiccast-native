@@ -365,6 +365,17 @@ def _find_makensis() -> Path:
     raise FileNotFoundError("makensis was not found after Tauri's NSIS build completed")
 
 
+def add_nsis_version_preflight(script: str) -> str:
+    """Run the read-only version guard before Tauri's pages/prerequisites."""
+    marker = "Function .onInit\n"
+    guard = "  !insertmacro CIVICCAST_VERSION_PREFLIGHT\n"
+    if script.count(marker) != 1:
+        raise ValueError("generated NSIS onInit entrypoint changed; cannot place version preflight")
+    if marker + guard not in script:
+        script = script.replace(marker, marker + guard, 1)
+    return script
+
+
 def normalize_nsis_bootstrap() -> None:
     """Repack NSIS with deterministic app bytes and source-file timestamp."""
 
@@ -372,6 +383,8 @@ def normalize_nsis_bootstrap() -> None:
         if not required.is_file():
             raise FileNotFoundError(f"generated native bootstrap input is missing: {required}")
 
+    script = GENERATED_NSIS_SCRIPT.read_text(encoding="utf-8")
+    GENERATED_NSIS_SCRIPT.write_text(add_nsis_version_preflight(script), encoding="utf-8")
     original = MAIN_BINARY.read_bytes()
     patched = patch_tauri_bundle_type(original)
     original_stat = MAIN_BINARY.stat()

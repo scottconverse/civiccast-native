@@ -1,8 +1,8 @@
-# CivicCast Beta 14 - Field-Test Quick Start
+# CivicCast Beta 15 - Field-Test Quick Start
 
-This quick start covers CivicCast Beta 14 and its complete kit: signed
+This quick start covers CivicCast Beta 15 and its complete kit: signed
 installer, matching runtime packs, and the complete signed station-model
-bundle. See the [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md)
+bundle. See the [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
 for package identity and installation results, and the
 [release-truth manifest](releases/release-truth.yaml) for published releases.
 
@@ -28,8 +28,9 @@ for package identity and installation results, and the
    `-Install`. It stages runtime packs under `packs\`, verifies and extracts
    the station bundle into `station\`, then runs `setup.exe /S`. Keep the
    verified files together; do not substitute a source ZIP, older release or
-   generic latest download. The verification record is the source for Beta 14's
-   installation evidence.
+   generic latest download. The verification record identifies the exact
+   tested Beta 15 candidate and distinguishes it from the refreshed Help bytes
+   in this release edition.
 2. If Windows shows **Windows protected your PC**, choose **More info** and
    confirm the publisher is Scott Converse before continuing. If the publisher,
    filename or hash is wrong, choose **Don't run** and contact your technical
@@ -91,11 +92,11 @@ asset to be packaged and explicitly published.
 
 ## Installation and station evidence
 
-The [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md)
-tracks component evidence and will record the exact candidate package, initial
-Sandbox check and final real-host installation when each is available. It does
-not currently claim those installation results. Historical reports retain their
-original release identity.
+The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
+records one fresh offline Sandbox installation and scoped package checks for
+the original signed candidate. It does not claim a normal cross-version
+upgrade, Beta 15 soak or automatic late-failure rollback. Historical reports
+retain their original release identity.
 
 A historical Beta 11 72-hour run across Public, Government and Education
 channels recorded **99.78% live caption-input coverage**. The [72-hour host
@@ -130,7 +131,7 @@ delivery guarantee. The default queue holds up to 42 five-second WAV chunks;
 catch-up after sustained overload is finite. Diagnostics are bounded and no
 audio archive is created.
 
-See the [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md)
+See the [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
 for package scope and limitations. SDI hardware, a cable headend and production
 cutover require separate evidence.
 

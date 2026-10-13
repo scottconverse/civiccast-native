@@ -207,27 +207,36 @@ def test_default_detect_postgres_cluster_returns_stripped_version(tmp_path: Path
 def test_windows_pwfile_acl_command_removes_inheritance() -> None:
     path = Path(r"C:\ProgramData\CivicCast\provision\tmp\initdb-pwfile-123-abc.tmp")
 
-    command = _windows_pwfile_acl_command(path, username="operator")
+    command = _windows_pwfile_acl_command(path, caller_sid="S-1-5-21-123-456-789-1001")
 
     assert command == [
         "icacls",
         str(path),
         "/inheritance:r",
         "/grant:r",
-        "operator:F",
-        "SYSTEM:F",
-        "Administrators:F",
+        "*S-1-5-21-123-456-789-1001:F",
+        "*S-1-5-18:F",
+        "*S-1-5-32-544:F",
     ]
 
 
-def test_restrict_windows_pwfile_acl_requires_username(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.delenv("USERNAME", raising=False)
-    monkeypatch.delenv("USER", raising=False)
+@pytest.mark.parametrize(
+    "username, sid",
+    [("machine-account$", "S-1-5-18"), ("operator", "S-1-5-21-123-456-789-1001"), ("", "S-1-5-18")],
+)
+def test_restrict_windows_pwfile_acl_uses_token_not_environment(
+    monkeypatch, tmp_path, username, sid
+):
+    import civiccast.native.provision.seams as seams_module
 
-    with pytest.raises(RuntimeError, match="USERNAME is unset"):
-        _restrict_windows_pwfile_acl(tmp_path / "pwfile.tmp")
+    monkeypatch.setenv("USERNAME", username)
+    monkeypatch.setattr(seams_module, "_current_process_sid", lambda: sid, raising=False)
+    calls = []
+    monkeypatch.setattr(
+        seams_module.subprocess, "run", lambda command, **kwargs: calls.append(command)
+    )
+    _restrict_windows_pwfile_acl(tmp_path / "pwfile.tmp")
+    assert calls[0][4:] == [f"*{sid}:F", "*S-1-5-18:F", "*S-1-5-32-544:F"]
 
 
 def test_restrict_windows_pwfile_acl_runs_icacls_without_shell(
@@ -238,6 +247,9 @@ def test_restrict_windows_pwfile_acl_runs_icacls_without_shell(
     calls: list[dict[str, object]] = []
     pwfile = tmp_path / "pwfile.tmp"
     monkeypatch.setenv("USERNAME", "operator")
+    monkeypatch.setattr(
+        seams_module, "_current_process_sid", lambda: "S-1-5-21-123-456-789-1001", raising=False
+    )
 
     def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
         calls.append({"command": command, **kwargs})
@@ -253,7 +265,7 @@ def test_restrict_windows_pwfile_acl_runs_icacls_without_shell(
 
     assert calls == [
         {
-            "command": _windows_pwfile_acl_command(pwfile, username="operator"),
+            "command": _windows_pwfile_acl_command(pwfile, caller_sid="S-1-5-21-123-456-789-1001"),
             "check": True,
             "capture_output": True,
             "text": True,
@@ -960,6 +972,9 @@ def test_restrict_windows_pwfile_acl_timeout_is_a_hard_stop(
     import civiccast.native.provision.seams as seams_module
 
     monkeypatch.setenv("USERNAME", "operator")
+    monkeypatch.setattr(
+        seams_module, "_current_process_sid", lambda: "S-1-5-21-123-456-789-1001", raising=False
+    )
 
     def hanging_run(command, **kwargs):  # type: ignore[no-untyped-def]
         assert kwargs["timeout"] == seams_module.ICACLS_TIMEOUT_SECONDS
@@ -1287,3 +1302,67 @@ def test_alter_role_password_sql_rejects_a_password_outside_the_url_safe_charset
 def test_alter_role_password_sql_rejects_an_unsafe_identifier() -> None:
     with pytest.raises(ValueError, match="identifier"):
         alter_role_password_sql(username='civiccast"; DROP', password="Ab3xyz09")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real Windows password-file ACL")
+def test_pwfile_acl_survives_machine_username_and_postgres_restricted_token(monkeypatch, tmp_path):
+    import ntsecuritycon
+    import win32security
+
+    from civiccast.native.provision.seams import _current_process_sid
+    from tests.native.test_pgdata_acl_win import (
+        _build_pg_ctl_shaped_restricted_token,
+        _impersonating,
+    )
+
+    monkeypatch.setenv("USERNAME", "nonexistent-machine-account$")
+    target = tmp_path / "password.tmp"
+    target.write_text("test-only-password\n", encoding="utf-8")
+    _restrict_windows_pwfile_acl(target)
+
+    allowed = {_current_process_sid(), "S-1-5-18", "S-1-5-32-544"}
+    owner_rights_sid = "S-1-3-4"
+    security_info = (
+        win32security.DACL_SECURITY_INFORMATION | win32security.OWNER_SECURITY_INFORMATION
+    )
+    descriptor = win32security.GetNamedSecurityInfo(
+        str(target), win32security.SE_FILE_OBJECT, security_info
+    )
+    owner_sid = win32security.ConvertSidToStringSid(descriptor.GetSecurityDescriptorOwner())
+    dacl = descriptor.GetSecurityDescriptorDacl()
+    sddl = win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(
+        descriptor, win32security.SDDL_REVISION_1, security_info
+    )
+    diagnostic = f"path={target}, owner={owner_sid}, SDDL={sddl}"
+
+    assert descriptor.GetSecurityDescriptorControl()[0] & win32security.SE_DACL_PROTECTED, (
+        diagnostic
+    )
+    assert dacl is not None, diagnostic
+    # S-1-3-4 is Owner Rights: it resolves to this object's owner. Count it
+    # only when that owner is already one of the three explicitly permitted
+    # identities, so the alias cannot expand the password file's readership.
+    assert owner_sid in allowed, diagnostic
+    actual_principals = set()
+    ace_rows = []
+    allowed_flags = {0, win32security.INHERITED_ACE}
+    for index in range(dacl.GetAceCount()):
+        ace = dacl.GetAce(index)
+        assert len(ace) == 3 and len(ace[0]) == 2, f"{diagnostic}; ACE[{index}]={ace!r}"
+        ace_type, ace_flags = ace[0]
+        access_mask = ace[1]
+        trustee_sid = win32security.ConvertSidToStringSid(ace[2])
+        ace_rows.append((ace_type, ace_flags, hex(access_mask), trustee_sid))
+        ace_diagnostic = f"{diagnostic}; ACEs={ace_rows!r}"
+        assert ace_type == win32security.ACCESS_ALLOWED_ACE_TYPE, ace_diagnostic
+        assert ace_flags in allowed_flags, ace_diagnostic
+        assert access_mask == ntsecuritycon.FILE_ALL_ACCESS, ace_diagnostic
+        actual_principals.add(owner_sid if trustee_sid == owner_rights_sid else trustee_sid)
+
+    assert actual_principals == allowed, f"{diagnostic}; ACEs={ace_rows!r}"
+    token = _build_pg_ctl_shaped_restricted_token()
+    try:
+        with _impersonating(token):
+            assert target.read_text(encoding="utf-8") == "test-only-password\n"
+    finally:
+        token.Close()

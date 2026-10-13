@@ -9,23 +9,23 @@
   <style>.doc{padding-block:var(--s5)} .doc h2{margin-top:var(--s4)} .doc ul{max-width:var(--text)} .status{border-left:6px solid var(--record);padding:var(--s2) var(--s3);background:var(--white);border-radius:0 var(--radius) var(--radius) 0;max-width:var(--text)} @media (max-width:879px){.install-header .nav{position:static}}</style>
 </head>
 <body>
-<header class="site-header install-header"><div class="wrap"><a class="brand" href="./" aria-label="CivicCast home"><img src="brand/svg/civiccast-lockup.svg" alt="CivicCast" width="162" height="34"></a><nav class="nav" style="display:flex" aria-label="Main"><a href="./">Home</a><a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14">View the beta.14 release</a></nav></div></header>
+<header class="site-header install-header"><div class="wrap"><a class="brand" href="./" aria-label="CivicCast home"><img src="brand/svg/civiccast-lockup.svg" alt="CivicCast" width="162" height="34"></a><nav class="nav" style="display:flex" aria-label="Main"><a href="./">Home</a><a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15">View the beta.15 release</a></nav></div></header>
 <main class="doc wrap">
   <h1>CivicCast for Windows</h1>
 
-  <p class="status"><strong>Current release:</strong> <code>v1.0.0-beta.14</code>, the signed native Windows pre-release.</p>
-  <p class="status">A fresh offline Windows Sandbox install and one normal development-host upgrade both exited 0. After the host upgrade, the service was healthy at Beta 14 schema 89, with all three channels Whistle-primary and within capacity. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md">Beta 14 verification record</a> for package identity, exact observations and limits.</p>
+  <p class="status"><strong>Current release:</strong> <code>v1.0.0-beta.15</code>, the signed native Windows pre-release.</p>
+  <p class="status">One fresh offline Windows Sandbox installation passed for the original signed Beta 15 candidate. The service registered, activated the station and reported healthy at the current schema. The <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md">Beta 15 verification record</a> identifies those tested bytes and distinguishes them from the refreshed manual/Help bytes in this release edition. No normal cross-version upgrade or extended soak is claimed.</p>
   <h2>Download and install</h2>
   <p>Use the <a href="https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md">Windows installation guide</a> and its PowerShell command. The helper downloads the signed installer, runtime packs and complete signed station model bundle, verifies them and prepares the correct folders before setup starts. You do not need Git, Python, Docker, WSL or a separate Ollama installation.</p>
   <p>Allow about 100 GB free for preparation and installation, plus media and recordings. After downloading, the complete folder can be copied to USB for offline installation.</p>
   <p>Whistle is the CPU primary for live captions. Whisper supplies fallback and recorded-media transcription, with optional supported NVIDIA acceleration.</p>
   <h2>First start or upgrade</h2>
   <p>Open <strong>CivicCast Operator Console</strong> after setup finishes. A new station creates its first administrator on that computer. For an existing station, sign in with its current administrator account; the Windows guide covers password recovery for old test accounts. Back up a working station and plan the upgrade interruption.</p>
-  <p>The <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md">Beta 14 verification record</a> identifies the signed installer and current installation evidence. Earlier package results remain attached to their own release records, including <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md">Beta 13</a>.</p>
+  <p>The <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md">Beta 15 verification record</a> identifies the signed candidate and current installation evidence. Earlier package results remain attached to their own release records, including <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md">Beta 13</a>.</p>
   <h2>More information</h2>
   <ul>
     <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/INSTALL-WINDOWS.md">Windows installation notes</a></li>
-    <li><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.14/USER-MANUAL.pdf">User manual (PDF)</a> &middot; <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md">Markdown</a></li>
+    <li><a href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.15/USER-MANUAL.pdf">User manual (PDF)</a> &middot; <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/USER-MANUAL.md">Markdown</a></li>
     <li><a href="https://github.com/scottconverse/civiccast-native/blob/main/BRANCHES.md">Branches and release posture</a></li>
   </ul>
 </main>

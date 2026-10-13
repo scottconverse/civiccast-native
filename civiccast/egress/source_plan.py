@@ -1092,6 +1092,12 @@ def _segment_from_item(
     inpoint = asset.trim_in_seconds
     outpoint = asset.trim_out_seconds
     media_end = media_duration_resolver(media_path) if media_duration_resolver is not None else None
+    playable_duration = _playable_duration(
+        asset,
+        inpoint=asset.trim_in_seconds,
+        outpoint=asset.trim_out_seconds,
+        media_end=media_end,
+    )
     duration = _segment_duration(
         item, asset, inpoint=inpoint, outpoint=outpoint, media_end=media_end
     )
@@ -1125,6 +1131,9 @@ def _segment_from_item(
         label=asset.title or item.asset_title or item.asset_id,
         path=str(media_path),
         duration_seconds=duration,
+        playable_duration_seconds=(
+            playable_duration if playable_duration is not None and playable_duration > 0 else None
+        ),
         kind="program",
         source_ref=item.asset_id,
         inpoint_seconds=inpoint,

@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.14
+current: v1.0.0-beta.15
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,21 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.14
+  - tag: v1.0.0-beta.15
     status: current
+    notes: >-
+      Release producer dc4a9e63a1bcf58b28818ee06ea7a5e631dd1ca8, successful
+      signed build 38365155889, setup SHA-256
+      6f053356027fc899d57136b0407306f179ec46372fb0f3c28542c93d5a056189.
+      Exact-source manual verification passed. Package execution observations
+      from the earlier producer 7899ee9234428b0b3c93b369392ae5114d292533 remain
+      separately identified in docs/releases/v1.0.0-beta.15-verification.md;
+      they do not verify these refreshed bytes. Public-download install and
+      uninstall checks are pending. Automatic late-failure restoration and
+      repeated-rollover state recovery remain unfinished.
+  - tag: v1.0.0-beta.14
+    status: superseded
+    superseded_by: v1.0.0-beta.15
     notes: >-
       Published by publish_beta_candidate.py, artifact source 44525c14265d21ae461c2435d4d5a9a6acd58af3, tag target ed2f5069004abb6c3c6b4375ac82a07fcabe9a7b, build run 38217950172, direct physical-host consumer receipt outputs\beta14-work\host-runtime-final\consumer-evidence-receipt.json; This receipt covers the host installation and output only; consult the release verification record for separate Sandbox checks. Gate A not run.
   - tag: v1.0.0-beta.13

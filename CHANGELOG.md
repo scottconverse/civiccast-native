@@ -1,6 +1,45 @@
 # Changelog
 
-## [Unreleased]
+## [1.0.0-beta.15] - 2026-10-13
+
+This release updates the native installer, operator guidance, release pages and
+installed Help. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
+binds each package result to its exact candidate and documents the limits; the
+original candidate's execution checks do not verify the refreshed manual/Help
+bytes in this release edition.
+
+### Product and installer fixes
+
+- Reject unsupported version downgrades earlier in setup.
+- Air intentional short programmes and align the starter schedule with its
+  20-second media duration, with five minutes of setup lead time, while retaining protection against nearly exhausted
+  long-programme tails.
+- Use the effective Windows token SID to restrict provisioning password-file
+  access, including SYSTEM context.
+- Let the optional setup wizard use a process-local fallback to find a usable
+  WebView runtime.
+- Distinguish the selected fallback device from current caption activity in the
+  operator status wording.
+
+### Documentation and public site
+
+- Reconcile support, tester and manual-source guidance with the Beta 15
+  candidate while preserving Beta 14 as the latest published package.
+- Describe Whistle recovery as automatic, serialized, and backoff-limited;
+  attribute the 72-hour 99.78% host result to historical Beta 11 evidence.
+- Improve public home-page link contrast on dark sections and wrap the long
+  operator URL at narrow widths.
+- Record the unresolved 60-second-slot repeated Welcome rollover and changing
+  source status in the manual; the observed slate output continued, and the
+  observation does not establish an indefinite stall.
+
+### Known installation limitation
+
+- A later installer failure after payload replacement does not automatically
+  restore the previous application files, activation state and service state.
+  Repair with the complete kit matching the newer installed version. The
+  earlier Beta 15 downgrade refusal test exercised the pre-install metadata
+  guard and does not prove late-failure rollback.
 
 ## [1.0.0-beta.14] - 2026-10-12
 

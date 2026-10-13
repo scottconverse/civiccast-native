@@ -2,7 +2,7 @@
 
 This chapter is for the IT person who connects CivicCast to the outside world: the cable company's equipment, a content delivery network, other servers on the internet, weather and emergency feeds, and other software that wants to talk to the station. It describes current source behavior and identifies connections that remain **off by default**.
 
-> **Note:** This chapter describes Beta 14 configuration. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records package observations. Verify your configured external service or headend during station commissioning.
+> **Note:** This chapter describes Beta 15 configuration. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) records its package observations and limits. Verify your configured external service or headend during station commissioning.
 
 ## Before you start
 

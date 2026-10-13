@@ -10,6 +10,7 @@ from hashlib import sha256
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from civiccast import __version__
@@ -31,6 +32,16 @@ from civiccast.installer.service import (
 )
 from civiccast.installer.tsduck_install import TsduckInstallReport
 from civiccast.schedule.ingest import FfprobeResult
+
+
+@pytest.fixture(autouse=True)
+def _isolate_staff_token_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Use the shared deterministic test identity instead of inherited station tokens.
+
+    Tests of specific role/token settings apply their own monkeypatch afterward.
+    The inherited environment is restored when each test finishes.
+    """
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS", raising=False)
 
 
 def _external_database_reports_current(monkeypatch) -> None:
@@ -602,6 +613,33 @@ def test_system_health_includes_contributor_upload_usage(monkeypatch, tmp_path) 
     )
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+@pytest.mark.parametrize("device", ["cuda", "cpu"])
+def test_caption_device_selection_does_not_claim_active_inference(monkeypatch, enabled, device):
+    from civiccast.installer import station_state
+    from civiccast.installer.service import _caption_device_health_check
+    from civiccast.native import station_runtime
+
+    monkeypatch.setattr(station_state, "resolve_live_captions_enabled_or_default", lambda: enabled)
+    monkeypatch.setattr(
+        station_runtime, "resolve_whisper_device", lambda *a, **kw: (device, "int8")
+    )
+    monkeypatch.setattr(
+        station_runtime, "whisper_device_capability", lambda *a, **kw: (False, False)
+    )
+
+    check = _caption_device_health_check()
+    assert "Whistle" in check.message
+    assert "Whisper" in check.message
+    assert "device" in check.message.lower()
+    assert "primary" not in check.message.lower()
+    assert "active" not in check.message.lower()
+    assert "running" not in check.message.lower()
+    assert "being used" not in check.message.lower()
+    assert ("disabled" in check.message.lower()) is (not enabled)
+    assert check.required is False
+
+
 def test_system_health_includes_caption_device_visibility(monkeypatch, tmp_path) -> None:
     """Owner review "option D": the health report must say, honestly, which
     device captions are running on -- and when a capable GPU is sitting idle
@@ -644,7 +682,7 @@ def test_system_health_includes_caption_device_visibility(monkeypatch, tmp_path)
     assert "gpu" in no_libs_check.message.lower()
     assert "component" in no_libs_check.message.lower()
 
-    # (1) Capable GPU with both required CUDA runtime DLLs staged -> active.
+    # (1) Capable GPU with required DLLs -> selected fallback, not activity proof.
     cuda_bin = station_runtime.cuda_bin_dir(install_root)
     cuda_bin.mkdir(parents=True, exist_ok=True)
     (cuda_bin / "cublas64_12.dll").write_bytes(b"")
@@ -654,7 +692,8 @@ def test_system_health_includes_caption_device_visibility(monkeypatch, tmp_path)
     assert active_check.color == "green"
     assert active_check.required is False
     assert "gpu" in active_check.message.lower()
-    assert "active" in active_check.message.lower()
+    assert "selected" in active_check.message.lower()
+    assert "active" not in active_check.message.lower()
 
 
 def test_system_health_caption_device_finds_libs_staged_at_the_acquisition_root(
@@ -693,7 +732,8 @@ def test_system_health_caption_device_finds_libs_staged_at_the_acquisition_root(
 
     assert check.color == "green"
     assert "gpu" in check.message.lower()
-    assert "active" in check.message.lower()
+    assert "selected" in check.message.lower()
+    assert "active" not in check.message.lower()
 
 
 def test_system_health_includes_headend_readiness(monkeypatch, tmp_path) -> None:

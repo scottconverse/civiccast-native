@@ -981,6 +981,32 @@ class TestSlotDuration:
         segment = plan.segments[0]
         assert segment.inpoint_seconds == 20  # 20s into the slot
         assert segment.duration_seconds == 10  # the 10s of slot that remain
+        assert segment.playable_duration_seconds == 3600
+
+    def test_join_in_progress_preserves_full_trimmed_clip_duration(self, tmp_path: Path) -> None:
+        media = _media(tmp_path)
+        now = datetime(2026, 6, 5, 18, 0, 3, 100000, tzinfo=UTC)
+
+        plan = build_source_plan_from_schedule(
+            channel_id="gov",
+            schedule_items=[
+                _schedule_item(scheduled_at=now - timedelta(seconds=3.1), duration_seconds=1800)
+            ],
+            asset_resolver=lambda _asset_id: _asset_of(
+                media,
+                duration_seconds=3600,
+                trim_in=5,
+                trim_out=25,
+            ),
+            now=now,
+        )
+
+        assert plan is not None
+        segment = plan.segments[0]
+        assert segment.duration_seconds == pytest.approx(16.9)
+        assert segment.inpoint_seconds == pytest.approx(8.1)
+        assert segment.outpoint_seconds == 25
+        assert segment.playable_duration_seconds == 20
 
     def test_a_trim_window_longer_than_the_slot_clips_and_moves_the_outpoint(
         self, tmp_path: Path

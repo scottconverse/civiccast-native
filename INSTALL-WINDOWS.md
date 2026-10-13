@@ -1,8 +1,8 @@
 # Install CivicCast on Windows
 
-The current release is **`v1.0.0-beta.14`**, the signed native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
+The current release is **`v1.0.0-beta.15`**, the signed native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
 
-[Beta 14 downloads](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14) · [User manual](docs/USER-MANUAL.md) · [Package verification](docs/releases/v1.0.0-beta.14-verification.md)
+[Beta 15 downloads](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15) · [User manual](docs/USER-MANUAL.md) · [Package verification](docs/releases/v1.0.0-beta.15-verification.md)
 
 ## Download and install the complete station
 
@@ -11,9 +11,9 @@ Use Windows 11 x64, internet for the download, and a Windows administrator accou
 Open **Windows PowerShell** and paste:
 
 ```powershell
-$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta14.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.14/download_windows_release_artifacts.ps1' -OutFile $installerScript
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta14"
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta15.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.15/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta15"
 ```
 
 The helper downloads the installer, all five runtime packs and all six signed station packs. It verifies SHA-256 hashes and the installer's valid **Scott Converse** Authenticode signature, and creates the `packs` and `station` folders setup needs. Windows requests administrator approval if needed. Setup uses supported silent mode with the complete kit, without the separate optional raw-model acquisition screen. Wait for it to finish; any actual nonzero exit is reported as failure.
@@ -41,7 +41,7 @@ The live-caption path automatically retries Whistle while Whisper supplies backu
 
 Use the same complete download and run setup over the installation. Do not uninstall or delete station data first. Setup stops the station during upgrade: back up a working station and plan the interruption. It is intended to preserve accounts, settings, schedules, recordings and model caches. The verification record identifies the exact paths observed; it does not guarantee every historical version pair.
 
-The Beta 14 package passed a fresh offline Windows Sandbox installation and one normal development-host upgrade; setup exited 0 in both. After the host upgrade, the service was healthy at Beta 14 schema 89, with all three channels using Whistle as primary and within capacity. See the [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md) for exact scope and limits.
+The original Beta 15 signed candidate passed one fresh offline Windows Sandbox installation; setup exited 0 after 14 minutes 49 seconds, and the service registered, activated the station and reported healthy at the current schema. That candidate also rendered the native wizard and Help, passed normal-user and SYSTEM ACL probes and the scoped checks described in the [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md). These results do not establish a normal cross-version upgrade or an extended soak; the record distinguishes the tested candidate from the refreshed manual and Help bytes included in this release edition.
 
 Historical Beta 13 installation evidence: its normal Beta 11 upgrade, controlled interruption and same-candidate repair, and separate fresh installation apply to Beta 13 only. See the [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md) and [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json). Raw Whisper or Ollama directories do not substitute for signed station packs.
 
@@ -60,7 +60,7 @@ It prompts privately, preserves station data and revokes that administrator's ex
 The release's `station-models.zip.001`, `.002` and subsequent parts form one ZIP64 archive. **Use the helper to verify and extract them.** Individual parts are not runtime packs.
 
 ```text
-CivicCast-Beta14/
+CivicCast-Beta15/
   setup.exe
   packs/
     native-app-payload.ccpack

@@ -18,7 +18,7 @@ Two asset-set families are supported:
     constants by tests/policy/test_windows_release_downloader.py so the two
     cannot drift.
 
-The defaults match the Beta 14 release tag and product version. For a
+The defaults match the Beta 15 release tag and product version. For a
 historical beta.12 or beta.7 download, specify both `-Tag` and `-Version` for
 that release.
 
@@ -31,8 +31,8 @@ that release.
 [CmdletBinding()]
 param(
   [string]$Repository = "scottconverse/civiccast-native",
-  [string]$Tag = "v1.0.0-beta.14",
-  [string]$Version = "1.0.0-beta.14",
+  [string]$Tag = "v1.0.0-beta.15",
+  [string]$Version = "1.0.0-beta.15",
   [ValidateSet("", "NativeCandidate", "ProofKit", "TesterPackage", "All")]
   [string]$AssetSet = "",
   [switch]$IncludePacks,

@@ -77,10 +77,12 @@ def test_field_delivery_docs_do_not_claim_plain_metadata_is_signed() -> None:
 def test_readme_separates_published_downloads_from_field_evidence() -> None:
     readme = _normalized_plaintext(ROOT / "README.md")
     assert PUBLISHED_RELEASE_LINK in readme
-    assert "72 hours. three channels. 99.78% live caption-input coverage" in readme
     assert (
-        "a beta 11 host ran public, government and education together without a service restart"
+        "historical beta 11 host result: 72 hours, three channels, 99.78% live caption-input coverage"
         in readme
+    )
+    assert (
+        "the host ran public, government and education together without a service restart" in readme
     )
     assert "with 216 healthy scheduled checkpoints" in readme
     assert "verification record" in readme

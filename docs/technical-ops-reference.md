@@ -23,11 +23,13 @@ toccolor: black
 > operators and records clerks should start with the persona guides linked from
 > [User Manual](USER-MANUAL.md).
 >
-> **Release line.** Beta 14 (`v1.0.0-beta.14`) is the current signed
-> native Windows pre-release, not a production release. Its exact package
-> identity, installation evidence and limits are in the
-> [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md). A fresh offline Sandbox install and one normal development-host upgrade both exited 0; the host service was healthy at schema 89, with all three channels Whistle-primary and within capacity.
-> Beta 13 results remain tied to their own release record. Consult
+> **Release line.** This reference describes `CivicCast 1.0.0-beta.15`. The
+> [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
+> identifies the original signed candidate and the limits of its package
+> observations; those observations do not transfer to the refreshed Help
+> bytes in this release edition. One fresh offline Sandbox installation passed.
+> No normal cross-version upgrade or extended soak is claimed. Beta 14 and
+> Beta 13 results remain tied to their own release records. Consult
 > `docs/releases/release-truth.yaml` for the authored release state; this
 > reference does not claim an extended soak or general service-uptime result.
 >
@@ -72,9 +74,10 @@ CivicCast is open-source, self-hostable civic meeting recording and publication
 software. The application wires a production live-source probe into live
 pre-flight, in addition to the recorded-media and Portal workflows. A working
 probe is not proof that a particular station's source, hardware, output,
-archive, CDN or headend works end to end. The Beta 14 verification record
-separates focused component checks from the still-pending candidate installation;
-station-specific external services still require their own checks.
+archive, CDN or headend works end to end. The Beta 15 verification record
+separates its fresh-install and focused checks from unrun upgrade and soak
+paths; station-specific external services still require
+their own checks.
 
 ## AI models: defaults and operator selection
 
@@ -139,9 +142,9 @@ The current defaults and component identities are:
    before attaching or publishing the translated track.
 
 Deterministic adapters are test infrastructure. Check the installed runtime
-and current station configuration before relying on an AI feature; the Beta 14
-verification record describes component evidence and pending installation
-checks separately.
+and current station configuration before relying on an AI feature; the Beta 15
+verification record describes the scoped installed-package checks and the
+upgrade and soak paths not run.
 
 ### Cloud and frontier tiers (optional, default OFF)
 
@@ -276,8 +279,8 @@ together. A standalone `setup.exe` download is not the complete install kit.
 Before running the helper, verify its own SHA-256 against the same release's
 `SHA256SUMS.txt`. See the [Windows Release Trust And Verification](install/windows-release-trust.md)
 checklist and the [operator quick start](QUICKSTART-OPERATOR.md). The
-[Beta 14 verification record](releases/v1.0.0-beta.14-verification.md) is the
-source for current package identity, installation evidence and limits.
+[Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) is the
+source for the current package's identity, installation evidence and limits.
 
 For a direct setup-app hash check when the handoff calls for one, compare it to
 the matching checksum entry:
@@ -717,8 +720,9 @@ and failure-handling guidance.
 ### Start a live broadcast
 
 These steps require a configured source and station-specific output path. The
-Beta 14 component checks do not establish an installation or sustained live
-operation result; see its verification record for pending evidence.
+Beta 15's scoped fresh-install and component checks do not establish a normal
+cross-version upgrade, extended soak or sustained live-operation result; see
+its verification record for the evidence boundary.
 
 1. Open the operator console and choose **Live**.
 2. Confirm that at least one live source appears. If the room says no live
@@ -1224,11 +1228,13 @@ probe succeeded; it does not restore the station database, media, or configurati
 ### Monitoring the running service (`/health`)
 
 `GET /health` is public and needs no authentication. It answers two different
-questions, and monitoring setups should not confuse them.
+questions, and monitoring setups should not confuse them. This illustrative
+response uses the Beta 15 version string; it is not evidence of package
+installation or health.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.14","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.15","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the

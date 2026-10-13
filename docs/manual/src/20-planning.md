@@ -13,13 +13,13 @@ You need three decisions and one fact:
 
 ## Plan from the matching release and measured results
 
-This manual describes Beta 14. The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies the signed package and its installation checks. Use the complete release helper for either a first installation or an upgrade.
+This manual describes Beta 15. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) identifies the signed package and installation checks. Use only a package listed on the releases page or named by the active owner-authorized handoff.
 
 | Evidence | Result |
 | --- | --- |
-| 72-hour, three-channel host run | Public, Government and Education ran together without a service restart, recording **99.78% live caption-input coverage**. See the [72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) |
-| Earlier 48-hour host window | **99.88% live caption-input coverage**, preserved in the [48-hour report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) |
-| Exact Beta 14 installation and operation | See the Beta 14 verification record for its completed Sandbox and host checks |
+| Historical Beta 11, 72-hour, three-channel host run | Public, Government and Education ran together without a service restart, recording **99.78% live caption-input coverage**. See the [Beta 11 72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) |
+| Earlier historical Beta 11, 48-hour host window | **99.88% live caption-input coverage**, preserved in the [Beta 11 48-hour report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) |
+| Exact package installation and operation | See the verification record that matches the package; the Beta 15 record states its evidence limits |
 
 The host measurements retain their original Beta 11 identity. Package verification identifies the version actually installed. Back up an existing station and keep its recovery information before upgrading.
 
@@ -198,7 +198,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 ### What is on the release page
 
-The Beta 14 release page is <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14>. Use its download helper to obtain the installer, runtime packs and matching signed station-model resources together.
+The current Beta 15 package is listed at <https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15>. Use the release-matched download helper to obtain the installer, runtime packs and matching signed station-model resources together.
 
 The complete offline kit contains 19 required files, including the signed station index and model packs. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 

@@ -431,7 +431,7 @@ def test_normalized_nsis_repack_is_reproducible_and_restores_main_binary(
     setup = tmp_path / "release" / "bundle" / "setup.exe"
     main_binary.parent.mkdir(parents=True)
     nsis_dir.mkdir(parents=True)
-    script.write_text("fixture", encoding="utf-8")
+    script.write_text("Function .onInit\nFunctionEnd\n", encoding="utf-8")
     original = b"prefix-" + builder.TAURI_UNKNOWN_BUNDLE_MARKER + b"-suffix"
     main_binary.write_bytes(original)
     original_timestamp = 1_600_000_000
@@ -496,7 +496,7 @@ def test_normalized_nsis_repack_creates_or_reuses_nested_target_directory(
     nsis_dir.mkdir(parents=True)
     if precreate_target_parent:
         setup.parent.mkdir(parents=True)
-    script.write_text("fixture", encoding="utf-8")
+    script.write_text("Function .onInit\nFunctionEnd\n", encoding="utf-8")
     original = b"prefix-" + builder.TAURI_UNKNOWN_BUNDLE_MARKER + b"-suffix"
     main_binary.write_bytes(original)
     monkeypatch.setattr(builder, "MAIN_BINARY", main_binary)
@@ -881,3 +881,53 @@ def test_embedded_station_resources_reject_an_oversized_whistle_pack(
             product_version="9.9.9-test",
             size_limit_exclusive=10_000,
         )
+
+
+def test_version_preflight_is_inserted_before_any_oninit_action():
+    source = "Function .onInit\n  Call MutatingAction\nFunctionEnd\n"
+    patched = builder.add_nsis_version_preflight(source)
+    assert patched.index("!insertmacro CIVICCAST_VERSION_PREFLIGHT") < patched.index(
+        "Call MutatingAction"
+    )
+    assert builder.add_nsis_version_preflight(patched) == patched
+
+
+def test_version_preflight_rejects_changed_upstream_entrypoint():
+    with pytest.raises(ValueError, match="onInit"):
+        builder.add_nsis_version_preflight("no entrypoint")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell installer preflight")
+@pytest.mark.parametrize(
+    "installed, candidate, expected",
+    [
+        ("1.0.0-beta.16", "1.0.0-beta.15", 129),
+        ("1.0.0-beta.9", "1.0.0-beta.15", 0),
+        ("1.0.0", "1.0.0-beta.15", 129),
+        ("unrecognized", "1.0.0-beta.15", 130),
+    ],
+)
+def test_version_preflight_executes_comparison_without_product_mutation(
+    installed, candidate, expected
+):
+    script = builder.SRC_TAURI / "version-preflight.ps1"
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-CandidateVersion",
+            candidate,
+            "-InstalledVersion",
+            installed,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == expected, result.stdout + result.stderr
+    assert "CivicCast version preflight" in result.stdout

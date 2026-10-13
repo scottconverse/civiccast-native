@@ -1,10 +1,11 @@
 # Known Limitations For Early-Adopter Builds
 
 > **Historical Beta 10 limitation record.** This page records evidence and
-> limits for Beta 10 only. For current Beta 12 operating guidance, use the
+> limits for Beta 10 only. For the latest published Beta 15 operating guidance, use the
 > [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
-> [tester start page](START-HERE.md), and [Beta 12 verification
-> record](../releases/v1.0.0-beta.12-verification.md).
+> [tester start page](START-HERE.md), and [Beta 15 verification
+> record](../releases/v1.0.0-beta.15-verification.md). The Beta 10 results below
+> remain historical and do not establish Beta 15 behavior.
 
 ## Release State
 
