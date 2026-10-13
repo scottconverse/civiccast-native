@@ -383,6 +383,12 @@ def add_nsis_version_preflight(script: str) -> str:
     skip = "  Abort ; Native upgrades use the recoverable PREINSTALL transaction.\n"
     if reinstall in script and reinstall + skip not in script:
         script = script.replace(reinstall, reinstall + skip, 1)
+    # Only the normalized template expands our recovery callbacks. Tauri's
+    # initial packaging pass must not reference functions it never defines.
+    # Define this before MUI expands its pages and generates .onUserAbort.
+    abort_callback = "!define MUI_CUSTOMFUNCTION_ABORT CivicCastTransactionAbort\n"
+    if abort_callback not in script:
+        script = abort_callback + script
     callbacks = "!insertmacro CIVICCAST_TRANSACTION_CALLBACKS\n"
     if callbacks not in script:
         script = script.rstrip() + "\n\n" + callbacks

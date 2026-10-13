@@ -425,9 +425,9 @@ Var CIVICCAST_TRANSACTION_RESULT
   System::Call 'kernel32::SetEnvironmentVariableW(w "CIVICCAST_INSTALL_TRANSACTION", p 0)'
 !macroend
 
-!define MUI_CUSTOMFUNCTION_ABORT CivicCastTransactionAbort
 ; The builder expands these after Tauri has declared UNINSTKEY and its page
-; variables. Expanding functions at this early include site is too soon.
+; variables, and enables the MUI abort callback only in that final template.
+; Tauri's initial packaging pass must retain its default MUI abort behavior.
 !macro CIVICCAST_TRANSACTION_CALLBACKS
 Function CivicCastTransactionAbort
   !insertmacro CIVICCAST_TRANSACTION_RESTORE

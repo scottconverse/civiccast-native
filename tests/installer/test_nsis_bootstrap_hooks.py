@@ -35,6 +35,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.build_native_bootstrap import add_nsis_version_preflight
+
 ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP_HOOKS_NSH = (
     ROOT / "civiccast" / "apps" / "installer" / "src-tauri" / "nsis-hooks-bootstrap.nsh"
@@ -64,12 +66,15 @@ def test_failed_install_restores_prior_station_before_aborting() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows NSIS recovery callback compilation")
-def test_transaction_macros_compile_with_tauri_early_hook_include(tmp_path: Path) -> None:
+@pytest.mark.parametrize("final_template", [False, True], ids=["initial-tauri", "final-patched"])
+def test_transaction_macros_compile_with_tauri_early_hook_include(
+    tmp_path: Path, final_template: bool
+) -> None:
     makensis = Path.home() / "AppData/Local/tauri/NSIS/Bin/makensis.exe"
     if not makensis.is_file():
         pytest.skip("Tauri NSIS compiler unavailable")
     source = tmp_path / "recovery.nsi"
-    source.write_text(
+    template = (
         "Unicode true\n!include MUI2.nsh\n!include LogicLib.nsh\n!include FileFunc.nsh\n"
         # Tauri includes hooks before defining product constants/page variables.
         f'!include "{BOOTSTRAP_HOOKS_NSH}"\n'
@@ -80,9 +85,16 @@ def test_transaction_macros_compile_with_tauri_early_hook_include(tmp_path: Path
         "Section\n!insertmacro CIVICCAST_TRANSACTION_RECOVER_PENDING\n"
         "!insertmacro CIVICCAST_TRANSACTION_BEGIN\n!insertmacro CIVICCAST_TRANSACTION_SNAPSHOT\n"
         "!insertmacro CIVICCAST_TRANSACTION_COMMIT ${CIVICCAST_EXIT_INSTALL_RECOVERY}\nSectionEnd\n"
-        "!insertmacro CIVICCAST_TRANSACTION_CALLBACKS\n",
-        encoding="utf-8",
+        "Function .onInit\nFunctionEnd\n"
     )
+    if final_template:
+        template = add_nsis_version_preflight(template)
+        assert "!define MUI_CUSTOMFUNCTION_ABORT" in template
+        assert template.index("!define MUI_CUSTOMFUNCTION_ABORT") < template.index(
+            "!insertmacro MUI_PAGE_INSTFILES"
+        )
+        assert template.count("!insertmacro CIVICCAST_TRANSACTION_CALLBACKS") == 1
+    source.write_text(template, encoding="utf-8")
     compiled = subprocess.run(
         [str(makensis), "/V2", str(source)], capture_output=True, text=True, timeout=60
     )
