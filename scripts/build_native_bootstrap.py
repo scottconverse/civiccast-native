@@ -366,14 +366,36 @@ def _find_makensis() -> Path:
 
 
 def add_nsis_version_preflight(script: str) -> str:
-    """Run the read-only version guard before Tauri's pages/prerequisites."""
+    """Recover interrupted setup, then guard version before pages/prerequisites."""
+    # Keep Tauri's optional UTF-8 signature at byte zero when prepending code.
+    bom = "\ufeff" if script.startswith("\ufeff") else ""
+    script = script.removeprefix("\ufeff")
     marker = "Function .onInit\n"
-    guard = "  !insertmacro CIVICCAST_VERSION_PREFLIGHT\n"
+    guard = (
+        "  !insertmacro CIVICCAST_TRANSACTION_RECOVER_PENDING\n"
+        "  !insertmacro CIVICCAST_VERSION_PREFLIGHT\n"
+    )
     if script.count(marker) != 1:
         raise ValueError("generated NSIS onInit entrypoint changed; cannot place version preflight")
     if marker + guard not in script:
         script = script.replace(marker, marker + guard, 1)
-    return script
+    # Native setup upgrades in place. Tauri's generic reinstall page can run
+    # the old uninstaller BEFORE PREINSTALL, destroying the recovery input.
+    # Skip that page entirely; installed products use our transaction instead.
+    reinstall = "Function PageReinstall\n"
+    skip = "  Abort ; Native upgrades use the recoverable PREINSTALL transaction.\n"
+    if reinstall in script and reinstall + skip not in script:
+        script = script.replace(reinstall, reinstall + skip, 1)
+    # Only the normalized template expands our recovery callbacks. Tauri's
+    # initial packaging pass must not reference functions it never defines.
+    # Define this before MUI expands its pages and generates .onUserAbort.
+    abort_callback = "!define MUI_CUSTOMFUNCTION_ABORT CivicCastTransactionAbort\n"
+    if abort_callback not in script:
+        script = abort_callback + script
+    callbacks = "!insertmacro CIVICCAST_TRANSACTION_CALLBACKS\n"
+    if callbacks not in script:
+        script = script.rstrip() + "\n\n" + callbacks
+    return bom + script
 
 
 def normalize_nsis_bootstrap() -> None:

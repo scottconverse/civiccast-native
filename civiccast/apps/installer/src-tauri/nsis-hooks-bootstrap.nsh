@@ -354,6 +354,90 @@ Var CIVICCAST_PAYLOAD_REPLACED
 ; and silent about the case where something did.
 Var CIVICCAST_CONTAINED
 
+Var CIVICCAST_TRANSACTION_ARMED
+Var CIVICCAST_TRANSACTION_RESULT
+!define CIVICCAST_TRANSACTION_SCRIPT "${__FILEDIR__}\install-transaction.ps1"
+!define CIVICCAST_EXIT_INSTALL_RECOVERY 136
+
+!macro CIVICCAST_TRANSACTION_CALL ACTION
+  Push $R8
+  Push $R9
+  Push $8
+  System::Call 'kernel32::GetCurrentProcessId() i .r8'
+  nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\civiccast-install-transaction.ps1" -Action ${ACTION} -InstallRoot "$INSTDIR" -UninstallKey "${UNINSTKEY}" -InstallerPid $8 -StartMenuFolder "$AppStartMenuFolder"'
+  Pop $R9
+  Pop $R8
+  StrCpy $CIVICCAST_TRANSACTION_RESULT $R9
+  !insertmacro CIVICCAST_STEP "installer recovery ${ACTION}: exit=$R9 $R8"
+  Pop $8
+  Pop $R9
+  Pop $R8
+!macroend
+
+!macro CIVICCAST_TRANSACTION_RECOVER_PENDING
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\civiccast-install-transaction.ps1" "${CIVICCAST_TRANSACTION_SCRIPT}"
+  !insertmacro CIVICCAST_TRANSACTION_CALL Recover
+  ${If} $CIVICCAST_TRANSACTION_RESULT != 0
+    !insertmacro CIVICCAST_ALERT "A previous interrupted CivicCast installation could not be restored. Setup stopped. Keep station data and recovery records; see $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+    SetErrorLevel ${CIVICCAST_EXIT_INSTALL_RECOVERY}
+    Quit
+  ${EndIf}
+!macroend
+
+!macro CIVICCAST_TRANSACTION_BEGIN
+  InitPluginsDir
+  File "/oname=$PLUGINSDIR\civiccast-install-transaction.ps1" "${CIVICCAST_TRANSACTION_SCRIPT}"
+  !insertmacro CIVICCAST_TRANSACTION_CALL Begin
+  ${If} $CIVICCAST_TRANSACTION_RESULT != 0
+    !insertmacro CIVICCAST_ALERT "Setup could not prepare automatic recovery. No application files were replaced. See $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+    SetErrorLevel ${CIVICCAST_EXIT_INSTALL_RECOVERY}
+    Abort
+  ${EndIf}
+  StrCpy $CIVICCAST_TRANSACTION_ARMED "1"
+  ; Every child, including service registration, inherits demand startup until
+  ; the final commit. A reboot must run recovery before candidate auto-start.
+  System::Call 'kernel32::SetEnvironmentVariableW(w "CIVICCAST_INSTALL_TRANSACTION", w "1")'
+!macroend
+
+!macro CIVICCAST_TRANSACTION_SNAPSHOT
+  !insertmacro CIVICCAST_TRANSACTION_CALL Snapshot
+  ${If} $CIVICCAST_TRANSACTION_RESULT != 0
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_INSTALL_RECOVERY} "Setup could not save the prior station for automatic recovery. See $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+  ${EndIf}
+!macroend
+
+!macro CIVICCAST_TRANSACTION_RESTORE
+  ${If} $CIVICCAST_TRANSACTION_ARMED == "1"
+    !insertmacro CIVICCAST_TRANSACTION_CALL Restore
+    ${If} $CIVICCAST_TRANSACTION_RESULT == 0
+      StrCpy $CIVICCAST_TRANSACTION_ARMED ""
+    ${EndIf}
+  ${EndIf}
+!macroend
+
+!macro CIVICCAST_TRANSACTION_COMMIT FAILURE_CODE
+  !insertmacro CIVICCAST_TRANSACTION_CALL Commit
+  ${If} $CIVICCAST_TRANSACTION_RESULT != 0
+    !insertmacro CIVICCAST_FAIL ${FAILURE_CODE} "Setup could not finalize automatic recovery. Recovery records have been retained. See $COMMONPROGRAMDATA\CivicCast\install-progress.log."
+  ${EndIf}
+  StrCpy $CIVICCAST_TRANSACTION_ARMED ""
+  System::Call 'kernel32::SetEnvironmentVariableW(w "CIVICCAST_INSTALL_TRANSACTION", p 0)'
+!macroend
+
+; The builder expands these after Tauri has declared UNINSTKEY and its page
+; variables, and enables the MUI abort callback only in that final template.
+; Tauri's initial packaging pass must retain its default MUI abort behavior.
+!macro CIVICCAST_TRANSACTION_CALLBACKS
+Function CivicCastTransactionAbort
+  !insertmacro CIVICCAST_TRANSACTION_RESTORE
+FunctionEnd
+
+Function .onInstFailed
+  !insertmacro CIVICCAST_TRANSACTION_RESTORE
+FunctionEnd
+!macroend
+
 !macro CIVICCAST_FAIL CODE TEXT
   SetErrors
   ; <installer-path-audit BL-02> CONTAIN THE SERVICE BEFORE ANNOUNCING THE
@@ -442,7 +526,14 @@ Var CIVICCAST_CONTAINED
       !insertmacro CIVICCAST_STEP "postinstall: FAILURE CONTAINMENT NOT confirmed (stop=$R8 config=$R9) -- the service may still auto-start onto the new payload"
     ${EndIf}
   ${EndIf}
-  !insertmacro CIVICCAST_ALERT "${TEXT}"
+  !insertmacro CIVICCAST_STEP "failure reason: ${TEXT}"
+  !insertmacro CIVICCAST_TRANSACTION_RESTORE
+  ${If} $CIVICCAST_TRANSACTION_RESULT == 0
+    !insertmacro CIVICCAST_ALERT "CivicCast setup failed (exit ${CODE}). The previous installation state was automatically restored. A station that was running before setup has been restarted and checked. See $COMMONPROGRAMDATA\CivicCast\install-progress.log for the original failure."
+  ${Else}
+    !insertmacro CIVICCAST_ALERT "${TEXT}"
+    !insertmacro CIVICCAST_ALERT "Automatic restoration could not finish. Recovery records were retained in $COMMONPROGRAMDATA\CivicCast\install-transaction. Do not delete station data. See install-progress.log and contact support if the automatic restart recovery cannot finish."
+  ${EndIf}
   !insertmacro CIVICCAST_STEP "postinstall: FAILED, aborting with exit code ${CODE}"
   SetErrorLevel ${CODE}
   Abort
@@ -697,6 +788,7 @@ Var CIVICCAST_POSTCLEAR_ARMED
 
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro CIVICCAST_VERSION_PREFLIGHT
+  !insertmacro CIVICCAST_TRANSACTION_BEGIN
   ; F-10 fix: declare the space the POSTINSTALL pack-staging chain below adds
   ; beyond what NSIS's own File statements already account for. AddSize is a
   ; compile-time directive (summed into this Section's total regardless of
@@ -770,6 +862,7 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ${Else}
     DetailPrint "No prior CivicCast Native bootstrap process to stop (fresh install)."
   ${EndIf}
+  !insertmacro CIVICCAST_TRANSACTION_SNAPSHOT
   !insertmacro CIVICCAST_STEP "preinstall: done"
 !macroend
 
@@ -1901,6 +1994,7 @@ Var CIVICCAST_POSTCLEAR_ARMED
   ${Else}
     !insertmacro CIVICCAST_STEP "postinstall: Desktop operator console shortcut written"
   ${EndIf}
+  !insertmacro CIVICCAST_TRANSACTION_COMMIT ${CIVICCAST_EXIT_INSTALL_RECOVERY}
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL

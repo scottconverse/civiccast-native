@@ -246,7 +246,8 @@ flowchart TB
 
 **What it does not do.**
 
-- **CivicCast does not back up your station by itself.** The only backups it takes are the one the upgrade engine takes before an upgrade (a database dump, with an integrity manifest, in `C:\ProgramData\CivicCast\upgrade\backups\pre-<version>`; the upgrade engine does not copy recordings) and the ones created by the `civiccast dr run-drill` command. We found no scheduled backup job. Your own backup must cover the database (a `pg_dump`, or a copy of `pgdata` with the service stopped), `C:\ProgramData\CivicCast\data\uploads`, and the files listed in the note above.
+- **CivicCast does not provide a durable, off-computer station backup.** The upgrade engine takes a database dump with an integrity manifest in `C:\ProgramData\CivicCast\upgrade\backups\pre-<version>`, and `civiccast dr run-drill` creates a separate database backup. We found no scheduled backup job. Your own backup must cover the database (a `pg_dump`, or a copy of `pgdata` with the service stopped), `C:\ProgramData\CivicCast\data\uploads`, and the files listed in the note above.
+- **Installer recovery is temporary protection, not a station backup.** Before replacing files, setup saves an access-restricted journal and a temporary copy under `C:\ProgramData\CivicCast\install-transaction`. The copy is limited to the application tree except `packs\.station-cache`, the native PostgreSQL cluster, `provision` and `upgrade`, relevant registry and firewall state, service configuration and shortcuts. It does not copy recordings or uploads. Setup checks the required copy size and leaves a 256 MB free-space reserve; after commit or successful restore it removes the temporary copy. If recovery cannot finish, the journal and copy remain for the startup recovery task or a later setup run.
 - **There is no automatic clean-up of the command table.** The conform cache (60 GB by default), prepared plan folders (5 GB by default) and relay logs have limits. Beta.11 also bounds live caption working audio, recent caption history and delivery tracking; those bounds do not limit original recordings or archived caption tracks. Watch the free space on the drive that holds `C:\ProgramData\CivicCast\data`.
 - **Uninstalling does not remove your data.** The uninstaller removes the program files, the service, the firewall rule and the registry values, but leaves `C:\ProgramData\CivicCast`. Because the uninstaller deletes the stored database password, a reinstall over a surviving data folder has to set a new password on the existing database. The installer does this using a short-lived loopback-only access rule.
 
@@ -349,6 +350,8 @@ flowchart LR
 **What this shows.** Recurring program slots are turned into schedule items. A background thread (the *channel automation*) looks at every enabled channel every 2 seconds. It asks the *source plan provider* what should be airing now, and gives the answer to the *egress daemon*, the part that owns each channel's worker. The daemon asks the *preparer* to make the files ready, then starts or instructs the worker. The worker plays the prepared files through one video encoder to the outputs.
 
 **The source plan.** A *source plan* is the list of things a channel should play from now on. Only schedule items that are published and are premieres count. Each item is clipped to its slot. If the channel is switched on halfway through an item, the plan starts partway into it (called *join in progress*) so that the stream matches the clock. A gap of up to 30 seconds between items is absorbed. A longer gap is filled with filler. With the default GStreamer engine a plan holds one slice of up to 30 minutes, which keeps the worker's pipeline small; the automation extends it before it runs out (Figure 16-7). A plan segment has one of four kinds: a program (a recorded file), a *slate* (a generated card, used when nothing is scheduled), a *live* source (a network stream, used when an operator takes over the channel) and *cg* filler (bulletin slides). The slate is rendered as a short clip and repeated into one continuous file of 3,600 seconds, so a channel that falls back to slate does not need a second preparation. A live takeover is refused unless the live source has been observed as ready within the last 30 seconds by default (a source that merely exists is not treated as ready).
+
+Scheduled segments carry their schedule-row occurrence ID through preparation. This distinguishes two scheduled uses of the same recording. A short program is allowed to air on its first selection; if the same occurrence is resolved again later with an advanced inpoint, the daemon treats it as the remainder of that program and resolves the slot's filler or next item instead of repeatedly restarting the short clip.
 
 **Preparing a file ("conform").** Video files come in every size and shape. The preparer converts each one to a single *canonical profile* so that every change of program looks the same to the encoder. The default profile is 1280 by 720 pixels at 30 frames a second, H.264 video at 6,000 kbit/s with a keyframe every 60 frames, and AAC stereo audio at 192 kbit/s and 48 kHz, in an MPEG-TS container. A station can change the profile for a channel. The audio is also leveled (Figure 16-9). A conformed file is stored in the *conform cache*, a folder named `conform-cache` under the channel work folder (`C:\ProgramData\CivicCast\data\egress`), keyed by the source file's path, size and modified time, the profile, and the leveling method. A program that has aired before is a cache hit and costs no conversion. A program that has never aired is converted in the time before it is due, and the whole file is converted in the background so that the next airing hits the cache. The cache holds 60 GB by default and discards the oldest entries first. Each preparation step is limited to 300 seconds by default.
 
@@ -671,7 +674,7 @@ flowchart TB
     R1 --> R2
 ```
 
-*Figure 16-13. Installation and activation. A failure after the new files are in place tries to stop the service and set it to manual start (best effort), then exits with a numbered code.*
+*Figure 16-13. Installation and activation. Setup saves prior state before replacing files and automatically restores it after a failure when recovery succeeds; exit 136 reports that recovery could not be prepared or completed.*
 
 **What this shows.**
 
@@ -691,16 +694,17 @@ flowchart TB
 | Activate: index or pack could not be verified; self-test or space failure | 123 (the activation tool itself exits 66, 67, 78, 64 or 65) |
 | Register the service; start it and wait | 118; 126 if it will not start; 125 if it starts but does not serve |
 | Firewall rule | 119 |
+| Automatic setup recovery could not be prepared or completed | 136 |
 
 Each of these steps writes a time-stamped line before and after to `C:\ProgramData\CivicCast\install-progress.log`.
 
 **Why it is built this way.** Every pack is signed and checked twice because the installer runs with full rights and the packs contain programs that will run as `LocalSystem`. The self-test exists so a station that looks installed but cannot caption or summarize is stopped at setup rather than discovered at the first meeting. The service refuses to start without the activation records for the same reason.
 
-> **Known issue (beta.11):** When the activation self-test fails, the dialog tells you to find the cause in `install-progress.log`, but the cause is shown only in the setup details pane, and exit 67 is also used for a full disk. A new install on a computer with a surviving data folder is handled by resetting the database password. Package-specific clean-install and upgrade evidence is in the matching release verification record. See [Chapter 10](#ch-installing).
+> **Known issue (beta.11):** When the activation self-test fails, the dialog tells you to find the cause in `install-progress.log`, but the cause is shown only in the setup details pane, and exit 67 is also used for a full disk. A new install on a computer with a surviving data folder is handled by resetting the database password. Package-specific installation evidence is in the matching release verification record. The corrected Beta 15 source adds automatic setup recovery; exit 136 reports that its recovery transaction could not be prepared or completed. See [Chapter 10](#ch-installing).
 
 ## Updating, and going back {#arch-upgrade}
 
-Running a newer `setup.exe` over an existing station upgrades it. The upgrade engine, a Python program in the new package, takes over after the new files are in place. Figure 16-14 shows its steps and what happens if one fails.
+Running a newer `setup.exe` over an existing station upgrades it. The installer skips the generic **Already Installed** page and wraps replacement in a durable recovery transaction before the upgrade engine, a Python program in the new package, takes over. Figure 16-14 shows the database steps and what happens if one fails.
 
 ```mermaid
 flowchart TB
@@ -718,20 +722,20 @@ flowchart TB
         H -->|green| OK["Release interlock;<br/>service back to normal"]
         M -->|failure| RB["Restore database<br/>from the backup"]
         H -->|failure| RB
-        RB --> ST["Setup exits 124.<br/>Service stopped.<br/>New files stay"]
+        RB --> ST["Setup exits 124.<br/>Installer restores pre-setup<br/>application and station state"]
     end
     R1 --> R2
 ```
 
 *Figure 16-14. Upgrade and rollback.*
 
-**What this shows.** The engine runs a series of steps and writes a *journal* after each one, so that a run that is interrupted can be resumed. It first takes the *maintenance interlock*, a flag in the registry that the supervisor reads to start the station read-only. It stops writers and checks that the database is quiet, then takes a full backup and proves it by restoring it into a scratch database and comparing rows, checksums and the schema revision. If that proof fails, nothing has been changed and the upgrade stops. It runs the migrations, starts the new code in maintenance mode, which brings up the database and the control plane and starts no video worker, and checks that the station is healthy. Only then does it release the interlock.
+**What this shows.** The engine runs a series of steps and writes a *journal* after each one, so that a run that is interrupted can be resumed. It first takes the *maintenance interlock*, a flag in the registry that the supervisor reads to start the station read-only. It stops writers and checks that the database is quiet, then takes a full backup and proves it by restoring it into a scratch database and comparing rows, checksums and the schema revision. If that proof fails, nothing has been changed and the upgrade stops. It runs the migrations, starts the new code in maintenance mode, which brings up the database and the control plane and starts no video worker, and checks that the station is healthy. Only then does it release the interlock. The enclosing installer transaction retains a size-checked temporary snapshot of the prior application and station state until setup commits.
 
-If the migration itself, or a step after it, fails, the engine restores the database from the backup. (A failure before the migration changes nothing in the database, so nothing is restored.) If the restore itself fails, the engine halts with the service stopped, keeps the backup and the journal, writes `UPGRADE-RECOVERY.md` and setup exits 113. A new release can also declare that its migration cannot be reversed; the engine then refuses to upgrade automatically (the engine exits 30, which setup reports as exit 114). The setup script does not appear to pass the flag that declares such a migration, so we did not see this refusal happen. An older setup over a newer install is refused outright (exit 129), because the database is not moved backwards.
+If the migration itself, or a step after it, fails, the engine restores the database from its backup. If that restore fails, the engine halts and writes `UPGRADE-RECOVERY.md`; setup then attempts to restore the whole pre-setup snapshot, including the old application files, database and service state. Exit 136 means the installer's own recovery could not be prepared or completed, and the durable recovery task retains the journal and temporary copy for retry. A new release can also declare that its migration cannot be reversed; the engine then refuses to upgrade automatically (the engine exits 30, which setup reports as exit 114). An older setup over a newer install is refused outright (exit 129), because the database is not moved backwards.
 
 **What a rollback does not do.**
 
-- **It does not put the old program files back.** In the layout the installer uses, the new files are extracted into the one `runtime` folder before the engine starts, so there is no previous folder to return to. After a rollback the database is the old version's, the files on disk are the new version's, and the service is left stopped. The recovery document says to run the old version's `setup.exe` over the machine before starting the service.
+- **The engine's own rollback does not put old program files back.** The installer's enclosing transaction does: when its temporary snapshot is intact, setup restores the previous application files, database, relevant app state and service state after a failed setup step. Keep a separate station backup; this temporary copy exists only until commit or successful restoration.
 - **The backup does not contain your recordings.** It is a database dump with an integrity manifest, saved in `C:\ProgramData\CivicCast\upgrade\backups\pre-<version>`. The upgrade does not touch `data\uploads`, but the backup does not protect it either.
 - **A failed upgrade blocks the next one.** The journal of a run that ended in failure makes later runs stop (exit 128) until someone moves `upgrade-journal.json` aside; nothing removes it automatically.
 - **There is no manual restore tool in setup.** The exit 114 message mentions a manual path with operator acknowledgement; we did not find the steps for it.

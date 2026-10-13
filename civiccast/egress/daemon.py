@@ -894,6 +894,11 @@ class EgressDaemon:
         # Per channel: the horizon of the source plan actually DISPATCHED to the
         # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
         self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
+        # Per channel: the first program occurrence, asset, and join-in-progress
+        # offset in the plan actually on air, keyed to its proof event. A later
+        # lookup of that same occurrence at an advanced offset is its remainder;
+        # another scheduled use of the same asset is a fresh short programme.
+        self._dispatched_program_source: dict[str, tuple[str, str, str, float]] = {}
         # Per channel (U53 item 1): when the dispatched plan is a filler whose tail
         # is the next scheduled programme chained behind it, the projected end of
         # that chained programme -- ``(proof_event_id, end_at)``. Set and cleared
@@ -1846,6 +1851,21 @@ class EgressDaemon:
             tuple(float(segment.duration_seconds) for segment in source_plan.segments),
             switch_deferred,
         )
+        first_segment = source_plan.segments[0]
+        if (
+            proof_event_id is not None
+            and first_segment.kind == "program"
+            and first_segment.source_ref is not None
+            and first_segment.schedule_occurrence_id is not None
+        ):
+            self._dispatched_program_source[channel_id] = (
+                proof_event_id,
+                first_segment.schedule_occurrence_id,
+                first_segment.source_ref,
+                float(first_segment.inpoint_seconds or 0.0),
+            )
+        else:
+            self._dispatched_program_source.pop(channel_id, None)
         if chained_program_end_at is None:
             self._chained_slate_program.pop(channel_id, None)
         else:
@@ -5021,11 +5041,13 @@ class EgressDaemon:
         policy owns, the end of the schedule, or a boundary that fails to
         prepare all resolve to ``None`` or to the same/short plan.
 
-        A plan with known original playable media windows (after asset trims,
-        before join, slot, or preparation-horizon clipping) whose combined
-        duration is itself below the floor is an intentional short programme,
-        not a near-EOS tail of a longer programme. Preserve it whole. Plans
-        without that provenance keep the existing conservative tail behavior.
+        A newly selected plan with known original playable media windows (after
+        asset trims, before join, slot, or preparation-horizon clipping) whose
+        combined duration is itself below the floor is an intentional short
+        programme, not a near-EOS tail of a longer programme. Preserve it whole.
+        If the same applied source is selected again at a later JIP inpoint, it
+        is the earlier programme's remainder and gets the normal tail check.
+        Plans without that provenance keep the existing conservative behavior.
 
         It cannot skip a program that genuinely has more than the floor left:
         the body returns ``source_plan`` unchanged (identity, not a copy) before
@@ -5067,6 +5089,7 @@ class EgressDaemon:
             and all(duration is not None for duration in playable_windows)
             and sum(float(duration) for duration in playable_windows if duration is not None)
             < _SCHEDULE_TAIL_FLOOR_SECONDS
+            and not self._is_dispatched_program_remainder(channel_id, source_plan)
         ):
             return _TailFloorOutcome(source_plan, False)
         if tail_seconds <= 0.0 or tail_seconds >= _SCHEDULE_TAIL_FLOOR_SECONDS:
@@ -5108,6 +5131,41 @@ class EgressDaemon:
             next_seconds,
         )
         return _TailFloorOutcome(next_plan, False)
+
+    def _is_dispatched_program_remainder(
+        self,
+        channel_id: str,
+        source_plan: EgressSourcePlan,
+    ) -> bool:
+        """Whether this short plan resumes the same dispatched occurrence later.
+
+        A complete short programme is allowed to air on its first selection.
+        The schedule provider can later return that same item with a smaller
+        JIP remainder while its slot is still open. Its occurrence ID separates
+        it from a later scheduled use of the same asset, while the applied
+        source/inpoint check prevents the short-media exception from rearming
+        the EOS remainder indefinitely.
+        """
+
+        dispatched = self._dispatched_program_source.get(channel_id)
+        state = self._store.read_state(channel_id)
+        if (
+            dispatched is None
+            or state is None
+            or state.current_proof_event_id != dispatched[0]
+            or not source_plan.segments
+        ):
+            return False
+        _, occurrence_id, source_ref, inpoint = dispatched
+        segment = source_plan.segments[0]
+        if (
+            segment.kind != "program"
+            or segment.schedule_occurrence_id != occurrence_id
+            or segment.source_ref != source_ref
+        ):
+            return False
+        resolved_inpoint = float(segment.inpoint_seconds or 0.0)
+        return resolved_inpoint > inpoint
 
     def _chain_next_program(
         self,
@@ -5277,10 +5335,12 @@ class EgressDaemon:
         """Seamless program content-reload for a content-reload-capable strategy.
 
         Resolves the newly-due plan (same provider → preparer chain as ``_start``) and
-        tells the running worker to rebuild its program leg in place. Returns False —
-        so the caller falls back to terminate+restart — for any case the seamless path
-        can't own: no/disabled config, no/foreign/invalid plan, a prepare failure, a
-        strategy error, or a worker control channel that isn't ready yet.
+        tells the running worker to rebuild its program leg in place. A scheduled
+        rollover with no next plan uses the configured fallback slate when there is
+        no operator override. Returns False — so the caller falls back to
+        terminate+restart — when the seamless path still can't own the request: a
+        missing or disabled config, no valid plan, a prepare failure, a strategy error,
+        or a worker control channel that isn't ready yet.
 
         F1 redesign (coordinator hostile review, 2026-09-06): ``reload_content``
         returning True means the worker ACCEPTED the request for arm/preroll,
@@ -5474,6 +5534,31 @@ class EgressDaemon:
                     (boundary_at + timedelta(seconds=_SCHEDULE_TAIL_BOUNDARY_MARGIN_S)).isoformat(),
                     source_plan.segments[0].label if source_plan.segments else "an empty plan",
                 )
+        # A scheduled rollover can legitimately reach the end of the schedule:
+        # both the boundary and the one-second recovery lookup are empty. Keep the
+        # persistent worker on a known source by arming its configured slate in
+        # place. Manual overrides own their own resolver, and force-fallback
+        # rollovers already select the slate above, so neither path comes through
+        # here.
+        if (
+            source_plan is None
+            and rollover_plan_end_at is not None
+            and not force_fallback
+            and not self.has_manual_override(channel_id)
+            and self._fallback_source_provider is not None
+        ):
+            try:
+                source_plan = self._fallback_source_provider(config)
+            except SourcePrepareError as exc:
+                _LOG.warning(
+                    "Could not prepare rollover fallback slate for %s; keeping the current "
+                    "output on air for the next automation retry: %s",
+                    channel_id,
+                    exc,
+                )
+                return True
+            if source_plan is not None and source_plan.channel_id == channel_id:
+                target_state = "FALLBACK_SLATE"
         # U53 item 1: this is a filler rollover -- if the schedule has a programme
         # due when the filler's gap closes, trim the filler to that gap and chain
         # the programme into the same plan, so the programme is prepared now (with
@@ -5515,7 +5600,7 @@ class EgressDaemon:
                 "boundary" if boundary_provider is not None and boundary_at is not None else "now",
             )
             return False
-        if not force_fallback:
+        if not force_fallback and target_state != "FALLBACK_SLATE":
             # U26 defect 2 applied where U26 deliberately skipped it.
             #
             # U26 reasoned that a horizon-bound rollover resolves at the
@@ -5534,8 +5619,8 @@ class EgressDaemon:
             # nothing is scheduled where the tail ends the slate is armed at the
             # boundary instead of airing the sliver.
             #
-            # A force-fallback filler rollover is still the slate fill by design
-            # and keeps skipping the floor entirely.
+            # A selected fallback slate is already the intended fill, so both
+            # force-fallback and terminal-schedule fallback skip this floor.
             tail_outcome = self._resolve_schedule_tail(
                 channel_id,
                 source_plan,

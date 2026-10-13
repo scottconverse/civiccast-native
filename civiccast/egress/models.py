@@ -762,6 +762,10 @@ class EgressSourceSegment(BaseModel):
     playable_duration_seconds: Annotated[float | None, Field(default=None, gt=0)] = None
     kind: EgressSourceKind = "program"
     source_ref: Annotated[str | None, Field(default=None, max_length=200)] = None
+    #: Stable schedule-row identity for scheduled program occurrences. Multiple
+    #: occurrences may air the same asset, so this cannot be inferred from
+    #: ``source_ref`` alone.
+    schedule_occurrence_id: Annotated[str | None, Field(default=None, max_length=80)] = None
     #: Opaque credential HANDLE for a live segment whose protocol supports one
     #: (WP-07: SRT only). Never the secret itself -- this model is serialized
     #: into ``TakeoverSession.source_plan_json`` (a durable audit row) and into

@@ -193,7 +193,13 @@ def test_source_preparer_conforms_inside_loudness_tolerance(tmp_path: Path) -> N
         warm_scheduler=lambda job: None,  # keep the at-air behavior deterministic
     )
 
-    report = preparer.prepare(_source_plan(tmp_path), _config())
+    source_plan = _source_plan(tmp_path)
+    source_segment = source_plan.segments[0].model_copy(
+        update={"schedule_occurrence_id": "schedule-item-1"}
+    )
+    report = preparer.prepare(
+        source_plan.model_copy(update={"segments": [source_segment]}), _config()
+    )
 
     assert report.source_plan.channel_id == "gov"
     prepared = report.source_plan.segments[0]
@@ -206,6 +212,7 @@ def test_source_preparer_conforms_inside_loudness_tolerance(tmp_path: Path) -> N
     )
     assert prepared.inpoint_seconds is None
     assert prepared.outpoint_seconds is None
+    assert prepared.schedule_occurrence_id == "schedule-item-1"
     assert report.records[0].normalized is False
     assert "-af" not in captured["args"]
     assert captured["loudness"]["target_lufs"] == -24.0
@@ -992,7 +999,7 @@ def test_join_in_progress_hits_cache_with_playout_trim(tmp_path: Path) -> None:
     source = tmp_path / "long-recording.mp4"
     source.write_text("fake long media", encoding="utf-8")
 
-    def plan(inpoint: float) -> EgressSourcePlan:
+    def plan(inpoint: float, occurrence_id: str) -> EgressSourcePlan:
         return EgressSourcePlan(
             channel_id="gov",
             segments=[
@@ -1002,12 +1009,13 @@ def test_join_in_progress_hits_cache_with_playout_trim(tmp_path: Path) -> None:
                     duration_seconds=1800.0,
                     inpoint_seconds=inpoint,
                     outpoint_seconds=inpoint + 1800.0,
+                    schedule_occurrence_id=occurrence_id,
                 )
             ],
         )
 
     # First-ever airing: trimmed conform straight to air + a warm scheduled.
-    preparer.prepare(plan(120.0), _config())
+    preparer.prepare(plan(120.0, "schedule-first"), _config())
     assert len(calls) == 1
     assert "-ss" in calls[0]  # air path still trims at the source (old latency)
     assert len(warm_jobs) == 1
@@ -1015,12 +1023,13 @@ def test_join_in_progress_hits_cache_with_playout_trim(tmp_path: Path) -> None:
 
     # Next hourly airing at a DIFFERENT join offset: cache hit, trim at playout.
     calls.clear()
-    report = preparer.prepare(plan(300.0), _config())
+    report = preparer.prepare(plan(300.0, "schedule-second"), _config())
     assert calls == []  # zero conforms
     seg = report.source_plan.segments[0]
     assert "conform-cache" in seg.path
     assert seg.inpoint_seconds == 300.0
     assert seg.outpoint_seconds == 300.0 + 1800.0
+    assert seg.schedule_occurrence_id == "schedule-second"
 
 
 def test_full_asset_warm_conform_has_no_trim_and_is_single_threaded(tmp_path: Path) -> None:

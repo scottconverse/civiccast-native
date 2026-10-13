@@ -266,7 +266,13 @@ pub fn service_registration_command(install_root: &Path) -> (PathBuf, Vec<String
         "-m".to_string(),
         "civiccast.native.supervisor.service_host".to_string(),
         "--startup".to_string(),
-        SERVICE_STARTUP_MODE.to_string(),
+        // NSIS keeps a durable prior-state snapshot until its final commit.
+        // A reboot during activation/D4 must recover before candidate startup.
+        if std::env::var_os("CIVICCAST_INSTALL_TRANSACTION").is_some() {
+            "manual".to_string()
+        } else {
+            SERVICE_STARTUP_MODE.to_string()
+        },
         "install".to_string(),
     ];
     (python_exe, args)

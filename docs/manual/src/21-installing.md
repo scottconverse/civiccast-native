@@ -263,7 +263,7 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 112 | Re-check | The extracted CivicCast program does not match its signed pack | Same |
 | 121 | Re-check | The extracted ffmpeg tools do not match | Same |
 | 122 | Re-check | The extracted AI engine does not match | Same |
-| 113 | Upgrade engine | The upgrade failed **and** its own rollback failed. The service is stopped on purpose | Follow `C:\ProgramData\CivicCast\upgrade\UPGRADE-RECOVERY.md` before restarting anything |
+| 113 | Upgrade engine | The upgrade failed **and** its own rollback failed | Setup then restores the pre-setup application and station state when automatic recovery succeeds. Read `upgrade\UPGRADE-RECOVERY.md` and `install-progress.log`; if setup reports exit 136, follow the recovery instructions above |
 | 114 | Upgrade engine | This release has a database change that cannot be rolled back, so automatic upgrade was refused | The dialog says "Use the manual upgrade path with operator acknowledgement". No such path is described anywhere in setup. Do not retry blindly; open an issue |
 | 115 | Upgrade engine | Unexpected fault | Read the log and `upgrade\upgrade-engine.log` |
 | 116 | Database | PostgreSQL could not be provisioned | Read the log and `provision\PROVISION-RECOVERY.md` |
@@ -272,13 +272,13 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 119 | Firewall | The firewall rule could not be created | Read the log. Setup requires this rule |
 | 120 | Pre-install | An existing service could not be stopped safely, its state could not be read, or the service exists but the old program is missing | Stop **CivicCast Native Supervisor** in Services, retry as administrator. If the old program folder was removed, repair or remove that install **without deleting** `C:\ProgramData\CivicCast` |
 | 123 | Activation | See the table below | See below |
-| 124 | Upgrade engine | The engine rolled back its own work; your previous database is intact | Read `upgrade\upgrade-engine.log`. The service is stopped and set to manual start. Fix the cause and run setup again; a successful run restores automatic start. If the dialog says containment was not confirmed, run `sc stop CivicCastSupervisor` and `sc config CivicCastSupervisor start= demand` |
+| 124 | Upgrade engine | The engine rolled back its database work; the installer then restores the pre-setup application and station state when automatic recovery succeeds | Read `upgrade\upgrade-engine.log` and `install-progress.log`. Fix the reported cause and run setup again; the previous service state is restored with the prior installation |
 | 125 | Service | The service started but the web server is not answering | Read `install-progress.log`, `logs\control_plane.log`, `logs\control_plane-app.log` and `upgrade\upgrade-engine.log`, fix, run setup again |
 | 126 | Service | Windows registered the service but could not start it | Read `C:\ProgramData\CivicCast\logs` and the Windows Application event log (Event Viewer, Windows Logs, Application) |
 | 127 | Database | Setup cannot tell which CivicCast runtime owns the machine | If there is no older WSL edition, an administrator sets `HKLM\SOFTWARE\CivicCast\ActiveRuntime` to `native` and runs setup again. The exact command is in `provision\OWNERSHIP-RECOVERY.md` |
-| 128 | Upgrade engine | An earlier failed upgrade's record is still on disk. The database is untouched, but setup had already stopped the service and replaced the program files (the dialog's "nothing was changed" is wrong) | Move (do not delete) `C:\ProgramData\CivicCast\upgrade\upgrade-journal.json` somewhere safe and run again |
+| 128 | Upgrade engine | An earlier failed upgrade's record is still on disk. Setup restores the pre-setup application and station state when automatic recovery succeeds | Move (do not delete) `C:\ProgramData\CivicCast\upgrade\upgrade-journal.json` somewhere safe, then run setup again |
 | 129 | Version preflight | Beta 15 is older than the installed version. Setup stops before prerequisites, service changes, application-file replacement, or station-data changes | Keep using the installed version. If it needs repair, use the complete signed setup kit matching that installed version |
-| 129 | Upgrade engine (defensive late refusal) | A newer version was detected after application files had already been replaced. The database downgrade was refused, but setup cannot automatically restore the previous application files; the station may be unavailable | Run the complete signed setup kit matching the newer installed version to restore its application files and service. Do not uninstall or delete `C:\ProgramData\CivicCast`; keep the kit available offline and contact support if repair fails. Check `install-progress.log` |
+| 129 | Upgrade engine (defensive late refusal) | A newer version was detected after application files had been replaced and the database downgrade was refused | Setup automatically restores the pre-setup files and station state when recovery succeeds. Check `install-progress.log`; if restoration did not complete, keep the recovery records and follow exit 136 |
 | 130 | Version preflight | Setup could not safely compare the installed version or identity; it stopped before changing the installation | Follow the setup message; retry from an administrator account or contact support with the message |
 | 130 | Uninstall | You declined the ownership-transfer question (this code is phase-specific; see the setup log) | None; nothing was removed |
 | 131 | Uninstall | The ownership transfer failed | Read the detail in the dialog |
@@ -286,6 +286,13 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 133 | Uninstall | Service stop unconfirmed during final cleanup; program files kept | Stop the service or restart Windows, then uninstall again |
 | 134 | Uninstall | Teardown incomplete, or a second uninstaller started while this one ran and cleared its plan to hand back the runtime-ownership setting (`ActiveRuntime`). The teardown case is a second line of defence: the uninstaller normally stops earlier, with 82 | Read the dialog and `install-progress.log`. Remove any leftover service, firewall rule and registry state by hand (Services, Windows Defender Firewall, `HKLM\Software\CivicCast\Native`) |
 | 135 | Database | Another CivicCast product (the older WSL edition) is registered | Uninstall it from Settings, Apps (or run its `cutover-to-native`), then run setup again |
+| 136 | Installer recovery | Setup could not prepare, complete or resume automatic restoration | Keep `C:\ProgramData\CivicCast` and `install-transaction` intact. Read `install-progress.log` and `install-transaction\recovery-error.txt`; retry setup or restart Windows so the recovery task can retry, then contact support if it still fails |
+
+### Automatic setup recovery
+
+Before replacing application files, setup creates a durable, access-restricted recovery record under `C:\ProgramData\CivicCast\install-transaction` and registers recovery to run after an interruption or restart. Once the existing service is stopped, setup makes a temporary copy of only the paths it can change: the application folder except `packs\.station-cache`, the local PostgreSQL cluster, `provision` and `upgrade` state, relevant registry and firewall state, the Windows service configuration and CivicCast shortcuts. Recordings and uploads are not copied because setup does not modify them. Setup calculates the copy size first and stops before replacement unless that amount plus a 256 MB reserve is free.
+
+If a later setup step fails, setup restores the previous application files, database and saved station state. It restores the prior service registration and start mode; if the service was running, setup starts it and checks that the saved version and database schema are healthy. A successful commit or restore removes the temporary copy. If automatic restoration is interrupted, the recovery task or the next setup run retries it. Exit 136 means recovery could not be prepared or completed; keep the station data and recovery records in place and use the log paths above. This transaction is a short-term setup safeguard, not a replacement for a separate station backup.
 
 ### Activation (exit 123)
 
@@ -316,7 +323,7 @@ The log records each step's own code ("step X: returned N"). You may see: 64 arg
 | First-run window | `%USERPROFILE%\.civiccast\runtime-host.log` and `installer-state.json` |
 | Which self-test failed | The setup window's details list (not the log; see the Known issue above) |
 
-A failure never deletes `C:\ProgramData\CivicCast`. Open the log in Notepad, and when you report a problem to the project's issue page, remove anything private first. Do not paste passwords, recovery codes or tokens.
+Setup keeps its recovery journal and temporary copy under `C:\ProgramData\CivicCast\install-transaction` until the install commits or restoration completes. If automatic restoration cannot finish, keep that folder and all station data intact. Open the logs in Notepad, and when you report a problem to the project's issue page, remove anything private first. Do not paste passwords, recovery codes or tokens.
 
 ## Verify the install
 
@@ -347,12 +354,11 @@ To upgrade, run the newer `setup.exe` over the existing installation. Use the re
 > **Warning:** Setup stops the CivicCast service before it replaces any file. That takes every channel off the air until setup finishes and the service starts again. Do not run an upgrade during a meeting or a scheduled program.
 
 1. Close the first-run window if it is open.
-2. Use the release helper with `-Install`, or run the new complete kit's `setup.exe /S` from an administrator PowerShell session. Approve UAC when requested and wait for setup's exit code.
-3. On the **Already Installed** page, choose the option that does **not** uninstall first (**Do not uninstall** on an older install, **Add/Reinstall components** for a same-version re-run).
-4. Wait. Setup stops the old service ("Preparing the existing CivicCast (Native) installation for a data-preserving upgrade..."), replaces files, re-checks the packs, then runs the upgrade engine, which backs up, migrates and health-checks the database.
-5. Confirm with "Verify the install".
+2. Use the release helper with `-Install`, or run the new complete kit's `setup.exe /S` from an administrator PowerShell session. Approve UAC when requested and wait for setup's exit code. The native installer skips Tauri's generic **Already Installed** page and does not call the old uninstaller first.
+3. Wait. Setup records the prior service and station state, stops the old service, makes its temporary recovery copy, replaces and verifies files, then runs the upgrade engine, which backs up, migrates and health-checks the database.
+4. Confirm with "Verify the install".
 
-Why not uninstall first: the upgrade engine decides what to do from two markers (`InstalledVersion` and `DatabaseUrl`) that an uninstall deletes, and the setup code says the uninstall teardown must not be used during an upgrade, because it removes those markers. Uninstalling first turns the upgrade into a reinstall over leftover data. This is the behavior described by the current setup code; use the verification record for package-specific test results.
+Run setup directly over the existing installation. The generic reinstall page could invoke the old uninstaller before setup had a chance to save recovery state, so the corrected native installer suppresses that page and uses its own recoverable in-place transaction. It also clears Tauri's saved install-location marker on uninstall, so a later clean reinstall is not misidentified as an already-installed product. Take a separate backup first; the temporary recovery copy is limited to the setup paths described above and is removed after commit or restoration.
 
 | Upgrade engine result | What setup does |
 | --- | --- |
@@ -360,21 +366,21 @@ Why not uninstall first: the upgrade engine decides what to do from two markers 
 | Fresh install (nothing to upgrade) | Continues. Existing CivicCast data on the machine is adopted, not deleted |
 | Same version already installed | Does nothing to the data; re-checks the packs; continues |
 | Older setup over newer install, caught by the early version preflight | Exit 129 before prerequisites, service changes, application-file replacement, or station-data changes |
-| Defensive D3 downgrade refusal after payload replacement | Exit 129. Database downgrade is refused, but the application files have already been replaced and are not automatically restored. Repair with the complete signed setup kit matching the newer installed version; do not uninstall or delete station data |
-| Rolled back its own work | Exit 124. The old database is intact. The service is stopped and set to manual start |
-| Rollback also failed | Exit 113. Follow `UPGRADE-RECOVERY.md` |
+| Defensive D3 downgrade refusal after payload replacement | Exit 129. The installer restores the pre-setup application and station state when automatic restoration succeeds |
+| Rolled back its own work | Exit 124. The installer restores the pre-setup application, database and service state when automatic restoration succeeds |
+| Rollback also failed | Exit 113. Setup attempts to restore the pre-setup station; see `UPGRADE-RECOVERY.md` and `install-progress.log` |
 | Release has an irreversible change | Exit 114 (refused) |
-| Earlier failed upgrade's record found | Exit 128. Database untouched; program files already replaced; service stopped |
+| Earlier failed upgrade's record found | Exit 128. Setup restores the pre-setup application and station state when automatic recovery succeeds; move the stale journal aside, then retry |
 
-> **Historical Beta 13/Beta 14 behavior:** those installers could discover a downgrade only in the D3 upgrade engine, after replacing application files; their exit-129 wording could incorrectly say that setup stopped before changing anything. Beta 15 adds an earlier version check, so the normal downgrade refusal happens before prerequisites, service changes, application files, or station data are touched. Beta 15 retains a defensive late D3 refusal in case the installed-version state changes after that check; if it fires, use the late-refusal repair instructions above. Automatic restoration of the old application files after a later failure is not implemented for the flat installer layout.
+> **Historical Beta 13/Beta 14 behavior:** those installers could discover a downgrade only in the D3 upgrade engine, after replacing application files; their exit-129 wording could incorrectly say that setup stopped before changing anything. Beta 15 adds an earlier version check, so the normal downgrade refusal happens before prerequisites, service changes, application files, or station data are touched. The corrected Beta 15 source retains a defensive late D3 refusal and wraps replacement in automatic restoration of the prior application and station state. Package-specific observations remain in the Beta 15 verification record.
 
-Exit 128 is a separate D3 stale-journal refusal: it occurs after the service has been stopped and application files replaced, but before database work. Keep the recovery journal and move it aside as the installer message instructs; do not delete it. For other failures after payload replacement, follow the specific exit-code instructions rather than assuming that database rollback also restored the application files.
+Exit 128 is a separate D3 stale-journal refusal. The installer restores the pre-setup state when automatic recovery succeeds; then move the stale `upgrade-journal.json` aside as instructed and retry. If setup reports exit 136, do not remove the recovery records or station data.
 
 ## Repair
 
 There is no separate repair button that does the work. Two paths exist.
 
-**Re-run setup.** Run the same version's setup again with its `packs\` folder and choose **Add/Reinstall components**. The upgrade engine does nothing (same version), each extracted pack is re-verified, and a damaged tree is rebuilt from the pack. The service is stopped first, because setup must not delete files under a running service.
+**Re-run setup.** Run the same version's setup again with its `packs\` folder. The native installer skips the generic **Already Installed** page; setup stops the service, records a temporary recovery copy, re-verifies each extracted pack and rebuilds a damaged tree from the pack. The upgrade engine does nothing for the same version.
 
 **The repair command.** For an operator working outside the setup window, the installed program has a repair mode. It checks every installed tree against its signed pack, re-lays corrupted files, repairs the runtime selector and re-registers the service. It never touches data. From an elevated PowerShell window, with the kit folder as `--installer-dir` (the folder that contains `packs\`):
 

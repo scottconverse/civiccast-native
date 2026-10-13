@@ -149,11 +149,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
-      # Beta 14 updates only the native collection floor; this workflow binding
+      # Beta 15 updates collection floors; this workflow binding
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
+        blob: 9b96e46d96f1b773199562c160f1113cc2111ab9
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -229,11 +229,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
-      # Beta 14 updates only the native collection floor; this workflow binding
+      # Beta 15 updates collection floors; this workflow binding
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
+        blob: 9b96e46d96f1b773199562c160f1113cc2111ab9
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -286,11 +286,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
-      # Beta 14 updates only the native collection floor; this workflow binding
+      # Beta 15 updates collection floors; this workflow binding
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
+        blob: 9b96e46d96f1b773199562c160f1113cc2111ab9
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -351,11 +351,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
-      # Beta 14 updates only the native collection floor; this workflow binding
+      # Beta 15 updates collection floors; this workflow binding
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
+        blob: 9b96e46d96f1b773199562c160f1113cc2111ab9
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -1106,11 +1106,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
-      # Beta 14 updates only the native collection floor; this workflow binding
+      # Beta 15 updates collection floors; this workflow binding
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
+        blob: 9b96e46d96f1b773199562c160f1113cc2111ab9
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1
@@ -2027,11 +2027,11 @@ entries:
           blob: 01557f5811065b02efdbac167043ebe73861c8a3
         - path: docs/claims/claims-schema.json
           blob: 716ee9bf02bae2849adeb1223569b263458d80d0
-      # Beta 14 updates only the native collection floor; this workflow binding
+      # Beta 15 updates collection floors; this workflow binding
       # remains a drift tripwire and does not renew unrelated claim evidence.
       workflow:
         path: .github/workflows/ci-test.yml
-        blob: d77a986bb15d44b0e84eb3e671c229fefbd5579d
+        blob: 9b96e46d96f1b773199562c160f1113cc2111ab9
       workflow_contract:
         path: docs/claims/workflow-contract.yaml
         blob: 8303f0a67ec5db1c5f074f5bc0cf037d2030cde1

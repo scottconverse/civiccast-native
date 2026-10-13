@@ -15,7 +15,7 @@ This chapter is for the person who looks after the CivicCast station computer: u
 
 ## Where things are logged
 
-Everything below `C:\ProgramData\CivicCast` survives an uninstall and survives a failed setup. Nothing in setup deletes it.
+Uninstall leaves `C:\ProgramData\CivicCast` in place. Setup uses a durable recovery record and a temporary copy in `install-transaction` for the specific files and station state it may change; successful commit or restoration removes that copy. If recovery fails, keep the record and backup in place.
 
 | What you want | File or place | Notes |
 |---|---|---|
@@ -25,6 +25,7 @@ Everything below `C:\ProgramData\CivicCast` survives an uninstall and survives a
 | The database server | `C:\ProgramData\CivicCast\logs\postgres.log` | Contains startup and server output; rotates at 10 MiB and keeps 10 older files. |
 | Why the supervisor stopped trying to start | `C:\ProgramData\CivicCast\STATION-START-FAILED.md` | Written after 3 failed starts in a row with the same error. Removed after the next successful start. |
 | What setup did, step by step | `C:\ProgramData\CivicCast\install-progress.log` | Read it from the bottom. Find the last "begin" with no matching "returned". |
+| Automatic setup restoration | `C:\ProgramData\CivicCast\install-transaction\` (`transaction.clixml`, temporary `backup\`, and `recovery-error.txt` when recovery reports an error) | Do not delete these while setup recovery is incomplete. Exit 136 means recovery could not be prepared or completed. |
 | Which pack was missing or untrusted | `C:\ProgramData\CivicCast\install-manifest-report-<pid>-<time>.json` | One per setup run. |
 | Upgrade, rollback, provisioning | `C:\ProgramData\CivicCast\upgrade\` (`upgrade-engine.log`, `upgrade-journal.json`, `UPGRADE-RECOVERY.md`) and `provision\` (`PROVISION-RECOVERY.md`, `OWNERSHIP-RECOVERY.md`, `ownership-observation.txt`) | |
 | One channel's encoder and relays | `C:\ProgramData\CivicCast\data\egress\<channel>\logs\` (`gst-worker.stdout.log`, `gst-worker.stderr.log`, `hls-relay.<sink label>.stderr.log`) | On the default GStreamer engine the worker logs are named `gst-worker.*`. On the FFmpeg fallback engine they are `ffmpeg.stdout.log` and `ffmpeg.stderr.log`. |
@@ -149,7 +150,7 @@ A program change is the moment a channel moves from one scheduled item to the ne
 | A single dropped frame at a join between two pieces | A known single-frame drop. | `CTRL mux diagnostic: dropped future-dated video arrival`. | None. It is one frame. |
 | A change aired only the tail of the closing item | The plan was resolved against a short remainder. | `Plan for <channel> resolved to a N.Ns tail of the closing scheduled item`. | Check the schedule's times. Remember that times typed on schedule screens are UTC. |
 
-> **Known issue (Beta 15):** In one observation, a 60-second scheduled slot containing the 20-second Welcome sample ended the sample and continued slate output, while the daemon remained in **Changing source** and logged repeated rollover attempts. This observation did not establish an indefinite stall. A separate 20-second slot played and returned to slate normally. The behavior was not fixed in Beta 15; if the status persists, preserve the service and worker logs and confirm the actual HLS output before deciding whether the channel stopped.
+> **Historical Beta 15 observation:** The published package showed repeated rollover attempts after a 20-second Welcome clip ended inside a 60-second slot; a separate 20-second slot played and returned to slate. The corrected source carries each schedule row's occurrence ID through preparation. It allows an intentional short program to air, then recognizes a later lookup of that same occurrence at an advanced inpoint as its remainder. A separate scheduled use of the same asset remains a new program. See the Beta 15 verification record for the published-package observation and the corrected candidate's runtime status.
 
 > **Historical Beta 10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the current package. Keep the logs if you see an unexplained rebuild.
 
@@ -287,16 +288,17 @@ The default encoder path is GStreamer. On Windows, a hardware H.264 request is m
 
 > **Upgrade evidence (Beta 12):** One normal upgrade from the pinned Beta 11 baseline exited 0 and recorded a healthy service/API, current schema 0089, a saved preservation marker, and initial HLS audio/video plus Whistle observations on three channels. The post-upgrade recorder failed during its first JSON save; no five-snapshot PASS was recorded. Fresh-install and repair checks remain unrun, and no sustained-operation result is claimed. Take a separate backup of `C:\ProgramData\CivicCast` before an upgrade. See the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
-An upgrade is the same `setup.exe` run over an existing install. The service is stopped (its registration is kept), packs are re-verified, the engine backs up and migrates the database with a rollback, then the service is registered and started again. Setup refuses to put an older version over a newer one.
+An upgrade is the same `setup.exe` run over an existing install. The generic **Already Installed** page is suppressed; setup does not uninstall first. It saves a temporary, size-checked recovery copy before replacing files, re-verifies packs, runs the database upgrade and restores the prior application and station state if a later step fails. Setup refuses to put an older version over a newer one. Exit 136 means recovery could not be prepared or completed; keep `install-transaction` and station data intact and let the recovery task or next setup run retry.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
-| Setup exit 113 | The upgrade failed and the rollback also failed. | `C:\ProgramData\CivicCast\upgrade\UPGRADE-RECOVERY.md`. | Follow the steps in that file. |
+| Setup exit 113 | The upgrade failed and the rollback also failed. | `C:\ProgramData\CivicCast\upgrade\UPGRADE-RECOVERY.md` and `install-progress.log`. | Setup attempts to restore the previous application and station state; if it reports exit 136, keep recovery files and follow the exit-136 instructions. |
 | Setup exit 114 | This release has a database change that cannot be rolled back, so the automatic upgrade was refused. | The dialog. | No manual path is written in the dialog (HELP-107). Ask for help before you proceed. |
 | Setup exit 115 | An unexpected fault in the upgrade step. | `install-progress.log`. | Run setup again; collect the logs if it repeats. |
-| Setup exit 124 | The engine was rolled back and the old database is intact. The service is left stopped and set to manual start on purpose. | `upgrade\upgrade-engine.log`. | Read the reason. Do not set the service back to automatic by hand: a successful run of setup restores it. If the dialog says containment was not confirmed, run `sc stop CivicCastSupervisor` and `sc config CivicCastSupervisor start= demand`, then fix the reason and run setup again. |
-| Setup exit 128 | The record of an earlier failed upgrade is still on disk. The service is stopped and the program files were already replaced, although the dialog says nothing changed. | `upgrade\upgrade-journal.json` exists. | Move that file aside (do not delete it) and run setup again. |
-| Setup exit 129 | An older setup was run over a newer install. The dialog says nothing changed, but the older program files were already copied over and the service is stopped. | The dialog. | Do not start the service. Run the newer setup, or uninstall first. |
+| Setup exit 124 | The engine rolled back its database work; setup then restores the pre-setup application and station state when automatic recovery succeeds. | `upgrade\upgrade-engine.log` and `install-progress.log`. | Read the reason, fix it, and run setup again. The previous service start mode is restored with the prior installation. |
+| Setup exit 128 | An earlier failed upgrade's journal is still on disk. Setup restores the pre-setup state when automatic recovery succeeds. | `upgrade\upgrade-journal.json` exists. | Move that file aside (do not delete it) and run setup again. |
+| Setup exit 129 | An older setup was run over a newer install. A defensive late refusal restores the pre-setup state when automatic recovery succeeds. | The dialog and `install-progress.log`. | Use the setup matching the newer installed version. If recovery did not complete, keep the recovery files and follow exit 136. |
+| Setup exit 136 | The installer could not prepare, complete or resume automatic restoration. | `install-transaction\recovery-error.txt` and `install-progress.log`. | Keep station data and recovery files. Restart Windows or retry setup to let automatic recovery run; contact support if it repeats. |
 | After the upgrade `/health` says `schema` is `behind` | The migration did not run. | `curl.exe http://127.0.0.1:8000/health`. | Run setup again; see exit 125. |
 | Uninstall exit 82, 133 or 134 | The service could not be confirmed stopped (82, 133), or teardown is incomplete (134, remove by hand). | The dialog. | Stop the service in `services.msc` or restart Windows, then uninstall again. For 134, remove the leftovers in `services.msc`, Windows Firewall and the registry. |
 
@@ -350,6 +352,7 @@ Collect these before you ask anyone for help. Together they answer most question
 | 133 | Uninstall | Service stop unconfirmed; files kept. |
 | 134 | Uninstall | Teardown incomplete; remove the leftovers by hand. |
 | 135 | Provision | The older WSL edition is registered (child code 87). |
+| 136 | Installer recovery | The automatic restoration transaction could not be prepared or completed. Keep `install-transaction` and station data intact. |
 | 3010 | Visual C++ | The Visual C++ runtime installed and Windows needs a restart. We could not confirm that setup itself returns this number. |
 
 Child codes seen: 64 arguments, 65 report write, 66 pack missing or untrusted, 67 activation or self-test, 68 verify, 73 and 74 uninstall preflight, 75 provision or pack, 78 embedded trust key refused, 83 service start, 84 not serving, 85 ownership, 87 other product. A child code of 77 appears in the setup code but its meaning is not named in any text we read. A first install with only `setup.exe` and no kit stops at exit 110 (see the first row of the install table).

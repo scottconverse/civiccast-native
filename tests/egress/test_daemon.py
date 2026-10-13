@@ -36,8 +36,10 @@ from civiccast.egress.models import (
     EgressStateRow,
 )
 from civiccast.egress.preparer import PreparedSegmentRecord, SourcePreparationReport
+from civiccast.egress.source_plan import ScheduleSourcePlanProvider
 from civiccast.egress.store import InMemoryEgressStore
 from civiccast.egress.supervisor import PlayoutSupervisor
+from civiccast.schedule.models import ScheduleItemResponse, StaffAssetRow
 
 
 def _write_fake_reload_status(
@@ -8398,6 +8400,210 @@ def _u36_on_air(
         )
     )
     return process
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_label", "expected_state"),
+    [
+        ("no_next", "CivicCast slate", "FALLBACK_SLATE"),
+        ("next_program", "City Council", "ON_AIR"),
+        ("same_asset_new_occurrence", "Welcome", "ON_AIR"),
+    ],
+)
+def test_scheduled_short_program_remainder_rolls_to_slate_or_next_program(
+    tmp_path: Path,
+    scenario: str,
+    expected_label: str,
+    expected_state: str,
+) -> None:
+    """A real schedule lookup can return the same short media later in its slot.
+
+    Keep the intentional 20s Welcome airing at the slot start. A later lookup
+    of that occurrence with an advanced join-in-progress offset must resolve
+    past its media end; a separately scheduled use of the same asset stays a
+    fresh short programme.
+    """
+    strategy = _FakeContentReloadStrategy([], [], auto_settle=False)
+    boundary_calls: list[datetime] = []
+    boundary_plans: list[EgressSourcePlan | None] = []
+    first_horizon = datetime.now(UTC) + timedelta(seconds=60.0)
+    second_horizon = first_horizon + timedelta(
+        seconds=75.0 if scenario == "same_asset_new_occurrence" else 15.0
+    )
+    welcome_path = tmp_path / "welcome.ts"
+    welcome_path.write_text("fake welcome media", encoding="utf-8")
+    items = [
+        ScheduleItemResponse(
+            id=uuid.uuid4(),
+            asset_id="welcome-asset",
+            asset_title="Welcome",
+            channel_id="gov",
+            mode="premiere",
+            state="published",
+            scheduled_at=first_horizon,
+            duration_seconds=60,
+            notes=None,
+            created_at=first_horizon - timedelta(days=1),
+        )
+    ]
+    assets = {
+        "welcome-asset": StaffAssetRow(
+            asset_id="welcome-asset",
+            title="Welcome",
+            state="validated",
+            file_path=str(welcome_path),
+            duration_seconds=20,
+            trim_in_seconds=None,
+            trim_out_seconds=20,
+        )
+    }
+    if scenario == "same_asset_new_occurrence":
+        items.append(
+            ScheduleItemResponse(
+                id=uuid.uuid4(),
+                asset_id="welcome-asset",
+                asset_title="Welcome",
+                channel_id="gov",
+                mode="premiere",
+                state="published",
+                scheduled_at=first_horizon + timedelta(seconds=60),
+                duration_seconds=60,
+                notes=None,
+                created_at=first_horizon - timedelta(days=1),
+            )
+        )
+    if scenario == "next_program":
+        council_path = tmp_path / "council.ts"
+        council_path.write_text("fake council media", encoding="utf-8")
+        items.append(
+            ScheduleItemResponse(
+                id=uuid.uuid4(),
+                asset_id="council-asset",
+                asset_title="City Council",
+                channel_id="gov",
+                mode="premiere",
+                state="published",
+                scheduled_at=first_horizon + timedelta(seconds=60),
+                duration_seconds=1800,
+                notes=None,
+                created_at=first_horizon - timedelta(days=1),
+            )
+        )
+        assets["council-asset"] = StaffAssetRow(
+            asset_id="council-asset",
+            title="City Council",
+            state="validated",
+            file_path=str(council_path),
+            duration_seconds=1800,
+            trim_in_seconds=None,
+            trim_out_seconds=1800,
+        )
+
+    provider = ScheduleSourcePlanProvider(
+        schedule_items_provider=lambda _channel_id: items,
+        asset_resolver=assets.get,
+        max_segments=1,
+        # Production uses a 30s absorb window. Widen only the next-program branch
+        # so the item at the 60s slot boundary is eligible at the short media
+        # tail's end; other cases use production's configured window.
+        gap_absorb_seconds=60.0 if scenario == "next_program" else 30.0,
+        media_duration_resolver=lambda path: 20.0 if path == welcome_path else 1800.0,
+    )
+
+    def boundary(channel_id: str, at: datetime, **kwargs: Any) -> EgressSourcePlan | None:
+        boundary_calls.append(at)
+        plan = provider.plan_at(channel_id, at, **kwargs)
+        boundary_plans.append(plan)
+        return plan
+
+    fallback_calls: list[str] = []
+
+    def fallback(_config: EgressConfig) -> EgressSourcePlan:
+        fallback_calls.append("called")
+        return _plan_with_seconds(tmp_path, "CivicCast slate", 3600.0)
+
+    daemon = _u36_rollover_daemon(
+        tmp_path,
+        strategy=strategy,
+        boundary=boundary,
+        fallback=fallback,
+    )
+    process = _u36_on_air(daemon, label="Previous programme")
+
+    daemon.record_rollover_plan_end("gov", first_horizon, command_id=None)
+    daemon._request_reload("gov")
+
+    # A genuinely short, playable item is not mistaken for a dying tail.
+    assert strategy.reload_calls == ["Welcome"]
+    first_reload_id = strategy.reload_ids[-1]
+    assert first_reload_id is not None
+    assert daemon._pending_reload_settle["gov"].target_state == "ON_AIR"
+    assert process.terminated is False
+    assert daemon._store.read_state("gov").state == "ON_AIR"  # type: ignore[union-attr]
+
+    _write_fake_reload_status(tmp_path, "gov", first_reload_id, "applied")
+    daemon._poll_reload_settlement("gov")
+    first_settled = daemon._store.read_state("gov")
+    assert first_settled is not None
+    assert first_settled.state == "ON_AIR"
+    assert first_settled.current_source_label == "Welcome"
+
+    daemon.record_rollover_plan_end("gov", second_horizon, command_id=None)
+    daemon._request_reload("gov")
+
+    # The provider itself returns Welcome again, with five seconds left after
+    # a 15-second join into its 60-second slot. The tail lookup resolves either
+    # the real next item or no item, depending on the case.
+    if scenario == "same_asset_new_occurrence":
+        assert boundary_calls == [first_horizon, second_horizon]
+    else:
+        assert boundary_calls == [
+            first_horizon,
+            second_horizon,
+            second_horizon + timedelta(seconds=6.0),
+        ]
+    assert boundary_plans[0] is not None
+    assert boundary_plans[0].segments[0].label == "Welcome"
+    assert boundary_plans[0].segments[0].duration_seconds == pytest.approx(20.0)
+    assert boundary_plans[0].segments[0].schedule_occurrence_id == str(items[0].id)
+    assert boundary_plans[1] is not None
+    assert boundary_plans[1].segments[0].source_ref == "welcome-asset"
+    assert boundary_plans[1].segments[0].inpoint_seconds == pytest.approx(15.0)
+    assert boundary_plans[1].segments[0].duration_seconds == pytest.approx(5.0)
+    if scenario == "same_asset_new_occurrence":
+        assert boundary_plans[1].segments[0].schedule_occurrence_id == str(items[1].id)
+        assert boundary_plans[1].segments[0].schedule_occurrence_id != (
+            boundary_plans[0].segments[0].schedule_occurrence_id
+        )
+    else:
+        assert boundary_plans[1].segments[0].schedule_occurrence_id == (
+            boundary_plans[0].segments[0].schedule_occurrence_id
+        )
+    if scenario == "next_program":
+        assert boundary_plans[2] is not None
+        assert boundary_plans[2].segments[0].label == "City Council"
+    elif scenario == "no_next":
+        assert boundary_plans[2] is None
+    assert fallback_calls == ([] if scenario != "no_next" else ["called"])
+    assert strategy.reload_calls == ["Welcome", expected_label]
+    assert process.terminated is False
+    pending = daemon._pending_reload_settle["gov"]
+    assert pending.target_state == expected_state
+    assert pending.source_plan.segments[0].label == expected_label
+    unsettled = daemon._store.read_state("gov")
+    assert unsettled is not None
+    assert unsettled.state == "ON_AIR"
+    assert unsettled.current_source_label == "Welcome"
+
+    second_reload_id = strategy.reload_ids[-1]
+    assert second_reload_id is not None
+    _write_fake_reload_status(tmp_path, "gov", second_reload_id, "applied")
+    daemon._poll_reload_settlement("gov")
+
+    settled = daemon._store.read_state("gov")
+    assert settled is not None
+    assert settled.state == expected_state
+    assert settled.current_source_label == expected_label
 
 
 def test_horizon_bound_rollover_resolves_past_a_sub_floor_schedule_tail(
