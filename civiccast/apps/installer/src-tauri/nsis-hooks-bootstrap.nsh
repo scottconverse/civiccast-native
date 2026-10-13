@@ -654,9 +654,19 @@ Var CIVICCAST_POSTCLEAR_ARMED
 ; are created here; no product/service/data state is changed on refusal.
 !define CIVICCAST_PREFLIGHT_SCRIPT "${__FILEDIR__}\version-preflight.ps1"
 !macro CIVICCAST_VERSION_PREFLIGHT
+  ; Tauri sets OUTDIR to INSTDIR immediately before PREINSTALL and does not
+  ; reset it before its File instructions. Extract scratch by absolute name
+  ; so this guard never changes the caller's output directory/current path.
+  Push $0
+  Push $1
+  ${If} ${Errors}
+    Push "1"
+  ${Else}
+    Push "0"
+  ${EndIf}
+  ClearErrors
   InitPluginsDir
-  SetOutPath "$PLUGINSDIR"
-  File /oname=civiccast-version-preflight.ps1 "${CIVICCAST_PREFLIGHT_SCRIPT}"
+  File "/oname=$PLUGINSDIR\civiccast-version-preflight.ps1" "${CIVICCAST_PREFLIGHT_SCRIPT}"
   nsExec::ExecToStack /TIMEOUT=30000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\civiccast-version-preflight.ps1" -CandidateVersion "${VERSION}"'
   Pop $0
   Pop $1
@@ -675,6 +685,14 @@ Var CIVICCAST_POSTCLEAR_ARMED
     ${EndIf}
     Quit
   ${EndIf}
+  Pop $1
+  ${If} $1 == "1"
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+  Pop $1
+  Pop $0
 !macroend
 
 !macro NSIS_HOOK_PREINSTALL

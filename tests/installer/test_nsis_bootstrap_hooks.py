@@ -33,6 +33,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 BOOTSTRAP_HOOKS_NSH = (
     ROOT / "civiccast" / "apps" / "installer" / "src-tauri" / "nsis-hooks-bootstrap.nsh"
@@ -1442,4 +1444,54 @@ def test_ma28_the_cli_contract_comment_names_the_codes_that_actually_exist() -> 
         assert code in band_comment, f"the new CLI code {code} must be recorded in the band comment"
     assert "40 unexpected fault" in band_comment, (
         "40 must be named as what it is -- a D3 engine phase code, not a CLI code"
+    )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="executes the real NSIS preflight macro")
+@pytest.mark.parametrize("incoming_errors", [False, True])
+def test_version_preflight_preserves_extraction_destination_and_caller_state(
+    tmp_path: Path, incoming_errors: bool
+) -> None:
+    makensis = Path.home() / "AppData/Local/tauri/NSIS/Bin/makensis.exe"
+    if not makensis.is_file():
+        pytest.skip("Tauri NSIS compiler is unavailable")
+    macro = _slice(_hooks_source(), "!macro CIVICCAST_VERSION_PREFLIGHT", "!macroend") + "!macroend"
+    # Supply identity through the script's existing input seam: the fixture
+    # runs without elevation and must not read the station's protected registry.
+    macro = macro.replace(
+        '-CandidateVersion "${VERSION}"',
+        '-CandidateVersion "${VERSION}" -InstalledVersion "1.0.0-beta.14"',
+    )
+    payload = tmp_path / "fixture.txt"
+    payload.write_text("must land in installation directory", encoding="utf-8")
+    output = tmp_path / "preflight-state.exe"
+    script = tmp_path / "preflight-state.nsi"
+    script.write_text(
+        "Unicode true\n!include LogicLib.nsh\nSilentInstall silent\nRequestExecutionLevel user\n"
+        f'OutFile "{output}"\n!define VERSION "999.0.0"\n'
+        f'!define CIVICCAST_PREFLIGHT_SCRIPT "{BOOTSTRAP_HOOKS_NSH.parent / "version-preflight.ps1"}"\n'
+        + macro
+        + '\nSection\nSetOutPath "$EXEDIR\\payload"\n'
+        'StrCpy $0 "caller-zero"\nStrCpy $1 "caller-one"\n'
+        + ("SetErrors\n" if incoming_errors else "ClearErrors\n")
+        + "!insertmacro CIVICCAST_VERSION_PREFLIGHT\n"
+        '${If} $OUTDIR != "$EXEDIR\\payload"\nSetErrorLevel 72\nQuit\n${EndIf}\n'
+        '${If} $0 != "caller-zero"\nSetErrorLevel 73\nQuit\n${EndIf}\n'
+        '${If} $1 != "caller-one"\nSetErrorLevel 74\nQuit\n${EndIf}\n'
+        + ("${IfNot} ${Errors}\n" if incoming_errors else "${If} ${Errors}\n")
+        + "SetErrorLevel 75\nQuit\n${EndIf}\n"
+        + f'File /oname=sentinel.txt "{payload}"\n'
+        "SetErrorLevel 0\nSectionEnd\n",
+        encoding="utf-8",
+    )
+    compiled = subprocess.run(
+        [str(makensis), "/V2", str(script)], capture_output=True, text=True, timeout=60
+    )
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    ran = subprocess.run([str(output), "/S"], capture_output=True, timeout=60)
+    assert ran.returncode == 0, (
+        f"NSIS state regression exit {ran.returncode}: 72=OUTDIR, 73/74=registers, 75=Errors"
+    )
+    assert (tmp_path / "payload/sentinel.txt").read_text(encoding="utf-8") == payload.read_text(
+        encoding="utf-8"
     )
