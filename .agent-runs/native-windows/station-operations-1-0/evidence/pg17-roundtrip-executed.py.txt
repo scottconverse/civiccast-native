@@ -1,0 +1,130 @@
+from __future__ import annotations
+import hashlib, json, os, shutil, socket, subprocess, tempfile, zipfile
+from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
+archive = Path(r"C:\CivicCastTester\runtime-artifact-mirror\ef9b1e5e23d2e8a83914ba13d9dc536a72210fba53fd1808ff1f7e06bb22b106\postgresql-17.10-2-windows-x64-binaries.zip")
+expected = "EF9B1E5E23D2E8A83914BA13D9DC536A72210FBA53FD1808FF1F7E06BB22B106"
+with archive.open("rb") as source:
+    if hashlib.file_digest(source, "sha256").hexdigest().upper() != expected: raise RuntimeError("local PostgreSQL artifact digest mismatch")
+scratch_parent = Path(tempfile.gettempdir()).resolve()
+scratch = Path(tempfile.mkdtemp(prefix="civiccast-pg17-backup-roundtrip-")).resolve()
+if scratch.parent != scratch_parent or not scratch.name.startswith("civiccast-pg17-backup-roundtrip-"): raise RuntimeError("scratch cleanup boundary check failed")
+pg_paths = None
+cleanup_safe = True
+old_path = os.environ.get("PATH", "")
+try:
+    from civiccast.native.service_identity import restrict_data_directory
+    restrict_data_directory(scratch)
+    with zipfile.ZipFile(archive) as package:
+        for info in package.infolist():
+            name = info.filename.replace("\\", "/")
+            if not name.startswith(("pgsql/bin/", "pgsql/share/", "pgsql/lib/")): continue
+            relative = PurePosixPath(name)
+            if relative.is_absolute() or ".." in relative.parts: raise RuntimeError("unsafe selected path in local PostgreSQL archive")
+            mode = info.external_attr >> 16
+            if mode and (mode & 0o170000) == 0o120000: raise RuntimeError("selected PostgreSQL archive member is a symlink")
+            target = scratch.joinpath(*relative.parts)
+            if info.is_dir(): target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with package.open(info) as src, target.open("wb") as dst: shutil.copyfileobj(src, dst, 1024 * 1024)
+    bin_dir = scratch / "pgsql" / "bin"
+    data_dir = scratch / "pgdata"
+    pg_ctl, initdb, psql = (bin_dir / name for name in ("pg_ctl.exe", "initdb.exe", "psql.exe"))
+    pgdump, pgdumpall, pgrestore = (bin_dir / name for name in ("pg_dump.exe", "pg_dumpall.exe", "pg_restore.exe"))
+    if not all(path.is_file() for path in (pg_ctl, initdb, psql, pgdump, pgdumpall, pgrestore)): raise RuntimeError("PostgreSQL 17.10 binaries are incomplete")
+    os.environ["PATH"] = os.pathsep.join((str(bin_dir), str(scratch / "pgsql" / "lib"), old_path))
+    def run(argv: list[str], timeout: int = 180):
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, env=os.environ.copy())
+        if result.returncode:
+            detail = (result.stderr or result.stdout or "no diagnostic output")[-2500:]
+            raise RuntimeError(f"{Path(argv[0]).name} failed (exit {result.returncode}): {detail}")
+        return result
+    run([str(initdb), "-D", str(data_dir), "-U", "postgres", "-A", "trust", "--encoding=UTF8", "--no-locale"])
+    with socket.socket() as probe: probe.bind(("127.0.0.1", 0)); port = probe.getsockname()[1]
+    from civiccast.native.upgrade.pg_lifecycle import PgLifecyclePaths, real_start_postgres, real_stop_postgres
+    from civiccast.native.station_secrets import StationSecretVault
+    from civiccast.dr.station_backup import StationBackupService
+    from civiccast.dr.station_backup_runtime import _managed_postgres_for_restore, validate_portable_credentials
+    pg_paths = PgLifecyclePaths(str(pg_ctl), str(data_dir), "127.0.0.1", port)
+    def status(paths) -> bool:
+        result = subprocess.run([paths.pg_ctl_path, "status", "-D", paths.data_dir], capture_output=True, text=True, env=os.environ.copy())
+        if result.returncode == 0: return True
+        if result.returncode == 3: return False
+        raise RuntimeError(f"pg_ctl status cannot confirm isolated state (exit {result.returncode})")
+    real_start_postgres(pg_paths)
+    source_url = f"postgresql+psycopg://postgres@127.0.0.1:{port}/source"
+    target_url = f"postgresql+psycopg://postgres@127.0.0.1:{port}/replacement"
+    for dbname in ("source", "replacement"):
+        run([str(psql), "-X", "-v", "ON_ERROR_STOP=1", "-h", "127.0.0.1", "-p", str(port), "-U", "postgres", "-d", "postgres", "-c", f'CREATE DATABASE "{dbname}"'])
+    from sqlalchemy import create_engine, text
+    schema_sql = "CREATE SCHEMA civiccast; CREATE TABLE civiccast.assets (asset_id text PRIMARY KEY, file_path text, thumbnail_path text); CREATE TABLE civiccast.watch_folder_configs (config_id text PRIMARY KEY, monitor_path text); CREATE TABLE civiccast.watch_folder_file_state (state_id text PRIMARY KEY, file_path text);"
+    old_media = scratch / "old-media"
+    source_engine = create_engine(source_url, connect_args={"connect_timeout":5})
+    target_engine = create_engine(target_url, connect_args={"connect_timeout":5})
+    try:
+        with source_engine.begin() as connection:
+            connection.exec_driver_sql(schema_sql)
+            connection.execute(text("INSERT INTO civiccast.assets VALUES (:id,:path,:thumb)"), {"id":"fixture-asset", "path":str(old_media / "roundtrip.mp4"), "thumb":str(old_media / "thumb.jpg")})
+            connection.execute(text("INSERT INTO civiccast.watch_folder_configs VALUES (:id,:path)"), {"id":"fixture-watch", "path":str(old_media / "incoming")})
+            connection.execute(text("INSERT INTO civiccast.watch_folder_file_state VALUES (:id,:path)"), {"id":"fixture-watch-state", "path":str(old_media / "incoming" / "next.mp4")})
+        with target_engine.begin() as connection:
+            connection.exec_driver_sql(schema_sql)
+            connection.execute(text("INSERT INTO civiccast.assets VALUES ('replacement-stale-row','stale','stale')"))
+    finally: source_engine.dispose(); target_engine.dispose()
+    old_media.mkdir()
+    (old_media / "roundtrip.mp4").write_bytes(b"disposable roundtrip media fixture")
+    station_state = scratch / "station-state.json"
+    station_state.write_text(json.dumps({"station":{"storage_locations":{"media_library":str(old_media),"recordings":str(old_media / "recordings"),"backups":str(old_media / "backups")}}}), encoding="utf-8")
+    source_vault = StationSecretVault(scratch / "source-vault.dpapi")
+    target_vault = StationSecretVault(scratch / "replacement-vault.dpapi")
+    fixture_secret = "disposable-roundtrip-credential-fixture"
+    source_vault.set("civiccast.ai-provider", "roundtrip-fixture", fixture_secret)
+    target_media = scratch / "replacement-media"
+    target_state = scratch / "replacement-config" / "station-state.json"
+    service = StationBackupService(database_url=source_url, destination=scratch / "archives", config_paths=[station_state], media_roots=[old_media], state_path=scratch / "backup-state.json", credential_exporter=source_vault.export_portable, credential_importer=target_vault.import_portable, credential_validator=validate_portable_credentials, pg_dump_command=[str(pgdump)], pg_dumpall_command=[str(pgdumpall)], pg_restore_command=[str(pgrestore)])
+    passphrase = "disposable fixture recovery phrase"
+    artifact = service.create_backup(passphrase)
+    if fixture_secret.encode() in artifact.path.read_bytes(): raise RuntimeError("fixture credential appeared unencrypted in archive")
+    verified = service.verify_backup(artifact.path, passphrase)
+    if not verified.valid or verified.database_engine != "postgres": raise RuntimeError("PostgreSQL archive verification failed")
+    real_stop_postgres(pg_paths)
+    if status(pg_paths): raise RuntimeError("isolated PostgreSQL did not stop before restore")
+    layout = SimpleNamespace(pg_ctl_path=pg_ctl, postgres_data_dir=data_dir)
+    with _managed_postgres_for_restore(source_url, target_url, layout):
+        restored = service.restore_backup(artifact.path, passphrase, target_database_url=target_url, target_paths={str(station_state):target_state, str(old_media):target_media}, writers_stopped=True)
+        verify_engine = create_engine(target_url, connect_args={"connect_timeout":5})
+        try:
+            with verify_engine.connect() as connection:
+                asset = connection.execute(text("SELECT file_path, thumbnail_path FROM civiccast.assets WHERE asset_id='fixture-asset'")).one()
+                watch_root = connection.execute(text("SELECT monitor_path FROM civiccast.watch_folder_configs WHERE config_id='fixture-watch'")).scalar_one()
+                watch_file = connection.execute(text("SELECT file_path FROM civiccast.watch_folder_file_state WHERE state_id='fixture-watch-state'")).scalar_one()
+                stale = connection.execute(text("SELECT count(*) FROM civiccast.assets WHERE asset_id='replacement-stale-row'")).scalar_one()
+        finally: verify_engine.dispose()
+        if asset != (str(target_media / "roundtrip.mp4"), str(target_media / "thumb.jpg")): raise RuntimeError("asset or thumbnail path did not remap")
+        if watch_root != str(target_media / "incoming") or watch_file != str(target_media / "incoming" / "next.mp4"): raise RuntimeError("watch-folder DB path did not remap")
+        if stale != 0: raise RuntimeError("preexisting replacement row survived restore")
+        if (target_media / "roundtrip.mp4").read_bytes() != b"disposable roundtrip media fixture": raise RuntimeError("selected media content did not restore")
+        locations = json.loads(target_state.read_text(encoding="utf-8"))["station"]["storage_locations"]
+        expected_locations = {"media_library":str(target_media), "recordings":str(target_media / "recordings"), "backups":str(target_media / "backups")}
+        if locations != expected_locations: raise RuntimeError("station-state roots did not remap")
+        if target_vault.get("civiccast.ai-provider", "roundtrip-fixture") != fixture_secret: raise RuntimeError("portable fixture credential did not restore")
+        if not restored.database_restored or restored.database_engine != "postgres": raise RuntimeError("restore result failed to report PostgreSQL")
+    if status(pg_paths): raise RuntimeError("restore context did not stop isolated PostgreSQL")
+    print("ROUNDTRIP=PASS")
+    print("PostgreSQL=17.10; archive verified; preexisting target objects replaced")
+    print("Verified=asset/watch-folder DB paths, station-state paths, selected media bytes, portable vault credential")
+    print("Lifecycle=managed PostgreSQL started only for restore and confirmed stopped afterward")
+finally:
+    os.environ["PATH"] = old_path
+    if pg_paths is not None:
+        try:
+            from civiccast.native.upgrade.pg_lifecycle import real_stop_postgres
+            if status(pg_paths): real_stop_postgres(pg_paths)
+            cleanup_safe = not status(pg_paths)
+        except Exception as cleanup_error:
+            cleanup_safe = False
+            print(f"SCRATCH_CLUSTER_STOP_UNCONFIRMED={type(cleanup_error).__name__}")
+    if cleanup_safe and scratch.parent == scratch_parent and scratch.name.startswith("civiccast-pg17-backup-roundtrip-"):
+        shutil.rmtree(scratch); print("SCRATCH=cleaned")
+    else: print(f"SCRATCH=retained {scratch}")

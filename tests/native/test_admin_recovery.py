@@ -18,8 +18,9 @@ def _assert_restricted_state_acl(path):
     import win32security
 
     from civiccast.certs.authority import _current_process_sid
+    from civiccast.native.service_identity import SERVICE_SID
 
-    allowed = {_current_process_sid(), "S-1-5-18", "S-1-5-32-544"}
+    allowed = {_current_process_sid(), "S-1-5-18", "S-1-5-32-544", SERVICE_SID}
     owner_rights_sid = "S-1-3-4"
     security_info = (
         win32security.DACL_SECURITY_INFORMATION | win32security.OWNER_SECURITY_INFORMATION
@@ -42,7 +43,6 @@ def _assert_restricted_state_acl(path):
     allowed_flags = {0, win32security.INHERITED_ACE}
     actual_principals = set()
     ace_rows = []
-    owner_rights_count = 0
     for index in range(acl.GetAceCount()):
         ace = acl.GetAce(index)
         assert len(ace) == 3 and len(ace[0]) == 2, f"{diagnostic}; ACE[{index}]={ace!r}"
@@ -61,16 +61,19 @@ def _assert_restricted_state_acl(path):
         ace_diagnostic = f"{diagnostic}; ACEs={ace_rows!r}"
         assert ace_type == win32security.ACCESS_ALLOWED_ACE_TYPE, ace_diagnostic
         assert ace_flags in allowed_flags, ace_diagnostic
-        assert access_mask == ntsecuritycon.FILE_ALL_ACCESS, ace_diagnostic
+        expected_mask = (
+            ntsecuritycon.FILE_GENERIC_READ | ntsecuritycon.FILE_GENERIC_WRITE
+            if trustee_sid == SERVICE_SID
+            else ntsecuritycon.FILE_ALL_ACCESS
+        )
+        assert access_mask == expected_mask, ace_diagnostic
 
         effective_sid = trustee_sid
         if trustee_sid == owner_rights_sid:
-            owner_rights_count += 1
             effective_sid = owner_sid
         actual_principals.add(effective_sid)
 
     assert actual_principals == allowed, f"{diagnostic}; ACEs={ace_rows!r}"
-    return owner_rights_count
 
 
 @pytest.fixture
@@ -117,12 +120,16 @@ def test_reset_preserves_data_and_revokes_credentials(station, legacy):
         original["operator_console"] = original["operator_console"]["tokens"][0]
         path.write_text(json.dumps(original), encoding="utf-8")
     assert station_state.verify_station_operator_token(recovery._test_old_token) is not None
+    # Legacy-session verification may persist its one-time session metadata
+    # migration. The recovery backup must preserve the exact state as it
+    # exists immediately before the reset, including that migration.
+    before_reset = path.read_bytes()
     backup = recovery.reset_password(path, "new-password-value")
     if sys.platform == "win32":
         for protected in (path, backup):
             _assert_restricted_state_acl(protected)
     updated = json.loads(path.read_text(encoding="utf-8"))
-    assert json.loads(backup.read_text(encoding="utf-8")) == original
+    assert backup.read_bytes() == before_reset
     assert updated["station"] == original["station"]
     assert updated["other_settings"] == original["other_settings"]
     assert updated["admin"]["username"] == "owner"
@@ -148,35 +155,56 @@ def test_reset_preserves_data_and_revokes_credentials(station, legacy):
 
 @pytest.mark.windows_only
 @pytest.mark.skipif(sys.platform != "win32", reason="Windows ACL semantics")
-def test_restrict_state_file_maps_explicit_owner_rights_to_verified_owner(tmp_path):
+def test_restrict_state_file_maps_explicit_owner_rights_to_verified_owner(tmp_path, monkeypatch):
     import ntsecuritycon
     import win32security
 
-    path = tmp_path / "station-state-owner-rights.json"
-    path.write_text("nonsecret ACL fixture", encoding="utf-8")
-    descriptor = win32security.GetNamedSecurityInfo(
-        str(path), win32security.SE_FILE_OBJECT, win32security.DACL_SECURITY_INFORMATION
-    )
-    acl = descriptor.GetSecurityDescriptorDacl()
-    assert acl is not None
-    acl.AddAccessAllowedAce(
-        win32security.ACL_REVISION,
-        ntsecuritycon.FILE_ALL_ACCESS,
-        win32security.ConvertStringSidToSid("S-1-3-4"),
-    )
-    win32security.SetNamedSecurityInfo(
-        str(path),
-        win32security.SE_FILE_OBJECT,
-        win32security.DACL_SECURITY_INFORMATION,
-        None,
-        None,
-        acl,
-        None,
-    )
+    from civiccast.certs import authority
+    from civiccast.native import service_identity
 
-    station_state._restrict_state_file(path)
+    unregistered_sid = "S-1-5-80-1111111111-2222222222-3333333333-1234567890-987654321"
+    for label, service_sid in (
+        ("configured", service_identity.SERVICE_SID),
+        ("unregistered", unregistered_sid),
+    ):
+        with monkeypatch.context() as patch:
+            patch.setattr(authority, "SERVICE_SID", service_sid)
+            patch.setattr(service_identity, "SERVICE_SID", service_sid)
+            path = tmp_path / f"station-state-owner-rights-{label}.json"
+            path.write_text("nonsecret ACL fixture", encoding="utf-8")
+            descriptor = win32security.GetNamedSecurityInfo(
+                str(path), win32security.SE_FILE_OBJECT, win32security.DACL_SECURITY_INFORMATION
+            )
+            acl = descriptor.GetSecurityDescriptorDacl()
+            assert acl is not None
+            acl.AddAccessAllowedAce(
+                win32security.ACL_REVISION,
+                ntsecuritycon.FILE_ALL_ACCESS,
+                win32security.ConvertStringSidToSid("S-1-3-4"),
+            )
+            win32security.SetNamedSecurityInfo(
+                str(path),
+                win32security.SE_FILE_OBJECT,
+                win32security.DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                acl,
+                None,
+            )
+            seeded_acl = win32security.GetNamedSecurityInfo(
+                str(path), win32security.SE_FILE_OBJECT, win32security.DACL_SECURITY_INFORMATION
+            ).GetSecurityDescriptorDacl()
+            assert seeded_acl is not None
+            assert any(
+                win32security.ConvertSidToStringSid(seeded_acl.GetAce(index)[2]) == "S-1-3-4"
+                for index in range(seeded_acl.GetAceCount())
+            )
 
-    assert _assert_restricted_state_acl(path) == 1
+            station_state._restrict_state_file(path)
+
+            # icacls may retain OWNER RIGHTS; the native fallback replaces it
+            # with a direct owner grant. Both must enforce the same effective ACL.
+            _assert_restricted_state_acl(path)
 
 
 def test_cli_uses_hidden_prompt_without_password_argument(monkeypatch, station):

@@ -1,0 +1,12 @@
+[
+  {
+    "path": "SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor",
+    "sddl": "D:PAI(A;;KA;;;SY)(A;;KA;;;BA)(A;;KR;;;S-1-5-80-3505678282-1640658708-3289577692-12763909-1392209962)",
+    "read_error": "[WinError 2] The system cannot find the file specified"
+  },
+  {
+    "path": "SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor\\PythonClass",
+    "sddl": "D:AI",
+    "read_error": "[WinError 5] Access is denied"
+  }
+]

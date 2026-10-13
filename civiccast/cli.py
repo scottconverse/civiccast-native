@@ -30,6 +30,7 @@ from civiccast.auth.store import PostgresStaffTokenStore, StaffTokenMetadata
 from civiccast.auth.tokens import generate_configured_staff_token
 from civiccast.cable.ndi import NdiOutputError, build_ndi_output_plan, check_ndi_runtime
 from civiccast.cable.package import build_cable_file_package
+from civiccast.dr.station_backup_cli import backup_app
 from civiccast.installer.handoff import build_beta_handoff_summary
 from civiccast.installer.model_bundle import build_v11_model_bundle_manifest
 from civiccast.installer.model_download import download_release_models
@@ -135,6 +136,7 @@ app.add_typer(egress_app)
 app.add_typer(live_takeover_app)
 app.add_typer(media_app)
 app.add_typer(dr_app)
+app.add_typer(backup_app)
 app.add_typer(output_app)
 # WS4 dual-runtime exclusion guard (slice:ws4-dual-runtime-guard): runtime_app
 # lives in civiccast/native/runtime_cli.py (not defined here like the other

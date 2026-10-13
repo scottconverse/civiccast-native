@@ -33,6 +33,12 @@ The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs
 
 ### Developer — run from source, contribute
 
+The current station-operations work adds [encrypted backup and restore](docs/ops/station-backup.md),
+[network access](docs/ops/network-access.md), [staff accounts and sessions](docs/ops/staff-accounts.md),
+and a [restricted Windows service account](docs/ops/restricted-service-identity.md).
+These changes are implemented and checked in the development branch, and are not included in the published Beta 15
+download. See the [implementation status](docs/ops/station-operations-goal.md).
+
 ```bash
 # One-time: install uv, then sync the workspace.
 uv sync --all-extras --group dev

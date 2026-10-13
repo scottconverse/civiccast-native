@@ -1,4 +1,5 @@
 import type { AssetMetadataUpdate, AssetRow } from '../types/asset'
+import type { NetworkSettings, NetworkSettingsResponse } from '../types/network'
 import type {
   ChannelCommissioningSetup,
   CommissioningCheckReport,
@@ -326,6 +327,13 @@ export function clearStoredStaffToken(): boolean {
   return hadToken
 }
 
+/** Persist a token issued by either first-admin or staff-account sign-in. */
+export function storeStaffToken(token: string): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem('civiccast.staffToken', token)
+  window.sessionStorage.setItem('civiccast.staffToken', token)
+}
+
 /**
  * The injected test-only token the server has rejected, if any. Once the
  * operator has explicitly asked to sign in again (SetupScreen's "Sign in
@@ -431,11 +439,14 @@ export class ApiError extends Error {
   }
 }
 
-interface RequestOptions {
+export interface StaffApiRequestOptions {
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
   body?: unknown
   /** Abort the request after this many ms (e.g. the multi-minute TSDuck install). */
   timeoutMs?: number
+  responseType?: 'json' | 'blob'
+  /** Use for public staff sign-in so it never forwards a stale bearer. */
+  includeStaffToken?: boolean
 }
 
 function responseRetryAfterSeconds(response: Response): number | undefined {
@@ -498,9 +509,9 @@ export interface EgressSchemaCurrency {
   latest_sampled_at?: string | null
 }
 
-async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+async function request<T>(path: string, opts: StaffApiRequestOptions = {}): Promise<T> {
   const { method = 'GET', body, timeoutMs } = opts
-  const staffToken = runtimeStaffToken()
+  const staffToken = opts.includeStaffToken === false ? null : runtimeStaffToken()
 
   const controller = timeoutMs != null ? new AbortController() : undefined
   const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : undefined
@@ -569,7 +580,18 @@ async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     )
   }
   if (res.status === 204) return undefined as T
+  if (opts.responseType === 'blob') return (await res.blob()) as T
   return (await res.json()) as T
+}
+
+/** Shared credential-aware JSON request for feature modules in this client. */
+export function staffApiRequest<T>(path: string, opts: StaffApiRequestOptions = {}): Promise<T> {
+  return request<T>(path, opts)
+}
+
+/** Shared credential-aware download path for feature modules in this client. */
+export function staffApiBlobRequest(path: string): Promise<Blob> {
+  return request<Blob>(path, { responseType: 'blob' })
 }
 
 async function requestForm<T>(
@@ -609,6 +631,17 @@ async function requestForm<T>(
 
 export function listStaffAssets(): Promise<AssetRow[]> {
   return request<AssetRow[]>('/api/staff/assets')
+}
+
+export function getNetworkSettings(): Promise<NetworkSettingsResponse> {
+  return request<NetworkSettingsResponse>('/api/staff/network/settings')
+}
+
+export function saveNetworkSettings(settings: NetworkSettings): Promise<NetworkSettingsResponse> {
+  return request<NetworkSettingsResponse>('/api/staff/network/settings', {
+    method: 'PUT',
+    body: settings,
+  })
 }
 
 export function getCivicCastVersion(): Promise<{ version: string }> {

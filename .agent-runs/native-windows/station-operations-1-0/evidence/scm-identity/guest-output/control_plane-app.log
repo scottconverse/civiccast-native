@@ -1,0 +1,64 @@
+2026-10-13 13:36:54,578 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-10-13 13:36:55,064 WARNING civiccast.app: CivicCast now enforces first-party bearer-token auth on /api/staff/* routes. Keep the API bound to loopback (127.0.0.1) or behind an authenticating reverse proxy for network and TLS policy; see docs/ops/staff-route-protection.md. Set CIVICCAST_AUTH_ACK=1 only after confirming that deployment posture.
+2026-10-13 13:36:55,473 INFO civiccast.app: Created the default CivicCast recording target 'local-recordings' at C:\ProgramData\CivicCast\data\uploads\recordings. Recordings are saved there until an operator configures a different target.
+2026-10-13 13:36:55,536 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-10-13 13:36:55,913 WARNING civiccast.app: CivicCast now enforces first-party bearer-token auth on /api/staff/* routes. Keep the API bound to loopback (127.0.0.1) or behind an authenticating reverse proxy for network and TLS policy; see docs/ops/staff-route-protection.md. Set CIVICCAST_AUTH_ACK=1 only after confirming that deployment posture.
+2026-10-13 13:36:56,180 INFO civiccast.live.finalization_worker: Finalization worker started (inline thread, poll=5.0s, settle=30.0s).
+2026-10-13 13:36:56,180 INFO civiccast.platform.worker_runtime: civiccast-activitypub-retry-worker started (poll=60.0s).
+2026-10-13 13:36:56,180 INFO civiccast.platform.worker_runtime: civiccast-retention-worker started (poll=3600.0s).
+2026-10-13 13:36:56,180 INFO civiccast.platform.worker_runtime: civiccast-webhook-retry-worker started (poll=60.0s).
+2026-10-13 13:36:56,196 INFO civiccast.platform.worker_runtime: civiccast-media-integrity-worker started (poll=3600.0s).
+2026-10-13 13:36:56,202 INFO civiccast.platform.worker_runtime: civiccast-media-lifecycle-worker started (poll=300.0s).
+2026-10-13 13:36:56,204 INFO civiccast.platform.worker_runtime: civiccast-watch-folder-worker started (poll=2.0s).
+2026-10-13 13:36:56,204 INFO civiccast.platform.worker_runtime: civiccast-analytics-rollup-worker started (poll=300.0s).
+2026-10-13 13:36:56,204 INFO civiccast.platform.worker_runtime: civiccast-contributor-upload-reap started (poll=3600.0s).
+2026-10-13 13:36:56,204 INFO civiccast.platform.worker_runtime: civiccast-program-log-materializer started (poll=300.0s).
+2026-10-13 13:36:56,212 INFO civiccast.platform.worker_runtime: civiccast-alerting-maintenance started (poll=30.0s).
+2026-10-13 13:36:56,212 INFO civiccast.platform.worker_runtime: civiccast-channel-automation started (poll=2.0s).
+2026-10-13 13:36:56,212 INFO civiccast.platform.worker_runtime: civiccast-autoschedule-compile started (poll=60.0s).
+2026-10-13 13:36:56,212 INFO civiccast.platform.worker_runtime: civiccast-scheduled-recording started (poll=10.0s).
+2026-10-13 13:36:56,220 INFO civiccast.platform.worker_runtime: civiccast-bulletin-expiry started (poll=300.0s).
+2026-10-13 13:36:56,220 INFO civiccast.platform.worker_runtime: civiccast-offline-caption-worker started (poll=60.0s).
+2026-10-13 13:36:56,228 INFO civiccast.platform.worker_runtime: civiccast-summary-job-worker started (poll=15.0s).
+2026-10-13 13:38:49,476 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-10-13 13:38:50,104 WARNING civiccast.app: CivicCast now enforces first-party bearer-token auth on /api/staff/* routes. Keep the API bound to loopback (127.0.0.1) or behind an authenticating reverse proxy for network and TLS policy; see docs/ops/staff-route-protection.md. Set CIVICCAST_AUTH_ACK=1 only after confirming that deployment posture.
+2026-10-13 13:38:50,673 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-10-13 13:38:51,082 WARNING civiccast.app: CivicCast now enforces first-party bearer-token auth on /api/staff/* routes. Keep the API bound to loopback (127.0.0.1) or behind an authenticating reverse proxy for network and TLS policy; see docs/ops/staff-route-protection.md. Set CIVICCAST_AUTH_ACK=1 only after confirming that deployment posture.
+2026-10-13 13:38:51,381 INFO civiccast.live.finalization_worker: Finalization worker started (inline thread, poll=5.0s, settle=30.0s).
+2026-10-13 13:38:51,396 INFO civiccast.platform.worker_runtime: civiccast-activitypub-retry-worker started (poll=60.0s).
+2026-10-13 13:38:51,396 INFO civiccast.platform.worker_runtime: civiccast-retention-worker started (poll=3600.0s).
+2026-10-13 13:38:51,396 INFO civiccast.platform.worker_runtime: civiccast-webhook-retry-worker started (poll=60.0s).
+2026-10-13 13:38:51,396 INFO civiccast.platform.worker_runtime: civiccast-media-integrity-worker started (poll=3600.0s).
+2026-10-13 13:38:51,412 INFO civiccast.platform.worker_runtime: civiccast-media-lifecycle-worker started (poll=300.0s).
+2026-10-13 13:38:51,419 INFO civiccast.platform.worker_runtime: civiccast-watch-folder-worker started (poll=2.0s).
+2026-10-13 13:38:51,419 INFO civiccast.platform.worker_runtime: civiccast-analytics-rollup-worker started (poll=300.0s).
+2026-10-13 13:38:51,425 INFO civiccast.platform.worker_runtime: civiccast-contributor-upload-reap started (poll=3600.0s).
+2026-10-13 13:38:51,428 INFO civiccast.platform.worker_runtime: civiccast-program-log-materializer started (poll=300.0s).
+2026-10-13 13:38:51,428 INFO civiccast.platform.worker_runtime: civiccast-alerting-maintenance started (poll=30.0s).
+2026-10-13 13:38:51,436 INFO civiccast.platform.worker_runtime: civiccast-channel-automation started (poll=2.0s).
+2026-10-13 13:38:51,442 INFO civiccast.platform.worker_runtime: civiccast-autoschedule-compile started (poll=60.0s).
+2026-10-13 13:38:51,444 INFO civiccast.platform.worker_runtime: civiccast-scheduled-recording started (poll=10.0s).
+2026-10-13 13:38:51,444 INFO civiccast.platform.worker_runtime: civiccast-bulletin-expiry started (poll=300.0s).
+2026-10-13 13:38:51,444 INFO civiccast.platform.worker_runtime: civiccast-offline-caption-worker started (poll=60.0s).
+2026-10-13 13:38:51,460 INFO civiccast.platform.worker_runtime: civiccast-summary-job-worker started (poll=15.0s).
+2026-10-13 13:41:22,726 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-10-13 13:41:23,182 WARNING civiccast.app: CivicCast now enforces first-party bearer-token auth on /api/staff/* routes. Keep the API bound to loopback (127.0.0.1) or behind an authenticating reverse proxy for network and TLS policy; see docs/ops/staff-route-protection.md. Set CIVICCAST_AUTH_ACK=1 only after confirming that deployment posture.
+2026-10-13 13:41:23,575 INFO civiccast.app: CIVICCAST_LAN_ONLY_STATION is set, so the interactive API doc UIs (/docs, /redoc) are NOT served: their assets load from cdn.jsdelivr.net / fastapi.tiangolo.com / fonts.googleapis.com, which a LAN-only station cannot reach. The OpenAPI schema itself is still served at /openapi.json, to callers holding a staff bearer token.
+2026-10-13 13:41:23,905 WARNING civiccast.app: CivicCast now enforces first-party bearer-token auth on /api/staff/* routes. Keep the API bound to loopback (127.0.0.1) or behind an authenticating reverse proxy for network and TLS policy; see docs/ops/staff-route-protection.md. Set CIVICCAST_AUTH_ACK=1 only after confirming that deployment posture.
+2026-10-13 13:41:24,125 INFO civiccast.live.finalization_worker: Finalization worker started (inline thread, poll=5.0s, settle=30.0s).
+2026-10-13 13:41:24,125 INFO civiccast.platform.worker_runtime: civiccast-activitypub-retry-worker started (poll=60.0s).
+2026-10-13 13:41:24,125 INFO civiccast.platform.worker_runtime: civiccast-retention-worker started (poll=3600.0s).
+2026-10-13 13:41:24,125 INFO civiccast.platform.worker_runtime: civiccast-webhook-retry-worker started (poll=60.0s).
+2026-10-13 13:41:24,141 INFO civiccast.platform.worker_runtime: civiccast-media-integrity-worker started (poll=3600.0s).
+2026-10-13 13:41:24,141 INFO civiccast.platform.worker_runtime: civiccast-media-lifecycle-worker started (poll=300.0s).
+2026-10-13 13:41:24,147 INFO civiccast.platform.worker_runtime: civiccast-watch-folder-worker started (poll=2.0s).
+2026-10-13 13:41:24,147 INFO civiccast.platform.worker_runtime: civiccast-analytics-rollup-worker started (poll=300.0s).
+2026-10-13 13:41:24,151 INFO civiccast.platform.worker_runtime: civiccast-contributor-upload-reap started (poll=3600.0s).
+2026-10-13 13:41:24,151 INFO civiccast.platform.worker_runtime: civiccast-program-log-materializer started (poll=300.0s).
+2026-10-13 13:41:24,151 INFO civiccast.platform.worker_runtime: civiccast-alerting-maintenance started (poll=30.0s).
+2026-10-13 13:41:24,157 INFO civiccast.platform.worker_runtime: civiccast-channel-automation started (poll=2.0s).
+2026-10-13 13:41:24,157 INFO civiccast.platform.worker_runtime: civiccast-autoschedule-compile started (poll=60.0s).
+2026-10-13 13:41:24,157 INFO civiccast.platform.worker_runtime: civiccast-scheduled-recording started (poll=10.0s).
+2026-10-13 13:41:24,157 INFO civiccast.platform.worker_runtime: civiccast-bulletin-expiry started (poll=300.0s).
+2026-10-13 13:41:24,157 INFO civiccast.platform.worker_runtime: civiccast-offline-caption-worker started (poll=60.0s).
+2026-10-13 13:41:24,157 INFO civiccast.platform.worker_runtime: civiccast-summary-job-worker started (poll=15.0s).

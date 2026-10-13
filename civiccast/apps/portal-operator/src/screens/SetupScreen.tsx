@@ -1646,6 +1646,9 @@ export function SetupScreen({ onAuthenticated }: { onAuthenticated?: () => void 
       >
         Sign in
       </button>
+      <p className="m-0 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+        Staff members can <Link to="/login" className="underline">sign in to the operator console</Link> with their own account.
+      </p>
       {loginMutation.error && (
         <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
           {apiMessage(loginMutation.error, 'Sign-in failed.')}

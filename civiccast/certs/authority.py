@@ -22,6 +22,7 @@ from civiccast.certs.models import (
     CertificateRotationStatus,
     ServiceCertificateStatus,
 )
+from civiccast.native.service_identity import SERVICE_SID
 
 REQUIRED_SERVICE_IDENTITIES = ("civiccast-api", "civiccast-worker")
 ROTATION_DANGER_WINDOW_DAYS = 30
@@ -303,7 +304,7 @@ def _current_process_sid() -> str:
 
 def _windows_private_key_acl_command(path: Path, *, principal_sid: str) -> list[str]:
     """Return the ``icacls`` command that strips inherited access from a local
-    key/secret file and re-grants Full control to exactly three principals,
+    key/secret file and re-grants Full control to the writer, SYSTEM and admins,
     each named by a raw SID (``*S-1-...``) so every grant resolves on a
     non-domain station and on a non-English Windows:
 
@@ -325,7 +326,7 @@ def _windows_private_key_acl_command(path: Path, *, principal_sid: str) -> list[
             f"Refusing to build an icacls grant from {principal_sid!r}, which is not a "
             "textual SID (expected 'S-1-...')."
         )
-    return [
+    command = [
         "icacls",
         str(path),
         "/inheritance:r",
@@ -334,6 +335,11 @@ def _windows_private_key_acl_command(path: Path, *, principal_sid: str) -> list[
         f"*{_SYSTEM_SID}:F",
         f"*{_ADMINISTRATORS_SID}:F",
     ]
+    # The restricted runtime needs the same secrets after an administrator
+    # creates or resets them, without permission to rewrite their ACLs.
+    if principal_sid != SERVICE_SID:
+        command.append(f"*{SERVICE_SID}:(R,W)")
+    return command
 
 
 def _restrict_windows_private_key_acl(
@@ -373,6 +379,32 @@ def _restrict_windows_private_key_acl(
         text=True,
         creationflags=creationflags,
     )
+    if result.returncode == 1332 and SERVICE_SID in f"{result.stdout}\n{result.stderr}":
+        # icacls resolves even a *S-1-... trustee through the local account
+        # database. A virtual service SID has no account mapping before its
+        # service is registered, while Windows ACL APIs accept the SID itself.
+        import win32security
+
+        grants = {
+            principal_sid: "FA",
+            _SYSTEM_SID: "FA",
+            _ADMINISTRATORS_SID: "FA",
+        }
+        grants.setdefault(SERVICE_SID, "FRFW")
+        sddl = "D:P" + "".join(f"(A;;{rights};;;{sid})" for sid, rights in grants.items())
+        descriptor = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1)
+        try:
+            win32security.SetFileSecurity(
+                str(path),
+                win32security.DACL_SECURITY_INFORMATION
+                | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+                descriptor,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to restrict CivicCast private-key ACL on Windows with native SID ACL: {exc}"
+            ) from exc
+        return
     if result.returncode != 0:
         raise RuntimeError(
             "Failed to restrict CivicCast private-key ACL on Windows: icacls exited "

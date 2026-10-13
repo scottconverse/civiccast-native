@@ -1,0 +1,17 @@
+[
+    {
+        "path":  "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor",
+        "aclError":  "Cannot find path \u0027HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor\u0027 because it does not exist.",
+        "defaultValue":  null
+    },
+    {
+        "path":  "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor\\PythonClass",
+        "aclError":  "Cannot find path \u0027HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor\\PythonClass\u0027 because it does not exist.",
+        "readError":  "Requested registry access is not allowed."
+    },
+    {
+        "path":  "HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor\\PythonPath",
+        "aclError":  "Cannot find path \u0027HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor\\PythonPath\u0027 because it does not exist.",
+        "readError":  "Cannot find path \u0027HKLM:\\SYSTEM\\CurrentControlSet\\Services\\CivicCastSupervisor\\PythonPath\u0027 because it does not exist."
+    }
+]

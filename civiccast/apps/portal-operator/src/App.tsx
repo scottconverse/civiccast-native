@@ -1,4 +1,5 @@
 import {
+  Link,
   Navigate,
   Route,
   Routes,
@@ -7,16 +8,19 @@ import {
   useParams,
 } from 'react-router'
 import { lazy, Suspense, useEffect, useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Layout, MAIN_CONTENT_ID } from './components/shell/Layout'
+import { CivicCastLogo } from './components/shell/TopBar'
 import type { RoleName } from './components/shell/Sidebar'
 import { SampleSeedNotice } from './components/SampleSeedNotice'
-import { ApiError, getStaffIdentity } from './api/client'
+import { ApiError, getStaffIdentity, STAFF_SIGNED_OUT_NOTICE_KEY, storeStaffToken } from './api/client'
+import { loginStaffAccount, staffAccountsApi } from './api/staffAccounts'
 import type { StaffIdentityResponse } from './types/api.generated'
 import { ToastProvider } from './components/Toast'
-import { isPublicRoute, isTrimEditorRoute, routeForPath, routePath } from './routes'
+import { canonicalRoutePath, isPublicRoute, isTrimEditorRoute, routeForPath, routePath } from './routes'
 import { useRecoveryKitGateActive } from './auth/recoveryKitGate'
 import { SetupScreen } from './screens/SetupScreen'
+import { StaffLoginForm } from './screens/StaffLoginForm'
 import { TrimEditorScreen } from './screens/TrimEditorScreen'
 
 const ManualScreen = lazy(() => import('./screens/ManualScreen').then((module) => ({ default: module.ManualScreen })))
@@ -56,6 +60,48 @@ const SummaryReviewScreen = lazy(() => import('./screens/SummaryReviewScreen').t
 const SystemHealthScreen = lazy(() => import('./screens/SystemHealthScreen').then((module) => ({ default: module.SystemHealthScreen })))
 const StationProfileScreen = lazy(() => import('./screens/StationProfileScreen').then((module) => ({ default: module.StationProfileScreen })))
 const CommissioningWizardScreen = lazy(() => import('./screens/CommissioningWizardScreen').then((module) => ({ default: module.CommissioningWizardScreen })))
+const BackupScreen = lazy(() => import('./screens/BackupScreen').then((module) => ({ default: module.BackupScreen })))
+const NetworkSettingsScreen = lazy(() => import('./screens/NetworkSettingsScreen').then((module) => ({ default: module.NetworkSettingsScreen })))
+const StaffAccountsScreen = lazy(() => import('./screens/StaffAccountsScreen').then((module) => ({ default: module.StaffAccountsScreen })))
+
+function StaffLoginRoute() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const queryClient = useQueryClient()
+  const routeState = location.state as { returnTo?: unknown } | null
+  const returnTo =
+    typeof routeState?.returnTo === 'string' &&
+    routeState.returnTo.startsWith('/') &&
+    !routeState.returnTo.startsWith('//')
+      ? routeState.returnTo
+      : '/schedule'
+
+  return (
+    <main className="min-h-screen px-6 py-12" style={{ background: 'var(--cc-paper)', color: 'var(--cc-ink)' }}>
+      <div className="mx-auto grid max-w-4xl gap-5">
+        <header className="space-y-1">
+          <CivicCastLogo />
+          <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--cc-ink-3)' }}>
+            Operator console
+          </div>
+          <h1 className="m-0 mt-1 text-2xl font-semibold tracking-tight">Sign in</h1>
+        </header>
+        <StaffLoginForm
+          onLogin={loginStaffAccount}
+          onAuthenticated={(result) => {
+            storeStaffToken(result.access_token)
+            window.sessionStorage.removeItem(STAFF_SIGNED_OUT_NOTICE_KEY)
+            queryClient.removeQueries({ queryKey: ['staff-identity'] })
+            navigate(returnTo, { replace: true })
+          }}
+        />
+        <p className="m-0 text-sm" style={{ color: 'var(--cc-ink-2)' }}>
+          Station setup or first-admin recovery? <Link to="/setup" className="underline">Open First Setup</Link>.
+        </p>
+      </div>
+    </main>
+  )
+}
 
 function AssetsRoute() {
   const navigate = useNavigate()
@@ -237,6 +283,10 @@ function AppContent() {
     return <Navigate to="/setup" replace state={{ returnTo: location.pathname }} />
   }
 
+  if (canonicalRoutePath(location.pathname) === '/login') {
+    return <StaffLoginRoute />
+  }
+
   return (
     <Layout
       route={route}
@@ -258,10 +308,9 @@ function AppContent() {
         <Route path="/docs" element={<Navigate to="/help" replace />} />
         <Route path="/manual" element={<Navigate to="/help" replace />} />
         <Route path="/setup" element={<SetupRoute />} />
-        {/* First Setup hosts the returning-operator Admin sign-in card, so a
-            guessed /login (or /sign-in) lands there instead of Page not found. */}
-        <Route path="/login" element={<Navigate to="/setup" replace />} />
-        <Route path="/sign-in" element={<Navigate to="/setup" replace />} />
+        <Route path="/login" element={<StaffLoginRoute />} />
+        <Route path="/sign-in" element={<Navigate to="/login" replace />} />
+        <Route path="/staff-login" element={<Navigate to="/login" replace />} />
         <Route path="/live" element={<LiveRoomScreen />} />
         <Route path="/facility" element={<FacilityRouterScreen />} />
         <Route path="/control-room" element={<ControlRoomScreen />} />
@@ -299,6 +348,9 @@ function AppContent() {
         <Route path="/subscribers" element={<Navigate to="/paywall" replace />} />
         <Route path="/ai-models" element={<AiModelsScreen />} />
         <Route path="/station-profile" element={<StationProfileScreen />} />
+        <Route path="/staff-accounts" element={<StaffAccountsScreen api={staffAccountsApi} />} />
+        <Route path="/backups" element={<BackupScreen />} />
+        <Route path="/network" element={<NetworkSettingsScreen />} />
         <Route path="/commissioning" element={<CommissioningWizardScreen />} />
         <Route path="/custom-fields" element={<CustomFieldsScreen />} />
         <Route path="/reports" element={<ReportsScreen />} />

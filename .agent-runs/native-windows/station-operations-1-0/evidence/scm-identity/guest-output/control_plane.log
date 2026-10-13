@@ -1,0 +1,48 @@
+INFO:     Started server process [2044]
+
+INFO:     Waiting for application startup.
+
+INFO:     Application startup complete.
+
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+
+INFO:     127.0.0.1:49687 - "GET /health HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49702 - "GET /health HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49702 - "POST /api/staff/auth/login HTTP/1.1" 401 Unauthorized
+
+INFO:     Started server process [6772]
+
+INFO:     Waiting for application startup.
+
+INFO:     Application startup complete.
+
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+
+INFO:     127.0.0.1:49710 - "GET /health HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49728 - "GET /health HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49710 - "POST /api/setup/login HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49710 - "POST /api/staff/backups/create HTTP/1.1" 503 Service Unavailable
+
+INFO:     Started server process [7100]
+
+INFO:     Waiting for application startup.
+
+INFO:     Application startup complete.
+
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+
+INFO:     127.0.0.1:49739 - "GET /health HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49754 - "GET /health HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49754 - "POST /api/setup/login HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49754 - "POST /api/staff/backups/create HTTP/1.1" 200 OK
+
+INFO:     127.0.0.1:49754 - "POST /api/staff/backups/verify HTTP/1.1" 200 OK
+

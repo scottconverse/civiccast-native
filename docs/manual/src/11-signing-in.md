@@ -4,7 +4,7 @@ This chapter shows you how to open the operator console, sign in, recover a lost
 
 ## Before you start
 
-- You need the **station computer**: the Windows computer where CivicCast is installed. Sign-in only works in a web browser that is running on that computer. If you use a remote-desktop program, open the browser inside the remote session, so the browser runs on the station computer itself.
+- For **first setup, first-admin sign-in and recovery**, use a browser on the station computer (a remote-desktop session to that computer also works). Staff accounts can sign in from the station or, when the separate staff hostname is configured, from an approved staff network. See the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md) and [staff accounts guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/staff-accounts.md).
 - You need the **admin username and password** from the station's recovery kit. The kit is the printout or saved file made when the station was first set up.
 - CivicCast has to be running in the background. If it is not, the shortcut opens a browser error page instead of the console.
 - If nobody has set this station up yet, go straight to [Set up a brand-new station](#signing-in-first-run).
@@ -16,16 +16,15 @@ This chapter shows you how to open the operator console, sign in, recover a lost
 1. On the station computer, double-click the **CivicCast Operator Console** shortcut on the Desktop. The Start menu has the same shortcut.
 2. Wait for the browser to open.
 
-You should see a page headed **First setup**. Opening the console always starts here.
+The Desktop shortcut opens the local operator console. A signed-out browser now has a separate **Staff sign-in** page. Use **First setup** at `/setup` only to create or recover the first administrator; ordinary staff sign in at `/login`.
 
-> **Known issue (beta.11):** The console has no separate sign-in page. Sign-in lives on the page headed **First setup**, and that heading still reads "Create the station identity, first local admin, and recovery kit before a public meeting." on a station that was set up long ago. If the station is already set up, ignore that sentence. Scroll to the cards named **Admin sign-in** and **Use recovery code**. The addresses `/login` and `/sign-in` also lead to this page.
+> **Note:** First-admin setup and recovery remain local-only. A staff account can use `/login` on the configured staff hostname from an allowed network; the public hostname does not expose staff sign-in.
 
 ## Sign in
 
-1. Find the card named **Admin sign-in**. It sits below the **Setup complete** card, which names your station.
-2. Type your username in **Admin username**.
-3. Type your password in **Admin password**. Use the current password you chose during first setup (or the new password from your most recent recovery/reset). The recovery kit is a safe place to keep the initial password and one-time recovery codes; an older printed password may no longer work.
-4. Click **Sign in**. The button does nothing until both boxes are filled.
+1. Staff: open `/login`. First administrator: open `/setup` on the station computer and choose **Admin sign-in**.
+2. Enter the account's username and current password. For the first administrator, use the password chosen during setup (or the new password from the most recent recovery/reset); an older printed password may no longer work.
+3. Click **Sign in**. The button does nothing until both boxes are filled.
 
 You should be taken to the **Readiness** screen. If a screen sent you here because you were signed out, you go back to that screen instead.
 
@@ -33,7 +32,7 @@ You should be taken to the **Readiness** screen. If a screen sent you here becau
 
 > **Note:** A normal sign-in takes you straight to Readiness, so you will not see this on that path. After you create the first admin on a new station (see [Set up a brand-new station](#signing-in-first-run)), the **Setup complete** card says "CivicCast saved a fresh console token in this browser for &lt;your admin display name&gt;." A *console token* is the private pass your browser keeps so the station knows it is you. The sentence means you are signed in.
 
-> **Warning:** Closing the browser does not sign you out. CivicCast keeps your sign-in in the browser until you click **Sign out**, so anyone who opens the browser on that computer afterwards can use the console as you. On a shared or borrowed computer, always click **Sign out** before you leave.
+> **Warning:** Closing the browser does not sign you out. The browser keeps its token until you sign out, an administrator revokes the session, or the 12-hour session expiry is reached. On a shared or borrowed computer, always click **Sign out** before you leave.
 
 ## Use a recovery code
 
@@ -69,7 +68,7 @@ The **Sign out** button appears only after the console has confirmed who you are
 
 The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the installed version number, such as `v1.0.0-beta.15`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
 
-Hover over the round badge to see your name and your roles, in the form "&lt;your display name&gt; / &lt;your role names&gt;". The console shows your roles nowhere else.
+Hover over the round badge to see your name and your roles, in the form "&lt;your display name&gt; / &lt;your role names&gt;". Setup admins can also review account role assignments in **Staff accounts**.
 
 > **Known issue (beta.12; first recorded in beta.11):** The **No live meeting broadcast** pill and the words "Next No events scheduled" still never change. They stay the same during a live meeting and with a full schedule. Do not use them to decide whether the station is on air or what comes next. Use **Readiness**, **Channels** and **Schedule** instead.
 
@@ -247,7 +246,7 @@ You should see a green **Setup complete** card, a **First-run defaults** card, a
 
 > **Warning:** The saved kit file contains the admin password in plain text, together with all eight codes. Keep it, or the printout, where only authorized people can find it. Do not email it, and do not leave it in a folder that syncs to the internet.
 
-> **Warning:** Until you confirm the kit, the console holds you on First Setup. Every sidebar entry except **Manual** is grey, **Sign out** is disabled, any other address returns to First Setup, and your browser warns before you close the page. The kit lives in that browser tab. The station can never show the codes again. If you do reach the sign-in page without having confirmed, a warning named **Recovery kit never confirmed** appears there with a button **I found the kit — it is stored safely**. That button only records your word; it does not check anything.
+> **Warning:** Until you confirm the kit, `/setup` holds you on First Setup. Every sidebar entry except **Manual** is grey, **Sign out** is disabled, other console addresses return to First Setup, and your browser warns before you close the page. The kit lives in that browser tab. The station can never show the codes again. If you return to `/setup` without having confirmed, a warning named **Recovery kit never confirmed** appears there with a button **I found the kit — it is stored safely**. That button only records your word; it does not check anything.
 
 ### What a new station starts with
 
@@ -271,14 +270,14 @@ Below **Setup complete** are four tools for a Setup admin: **Camera or test medi
 | "Too many sign-in attempts from this station. Wait N seconds, then try again with the correct password, or use a printed recovery code." | Too many wrong guesses. | Wait the time shown. A correct password or recovery code still gets through. |
 | "Too many failed attempts to authenticate with the staff API. Wait N seconds, then try again." | Too many requests with a bad sign-in. The station's default is 10 failures in 60 seconds. | Wait, then try again. "Staff API" means the station's staff-side service. |
 | "The station is cooling down after too many requests" | The same slowdown, shown on First Setup. | Click **Try again**. The sign-in form on that card still works. |
-| **You were signed out**, "This browser's console session is no longer valid..." | Your sign-in was removed. Most often it was the oldest of the 20 sign-ins the station keeps, pushed out by newer ones, or the station's sign-in state was reset. | Sign in again on that page. Nothing is wrong with the station. |
-| "This browser's console sign-in is no longer valid" | The station rejected the sign-in this browser still held. | Click **Sign in again**, then use **Admin sign-in**. |
-| "First setup can only be done from the station computer itself" | You opened the console on another computer, or in a way that is not running on the station. | Open the browser on the station computer, or inside a remote session on it. |
+| **You were signed out**, "This browser's console session is no longer valid..." | Your session expired after 12 hours, an administrator revoked it, or the station's sign-in state was reset. | Sign in again. A Setup admin can review and revoke station sessions in **Staff accounts**. |
+| "This browser's console sign-in is no longer valid" | The station rejected the sign-in this browser still held. | Click **Sign in again**, then use `/login` for a staff account or `/setup` for the first administrator. |
+| "First setup can only be done from the station computer itself" | You opened first setup or first-admin recovery from another computer. | Open `/setup` on the station computer, or inside a remote session on it. Staff accounts use `/login` from the approved staff network when configured. |
 | "Could not read setup state." with more text | The station did not answer properly. | Wait a moment and reload. If it repeats, tell your IT person. |
 | "Sign in with the local station admin account, then try again." | The request carried no sign-in. | Sign in on First Setup. |
 | "This action requires one of these CivicCast roles: ..." | Your account does not hold a role the action needs. | Ask your admin. See below. |
 | "Staff identity is required for this action." | You are signed out. | Sign in. |
-| "Could not verify your staff identity (...)" | The screen could not check who you are. | Go to **First Setup**, use **Admin sign-in** with your admin username and password, then retry. |
+| "Could not verify your staff identity (...)" | The screen could not check who you are. | Sign in again at `/login` with your staff account, or use `/setup` if you are the first administrator. |
 | "Durable storage is not ready." | The station's database has not been prepared. | Click **Go to Setup**, then **Prepare storage**. |
 | **Page not found** | The address does not exist in this build. | Use a button on the page, or the sidebar. |
 
@@ -292,9 +291,9 @@ The role message lists raw role names. They map to the names in the console like
 | `publish_operator` | Publish operator |
 | `support_admin` | Support admin |
 
-> **Known issue (beta.11):** The card "First setup can only be done from the station computer itself" also appears when you try to sign in or recover from another computer, even though you are not doing setup. Sign-in and recovery have the same station-computer rule.
+> **Known issue (beta.11):** The message "First setup can only be done from the station computer itself" also appears for first-admin sign-in and recovery when `/setup` is opened remotely. Those `/api/setup/*` actions remain local-only. Staff use `/login` and, when configured, the CIDR-restricted staff hostname.
 
-> **Note:** The console has no screen for adding people or giving them roles. If you need a different set of roles, ask your IT person; see [Security and privacy](#ch-security).
+> **Note:** Setup admins can add staff, assign roles and disable access in **Staff accounts**. See the [staff accounts guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/staff-accounts.md) for account and session management.
 
 ## Related
 

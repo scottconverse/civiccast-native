@@ -377,6 +377,16 @@ pub fn register_native_service(install_root: &Path) -> Result<(), String> {
         "CivicCast (Native) service registration",
     )?;
     restore_service_host_site_packages_member(install_root)?;
+    run_and_check(
+        &python_exe,
+        &[
+            "-m".to_string(),
+            "civiccast.native.install_service_identity".to_string(),
+            "--install-root".to_string(),
+            install_root.to_string_lossy().into_owned(),
+        ],
+        "CivicCast restricted service identity migration",
+    )?;
     let sc_exe = Path::new("sc.exe");
     run_and_check(
         sc_exe,
@@ -1275,11 +1285,10 @@ pub fn validate_database_url_value(value: &str) -> Result<(), String> {
 // already-vendored version rather than fetching a new one.
 // ---------------------------------------------------------------------------
 
-/// SYSTEM + Administrators full control, no other principal, inheritance
-/// disabled (`P`). Identical DACL shape to
-/// `civiccast.native.runtime_guard.MUTEX_SDDL` -- see the section doc above.
+/// SYSTEM + Administrators full control, station virtual account read-only,
+/// inheritance disabled (`P`). The runtime reads its database credential here.
 #[cfg(target_os = "windows")]
-pub const SYSTEM_ADMIN_ONLY_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)";
+pub const SYSTEM_ADMIN_ONLY_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;KR;;;S-1-5-80-3505678282-1640658708-3289577692-12763909-1392209962)";
 
 #[cfg(target_os = "windows")]
 mod registry_acl {

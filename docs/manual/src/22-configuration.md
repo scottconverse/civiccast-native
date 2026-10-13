@@ -9,7 +9,7 @@ This chapter is for the person at the city who owns the CivicCast computer. It w
 You need:
 
 - The station computer, installed and running (see [Installing, first run, upgrading, uninstalling](#ch-installing)). The Windows service is `CivicCastSupervisor` ("CivicCast Native Supervisor").
-- A browser on the station computer itself. First Setup, the admin sign-in and the recovery-code reset only work from the station computer (the server answers HTTP 403 to any other computer).
+- A browser on the station computer for first setup, first-admin sign-in and recovery. Staff accounts can sign in remotely only through the configured staff hostname and from an approved network; see the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md) and [staff accounts guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/staff-accounts.md).
 - Administrator rights on Windows for the registry and file steps in the environment-variable section.
 - A plan for what the station does. A public-meetings station (residents watch on the web) needs far less configuration than a station that feeds a cable headend. Cable Commissioning and the headend presets are only needed for the second kind.
 
@@ -24,12 +24,13 @@ Settings are kept in five different places. Knowing which place holds a setting 
 | Where | What is kept there | How you change it |
 | --- | --- | --- |
 | The database (PostgreSQL, `C:\ProgramData\CivicCast\data\pgdata`) | Each channel's output configuration, the AI model choices, custom fields, the paywall, control-room devices and cues, watch folders, retention rules, schedules, assets | The console screens in this chapter (or the staff API) |
-| `station-state.json` and the files beside it | The Station Profile, the admin account, the recovery kit state, commissioning progress, the backup folder you verified, provider credentials (`provider-credentials.json`), proof references (`provider-proof-evidence.json`), `tester-ops-state.json` | The Setup and Station Profile screens |
+| `station-state.json` and the files beside it | The Station Profile, first-admin and staff accounts and session hashes, recovery-kit state, commissioning progress, network settings, provider credentials (`provider-credentials.json`), proof references (`provider-proof-evidence.json`), `tester-ops-state.json` | Setup, Staff accounts, Network Settings and Station Profile screens |
+| `C:\ProgramData\CivicCast\config\station-backups.json` | Backup destination, selected media roots, schedule, retention and last-run status | Station backup and restore screen; unattended passphrase is stored separately in the OS-protected secret vault |
 | The service's environment (the registry value `Environment` on the service) | Tuning and switches that have no screen: timeouts, worker on/off switches, cache sizes, proxy and CORS rules, the control-room sidecar address, TSDuck location | You, by hand, in the registry (see [Environment variables](#configuration-env)) |
 | The Windows credential store ("keyring") | AI provider API keys, control-room device passwords | The AI Models and Control Room Setup screens, or `civiccast model set-provider-key` |
-| Fixed by the installer | The folder layout under `C:\Program Files\CivicCast (Native)` and `C:\ProgramData\CivicCast`, the control plane address `127.0.0.1:8000`, the Ollama address `127.0.0.1:11434` | Not changeable in beta.11 |
+| Fixed or selected by the installer and network settings | The folder layout under `C:\Program Files\CivicCast (Native)` and `C:\ProgramData\CivicCast`, a loopback-only control-plane address (default `127.0.0.1:8000`), the Ollama address `127.0.0.1:11434` | Choose `127.0.0.1` or `::1` in Network Settings; the application cannot bind directly to a LAN or public address |
 
-The default location of `station-state.json` is `%LOCALAPPDATA%\CivicCast\station-state.json` of the account that runs the service, unless the variable `CIVICCAST_STATION_STATE_PATH` names another file. The service runs as LocalSystem, so on a station the folder is under the Windows system profile (normally `C:\Windows\System32\config\systemprofile\AppData\Local\CivicCast`). We derived that path from the code and the Windows rules for the LocalSystem account; we did not look at it on a running station. If you need the exact file, search the computer for `station-state.json`.
+The service's `station-state.json` and related profile files live under its configured service profile. The installer sets that profile to `C:\ProgramData\CivicCast\profile`; when migrating a default LocalSystem installation, it copies and verifies the old profile and imports CivicCast Credential Manager entries before changing service identity. See the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md) for migration boundaries. An isolated Windows Sandbox run with the current source overlay verified profile and credential migration, virtual-account startup, and a healthy API with the current schema. This is development-source evidence, not qualification of a rebuilt or signed installer or production cutover.
 
 > **Known issue (beta.11):** Back up `station-state.json` and the files beside it as well as `C:\ProgramData\CivicCast`. The admin account, the recovery-code hashes, the saved provider credentials and the commissioning record are in the state files, which in the default layout are not under `ProgramData`. The chapter on backups ([Running it day to day](#ch-operations)) describes what to copy.
 
@@ -39,7 +40,7 @@ The folder layout is described in the installing chapter. The two folders that m
 
 ## Run First Setup and create the admin account {#configuration-first-setup}
 
-First Setup is a page in the operator console at `http://127.0.0.1:8000/operator/` (the Start Menu shortcut "CivicCast Operator Console" opens it). It creates the station's one local admin account and a one-time recovery kit. After that, the same page is the sign-in page. You can reach it signed out; the aliases `/login` and `/sign-in` land on it.
+First Setup is at `/setup` in the local operator console (`http://127.0.0.1:8000/operator/`). It creates the first administrator and one-time recovery kit; first-admin sign-in and recovery remain local-only. Staff accounts use the separate `/login` page and can use the configured staff hostname from approved networks. See the [staff accounts guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/staff-accounts.md).
 
 1. On the station computer, open the console and choose **First Setup** in the sidebar.
 2. Under **Durable storage**, click **Prepare storage**. This creates or activates the local database for meeting records, captions, summaries and subscriptions. If the service was started with a `DATABASE_URL` the button does nothing and just reports status.
@@ -68,7 +69,7 @@ What the form does not show you, but the server chooses for you when you click *
 
 ### Sign in again, and when the password is lost
 
-On a configured station the page shows **Admin sign-in** (username and password) and **Use recovery code**. A correct password signs you in on that browser and sends you to the Readiness screen (`/health`) or to the page you were bounced from. It does not sign out other browsers. Sign-in only works from the station computer.
+At `/setup`, the station computer shows **Admin sign-in** and **Use recovery code** for the first administrator. A correct password signs in that browser and opens Readiness (`/health`) or the page you were returning to; it does not sign out other browsers. Ordinary staff use `/login`; remote sign-in is available only through the configured staff hostname from an approved network.
 
 Too many wrong passwords are limited. The default is 10 failures per 60 seconds for each route and each connecting address (`CIVICCAST_AUTH_RATE_LIMIT`, `CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS`). A correct password always gets through; a wrong one burns the budget.
 
@@ -87,7 +88,7 @@ Once signed in, the Setup page has four tools:
 - **Storage and viewing estimate** is arithmetic in your browser: hours per meeting times meetings per month times 2 gives gigabytes stored. Nothing is measured.
 - **Provider setup** holds the cloud and archive providers. See [Provider setup and keys](#configuration-providers).
 
-> **Known issue (beta.11):** **Verify backup** only checks that CivicCast can write, read and delete a small test file in the folder you typed, and it remembers the path. We found no code that copies station data to that folder on a schedule, and `last_backup_at` is never written. A green "Ready" on this card does not mean a backup exists. Make real backups as described in [Running it day to day](#ch-operations). The folder is written by the service account, so use a local path or a share that the computer account can write to; a drive letter mapped in your own session does not exist for the service. Paths that start `/mnt/c/...` (Linux style) and drive-relative paths such as `C:backups` are refused.
+> **Note:** The Setup card's **Verify backup** checks whether CivicCast can write, read and delete a small test file in the selected folder; it does not create or schedule an encrypted station archive. Use **Station backup and restore** to create, verify and schedule `.ccbackup` archives, and review the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md) before relying on them. The Setup destination check runs under the service account, so use a local path or share that account can write to; a drive letter mapped only in your own session is unavailable to the service.
 
 ## Set the Station Profile {#configuration-profile}
 
@@ -114,7 +115,7 @@ The **Station box profile** card is read-only. It asks the program what this com
 
 ### Security actions
 
-- **Sign out other sessions** ends every other operator-console session except this browser, after a confirmation. It only works if you signed in with the admin password; with a staff token you get HTTP 401 "Invalid staff bearer token."
+- **Sign out other sessions** ends every other station-local console session except this browser, after a confirmation. It requires a signed-in station session with the `setup_admin` role; database and environment API tokens cannot use it. The **Staff accounts** screen also lets a setup admin review and revoke individual sessions.
 - **Regenerate recovery kit** creates eight new codes and invalidates the old ones at once. The new codes exist only on that page. Save or print them before you leave the page, tick the confirmation and click **Done**. If you leave early the codes are lost, and the old ones no longer work.
 
 ## Configure channels, outputs and sinks {#configuration-channels}
@@ -414,15 +415,15 @@ If you still want to look at it on a lab station:
 
 What the program does, as found in the code:
 
-- The control plane, which serves the operator console and the resident portal and the API, is started by the service as `uvicorn civiccast.app:create_app --factory --host 127.0.0.1 --port 8000`. It is plain HTTP. We found no setting for a certificate, a key file or HTTPS on this server. The first-admin setup and sign-in also require the request to come from the same computer (loopback).
+- The control plane, which serves the operator console, resident portal and API, stays on a loopback address (`127.0.0.1` by default; Network Settings also accepts `::1`) and speaks plain HTTP upstream. For remote HTTPS, use the supported Caddy configuration: a public hostname for resident pages and a separate, CIDR-restricted staff hostname. First setup and first-admin recovery stay local-only. See the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md).
 - PostgreSQL listens on `127.0.0.1` (the first free of ports 5432, 5433, 5434, 5435 and 5544). Ollama listens on `127.0.0.1:11434`. The Control Room sidecar listens on `127.0.0.1`.
 - The **local CA** is a small certificate authority for internal service-to-service TLS (mutual TLS). It holds two identities, `civiccast-api` and `civiccast-worker`. `civiccast cert rotate civiccast-api` creates the CA on first use (valid 3,650 days), then issues the named certificate (valid 90 days; "rotation due" starts when 30 days remain) with the key readable only by the account that ran the command. The folder is `CIVICCAST_CERT_ROOT`, default `.civiccast\certs` in the home folder of the account running the command. The only reader of these certificates is the CLI's `civiccast installer health-check`, which lists "Local CA mTLS" with the next step "Rotate internal service certificates every 90 days." We found no part of the station that serves or checks TLS with them.
 - Behind a reverse proxy or CDN, set `CIVICCAST_TRUSTED_PROXY_CIDRS` (comma-separated CIDR list) so the real client address is used for rate limiting and audit. `CIVICCAST_TRUST_PRIVATE_PROXIES=true` trusts loopback and private-network hops too (default false; set it when a proxy such as nginx runs on the station itself). With `CIVICCAST_CDN_PROVIDER` set to `bunny` or `cloudflare`, the provider's published edge networks are added. With none of these set, forwarded headers are ignored.
 - Browsers from another web origin are refused by default. `CIVICCAST_CORS_ALLOWED_ORIGINS` is a comma-separated list of exact origins (scheme, host, port); a wildcard is a startup error.
 
-> **Known issue (beta.11):** The installer opens an inbound Windows Firewall rule named "CivicCast (Native) Portal/API (TCP 8000)", but the control plane listens on `127.0.0.1` only. Other computers on the network cannot reach the console or the resident portal through that rule. Do not tell staff that other computers can open `http://<station>:8000/`. To serve residents on the internet, publish through a CDN or your own reverse proxy and verify it before the first meeting; see [Integrations](#ch-integrations).
+The installer-created TCP 8000 rule does not make the loopback-only application listener reachable from other computers. For supported remote access, deploy Caddy using the generated configuration; it terminates HTTPS and enforces the separate public/staff host policy. Do not expose port 8000 directly. See the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md).
 
-> **Known issue (beta.11):** There is no HTTPS setting for the station's own web server. The local CA is not a way to turn it on.
+The application itself does not terminate HTTPS; Caddy provides the supported HTTPS edge. The local CA remains for internal certificate operations and is not a browser certificate.
 
 ## Storage and media lifecycle {#configuration-storage}
 
@@ -596,7 +597,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 | What you see | Likely cause | What to do |
 | --- | --- | --- |
-| "First setup can only be done from the station computer itself" | You opened First Setup from another computer | Use a browser on the station computer. The server answers 403 to any other address |
+| "First setup can only be done from the station computer itself" | You opened `/setup` away from the station | Use `/setup` on the station computer for first-admin actions. Ordinary staff use `/login`; remote staff sign-in requires the configured staff hostname and an approved network. |
 | "First-admin setup is already complete. Use the recovery flow or set CIVICCAST_ALLOW_FIRST_ADMIN_RESET=1 for an intentional local reset." | The station is already set up | Sign in; use a recovery code if the password is lost |
 | "Too many sign-in attempts from this station. Wait N seconds, then try again with the correct password, or use a printed recovery code." | The sign-in limit was reached | Wait the number of seconds shown |
 | "Durable storage is not ready." or HTTP 503 on a screen | The database was not prepared or the service is still starting | Click **Prepare storage** on First Setup; check the service and `postgres.log` |

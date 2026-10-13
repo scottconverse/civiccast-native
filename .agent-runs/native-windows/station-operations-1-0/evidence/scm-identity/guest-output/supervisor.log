@@ -1,0 +1,33 @@
+2026-10-13 13:36:48,091 INFO civiccast.native.supervisor: supervisor logging initialized (pid 7024, sinks ['C:\\ProgramData\\CivicCast\\logs\\supervisor.log'])
+2026-10-13 13:36:49,195 WARNING civiccast.native.supervisor: station not yet activated; supervisor starting in pre-activation mode (packaged portals and the setup handoff are still served so first-run setup can be completed)
+2026-10-13 13:36:49,195 WARNING civiccast.native.supervisor: ffmpeg/ffprobe not staged at C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin (degraded media handling, control-plane rehearsal/live paths that shell out to ffmpeg will fail; service healthy)
+2026-10-13 13:36:49,195 INFO civiccast.native.supervisor: CivicCast supervisor service starting up
+2026-10-13 13:36:49,195 INFO civiccast.native.supervisor: D7 control pipe opened: control pipe '\\\\.\\pipe\\civiccast-supervisor' created
+2026-10-13 13:36:49,211 WARNING civiccast.native.supervisor: ollama child skipped (degraded AI, service healthy): ollama binary absent at C:\Program Files\CivicCast (Native)\dependencies\ollama\ollama.exe
+2026-10-13 13:36:57,642 INFO civiccast.native.supervisor: stop requested; running graceful stop chain
+2026-10-13 13:36:57,642 INFO civiccast.native.supervisor: stop: issued ctrl_break_event graceful action for control_plane
+2026-10-13 13:37:12,649 WARNING civiccast.native.supervisor: stop: control_plane overran the 15s graceful deadline; TerminateProcess
+2026-10-13 13:37:12,789 INFO civiccast.native.supervisor: stop: issued argv graceful action for postgres
+2026-10-13 13:37:12,948 INFO civiccast.native.supervisor: CivicCast supervisor service stopped
+2026-10-13 13:38:41,130 INFO civiccast.native.supervisor: supervisor logging initialized (pid 3244, sinks ['C:\\ProgramData\\CivicCast\\logs\\supervisor.log'])
+2026-10-13 13:38:42,601 WARNING civiccast.native.supervisor: station not yet activated; supervisor starting in pre-activation mode (packaged portals and the setup handoff are still served so first-run setup can be completed)
+2026-10-13 13:38:42,601 WARNING civiccast.native.supervisor: ffmpeg/ffprobe not staged at C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin (degraded media handling, control-plane rehearsal/live paths that shell out to ffmpeg will fail; service healthy)
+2026-10-13 13:38:42,617 INFO civiccast.native.supervisor: CivicCast supervisor service starting up
+2026-10-13 13:38:42,617 INFO civiccast.native.supervisor: D7 control pipe opened: control pipe '\\\\.\\pipe\\civiccast-supervisor' created
+2026-10-13 13:38:42,633 WARNING civiccast.native.supervisor: ollama child skipped (degraded AI, service healthy): ollama binary absent at C:\Program Files\CivicCast (Native)\dependencies\ollama\ollama.exe
+2026-10-13 13:38:52,721 INFO civiccast.native.supervisor: stop requested; running graceful stop chain
+2026-10-13 13:38:52,721 INFO civiccast.native.supervisor: stop: issued ctrl_break_event graceful action for control_plane
+2026-10-13 13:39:07,733 WARNING civiccast.native.supervisor: stop: control_plane overran the 15s graceful deadline; TerminateProcess
+2026-10-13 13:39:07,869 INFO civiccast.native.supervisor: stop: issued argv graceful action for postgres
+2026-10-13 13:39:08,011 INFO civiccast.native.supervisor: CivicCast supervisor service stopped
+2026-10-13 13:41:16,129 INFO civiccast.native.supervisor: supervisor logging initialized (pid 8432, sinks ['C:\\ProgramData\\CivicCast\\logs\\supervisor.log'])
+2026-10-13 13:41:17,269 WARNING civiccast.native.supervisor: station not yet activated; supervisor starting in pre-activation mode (packaged portals and the setup handoff are still served so first-run setup can be completed)
+2026-10-13 13:41:17,269 WARNING civiccast.native.supervisor: ffmpeg/ffprobe not staged at C:\Program Files\CivicCast (Native)\dependencies\ffmpeg\bin (degraded media handling, control-plane rehearsal/live paths that shell out to ffmpeg will fail; service healthy)
+2026-10-13 13:41:17,269 INFO civiccast.native.supervisor: CivicCast supervisor service starting up
+2026-10-13 13:41:17,269 INFO civiccast.native.supervisor: D7 control pipe opened: control pipe '\\\\.\\pipe\\civiccast-supervisor' created
+2026-10-13 13:41:17,269 WARNING civiccast.native.supervisor: ollama child skipped (degraded AI, service healthy): ollama binary absent at C:\Program Files\CivicCast (Native)\dependencies\ollama\ollama.exe
+2026-10-13 13:41:27,192 INFO civiccast.native.supervisor: stop requested; running graceful stop chain
+2026-10-13 13:41:27,192 INFO civiccast.native.supervisor: stop: issued ctrl_break_event graceful action for control_plane
+2026-10-13 13:41:42,201 WARNING civiccast.native.supervisor: stop: control_plane overran the 15s graceful deadline; TerminateProcess
+2026-10-13 13:41:42,335 INFO civiccast.native.supervisor: stop: issued argv graceful action for postgres
+2026-10-13 13:41:42,445 INFO civiccast.native.supervisor: CivicCast supervisor service stopped

@@ -1377,6 +1377,51 @@ Upsert Audio Track.
 - Request body: `AudioTrackInput`
 - Responses: 200 `AudioProgramTrack`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/auth/accounts`
+
+List station-local staff accounts.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `Array<StaffAccountResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/auth/accounts`
+
+Create a station-local staff account.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `StaffAccountCreateRequest`
+- Responses: 201 `StaffAccountResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PATCH /api/staff/auth/accounts/{operator_id}`
+
+Change a staff account's roles, display name, or access state.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `operator_id` (path, required): `string`
+- Request body: `StaffAccountUpdateRequest`
+- Responses: 200 `StaffAccountResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/auth/accounts/{operator_id}/reset-password`
+
+Reset a staff password and end its existing sessions.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `operator_id` (path, required): `string`
+- Request body: `StaffPasswordResetRequest`
+- Responses: 204 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/auth/login`
+
+Sign in to a station-local staff account.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `StaffLoginRequest`
+- Responses: 200 `StaffLoginResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/auth/me`
 
 Return the verified staff identity and product roles.
@@ -1385,6 +1430,24 @@ Return the verified staff identity and product roles.
 - Parameters: none
 - Request body: none
 - Responses: 200 `StaffIdentityResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/auth/sessions`
+
+List station-local staff sessions.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `Array<StaffSessionResponse>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `DELETE /api/staff/auth/sessions/{session_id}`
+
+Revoke one station-local staff session.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `session_id` (path, required): `string`
+- Request body: none
+- Responses: 204 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `POST /api/staff/auth/sign-out`
 
@@ -1547,6 +1610,69 @@ Update a saved search.
 - Parameters: `saved_search_id` (path, required): `string`
 - Request body: `SavedSearchInput`
 - Responses: 200 `SavedSearch`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+
+### `GET /api/staff/backups`
+
+List Station Backups.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `Record<string, unknown>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/backups/create`
+
+Create Station Backup.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `CreateBackupRequest`
+- Responses: 200 `Record<string, unknown>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PUT /api/staff/backups/schedule`
+
+Update Station Backup Schedule.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `ScheduleRequest`
+- Responses: 200 `Record<string, unknown>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PUT /api/staff/backups/schedule/passphrase`
+
+Set Scheduled Passphrase.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `ScheduledPassphraseRequest`
+- Responses: 200 `Record<string, boolean>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/backups/status`
+
+Station Backup Status.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `Record<string, unknown>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `POST /api/staff/backups/verify`
+
+Verify Station Backup.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `VerifyBackupRequest`
+- Responses: 200 `Record<string, unknown>`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `GET /api/staff/backups/{backup_id}/download`
+
+Download Station Backup.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: `backup_id` (path, required): `string`
+- Request body: none
+- Responses: 200 Successful Response; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `GET /api/staff/cable/channels`
 
@@ -3527,6 +3653,24 @@ Undo an apply: delete exactly the rows that batch created.
 - Parameters: none
 - Request body: `MigrationRollbackRequest`
 - Responses: 200 `ImportBatch`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Import batch not found; 409 Import batch was already rolled back; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage is not ready yet.
+
+### `GET /api/staff/network/settings`
+
+Read station listener and proxy settings.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `NetworkSettingsResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PUT /api/staff/network/settings`
+
+Save station listener and proxy settings.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `NetworkSettings`
+- Responses: 200 `NetworkSettingsResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
 ### `GET /api/staff/paywall/config`
 
@@ -6030,6 +6174,10 @@ Read CivicCast local federation metadata.
 - `name` (required): `string`
 - `ok` (required): `boolean`
 
+### `CreateBackupRequest`
+
+- `passphrase` (required): `string`
+
 ### `CreateRoomInput`
 
 - `channel_id` (required): `string`
@@ -7300,6 +7448,22 @@ rule (S13 §5.1).
 - `headend_interface_hint` (optional): `string | null`
 - `hostname` (required): `string`
 - `primary_interface_up` (required): `boolean`
+
+### `NetworkSettings`
+
+- `caddy_bind_addresses` (optional): `Array<string>`
+- `mode` (optional): `'loopback' | 'caddy'`
+- `public_base_url` (optional): `string | null`
+- `staff_allowed_cidrs` (optional): `Array<string>`
+- `staff_hostname` (optional): `string | null`
+- `upstream_host` (optional): `string`
+- `upstream_port` (optional): `number`
+
+### `NetworkSettingsResponse`
+
+- `caddyfile` (required): `string`
+- `restart_required` (required): `boolean`
+- `settings` (required): `NetworkSettings`
 
 ### `NotificationDelivery`
 
@@ -8623,6 +8787,19 @@ rule (S13 §5.1).
 - `scheduled_at` (required): `string`
 - `state` (required): `'scheduled' | 'cancelled' | 'published'`
 
+### `ScheduleRequest`
+
+- `destination` (required): `string`
+- `enabled` (required): `boolean`
+- `hour_utc` (required): `number`
+- `minute_utc` (required): `number`
+- `retention_count` (required): `number`
+- `selected_media_roots` (optional): `Array<string>`
+
+### `ScheduledPassphraseRequest`
+
+- `passphrase` (required): `string`
+
 ### `SdiReadiness`
 
 - `ffmpeg_detected` (required): `boolean`
@@ -8834,6 +9011,31 @@ rule (S13 §5.1).
 - `schedule_item_id` (required): `string`
 - `scheduled_at` (required): `string`
 
+### `StaffAccountCreateRequest`
+
+- `display_name` (required): `string`
+- `password` (required): `string`
+- `roles` (required): `Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>`
+- `username` (required): `string`
+
+### `StaffAccountResponse`
+
+- `account_type` (required): `'first_admin' | 'staff'`
+- `created_at` (optional): `string | null`
+- `display_name` (required): `string`
+- `enabled` (required): `boolean`
+- `immutable` (optional): `boolean`
+- `operator_id` (required): `string`
+- `roles` (required): `Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>`
+- `updated_at` (optional): `string | null`
+- `username` (required): `string`
+
+### `StaffAccountUpdateRequest`
+
+- `display_name` (optional): `string | null`
+- `enabled` (optional): `boolean | null`
+- `roles` (optional): `Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'> | null`
+
 ### `StaffAssetRow`
 
 - `asset_id` (required): `string`
@@ -8888,6 +9090,36 @@ rule (S13 §5.1).
 - `roles` (optional): `Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>`
 - `scopes` (optional): `Array<string>`
 - `token_id` (optional): `string | null`
+
+### `StaffLoginRequest`
+
+- `password` (required): `string`
+- `username` (required): `string`
+
+### `StaffLoginResponse`
+
+- `access_token` (required): `string`
+- `expires_at` (required): `string`
+- `issued_at` (required): `string`
+- `operator_display_name` (required): `string`
+- `operator_id` (required): `string`
+- `roles` (optional): `Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>`
+
+### `StaffPasswordResetRequest`
+
+- `new_password` (required): `string`
+
+### `StaffSessionResponse`
+
+- `current` (optional): `boolean`
+- `expired` (optional): `boolean`
+- `expires_at` (required): `string`
+- `issued_at` (required): `string`
+- `operator_display_name` (required): `string`
+- `operator_id` (required): `string`
+- `roles` (optional): `Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>`
+- `session_id` (required): `string`
+- `source` (required): `string`
 
 ### `StaffSignOutResponse`
 
@@ -9474,6 +9706,11 @@ rule (S13 §5.1).
 - `turn_port` (optional): `number | null`
 - `turn_reachable` (optional): `boolean`
 - `vdo_process_up` (optional): `boolean`
+
+### `VerifyBackupRequest`
+
+- `backup_id` (required): `string`
+- `passphrase` (required): `string`
 
 ### `ViewerAccount`
 

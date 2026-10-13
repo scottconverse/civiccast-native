@@ -18,6 +18,7 @@ from pathlib import Path
 import typer
 
 from civiccast.installer.station_state import _replace_admin_password, _restrict_state_file
+from civiccast.native.service_identity import is_station_service_account
 
 admin_app = typer.Typer(
     name="admin", help="Local Windows administrator recovery.", no_args_is_help=True
@@ -68,9 +69,9 @@ def _installed_state_path() -> Path:
                     "Stop CivicCastSupervisor before resetting the administrator password."
                 )
             account = win32service.QueryServiceConfig(service)[7]
-            if account.casefold() not in ("localsystem", r"nt authority\system"):
+            if not is_station_service_account(account):
                 raise RecoveryError(
-                    "Recovery requires the installed LocalSystem supervisor identity."
+                    "Recovery requires the installed CivicCast supervisor service identity."
                 )
         finally:
             win32service.CloseServiceHandle(service)

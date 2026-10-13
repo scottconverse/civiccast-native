@@ -1,0 +1,31 @@
+﻿**********************
+Windows PowerShell transcript start
+Start time: 20261013134114
+Username: 33A39735-4E5E-4\WDAGUtilityAccount
+RunAs User: 33A39735-4E5E-4\WDAGUtilityAccount
+Configuration Name: 
+Machine: 33A39735-4E5E-4 (Microsoft Windows NT 10.0.26100.0)
+Host Application: powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastScripts\ContinueApi.ps1
+Process ID: 5524
+PSVersion: 5.1.26100.9444
+PSEdition: Desktop
+PSCompatibleVersions: 1.0, 2.0, 3.0, 4.0, 5.0, 5.1.26100.9444
+BuildVersion: 10.0.26100.9444
+CLRVersion: 4.0.30319.42000
+WSManStackVersion: 3.0
+PSRemotingProtocolVersion: 2.3
+SerializationVersion: 1.1.0.1
+**********************
+PS>TerminatingError(Invoke-RestMethod): "Unable to connect to the remote server"
+PS>TerminatingError(Invoke-RestMethod): "Unable to connect to the remote server"
+WARNING: Waiting for service 'CivicCast Native Supervisor (CivicCastSupervisor)' to stop...
+WARNING: Waiting for service 'CivicCast Native Supervisor (CivicCastSupervisor)' to stop...
+WARNING: Waiting for service 'CivicCast Native Supervisor (CivicCastSupervisor)' to stop...
+WARNING: Waiting for service 'CivicCast Native Supervisor (CivicCastSupervisor)' to stop...
+WARNING: Waiting for service 'CivicCast Native Supervisor (CivicCastSupervisor)' to stop...
+WARNING: Waiting for service 'CivicCast Native Supervisor (CivicCastSupervisor)' to stop...
+WARNING: Waiting for service 'CivicCast Native Supervisor (CivicCastSupervisor)' to stop...
+**********************
+Windows PowerShell transcript end
+End time: 20261013134143
+**********************

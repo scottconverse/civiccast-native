@@ -1,0 +1,5 @@
+{
+    "State":  "Stopped",
+    "StartName":  "NT SERVICE\\CivicCastSupervisor",
+    "ProcessId":  0
+}

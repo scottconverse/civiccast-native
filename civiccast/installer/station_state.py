@@ -16,14 +16,28 @@ import logging
 import os
 import secrets
 import stat
-from datetime import UTC, datetime
+import threading
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
+from functools import wraps
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, cast
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from civiccast.ai_models.models import detect_summary_model_default
-from civiccast.auth.models import OperatorIdentity
+from civiccast.auth.models import (
+    OperatorIdentity,
+    OperatorRole,
+    StaffAccountCreateRequest,
+    StaffAccountResponse,
+    StaffAccountUpdateRequest,
+    StaffLoginRequest,
+    StaffLoginResponse,
+    StaffPasswordResetRequest,
+    StaffSessionResponse,
+)
+from civiccast.auth.roles import ALL_OPERATOR_ROLES
 from civiccast.cable.channel import default_channel_profiles
 from civiccast.installer.models import (
     LIVE_CAPTIONS_DEFAULT,
@@ -75,6 +89,20 @@ _DEFAULT_ROLES = ["setup_admin", "publish_operator", "support_admin", "viewer"]
 # are never explicitly signed out -- oldest-issued entries are evicted
 # first; it is not a security control.
 _MAX_OPERATOR_SESSIONS = 20
+_OPERATOR_SESSION_TTL = 12 * 60 * 60
+_STATE_MUTATION_LOCK = threading.RLock()
+
+
+def _serialize_state_mutation[**P, R](function: Callable[P, R]) -> Callable[P, R]:
+    """Keep read-modify-write station-state operations from clobbering each other."""
+
+    @wraps(function)
+    def wrapped(*args: P.args, **kwargs: P.kwargs) -> R:
+        with _STATE_MUTATION_LOCK:
+            return function(*args, **kwargs)
+
+    return wrapped
+
 
 # The station's seed channels MUST match the real playout/egress channel
 # lineup. A manually-maintained second list here (a numbered channel set)
@@ -120,6 +148,10 @@ class StationSetupAlreadyCompleteError(RuntimeError):
 
 class StationAuthError(RuntimeError):
     """Raised when local station admin sign-in or recovery fails."""
+
+
+class StationAccountNotFoundError(RuntimeError):
+    """Raised when a requested staff account or session does not exist."""
 
 
 class StationSetupNotCompleteError(RuntimeError):
@@ -643,6 +675,7 @@ def read_station_setup_state(*, operator_console_url: str) -> StationSetupState:
     )
 
 
+@_serialize_state_mutation
 def complete_first_admin_setup(
     request: FirstAdminSetupRequest,
     *,
@@ -682,6 +715,7 @@ def complete_first_admin_setup(
         recovery_kit_id=kit_id,
         recovery_kit_generated_at=generated_at,
     )
+    token_entry["operator_id"] = profile.admin_username
     recovery_kit = RecoveryKit(
         kit_id=kit_id,
         generated_at=generated_at,
@@ -771,6 +805,7 @@ def complete_first_admin_setup(
     )
 
 
+@_serialize_state_mutation
 def acknowledge_recovery_kit(*, operator_console_url: str) -> StationSetupState:
     """Record that the operator saved or printed the one-time recovery kit."""
 
@@ -786,34 +821,309 @@ def acknowledge_recovery_kit(*, operator_console_url: str) -> StationSetupState:
     return read_station_setup_state(operator_console_url=operator_console_url)
 
 
+@_serialize_state_mutation
 def verify_station_operator_token(token: str) -> OperatorIdentity | None:
-    """Return the first-admin operator identity when token matches local state.
+    """Return a station-local operator identity when a session matches.
 
     Checks every concurrently valid session in ``operator_console.tokens``,
     not just the most recently issued one -- see ``_MAX_OPERATOR_SESSIONS``
-    for why more than one can be valid at once.
+    for why more than one can be valid at once. Legacy sessions acquire an
+    expiry on first successful use; all newly issued sessions carry a fixed
+    12-hour expiry.
     """
 
     raw = _load_raw_state()
     admin = raw.get("admin")
     console = raw.get("operator_console")
-    if not isinstance(admin, dict) or not isinstance(console, dict):
+    if not isinstance(console, dict):
         return None
-    if not any(
-        hmac.compare_digest(_hash_token(token, salt=entry["token_salt"]), entry["token_hash"])
-        for entry in _operator_token_entries(console)
-    ):
-        return None
-    username = str(admin.get("username") or "first-admin")
-    display_name = str(admin.get("display_name") or username)
-    return OperatorIdentity(
-        operator_id=username,
-        operator_display_name=display_name,
-        token_id="station-first-admin",  # noqa: S106 - audit label, not a secret.
-        scopes=("admin",),
-    )
+    entries = _operator_token_entries(console)
+    for entry in entries:
+        if not hmac.compare_digest(
+            _hash_token(token, salt=entry["token_salt"]), entry["token_hash"]
+        ):
+            continue
+        if _ensure_session_metadata(raw, console, entries, entry):
+            _save_raw_state(raw)
+        if _session_is_expired(entry):
+            return None
+        account_id = entry.get("account_id", "first-admin")
+        session_id = str(entry.get("session_id") or _session_id_for_entry(entry))
+        if account_id == "first-admin":
+            if not isinstance(admin, dict):
+                return None
+            username = str(admin.get("username") or "first-admin")
+            display_name = str(admin.get("display_name") or username)
+            return OperatorIdentity(
+                operator_id=username,
+                operator_display_name=display_name,
+                token_id=session_id,
+                scopes=("admin",),
+            )
+        account = _find_staff_account(raw, str(account_id))
+        if account is None or not account.get("enabled", True):
+            return None
+        roles = _account_roles(account)
+        if not roles:
+            return None
+        return OperatorIdentity(
+            operator_id=str(account["operator_id"]),
+            operator_display_name=str(account["display_name"]),
+            token_id=session_id,
+            scopes=tuple(roles),
+        )
+    return None
 
 
+def staff_login_credentials_correct(request: StaffLoginRequest) -> bool:
+    """Non-mutating credential check for the login rate-limit exact-match bypass."""
+
+    raw = _load_raw_state()
+    account = _find_staff_account_by_username(raw, request.username)
+    return account is not None and _verify_staff_password(account, request.password)
+
+
+def login_staff_account(request: StaffLoginRequest) -> StaffLoginResponse:
+    """Verify a local staff password and issue one bounded, expiring session."""
+
+    with _STATE_MUTATION_LOCK:
+        raw = _load_raw_state()
+        account = _find_staff_account_by_username(raw, request.username)
+        if account is None or not _verify_staff_password(account, request.password):
+            raise StationAuthError("Invalid staff username or password.")
+        if not account.get("enabled", True):
+            raise StationAuthError("Invalid staff username or password.")
+        roles = _account_roles(account)
+        if not roles:
+            raise StationAuthError("Invalid staff username or password.")
+        token, entry = _issue_operator_token(
+            raw,
+            source="staff-login",
+            account_id=str(account["operator_id"]),
+            operator_id=str(account["operator_id"]),
+            scopes=tuple(roles),
+        )
+        _save_raw_state(raw)
+        return StaffLoginResponse(
+            access_token=token,
+            operator_id=str(account["operator_id"]),
+            operator_display_name=str(account["display_name"]),
+            roles=tuple(roles),
+            issued_at=str(entry["issued_at"]),
+            expires_at=str(entry["expires_at"]),
+        )
+
+
+def list_staff_accounts() -> list[StaffAccountResponse]:
+    """Return first-admin and staff metadata, without password material."""
+
+    raw = _load_raw_state()
+    result: list[StaffAccountResponse] = []
+    admin = raw.get("admin")
+    if isinstance(admin, dict):
+        username = str(admin.get("username") or "first-admin")
+        result.append(
+            StaffAccountResponse(
+                operator_id="first-admin",
+                username=username,
+                display_name=str(admin.get("display_name") or username),
+                roles=tuple(ALL_OPERATOR_ROLES),
+                enabled=True,
+                account_type="first_admin",
+                created_at=(
+                    str(raw.get("recovery", {}).get("generated_at"))
+                    if isinstance(raw.get("recovery"), dict)
+                    else None
+                ),
+                immutable=True,
+            )
+        )
+    accounts = raw.get("staff_accounts")
+    if isinstance(accounts, list):
+        result.extend(
+            _staff_account_response(account)
+            for account in accounts
+            if isinstance(account, dict) and isinstance(account.get("operator_id"), str)
+        )
+    return result
+
+
+def create_staff_account(request: StaffAccountCreateRequest) -> StaffAccountResponse:
+    """Create one staff account in portable station state."""
+
+    with _STATE_MUTATION_LOCK:
+        raw = _load_raw_state()
+        username = request.username.strip().casefold()
+        display_name = request.display_name.strip()
+        if not username or not display_name:
+            raise StationAuthError("A staff username and display name are required.")
+        admin = raw.get("admin")
+        if isinstance(admin, dict) and username == str(admin.get("username", "")).casefold():
+            raise StationAuthError("That username is reserved for the first administrator.")
+        if _find_staff_account_by_username(raw, username) is not None:
+            raise StationAuthError("A staff account already uses that username.")
+        now = datetime.now(UTC).isoformat()
+        salt = secrets.token_hex(16)
+        account: dict[str, Any] = {
+            "operator_id": "staff_" + secrets.token_urlsafe(12),
+            "username": username,
+            "display_name": display_name,
+            "password_salt": salt,
+            "password_hash": _hash_secret(request.password, salt=salt),
+            "password_iterations": _PASSWORD_ITERATIONS,
+            "roles": sorted(set(request.roles)),
+            "enabled": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+        raw.setdefault("staff_accounts", []).append(account)
+        _save_raw_state(raw)
+        return _staff_account_response(account)
+
+
+def update_staff_account(
+    operator_id: str,
+    request: StaffAccountUpdateRequest,
+) -> StaffAccountResponse:
+    """Update one staff record and revoke sessions after access changes."""
+
+    if operator_id == "first-admin":
+        raise StationAuthError("The first administrator is managed through the recovery flow.")
+    with _STATE_MUTATION_LOCK:
+        raw = _load_raw_state()
+        account = _find_staff_account(raw, operator_id)
+        if account is None:
+            raise StationAccountNotFoundError("Staff account was not found.")
+        current_roles = set(_account_roles(account))
+        new_roles = set(request.roles) if request.roles is not None else current_roles
+        new_enabled = (
+            request.enabled if request.enabled is not None else bool(account.get("enabled", True))
+        )
+        if (
+            account.get("enabled", True)
+            and "setup_admin" in current_roles
+            and (not new_enabled or "setup_admin" not in new_roles)
+        ):
+            _ensure_active_administrator_remains(raw, account)
+        roles_changed = new_roles != current_roles
+        enabled_changed = new_enabled != bool(account.get("enabled", True))
+        if request.display_name is not None:
+            display_name = request.display_name.strip()
+            if not display_name:
+                raise StationAuthError("A staff display name is required.")
+            account["display_name"] = display_name
+        account["roles"] = sorted(new_roles)
+        account["enabled"] = new_enabled
+        account["updated_at"] = datetime.now(UTC).isoformat()
+        if roles_changed or enabled_changed:
+            _revoke_staff_account_sessions(raw, operator_id)
+        _save_raw_state(raw)
+        return _staff_account_response(account)
+
+
+def reset_staff_account_password(
+    operator_id: str,
+    request: StaffPasswordResetRequest,
+) -> None:
+    """Replace a staff password and revoke all of that account's sessions."""
+
+    with _STATE_MUTATION_LOCK:
+        raw = _load_raw_state()
+        account = _find_staff_account(raw, operator_id)
+        if account is None:
+            raise StationAccountNotFoundError("Staff account was not found.")
+        salt = secrets.token_hex(16)
+        account["password_salt"] = salt
+        account["password_hash"] = _hash_secret(request.new_password, salt=salt)
+        account["password_iterations"] = _PASSWORD_ITERATIONS
+        account["password_rotated_at"] = datetime.now(UTC).isoformat()
+        account["updated_at"] = account["password_rotated_at"]
+        _revoke_staff_account_sessions(raw, operator_id)
+        _save_raw_state(raw)
+
+
+def list_operator_sessions(*, current_token: str | None = None) -> list[StaffSessionResponse]:
+    """List live and expired station sessions without exposing token material."""
+
+    with _STATE_MUTATION_LOCK:
+        raw = _load_raw_state()
+        console = raw.get("operator_console")
+        if not isinstance(console, dict):
+            return []
+        entries = _operator_token_entries(console)
+        dirty = False
+        for entry in entries:
+            if _ensure_session_metadata(raw, console, entries, entry):
+                dirty = True
+        if console.get("tokens") is not entries:
+            console["tokens"] = entries
+            dirty = True
+        if dirty:
+            raw["operator_console"] = console
+            _save_raw_state(raw)
+        result: list[StaffSessionResponse] = []
+        for entry in entries:
+            operator_id = str(entry.get("operator_id") or "")
+            account_id = str(entry.get("account_id") or "first-admin")
+            if account_id == "first-admin":
+                admin = raw.get("admin")
+                if not isinstance(admin, dict):
+                    continue
+                operator_id = str(admin.get("username") or "first-admin")
+                display_name = str(admin.get("display_name") or operator_id)
+                roles = tuple(ALL_OPERATOR_ROLES)
+            else:
+                account = _find_staff_account(raw, account_id)
+                if account is None:
+                    continue
+                operator_id = str(account["operator_id"])
+                display_name = str(account["display_name"])
+                roles = tuple(_account_roles(account))
+            token_matches = bool(
+                current_token
+                and hmac.compare_digest(
+                    _hash_token(current_token, salt=entry["token_salt"]),
+                    entry["token_hash"],
+                )
+            )
+            result.append(
+                StaffSessionResponse(
+                    session_id=str(entry["session_id"]),
+                    operator_id=operator_id,
+                    operator_display_name=display_name,
+                    roles=roles,
+                    source=str(entry.get("source") or "legacy"),
+                    issued_at=str(entry["issued_at"]),
+                    expires_at=str(entry["expires_at"]),
+                    expired=_session_is_expired(entry),
+                    current=token_matches,
+                )
+            )
+        return result
+
+
+def revoke_operator_session_by_id(session_id: str) -> None:
+    """Revoke one station session selected by its public opaque id."""
+
+    with _STATE_MUTATION_LOCK:
+        raw = _load_raw_state()
+        console = raw.get("operator_console")
+        if not isinstance(console, dict):
+            raise StationAccountNotFoundError("Staff session was not found.")
+        entries = _operator_token_entries(console)
+        for entry in entries:
+            _ensure_session_metadata(raw, console, entries, entry)
+        remaining = [entry for entry in entries if entry.get("session_id") != session_id]
+        if len(remaining) == len(entries):
+            raise StationAccountNotFoundError("Staff session was not found.")
+        raw["operator_console"] = {
+            "tokens": remaining,
+            "rotated_at": datetime.now(UTC).isoformat(),
+        }
+        _save_raw_state(raw)
+
+
+@_serialize_state_mutation
 def login_station_admin(
     request: StationLoginRequest,
     *,
@@ -833,7 +1143,7 @@ def login_station_admin(
     # _MAX_OPERATOR_SESSIONS above): a routine password sign-in on one
     # browser must not silently sign out every other browser or device
     # already signed in -- which is exactly what the sign-in card promises.
-    operator_token = _issue_operator_token(raw, source="login")
+    operator_token, _entry = _issue_operator_token(raw, source="login")
     _save_raw_state(raw)
     return StationAuthResponse(
         status="authenticated",
@@ -844,6 +1154,7 @@ def login_station_admin(
     )
 
 
+@_serialize_state_mutation
 def recover_station_admin(
     request: StationRecoveryRequest,
     *,
@@ -862,7 +1173,7 @@ def recover_station_admin(
     # any other already-open session is compromised, so recovering does not
     # get to silently sign out the admin's own other tabs/devices (see the
     # OWNER DECISION comment on _MAX_OPERATOR_SESSIONS above).
-    operator_token = _issue_operator_token(raw, source="recovery")
+    operator_token, _entry = _issue_operator_token(raw, source="recovery")
     _save_raw_state(raw)
     return StationAuthResponse(
         status="recovered",
@@ -916,6 +1227,7 @@ def recovery_code_correct(request: StationRecoveryRequest) -> bool:
     return _consume_recovery_code(raw, request.recovery_code)
 
 
+@_serialize_state_mutation
 def revoke_other_operator_sessions(token: str) -> int:
     """Sign out every operator-console session except the caller's own.
 
@@ -963,6 +1275,7 @@ def revoke_other_operator_sessions(token: str) -> int:
     return revoked_count
 
 
+@_serialize_state_mutation
 def revoke_operator_session(token: str) -> None:
     """Sign out exactly the operator-console session that is calling.
 
@@ -1002,6 +1315,7 @@ def revoke_operator_session(token: str) -> None:
     _save_raw_state(raw)
 
 
+@_serialize_state_mutation
 def regenerate_recovery_kit() -> RecoveryKit:
     """Mint a fresh 8-code recovery kit for an already-authenticated admin.
 
@@ -1258,6 +1572,160 @@ def _dashboard_ready_state_from_state(value: object) -> StationDashboardReadySta
     return "not_ready"
 
 
+def _find_staff_account(raw: dict[str, Any], operator_id: str) -> dict[str, Any] | None:
+    accounts = raw.get("staff_accounts")
+    if not isinstance(accounts, list):
+        return None
+    return next(
+        (
+            account
+            for account in accounts
+            if isinstance(account, dict) and account.get("operator_id") == operator_id
+        ),
+        None,
+    )
+
+
+def _find_staff_account_by_username(raw: dict[str, Any], username: str) -> dict[str, Any] | None:
+    normalized = username.strip().casefold()
+    if not normalized:
+        return None
+    accounts = raw.get("staff_accounts")
+    if not isinstance(accounts, list):
+        return None
+    return next(
+        (
+            account
+            for account in accounts
+            if isinstance(account, dict)
+            and str(account.get("username", "")).casefold() == normalized
+        ),
+        None,
+    )
+
+
+def _account_roles(account: dict[str, Any]) -> list[OperatorRole]:
+    values = account.get("roles")
+    if not isinstance(values, list):
+        return []
+    known = set(ALL_OPERATOR_ROLES)
+    return sorted({value for value in values if isinstance(value, str) and value in known})
+
+
+def _staff_account_response(account: dict[str, Any]) -> StaffAccountResponse:
+    return StaffAccountResponse(
+        operator_id=str(account["operator_id"]),
+        username=str(account["username"]),
+        display_name=str(account["display_name"]),
+        roles=tuple(_account_roles(account)),
+        enabled=bool(account.get("enabled", True)),
+        account_type="staff",
+        created_at=str(account.get("created_at")) if account.get("created_at") else None,
+        updated_at=str(account.get("updated_at")) if account.get("updated_at") else None,
+    )
+
+
+def _verify_staff_password(account: dict[str, Any], password: str) -> bool:
+    salt = account.get("password_salt")
+    expected = account.get("password_hash")
+    if not isinstance(salt, str) or not isinstance(expected, str):
+        return False
+    return hmac.compare_digest(_hash_secret(password, salt=salt), expected)
+
+
+def _ensure_active_administrator_remains(
+    raw: dict[str, Any],
+    account_being_changed: dict[str, Any],
+) -> None:
+    admin = raw.get("admin")
+    active_admins = int(
+        isinstance(admin, dict)
+        and all(
+            isinstance(admin.get(name), str) and admin.get(name)
+            for name in ("username", "password_salt", "password_hash")
+        )
+    )
+    accounts = raw.get("staff_accounts")
+    if isinstance(accounts, list):
+        active_admins += sum(
+            1
+            for account in accounts
+            if isinstance(account, dict)
+            and account is not account_being_changed
+            and account.get("enabled", True)
+            and "setup_admin" in _account_roles(account)
+        )
+    if active_admins <= 1:
+        raise StationAuthError("At least one active setup administrator must remain.")
+
+
+def _revoke_staff_account_sessions(raw: dict[str, Any], operator_id: str) -> None:
+    console = raw.get("operator_console")
+    if not isinstance(console, dict):
+        return
+    entries = _operator_token_entries(console)
+    remaining = [entry for entry in entries if entry.get("account_id") != operator_id]
+    if len(remaining) != len(entries):
+        raw["operator_console"] = {
+            "tokens": remaining,
+            "rotated_at": datetime.now(UTC).isoformat(),
+        }
+
+
+def _ensure_session_metadata(
+    raw: dict[str, Any],
+    console: dict[str, Any],
+    entries: list[dict[str, Any]],
+    entry: dict[str, Any],
+) -> bool:
+    """Add bounded expiry and stable IDs when an old session is first used."""
+
+    changed = False
+    now = datetime.now(UTC)
+    if not isinstance(entry.get("session_id"), str) or not entry["session_id"]:
+        entry["session_id"] = "sess_" + secrets.token_urlsafe(12)
+        changed = True
+    if not isinstance(entry.get("account_id"), str):
+        entry["account_id"] = "first-admin"
+        changed = True
+    if not isinstance(entry.get("issued_at"), str):
+        entry["issued_at"] = now.isoformat()
+        changed = True
+    if not isinstance(entry.get("expires_at"), str):
+        try:
+            issued = datetime.fromisoformat(str(entry["issued_at"]).replace("Z", "+00:00"))
+            if issued.tzinfo is None:
+                issued = issued.replace(tzinfo=UTC)
+        except (TypeError, ValueError):
+            issued = now
+        entry["expires_at"] = (issued + timedelta(seconds=_OPERATOR_SESSION_TTL)).isoformat()
+        changed = True
+    if changed:
+        console["tokens"] = entries
+        raw["operator_console"] = console
+    return changed
+
+
+def _session_is_expired(entry: dict[str, Any]) -> bool:
+    value = entry.get("expires_at")
+    if not isinstance(value, str):
+        return True
+    try:
+        expires = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    return expires <= datetime.now(UTC)
+
+
+def _session_id_for_entry(entry: dict[str, Any]) -> str:
+    session_id = entry.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    return "legacy-" + str(entry.get("token_hash", ""))[:16]
+
+
 def _hash_secret(secret: str, *, salt: str) -> str:
     digest = hashlib.pbkdf2_hmac(
         "sha256",
@@ -1325,15 +1793,27 @@ def _replace_admin_password(raw: dict[str, Any], new_password: str) -> None:
     admin["password_rotated_at"] = datetime.now(UTC).isoformat()
 
 
-def _new_operator_token_entry(*, source: str) -> tuple[str, dict[str, Any]]:
+def _new_operator_token_entry(
+    *,
+    source: str,
+    account_id: str = "first-admin",
+    operator_id: str | None = None,
+    scopes: tuple[str, ...] = ("admin",),
+) -> tuple[str, dict[str, Any]]:
     """Mint one fresh operator token and its storable (salted-hash) entry."""
 
     operator_token = "ccst_" + secrets.token_urlsafe(32)
     token_salt = secrets.token_hex(16)
+    issued_at = datetime.now(UTC)
     entry = {
         "token_salt": token_salt,
         "token_hash": _hash_token(operator_token, salt=token_salt),
-        "issued_at": datetime.now(UTC).isoformat(),
+        "session_id": "sess_" + secrets.token_urlsafe(12),
+        "account_id": account_id,
+        "operator_id": operator_id,
+        "scopes": list(scopes),
+        "issued_at": issued_at.isoformat(),
+        "expires_at": (issued_at + timedelta(seconds=_OPERATOR_SESSION_TTL)).isoformat(),
         "source": source,
     }
     return operator_token, entry
@@ -1365,7 +1845,14 @@ def _operator_token_entries(console: dict[str, Any]) -> list[dict[str, Any]]:
     return []
 
 
-def _issue_operator_token(raw: dict[str, Any], *, source: str) -> str:
+def _issue_operator_token(
+    raw: dict[str, Any],
+    *,
+    source: str,
+    account_id: str = "first-admin",
+    operator_id: str | None = None,
+    scopes: tuple[str, ...] = ("admin",),
+) -> tuple[str, dict[str, Any]]:
     """Mint a fresh operator token and append it to the session list.
 
     Every issuance path (setup, ordinary login, recovery) keeps all other
@@ -1378,13 +1865,22 @@ def _issue_operator_token(raw: dict[str, Any], *, source: str) -> str:
 
     console = raw.get("operator_console")
     existing = _operator_token_entries(console) if isinstance(console, dict) else []
-    operator_token, entry = _new_operator_token_entry(source=source)
+    if operator_id is None and account_id == "first-admin":
+        admin = raw.get("admin")
+        if isinstance(admin, dict):
+            operator_id = str(admin.get("username") or "first-admin")
+    operator_token, entry = _new_operator_token_entry(
+        source=source,
+        account_id=account_id,
+        operator_id=operator_id,
+        scopes=scopes,
+    )
     tokens = [*existing, entry][-_MAX_OPERATOR_SESSIONS:]
     raw["operator_console"] = {
         "tokens": tokens,
         "rotated_at": datetime.now(UTC).isoformat(),
     }
-    return operator_token
+    return operator_token, entry
 
 
 def _restrict_state_file(path: Path) -> None:

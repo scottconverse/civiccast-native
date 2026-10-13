@@ -1,0 +1,35 @@
+guest-entry 2026-10-13T19:22:33.6080316Z
+2026-10-13T19:22:49.8801917Z phase=preflight
+2026-10-13T19:22:50.2078968Z phase=stage
+2026-10-13T19:23:10.0938288Z phase=stage-vc-runtime
+2026-10-13T19:23:10.2512906Z phase=postgres-fixture
+guest-resume 2026-10-13T19:26:55.0520932Z
+2026-10-13T19:26:55.3767044Z phase=preflight
+2026-10-13T19:26:55.7603650Z phase=resume-postgres-fixture
+guest-resume 2026-10-13T19:27:33.2130029Z
+2026-10-13T19:27:33.5886919Z phase=preflight
+2026-10-13T19:27:33.9134859Z phase=resume-postgres-fixture
+guest-resume 2026-10-13T19:31:42.8073891Z
+2026-10-13T19:31:43.1001451Z phase=preflight
+2026-10-13T19:31:43.4236957Z phase=resume-postgres-fixture
+fixture=normalize-and-start-file-backed
+fixture=create-database
+fixture=production-schema-migration
+fixture=stop-file-backed
+fixture=postgres-fixture-ready
+2026-10-13T19:31:49.8868712Z phase=register-local-system
+2026-10-13T19:31:53.0884163Z phase=seed-local-system
+2026-10-13T19:31:57.6569186Z phase=migrate-identity
+guest-resume 2026-10-13T19:33:38.8492972Z
+2026-10-13T19:33:39.1811407Z phase=preflight
+2026-10-13T19:33:40.6918988Z phase=migrate-identity
+guest-resume 2026-10-13T19:36:31.7580680Z
+2026-10-13T19:36:32.0700871Z phase=preflight
+2026-10-13T19:36:33.5821472Z phase=migrate-identity
+2026-10-13T19:36:44.8984257Z phase=verify-secret
+2026-10-13T19:36:46.0894962Z phase=restricted-start-api
+2026-10-13T19:36:57.5380729Z phase=restricted-backup-credential-export
+2026-10-13T19:38:39.3831652Z phase=restricted-start-api
+2026-10-13T19:38:52.3121844Z phase=restricted-backup-credential-export
+2026-10-13T19:41:14.3626177Z phase=restricted-start-api
+2026-10-13T19:41:25.8823833Z phase=restricted-backup-credential-export

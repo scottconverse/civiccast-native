@@ -1,0 +1,5 @@
+.venv\Scripts\python.exe -m pytest tests/dr/test_station_backup.py tests/dr/test_station_backup_runtime.py tests/dr/test_backup.py tests/auth/test_staff_accounts.py tests/native/test_identity_migration.py tests/native/test_install_service_identity.py tests/native/test_service_identity.py tests/native/test_station_secrets.py tests/native/test_network.py tests/native/test_network_router.py tests/native/test_admin_recovery.py tests/native/test_pgdata_acl.py tests/native/test_supervisor_control_client.py tests/certs/test_private_key_acl.py tests/common/test_trusted_proxy.py tests/test_app_station_backup_wiring.py -q --tb=short
+
+Exit code: 0
+Result: 186 passed in 26.53s
+Output: affected-python-final.txt

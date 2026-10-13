@@ -48,11 +48,13 @@ mutating tier; ``none`` = the caller satisfies no tier (denied)."""
 #   administrators       -> S-1-5-32-544 (BUILTIN\Administrators)
 #   system               -> S-1-5-18
 #   interactive          -> S-1-5-4
-KnownGroup = Literal["authenticated_users", "administrators", "system", "interactive"]
+KnownGroup = Literal[
+    "authenticated_users", "administrators", "system", "interactive", "station_service"
+]
 
 _ADMIN_COMMANDS: frozenset[str] = frozenset({"start", "stop", "restart", "drain", "runtime_set"})
 _READ_COMMANDS: frozenset[str] = frozenset({"status", "version"})
-_ADMIN_GROUPS: frozenset[str] = frozenset({"administrators", "system"})
+_ADMIN_GROUPS: frozenset[str] = frozenset({"administrators", "system", "station_service"})
 
 
 class AuthzDecision(BaseModel):

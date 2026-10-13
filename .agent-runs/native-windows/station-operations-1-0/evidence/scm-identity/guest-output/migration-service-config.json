@@ -1,0 +1,7 @@
+{
+    "ObjectName":  "LocalSystem",
+    "Environment":  [
+                        "LOCALAPPDATA=C:\\Windows\\System32\\config\\systemprofile\\AppData\\Local",
+                        "USERPROFILE=C:\\Windows\\System32\\config\\systemprofile"
+                    ]
+}

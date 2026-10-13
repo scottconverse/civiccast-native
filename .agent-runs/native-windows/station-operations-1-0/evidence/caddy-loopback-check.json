@@ -1,0 +1,42 @@
+{
+  "check": "Caddy generated-config validation and loopback route boundary",
+  "caddy_version": "v2.11.7",
+  "official_release_asset": "https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_windows_amd64.zip",
+  "caddy_exe_sha256": "5F93A9BD555F3AAC9D33AF2756BA14B3519D8CCA4FFD55256BDAEAB444C9DB2A",
+  "production_example_config_sha256": "BE3079AFBAC1C898ABDAF71D64C147C6BC9BFBE4F588A134C24002F261E8F56C",
+  "production_config_validation": "caddy adapt --config Caddyfile --adapter caddyfile --validate: exit 0",
+  "loopback_test_config_sha256": "4FF9811688AD45B4AC63F3501EA6B1B770603882B9459EE36096D7335AF6C211",
+  "loopback_scope": "127.0.0.1:18443 Caddy TLS internal, skip_install_trust, auto_https disable_redirects; Python static upstream 127.0.0.1:18080; generated route blocks retained, hostnames mapped with curl --resolve",
+  "requests": [
+    {
+      "status": 200,
+      "name": "public-root",
+      "expected": 200
+    },
+    {
+      "status": 404,
+      "name": "public-staff-api-block",
+      "expected": 404
+    },
+    {
+      "status": 200,
+      "name": "staff-api-forward-to-fixture",
+      "expected": 200
+    },
+    {
+      "status": 403,
+      "name": "staff-first-setup-block",
+      "expected": 403
+    }
+  ],
+  "limitations": [
+    "Upstream was a static Python fixture, not CivicCast; the staff 200 proves proxy routing only, not bearer authentication.",
+    "Only loopback listeners were used; no public bind, firewall change, service mutation, or CA trust-store installation.",
+    "Both temporary processes received Ctrl-C and post-stop listener query was empty.",
+    "Caddy emitted nonfatal style/redundant-header warnings during validation."
+  ],
+  "retained_configs": [
+    "caddy-example-generated.Caddyfile",
+    "caddy-loopback-fixture.Caddyfile"
+  ]
+}

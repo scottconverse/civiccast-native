@@ -469,13 +469,14 @@ jobs:
         # 2026-10-09 CI collection audit: 1959 pure tests; that checkpoint's
         # 50-test-margin floor was 1909.
         # 2026-10-12 Beta 14 collection: 1985 pure tests, with a floor of 1935.
-        # 2026-10-13 Beta 15 collection: 1995 pure tests; preserve the same
-        # 50-test margin with a floor of 1945.
+        # 2026-10-13 station-operations collection: 2024 pure tests after
+        # marking six Windows-only identity/DPAPI cases; preserve the same
+        # 50-test margin with a floor of 1974.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1945 \
+            --floor 1974 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -622,14 +623,15 @@ jobs:
         # 2026-10-12 Beta 14 collection: the current Windows non-integration
         # collection is 2193; preserve the same 50-test margin with a floor of
         # 2143.
-        # 2026-10-13 Beta 15 collection: 2203 Windows non-integration tests;
-        # preserve the same 50-test margin with a floor of 2153.
+        # 2026-10-13 station-operations collection: 2256 Windows
+        # non-integration tests; preserve the same 50-test margin with a
+        # floor of 2206.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 2153 \
+            --floor 2206 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit

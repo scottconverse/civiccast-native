@@ -1,0 +1,14 @@
+[
+    {
+        "TimeCreated":  "\/Date(1791920023400)\/",
+        "ProviderName":  "Python Service",
+        "Id":  128,
+        "Message":  "Could not locate the module name in the Python class string (ie, no \u0027.\u0027)"
+    },
+    {
+        "TimeCreated":  "\/Date(1791920023399)\/",
+        "ProviderName":  "Python Service",
+        "Id":  244,
+        "Message":  "Could not find the service\u0027s PythonClass entry in the registry Error 1814 - The specified resource name cannot be found in the image file."
+    }
+]

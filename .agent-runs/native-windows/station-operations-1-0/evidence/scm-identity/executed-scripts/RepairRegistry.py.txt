@@ -1,0 +1,4 @@
+from civiccast.native.install_service_identity import _grant_service_environment_read
+_grant_service_environment_read()
+from pathlib import Path
+Path(r"C:\CivicCastEvidence\partial-candidate-registry-repair.txt").write_text("Corrected production registry grant reapplied once to repair the empty PythonClass child DACL left by prior candidate. Same initialized guest retained. Not a pristine installation proof.\n",encoding="utf-8")

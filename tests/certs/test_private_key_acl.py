@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from civiccast.certs import authority
+from civiccast.native.service_identity import SERVICE_SID
 
 _SAMPLE_SID = "S-1-5-21-1111111111-2222222222-3333333333-1001"
 
@@ -31,7 +32,7 @@ windows_only = pytest.mark.skipif(os.name != "nt", reason="Real icacls behavior 
 # --------------------------------------------------------------------------- #
 # Pure command-builder contract (cross-platform)                              #
 # --------------------------------------------------------------------------- #
-def test_command_grants_three_sids_by_star_prefix() -> None:
+def test_command_grants_writer_admins_and_restricted_service_by_sid() -> None:
     path = Path(r"C:\CivicCast\certs\ca\civiccast-local-ca.key")
 
     command = authority._windows_private_key_acl_command(path, principal_sid=_SAMPLE_SID)
@@ -44,6 +45,7 @@ def test_command_grants_three_sids_by_star_prefix() -> None:
         f"*{_SAMPLE_SID}:F",
         "*S-1-5-18:F",
         "*S-1-5-32-544:F",
+        f"*{SERVICE_SID}:(R,W)",
     ]
 
 
@@ -187,6 +189,31 @@ def test_restrict_real_icacls_succeeds_and_grants_expected_principals(tmp_path: 
     text = readback.stdout
     assert "NT AUTHORITY\\SYSTEM:(F)" in text
     assert "BUILTIN\\Administrators:(F)" in text
+
+
+@windows_only
+def test_unregistered_service_sid_uses_native_acl_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A raw but unregistered virtual SID fails icacls, then succeeds natively."""
+
+    import win32security
+
+    fake_service_sid = "S-1-5-80-1111111111-2222222222-3333333333-1234567890-987654321"
+    monkeypatch.setattr(authority, "SERVICE_SID", fake_service_sid)
+    key = tmp_path / "key.pem"
+    key.write_text("secret")
+
+    authority._restrict_windows_private_key_acl(key, sid_reader=lambda: "S-1-5-18")
+
+    descriptor = win32security.GetFileSecurity(str(key), win32security.DACL_SECURITY_INFORMATION)
+    acl = descriptor.GetSecurityDescriptorDacl()
+    grants = {
+        win32security.ConvertSidToStringSid(acl.GetAce(index)[2]): acl.GetAce(index)[1]
+        for index in range(acl.GetAceCount())
+    }
+    assert set(grants) == {"S-1-5-18", "S-1-5-32-544", fake_service_sid}
+    assert grants[fake_service_sid] == 0x0012019F  # FILE_GENERIC_READ | FILE_GENERIC_WRITE
 
 
 # --------------------------------------------------------------------------- #

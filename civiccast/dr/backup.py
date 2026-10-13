@@ -342,6 +342,8 @@ def run_postgres_restore(
     pg_restore_command: list[str] | None = None,
     preserve_ownership: bool = False,
     single_transaction: bool = False,
+    no_acls: bool = False,
+    clean_if_exists: bool = False,
 ) -> None:
     """Restore a ``pg_dump --format=custom`` artifact into ``target_database_url``.
 
@@ -368,6 +370,11 @@ def run_postgres_restore(
     :func:`civiccast.dr.restore_drill.run_postgres_cold_standby_drill`'s own
     precondition (it replays globals.sql and verifies the roles exist BEFORE
     calling this with ``preserve_ownership=True``).
+
+    ``clean_if_exists=True`` asks pg_restore to drop objects represented in
+    the archive before recreating them. Station replacement uses this with a
+    single transaction so a provisioned replacement schema can be restored
+    without requiring a separately empty database.
     """
 
     conn = _parse_postgres_url(target_database_url)
@@ -385,6 +392,8 @@ def run_postgres_restore(
         "--dbname",
         conn["dbname"],
         *(() if preserve_ownership else ("--no-owner",)),
+        *(("--no-acl",) if no_acls else ()),
+        *(("--clean", "--if-exists") if clean_if_exists else ()),
         # <installer-path-audit BL-01> ``--single-transaction`` wraps the whole
         # replay in ONE transaction, so a failure part-way through rolls the
         # target back to empty instead of leaving it half-restored. Opt-in

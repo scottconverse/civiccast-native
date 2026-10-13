@@ -20,6 +20,7 @@ def _clear_env(monkeypatch):  # type: ignore[no-untyped-def]
     """Each test starts with a clean env + a cleared cache."""
     for var in (
         "CIVICCAST_TRUSTED_PROXY_CIDRS",
+        "CIVICCAST_TRUSTED_PROXY_CIDRS_EXACT",
         "CIVICCAST_CDN_PROVIDER",
         "CIVICCAST_TRUST_PRIVATE_PROXIES",
     ):
@@ -106,6 +107,26 @@ class TestIsTrustedProxy:
         assert is_trusted_proxy("104.16.1.1") is True
         # And the v6 prefix.
         assert is_trusted_proxy("2606:4700::1") is True
+
+    def test_exact_network_proxy_override_ignores_cdn_and_private_trust(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.setenv("CIVICCAST_TRUSTED_PROXY_CIDRS_EXACT", "127.0.0.1/32")
+        monkeypatch.setenv("CIVICCAST_TRUSTED_PROXY_CIDRS", "203.0.113.0/24")
+        monkeypatch.setenv("CIVICCAST_CDN_PROVIDER", "bunny")
+        monkeypatch.setenv("CIVICCAST_TRUST_PRIVATE_PROXIES", "true")
+        reset_trusted_proxy_cache()
+
+        assert is_trusted_proxy("127.0.0.1") is True
+        assert is_trusted_proxy("192.168.4.2") is False
+        assert is_trusted_proxy("203.0.113.5") is False
+        assert is_trusted_proxy("23.227.38.42") is False
+
+    def test_empty_exact_network_proxy_override_trusts_no_proxy(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        monkeypatch.setenv("CIVICCAST_TRUSTED_PROXY_CIDRS_EXACT", "")
+        monkeypatch.setenv("CIVICCAST_TRUST_PRIVATE_PROXIES", "true")
+        reset_trusted_proxy_cache()
+
+        assert is_trusted_proxy("127.0.0.1") is False
+        assert is_trusted_proxy("10.0.0.5") is False
 
     def test_cloudflare_r2_alias(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         monkeypatch.setenv("CIVICCAST_TRUST_PRIVATE_PROXIES", "false")

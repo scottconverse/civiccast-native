@@ -17,7 +17,7 @@ You need:
 
 ## What the service runs
 
-CivicCast on Windows is one Windows service named **CivicCastSupervisor** (display name **CivicCast Native Supervisor**). It starts automatically at boot, runs as LocalSystem, and is registered so that Windows restarts it on failure: restart after 5 seconds, then 10 seconds, then 30 seconds, with the failure count resetting after 86,400 seconds (one day). The supervisor starts and watches a small number of child programs. Everything else (the playout workers, relays and caption tap) lives inside the control plane child.
+CivicCast on Windows is one Windows service named **CivicCastSupervisor** (display name **CivicCast Native Supervisor**). It starts automatically at boot as the restricted virtual account `NT SERVICE\CivicCastSupervisor` and is registered so that Windows restarts it on failure: restart after 5 seconds, then 10 seconds, then 30 seconds, with the failure count resetting after 86,400 seconds (one day). Existing default LocalSystem installations migrate their profile and CivicCast credentials before the account changes. An isolated Windows Sandbox run with the current source overlay verified profile and CivicCast credential migration, startup under this virtual account, and a healthy API with the current schema. This is development-source evidence, not qualification of a rebuilt or signed installer or production cutover; see the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md). The supervisor starts and watches a small number of child programs. Everything else (the playout workers, relays and caption tap) lives inside the control plane child.
 
 ```mermaid
 flowchart TB
@@ -34,12 +34,12 @@ flowchart TB
 
 *Figure: the processes CivicCast runs. A solid arrow means the parent starts and restarts the child; the dotted arrow means the child is optional.*
 
-The supervisor itself starts only three kinds of child, in this order: **Postgres** first, then the **control plane**, then **Ollama** if it is present. The control plane is the CivicCast application (a Python web service). It listens on `127.0.0.1` port 8000 and runs the playout workers, the transport-stream relay, the HLS relay and the caption tap itself. Those are not separate Windows services and you do not manage them individually.
+The supervisor itself starts only three kinds of child, in this order: **Postgres** first, then the **control plane**, then **Ollama** if it is present. The control plane is the CivicCast application (a Python web service). It listens on a configured loopback address (`127.0.0.1` by default, or `::1`) and runs the playout workers, the transport-stream relay, the HLS relay and the caption tap itself. Those are not separate Windows services and you do not manage them individually. Supported remote HTTPS uses Caddy in front of this listener; see the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md).
 
 | Piece | What it is | Who starts it | Notes |
 | --- | --- | --- | --- |
 | Postgres | The station database | Supervisor | Listens on `127.0.0.1` only. Uses the first free port of 5432, 5433, 5434, 5435, 5544. Password logins only (`scram-sha-256`), no TLS. |
-| Control plane | The CivicCast application and its web API | Supervisor | `python -I -u -m uvicorn civiccast.app:create_app --factory --host 127.0.0.1 --port 8000`. The host is fixed to `127.0.0.1` in code. |
+| Control plane | The CivicCast application and its web API | Supervisor | `python -I -u -m uvicorn civiccast.app:create_app --factory --host <configured loopback> --port <configured port>`. Network Settings accepts `127.0.0.1` or `::1`; do not expose the app listener directly. |
 | Ollama | The local AI model server used for summaries and similar tasks | Supervisor | Optional. Started only when both `dependencies\ollama\ollama.exe` and a model store with a `manifests` folder exist. Listens on `127.0.0.1:11434`. When skipped, it shows as `stopped` with a reason, and the supervisor re-checks every 60 seconds. |
 | Playout workers | The processes that put your channel on the air | Control plane | The playout engine is GStreamer by default. The older ffmpeg concatenation engine is used only when `CIVICCAST_EGRESS_ENGINE` selects it. |
 | TS relay | Sends a transport stream (for a headend encoder) | Control plane | Uses TSDuck (`tsp.exe`). Automatic mode runs only when `tsp` is present. |
@@ -97,7 +97,7 @@ CivicCast reads many settings from environment variables (the full list is in [A
 
 > **Known issue (beta.11):** The installer does not create a service `Environment` value for optional variables. Create it yourself when a setting requires one, and check it again after every upgrade.
 
-> **Note:** The database address comes from the registry value `HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl`, which only SYSTEM and Administrators can read. The supervisor copies it into the control plane's environment unless `DATABASE_URL` is already set in the service environment, in which case the environment wins. `supervisor.log` records which source won.
+> **Note:** The database address comes from the registry value `HKLM\SOFTWARE\CivicCast\Native\DatabaseUrl`, which SYSTEM, Administrators and the station service identity can read. The supervisor copies it into the control plane's environment unless `DATABASE_URL` is already set in the service environment, in which case the environment wins. `supervisor.log` records which source won.
 
 ## Read the logs
 
@@ -257,15 +257,17 @@ Original recordings, archived caption tracks and recorded-caption review remain 
 
 ## Back up and restore
 
-### What exists in beta.11
+### Station backup and restore
 
-> **Known issue (beta.11):** The CivicCast command line has no `backup` command and no `restore` command, even though a comment at the top of the command-line source mentions them. The only backup-related command is `civiccast dr run-drill`. It makes a real backup and proves that the backup can be restored into a throwaway database, but it does not restore the live station. There is no scheduled backup in beta.11: the console's **Backup destination** and **Verify backup** buttons only write and delete a small test file, and the station never records a "last backup" time.
+Use **Station backup and restore** to create, verify and restore portable station archives. The encrypted `.ccbackup` contains the database, configured station files and portable CivicCast credentials, plus every file beneath the selected media roots. Choose an absolute destination, keep the recovery passphrase separately, and verify an off-station copy. A daily UTC schedule and bounded retention are available after saving the unattended passphrase in protected station storage. The station screen shows progress and the last run; the detailed inventory, restore steps and limitations are in the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md).
 
-What you can rely on:
+Restore is an offline maintenance operation. Stop CivicCast and other station writers, provision the replacement service/database, then use `civiccast backup inventory` to inspect archive paths and `civiccast backup restore` with explicit target mappings and the `RESTORE` confirmation. The command prompts for the passphrase. Do not overlay a running station. A database restore can complete before later file or credential copies fail, so keep the source archive and rerun after correcting a path or permission problem.
 
-- `civiccast dr run-drill` (backup plus restore proof plus crash drill).
-- The upgrade engine's own backup, taken automatically before each upgrade to `C:\ProgramData\CivicCast\upgrade\backups\pre-<new_version>` (see below).
-- Postgres's own tools, which are in `<INSTDIR>\packs\native-server-binaries\payload\bin` (`pg_dump`, `pg_dumpall`, `pg_restore`, `psql`, `pg_ctl`).
+The scheduled passphrase is stored separately from the archive and schedule. Keep it available to the operator who would rebuild the station. An upgrade rollback backup remains separate and is not a substitute for an off-station `.ccbackup`.
+
+### Database restore drill
+
+`civiccast dr run-drill` remains a separate database restore and crash-recovery drill. It proves a backup can be restored into a throwaway database; it is not the operator's station backup or live restore workflow.
 
 ### Run the disaster-recovery drill
 
@@ -308,40 +310,13 @@ Remove-Item Env:\DATABASE_URL
 
 The `--out` folder must have room for a full copy of the database. Choose a drive that is not the station's data drive when you can.
 
-### What is and is not backed up
+### What the archive covers
 
-The drill's backup holds the database only. Anything else you need after a disaster must be copied by you.
-
-| Item | In the drill backup? | Where it is | If lost |
-| --- | --- | --- | --- |
-| Database (schedule, asset records, staff token records, alert rules, analytics, captions text, audit trail) | Yes | Postgres under `data\pgdata` | Restore from backup |
-| Media files | No (manifest only, and only with `--media-root`) | `data\uploads` and any media folders you configured | Re-import from your original files |
-| `station-state.json` (first admin account, recovery-code hashes, console sign-in sessions) | No | Under `%LOCALAPPDATA%\CivicCast` of the service account, or the path in `CIVICCAST_STATION_STATE_PATH`. In testing we could not confirm the exact folder for LocalSystem. | Run First Setup again or use a recovery code (see [Chapter 13](#ch-security)) |
-| `subscribe-secrets.json` (encryption key for subscribers' e-mail addresses) | No | `CIVICCAST_SUBSCRIBE_SECRETS_FILE`, or `CIVICCAST_CONFIG_DIR`, or `~\.civiccast\`; may be replaced by `CIVICCAST_SUBSCRIBE_TOKEN_SECRET` and `CIVICCAST_SUBSCRIBE_ENCRYPTION_KEY` | A restored database whose subscriber e-mail addresses were encrypted with a lost key cannot decrypt them |
-| Alert credentials file | No | `CIVICCAST_ALERT_CREDENTIALS_FILE` or `CIVICCAST_CONFIG_DIR` | Re-enter destinations and credentials |
-| Internal certificates (`CIVICCAST_CERT_ROOT`) | No | Default `~\.civiccast\certs` | Re-issued with `civiccast cert rotate` |
-| Registry value `DatabaseUrl` and the service `Environment` value | No | `HKLM` | Export both keys with `reg export` |
-| Program, packs, models | No | `<INSTDIR>` | Reinstall |
-| Temporary live-caption working audio | No | `data\caption-tap` | Normally deleted as it is processed; it is not a retained evidence archive |
-| Conform cache | No | `data\egress\conform-cache` | Rebuilt automatically from the media |
-
-> **Tip:** Put the registry export, `station-state.json`, `subscribe-secrets.json`, the alert credentials file and the `Environment` value in the same off-computer location as your database backup, and encrypt them: they contain secrets.
-
-### Restore into the live station
-
-Beta.11 has no supported command that restores into the live database. The only code path that does is the upgrade engine's automatic rollback after a failed upgrade. If you must restore by hand, you are using Postgres's own tools on a backup that the drill wrote. We have not run a manual live restore for the exact published package, so this chapter gives no step-by-step procedure for it. Rehearse the restore into a spare computer or a throwaway database first, and have your own written procedure before you need it.
+The station archive uses the installed integration's configured database, files, portable credential adapter and selected media roots. It is encrypted before publication; do not copy individual machine-protected DPAPI or Windows Credential Manager blobs as a substitute. Program files, packs and models are not part of the archive and must be reinstalled. Review the exact inventory and the portable credential boundaries in the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md).
 
 ## Recover from a disaster
 
-The drill does not prove that you can rebuild a station from nothing. Plan on this order, and rehearse it:
-
-1. Prepare the replacement computer's kit with `scripts\download_windows_release_artifacts.ps1 -Install`. The helper verifies and assembles the signed station resources from the release manifest and archive parts before setup runs. The R9 field attempt used an earlier release asset set that lacked those resources and failed activation; see [Chapter 10](#ch-installing) and the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md) for exact package scope.
-2. Stop the service.
-3. Restore the database from your off-computer copy using Postgres's tools, as above.
-4. Restore the registry values, `station-state.json`, `subscribe-secrets.json` and the alert credentials file.
-5. Copy the media back.
-6. Start the service and check `/health` and Readiness.
-7. If you cannot sign in, use a recovery code at `/setup` ([Chapter 13](#ch-security)).
+The station archive is intended for a replacement installation: provision the station, stop all writers, inventory the archive, map old paths to their replacement locations, restore, import portable credentials and verify service health before returning to air. Use the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md) for the complete sequence and failure boundaries. Keep installer rollback and station disaster recovery as separate copies and procedures.
 
 ## Update and upgrade
 

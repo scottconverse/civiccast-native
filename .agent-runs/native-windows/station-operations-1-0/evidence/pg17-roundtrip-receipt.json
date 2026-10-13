@@ -1,0 +1,42 @@
+{
+  "recorded_utc": "2026-10-13T19:11:54.5603724Z",
+  "branch": "codex/station-operations-1-0",
+  "base_head": "431585942c9ced93e730b1e6b506c707a6adecb8",
+  "candidate": "dirty working tree",
+  "executed_by": "/root/remaining_software",
+  "reviewed_by": "/root/pg_roundtrip_finish",
+  "execution_handle": "4584",
+  "command_form": "PowerShell inline Python here-string piped to uv run python -",
+  "result": "exit 0 (reported by executing worker)",
+  "stdout": [
+    "ROUNDTRIP=PASS",
+    "PostgreSQL=17.10; archive verified; preexisting target objects replaced",
+    "Verified=asset/watch-folder DB paths, station-state paths, selected media bytes, portable vault credential",
+    "Lifecycle=managed PostgreSQL started only for restore and confirmed stopped afterward",
+    "SCRATCH=cleaned"
+  ],
+  "postgres_pack": "C:\\CivicCastTester\\runtime-artifact-mirror\\ef9b1e5e23d2e8a83914ba13d9dc536a72210fba53fd1808ff1f7e06bb22b106\\postgresql-17.10-2-windows-x64-binaries.zip",
+  "postgres_pack_sha256": "ef9b1e5e23d2e8a83914ba13d9dc536a72210fba53fd1808ff1f7e06bb22b106",
+  "scratch_pattern": "%TEMP%\\civiccast-pg17-backup-roundtrip-*",
+  "isolation": "Disposable scratch cluster; ephemeral localhost port; no station service or registry changes",
+  "cleanup": "Worker reports real pg_ctl status stopped before scratch removal; independent Get-ChildItem found no remaining scratch-pattern directories",
+  "limitations": [
+    "Port and scratch leaf were dynamically selected and not retained.",
+    "Source hashes below were captured after execution; at-run hashes were not retained.",
+    "Executing-worker output is quoted verbatim from its report; reviewer did not run the operation again.",
+    "No installed-station or replacement-machine cutover claim."
+  ],
+  "source_hash_timing": "post-run",
+  "source_sha256": {
+    "civiccast/native/upgrade/pg_lifecycle.py": "28e0e3188a8b4def361d9548fc8c2d08480600fbc2d21eccf1ab8498ccccd981",
+    "civiccast/dr/backup.py": "6a65adcdc008bd479e6c116c711956988610f10480f042a963ebd5fe10e533d4",
+    "civiccast/dr/station_backup_runtime.py": "12e99cfaf40dad815f054fc75c716c02a220a4f1e02329162bb7d7b441a7170b",
+    "civiccast/dr/station_backup.py": "774eb4ee5687518f3fa69a96f4bf6205fe63b3cab5473e989d697cdf6ae0334a",
+    "civiccast/native/station_secrets.py": "37b09ebb3f00aa0f2466f0e3e09d5e37db20f89c4527aefedf7271dde839ab04"
+  },
+  "executed_source": "pg17-roundtrip-executed.py.txt",
+  "executed_source_provenance": "Copied by executing worker from successful functions.exec inline Python body after run; PowerShell here-string wrapper excluded",
+  "executed_source_sha256_post_run": "7c6a1386e08e30d39b3c624bf8573254dbe0e36baae45bc1c0bd199afc833d59",
+  "output_file": "pg17-roundtrip-output.txt",
+  "independent_assertion_review": "Read copied successful script: real PG tool paths supplied (no mocks); preexisting target asset row removed; asset and thumbnail paths, both watch-folder tables, three state storage roots, selected media bytes and imported DPAPI vault credential asserted; real status stopped before and after managed restore, cleanup gated on stopped status and absolute scratch boundary. Claims match assertions. Minimal fixture schema only; not full station provisioning."
+}

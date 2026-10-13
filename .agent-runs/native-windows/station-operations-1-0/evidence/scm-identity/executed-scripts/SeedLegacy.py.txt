@@ -1,0 +1,56 @@
+import hashlib
+import json
+import os
+from pathlib import Path
+
+import win32cred
+
+from civiccast.installer.models import FirstAdminSetupRequest
+from civiccast.installer.station_state import complete_first_admin_setup
+from civiccast.native.provision.journal import _harden_state_root_acl as harden_provision
+from civiccast.native.upgrade.journal import _harden_state_root_acl as harden_upgrade
+
+root = Path(os.environ["WINDIR"]) / "System32" / "config" / "systemprofile" / "AppData" / "Local" / "CivicCast"
+root.mkdir(parents=True, exist_ok=True)
+os.environ["CIVICCAST_STATION_STATE_PATH"] = str(root / "station-state.json")
+request = FirstAdminSetupRequest(
+    station_name="Disposable Identity Test",
+    admin_display_name="Sandbox Fixture",
+    admin_username="sandbox-admin",
+    admin_password="sandbox-only-password-long-enough",
+    recovery_kit_destination="discarded with Sandbox",
+    sample_content_enabled=False,
+    initial_schedule_enabled=False,
+    operation_mode="test",
+)
+complete_first_admin_setup(request, operator_console_url="http://127.0.0.1:8000/operator/")
+(root / "migration-fixture.txt").write_bytes(b"identity migration fixture bytes\n")
+for folder, harden in (
+    (Path(r"C:\ProgramData\CivicCast\provision"), harden_provision),
+    (Path(r"C:\ProgramData\CivicCast\upgrade"), harden_upgrade),
+):
+    folder.mkdir(parents=True, exist_ok=True)
+    harden(folder)
+win32cred.CredWrite(
+    {
+        "Type": win32cred.CRED_TYPE_GENERIC,
+        "TargetName": "civiccast.live-source",
+        "UserName": "sandbox-source",
+        "CredentialBlob": "sandbox-only-secret-fixture",
+        "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE,
+        "Comment": "Disposable Sandbox fixture",
+    },
+    0,
+)
+hash_file = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+Path(r"C:\CivicCastScratch\seed-result.json").write_text(
+    json.dumps(
+        {
+            "ok": True,
+            "stateSha256": hash_file(root / "station-state.json"),
+            "fixtureSha256": hash_file(root / "migration-fixture.txt"),
+        }
+    ),
+    encoding="utf-8",
+)
+

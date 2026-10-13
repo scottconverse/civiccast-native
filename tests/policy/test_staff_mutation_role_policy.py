@@ -52,6 +52,10 @@ _SKIP_PARTS = {"tests", "test", "__pycache__", "alembic"}
 # not being under /api/staff.
 ALLOWED_UNGUARDED_STAFF_MUTATION_ROUTES: frozenset[tuple[str, str]] = frozenset(
     {
+        # Login establishes the caller's session: requiring an existing role
+        # would prevent authentication. The handler validates a station-local
+        # password and applies failed-login throttling before issuing a token.
+        ("POST", "/api/staff/auth/login"),
         # Ending your own session is never a privileged action, so there is no
         # role that could be required here that every authenticated caller does
         # not already hold. `staff_auth_middleware` has already verified the

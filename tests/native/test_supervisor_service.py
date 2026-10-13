@@ -16,6 +16,7 @@ test_supervisor_service_win.py.
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import sys
@@ -176,8 +177,10 @@ def test_identity_constants_have_the_ratified_values() -> None:
     assert DISPLAY_NAME == "CivicCast Native Supervisor"
     assert EVENT_LOG_SOURCE == "CivicCastSupervisor"
     assert SINGLETON_MUTEX_NAME == r"Global\CivicCastSupervisorSingleton"
-    # Same restrictive SDDL as WS4's runtime-owner mutex: SYSTEM + Administrators.
-    assert SINGLETON_MUTEX_SDDL == "D:P(A;;GA;;;SY)(A;;GA;;;BA)"
+    # Coordination is limited to SYSTEM, administrators and this service.
+    from civiccast.native.service_identity import SERVICE_SID
+
+    assert f"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{SERVICE_SID})" == SINGLETON_MUTEX_SDDL
     # And it is literally re-used from runtime_guard's constant, not re-typed.
     assert SINGLETON_MUTEX_SDDL == config_mod.MUTEX_SDDL
 
@@ -1177,6 +1180,63 @@ def test_default_dependency_provider_builds_real_deps_without_raising(
     # CivicCast segment in the control plane's egress work dir.
     assert deps.program_data_root == os.environ.get("PROGRAMDATA", r"C:\ProgramData")
     assert not deps.program_data_root.endswith("CivicCast")
+
+
+def test_default_provider_uses_saved_network_settings_for_env_and_health_probe(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from civiccast.native.network import (
+        NetworkSettings,
+        NetworkSettingsStore,
+        default_network_settings_path,
+    )
+
+    settings = NetworkSettings.model_validate(
+        {
+            "mode": "caddy",
+            "public_base_url": "https://watch.example.gov",
+            "staff_hostname": "staff.example.gov",
+            "staff_allowed_cidrs": ["192.168.50.0/24"],
+            "upstream_host": "127.0.0.1",
+            "upstream_port": 8123,
+        }
+    )
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg" / "state"))
+    settings_path = default_network_settings_path()
+    NetworkSettingsStore(settings_path).save(settings)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+
+    requested_urls: list[str] = []
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):  # type: ignore[no-untyped-def]
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps({"mode": "normal"}).encode("utf-8")
+
+    def _urlopen(url: str, **kwargs: object) -> _Response:
+        requested_urls.append(url)
+        return _Response()
+
+    monkeypatch.setattr(supervisor_service.urllib.request, "urlopen", _urlopen)
+    deps = supervisor_service.default_dependency_provider()
+
+    assert deps.network_settings == settings
+    assert deps.control_plane_env["CIVICAST_PUBLIC_BASE_URL"] == "https://watch.example.gov"
+    assert deps.control_plane_env["CIVICAST_TRUSTED_PROXY_CIDRS_EXACT"] == "127.0.0.1/32"
+    assert (
+        json.loads(deps.control_plane_env["CIVICAST_ACTIVE_NETWORK_SETTINGS"])
+        == settings.model_dump()
+    )
+    assert deps.health_probe().status_code == 200
+    assert requested_urls == ["http://127.0.0.1:8123/health"]
 
 
 def test_default_dependency_provider_normalizes_bare_postgresql_scheme(

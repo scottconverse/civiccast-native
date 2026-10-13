@@ -1,4 +1,27 @@
-# CivicCast Beta 14 publication handoff
+# Current handoff: station operations (2026-10-13)
+
+Current branch: `codex/station-operations-1-0`, based on
+`431585942c9ced93e730b1e6b506c707a6adecb8` (corrected Beta 15).
+Owner authorizes push and merge after green CI; no tag or production cutover.
+
+The four selected source goals are implemented: station backup/restore,
+network access, staff/session administration, and restricted service identity.
+See [current implementation and evidence](docs/ops/station-operations-goal.md).
+Actual restricted SCM migration, healthy PostgreSQL/API startup and encrypted
+backup passed in an isolated guest; the guest is closed and the host is unchanged.
+Pre-push type declarations and manual text were reconciled. PR #245 is open:
+https://github.com/scottconverse/civiccast-native/pull/245
+Its first CI run found operator form lint, a missing login version label, and
+clean-machine service-SID ACL failures. Its review also identified backup-state,
+retry and destination-overlap defects; a Linux network test fixture used a
+Windows-only path. Focused corrections pass; merge awaits corrected-head CI.
+See `.agent-runs/native-windows/station-operations-1-0/evidence/pr245-ci-corrections.md`.
+Published Beta 15 remains unchanged. Current PR/CI
+identity is recorded on the pull request.
+
+## Historical Beta 14 publication handoff
+
+The following is retained history, not the current station or work status.
 
 Beta 14 is published: https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14
 Published 2026-10-12 10:25:01 UTC. All 26 assets passed name/size and SHA-256

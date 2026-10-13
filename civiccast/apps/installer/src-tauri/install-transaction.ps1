@@ -316,8 +316,8 @@ function Stop-TransactionWriters($state) {
 function Get-ServiceSnapshot {
     $service = Get-CimInstance Win32_Service -Filter "Name='CivicCastSupervisor'"
     if (-not $service) { return $null }
-    if ($service.StartName -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM')) {
-        throw 'Automatic restoration supports the native LocalSystem service only; setup stopped before replacement.'
+    if ($service.StartName -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM', 'NT SERVICE\CivicCastSupervisor')) {
+        throw 'Automatic restoration supports the CivicCast virtual account or legacy LocalSystem account; setup stopped before replacement.'
     }
     if ($service.State -notin @('Running', 'Stopped')) { throw 'Native service is changing state; retry setup after it settles.' }
     $tree = Get-RegistryTree 'SYSTEM\CurrentControlSet\Services\CivicCastSupervisor'
@@ -346,8 +346,12 @@ function Restore-ServiceSnapshot($state) {
     }
     $values = @{}
     foreach ($item in $saved.Tree.Values) { $values[$item.Name] = $item.Value }
+    $savedAccount = [string]$values.ObjectName
+    if ($savedAccount -notin @('LocalSystem', 'NT AUTHORITY\SYSTEM', 'NT SERVICE\CivicCastSupervisor')) {
+        throw 'Unsupported saved service identity; refusing to substitute LocalSystem.'
+    }
     if (-not $service) {
-        Invoke-ServiceCommand @('create', 'CivicCastSupervisor', 'binPath=', [string]$values.ImagePath, 'start=', 'demand', 'obj=', 'LocalSystem')
+        Invoke-ServiceCommand @('create', 'CivicCastSupervisor', 'binPath=', [string]$values.ImagePath, 'start=', 'demand', 'obj=', $savedAccount)
     }
     if ($service) { $service.Dispose() }
     $start = switch ([int]$values.Start) { 2 { if ($values.DelayedAutoStart) { 'delayed-auto' } else { 'auto' } } 3 { 'demand' } 4 { 'disabled' } default { throw 'Unsupported prior service start mode.' } }
@@ -355,7 +359,7 @@ function Restore-ServiceSnapshot($state) {
     # refresh SCM's cached failure-action configuration using its public command.
     Set-RegistryTree 'SYSTEM\CurrentControlSet\Services\CivicCastSupervisor' $saved.Tree
     $effectiveStart = if ($saved.Running) { 'demand' } else { $start }
-    Invoke-ServiceCommand @('config', 'CivicCastSupervisor', 'binPath=', [string]$values.ImagePath, 'start=', $effectiveStart, 'obj=', 'LocalSystem', 'DisplayName=', [string]$values.DisplayName, 'depend=', (@($values.DependOnService) -join '/'))
+    Invoke-ServiceCommand @('config', 'CivicCastSupervisor', 'binPath=', [string]$values.ImagePath, 'start=', $effectiveStart, 'obj=', $savedAccount, 'DisplayName=', [string]$values.DisplayName, 'depend=', (@($values.DependOnService) -join '/'))
     if ($values.ContainsKey('FailureActions')) {
         $blob = [byte[]]$values.FailureActions
         $count = [BitConverter]::ToUInt32($blob, 12)

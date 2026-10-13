@@ -1,0 +1,50 @@
+[
+    {
+        "ProcessId":  6756,
+        "ParentProcessId":  2980,
+        "Name":  "powershell.exe",
+        "CommandLine":  "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\\CivicCastScripts\\Run.ps1"
+    },
+    {
+        "ProcessId":  6320,
+        "ParentProcessId":  4652,
+        "Name":  "postgres.exe",
+        "CommandLine":  "\"C:/Program Files/CivicCast (Native)/packs/native-server-binaries/payload/bin/postgres.exe\"  -D \"C:/ProgramData/CivicCast/data/pgdata\" -p 55439 -h 127.0.0.1 "
+    },
+    {
+        "ProcessId":  6004,
+        "ParentProcessId":  6320,
+        "Name":  "postgres.exe",
+        "CommandLine":  "\"C:/Program Files/CivicCast (Native)/packs/native-server-binaries/payload/bin/postgres.exe\" --forkchild=\"checkpointer\" 5528"
+    },
+    {
+        "ProcessId":  5356,
+        "ParentProcessId":  6320,
+        "Name":  "postgres.exe",
+        "CommandLine":  "\"C:/Program Files/CivicCast (Native)/packs/native-server-binaries/payload/bin/postgres.exe\" --forkchild=\"bgwriter\" 5524"
+    },
+    {
+        "ProcessId":  1724,
+        "ParentProcessId":  6320,
+        "Name":  "postgres.exe",
+        "CommandLine":  "\"C:/Program Files/CivicCast (Native)/packs/native-server-binaries/payload/bin/postgres.exe\" --forkchild=\"wal_writer\" 5484"
+    },
+    {
+        "ProcessId":  7164,
+        "ParentProcessId":  6320,
+        "Name":  "postgres.exe",
+        "CommandLine":  "\"C:/Program Files/CivicCast (Native)/packs/native-server-binaries/payload/bin/postgres.exe\" --forkchild=\"autovacuum launcher\" 5492"
+    },
+    {
+        "ProcessId":  3924,
+        "ParentProcessId":  6320,
+        "Name":  "postgres.exe",
+        "CommandLine":  "\"C:/Program Files/CivicCast (Native)/packs/native-server-binaries/payload/bin/postgres.exe\" --forkchild=\"bgworker\" 5456"
+    },
+    {
+        "ProcessId":  1964,
+        "ParentProcessId":  2980,
+        "Name":  "powershell.exe",
+        "CommandLine":  "powershell.exe -NoProfile -EncodedCommand RwBlAHQALQBDAGkAbQBJAG4AcwB0AGEAbgBjAGUAIABXAGkAbgAzADIAXwBQAHIAbwBjAGUAcwBzACAAfAAgAFcAaABlAHIAZQAtAE8AYgBqAGUAYwB0ACAAewAkAF8ALgBOAGEAbQBlACAALQBpAG4AIABAACgAJwBpAG4AaQB0AGQAYgAuAGUAeABlACcALAAnAHAAZwBfAGMAdABsAC4AZQB4AGUAJwAsACcAcABvAHMAdABnAHIAZQBzAC4AZQB4AGUAJwAsACcAcABvAHcAZQByAHMAaABlAGwAbAAuAGUAeABlACcALAAnAHAAeQB0AGgAbwBuAC4AZQB4AGUAJwAsACcAcAB5AHQAaABvAG4AcwBlAHIAdgBpAGMAZQAuAGUAeABlACcAKQB9ACAAfAAgAFMAZQBsAGUAYwB0AC0ATwBiAGoAZQBjAHQAIABQAHIAbwBjAGUAcwBzAEkAZAAsAFAAYQByAGUAbgB0AFAAcgBvAGMAZQBzAHMASQBkACwATgBhAG0AZQAsAEMAbwBtAG0AYQBuAGQATABpAG4AZQAgAHwAIABDAG8AbgB2AGUAcgB0AFQAbwAtAEoAcwBvAG4AIAAtAEQAZQBwAHQAaAAgADMAIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAAJwBDADoAXABDAGkAdgBpAGMAQwBhAHMAdABFAHYAaQBkAGUAbgBjAGUAXABnAHUAZQBzAHQALQBwAHIAbwBjAGUAcwBzAGUAcwAuAGoAcwBvAG4AJwAKAEcAZQB0AC0AQwBoAGkAbABkAEkAdABlAG0AIAAnAEMAOgBcAEMAaQB2AGkAYwBDAGEAcwB0AFMAYwByAGEAdABjAGgAJwAgAHwAIABTAGUAbABlAGMAdAAtAE8AYgBqAGUAYwB0ACAATgBhAG0AZQAsAEwAZQBuAGcAdABoACwATABhAHMAdABXAHIAaQB0AGUAVABpAG0AZQAgAHwAIABDAG8AbgB2AGUAcgB0AFQAbwAtAEoAcwBvAG4AIAB8ACAAUwBlAHQALQBDAG8AbgB0AGUAbgB0ACAAJwBDADoAXABDAGkAdgBpAGMAQwBhAHMAdABFAHYAaQBkAGUAbgBjAGUAXABnAHUAZQBzAHQALQBzAGMAcgBhAHQAYwBoAC4AagBzAG8AbgAnAAoARwBlAHQALQBDAGgAaQBsAGQASQB0AGUAbQAgACcAQwA6AFwAQwBpAHYAaQBjAEMAYQBzAHQAUwBjAHIAYQB0AGMAaAAnACAALQBGAGkAbAB0AGUAcgAgACcAKgAuAGwAbwBnACcAIAB8ACAARgBvAHIARQBhAGMAaAAtAE8AYgBqAGUAYwB0ACAAewBDAG8AcAB5AC0ASQB0AGUAbQAgAC0ATABpAHQAZQByAGEAbABQAGEAdABoACAAJABfAC4ARgB1AGwAbABOAGEAbQBlACAALQBEAGUAcwB0AGkAbgBhAHQAaQBvAG4AIAAnAEMAOgBcAEMAaQB2AGkAYwBDAGEAcwB0AEUAdgBpAGQAZQBuAGMAZQAnACAALQBGAG8AcgBjAGUAfQA="
+    }
+]

@@ -36,6 +36,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
+from civiccast.native.service_identity import SERVICE_SID
 from civiccast.native.supervisor.config import CONTROL_PIPE_NAME
 from civiccast.native.supervisor.pipe_server import (
     AUTHENTICATED_USERS_ACCESS_MASK,
@@ -52,7 +53,7 @@ logger = logging.getLogger(__name__)
 # a squat and is refused. (Mirrors ``authz._ADMIN_GROUPS`` -- SYSTEM +
 # Administrators -- but this is the OWNER of the server object, not the caller's
 # token, so it lives here rather than in the pure caller-authz module.)
-_TRUSTED_OWNER_SIDS: frozenset[str] = frozenset({"S-1-5-18", "S-1-5-32-544"})
+_TRUSTED_OWNER_SIDS: frozenset[str] = frozenset({"S-1-5-18", "S-1-5-32-544", SERVICE_SID})
 
 # The single live handle is opened with the RAT-003 Authenticated-Users mask
 # (``AUTHENTICATED_USERS_ACCESS_MASK``), which INCLUDES READ_CONTROL (0x20000):
