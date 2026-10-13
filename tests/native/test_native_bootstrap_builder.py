@@ -913,6 +913,7 @@ def test_native_reinstall_page_cannot_remove_recovery_input():
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell installer preflight")
+@pytest.mark.windows_only
 @pytest.mark.parametrize(
     "installed, candidate, expected",
     [

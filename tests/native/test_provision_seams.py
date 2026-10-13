@@ -1305,6 +1305,7 @@ def test_alter_role_password_sql_rejects_an_unsafe_identifier() -> None:
 
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows password-file ACL")
+@pytest.mark.windows_only
 def test_pwfile_acl_survives_machine_username_and_postgres_restricted_token(monkeypatch, tmp_path):
     import ntsecuritycon
     import win32security
