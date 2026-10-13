@@ -903,7 +903,9 @@ def test_native_reinstall_page_cannot_remove_recovery_input():
         "Function PageReinstall\n  Call PageLeaveReinstall\nFunctionEnd\n"
     )
     patched = builder.add_nsis_version_preflight(source)
-    assert patched.index("CIVICCAST_TRANSACTION_RECOVER_PENDING") < patched.index("CIVICCAST_VERSION_PREFLIGHT")
+    assert patched.index("CIVICCAST_TRANSACTION_RECOVER_PENDING") < patched.index(
+        "CIVICCAST_VERSION_PREFLIGHT"
+    )
     page = patched.split("Function PageReinstall\n", 1)[1]
     assert page.index("Abort") < page.index("Call PageLeaveReinstall")
     assert patched.endswith("!insertmacro CIVICCAST_TRANSACTION_CALLBACKS\n")

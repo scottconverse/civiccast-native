@@ -5,6 +5,7 @@
 SCM, machine registry, firewall and tasks are replaced at their narrow boundaries;
 these tests never install, stop or modify a service on the development machine.
 """
+
 from __future__ import annotations
 
 import os
@@ -55,15 +56,32 @@ def run_recovery(tmp_path: Path, body: str) -> None:
     wrapper = tmp_path / "check.ps1"
     wrapper.write_text(SETUP + "\n" + body, encoding="utf-8")
     result = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-         "-File", str(wrapper), "-Coordinator", str(SCRIPT), "-Fixture", str(tmp_path)],
-        capture_output=True, text=True, timeout=60,
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(wrapper),
+            "-Coordinator",
+            str(SCRIPT),
+            "-Fixture",
+            str(tmp_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
     )
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_restores_files_activation_database_after_late_failure_and_preserves_media(tmp_path: Path) -> None:
-    run_recovery(tmp_path, r"""
+def test_restores_files_activation_database_after_late_failure_and_preserves_media(
+    tmp_path: Path,
+) -> None:
+    run_recovery(
+        tmp_path,
+        r"""
 Snapshot-Transaction $state
 Assert (-not (Test-Path "$StateRoot\backup\app\packs\.station-cache")) 'cache duplicated'
 Set-Content "$app\runtime\python.exe" 'candidate-runtime'
@@ -81,11 +99,14 @@ Assert (Test-Path "$app\packs\.station-cache\new-pack.bin") 'immutable cache rem
 Assert ((Get-Content "$data\recordings\meeting.mp4") -eq 'recording-written-outside-installer') 'media overwritten'
 Assert ($script:events.IndexOf('registry:old') -lt $script:events.IndexOf('restart-checked')) 'service started before registry'
 Assert (-not (Test-Path "$StateRoot\backup")) 'successful restoration retained large backup'
-""")
+""",
+    )
 
 
 def test_interrupted_restore_keeps_recovery_point_and_retries_idempotently(tmp_path: Path) -> None:
-    run_recovery(tmp_path, r"""
+    run_recovery(
+        tmp_path,
+        r"""
 Snapshot-Transaction $state
 Set-Content "$app\runtime\python.exe" 'candidate-runtime'
 Set-Content "$data\data\pgdata\database.bin" 'partly-migrated-db'
@@ -105,11 +126,14 @@ Assert (Test-Path "$StateRoot\backup\app\runtime\python.exe") 'recovery point co
 Assert (-not $script:events.Contains('restart-checked')) 'service started on partial restore'
 Restore-Transaction (Read-Transaction)
 Assert ((Read-Transaction).Phase -eq 'Restored') 'retry failed'
-""")
+""",
+    )
 
 
 def test_dead_installer_recovery_restores_but_live_installer_is_untouched(tmp_path: Path) -> None:
-    run_recovery(tmp_path, r"""
+    run_recovery(
+        tmp_path,
+        r"""
 Snapshot-Transaction $state
 Set-Content "$app\runtime\python.exe" 'candidate-runtime'
 function Test-InstallerAlive($state) { return $true }
@@ -120,11 +144,14 @@ function Test-InstallerAlive($state) { return $false }
 $InstallerPid = $PID
 Recover-Transaction (Read-Transaction)
 Assert ((Read-Transaction).Phase -eq 'Restored') 'dead installer was not recovered'
-""")
+""",
+    )
 
 
 def test_commit_keeps_candidate_and_recovery_cannot_roll_it_back(tmp_path: Path) -> None:
-    run_recovery(tmp_path, r"""
+    run_recovery(
+        tmp_path,
+        r"""
 Snapshot-Transaction $state
 Set-Content "$app\runtime\python.exe" 'candidate-runtime'
 Commit-Transaction (Read-Transaction)
@@ -135,11 +162,14 @@ Recover-Transaction (Read-Transaction)
 Assert (@($script:events | Where-Object { $_ -eq 'service-config' }).Count -eq $configCount) 'later setup overwrote operator start-mode preference'
 Assert ((Get-Content "$app\runtime\python.exe") -eq 'candidate-runtime') 'committed candidate rolled back'
 Assert (-not $script:events.Contains('restart-checked')) 'prior station restarted after commit'
-""")
+""",
+    )
 
 
 def test_restores_existing_shortcut_and_removes_only_new_installer_shortcut(tmp_path: Path) -> None:
-    run_recovery(tmp_path, r"""
+    run_recovery(
+        tmp_path,
+        r"""
 $links = Join-Path $Fixture 'links'
 New-Item -ItemType Directory -Path $links -Force | Out-Null
 Set-Content "$links\console.url" 'old-console'
@@ -154,11 +184,14 @@ Restore-Transaction (Read-Transaction)
 Assert ((Get-Content "$links\console.url") -eq 'old-console') 'old shortcut not restored'
 Assert (-not (Test-Path "$links\portal.url")) 'new shortcut retained'
 Assert ((Get-Content "$links\unrelated.url") -eq 'unrelated') 'unrelated shortcut changed'
-""")
+""",
+    )
 
 
 def test_insufficient_snapshot_space_refuses_before_replacement(tmp_path: Path) -> None:
-    run_recovery(tmp_path, r"""
+    run_recovery(
+        tmp_path,
+        r"""
 function Get-TreeBytes($path, $exclude) { return [long]([IO.DriveInfo]::new('C:\').AvailableFreeSpace + 1GB) }
 try { Snapshot-Transaction $state; throw 'expected space refusal' }
 catch { Assert ($_.Exception.Message -like 'Recovery snapshot needs*') 'wrong preflight failure' }
@@ -166,11 +199,14 @@ Assert (-not (Read-Transaction).SnapshotComplete) 'incomplete recovery point tru
 Restore-Transaction (Read-Transaction)
 Assert ((Get-Content "$app\runtime\python.exe") -eq 'old-runtime') 'preflight replaced runtime'
 Assert ((Read-Transaction).Phase -eq 'Restored') 'preflight did not restore prior running state'
-""")
+""",
+    )
 
 
 def test_service_restore_preserves_start_mode_and_prior_running_state(tmp_path: Path) -> None:
-    run_recovery(tmp_path, r"""
+    run_recovery(
+        tmp_path,
+        r"""
 $script:fakeService = [pscustomobject]@{}
 $script:fakeService | Add-Member -MemberType ScriptMethod -Name Dispose -Value { }
 $script:fakeService | Add-Member -MemberType ScriptMethod -Name WaitForStatus -Value { param($status, $timeout) }
@@ -196,4 +232,5 @@ foreach ($mode in @(2, 3, 4)) {
         }
     }
 }
-""")
+""",
+    )
