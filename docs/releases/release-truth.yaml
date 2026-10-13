@@ -40,19 +40,16 @@ entries:
   - tag: v1.0.0-beta.15
     status: current
     notes: >-
-      Release producer dc4a9e63a1bcf58b28818ee06ea7a5e631dd1ca8, successful
-      signed build 38365155889, setup SHA-256
-      6f053356027fc899d57136b0407306f179ec46372fb0f3c28542c93d5a056189.
-      Exact-source manual verification passed. Package execution observations
-      from the earlier producer 7899ee9234428b0b3c93b369392ae5114d292533 remain
-      separately identified in docs/releases/v1.0.0-beta.15-verification.md;
-      they do not verify these refreshed bytes. Public-download clean installation and first-admin setup passed on
-      October 13. The Welcome sample reached identified HLS output and returned to
-      slate; installed Help matched the published manual hash. Built-in uninstall
-      passed on October 13 after the original installation was restored.
-      Corrected candidate ff551502 passed activation-failure restoration,
-      clean installation, first-admin setup, installed Help and short-programme
-      rollover checks. Its publication remains pending.
+      Corrected edition published October 13: artifact source
+      ff5515021c70ed453589feb9ed4796aaa49aece4, signed build 38408874006,
+      setup SHA-256 5cfb86788635c24a1f58c02ce799ec0034fea054a3b953789bd775050db5360c.
+      Corrections merged in PR 243; the release tag also includes release records.
+      Activation-failure restoration, clean installation, first-admin setup,
+      installed Help, short-programme playback/return to slate and built-in
+      uninstall passed in Windows Sandbox. Original public-download evidence
+      remains separately identified. Original source dc4a9e63 is preserved at
+      archive/v1.0.0-beta.15-initial-20261013; replaced original files remain
+      attached as initial-20261013 assets.
   - tag: v1.0.0-beta.14
     status: superseded
     superseded_by: v1.0.0-beta.15

@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-### Beta 15 completion corrections
+## [1.0.0-beta.15] - 2026-10-13
+
+### October 13 corrected edition
 
 - Save the prior native installation before replacement and automatically
   restore its application, owned database, activation, service and shortcut
@@ -18,11 +20,15 @@
   the same short video remains playable; report the new source after the
   worker confirms the change.
 
-These source corrections are separate from the initially published Beta 15
-installer. Package verification is recorded against its actual build in the
-Beta 15 verification record; the original package evidence remains historical.
+These corrections are published in signed build 38408874006, artifact source
+`ff5515021c70ed453589feb9ed4796aaa49aece4`. Its setup SHA-256 is
+`5cfb86788635c24a1f58c02ce799ec0034fea054a3b953789bd775050db5360c`.
+Failed-install restoration, clean installation/setup, short-programme playback,
+installed Help and built-in uninstall passed in Windows Sandbox. The initial
+Beta 15 source and replaced assets remain archived and separately identified
+in the verification record.
 
-## [1.0.0-beta.15] - 2026-10-13
+### Initial edition
 
 This release updates the native installer, operator guidance, release pages and
 installed Help. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
