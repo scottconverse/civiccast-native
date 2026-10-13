@@ -1,0 +1,5 @@
+ROUNDTRIP=PASS
+PostgreSQL=17.10; archive verified; preexisting target objects replaced
+Verified=asset/watch-folder DB paths, station-state paths, selected media bytes, portable vault credential
+Lifecycle=managed PostgreSQL started only for restore and confirmed stopped afterward
+SCRATCH=cleaned

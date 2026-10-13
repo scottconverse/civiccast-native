@@ -1,0 +1,45 @@
+civiccast\native\upgrade\service_control.py:494: error: Unused "type: ignore"
+comment  [unused-ignore]
+                import win32service  # type: ignore[import-untyped]
+                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+civiccast\installer\service.py:926: error: Returning Any from function declared
+to return "StationSetupState"  [no-any-return]
+        return persist_recovery_kit_acknowledgement(
+        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+civiccast\installer\service.py:988: error: Returning Any from function declared
+to return "FirstAdminSetupResponse"  [no-any-return]
+        return response
+        ^~~~~~~~~~~~~~~
+civiccast\installer\service.py:998: error: Returning Any from function declared
+to return "StationAuthResponse"  [no-any-return]
+        return persist_station_login(
+        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+civiccast\installer\service.py:1011: error: Returning Any from function
+declared to return "StationAuthResponse"  [no-any-return]
+        return persist_station_recovery(
+        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+civiccast\auth\tokens.py:170: error: Returning Any from function declared to
+return "OperatorIdentity"  [no-any-return]
+                    return with_station
+                    ^~~~~~~~~~~~~~~~~~~
+civiccast\auth\tokens.py:178: error: Returning Any from function declared to
+return "OperatorIdentity"  [no-any-return]
+            return with_station
+            ^~~~~~~~~~~~~~~~~~~
+civiccast\native\supervisor\service.py:1931: error: Unused "type: ignore"
+comment  [unused-ignore]
+        import win32service  # type: ignore[import-untyped]
+        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+civiccast\native\supervisor\service_host.py:67: error: Unused "type: ignore"
+comment  [unused-ignore]
+    import win32service  # type: ignore[import-untyped]
+    ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+civiccast\native\admin_recovery.py:57: error: Unused "type: ignore" comment 
+[unused-ignore]
+        import win32service  # type: ignore[import-untyped]  # pywin32 run...
+        ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~...
+Found 10 errors in 6 files (checked 701 source files)
+
+After type-contract corrections: .venv\Scripts\python.exe -m mypy civiccast
+Success: no issues found in 701 source files
+Exit code: 0

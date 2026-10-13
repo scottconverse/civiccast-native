@@ -1,0 +1,10 @@
+import json
+from pathlib import Path
+
+from civiccast.native.station_secrets import StationSecretVault
+
+value = StationSecretVault().get("civiccast.live-source", "sandbox-source")
+Path(r"C:\CivicCastScratch\vault-result.json").write_text(
+    json.dumps({"credentialPreserved": value == "sandbox-only-secret-fixture"}),
+    encoding="utf-8",
+)

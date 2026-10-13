@@ -1,0 +1,130 @@
+waiting for server to start...
+.
+2026-10-13 13:36:49.354 MDT [7352] LOG:  starting PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35227, 64-bit
+
+2026-10-13 13:36:49.355 MDT [7352] LOG:  listening on IPv4 address "127.0.0.1", port 55439
+
+2026-10-13 13:36:49.376 MDT [3632] LOG:  database system was shut down at 2026-10-13 13:31:48 MDT
+
+2026-10-13 13:36:49.433 MDT [7352] LOG:  database system is ready to accept connections
+
+ done
+
+server started
+
+2026-10-13 13:37:12.654 MDT [2452] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:37:12.654 MDT [8776] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:37:12.654 MDT [6184] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-10-13 13:37:12.654 MDT [8264] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-10-13 13:37:12.655 MDT [8524] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:37:12.675 MDT [7352] LOG:  received fast shutdown request
+
+2026-10-13 13:37:12.676 MDT [7352] LOG:  aborting any active transactions
+
+2026-10-13 13:37:12.676 MDT [8960] FATAL:  terminating connection due to administrator command
+
+2026-10-13 13:37:12.682 MDT [7352] LOG:  background worker "logical replication launcher" (PID 8760) exited with exit code 1
+
+2026-10-13 13:37:12.683 MDT [3612] LOG:  shutting down
+
+2026-10-13 13:37:12.684 MDT [3612] LOG:  checkpoint starting: shutdown immediate
+
+2026-10-13 13:37:12.712 MDT [3612] LOG:  checkpoint complete: wrote 133 buffers (0.8%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.003 s, sync=0.023 s, total=0.030 s; sync files=35, longest=0.005 s, average=0.001 s; distance=347 kB, estimate=347 kB; lsn=0/1DBB5B0, redo lsn=0/1DBB5B0
+
+2026-10-13 13:37:12.719 MDT [7352] LOG:  database system is shut down
+
+waiting for server to start...
+.
+2026-10-13 13:38:42.798 MDT [5316] LOG:  starting PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35227, 64-bit
+
+2026-10-13 13:38:42.800 MDT [5316] LOG:  listening on IPv4 address "127.0.0.1", port 55439
+
+2026-10-13 13:38:42.843 MDT [5640] LOG:  database system was shut down at 2026-10-13 13:37:12 MDT
+
+2026-10-13 13:38:42.854 MDT [5316] LOG:  database system is ready to accept connections
+
+ done
+
+server started
+
+2026-10-13 13:39:07.743 MDT [8836] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:39:07.743 MDT [8716] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-10-13 13:39:07.743 MDT [6664] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-10-13 13:39:07.743 MDT [5820] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-10-13 13:39:07.743 MDT [8392] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:39:07.765 MDT [5316] LOG:  received fast shutdown request
+
+2026-10-13 13:39:07.766 MDT [5316] LOG:  aborting any active transactions
+
+2026-10-13 13:39:07.767 MDT [8660] FATAL:  terminating connection due to administrator command
+
+2026-10-13 13:39:07.771 MDT [5316] LOG:  background worker "logical replication launcher" (PID 3640) exited with exit code 1
+
+2026-10-13 13:39:07.773 MDT [8512] LOG:  shutting down
+
+2026-10-13 13:39:07.774 MDT [8512] LOG:  checkpoint starting: shutdown immediate
+
+2026-10-13 13:39:07.785 MDT [8512] LOG:  checkpoint complete: wrote 14 buffers (0.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.003 s, sync=0.005 s, total=0.013 s; sync files=13, longest=0.001 s, average=0.001 s; distance=3 kB, estimate=3 kB; lsn=0/1DBC3F8, redo lsn=0/1DBC3F8
+
+2026-10-13 13:39:07.792 MDT [5316] LOG:  database system is shut down
+
+waiting for server to start...
+.
+2026-10-13 13:41:17.397 MDT [5852] LOG:  starting PostgreSQL 17.10 on x86_64-windows, compiled by msvc-19.44.35227, 64-bit
+
+2026-10-13 13:41:17.398 MDT [5852] LOG:  listening on IPv4 address "127.0.0.1", port 55439
+
+2026-10-13 13:41:17.418 MDT [7504] LOG:  database system was shut down at 2026-10-13 13:39:07 MDT
+
+2026-10-13 13:41:17.425 MDT [5852] LOG:  database system is ready to accept connections
+
+ done
+
+server started
+
+2026-10-13 13:41:42.206 MDT [3924] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:41:42.206 MDT [8360] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:41:42.207 MDT [8420] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:41:42.207 MDT [3752] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:41:42.207 MDT [8556] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+
+2026-10-13 13:41:42.224 MDT [5852] LOG:  received fast shutdown request
+
+2026-10-13 13:41:42.225 MDT [5852] LOG:  aborting any active transactions
+
+2026-10-13 13:41:42.226 MDT [4772] FATAL:  terminating connection due to administrator command
+
+2026-10-13 13:41:42.229 MDT [5852] LOG:  background worker "logical replication launcher" (PID 9192) exited with exit code 1
+
+2026-10-13 13:41:42.231 MDT [8404] LOG:  shutting down
+
+2026-10-13 13:41:42.232 MDT [8404] LOG:  checkpoint starting: shutdown immediate
+
+2026-10-13 13:41:42.256 MDT [8404] LOG:  checkpoint complete: wrote 186 buffers (1.1%); 0 WAL file(s) added, 0 removed, 0 recycled; write=0.003 s, sync=0.020 s, total=0.026 s; sync files=35, longest=0.003 s, average=0.001 s; distance=550 kB, estimate=550 kB; lsn=0/1E45D58, redo lsn=0/1E45D58
+
+2026-10-13 13:41:42.263 MDT [5852] LOG:  database system is shut down
+

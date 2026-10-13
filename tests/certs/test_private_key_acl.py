@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from civiccast.certs import authority
+from civiccast.native.service_identity import SERVICE_SID
 
 _SAMPLE_SID = "S-1-5-21-1111111111-2222222222-3333333333-1001"
 
@@ -31,7 +32,7 @@ windows_only = pytest.mark.skipif(os.name != "nt", reason="Real icacls behavior 
 # --------------------------------------------------------------------------- #
 # Pure command-builder contract (cross-platform)                              #
 # --------------------------------------------------------------------------- #
-def test_command_grants_three_sids_by_star_prefix() -> None:
+def test_command_grants_writer_admins_and_restricted_service_by_sid() -> None:
     path = Path(r"C:\CivicCast\certs\ca\civiccast-local-ca.key")
 
     command = authority._windows_private_key_acl_command(path, principal_sid=_SAMPLE_SID)
@@ -44,6 +45,7 @@ def test_command_grants_three_sids_by_star_prefix() -> None:
         f"*{_SAMPLE_SID}:F",
         "*S-1-5-18:F",
         "*S-1-5-32-544:F",
+        f"*{SERVICE_SID}:(R,W)",
     ]
 
 

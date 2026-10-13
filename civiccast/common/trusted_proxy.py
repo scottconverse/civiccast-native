@@ -22,6 +22,11 @@ Three env vars + one provider preset:
 * ``CIVICCAST_TRUSTED_PROXY_CIDRS`` — comma-separated CIDR list. Wins over
   every other source. Use this when the operator has explicit knowledge
   of the proxy fleet (e.g. an internal load balancer subnet).
+* ``CIVICCAST_TRUSTED_PROXY_CIDRS_EXACT`` — comma-separated CIDR list used by
+  the native reverse-proxy integration. When present (including as an empty
+  string), it is the complete trust boundary: provider presets and private
+  proxy opt-in are ignored. This prevents an edge-proxy setting from silently
+  inheriting wider trust from a CDN setting used by a different subsystem.
 * ``CIVICCAST_CDN_PROVIDER`` (already used by ``civiccast.stream.cdn``) —
   when set to ``bunny`` or ``cloudflare_r2`` (or ``cloudflare``), the
   resolver UNIONS the provider's published edge CIDR list with the
@@ -129,6 +134,18 @@ def _trusted_networks() -> tuple[IPv4Network | IPv6Network, ...]:
     """
     networks: list[IPv4Network | IPv6Network] = []
 
+    exact = os.environ.get("CIVICCAST_TRUSTED_PROXY_CIDRS_EXACT")
+    if exact is not None:
+        for entry in exact.split(","):
+            token = entry.strip()
+            if not token:
+                continue
+            try:
+                networks.append(ip_network(token, strict=False))
+            except ValueError:
+                continue
+        return tuple(networks)
+
     # Explicit operator list takes precedence — additive with the provider preset.
     raw = os.environ.get("CIVICCAST_TRUSTED_PROXY_CIDRS", "")
     for entry in raw.split(","):
@@ -155,6 +172,8 @@ def _trusted_networks() -> tuple[IPv4Network | IPv6Network, ...]:
 
 @lru_cache(maxsize=1)
 def _trust_private() -> bool:
+    if os.environ.get("CIVICCAST_TRUSTED_PROXY_CIDRS_EXACT") is not None:
+        return False
     # QA-4: was default=True. A same-peer caller (loopback/RFC1918) could pick
     # its own rate-limit bucket via a spoofed X-Forwarded-For with nothing
     # configured. Deployments that need private-proxy trust set

@@ -503,7 +503,7 @@ Code 123 hides a second number from the activation step: 66 (pack or index missi
 
 | Where | Message | Cause and fix |
 | --- | --- | --- |
-| API, HTTP 401 | Missing Authorization header. Use Bearer &lt;staff-token&gt;. | No token sent. In the console: sign in again on First Setup. |
+| API, HTTP 401 | Missing Authorization header. Use Bearer &lt;staff-token&gt;. | No token sent. Staff sign in at `/login`; the first administrator signs in at `/setup`. |
 | API, HTTP 401 | Invalid Authorization header. Use Bearer &lt;staff-token&gt;. | The header is not in the form `Bearer <token>`. |
 | API, HTTP 401 | Invalid staff bearer token. | The token is wrong or from another station. |
 | API, HTTP 401 | Staff bearer token has been revoked. | Issue a new one. |
@@ -547,7 +547,7 @@ CivicCast has five roles. A role is a set of things a person is allowed to do. T
 
 1. **The first admin gets all five.** The account created on First Setup, and anyone who signs in with that admin's password or a recovery code, gets the scope `admin`, which means all five roles.
 2. **Tokens for tools get what you give them.** `civiccast token issue --scopes ...` makes a token; with no `--scopes` it gets `operator`, which is also all five. Name roles (for example `--scopes records_clerk`) to narrow it ([Appendix A](#app-cli)).
-3. **There is no screen for creating operators or assigning roles.** Because the console signs in only as the first admin, in a normal station every console user is effectively all five roles. The role limits below are real, but you can only see them with a narrowed token. Nothing in the console shows a person's roles as text; only the hover text on the initials badge in the top bar lists them.
+3. **Setup admins manage staff accounts and roles.** The **Staff accounts** screen creates staff accounts, assigns their roles, disables access and resets passwords. The first administrator remains the recovery account with all five roles. Each signed-in account sees menu entries allowed by its roles, as summarized below.
 4. **Roles add up.** One matching role is enough.
 5. **No scopes means no roles.** A token with no scopes is refused everywhere that checks a role.
 
@@ -986,7 +986,7 @@ Conform cache
 :   The folder of prepared copies. It lives at `data\egress\conform-cache` under the data folder and is limited to 60 GB by default.
 
 Console token
-:   The proof of sign-in the browser keeps after you sign in on First Setup. It is stored in the browser until you sign out or the station rejects it.
+:   The proof of sign-in the browser keeps after staff sign-in at `/login` or first-admin sign-in at `/setup`. It is stored in the browser until you sign out, an administrator revokes the session, or it expires.
 
 Contributor
 :   An outside producer who sends in a program through the public "Submit a program" form. Staff review these on the Contributors screen.
@@ -1091,7 +1091,7 @@ Firewall rule
 :   A Windows setting that allows or blocks network traffic. Setup adds one for TCP 8000.
 
 First Setup
-:   The screen that creates the first admin and the recovery kit, and later serves as the sign-in page.
+:   The screen that creates the first admin and recovery kit, and later serves that administrator’s sign-in and recovery flow. Staff use `/login`.
 
 Flight
 :   The date window in which an underwriting spot should run.
@@ -1573,7 +1573,10 @@ Every screen of the operator console, then the resident portal pages and the set
 | Menu name | Menu section | Roles | Page title (if different) | Chapter |
 | --- | --- | --- | --- | --- |
 | Manual | Help | All | Operator manual | [Chapter 2](#ch-signing-in) |
-| First Setup | Setup | All | First setup (also the sign-in page) | [Chapter 2](#ch-signing-in) |
+| First Setup | Setup | All | First setup and admin sign-in | [Chapter 2](#ch-signing-in) |
+| Staff accounts | Setup | S | Staff accounts | [Chapter 2](#ch-signing-in) and [Chapter 11](#ch-configuration) (Part II) |
+| Backup and restore | Setup | S, A | Station backup and restore | [Chapter 13](#ch-operations) (Part II) |
+| Network access | Setup | S, A | Network Settings | [Chapter 11](#ch-configuration) (Part II) |
 | Control Room Setup | Setup | S | Control Room — setup | [Chapter 11](#ch-configuration), Configuring the station (Part II) |
 | Station Profile | Setup | S, M, A | | [Chapter 11](#ch-configuration), Configuring the station (Part II) |
 | Cable Commissioning | Setup | S, A | | [Chapter 11](#ch-configuration) and [Chapter 15](#ch-integrations) (Part II) |
@@ -1610,7 +1613,7 @@ Every screen of the operator console, then the resident portal pages and the set
 | Emergency Alerts | System Health | S, M, A | | [Chapter 8](#ch-something-wrong) |
 | Federation | System Health | All | ActivityPub federation | [Chapter 8](#ch-something-wrong); setup detail in [Chapter 15](#ch-integrations) (Part II) |
 
-That is 37 menu entries in six sections. Two more pages are reached from the Assets list and are not in the menu: **asset detail** (`#/assets/<asset id>`) and the full-screen **trim editor** (`#/assets/<asset id>/trim`); both are in [Chapter 5](#ch-after-meeting). An address the console does not know shows "Page not found" with buttons for Manual, First Setup, Recording, Reports and Readiness. A few old or short addresses forward to the right screen (for example `/docs` and `/manual` to Manual, `/login` to First Setup, `/readiness` to Readiness, `/today` to Schedule, `/archive` to Assets).
+That is 40 menu entries in six sections. Two more pages are reached from the Assets list and are not in the menu: **asset detail** (`#/assets/<asset id>`) and the full-screen **trim editor** (`#/assets/<asset id>/trim`); both are in [Chapter 5](#ch-after-meeting). An address the console does not know shows "Page not found" with buttons for Manual, First Setup, Recording, Reports and Readiness. A few old or short addresses forward to the right screen (for example `/docs` and `/manual` to Manual, `/sign-in` and `/staff-login` to the staff sign-in page at `/login`, `/readiness` to Readiness, `/today` to Schedule, `/archive` to Assets).
 
 > **Known issue (beta.11):** The top bar clock always says "Next No events scheduled" and the pill "No live meeting broadcast", whatever the schedule holds. They are placeholders. Use Schedule and Channels for the real answers.
 

@@ -53,16 +53,20 @@ class _Applier:
 # --- the descriptor itself (pure) --------------------------------------------
 
 
-def test_sddl_grants_exactly_system_administrators_and_the_caller() -> None:
+def test_sddl_grants_system_administrators_caller_and_station_service() -> None:
     """The whole security argument in one assertion: PROTECTED, inheritable,
     exactly three grantees, and NONE of the broad principals ProgramData
     hands down by default."""
 
     sddl = pgdata_dacl_sddl(_SID)
 
-    assert sddl == f"D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)(A;OICI;GA;;;{_SID})"
+    from civiccast.native.service_identity import SERVICE_SID
+
+    assert sddl == (
+        f"D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)(A;OICI;GA;;;{_SID})(A;OICI;0x1301bf;;;{SERVICE_SID})"
+    )
     assert sddl.startswith("D:P"), "must be PROTECTED so ProgramData's ACEs cannot re-inherit"
-    assert sddl.count("(A;") == 3, f"exactly three ACEs, no more: {sddl!r}"
+    assert sddl.count("(A;") == 4, f"exactly four ACEs, no more: {sddl!r}"
     assert "OICI" in sddl, (
         "must be inheritable, or future service-created WAL files are unreachable"
     )

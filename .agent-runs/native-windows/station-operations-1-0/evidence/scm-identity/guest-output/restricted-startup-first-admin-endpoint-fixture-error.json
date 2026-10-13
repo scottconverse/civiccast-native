@@ -1,0 +1,52 @@
+﻿{
+    "startedUtc":  "2026-10-13T19:36:32.0741257Z",
+    "phases":  {
+                   "fixture":  "existing same-guest PostgreSQL schema current; original LocalSystem seed retained without reseeding",
+                   "protectedAcl":  "provision and upgrade state roots remain protected and exclude the service SID",
+                   "profile":  "migration receipt exists and source/destination profile hashes match",
+                   "credential":  "LocalSystem decrypted the migrated vault and matched the synthetic secret",
+                   "api":  "restricted-account SCM service served actual loopback /health"
+               },
+    "logonIdentity":  "33A39735-4E5E-4\\WDAGUtilityAccount",
+    "adminToken":  true,
+    "memoryMiB":  4095,
+    "legacyStateSha256":  "d0bacbda94e338d89db1356185a00ebb1cca267fc6fae028e76489a664533608",
+    "legacyFixtureSha256":  "80321abdb2f0d2b025ea638cc5339c7c709202910124bf527ca6db4148eba36a",
+    "serviceBeforeMigration":  "LocalSystem",
+    "serviceAfterMigration":  "NT SERVICE\\CivicCastSupervisor",
+    "stateAfterMigration":  "Stopped",
+    "migrationReceipt":  true,
+    "migratedStateSha256":  "d0bacbda94e338d89db1356185a00ebb1cca267fc6fae028e76489a664533608",
+    "migratedFixtureSha256":  "80321abdb2f0d2b025ea638cc5339c7c709202910124bf527ca6db4148eba36a",
+    "serviceSid":  "S-1-5-80-3505678282-1640658708-3289577692-12763909-1392209962",
+    "vaultExists":  true,
+    "serviceSidOnVaultAcl":  true,
+    "provisionAclProtected":  true,
+    "provisionHasServiceSid":  false,
+    "upgradeAclProtected":  true,
+    "upgradeHasServiceSid":  false,
+    "credentialPreserved":  true,
+    "serviceStateAfterStart":  "Running",
+    "serviceStartName":  "NT SERVICE\\CivicCastSupervisor",
+    "apiHealthHttp":  200,
+    "apiMode":  "normal",
+    "apiHealth":  {
+                      "status":  "healthy",
+                      "version":  "1.0.0-beta.15",
+                      "schema":  "current",
+                      "live_captions":  "disabled",
+                      "schema_db_revision":  "0089_contribution_media_control_requests",
+                      "schema_expected_head":  "0089_contribution_media_control_requests",
+                      "mode":  "normal"
+                  },
+    "serviceProcessId":  7024,
+    "serviceProcessOwner":  {
+                                "Domain":  "NT SERVICE",
+                                "User":  "CivicCastSupervisor",
+                                "ReturnValue":  0
+                            },
+    "failedPhase":  "restricted-backup-credential-export",
+    "error":  "The remote server returned an error: (401) Unauthorized.",
+    "errorDetail":  "Invoke-RestMethod : {\"detail\":\"Invalid staff username or password.\"}\r\nAt C:\\CivicCastScripts\\ContinueMigration.ps1:88 char:12\r\n+   $login = Invoke-RestMethod \u0027http://127.0.0.1:8000/api/staff/auth/lo ...\r\n+            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : InvalidOperation: (System.Net.HttpWebRequest:Htt \r\n   pWebRequest) [Invoke-RestMethod], WebException\r\n    + FullyQualifiedErrorId : WebCmdletWebResponseException,Microsoft.PowerShe \r\n   ll.Commands.InvokeRestMethodCommand\r\n",
+    "finishedUtc":  "2026-10-13T19:37:12.9797214Z"
+}

@@ -75,11 +75,13 @@ Setup returns a number when it fails. Interactive setup shows a dialog with word
 
 ## Sign-in
 
-There is no separate login page. Sign-in is on the **First Setup** screen (`#/setup`), in the **Admin sign-in** card.
+The **First Setup** screen (`#/setup`) is for creating the first administrator and for that administrator to sign in or recover access. Staff use the separate sign-in page at `/login`. When Caddy remote access is configured, staff can sign in through the staff hostname from an approved CIDR; first-admin setup and sign-in remain local to the station.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
 | "Invalid admin username or password." | Wrong username or password. | The red alert on the card. | Use the username and password from the recovery kit. If the password is lost, use **Use recovery code**: it consumes one of the 8 one-time codes and sets a new password of 12 or more characters. |
+| "Invalid staff username or password." | The username or password is wrong, or the account is disabled. | The alert on the Staff sign-in page. | Check the credentials. Ask a setup administrator to confirm the account is enabled or reset its password in **Staff accounts**. |
+| "Too many staff sign-in attempts. Wait and try again." | Staff sign-in is rate-limited after repeated failed attempts. | HTTP 429 and the message on the Staff sign-in page; the response includes `Retry-After`. | Wait, then try again with the correct credentials. |
 | "Too many sign-in attempts from this station. Wait N seconds, then try again..." | The setup sign-in limiter is cooling down. | The text names the wait. | Wait the number of seconds shown, then use the correct password or a recovery code. |
 | "Too many failed attempts to authenticate with the staff API. Wait N seconds, then try again." | 10 bad tokens in 60 seconds from one client address. A request with no token at all does not count. | The text (the console writes it itself), and an HTTP 429 from the API. The API's own `detail` is "Too many failed staff authentication attempts. Wait and retry." with a `Retry-After` header in seconds. | Wait. The limit is set by `CIVICCAST_AUTH_RATE_LIMIT` (default 10) and `CIVICCAST_AUTH_RATE_LIMIT_WINDOW_SECONDS` (default 60). |
 | The card "First setup can only be done from the station computer itself" | You opened the console from another computer, or through a remote-viewer that is not running on the station. | The page is HTTP 403. | Sign in on the station computer itself, or in a remote-desktop session on it. The sign-in and recovery routes accept only loopback requests. |

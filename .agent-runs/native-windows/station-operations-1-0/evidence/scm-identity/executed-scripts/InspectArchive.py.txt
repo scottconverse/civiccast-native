@@ -1,0 +1,17 @@
+import hashlib, json, tempfile
+from pathlib import Path
+from civiccast.dr.station_backup import _decrypt_and_extract, _decode_portable_credentials, _read_station_manifest
+root=Path(r"C:\ProgramData\CivicCast")
+archive=max((root/"backups").glob("station-backup-*.ccbackup"),key=lambda p:p.stat().st_mtime)
+with tempfile.TemporaryDirectory(prefix="identity-credential-proof-") as temp:
+    bundle=_decrypt_and_extract(archive,Path(temp),"sandbox-only-recovery-passphrase")
+    manifest=_read_station_manifest(bundle)
+    records=_decode_portable_credentials(bundle,manifest.get("credential_export_member"))
+    value=json.loads(records["station-keyring.json"])
+    credential_matches=value.get("civiccast.live-source",{}).get("sandbox-source")=="sandbox-only-secret-fixture"
+    assert credential_matches,"Service-produced archive did not contain migrated synthetic vault credential"
+package=Path(r"C:\Program Files\CivicCast (Native)\runtime\Lib\site-packages\civiccast")
+files=("app.py","native/install_service_identity.py","native/identity_migration.py","native/service_identity.py","native/station_secrets.py","native/supervisor/service_host.py","native/supervisor/service.py","native/pgdata_acl.py","dr/station_backup.py","dr/station_backup_runtime.py","dr/station_backup_router.py","installer/station_state.py")
+hashes={name:hashlib.sha256((package/name).read_bytes()).hexdigest() for name in files}
+result={"serviceProducedArchive":archive.name,"archiveSha256":hashlib.sha256(archive.read_bytes()).hexdigest(),"migratedSyntheticVaultCredentialPresent":credential_matches,"plaintextExtractScratchRemoved":True,"guestInstalledSourceSha256":hashes}
+Path(r"C:\CivicCastEvidence\archive-credential-and-source-proof.json").write_text(json.dumps(result,indent=2),encoding="utf-8")

@@ -15,6 +15,7 @@ export type RoleName = NonNullable<StaffIdentityResponse['roles']>[number]
 export type RouteId =
   | 'help'
   | 'setup'
+  | 'staffaccounts'
   | 'live'
   | 'facility'
   | 'controlroom'
@@ -43,6 +44,8 @@ export type RouteId =
   | 'eas'
   | 'ai-models'
   | 'station-profile'
+  | 'backups'
+  | 'network'
   | 'commissioning'
   | 'custom-fields'
   | 'reports'
@@ -98,6 +101,9 @@ const NAV_SECTIONS: NavSection[] = [
     collapsedByDefault: true,
     items: [
       { id: 'setup', label: 'First Setup' },
+      { id: 'staffaccounts', label: 'Staff accounts', requiredRoles: ['setup_admin'] },
+      { id: 'backups', label: 'Backup and restore', requiredRoles: ['setup_admin', 'support_admin'] },
+      { id: 'network', label: 'Network access', requiredRoles: ['setup_admin', 'support_admin'] },
       { id: 'controlroomsetup', label: 'Control Room Setup', requiredRoles: ['setup_admin'] },
       {
         id: 'station-profile',

@@ -107,6 +107,7 @@ from civiccast.native.models import (
     InterlockRead,
     SelectorRead,
 )
+from civiccast.native.service_identity import object_dacl
 
 # ---------------------------------------------------------------------------
 # Registry / serialization contracts (WS4-owned; win_probes.py and
@@ -122,7 +123,7 @@ MAINTENANCE_VALUE_NAME = "Maintenance"
 MUTEX_NAME = r"Global\CivicCastRuntimeOwner"
 # Protected DACL: SYSTEM + BUILTIN\Administrators GENERIC_ALL, nobody else
 # (spec D4) -- an unprivileged local process must be DENIED acquisition.
-MUTEX_SDDL = "D:P(A;;GA;;;SY)(A;;GA;;;BA)"
+MUTEX_SDDL = object_dacl()
 
 # From the SHIPPING WSL product (verified in-repo):
 #   civiccast/apps/installer/src-tauri/src/main.rs:26,676-684 (spawn_civiccast_wsl_keepalive)

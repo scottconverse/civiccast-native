@@ -1,0 +1,16 @@
+﻿{
+    "startedUtc":  "2026-10-13T19:33:39.1851621Z",
+    "phases":  {
+                   "fixture":  "existing same-guest PostgreSQL schema current; original LocalSystem seed retained without reseeding"
+               },
+    "logonIdentity":  "33A39735-4E5E-4\\WDAGUtilityAccount",
+    "adminToken":  true,
+    "memoryMiB":  4095,
+    "legacyStateSha256":  "d0bacbda94e338d89db1356185a00ebb1cca267fc6fae028e76489a664533608",
+    "legacyFixtureSha256":  "80321abdb2f0d2b025ea638cc5339c7c709202910124bf527ca6db4148eba36a",
+    "serviceBeforeMigration":  "LocalSystem",
+    "failedPhase":  "migrate-identity",
+    "error":  "SCM service identity migration failed (1).",
+    "errorDetail":  "SCM service identity migration failed (1).\r\nAt C:\\CivicCastScripts\\ContinueMigration.ps1:33 char:30\r\n+ ... DE -ne 0) { throw \"SCM service identity migration failed ($LASTEXITCO ...\r\n+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : OperationStopped: (SCM service ide...ion failed  \r\n   (1).:String) [], RuntimeException\r\n    + FullyQualifiedErrorId : SCM service identity migration failed (1).\r\n \r\n",
+    "finishedUtc":  "2026-10-13T19:33:43.9845767Z"
+}

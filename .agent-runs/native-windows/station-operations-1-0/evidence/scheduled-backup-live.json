@@ -1,0 +1,10 @@
+{
+  "result": "PASS",
+  "actual_scheduler_thread": true,
+  "elapsed_seconds": 30.67,
+  "archives": 1,
+  "archive_verified": true,
+  "database_engine": "sqlite",
+  "attempt_day_persisted": true,
+  "worker_stopped": true
+}

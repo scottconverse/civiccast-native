@@ -1,0 +1,14 @@
+﻿{
+    "startedUtc":  "2026-10-13T19:26:55.3824772Z",
+    "phases":  {
+
+               },
+    "logonIdentity":  "33A39735-4E5E-4\\WDAGUtilityAccount",
+    "adminToken":  true,
+    "memoryMiB":  4095,
+    "resumedAfter":  "verified one-off pg_ctl inherited-output hang; initial initdb and pg_ctl start succeeded; original script stopped; same guest reused",
+    "failedPhase":  "resume-postgres-fixture",
+    "error":  "The term \u0027C:\\Program Files\\CivicCast (Native)\\packs\\native-server-binaries\\payload\\bin\\createdb.exe\u0027 is not recognized as the name of a cmdlet, function, script file, or operable program. Check the spelling of the name, or if a path was included, verify that the path is correct and try again.",
+    "errorDetail":  "\u0026 : The term \u0027C:\\Program Files\\CivicCast \r\n(Native)\\packs\\native-server-binaries\\payload\\bin\\createdb.exe\u0027 is not \r\nrecognized as the name of a cmdlet, function, script file, or operable \r\nprogram. Check the spelling of the name, or if a path was included, verify \r\nthat the path is correct and try again.\r\nAt C:\\CivicCastScripts\\Resume.ps1:27 char:5\r\n+   \u0026 \"$bin\\createdb.exe\" \u0027-h\u0027 \u0027127.0.0.1\u0027 \u0027-p\u0027 \u002755439\u0027 \u0027-U\u0027 \u0027postgres\u0027 ...\r\n+     ~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : ObjectNotFound: (C:\\Program File...in\\createdb.e \r\n   xe:String) [], CommandNotFoundException\r\n    + FullyQualifiedErrorId : CommandNotFoundException\r\n \r\n",
+    "finishedUtc":  "2026-10-13T19:26:56.8790821Z"
+}

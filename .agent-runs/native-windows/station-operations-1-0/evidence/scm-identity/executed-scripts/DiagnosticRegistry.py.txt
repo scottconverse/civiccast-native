@@ -1,0 +1,17 @@
+import json, winreg, win32security, win32con
+from pathlib import Path
+root=r"SYSTEM\CurrentControlSet\Services\CivicCastSupervisor"
+results=[]
+for path in (root, root+r"\PythonClass"):
+    item={"path":path}
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,path,0,win32con.READ_CONTROL|winreg.KEY_WOW64_64KEY) as key:
+            sd=win32security.GetSecurityInfo(int(key),win32security.SE_REGISTRY_KEY,win32security.DACL_SECURITY_INFORMATION)
+            item["sddl"]=win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(sd,1,win32security.DACL_SECURITY_INFORMATION)
+    except Exception as e:item["acl_error"]=str(e)
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,path,0,winreg.KEY_READ|winreg.KEY_WOW64_64KEY) as key:
+            item["default"]=winreg.QueryValueEx(key,"")[0]
+    except Exception as e:item["read_error"]=str(e)
+    results.append(item)
+Path(r"C:\CivicCastEvidence\migration-registry-native.json").write_text(json.dumps(results,indent=2),encoding="utf-8")

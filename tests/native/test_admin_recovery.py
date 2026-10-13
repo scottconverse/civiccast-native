@@ -18,8 +18,9 @@ def _assert_restricted_state_acl(path):
     import win32security
 
     from civiccast.certs.authority import _current_process_sid
+    from civiccast.native.service_identity import SERVICE_SID
 
-    allowed = {_current_process_sid(), "S-1-5-18", "S-1-5-32-544"}
+    allowed = {_current_process_sid(), "S-1-5-18", "S-1-5-32-544", SERVICE_SID}
     owner_rights_sid = "S-1-3-4"
     security_info = (
         win32security.DACL_SECURITY_INFORMATION | win32security.OWNER_SECURITY_INFORMATION
@@ -61,7 +62,12 @@ def _assert_restricted_state_acl(path):
         ace_diagnostic = f"{diagnostic}; ACEs={ace_rows!r}"
         assert ace_type == win32security.ACCESS_ALLOWED_ACE_TYPE, ace_diagnostic
         assert ace_flags in allowed_flags, ace_diagnostic
-        assert access_mask == ntsecuritycon.FILE_ALL_ACCESS, ace_diagnostic
+        expected_mask = (
+            ntsecuritycon.FILE_GENERIC_READ | ntsecuritycon.FILE_GENERIC_WRITE
+            if trustee_sid == SERVICE_SID
+            else ntsecuritycon.FILE_ALL_ACCESS
+        )
+        assert access_mask == expected_mask, ace_diagnostic
 
         effective_sid = trustee_sid
         if trustee_sid == owner_rights_sid:
@@ -117,12 +123,16 @@ def test_reset_preserves_data_and_revokes_credentials(station, legacy):
         original["operator_console"] = original["operator_console"]["tokens"][0]
         path.write_text(json.dumps(original), encoding="utf-8")
     assert station_state.verify_station_operator_token(recovery._test_old_token) is not None
+    # Legacy-session verification may persist its one-time session metadata
+    # migration. The recovery backup must preserve the exact state as it
+    # exists immediately before the reset, including that migration.
+    before_reset = path.read_bytes()
     backup = recovery.reset_password(path, "new-password-value")
     if sys.platform == "win32":
         for protected in (path, backup):
             _assert_restricted_state_acl(protected)
     updated = json.loads(path.read_text(encoding="utf-8"))
-    assert json.loads(backup.read_text(encoding="utf-8")) == original
+    assert backup.read_bytes() == before_reset
     assert updated["station"] == original["station"]
     assert updated["other_settings"] == original["other_settings"]
     assert updated["admin"]["username"] == "owner"

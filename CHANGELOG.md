@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Station operations
+
+- Add encrypted station backups with scheduled destinations, retained-backup
+  limits, progress, and an offline restore command for database, configuration,
+  credentials and selected media.
+- Add supported Caddy HTTPS configuration with separate public and staff
+  hostnames, staff network restrictions, and configurable application listening.
+- Add staff account administration, roles, access disabling, session revocation
+  and enforced session expiry, including first-administrator sessions.
+- Replace LocalSystem with a dedicated Windows virtual service account and
+  preserve existing station profiles and credentials during migration.
+
+These changes are not in the published Beta 15 package. Integration results and
+verification scope are recorded in [station operations](docs/ops/station-operations-goal.md).
+
 ## [1.0.0-beta.15] - 2026-10-13
 
 ### October 13 corrected edition

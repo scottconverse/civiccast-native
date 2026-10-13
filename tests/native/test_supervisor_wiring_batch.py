@@ -255,6 +255,7 @@ def _build_service(
     layout=None,
     program_data_root: str | None = None,
     control_plane_env: dict[str, str] | None = None,
+    network_settings=None,
 ):
     from civiccast.native.supervisor.service import build_production_service
 
@@ -265,6 +266,8 @@ def _build_service(
         kwargs["program_data_root"] = program_data_root
     if control_plane_env is not None:
         kwargs["control_plane_env"] = control_plane_env
+    if network_settings is not None:
+        kwargs["network_settings"] = network_settings
     return build_production_service(
         logging.getLogger("test.wiring.batch"),
         guard=_WiringGuard(),  # type: ignore[arg-type]
@@ -668,6 +671,45 @@ def test_build_production_service_leaves_control_plane_path_untouched_without_ff
     assert "PATH" not in cp.env
     # CIVICCAST_UPLOAD_DIR is unconditional -- set regardless of ffmpeg staging.
     assert cp.env["CIVICCAST_UPLOAD_DIR"] == str(pd_root / "CivicCast" / "data" / "uploads")
+
+
+@pytest.mark.windows_only
+@_WINDOWS_PATH_TEST
+def test_production_service_applies_network_listener_and_proxy_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from civiccast.native.network import NetworkSettings
+    from civiccast.native.supervisor.install_layout import resolve_install_layout
+
+    install_root, pd_root = _make_install_tree(tmp_path)
+    monkeypatch.setenv("PROGRAMDATA", str(pd_root))
+    layout = resolve_install_layout(
+        executable=install_root / "runtime" / "pythonservice.exe",
+        program_data_root=pd_root,
+    )
+    settings = NetworkSettings.model_validate(
+        {
+            "mode": "caddy",
+            "public_base_url": "https://watch.example.gov",
+            "staff_hostname": "staff.example.gov",
+            "staff_allowed_cidrs": ["192.168.50.0/24"],
+            "upstream_host": "127.0.0.1",
+            "upstream_port": 8123,
+        }
+    )
+
+    service = _build_service(
+        layout=layout,
+        program_data_root=str(pd_root),
+        network_settings=settings,
+    )
+    spec = service._supervisor._spec_for("control_plane")
+
+    assert spec.argv[spec.argv.index("--host") + 1] == "127.0.0.1"
+    assert spec.argv[spec.argv.index("--port") + 1] == "8123"
+    assert spec.env["CIVICCAST_PUBLIC_BASE_URL"] == "https://watch.example.gov"
+    assert spec.env["CIVICCAST_TRUSTED_PROXY_CIDRS_EXACT"] == "127.0.0.1/32"
+    assert spec.env["CIVICCAST_ACTIVE_NETWORK_SETTINGS"] == settings.model_dump_json()
 
 
 def test_build_production_service_does_not_create_the_upload_dir(tmp_path: Path) -> None:

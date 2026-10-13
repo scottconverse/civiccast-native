@@ -19,8 +19,9 @@ state machine:
   classification, the handle-lifetime discipline) rather than hand-rolling a new
   ``CreateMutex`` path; it is parametrised with the singleton identity
   (``config.SINGLETON_MUTEX_NAME``) and the SAME restrictive SDDL as WS4's
-  runtime-owner mutex (``config.SINGLETON_MUTEX_SDDL`` == ``MUTEX_SDDL`` ==
-  ``D:P(A;;GA;;;SY)(A;;GA;;;BA)`` -- SYSTEM + Administrators only).
+  runtime-owner mutex (``config.SINGLETON_MUTEX_SDDL`` == ``MUTEX_SDDL``);
+  its DACL grants SYSTEM, Administrators and the CivicCast supervisor service
+  SID, without granting access to other local accounts.
 * **The graceful stop chain (D5 graceful-stop + RAT-004 drain-all).**
   :meth:`SupervisorService.graceful_stop_all` stops children in reverse startup
   order and issues each child its OWN graceful action first
@@ -88,6 +89,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from civiccast.db import connect_options
 from civiccast.db.url import normalize_database_url
+from civiccast.native.network import (
+    NetworkSettings,
+    NetworkSettingsStore,
+    default_network_settings_path,
+)
 from civiccast.native.pg_ctl_exec import run_captured_argv
 from civiccast.native.runtime_guard import GuardMonitor
 from civiccast.native.supervisor.admin import (
@@ -447,7 +453,7 @@ def build_singleton_mutex(
     """The ``Global\\CivicCastSupervisorSingleton`` mutex, built by REUSING the
     WS4 ``RuntimeOwnerMutex`` (its empirical Win32 cautions and handle-lifetime
     discipline) parametrised with the singleton identity and the restrictive
-    SYSTEM+Administrators SDDL. ``name``/``sddl`` are injectable ONLY so a
+    SYSTEM+Administrators+service-SID DACL. ``name``/``sddl`` are injectable ONLY so a
     ``*_win.py`` test can exercise the real SDDL readback under a unique object
     name without contending for the real global singleton."""
 
@@ -1726,6 +1732,7 @@ def build_production_service(
     layout: InstallLayout | None = None,
     db_host: str = "127.0.0.1",
     db_port: int = 5432,
+    network_settings: NetworkSettings | None = None,
 ) -> SupervisorService:
     """Assemble a production :class:`SupervisorService`. Binds the Windows-real
     seams this layer owns -- the concrete child runner, the Job Object API, the
@@ -1758,6 +1765,8 @@ def build_production_service(
     subsequent connection failed."""
 
     cfg = config or SupervisorConfig()
+    active_network_settings = network_settings or NetworkSettings()
+    network_runtime = active_network_settings.runtime_values()
     # F1: ONE stop Event, shared by the run loop (which waits on it) and the
     # supervisor (whose ``should_abort`` seam polls it from inside start()/tick()
     # and every readiness poll). Created here, before both, because the
@@ -1793,6 +1802,13 @@ def build_production_service(
     # worker died at `import gi.repository.Gst`. See
     # build_control_plane_media_env's docstring.
     control_plane_env = dict(control_plane_env or {})
+    control_plane_env.update(
+        {
+            "CIVICCAST_ACTIVE_NETWORK_SETTINGS": active_network_settings.model_dump_json(),
+            "CIVICCAST_PUBLIC_BASE_URL": network_runtime.public_base_url or "",
+            "CIVICCAST_TRUSTED_PROXY_CIDRS_EXACT": ",".join(network_runtime.trusted_proxy_cidrs),
+        }
+    )
     control_plane_env.update(
         build_control_plane_media_env(
             layout, logger=logger, inherited_path=control_plane_env.get("PATH")
@@ -1851,6 +1867,8 @@ def build_production_service(
         # provisioned with, not a silently wrong default.
         db_host=db_host,
         db_port=db_port,
+        control_plane_host=network_runtime.upstream_host,
+        control_plane_port=network_runtime.upstream_port,
         python_path=str(layout.python_path),
         # CC-WS5-003 review-fix: preserve the egress-work-dir security wiring.
         # The layout kwargs must ADD to, not REPLACE, the existing
@@ -2029,6 +2047,7 @@ class ProductionDependencies:
     # "127.0.0.1"/5432 defaults.
     db_host: str = "127.0.0.1"
     db_port: int = 5432
+    network_settings: NetworkSettings = field(default_factory=NetworkSettings)
 
 
 DependencyProvider = Callable[[], ProductionDependencies]
@@ -2126,6 +2145,9 @@ def default_dependency_provider() -> ProductionDependencies:
             "DATABASE_URL in the service environment before running under the SCM."
         )
 
+    network_settings = NetworkSettingsStore(default_network_settings_path()).load()
+    network_runtime = network_settings.runtime_values()
+
     # Real-world LPM deployment fix (2026-08-27): parse the postgres host/port
     # out of the SAME DATABASE_URL every other seam below connects to, the
     # SAME way civiccast.native.upgrade.pg_lifecycle.derive_pg_lifecycle_paths
@@ -2186,7 +2208,13 @@ def default_dependency_provider() -> ProductionDependencies:
     # Alerting outbox bound to the live Session factory + this station's host id.
     outbox = _AlertingOutbox(session_factory, socket.gethostname())
 
-    control_plane_url = os.environ.get(_ENV_CONTROL_PLANE_URL, _DEFAULT_CONTROL_PLANE_URL)
+    default_host = network_runtime.upstream_host
+    if ":" in default_host:
+        default_host = f"[{default_host}]"
+    default_control_plane_url = f"http://{default_host}:{network_runtime.upstream_port}"
+    control_plane_url = (
+        os.environ.get(_ENV_CONTROL_PLANE_URL, "").strip() or default_control_plane_url
+    )
 
     def postgres_probe() -> bool:
         """Cheap DB liveness (``SELECT 1``). G2: deliberately does NOT catch here
@@ -2301,6 +2329,14 @@ def default_dependency_provider() -> ProductionDependencies:
                 "setup can be completed)"
             )
 
+    control_plane_env.update(
+        {
+            "CIVICAST_ACTIVE_NETWORK_SETTINGS": network_settings.model_dump_json(),
+            "CIVICAST_PUBLIC_BASE_URL": network_runtime.public_base_url or "",
+            "CIVICAST_TRUSTED_PROXY_CIDRS_EXACT": ",".join(network_runtime.trusted_proxy_cidrs),
+        }
+    )
+
     return ProductionDependencies(
         guard=guard,
         alert_outbox=outbox,
@@ -2316,6 +2352,7 @@ def default_dependency_provider() -> ProductionDependencies:
         # this function's docstring.
         db_host=db_host,
         db_port=db_port,
+        network_settings=network_settings,
     )
 
 
@@ -2355,6 +2392,7 @@ def build_production_service_factory(
             control_plane_env=deps.control_plane_env,
             db_host=deps.db_host,
             db_port=deps.db_port,
+            network_settings=deps.network_settings,
         )
 
     return factory

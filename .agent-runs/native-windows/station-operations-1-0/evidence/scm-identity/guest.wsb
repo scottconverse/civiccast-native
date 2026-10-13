@@ -1,0 +1,13 @@
+<Configuration>
+  <VGpu>Disable</VGpu><Networking>Disable</Networking><ClipboardRedirection>Disable</ClipboardRedirection><MemoryInMB>4096</MemoryInMB>
+  <MappedFolders>
+    <MappedFolder><HostFolder>C:\Program Files\CivicCast (Native)\runtime</HostFolder><SandboxFolder>C:\CivicCastHostRuntime</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
+    <MappedFolder><HostFolder>C:\Program Files\CivicCast (Native)\packs\native-server-binaries\payload</HostFolder><SandboxFolder>C:\CivicCastPostgres</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
+    <MappedFolder><HostFolder>C:\Dev\Claude\civiccast-beta15-completion\civiccast</HostFolder><SandboxFolder>C:\CivicCastSource</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
+    <MappedFolder><HostFolder>C:\Users\scott\AppData\Local\Temp\CivicCast-identity-20261013-132213-input</HostFolder><SandboxFolder>C:\CivicCastScripts</SandboxFolder><ReadOnly>true</ReadOnly></MappedFolder>
+    <MappedFolder><HostFolder>C:\Dev\Claude\civiccast-beta15-completion\sandbox-lab\output\identity-20261013-132213</HostFolder><SandboxFolder>C:\CivicCastEvidence</SandboxFolder></MappedFolder>
+  </MappedFolders>
+  <LogonCommand><Command>powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\CivicCastScripts\Run.ps1</Command></LogonCommand>
+</Configuration>
+
+

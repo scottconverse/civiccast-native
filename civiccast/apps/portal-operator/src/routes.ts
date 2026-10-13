@@ -4,6 +4,7 @@ import { matchPath } from 'react-router'
 export const ROUTE_PATHS: Record<RouteId, string> = {
   help: '/help',
   setup: '/setup',
+  staffaccounts: '/staff-accounts',
   live: '/live',
   facility: '/facility',
   controlroom: '/control-room',
@@ -32,6 +33,8 @@ export const ROUTE_PATHS: Record<RouteId, string> = {
   eas: '/emergency-alerts',
   'ai-models': '/ai-models',
   'station-profile': '/station-profile',
+  backups: '/backups',
+  network: '/network',
   commissioning: '/commissioning',
   'custom-fields': '/custom-fields',
   reports: '/reports',
@@ -60,10 +63,8 @@ export const ROUTE_ALIASES: Record<string, string> = {
   '/today': '/schedule',
   '/archive': '/assets',
   '/subscribers': '/paywall',
-  // F-RC3-5 (nav): First Setup hosts the returning-operator sign-in, so a
-  // guessed /login or /sign-in lands there instead of Page not found.
-  '/login': '/setup',
-  '/sign-in': '/setup',
+  '/sign-in': '/login',
+  '/staff-login': '/login',
 }
 
 export function canonicalRoutePath(pathname: string): string {
@@ -95,5 +96,5 @@ export function isTrimEditorRoute(pathname: string): boolean {
 // before ManualScreen ever rendered).
 export function isPublicRoute(pathname: string): boolean {
   const canonical = canonicalRoutePath(pathname)
-  return canonical === '/setup' || canonical === '/help'
+  return canonical === '/setup' || canonical === '/help' || canonical === '/login'
 }

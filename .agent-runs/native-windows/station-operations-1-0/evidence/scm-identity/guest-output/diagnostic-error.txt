@@ -1,0 +1,12 @@
+Get-Content : Cannot find path 
+'C:\ProgramData\CivicCast\data\pgdata\postmaster.pid' because it does not 
+exist.
+At C:\CivicCastScripts\Diagnostic.ps1:5 char:1
++ Get-Content 'C:\ProgramData\CivicCast\data\pgdata\postmaster.pid' | S ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ObjectNotFound: (C:\ProgramData\...\postmaster.p 
+   id:String) [Get-Content], ItemNotFoundException
+    + FullyQualifiedErrorId : PathNotFound,Microsoft.PowerShell.Commands.GetCo 
+   ntentCommand
+ 
+

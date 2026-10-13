@@ -61,6 +61,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
+from civiccast.native.service_identity import SERVICE_SID
 from civiccast.native.supervisor.authz import authorize
 from civiccast.native.supervisor.config import CONTROL_PIPE_NAME
 
@@ -70,7 +71,9 @@ logger = logging.getLogger(__name__)
 # RAT-003 authoritative constants
 # ---------------------------------------------------------------------------
 
-CONTROL_PIPE_SDDL = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x120083;;;AU)(D;;FA;;;NU)"
+CONTROL_PIPE_SDDL = (
+    f"D:P(D;;FA;;;NU)(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;{SERVICE_SID})(A;;0x120083;;;AU)"
+)
 """SYSTEM + BUILTIN\\Administrators GENERIC_ALL; Authenticated Users EXACTLY
 the read/write-without-create-instance mask below; explicit DENY NETWORK.
 RAT-003 in ``design-addendum-ratification.md`` is authoritative for this
@@ -576,6 +579,8 @@ def impersonate_and_extract(handle: Any) -> tuple[frozenset[str], str]:
             )
             caller_sid = cast(str, win32security.ConvertSidToStringSid(user_sid))
             groups: set[str] = set()
+            if caller_sid == SERVICE_SID:
+                groups.add("station_service")
             for sid, attributes in win32security.GetTokenInformation(
                 thread_token, win32security.TokenGroups
             ):

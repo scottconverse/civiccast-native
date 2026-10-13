@@ -1,0 +1,3 @@
+# Preserve executed-script hashes and raw Windows output bytes as recorded.
+# Console alignment and terminal blank lines are part of that evidence.
+* -text whitespace=-blank-at-eol,-blank-at-eof

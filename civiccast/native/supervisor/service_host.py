@@ -183,6 +183,11 @@ class CivicCastSupervisorService(win32serviceutil.ServiceFramework):  # type: ig
         # /factory), so the watchdog is genuinely the LAST resort and can never
         # pre-empt a step that was still going to finish.
         try:
+            from civiccast.native.identity_migration import MIGRATION_ENV, migrate_old_account
+
+            if os.environ.get(MIGRATION_ENV) == "1":
+                migrate_old_account()
+                return
             # Beta BLOCKER #48: bridge the installer-persisted registry DatabaseUrl
             # into this process's environment BEFORE anything else runs, so
             # _service_factory's default_dependency_provider (service.py) finds

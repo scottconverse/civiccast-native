@@ -135,13 +135,18 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 
+from civiccast.native.service_identity import SERVICE_SID
+
 #: The DACL every install-time postgres data directory is normalized to.
 #: ``D:P`` -- protected, so ``C:\ProgramData``'s ``BUILTIN\Users`` entries can
 #: never re-inherit. ``OICI`` -- object+container inherit, so every existing
 #: child (propagation) and every FUTURE file the LocalSystem service creates
 #: carries the same three grantees. See the module docstring for why exactly
 #: these three principals and no others.
-PGDATA_DACL_SDDL_TEMPLATE = "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)(A;OICI;GA;;;{caller_sid})"
+PGDATA_DACL_SDDL_TEMPLATE = (
+    "D:P(A;OICI;GA;;;SY)(A;OICI;GA;;;BA)(A;OICI;GA;;;{caller_sid})"
+    f"(A;OICI;0x1301bf;;;{SERVICE_SID})"
+)
 
 #: A textual SID as ``ConvertSidToStringSid`` returns it. Validated before it
 #: is ever spliced into :data:`PGDATA_DACL_SDDL_TEMPLATE` so a malformed or

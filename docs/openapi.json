@@ -157,6 +157,402 @@
         }
       }
     },
+    "/api/staff/auth/login": {
+      "post": {
+        "tags": [
+          "staff-auth"
+        ],
+        "summary": "Sign in to a station-local staff account",
+        "description": "Issue a bearer for a valid staff password, with failed-guess throttling.",
+        "operationId": "login_staff_api_staff_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffLoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/auth/accounts": {
+      "get": {
+        "tags": [
+          "staff-auth"
+        ],
+        "summary": "List station-local staff accounts",
+        "operationId": "get_staff_accounts_api_staff_auth_accounts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StaffAccountResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Get Staff Accounts Api Staff Auth Accounts Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "staff-auth"
+        ],
+        "summary": "Create a station-local staff account",
+        "operationId": "post_staff_account_api_staff_auth_accounts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffAccountCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffAccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/auth/accounts/{operator_id}": {
+      "patch": {
+        "tags": [
+          "staff-auth"
+        ],
+        "summary": "Change a staff account's roles, display name, or access state",
+        "operationId": "patch_staff_account_api_staff_auth_accounts__operator_id__patch",
+        "parameters": [
+          {
+            "name": "operator_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operator Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffAccountUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StaffAccountResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/auth/accounts/{operator_id}/reset-password": {
+      "post": {
+        "tags": [
+          "staff-auth"
+        ],
+        "summary": "Reset a staff password and end its existing sessions",
+        "operationId": "post_staff_password_reset_api_staff_auth_accounts__operator_id__reset_password_post",
+        "parameters": [
+          {
+            "name": "operator_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Operator Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StaffPasswordResetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/auth/sessions": {
+      "get": {
+        "tags": [
+          "staff-auth"
+        ],
+        "summary": "List station-local staff sessions",
+        "operationId": "get_operator_sessions_api_staff_auth_sessions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/StaffSessionResponse"
+                  },
+                  "type": "array",
+                  "title": "Response Get Operator Sessions Api Staff Auth Sessions Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/auth/sessions/{session_id}": {
+      "delete": {
+        "tags": [
+          "staff-auth"
+        ],
+        "summary": "Revoke one station-local staff session",
+        "operationId": "delete_operator_session_api_staff_auth_sessions__session_id__delete",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/auth/me": {
       "get": {
         "tags": [
@@ -212,6 +608,506 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StaffSignOutResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/network/settings": {
+      "get": {
+        "tags": [
+          "staff",
+          "network"
+        ],
+        "summary": "Read station listener and proxy settings",
+        "operationId": "read_network_settings_api_staff_network_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkSettingsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "staff",
+          "network"
+        ],
+        "summary": "Save station listener and proxy settings",
+        "operationId": "save_network_settings_api_staff_network_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NetworkSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NetworkSettingsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/backups": {
+      "get": {
+        "tags": [
+          "staff",
+          "backup"
+        ],
+        "summary": "List Station Backups",
+        "operationId": "list_station_backups_api_staff_backups_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response List Station Backups Api Staff Backups Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/backups/status": {
+      "get": {
+        "tags": [
+          "staff",
+          "backup"
+        ],
+        "summary": "Station Backup Status",
+        "operationId": "station_backup_status_api_staff_backups_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Station Backup Status Api Staff Backups Status Get"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/backups/create": {
+      "post": {
+        "tags": [
+          "staff",
+          "backup"
+        ],
+        "summary": "Create Station Backup",
+        "operationId": "create_station_backup_api_staff_backups_create_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBackupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Create Station Backup Api Staff Backups Create Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/backups/verify": {
+      "post": {
+        "tags": [
+          "staff",
+          "backup"
+        ],
+        "summary": "Verify Station Backup",
+        "operationId": "verify_station_backup_api_staff_backups_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyBackupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Verify Station Backup Api Staff Backups Verify Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/backups/schedule": {
+      "put": {
+        "tags": [
+          "staff",
+          "backup"
+        ],
+        "summary": "Update Station Backup Schedule",
+        "operationId": "update_station_backup_schedule_api_staff_backups_schedule_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Update Station Backup Schedule Api Staff Backups Schedule Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/backups/schedule/passphrase": {
+      "put": {
+        "tags": [
+          "staff",
+          "backup"
+        ],
+        "summary": "Set Scheduled Passphrase",
+        "operationId": "set_scheduled_passphrase_api_staff_backups_schedule_passphrase_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScheduledPassphraseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "type": "object",
+                  "title": "Response Set Scheduled Passphrase Api Staff Backups Schedule Passphrase Put"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
+    "/api/staff/backups/{backup_id}/download": {
+      "get": {
+        "tags": [
+          "staff",
+          "backup"
+        ],
+        "summary": "Download Station Backup",
+        "operationId": "download_station_backup_api_staff_backups__backup_id__download_get",
+        "parameters": [
+          {
+            "name": "backup_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Backup Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -40969,6 +41865,22 @@
         ],
         "title": "CrashDrillResult"
       },
+      "CreateBackupRequest": {
+        "properties": {
+          "passphrase": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "Passphrase"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "passphrase"
+        ],
+        "title": "CreateBackupRequest"
+      },
       "CreateRoomInput": {
         "properties": {
           "channel_id": {
@@ -49060,6 +49972,99 @@
         ],
         "title": "NetworkReport",
         "description": "Network context; headend interface detail deferred to S2."
+      },
+      "NetworkSettings": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "loopback",
+              "caddy"
+            ],
+            "title": "Mode",
+            "default": "loopback"
+          },
+          "public_base_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 240
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Public Base Url"
+          },
+          "staff_hostname": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 253
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Staff Hostname"
+          },
+          "staff_allowed_cidrs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Staff Allowed Cidrs"
+          },
+          "caddy_bind_addresses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Caddy Bind Addresses"
+          },
+          "upstream_host": {
+            "type": "string",
+            "title": "Upstream Host",
+            "default": "127.0.0.1"
+          },
+          "upstream_port": {
+            "type": "integer",
+            "maximum": 65535.0,
+            "minimum": 1024.0,
+            "title": "Upstream Port",
+            "default": 8000
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "NetworkSettings",
+        "description": "Persisted station network configuration; defaults never expose a socket."
+      },
+      "NetworkSettingsResponse": {
+        "properties": {
+          "settings": {
+            "$ref": "#/components/schemas/NetworkSettings"
+          },
+          "caddyfile": {
+            "type": "string",
+            "title": "Caddyfile"
+          },
+          "restart_required": {
+            "type": "boolean",
+            "title": "Restart Required"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "settings",
+          "caddyfile",
+          "restart_required"
+        ],
+        "title": "NetworkSettingsResponse",
+        "description": "Persisted settings and the Caddy config the operator can deploy."
       },
       "NotificationDelivery": {
         "properties": {
@@ -57554,6 +58559,72 @@
         "title": "ScheduleItemResponse",
         "description": "Response payload for the schedule endpoints.\n\nAudit-team v0.3.0 UX-003: ``asset_title`` is denormalized into the\nresponse so the operator-console schedule UI can render the human\ntitle (not the opaque asset_id) without a second round-trip per row.\nThe store fills it via a JOIN at list/get time. ``None`` is allowed\nfor legacy rows where the FK target may have been deleted; the UI\nfalls back to the asset_id in that case."
       },
+      "ScheduleRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "destination": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Destination"
+          },
+          "hour_utc": {
+            "type": "integer",
+            "maximum": 23.0,
+            "minimum": 0.0,
+            "title": "Hour Utc"
+          },
+          "minute_utc": {
+            "type": "integer",
+            "maximum": 59.0,
+            "minimum": 0.0,
+            "title": "Minute Utc"
+          },
+          "retention_count": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Retention Count"
+          },
+          "selected_media_roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Selected Media Roots"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled",
+          "destination",
+          "hour_utc",
+          "minute_utc",
+          "retention_count"
+        ],
+        "title": "ScheduleRequest"
+      },
+      "ScheduledPassphraseRequest": {
+        "properties": {
+          "passphrase": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "Passphrase"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "passphrase"
+        ],
+        "title": "ScheduledPassphraseRequest"
+      },
       "SdiReadiness": {
         "properties": {
           "status": {
@@ -58972,6 +60043,195 @@
         "title": "SpotPlacement",
         "description": "One materialized break/interstitial insertion the trafficking compiler made.\n\nThe placement carries the ``schedule_item_id`` of the materialized\nprogram-log row so the as-run log \u2192 affidavit join in slice 3 can\nattribute each aired second back through ``spot_placements`` \u2192\n``spot_flights`` \u2192 ``underwriting_spots`` \u2192 ``underwriter``."
       },
+      "StaffAccountCreateRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "title": "Username"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "Password"
+          },
+          "roles": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "setup_admin",
+                "meeting_operator",
+                "records_clerk",
+                "publish_operator",
+                "support_admin"
+              ]
+            },
+            "type": "array",
+            "minItems": 1,
+            "title": "Roles"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "username",
+          "display_name",
+          "password",
+          "roles"
+        ],
+        "title": "StaffAccountCreateRequest",
+        "description": "Create one local staff login with an explicit non-empty role set."
+      },
+      "StaffAccountResponse": {
+        "properties": {
+          "operator_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Operator Id"
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Username"
+          },
+          "display_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Display Name"
+          },
+          "roles": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "setup_admin",
+                "meeting_operator",
+                "records_clerk",
+                "publish_operator",
+                "support_admin"
+              ]
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "account_type": {
+            "type": "string",
+            "enum": [
+              "first_admin",
+              "staff"
+            ],
+            "title": "Account Type"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          },
+          "immutable": {
+            "type": "boolean",
+            "title": "Immutable",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operator_id",
+          "username",
+          "display_name",
+          "roles",
+          "enabled",
+          "account_type"
+        ],
+        "title": "StaffAccountResponse",
+        "description": "Public account metadata; password hashes never leave station state."
+      },
+      "StaffAccountUpdateRequest": {
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "roles": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "setup_admin",
+                    "meeting_operator",
+                    "records_clerk",
+                    "publish_operator",
+                    "support_admin"
+                  ]
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Roles"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StaffAccountUpdateRequest",
+        "description": "Change mutable staff identity, role, or enabled state."
+      },
       "StaffAssetRow": {
         "properties": {
           "asset_id": {
@@ -59434,6 +60694,171 @@
         ],
         "title": "StaffIdentityResponse",
         "description": "Staff identity and v1.4 product roles returned to the operator console."
+      },
+      "StaffLoginRequest": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "StaffLoginRequest",
+        "description": "Credentials for a station-local staff account."
+      },
+      "StaffLoginResponse": {
+        "properties": {
+          "access_token": {
+            "type": "string",
+            "minLength": 24,
+            "title": "Access Token"
+          },
+          "operator_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Operator Id"
+          },
+          "operator_display_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Operator Display Name"
+          },
+          "roles": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "setup_admin",
+                "meeting_operator",
+                "records_clerk",
+                "publish_operator",
+                "support_admin"
+              ]
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "issued_at": {
+            "type": "string",
+            "title": "Issued At"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "access_token",
+          "operator_id",
+          "operator_display_name",
+          "issued_at",
+          "expires_at"
+        ],
+        "title": "StaffLoginResponse",
+        "description": "One-time bearer credential returned after a successful staff login."
+      },
+      "StaffPasswordResetRequest": {
+        "properties": {
+          "new_password": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 12,
+            "title": "New Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "new_password"
+        ],
+        "title": "StaffPasswordResetRequest",
+        "description": "Set a new password for a staff account."
+      },
+      "StaffSessionResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Session Id"
+          },
+          "operator_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Operator Id"
+          },
+          "operator_display_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Operator Display Name"
+          },
+          "roles": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "setup_admin",
+                "meeting_operator",
+                "records_clerk",
+                "publish_operator",
+                "support_admin"
+              ]
+            },
+            "type": "array",
+            "title": "Roles"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "issued_at": {
+            "type": "string",
+            "title": "Issued At"
+          },
+          "expires_at": {
+            "type": "string",
+            "title": "Expires At"
+          },
+          "expired": {
+            "type": "boolean",
+            "title": "Expired",
+            "default": false
+          },
+          "current": {
+            "type": "boolean",
+            "title": "Current",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "operator_id",
+          "operator_display_name",
+          "source",
+          "issued_at",
+          "expires_at"
+        ],
+        "title": "StaffSessionResponse",
+        "description": "Safe session metadata without a token, salt, or hash."
       },
       "StaffSignOutResponse": {
         "properties": {
@@ -63245,6 +64670,29 @@
         "type": "object",
         "title": "VdoDiagnostics",
         "description": "A read-only health snapshot for the operator diagnostics drawer (S17 \u00a75).\n\n``turn_reachable`` is the load-bearing commissioning signal (a guest behind\nNAT cannot join without it). The process-up flags come from the S9 co-process\nsupervisor (slice 3d).\n\n``turn_reachable`` reflects the most recent probe of ``turn_host``:\n``turn_port`` regardless of ``coturn_process_up`` \u2014 the owner-approved\n\"documented external TURN\" posture (coturn has no native Windows build;\nsee ``civiccast/installer/contribution_install.py``) means there is\ndeliberately no LOCAL coturn process to supervise, but the configured\nexternal server's reachability is still the thing that matters to a\nguest behind NAT, and is still probed.\n\n``turn_host`` / ``turn_port`` echo the effective, currently-configured\nTURN target (``CIVICCAST_TURN_HOST`` / ``CIVICCAST_TURN_PORT``, read at\nservice start) so the operator console can show what's actually\nconfigured, not just whether it's reachable."
+      },
+      "VerifyBackupRequest": {
+        "properties": {
+          "passphrase": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 12,
+            "title": "Passphrase"
+          },
+          "backup_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Backup Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "passphrase",
+          "backup_id"
+        ],
+        "title": "VerifyBackupRequest"
       },
       "ViewerAccount": {
         "properties": {

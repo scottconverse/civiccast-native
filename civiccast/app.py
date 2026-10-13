@@ -768,9 +768,18 @@ async def _app_lifespan(app: FastAPI) -> AsyncIterator[None]:
     _maybe_start_finalization_worker(app)
     _maybe_start_background_supervisors(app)
     try:
+        backup_service = getattr(app.state, "station_backup_service", None)
+        if backup_service is not None and app.state.supervisor_mode not in _SUPERVISOR_MODE_FROZEN:
+            backup_service.start_worker()
         yield
     finally:
         app.state.lifespan_started = False
+        # Durable storage can be prepared or rebound while this lifespan is
+        # active. Stop the current service, not the boot-time instance captured
+        # before the first request.
+        backup_service = getattr(app.state, "station_backup_service", None)
+        if backup_service is not None:
+            backup_service.stop_worker()
         # RAT-004: drain every live channel through its owner (observed exit,
         # escalating to a kill past the deadline) BEFORE background.stop()
         # halts the automation poll loop, so channels are drained on
@@ -2247,6 +2256,10 @@ def create_app() -> FastAPI:
     # job assignment, so it must precede every spawn site in startup.
     _maybe_contain_own_descendants()
     _maybe_configure_control_plane_logging()
+    if os.environ.get("CIVICCAST_SUPERVISED") == "1":
+        from civiccast.native.station_secrets import configure_station_keyring
+
+        configure_station_keyring()
     lan_only_station = _lan_only_station()
     app = FastAPI(
         title="CivicCast",
@@ -2570,6 +2583,21 @@ def create_app() -> FastAPI:
     app.include_router(vod_router)
     app.include_router(manual_router)
     app.include_router(auth_staff_router)
+    from civiccast.dr.station_backup_router import staff_router as station_backup_router
+    from civiccast.native.network import (
+        NetworkSettings,
+        NetworkSettingsStore,
+        default_network_settings_path,
+    )
+    from civiccast.native.network_router import router as station_network_router
+
+    app.state.network_settings_store = NetworkSettingsStore(default_network_settings_path())
+    active_network = os.environ.get("CIVICCAST_ACTIVE_NETWORK_SETTINGS")
+    app.state.network_active_settings = (
+        NetworkSettings.model_validate_json(active_network) if active_network else NetworkSettings()
+    )
+    app.include_router(station_network_router)
+    app.include_router(station_backup_router)
     app.include_router(schedule_public_router)
     # S7 media lifecycle: MUST be registered before schedule_staff_router --
     # its literal /assets/readiness-dashboard path would otherwise be
@@ -3457,6 +3485,34 @@ def _install_durable_store_wiring(
     _wire_durable_stores(app)
     _ensure_default_local_recording_target(app)
     _refresh_schema_status(app)
+    _wire_station_backup_service(app)
+
+
+def _wire_station_backup_service(app: FastAPI) -> None:
+    """Bind the native station backup service whenever durable stores change."""
+
+    # Installed stations need backups before AI/media activation as well.
+    if (
+        os.environ.get("CIVICCAST_NATIVE_STATION") != "1"
+        and os.environ.get("CIVICCAST_SUPERVISED") != "1"
+    ):
+        return
+
+    from civiccast.dr.station_backup_runtime import build_station_backup_service
+
+    replacement = build_station_backup_service()
+    current = getattr(app.state, "station_backup_service", None)
+    if current is replacement:
+        return
+    if current is not None:
+        current.stop_worker()
+    app.state.station_backup_service = replacement
+    if (
+        getattr(app.state, "lifespan_started", False)
+        and getattr(app.state, "supervisor_mode", _SUPERVISOR_MODE_UNKNOWN)
+        not in _SUPERVISOR_MODE_FROZEN
+    ):
+        replacement.start_worker()
 
 
 def _refresh_schema_status(app: FastAPI) -> None:

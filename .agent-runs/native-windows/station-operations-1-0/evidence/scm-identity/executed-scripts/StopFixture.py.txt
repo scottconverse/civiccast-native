@@ -1,0 +1,39 @@
+import json, traceback
+from pathlib import Path
+from sqlalchemy import create_engine
+from civiccast.native.pg_ctl_exec import run_pg_ctl_argv
+from civiccast.native.pgdata_acl import normalize_pgdata_acl
+from civiccast.native.provision.seams import run_schema_migration_to_head
+from civiccast.schema_check import check_schema_currency
+root = Path(r"C:\CivicCastEvidence")
+bin_dir = Path(r"C:\Program Files\CivicCast (Native)\packs\native-server-binaries\payload\bin")
+data = Path(r"C:\ProgramData\CivicCast\data\pgdata")
+ctl = str(bin_dir / "pg_ctl.exe")
+def phase(name):
+    with (root / "progress.log").open("a", encoding="utf-8") as stream: stream.write("fixture=" + name + "\n")
+def pg(args):
+    result = run_pg_ctl_argv([ctl, *args], timeout_seconds=45)
+    with (root / "fixture-pg-commands.log").open("a", encoding="utf-8") as stream: stream.write(result.output_tail + "\n")
+    if result.returncode: raise RuntimeError("pg_ctl failed: " + result.output_tail)
+try:
+    phase("normalize-and-start-file-backed")
+    normalize_pgdata_acl(data)
+    pg(["start", "-D", str(data), "-w", "-t", "20", "-l", str(root / "postgres-server.log"), "-o", "-p 55439 -h 127.0.0.1"])
+    try:
+        phase("create-database")
+        engine = create_engine("postgresql+psycopg://postgres@127.0.0.1:55439/postgres", isolation_level="AUTOCOMMIT", connect_args={"connect_timeout":5})
+        try:
+            with engine.connect() as connection:
+                if not connection.exec_driver_sql("SELECT 1 FROM pg_database WHERE datname='civiccast'").scalar(): connection.exec_driver_sql("CREATE DATABASE civiccast")
+        finally: engine.dispose()
+        phase("production-schema-migration")
+        url = "postgresql+psycopg://postgres@127.0.0.1:55439/civiccast"
+        run_schema_migration_to_head(database_url=url, install_root=r"C:\Program Files\CivicCast (Native)", state_root=r"C:\ProgramData\CivicCast\upgrade", owner_run_id="disposable-identity-check")
+        (root / "fixture-schema.txt").write_text(str(check_schema_currency(url)), encoding="utf-8")
+    finally:
+        phase("stop-file-backed")
+        pg(["stop", "-D", str(data), "-m", "fast", "-w"])
+except Exception:
+    (root / "fixture-python-error.log").write_text(traceback.format_exc(), encoding="utf-8")
+    raise SystemExit(1)
+phase("postgres-fixture-ready")

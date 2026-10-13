@@ -10,9 +10,16 @@ package is the drill underneath: it backs up the REAL database, restores it
 into a completely fresh database, and verifies row counts, per-table content
 checksums, and that the app's own stores can read the restored data.
 
+The operator-facing portable backup workflow is implemented separately by
+:class:`civiccast.dr.station_backup.StationBackupService`; it includes
+encrypted configuration/credential payloads and complete selected media
+files. The boundaries below describe the DR *drill* functions, not that
+operator backup package.
+
 Honest boundaries (do not overclaim beyond these):
 
-* **Media backup is manifest + bounded sampled hash, not replication.**
+* **The DR drill's media check is a manifest + bounded sampled hash, not
+  replication.**
   Hashing every byte of a station's media library on every drill is not a
   drill, it is an outage. The manifest records path, size, and a sha256 of a
   bounded head/tail sample per file; operators still need their own

@@ -1,0 +1,1 @@
+Corrected production registry grant reapplied once to repair the empty PythonClass child DACL left by prior candidate. Same initialized guest retained. Not a pristine installation proof.

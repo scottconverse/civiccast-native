@@ -1502,6 +1502,10 @@ export interface CrashDrillResult {
   duration_seconds: number
 }
 
+export interface CreateBackupRequest {
+  passphrase: string
+}
+
 export interface CreateRoomInput {
   channel_id: string
   name: string
@@ -2767,6 +2771,22 @@ export interface NetworkReport {
   hostname: string
   primary_interface_up: boolean
   headend_interface_hint?: string | null
+}
+
+export interface NetworkSettings {
+  mode?: 'loopback' | 'caddy'
+  public_base_url?: string | null
+  staff_hostname?: string | null
+  staff_allowed_cidrs?: Array<string>
+  caddy_bind_addresses?: Array<string>
+  upstream_host?: string
+  upstream_port?: number
+}
+
+export interface NetworkSettingsResponse {
+  settings: NetworkSettings
+  caddyfile: string
+  restart_required: boolean
 }
 
 export interface NotificationDelivery {
@@ -4089,6 +4109,19 @@ export interface ScheduleItemResponse {
   created_at: string
 }
 
+export interface ScheduleRequest {
+  enabled: boolean
+  destination: string
+  hour_utc: number
+  minute_utc: number
+  retention_count: number
+  selected_media_roots?: Array<string>
+}
+
+export interface ScheduledPassphraseRequest {
+  passphrase: string
+}
+
 export interface SdiReadiness {
   status: 'ok' | 'decklink_muxer_missing' | 'ffmpeg_unavailable'
   ffmpeg_detected: boolean
@@ -4300,6 +4333,31 @@ export interface SpotPlacement {
   created_at?: string
 }
 
+export interface StaffAccountCreateRequest {
+  username: string
+  display_name: string
+  password: string
+  roles: Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>
+}
+
+export interface StaffAccountResponse {
+  operator_id: string
+  username: string
+  display_name: string
+  roles: Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>
+  enabled: boolean
+  account_type: 'first_admin' | 'staff'
+  created_at?: string | null
+  updated_at?: string | null
+  immutable?: boolean
+}
+
+export interface StaffAccountUpdateRequest {
+  display_name?: string | null
+  roles?: Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'> | null
+  enabled?: boolean | null
+}
+
 export interface StaffAssetRow {
   asset_id: string
   title: string
@@ -4353,6 +4411,36 @@ export interface StaffIdentityResponse {
   token_id?: string | null
   scopes?: Array<string>
   roles?: Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>
+}
+
+export interface StaffLoginRequest {
+  username: string
+  password: string
+}
+
+export interface StaffLoginResponse {
+  access_token: string
+  operator_id: string
+  operator_display_name: string
+  roles?: Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>
+  issued_at: string
+  expires_at: string
+}
+
+export interface StaffPasswordResetRequest {
+  new_password: string
+}
+
+export interface StaffSessionResponse {
+  session_id: string
+  operator_id: string
+  operator_display_name: string
+  roles?: Array<'setup_admin' | 'meeting_operator' | 'records_clerk' | 'publish_operator' | 'support_admin'>
+  source: string
+  issued_at: string
+  expires_at: string
+  expired?: boolean
+  current?: boolean
 }
 
 export interface StaffSignOutResponse {
@@ -4937,6 +5025,11 @@ export interface VdoDiagnostics {
   coturn_process_up?: boolean
   ice_summary?: string
   detail?: string
+}
+
+export interface VerifyBackupRequest {
+  passphrase: string
+  backup_id: string
 }
 
 export interface ViewerAccount {

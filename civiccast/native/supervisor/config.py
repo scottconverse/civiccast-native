@@ -38,10 +38,11 @@ SERVICE_NAME = "CivicCastSupervisor"
 DISPLAY_NAME = "CivicCast Native Supervisor"
 EVENT_LOG_SOURCE = "CivicCastSupervisor"
 SINGLETON_MUTEX_NAME = r"Global\CivicCastSupervisorSingleton"
-# spec D3/D7 "same explicit SD" clause: SYSTEM + BUILTIN\Administrators
-# GENERIC_ALL, nobody else -- identical to WS4's ``runtime_guard.MUTEX_SDDL``
-# so an unprivileged local process can neither forge singleton ownership nor
-# hold the station offline.
+# spec D3/D7 "same explicit SD" clause: SYSTEM, BUILTIN\Administrators and
+# the CivicCast supervisor service SID receive GENERIC_ALL; other local
+# accounts do not. This is identical to WS4's ``runtime_guard.MUTEX_SDDL`` and
+# prevents an unrelated local process from forging singleton ownership or
+# holding the station offline.
 SINGLETON_MUTEX_SDDL = MUTEX_SDDL
 
 # Control pipe identity (D7). Frame cap is a config field (below) so tests can

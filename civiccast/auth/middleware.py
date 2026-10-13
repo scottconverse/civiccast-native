@@ -63,6 +63,10 @@ async def staff_auth_middleware(
         syncer()
     if not request.url.path.startswith("/api/staff/"):
         return await call_next(request)
+    if request.method == "POST" and request.url.path == "/api/staff/auth/login":
+        # Password login is the sole unauthenticated staff-auth route. Its
+        # handler applies the same failure-only limiter used by setup login.
+        return await call_next(request)
 
     rejected = authenticate_staff_request(request)
     if rejected is not None:
