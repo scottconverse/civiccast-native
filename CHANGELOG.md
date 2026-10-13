@@ -9,6 +9,8 @@
   state after a failed or interrupted installation. A protected journal and
   Windows startup recovery task retain the recovery point until restoration
   succeeds; successful installation or restoration removes the backup.
+- Preserve shared model files within each independent recovery copy, counting
+  their disk usage once and restoring their original file relationships.
 - Keep service startup manual until installation commits, and bypass the
   generic reinstall page that could uninstall the old application first.
 - Resolve a repeated short-programme remainder to the next eligible programme

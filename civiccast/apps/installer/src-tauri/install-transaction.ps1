@@ -96,27 +96,109 @@ function Assert-NoReparsePoints([string]$path) {
     }
 }
 
+function Get-RecoveryFiles([string]$path, [string[]]$exclude = @()) {
+    if (-not (Test-Path -LiteralPath $path)) { return }
+    foreach ($file in Get-ChildItem -LiteralPath $path -File -Recurse -Force | Sort-Object FullName) {
+        $skip = $false
+        foreach ($excluded in $exclude) {
+            if ($file.FullName -match ('(?i)[\\/]' + [regex]::Escape($excluded) + '[\\/]')) { $skip = $true }
+        }
+        if (-not $skip) { $file }
+    }
+}
+
+function Get-RecoveryFileId([string]$path, [switch]$LinkCount) {
+    if (-not ('CivicCastRecoveryFileId' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class CivicCastRecoveryFileId {
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Info {
+        public uint Attributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME Creation, Access, Write;
+        public uint Volume, SizeHigh, SizeLow, Links, IndexHigh, IndexLow;
+    }
+    [DllImport("kernel32.dll", SetLastError=true)]
+    private static extern bool GetFileInformationByHandle(SafeFileHandle handle, out Info info);
+    private static Info Inspect(string path) {
+        using (var file = new FileStream(path, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete)) {
+            Info info;
+            if (!GetFileInformationByHandle(file.SafeFileHandle, out info))
+                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            return info;
+        }
+    }
+    public static uint Links(string path) { return Inspect(path).Links; }
+    public static string Read(string path) {
+        var info = Inspect(path);
+        return info.Volume.ToString("X8") + ":" + info.IndexHigh.ToString("X8") + info.IndexLow.ToString("X8");
+    }
+}
+'@
+    }
+    if ($LinkCount) { return [CivicCastRecoveryFileId]::Links($path) }
+    return [CivicCastRecoveryFileId]::Read($path)
+}
+
 function Copy-RecoveryTree([string]$source, [string]$target, [string[]]$exclude = @()) {
     if (-not (Test-Path -LiteralPath $source)) { return }
+    Assert-NoReparsePoints $source
+    Assert-NoReparsePoints $target
     # Preserve data, attributes, times and restrictive DACLs. Copying auditing
     # information would unnecessarily require SeSecurityPrivilege, even for an
     # administrator running this otherwise supported native installer.
     $arguments = @($source, $target, '/MIR', '/COPY:DATS', '/DCOPY:DAT', '/XJ', '/R:1', '/W:1', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
     if ($exclude.Count) { $arguments += '/XD'; $arguments += $exclude }
+    # Ollama's components and composed model store share NTFS files. Copy one
+    # name per file, then recreate aliases INSIDE the destination tree. Never
+    # link a backup to live bytes: in-place writes must not change recovery.
+    $first = @{}
+    $aliases = @()
+    foreach ($file in Get-RecoveryFiles $source $exclude) {
+        $id = Get-RecoveryFileId $file.FullName
+        $relative = $file.FullName.Substring($source.TrimEnd('\').Length + 1)
+        if ($first.ContainsKey($id)) {
+            $aliases += @{ Path = $relative; Original = $first[$id]; Source = $file.FullName }
+        } else { $first[$id] = $relative }
+    }
+    if ($aliases.Count) {
+        $arguments += '/XF'
+        foreach ($alias in $aliases) {
+            $arguments += $alias.Source
+            $arguments += Join-Path $target $alias.Path
+        }
+    }
+    # A failed candidate can have a different alias topology. Detach existing
+    # destination links before robocopy writes, including links to files outside
+    # this tree, so restoring one file cannot overwrite another preserved file.
+    foreach ($file in Get-RecoveryFiles $target $exclude) {
+        if ((Get-RecoveryFileId $file.FullName -LinkCount) -gt 1) {
+            Assert-ChildPath $file.FullName $target
+            Remove-Item -LiteralPath $file.FullName -Force
+        }
+    }
     & "$env:SystemRoot\System32\robocopy.exe" @arguments | Out-Null
     if ($LASTEXITCODE -ge 8) { throw "Recovery copy failed (robocopy exit $LASTEXITCODE)." }
+    foreach ($alias in $aliases) {
+        $destination = Join-Path $target $alias.Path
+        $original = Join-Path $target $alias.Original
+        Assert-ChildPath $destination $target
+        Assert-ChildPath $original $target
+        if (Test-Path -LiteralPath $destination) { Remove-Item -LiteralPath $destination -Force }
+        New-Item -ItemType HardLink -Path $destination -Target $original | Out-Null
+    }
 }
 
 function Get-TreeBytes([string]$path, [string[]]$exclude = @()) {
     [long]$bytes = 0
-    if (Test-Path -LiteralPath $path) {
-        foreach ($file in Get-ChildItem -LiteralPath $path -File -Recurse -Force) {
-            $skip = $false
-            foreach ($excluded in $exclude) {
-                if ($file.FullName -match ('(?i)[\\/]' + [regex]::Escape($excluded) + '[\\/]')) { $skip = $true }
-            }
-            if (-not $skip) { $bytes += $file.Length }
-        }
+    $seen = @{}
+    foreach ($file in Get-RecoveryFiles $path $exclude) {
+        $id = Get-RecoveryFileId $file.FullName
+        if (-not $seen.ContainsKey($id)) { $bytes += $file.Length; $seen[$id] = $true }
     }
     return $bytes
 }

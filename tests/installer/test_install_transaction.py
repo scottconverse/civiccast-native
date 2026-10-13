@@ -203,6 +203,56 @@ Assert ((Read-Transaction).Phase -eq 'Restored') 'preflight did not restore prio
     )
 
 
+def test_snapshot_and_restore_keep_hardlinks_without_sharing_live_bytes(tmp_path: Path) -> None:
+    run_recovery(
+        tmp_path,
+        r"""
+New-Item -ItemType Directory -Path "$app\components\model" -Force | Out-Null
+[IO.File]::WriteAllText("$app\components\model\blob", 'old-model-bytes')
+New-Item -ItemType HardLink -Path "$app\models\alias-one" -Target "$app\components\model\blob" | Out-Null
+New-Item -ItemType HardLink -Path "$app\models\alias-two" -Target "$app\components\model\blob" | Out-Null
+New-Item -ItemType HardLink -Path "$app\packs\.station-cache\excluded-alias" -Target "$app\components\model\blob" | Out-Null
+# Equal contents are not evidence of a hardlink; this file stays independent.
+[IO.File]::WriteAllText("$app\models\separate-copy", 'old-model-bytes')
+$logical = (Get-ChildItem -LiteralPath $app -Recurse -File | Where-Object { $_.FullName -notlike '*\.station-cache\*' } | Measure-Object -Property Length -Sum).Sum
+$unique = $logical - 2 * (Get-Item "$app\components\model\blob").Length
+Assert ((Get-TreeBytes $app @('.station-cache')) -eq $unique) 'snapshot counts hardlink aliases twice'
+Snapshot-Transaction $state
+Assert (-not (Test-Path "$StateRoot\backup\app\packs\.station-cache")) 'hardlink cache copied'
+# Candidate topology can differ: an independent prior file is now an alias.
+Remove-Item -LiteralPath "$app\models\separate-copy"
+New-Item -ItemType HardLink -Path "$app\models\separate-copy" -Target "$app\components\model\blob" | Out-Null
+[IO.File]::WriteAllText("$app\models\alias-one", 'candidate-model-bytes')
+Assert ((Get-Content "$StateRoot\backup\app\components\model\blob") -eq 'old-model-bytes') 'live writes changed backup'
+# Fail after restoring the app: backup topology and independence must survive retry.
+$script:copyTree = ${function:Copy-RecoveryTree}
+$script:failOnce = $true
+function Copy-RecoveryTree($source, $target, $exclude) {
+    if ($script:failOnce -and $source -like '*backup*pgdata') {
+        $script:failOnce = $false
+        throw 'controlled hardlink restore interruption'
+    }
+    & $script:copyTree $source $target $exclude
+}
+try { Restore-Transaction (Read-Transaction); throw 'expected interruption' }
+catch { Assert ($_.Exception.Message -eq 'controlled hardlink restore interruption') 'wrong restore failure' }
+[IO.File]::WriteAllText("$app\models\alias-two", 'interrupted-live-write')
+Assert ((Get-Content "$StateRoot\backup\app\models\alias-one") -eq 'old-model-bytes') 'restore linked live bytes to backup'
+# Check backup topology by changing one alias, then put the recovery point back.
+[IO.File]::WriteAllText("$StateRoot\backup\app\models\alias-one", 'backup-link-check')
+Assert ((Get-Content "$StateRoot\backup\app\models\alias-two") -eq 'backup-link-check') 'backup hardlinks expanded into copies'
+Assert ((Get-Content "$StateRoot\backup\app\models\separate-copy") -eq 'old-model-bytes') 'equal contents incorrectly deduplicated'
+[IO.File]::WriteAllText("$StateRoot\backup\app\models\alias-one", 'old-model-bytes')
+Restore-Transaction (Read-Transaction)
+Assert ((Get-Content "$app\components\model\blob") -eq 'old-model-bytes') 'retry did not restore model'
+[IO.File]::WriteAllText("$app\models\alias-one", 'restored-link-check')
+Assert ((Get-Content "$app\models\alias-two") -eq 'restored-link-check') 'restored hardlinks expanded into copies'
+Assert ((Get-Content "$app\components\model\blob") -eq 'restored-link-check') 'restored component disconnected from models'
+Assert ((Get-Content "$app\models\separate-copy") -eq 'old-model-bytes') 'independent file was linked'
+""",
+    )
+
+
 def test_service_restore_preserves_start_mode_and_prior_running_state(tmp_path: Path) -> None:
     run_recovery(
         tmp_path,
