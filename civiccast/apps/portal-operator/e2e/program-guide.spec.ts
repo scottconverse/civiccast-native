@@ -103,6 +103,24 @@ async function mockGuide(page: import('@playwright/test').Page) {
     materializeCalls: 0,
     disableCalls: 0,
   }
+  await page.route('**/api/staff/auth/me', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        operator_id: 'e2e-program-guide-operator',
+        display_name: 'Program Guide E2E',
+        roles: ['setup_admin', 'meeting_operator'],
+      }),
+    })
+  })
+  await page.route('**/api/staff/station/profile', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ station_timezone: 'America/Denver' }),
+    })
+  })
   await page.route('**/api/staff/assets', async (route) => {
     await route.fulfill({
       status: 200,
