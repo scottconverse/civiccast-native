@@ -79,7 +79,7 @@ test.beforeEach(async ({ page }) => {
       }),
     })
   })
-  await page.route('**/api/staff/station/profile', async (route) => {
+  await page.route('**/api/staff/station/timezone', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',

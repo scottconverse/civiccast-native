@@ -3213,6 +3213,7 @@ export interface ProgramSlot {
   title_override?: string | null
   recurrence: 'once' | 'daily' | 'weekly' | 'weekdays'
   first_start_at: string
+  recurrence_anchor_local?: string | null
   duration_seconds?: number | null
   repeat_until?: string | null
   enabled?: boolean
@@ -4590,6 +4591,10 @@ export interface StationStorageLocations {
   media_library: string
   recordings: string
   backups: string
+}
+
+export interface StationTimeZone {
+  station_timezone: string
 }
 
 export interface StorageBudgetResponse {

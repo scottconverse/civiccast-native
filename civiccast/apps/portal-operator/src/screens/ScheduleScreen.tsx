@@ -5,7 +5,7 @@ import {
   cancelSchedule,
   commitToAir,
   getStaffIdentity,
-  getStationProfile,
+  getStationTimeZone,
   listSchedule,
   prepareCommit,
 } from '../api/client'
@@ -810,8 +810,8 @@ function _initialView(): ViewMode {
 
 export function ScheduleScreen() {
   const stationProfileQuery = useQuery({
-    queryKey: ['station-profile'],
-    queryFn: getStationProfile,
+    queryKey: ['station-timezone'],
+    queryFn: getStationTimeZone,
     retry: false,
   })
   const stationTimeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)

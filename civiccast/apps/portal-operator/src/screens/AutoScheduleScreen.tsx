@@ -10,7 +10,7 @@ import {
   deleteSavedSearch,
   deleteScheduleBlock,
   getStaffIdentity,
-  getStationProfile,
+  getStationTimeZone,
   listAutoScheduleRules,
   listSavedSearches,
   listScheduleBlocks,
@@ -866,7 +866,7 @@ function CompileBar({ canWrite, timeZoneAvailable }: { canWrite: boolean; timeZo
 
 export function AutoScheduleScreen() {
   const identityQuery = useQuery({ queryKey: ['staff-identity'], queryFn: getStaffIdentity, retry: false })
-  const stationProfileQuery = useQuery({ queryKey: ['station-profile'], queryFn: getStationProfile, retry: false })
+  const stationProfileQuery = useQuery({ queryKey: ['station-timezone'], queryFn: getStationTimeZone, retry: false })
   const stationTimeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)
   // Fail CLOSED: writes/compile need publish_operator or setup_admin (the same
   // gate the router enforces); reads also allow support_admin.

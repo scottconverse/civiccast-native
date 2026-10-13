@@ -46,7 +46,8 @@ const MOCK_SLOT = {
   asset_id: 'council-meeting',
   title_override: 'City Council (Replay)',
   recurrence: 'weekly',
-  first_start_at: '2026-06-12T19:00:00Z',
+  first_start_at: '2026-06-13T01:00:00Z',
+  recurrence_anchor_local: '2026-06-12T19:00:00',
   duration_seconds: 3600,
   repeat_until: null,
   enabled: true,
@@ -114,11 +115,11 @@ async function mockGuide(page: import('@playwright/test').Page) {
       }),
     })
   })
-  await page.route('**/api/staff/station/profile', async (route) => {
+  await page.route('**/api/staff/station/timezone', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ station_timezone: 'America/Denver' }),
+      body: JSON.stringify({ station_timezone: 'America/New_York' }),
     })
   })
   await page.route('**/api/staff/assets', async (route) => {
@@ -212,6 +213,9 @@ test.describe('program guide screen', () => {
     // Recurring slot row with its recurrence chip and disable affordance.
     await expect(page.getByText('City Council (Replay)').first()).toBeVisible()
     await expect(page.getByText('Weekly').first()).toBeVisible()
+    await expect(
+      page.getByText(/first Jun 12, 9:00 PM · recurs Fri at 7:00 PM station time/),
+    ).toBeVisible()
     await expect(page.getByRole('button', { name: 'Disable' })).toBeVisible()
 
     // Log: the scheduled airing and the honestly-recorded skip with reason.

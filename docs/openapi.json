@@ -14576,6 +14576,47 @@
         ]
       }
     },
+    "/api/staff/station/timezone": {
+      "get": {
+        "tags": [
+          "staff",
+          "station"
+        ],
+        "summary": "Read the station timezone used by scheduling forms",
+        "operationId": "get_station_timezone_api_staff_station_timezone_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StationTimeZone"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/cable/commissioning/state": {
       "get": {
         "tags": [
@@ -52766,6 +52807,20 @@
             "format": "date-time",
             "title": "First Start At"
           },
+          "recurrence_anchor_local": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recurrence Anchor Local",
+            "description": "Original station-local calendar/clock anchor without a timezone offset.",
+            "readOnly": true
+          },
           "duration_seconds": {
             "anyOf": [
               {
@@ -61870,6 +61925,21 @@
         ],
         "title": "StationStorageLocations",
         "description": "Local station storage paths created or proposed during first-run setup."
+      },
+      "StationTimeZone": {
+        "properties": {
+          "station_timezone": {
+            "type": "string",
+            "title": "Station Timezone"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "station_timezone"
+        ],
+        "title": "StationTimeZone",
+        "description": "The minimal station setting required to enter scheduling times."
       },
       "StorageBudgetResponse": {
         "properties": {

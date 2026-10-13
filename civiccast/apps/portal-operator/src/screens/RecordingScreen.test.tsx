@@ -11,7 +11,6 @@ import type {
   RecordingSchedule,
 } from '../api/client'
 import type { StaffIdentityResponse } from '../types/api.generated'
-import type { StationProfile } from '../types/api.generated'
 
 afterEach(() => {
   cleanup()
@@ -29,7 +28,7 @@ vi.mock('../api/client', () => ({
     }
   },
   getStaffIdentity: vi.fn(),
-  getStationProfile: vi.fn(),
+  getStationTimeZone: vi.fn(),
   listRecordingSchedules: vi.fn(),
   createRecordingSchedule: vi.fn(),
   updateRecordingSchedule: vi.fn(),
@@ -45,7 +44,7 @@ import {
   createRecordingSchedule,
   deleteRecordingSchedule,
   getStaffIdentity,
-  getStationProfile,
+  getStationTimeZone,
   listRecordingJobs,
   listRecordingInputPresets,
   listRecordingSchedules,
@@ -127,7 +126,7 @@ function renderScreen() {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
-  vi.mocked(getStationProfile).mockResolvedValue({ station_timezone: 'America/Denver' } as StationProfile)
+  vi.mocked(getStationTimeZone).mockResolvedValue({ station_timezone: 'America/Denver' })
   vi.mocked(listRecordingSchedules).mockResolvedValue([])
   vi.mocked(listRecordingJobs).mockResolvedValue([])
   vi.mocked(listRecordingInputPresets).mockResolvedValue([
@@ -295,7 +294,7 @@ describe('RecordingScreen empty states', () => {
 
 describe('RecordingScreen form validation', () => {
   it('blocks schedule creation when the station timezone lookup fails', async () => {
-    vi.mocked(getStationProfile).mockRejectedValue(new Error('profile unavailable'))
+    vi.mocked(getStationTimeZone).mockRejectedValue(new Error('timezone unavailable'))
     const { findByRole, findByText } = renderScreen()
     expect(await findByText(/Schedule creation and edits are disabled/i)).toBeTruthy()
     expect((await findByRole('button', { name: /Create schedule/i }) as HTMLButtonElement).disabled).toBe(true)

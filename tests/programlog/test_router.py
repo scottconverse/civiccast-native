@@ -126,6 +126,42 @@ def _create_payload(**overrides):  # type: ignore[no-untyped-def]
     return payload
 
 
+def test_create_and_start_edit_capture_read_only_local_anchor():
+    from zoneinfo import ZoneInfo
+
+    with _client() as (client, _schedule):
+        materializer = client.app.dependency_overrides[get_program_log_materializer]()
+        store = client.app.dependency_overrides[get_program_log_store]()
+        materializer._tz = ZoneInfo("America/Denver")
+        created = client.post(
+            "/api/staff/programlog/slots",
+            json=_create_payload(
+                first_start_at="2026-06-12T01:00:00Z",
+            ),
+        )
+        assert created.status_code == 200
+        assert created.json()["recurrence_anchor_local"] == "2026-06-11T19:00:00"
+        slot_id = created.json()["slot_id"]
+        assert store.get_slot(slot_id).recurrence_anchor_local == datetime(2026, 6, 11, 19)
+        materializer._tz = ZoneInfo("America/New_York")
+        assert (
+            client.patch(
+                f"/api/staff/programlog/slots/{slot_id}",
+                json={"title_override": "New title", "first_start_at": "2026-06-12T01:00:00Z"},
+            ).status_code
+            == 200
+        )
+        assert store.get_slot(slot_id).recurrence_anchor_local == datetime(2026, 6, 11, 19)
+        assert (
+            client.patch(
+                f"/api/staff/programlog/slots/{slot_id}",
+                json={"first_start_at": "2026-06-13T01:00:00Z"},
+            ).status_code
+            == 200
+        )
+        assert store.get_slot(slot_id).recurrence_anchor_local == datetime(2026, 6, 12, 21)
+
+
 def test_create_slot_materializes_and_log_shows_entries() -> None:
     with _client() as (client, schedule):
         created = client.post("/api/staff/programlog/slots", json=_create_payload())

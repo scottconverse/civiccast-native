@@ -107,6 +107,53 @@ class TestStationIdentityProfileApi:
         payload = response.json()
         assert payload["station_name"] == "Pinegrove School Board"
 
+    def test_publish_operator_reads_only_station_timezone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._complete_setup()
+        monkeypatch.setenv(
+            "CIVICCAST_STAFF_TOKENS",
+            "publish-token-p:publish-p:Publish P:publish_operator",
+        )
+        monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
+        monkeypatch.setenv("CIVICCAST_STATION_TZ", "America/Denver")
+        client = TestClient(
+            create_app(), headers={"Authorization": "Bearer publish-token-p"}
+        )
+
+        timezone = client.get("/api/staff/station/timezone")
+
+        assert timezone.status_code == 200
+        assert timezone.json() == {"station_timezone": "America/Denver"}
+        assert client.get("/api/staff/station/profile").status_code == 403
+        assert client.put(
+            "/api/staff/station/profile", json={"station_name": "Nope"}
+        ).status_code == 403
+
+    def test_timezone_change_pins_program_slots_before_profile_update(self) -> None:
+        from civiccast.installer.service import operator_console_url
+        from civiccast.installer.station_state import (
+            StationProfileUpdateRequest,
+            read_station_setup_state,
+        )
+        from civiccast.platform.station_router import put_station_profile
+
+        self._complete_setup()
+        observed_old_zones: list[str] = []
+
+        class MaterializerStub:
+            def pin_legacy_anchors(self) -> None:
+                profile = read_station_setup_state(
+                    operator_console_url=operator_console_url()
+                ).profile
+                assert profile is not None
+                observed_old_zones.append(profile.station_timezone)
+
+        profile = put_station_profile(
+            StationProfileUpdateRequest(station_timezone='America/Denver'),
+            program_log_materializer=MaterializerStub(),
+        )
+
+        assert observed_old_zones == ['local']
+        assert profile.station_timezone == 'America/Denver'
     def test_put_profile_updates_name_and_timezone(self) -> None:
         self._complete_setup()
         client = TestClient(create_app(), headers=_OPERATOR_HEADERS)

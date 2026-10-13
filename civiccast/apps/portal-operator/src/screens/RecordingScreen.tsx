@@ -52,7 +52,7 @@ import {
   createRecordingSchedule,
   deleteRecordingSchedule,
   getStaffIdentity,
-  getStationProfile,
+  getStationTimeZone,
   listRecordingJobs,
   listRecordingInputPresets,
   listRecordingSchedules,
@@ -307,8 +307,8 @@ function RecordingBody({ canWrite }: { canWrite: boolean }) {
   const qc = useQueryClient()
 
   const stationProfileQuery = useQuery({
-    queryKey: ['station-profile'],
-    queryFn: getStationProfile,
+    queryKey: ['station-timezone'],
+    queryFn: getStationTimeZone,
     retry: false,
   })
   const stationTimeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)

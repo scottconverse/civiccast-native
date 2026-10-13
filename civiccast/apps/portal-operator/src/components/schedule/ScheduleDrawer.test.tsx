@@ -13,7 +13,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import type { AssetRow } from '../../types/asset'
 import type { ChannelProfile } from '../../types/api.generated'
-import type { StationProfile } from '../../types/api.generated'
 
 afterEach(cleanup)
 
@@ -28,14 +27,14 @@ vi.mock('../../api/client', () => ({
     }
   },
   createSchedule: vi.fn(),
-  getStationProfile: vi.fn(),
+  getStationTimeZone: vi.fn(),
   listChannelProfiles: vi.fn(),
   listStaffAssets: vi.fn(),
 }))
 
 import {
   createSchedule,
-  getStationProfile,
+  getStationTimeZone,
   listChannelProfiles,
   listStaffAssets,
 } from '../../api/client'
@@ -63,9 +62,9 @@ const validatedAsset: AssetRow = {
 
 function renderDrawer(profileAvailable = true) {
   if (profileAvailable) {
-    vi.mocked(getStationProfile).mockResolvedValue({ station_timezone: 'America/Denver' } as StationProfile)
+    vi.mocked(getStationTimeZone).mockResolvedValue({ station_timezone: 'America/Denver' })
   } else {
-    vi.mocked(getStationProfile).mockRejectedValue(new Error('profile unavailable'))
+    vi.mocked(getStationTimeZone).mockRejectedValue(new Error('timezone unavailable'))
   }
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },

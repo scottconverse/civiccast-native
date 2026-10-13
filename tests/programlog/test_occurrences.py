@@ -4,8 +4,8 @@
 
 Pure-function tests: given a slot's recurrence rule and a [start, end)
 horizon window, which UTC occurrence datetimes fall inside it. All math is
-timezone-aware UTC — a slot scheduled at 19:00 UTC stays 19:00 UTC across
-DST shifts (station-local-time recurrence is an explicit later feature).
+timezone-aware; saved local anchors retain the selected clock and weekday
+across DST and station timezone changes.
 """
 
 from __future__ import annotations
@@ -40,6 +40,20 @@ def _slot(
 
 
 class TestComputeOccurrences:
+    def test_saved_local_anchor_keeps_clock_and_weekday_after_station_zone_change(self):
+        slot = _slot(
+            recurrence="weekly",
+            first_start_at=datetime(2026, 6, 12, 5, tzinfo=UTC),
+        ).model_copy(update={"recurrence_anchor_local": datetime(2026, 6, 11, 23)})
+        result = compute_occurrences(
+            slot,
+            window_start=datetime(2026, 6, 17, tzinfo=UTC),
+            window_end=datetime(2026, 6, 20, tzinfo=UTC),
+            tz=ZoneInfo("America/New_York"),
+        )
+        assert result == [datetime(2026, 6, 19, 3, tzinfo=UTC)]
+        assert result[0].astimezone(ZoneInfo("America/New_York")).weekday() == 3
+
     def test_once_inside_window(self) -> None:
         slot = _slot(recurrence="once", first_start_at=datetime(2026, 6, 12, 19, 0, tzinfo=UTC))
         window = (datetime(2026, 6, 12, 0, 0, tzinfo=UTC), datetime(2026, 6, 15, 0, 0, tzinfo=UTC))

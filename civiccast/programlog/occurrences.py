@@ -27,8 +27,8 @@ def compute_occurrences(
 ) -> list[datetime]:
     """Return UTC slot starts inside [window_start, window_end).
 
-    ``first_start_at`` remains the absolute first instant. For later recurring
-    dates its local calendar date and wall clock are repeated in ``tz``.
+    ``first_start_at`` remains the absolute first instant. Later recurring
+    dates repeat the persisted local calendar/clock anchor in ``tz``.
     """
 
     if not slot.enabled:
@@ -44,7 +44,10 @@ def compute_occurrences(
             return [first_start]
         return []
 
-    first_local = first_start.astimezone(tz)
+    # Legacy pure-function callers retain prior interpretation until the
+    # materializer pins their current local anchor. New/stored anchors preserve
+    # the original calendar date and clock when the station zone changes.
+    first_local = slot.recurrence_anchor_local or first_start.astimezone(tz)
     first_day = first_local.date()
     wall_time = time(
         first_local.hour,

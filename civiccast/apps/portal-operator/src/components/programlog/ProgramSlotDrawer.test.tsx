@@ -28,11 +28,11 @@ vi.mock('../../api/client', () => ({
     }
   },
   createProgramSlot: vi.fn(),
-  getStationProfile: vi.fn(),
+  getStationTimeZone: vi.fn(),
   listStaffAssets: vi.fn(),
 }))
 
-import { createProgramSlot, getStationProfile, listStaffAssets } from '../../api/client'
+import { createProgramSlot, getStationTimeZone, listStaffAssets } from '../../api/client'
 import { ProgramSlotDrawer } from './ProgramSlotDrawer'
 
 const validatedAsset: AssetRow = {
@@ -57,7 +57,7 @@ function renderDrawer() {
 }
 
 async function drawerWithAssets() {
-  vi.mocked(getStationProfile).mockResolvedValue({ station_timezone: 'America/Denver' } as never)
+  vi.mocked(getStationTimeZone).mockResolvedValue({ station_timezone: 'America/Denver' })
   vi.mocked(listStaffAssets).mockResolvedValue([validatedAsset])
   const view = renderDrawer()
   await waitFor(() =>

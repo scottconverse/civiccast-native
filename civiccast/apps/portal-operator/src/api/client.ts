@@ -12,6 +12,7 @@ import type {
   RevokeOtherSessionsResponse,
   StationBoxProfile,
   StationProfile,
+  StationTimeZone,
 } from '../types/api.generated'
 import type {
   ActivityPubDeliveriesResponse,
@@ -978,6 +979,10 @@ export function getStationBoxProfileReadiness(): Promise<PegReadinessRollup> {
 
 export function getStationProfile(): Promise<StationProfile> {
   return request<StationProfile>('/api/staff/station/profile')
+}
+
+export function getStationTimeZone(): Promise<StationTimeZone> {
+  return request<StationTimeZone>('/api/staff/station/timezone')
 }
 
 // S3 commissioning wizard (screens 8-11).

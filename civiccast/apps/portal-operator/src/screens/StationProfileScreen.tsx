@@ -214,6 +214,7 @@ function StationIdentityPanel({ canWrite }: { canWrite: boolean }) {
       }),
     onSuccess: (data) => {
       qc.setQueryData(['station-profile'], data)
+      void qc.invalidateQueries({ queryKey: ['station-timezone'] })
       setFields(fieldsFromProfile(data))
       setDirty(false)
     },

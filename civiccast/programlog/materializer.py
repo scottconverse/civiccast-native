@@ -142,6 +142,36 @@ class ProgramLogMaterializer:
         with _MATERIALIZE_LOCK:
             return self._run_once(now=now)
 
+    def local_anchor(self, first_start: datetime) -> datetime:
+        """Capture a slot's calendar/clock anchor in the current station zone."""
+        with _MATERIALIZE_LOCK:
+            tz = self._tz() if callable(self._tz) else self._tz
+            return first_start.astimezone(tz).replace(tzinfo=None)
+
+    def pin_legacy_anchors(self) -> None:
+        """Adopt the current zone for legacy slots before a profile zone edit.
+
+        Prior station timezone history was not stored and cannot be recovered.
+        This only pins intent, including disabled slots; it creates no airings.
+        """
+        with _MATERIALIZE_LOCK:
+            tz = self._tz() if callable(self._tz) else self._tz
+            for slot in self._store.list_slots():
+                self._pin_anchor(slot, tz)
+
+    def _pin_anchor(self, slot: ProgramSlot, tz: tzinfo) -> ProgramSlot:
+        if slot.recurrence_anchor_local is not None:
+            return slot
+        return self._store.update_slot(
+            slot.model_copy(
+                update={
+                    "recurrence_anchor_local": slot.first_start_at.astimezone(tz).replace(
+                        tzinfo=None
+                    ),
+                }
+            )
+        )
+
     def _run_once(self, *, now: datetime | None = None) -> list[SlotOccurrence]:
 
         resolved_now = now or datetime.now(UTC)
@@ -149,6 +179,7 @@ class ProgramLogMaterializer:
         tz = self._tz() if callable(self._tz) else self._tz
         recorded: list[SlotOccurrence] = []
         for slot in self._store.list_slots():
+            slot = self._pin_anchor(slot, tz)
             if not slot.enabled:
                 continue
             occurrences = self._store.list_occurrences(slot_id=slot.slot_id)

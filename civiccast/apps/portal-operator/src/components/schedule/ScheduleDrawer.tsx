@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   ApiError,
   createSchedule,
-  getStationProfile,
+  getStationTimeZone,
   listChannelProfiles,
   listStaffAssets,
 } from '../../api/client'
@@ -43,8 +43,8 @@ function defaultStartLocal(timeZone: string): string {
 
 export function ScheduleDrawer({ onClose, onCreated }: Props) {
   const stationProfileQuery = useQuery({
-    queryKey: ['station-profile'],
-    queryFn: getStationProfile,
+    queryKey: ['station-timezone'],
+    queryFn: getStationTimeZone,
     retry: false,
   })
   const timeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)

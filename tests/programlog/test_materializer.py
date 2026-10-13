@@ -114,6 +114,27 @@ def _slot(store: PostgresProgramLogStore, **overrides) -> ProgramSlot:  # type: 
 
 
 class TestMaterializer:
+    def test_legacy_anchor_is_pinned_before_zone_change_and_survives_reload(self):
+        from zoneinfo import ZoneInfo
+
+        with _sqlite_store() as store:
+            _slot(store, first_start_at=datetime(2026, 6, 12, 1, tzinfo=UTC))
+            zone = [ZoneInfo("America/Denver")]
+            materializer = ProgramLogMaterializer(
+                store,
+                _FakeScheduleStore(),
+                _FakeAssetResolver({"council-2026-06-10": 3600}),
+                settings=ProgramLogSettings(horizon_hours=72),
+                tz=lambda: zone[0],
+            )
+            materializer.run_once(now=_NOW)
+            zone[0] = ZoneInfo("America/New_York")
+            extended = materializer.run_once(now=_NOW + timedelta(days=3))
+            assert extended
+            assert {row.occurrence_start.astimezone(zone[0]).hour for row in extended} == {19}
+            saved = store.get_slot("cps_council")
+            assert saved.recurrence_anchor_local == datetime(2026, 6, 11, 19)
+
     def test_zone_change_extends_saved_local_day_even_when_utc_date_differs(self):
         from zoneinfo import ZoneInfo
 
@@ -132,7 +153,7 @@ class TestMaterializer:
             assert original[-1].occurrence_start.date().isoformat() == "2026-06-15"
             zone[0] = UTC
             assert materializer.run_once(now=_NOW) == []
-            extended = materializer.run_once(now=_NOW + timedelta(days=1))
+            extended = materializer.run_once(now=_NOW + timedelta(days=2))
             assert len(extended) == 1
             assert extended[0].occurrence_start.date().isoformat() == "2026-06-16"
             assert materializer.run_once(now=_NOW) == []

@@ -4392,6 +4392,15 @@ Edit the mutable station identity profile fields (including the live-caption swi
 - Request body: `StationProfileUpdateRequest`
 - Responses: 200 `StationProfile`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/station/timezone`
+
+Read the station timezone used by scheduling forms.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `StationTimeZone`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `POST /api/staff/stream/overlay-compositor-plan`
 
 Preview a streaming overlay compositor plan.
@@ -7900,6 +7909,7 @@ rule (S13 §5.1).
 - `enabled` (optional): `boolean`
 - `first_start_at` (required): `string`
 - `recurrence` (required): `'once' | 'daily' | 'weekly' | 'weekdays'`
+- `recurrence_anchor_local` (optional): `string | null` -- Original station-local calendar/clock anchor without a timezone offset.
 - `repeat_until` (optional): `string | null`
 - `slot_id` (required): `string`
 - `title_override` (optional): `string | null`
@@ -9278,6 +9288,10 @@ rule (S13 §5.1).
 - `backups` (required): `string`
 - `media_library` (required): `string`
 - `recordings` (required): `string`
+
+### `StationTimeZone`
+
+- `station_timezone` (required): `string`
 
 ### `StorageBudgetResponse`
 

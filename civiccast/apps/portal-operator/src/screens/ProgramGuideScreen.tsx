@@ -4,7 +4,7 @@ import {
   ApiError,
   disableProgramSlot,
   getChannelProgramLog,
-  getStationProfile,
+  getStationTimeZone,
   listChannelProfiles,
   listProgramSlots,
   materializeProgramLog,
@@ -71,6 +71,30 @@ function fmtTime(iso: string, timeZone: string): string {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function fmtRecurrenceTime(
+  anchorLocal: string | null | undefined,
+  recurrence: ProgramSlot['recurrence'],
+): string | null {
+  if (!anchorLocal || recurrence === 'once') return null
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(anchorLocal)
+  if (!match) return null
+  const [, year, month, day, hour, minute] = match
+  const wallClock = new Date(
+    Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)),
+  )
+  const weekday = wallClock.toLocaleDateString(undefined, {
+    weekday: 'short',
+    timeZone: 'UTC',
+  })
+  const time = formatStationInstant(wallClock, 'UTC', {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+  const cadence =
+    recurrence === 'weekly' ? `${weekday} ` : recurrence === 'weekdays' ? 'weekdays ' : 'daily '
+  return `recurs ${cadence}at ${time} station time`
 }
 
 function fmtDuration(seconds: number | null | undefined): string {
@@ -224,6 +248,8 @@ function SlotList({ slots, timeZone, onDisable, disabling }: SlotListProps) {
                 hour: 'numeric',
                 minute: '2-digit',
               })}
+              {fmtRecurrenceTime(slot.recurrence_anchor_local, slot.recurrence) &&
+                ` · ${fmtRecurrenceTime(slot.recurrence_anchor_local, slot.recurrence)}`}
               {slot.repeat_until
                 ? ` · until ${formatStationInstant(new Date(slot.repeat_until), timeZone, { dateStyle: 'medium' })}`
                 : ''}
@@ -372,8 +398,8 @@ export function ProgramGuideScreen() {
   const toast = useToast()
 
   const stationProfileQuery = useQuery({
-    queryKey: ['station-profile'],
-    queryFn: getStationProfile,
+    queryKey: ['station-timezone'],
+    queryFn: getStationTimeZone,
     retry: false,
   })
   const stationTimeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)

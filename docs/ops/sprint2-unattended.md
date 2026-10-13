@@ -55,6 +55,19 @@ Push, Sprint 2 CI and merge remain pending.
 
 ## Scope and limitations
 
+- PR review corrections: scheduling roles read only the timezone through a
+  dedicated endpoint; full-profile permissions remain unchanged. Recurring
+  programme slots persist a local clock/calendar anchor (migration 0091), and
+  the guide displays it separately from the first airing instant. Legacy slots
+  adopt their current station-local interpretation before a timezone edit or
+  on first materialization; earlier timezone history cannot be reconstructed.
+- Correction checks: 47 focused programlog/schema tests passed, followed by
+  the API anchor-exposure check; two timezone permission/profile-hook tests
+  and one guide-display browser regression passed. TypeScript, portal build,
+  targeted lint and generated OpenAPI checks passed. The old recovery log
+  assertion was aligned with cooldown behavior; its exact process/restart
+  bounds remain unchanged and its single focused test passed.
+
 - Existing generated timestamps remain fixed when the station timezone or
   recurrence changes. Extension begins after the greatest preserved logical
   calendar day or existing start's calendar day in the current zone. Cancelled

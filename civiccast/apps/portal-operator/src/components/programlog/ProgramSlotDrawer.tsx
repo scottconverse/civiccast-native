@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ApiError, createProgramSlot, getStationProfile, listStaffAssets } from '../../api/client'
+import { ApiError, createProgramSlot, getStationTimeZone, listStaffAssets } from '../../api/client'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { RadioCardGroup } from '../RadioCardGroup'
 import type { ProgramSlot, ProgramSlotCreate } from '../../types/api.generated'
@@ -50,8 +50,8 @@ function defaultStartLocal(timeZone: string): string {
 
 export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
   const stationProfileQuery = useQuery({
-    queryKey: ['station-profile'],
-    queryFn: getStationProfile,
+    queryKey: ['station-timezone'],
+    queryFn: getStationTimeZone,
     retry: false,
   })
   const timeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)
