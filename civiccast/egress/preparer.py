@@ -1652,6 +1652,7 @@ class SourcePreparer:
                 outpoint_seconds=emit_outpoint,
                 kind=segment.kind,
                 source_ref=segment.source_ref,
+                schedule_occurrence_id=segment.schedule_occurrence_id,
             ),
             PreparedSegmentRecord(
                 label=segment.label,
@@ -1975,6 +1976,7 @@ class SourcePreparer:
                     duration_seconds=warm_duration_seconds,
                     kind=segment.kind,
                     source_ref=segment.source_ref,
+                    schedule_occurrence_id=segment.schedule_occurrence_id,
                 )
                 # The scratch output is thrown away -- the value of this call
                 # is its SIDE EFFECT, the promoted ``conform-cache/{key}.ts``.
@@ -2303,7 +2305,12 @@ class SourcePreparer:
             key = (segment.path, segment.inpoint_seconds, segment.outpoint_seconds)
             cached = seen.get(key)
             if cached is not None:
-                prepared_segments.append(cached[0])
+                prepared_segment = cached[0]
+                if prepared_segment.schedule_occurrence_id != segment.schedule_occurrence_id:
+                    prepared_segment = prepared_segment.model_copy(
+                        update={"schedule_occurrence_id": segment.schedule_occurrence_id}
+                    )
+                prepared_segments.append(prepared_segment)
                 records.append(cached[1])
                 continue
             prepared_path = prepared_dir / f"segment-{index:04d}.ts"
@@ -3174,6 +3181,7 @@ class SourcePreparer:
                 duration_seconds=segment.duration_seconds,
                 kind=segment.kind,
                 source_ref=segment.source_ref,
+                schedule_occurrence_id=segment.schedule_occurrence_id,
             ),
             PreparedSegmentRecord(
                 label=segment.label,

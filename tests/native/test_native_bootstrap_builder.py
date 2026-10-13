@@ -897,6 +897,19 @@ def test_version_preflight_rejects_changed_upstream_entrypoint():
         builder.add_nsis_version_preflight("no entrypoint")
 
 
+def test_native_reinstall_page_cannot_remove_recovery_input():
+    source = (
+        "Function .onInit\nFunctionEnd\n"
+        "Function PageReinstall\n  Call PageLeaveReinstall\nFunctionEnd\n"
+    )
+    patched = builder.add_nsis_version_preflight(source)
+    assert patched.index("CIVICCAST_TRANSACTION_RECOVER_PENDING") < patched.index("CIVICCAST_VERSION_PREFLIGHT")
+    page = patched.split("Function PageReinstall\n", 1)[1]
+    assert page.index("Abort") < page.index("Call PageLeaveReinstall")
+    assert patched.endswith("!insertmacro CIVICCAST_TRANSACTION_CALLBACKS\n")
+    assert builder.add_nsis_version_preflight(patched) == patched
+
+
 @pytest.mark.skipif(os.name != "nt", reason="Windows PowerShell installer preflight")
 @pytest.mark.parametrize(
     "installed, candidate, expected",

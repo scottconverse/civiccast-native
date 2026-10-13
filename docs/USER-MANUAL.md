@@ -3321,7 +3321,7 @@ Place runtime packs in the `packs\` subfolder beside `setup.exe`. The four runti
 
 ![Figure 10.1. The order of the Windows setup steps and the first-run window.](manual/diagrams/7ea8e49d7826.png){width=100%}
 
-Each box is a step that writes a line before and after to `C:\ProgramData\CivicCast\install-progress.log`. If a step fails, setup stops, shows a dialog (when it is not silent) and exits with that step's code. After files are replaced, any failure also **stops the CivicCast service and sets it to manual start**, so that it cannot start on a half-updated install. Re-running setup is the supported recovery after correcting a recoverable cause. An incomplete kit cannot supply missing signed station packs; obtain the complete matching bundle first.
+Each box is a step that writes a line before and after to `C:\ProgramData\CivicCast\install-progress.log`. If a step fails, setup attempts to restore the previous application and station state before it exits. A durable recovery record and temporary copy support retries after an interruption or restart; exit 136 means recovery could not be prepared or completed. An incomplete kit cannot supply missing signed station packs; obtain the complete matching bundle first.
 
 ### Install from the kit
 
@@ -3337,11 +3337,11 @@ If CivicCast (Native) is already running, setup says "CivicCast (Native) is runn
 
 If WebView2 is missing, setup installs the full offline copy it carries (the build configuration says "offlineInstaller", installed silently). The details list should show "Installing WebView2...", then "WebView2 installed successfully". The setup text also defines a line "Downloading WebView2 bootstrapper...", but that belongs to a download mode this build does not use, so we do not expect to see it; we could not confirm the exact lines on screen. On failure: "Failed to install WebView2! The app can't run without it. Try restarting the installer."
 
-#### Step 2: The "Already Installed" page (only if CivicCast is on the computer)
+#### Step 2: Existing-install handling
 
 Before the normal setup pages or prerequisite installers, Beta 15 checks the installed CivicCast version. If the installed version is newer, setup exits with code 129 before installing prerequisites, stopping the service, replacing application files, or changing station data. Keep using the installed version, or use its complete matching signed setup kit if it needs repair. If setup cannot safely read or compare the installed version, it exits with code 130 before changing the installation; follow the message and contact support if it persists.
 
-If that check passes, NSIS may show its **Already Installed** page with the installed version and choices such as **Add/Reinstall components** and **Uninstall CivicCast (Native)**. For an upgrade, choose the option that does **not** uninstall first. See "Upgrade" below for why. The older silent-installer downgrade message is historical; Beta 15 refuses a downgrade in the early version check for both graphical and silent setup.
+If that check passes, the native installer skips Tauri's generic **Already Installed** page. It does not call the old uninstaller first; the in-place upgrade and same-version repair use the installer's recoverable transaction. The older silent-installer downgrade message is historical; Beta 15 refuses a downgrade in the early version check for both graphical and silent setup.
 
 #### Step 3: Choose the install folder
 
@@ -3510,7 +3510,7 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 112 | Re-check | The extracted CivicCast program does not match its signed pack | Same |
 | 121 | Re-check | The extracted ffmpeg tools do not match | Same |
 | 122 | Re-check | The extracted AI engine does not match | Same |
-| 113 | Upgrade engine | The upgrade failed **and** its own rollback failed. The service is stopped on purpose | Follow `C:\ProgramData\CivicCast\upgrade\UPGRADE-RECOVERY.md` before restarting anything |
+| 113 | Upgrade engine | The upgrade failed **and** its own rollback failed | Setup then restores the pre-setup application and station state when automatic recovery succeeds. Read `upgrade\UPGRADE-RECOVERY.md` and `install-progress.log`; if setup reports exit 136, follow the recovery instructions above |
 | 114 | Upgrade engine | This release has a database change that cannot be rolled back, so automatic upgrade was refused | The dialog says "Use the manual upgrade path with operator acknowledgement". No such path is described anywhere in setup. Do not retry blindly; open an issue |
 | 115 | Upgrade engine | Unexpected fault | Read the log and `upgrade\upgrade-engine.log` |
 | 116 | Database | PostgreSQL could not be provisioned | Read the log and `provision\PROVISION-RECOVERY.md` |
@@ -3519,13 +3519,13 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 119 | Firewall | The firewall rule could not be created | Read the log. Setup requires this rule |
 | 120 | Pre-install | An existing service could not be stopped safely, its state could not be read, or the service exists but the old program is missing | Stop **CivicCast Native Supervisor** in Services, retry as administrator. If the old program folder was removed, repair or remove that install **without deleting** `C:\ProgramData\CivicCast` |
 | 123 | Activation | See the table below | See below |
-| 124 | Upgrade engine | The engine rolled back its own work; your previous database is intact | Read `upgrade\upgrade-engine.log`. The service is stopped and set to manual start. Fix the cause and run setup again; a successful run restores automatic start. If the dialog says containment was not confirmed, run `sc stop CivicCastSupervisor` and `sc config CivicCastSupervisor start= demand` |
+| 124 | Upgrade engine | The engine rolled back its database work; the installer then restores the pre-setup application and station state when automatic recovery succeeds | Read `upgrade\upgrade-engine.log` and `install-progress.log`. Fix the reported cause and run setup again; the previous service state is restored with the prior installation |
 | 125 | Service | The service started but the web server is not answering | Read `install-progress.log`, `logs\control_plane.log`, `logs\control_plane-app.log` and `upgrade\upgrade-engine.log`, fix, run setup again |
 | 126 | Service | Windows registered the service but could not start it | Read `C:\ProgramData\CivicCast\logs` and the Windows Application event log (Event Viewer, Windows Logs, Application) |
 | 127 | Database | Setup cannot tell which CivicCast runtime owns the machine | If there is no older WSL edition, an administrator sets `HKLM\SOFTWARE\CivicCast\ActiveRuntime` to `native` and runs setup again. The exact command is in `provision\OWNERSHIP-RECOVERY.md` |
-| 128 | Upgrade engine | An earlier failed upgrade's record is still on disk. The database is untouched, but setup had already stopped the service and replaced the program files (the dialog's "nothing was changed" is wrong) | Move (do not delete) `C:\ProgramData\CivicCast\upgrade\upgrade-journal.json` somewhere safe and run again |
+| 128 | Upgrade engine | An earlier failed upgrade's record is still on disk. Setup restores the pre-setup application and station state when automatic recovery succeeds | Move (do not delete) `C:\ProgramData\CivicCast\upgrade\upgrade-journal.json` somewhere safe, then run setup again |
 | 129 | Version preflight | Beta 15 is older than the installed version. Setup stops before prerequisites, service changes, application-file replacement, or station-data changes | Keep using the installed version. If it needs repair, use the complete signed setup kit matching that installed version |
-| 129 | Upgrade engine (defensive late refusal) | A newer version was detected after application files had already been replaced. The database downgrade was refused, but setup cannot automatically restore the previous application files; the station may be unavailable | Run the complete signed setup kit matching the newer installed version to restore its application files and service. Do not uninstall or delete `C:\ProgramData\CivicCast`; keep the kit available offline and contact support if repair fails. Check `install-progress.log` |
+| 129 | Upgrade engine (defensive late refusal) | A newer version was detected after application files had been replaced and the database downgrade was refused | Setup automatically restores the pre-setup files and station state when recovery succeeds. Check `install-progress.log`; if restoration did not complete, keep the recovery records and follow exit 136 |
 | 130 | Version preflight | Setup could not safely compare the installed version or identity; it stopped before changing the installation | Follow the setup message; retry from an administrator account or contact support with the message |
 | 130 | Uninstall | You declined the ownership-transfer question (this code is phase-specific; see the setup log) | None; nothing was removed |
 | 131 | Uninstall | The ownership transfer failed | Read the detail in the dialog |
@@ -3533,6 +3533,13 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 133 | Uninstall | Service stop unconfirmed during final cleanup; program files kept | Stop the service or restart Windows, then uninstall again |
 | 134 | Uninstall | Teardown incomplete, or a second uninstaller started while this one ran and cleared its plan to hand back the runtime-ownership setting (`ActiveRuntime`). The teardown case is a second line of defence: the uninstaller normally stops earlier, with 82 | Read the dialog and `install-progress.log`. Remove any leftover service, firewall rule and registry state by hand (Services, Windows Defender Firewall, `HKLM\Software\CivicCast\Native`) |
 | 135 | Database | Another CivicCast product (the older WSL edition) is registered | Uninstall it from Settings, Apps (or run its `cutover-to-native`), then run setup again |
+| 136 | Installer recovery | Setup could not prepare, complete or resume automatic restoration | Keep `C:\ProgramData\CivicCast` and `install-transaction` intact. Read `install-progress.log` and `install-transaction\recovery-error.txt`; retry setup or restart Windows so the recovery task can retry, then contact support if it still fails |
+
+#### Automatic setup recovery
+
+Before replacing application files, setup creates a durable, access-restricted recovery record under `C:\ProgramData\CivicCast\install-transaction` and registers recovery to run after an interruption or restart. Once the existing service is stopped, setup makes a temporary copy of only the paths it can change: the application folder except `packs\.station-cache`, the local PostgreSQL cluster, `provision` and `upgrade` state, relevant registry and firewall state, the Windows service configuration and CivicCast shortcuts. Recordings and uploads are not copied because setup does not modify them. Setup calculates the copy size first and stops before replacement unless that amount plus a 256 MB reserve is free.
+
+If a later setup step fails, setup restores the previous application files, database and saved station state. It restores the prior service registration and start mode; if the service was running, setup starts it and checks that the saved version and database schema are healthy. A successful commit or restore removes the temporary copy. If automatic restoration is interrupted, the recovery task or the next setup run retries it. Exit 136 means recovery could not be prepared or completed; keep the station data and recovery records in place and use the log paths above. This transaction is a short-term setup safeguard, not a replacement for a separate station backup.
 
 #### Activation (exit 123)
 
@@ -3563,7 +3570,7 @@ The log records each step's own code ("step X: returned N"). You may see: 64 arg
 | First-run window | `%USERPROFILE%\.civiccast\runtime-host.log` and `installer-state.json` |
 | Which self-test failed | The setup window's details list (not the log; see the Known issue above) |
 
-A failure never deletes `C:\ProgramData\CivicCast`. Open the log in Notepad, and when you report a problem to the project's issue page, remove anything private first. Do not paste passwords, recovery codes or tokens.
+Setup keeps its recovery journal and temporary copy under `C:\ProgramData\CivicCast\install-transaction` until the install commits or restoration completes. If automatic restoration cannot finish, keep that folder and all station data intact. Open the logs in Notepad, and when you report a problem to the project's issue page, remove anything private first. Do not paste passwords, recovery codes or tokens.
 
 ### Verify the install
 
@@ -3594,12 +3601,11 @@ To upgrade, run the newer `setup.exe` over the existing installation. Use the re
 > **Warning:** Setup stops the CivicCast service before it replaces any file. That takes every channel off the air until setup finishes and the service starts again. Do not run an upgrade during a meeting or a scheduled program.
 
 1. Close the first-run window if it is open.
-2. Use the release helper with `-Install`, or run the new complete kit's `setup.exe /S` from an administrator PowerShell session. Approve UAC when requested and wait for setup's exit code.
-3. On the **Already Installed** page, choose the option that does **not** uninstall first (**Do not uninstall** on an older install, **Add/Reinstall components** for a same-version re-run).
-4. Wait. Setup stops the old service ("Preparing the existing CivicCast (Native) installation for a data-preserving upgrade..."), replaces files, re-checks the packs, then runs the upgrade engine, which backs up, migrates and health-checks the database.
-5. Confirm with "Verify the install".
+2. Use the release helper with `-Install`, or run the new complete kit's `setup.exe /S` from an administrator PowerShell session. Approve UAC when requested and wait for setup's exit code. The native installer skips Tauri's generic **Already Installed** page and does not call the old uninstaller first.
+3. Wait. Setup records the prior service and station state, stops the old service, makes its temporary recovery copy, replaces and verifies files, then runs the upgrade engine, which backs up, migrates and health-checks the database.
+4. Confirm with "Verify the install".
 
-Why not uninstall first: the upgrade engine decides what to do from two markers (`InstalledVersion` and `DatabaseUrl`) that an uninstall deletes, and the setup code says the uninstall teardown must not be used during an upgrade, because it removes those markers. Uninstalling first turns the upgrade into a reinstall over leftover data. This is the behavior described by the current setup code; use the verification record for package-specific test results.
+Run setup directly over the existing installation. The generic reinstall page could invoke the old uninstaller before setup had a chance to save recovery state, so the corrected native installer suppresses that page and uses its own recoverable in-place transaction. It also clears Tauri's saved install-location marker on uninstall, so a later clean reinstall is not misidentified as an already-installed product. Take a separate backup first; the temporary recovery copy is limited to the setup paths described above and is removed after commit or restoration.
 
 | Upgrade engine result | What setup does |
 | --- | --- |
@@ -3607,21 +3613,21 @@ Why not uninstall first: the upgrade engine decides what to do from two markers 
 | Fresh install (nothing to upgrade) | Continues. Existing CivicCast data on the machine is adopted, not deleted |
 | Same version already installed | Does nothing to the data; re-checks the packs; continues |
 | Older setup over newer install, caught by the early version preflight | Exit 129 before prerequisites, service changes, application-file replacement, or station-data changes |
-| Defensive D3 downgrade refusal after payload replacement | Exit 129. Database downgrade is refused, but the application files have already been replaced and are not automatically restored. Repair with the complete signed setup kit matching the newer installed version; do not uninstall or delete station data |
-| Rolled back its own work | Exit 124. The old database is intact. The service is stopped and set to manual start |
-| Rollback also failed | Exit 113. Follow `UPGRADE-RECOVERY.md` |
+| Defensive D3 downgrade refusal after payload replacement | Exit 129. The installer restores the pre-setup application and station state when automatic restoration succeeds |
+| Rolled back its own work | Exit 124. The installer restores the pre-setup application, database and service state when automatic restoration succeeds |
+| Rollback also failed | Exit 113. Setup attempts to restore the pre-setup station; see `UPGRADE-RECOVERY.md` and `install-progress.log` |
 | Release has an irreversible change | Exit 114 (refused) |
-| Earlier failed upgrade's record found | Exit 128. Database untouched; program files already replaced; service stopped |
+| Earlier failed upgrade's record found | Exit 128. Setup restores the pre-setup application and station state when automatic recovery succeeds; move the stale journal aside, then retry |
 
-> **Historical Beta 13/Beta 14 behavior:** those installers could discover a downgrade only in the D3 upgrade engine, after replacing application files; their exit-129 wording could incorrectly say that setup stopped before changing anything. Beta 15 adds an earlier version check, so the normal downgrade refusal happens before prerequisites, service changes, application files, or station data are touched. Beta 15 retains a defensive late D3 refusal in case the installed-version state changes after that check; if it fires, use the late-refusal repair instructions above. Automatic restoration of the old application files after a later failure is not implemented for the flat installer layout.
+> **Historical Beta 13/Beta 14 behavior:** those installers could discover a downgrade only in the D3 upgrade engine, after replacing application files; their exit-129 wording could incorrectly say that setup stopped before changing anything. Beta 15 adds an earlier version check, so the normal downgrade refusal happens before prerequisites, service changes, application files, or station data are touched. The corrected Beta 15 source retains a defensive late D3 refusal and wraps replacement in automatic restoration of the prior application and station state. Package-specific observations remain in the Beta 15 verification record.
 
-Exit 128 is a separate D3 stale-journal refusal: it occurs after the service has been stopped and application files replaced, but before database work. Keep the recovery journal and move it aside as the installer message instructs; do not delete it. For other failures after payload replacement, follow the specific exit-code instructions rather than assuming that database rollback also restored the application files.
+Exit 128 is a separate D3 stale-journal refusal. The installer restores the pre-setup state when automatic recovery succeeds; then move the stale `upgrade-journal.json` aside as instructed and retry. If setup reports exit 136, do not remove the recovery records or station data.
 
 ### Repair
 
 There is no separate repair button that does the work. Two paths exist.
 
-**Re-run setup.** Run the same version's setup again with its `packs\` folder and choose **Add/Reinstall components**. The upgrade engine does nothing (same version), each extracted pack is re-verified, and a damaged tree is rebuilt from the pack. The service is stopped first, because setup must not delete files under a running service.
+**Re-run setup.** Run the same version's setup again with its `packs\` folder. The native installer skips the generic **Already Installed** page; setup stops the service, records a temporary recovery copy, re-verifies each extracted pack and rebuilds a damaged tree from the pack. The upgrade engine does nothing for the same version.
 
 **The repair command.** For an operator working outside the setup window, the installed program has a repair mode. It checks every installed tree against its signed pack, re-lays corrupted files, repairs the runtime selector and re-registers the service. It never touches data. From an elevated PowerShell window, with the kit folder as `--installer-dir` (the folder that contains `packs\`):
 
@@ -5057,7 +5063,7 @@ This chapter is for the person who looks after the CivicCast station computer: u
 
 ### Where things are logged
 
-Everything below `C:\ProgramData\CivicCast` survives an uninstall and survives a failed setup. Nothing in setup deletes it.
+Uninstall leaves `C:\ProgramData\CivicCast` in place. Setup uses a durable recovery record and a temporary copy in `install-transaction` for the specific files and station state it may change; successful commit or restoration removes that copy. If recovery fails, keep the record and backup in place.
 
 | What you want | File or place | Notes |
 |---|---|---|
@@ -5067,6 +5073,7 @@ Everything below `C:\ProgramData\CivicCast` survives an uninstall and survives a
 | The database server | `C:\ProgramData\CivicCast\logs\postgres.log` | Contains startup and server output; rotates at 10 MiB and keeps 10 older files. |
 | Why the supervisor stopped trying to start | `C:\ProgramData\CivicCast\STATION-START-FAILED.md` | Written after 3 failed starts in a row with the same error. Removed after the next successful start. |
 | What setup did, step by step | `C:\ProgramData\CivicCast\install-progress.log` | Read it from the bottom. Find the last "begin" with no matching "returned". |
+| Automatic setup restoration | `C:\ProgramData\CivicCast\install-transaction\` (`transaction.clixml`, temporary `backup\`, and `recovery-error.txt` when recovery reports an error) | Do not delete these while setup recovery is incomplete. Exit 136 means recovery could not be prepared or completed. |
 | Which pack was missing or untrusted | `C:\ProgramData\CivicCast\install-manifest-report-<pid>-<time>.json` | One per setup run. |
 | Upgrade, rollback, provisioning | `C:\ProgramData\CivicCast\upgrade\` (`upgrade-engine.log`, `upgrade-journal.json`, `UPGRADE-RECOVERY.md`) and `provision\` (`PROVISION-RECOVERY.md`, `OWNERSHIP-RECOVERY.md`, `ownership-observation.txt`) | |
 | One channel's encoder and relays | `C:\ProgramData\CivicCast\data\egress\<channel>\logs\` (`gst-worker.stdout.log`, `gst-worker.stderr.log`, `hls-relay.<sink label>.stderr.log`) | On the default GStreamer engine the worker logs are named `gst-worker.*`. On the FFmpeg fallback engine they are `ffmpeg.stdout.log` and `ffmpeg.stderr.log`. |
@@ -5191,7 +5198,7 @@ A program change is the moment a channel moves from one scheduled item to the ne
 | A single dropped frame at a join between two pieces | A known single-frame drop. | `CTRL mux diagnostic: dropped future-dated video arrival`. | None. It is one frame. |
 | A change aired only the tail of the closing item | The plan was resolved against a short remainder. | `Plan for <channel> resolved to a N.Ns tail of the closing scheduled item`. | Check the schedule's times. Remember that times typed on schedule screens are UTC. |
 
-> **Known issue (Beta 15):** In one observation, a 60-second scheduled slot containing the 20-second Welcome sample ended the sample and continued slate output, while the daemon remained in **Changing source** and logged repeated rollover attempts. This observation did not establish an indefinite stall. A separate 20-second slot played and returned to slate normally. The behavior was not fixed in Beta 15; if the status persists, preserve the service and worker logs and confirm the actual HLS output before deciding whether the channel stopped.
+> **Historical Beta 15 observation:** The published package showed repeated rollover attempts after a 20-second Welcome clip ended inside a 60-second slot; a separate 20-second slot played and returned to slate. The corrected source carries each schedule row's occurrence ID through preparation. It allows an intentional short program to air, then recognizes a later lookup of that same occurrence at an advanced inpoint as its remainder. A separate scheduled use of the same asset remains a new program. See the Beta 15 verification record for the published-package observation and the corrected candidate's runtime status.
 
 > **Historical Beta 10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the current package. Keep the logs if you see an unexplained rebuild.
 
@@ -5329,16 +5336,17 @@ The default encoder path is GStreamer. On Windows, a hardware H.264 request is m
 
 > **Upgrade evidence (Beta 12):** One normal upgrade from the pinned Beta 11 baseline exited 0 and recorded a healthy service/API, current schema 0089, a saved preservation marker, and initial HLS audio/video plus Whistle observations on three channels. The post-upgrade recorder failed during its first JSON save; no five-snapshot PASS was recorded. Fresh-install and repair checks remain unrun, and no sustained-operation result is claimed. Take a separate backup of `C:\ProgramData\CivicCast` before an upgrade. See the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
-An upgrade is the same `setup.exe` run over an existing install. The service is stopped (its registration is kept), packs are re-verified, the engine backs up and migrates the database with a rollback, then the service is registered and started again. Setup refuses to put an older version over a newer one.
+An upgrade is the same `setup.exe` run over an existing install. The generic **Already Installed** page is suppressed; setup does not uninstall first. It saves a temporary, size-checked recovery copy before replacing files, re-verifies packs, runs the database upgrade and restores the prior application and station state if a later step fails. Setup refuses to put an older version over a newer one. Exit 136 means recovery could not be prepared or completed; keep `install-transaction` and station data intact and let the recovery task or next setup run retry.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
-| Setup exit 113 | The upgrade failed and the rollback also failed. | `C:\ProgramData\CivicCast\upgrade\UPGRADE-RECOVERY.md`. | Follow the steps in that file. |
+| Setup exit 113 | The upgrade failed and the rollback also failed. | `C:\ProgramData\CivicCast\upgrade\UPGRADE-RECOVERY.md` and `install-progress.log`. | Setup attempts to restore the previous application and station state; if it reports exit 136, keep recovery files and follow the exit-136 instructions. |
 | Setup exit 114 | This release has a database change that cannot be rolled back, so the automatic upgrade was refused. | The dialog. | No manual path is written in the dialog (HELP-107). Ask for help before you proceed. |
 | Setup exit 115 | An unexpected fault in the upgrade step. | `install-progress.log`. | Run setup again; collect the logs if it repeats. |
-| Setup exit 124 | The engine was rolled back and the old database is intact. The service is left stopped and set to manual start on purpose. | `upgrade\upgrade-engine.log`. | Read the reason. Do not set the service back to automatic by hand: a successful run of setup restores it. If the dialog says containment was not confirmed, run `sc stop CivicCastSupervisor` and `sc config CivicCastSupervisor start= demand`, then fix the reason and run setup again. |
-| Setup exit 128 | The record of an earlier failed upgrade is still on disk. The service is stopped and the program files were already replaced, although the dialog says nothing changed. | `upgrade\upgrade-journal.json` exists. | Move that file aside (do not delete it) and run setup again. |
-| Setup exit 129 | An older setup was run over a newer install. The dialog says nothing changed, but the older program files were already copied over and the service is stopped. | The dialog. | Do not start the service. Run the newer setup, or uninstall first. |
+| Setup exit 124 | The engine rolled back its database work; setup then restores the pre-setup application and station state when automatic recovery succeeds. | `upgrade\upgrade-engine.log` and `install-progress.log`. | Read the reason, fix it, and run setup again. The previous service start mode is restored with the prior installation. |
+| Setup exit 128 | An earlier failed upgrade's journal is still on disk. Setup restores the pre-setup state when automatic recovery succeeds. | `upgrade\upgrade-journal.json` exists. | Move that file aside (do not delete it) and run setup again. |
+| Setup exit 129 | An older setup was run over a newer install. A defensive late refusal restores the pre-setup state when automatic recovery succeeds. | The dialog and `install-progress.log`. | Use the setup matching the newer installed version. If recovery did not complete, keep the recovery files and follow exit 136. |
+| Setup exit 136 | The installer could not prepare, complete or resume automatic restoration. | `install-transaction\recovery-error.txt` and `install-progress.log`. | Keep station data and recovery files. Restart Windows or retry setup to let automatic recovery run; contact support if it repeats. |
 | After the upgrade `/health` says `schema` is `behind` | The migration did not run. | `curl.exe http://127.0.0.1:8000/health`. | Run setup again; see exit 125. |
 | Uninstall exit 82, 133 or 134 | The service could not be confirmed stopped (82, 133), or teardown is incomplete (134, remove by hand). | The dialog. | Stop the service in `services.msc` or restart Windows, then uninstall again. For 134, remove the leftovers in `services.msc`, Windows Firewall and the registry. |
 
@@ -5392,6 +5400,7 @@ Collect these before you ask anyone for help. Together they answer most question
 | 133 | Uninstall | Service stop unconfirmed; files kept. |
 | 134 | Uninstall | Teardown incomplete; remove the leftovers by hand. |
 | 135 | Provision | The older WSL edition is registered (child code 87). |
+| 136 | Installer recovery | Automatic restoration could not be prepared or completed. Keep `install-transaction` and station data intact. |
 | 3010 | Visual C++ | The Visual C++ runtime installed and Windows needs a restart. We could not confirm that setup itself returns this number. |
 
 Child codes seen: 64 arguments, 65 report write, 66 pack missing or untrusted, 67 activation or self-test, 68 verify, 73 and 74 uninstall preflight, 75 provision or pack, 78 embedded trust key refused, 83 service start, 84 not serving, 85 ownership, 87 other product. A child code of 77 appears in the setup code but its meaning is not named in any text we read. A first install with only `setup.exe` and no kit stops at exit 110 (see the first row of the install table).
@@ -5995,7 +6004,8 @@ CivicCast keeps its data in a database, in folders of files, in a few small file
 
 **What it does not do.**
 
-- **CivicCast does not back up your station by itself.** The only backups it takes are the one the upgrade engine takes before an upgrade (a database dump, with an integrity manifest, in `C:\ProgramData\CivicCast\upgrade\backups\pre-<version>`; the upgrade engine does not copy recordings) and the ones created by the `civiccast dr run-drill` command. We found no scheduled backup job. Your own backup must cover the database (a `pg_dump`, or a copy of `pgdata` with the service stopped), `C:\ProgramData\CivicCast\data\uploads`, and the files listed in the note above.
+- **CivicCast does not provide a durable, off-computer station backup.** The upgrade engine takes a database dump with an integrity manifest in `C:\ProgramData\CivicCast\upgrade\backups\pre-<version>`, and `civiccast dr run-drill` creates a separate database backup. We found no scheduled backup job. Your own backup must cover the database (a `pg_dump`, or a copy of `pgdata` with the service stopped), `C:\ProgramData\CivicCast\data\uploads`, and the files listed in the note above.
+- **Installer recovery is temporary protection, not a station backup.** Before replacing files, setup saves an access-restricted journal and a temporary copy under `C:\ProgramData\CivicCast\install-transaction`. The copy is limited to the application tree except `packs\.station-cache`, the native PostgreSQL cluster, `provision` and `upgrade`, relevant registry and firewall state, service configuration and shortcuts. It does not copy recordings or uploads. Setup checks the required copy size and leaves a 256 MB free-space reserve; after commit or successful restore it removes the temporary copy. If recovery cannot finish, the journal and copy remain for the startup recovery task or a later setup run.
 - **There is no automatic clean-up of the command table.** The conform cache (60 GB by default), prepared plan folders (5 GB by default) and relay logs have limits. Beta.11 also bounds live caption working audio, recent caption history and delivery tracking; those bounds do not limit original recordings or archived caption tracks. Watch the free space on the drive that holds `C:\ProgramData\CivicCast\data`.
 - **Uninstalling does not remove your data.** The uninstaller removes the program files, the service, the firewall rule and the registry values, but leaves `C:\ProgramData\CivicCast`. Because the uninstaller deletes the stored database password, a reinstall over a surviving data folder has to set a new password on the existing database. The installer does this using a short-lived loopback-only access rule.
 
@@ -6060,6 +6070,8 @@ A CivicCast channel is a continuous video stream that never stops, even when the
 **What this shows.** Recurring program slots are turned into schedule items. A background thread (the *channel automation*) looks at every enabled channel every 2 seconds. It asks the *source plan provider* what should be airing now, and gives the answer to the *egress daemon*, the part that owns each channel's worker. The daemon asks the *preparer* to make the files ready, then starts or instructs the worker. The worker plays the prepared files through one video encoder to the outputs.
 
 **The source plan.** A *source plan* is the list of things a channel should play from now on. Only schedule items that are published and are premieres count. Each item is clipped to its slot. If the channel is switched on halfway through an item, the plan starts partway into it (called *join in progress*) so that the stream matches the clock. A gap of up to 30 seconds between items is absorbed. A longer gap is filled with filler. With the default GStreamer engine a plan holds one slice of up to 30 minutes, which keeps the worker's pipeline small; the automation extends it before it runs out (Figure 16-7). A plan segment has one of four kinds: a program (a recorded file), a *slate* (a generated card, used when nothing is scheduled), a *live* source (a network stream, used when an operator takes over the channel) and *cg* filler (bulletin slides). The slate is rendered as a short clip and repeated into one continuous file of 3,600 seconds, so a channel that falls back to slate does not need a second preparation. A live takeover is refused unless the live source has been observed as ready within the last 30 seconds by default (a source that merely exists is not treated as ready).
+
+Scheduled segments carry their schedule-row occurrence ID through preparation. This distinguishes two scheduled uses of the same recording. A short program is allowed to air on its first selection; if the same occurrence is resolved again later with an advanced inpoint, the daemon treats it as the remainder of that program and resolves the slot's filler or next item instead of repeatedly restarting the short clip.
 
 **Preparing a file ("conform").** Video files come in every size and shape. The preparer converts each one to a single *canonical profile* so that every change of program looks the same to the encoder. The default profile is 1280 by 720 pixels at 30 frames a second, H.264 video at 6,000 kbit/s with a keyframe every 60 frames, and AAC stereo audio at 192 kbit/s and 48 kHz, in an MPEG-TS container. A station can change the profile for a channel. The audio is also leveled (Figure 16-9). A conformed file is stored in the *conform cache*, a folder named `conform-cache` under the channel work folder (`C:\ProgramData\CivicCast\data\egress`), keyed by the source file's path, size and modified time, the profile, and the leveling method. A program that has aired before is a cache hit and costs no conversion. A program that has never aired is converted in the time before it is due, and the whole file is converted in the background so that the next airing hits the cache. The cache holds 60 GB by default and discards the oldest entries first. Each preparation step is limited to 300 seconds by default.
 
@@ -6239,7 +6251,7 @@ The five roles are `setup_admin`, `meeting_operator`, `records_clerk`, `publish_
 
 The installer is a standard Windows setup program built with Tauri and NSIS, with a series of steps (called *hooks*) that do the real work. Setup runs elevated (as an administrator). Figure 16-13 shows the steps in order.
 
-![Figure 16-13. Installation and activation. A failure after the new files are in place tries to stop the service and set it to manual start (best effort), then exits with a numbered code.](manual/diagrams/aa5394bfa005.png){width=100%}
+![Figure 16-13. Installation and activation. Setup saves prior state before replacing files and automatically restores it after a failure when recovery succeeds; exit 136 reports that recovery could not be prepared or completed.](manual/diagrams/aa5394bfa005.png){width=100%}
 
 **What this shows.**
 
@@ -6259,26 +6271,27 @@ The installer is a standard Windows setup program built with Tauri and NSIS, wit
 | Activate: index or pack could not be verified; self-test or space failure | 123 (the activation tool itself exits 66, 67, 78, 64 or 65) |
 | Register the service; start it and wait | 118; 126 if it will not start; 125 if it starts but does not serve |
 | Firewall rule | 119 |
+| Automatic setup recovery could not be prepared or completed | 136 |
 
 Each of these steps writes a time-stamped line before and after to `C:\ProgramData\CivicCast\install-progress.log`.
 
 **Why it is built this way.** Every pack is signed and checked twice because the installer runs with full rights and the packs contain programs that will run as `LocalSystem`. The self-test exists so a station that looks installed but cannot caption or summarize is stopped at setup rather than discovered at the first meeting. The service refuses to start without the activation records for the same reason.
 
-> **Known issue (beta.11):** When the activation self-test fails, the dialog tells you to find the cause in `install-progress.log`, but the cause is shown only in the setup details pane, and exit 67 is also used for a full disk. A new install on a computer with a surviving data folder is handled by resetting the database password. Package-specific clean-install and upgrade evidence is in the matching release verification record. See [Chapter 10](#ch-installing).
+> **Known issue (beta.11):** When the activation self-test fails, the dialog tells you to find the cause in `install-progress.log`, but the cause is shown only in the setup details pane, and exit 67 is also used for a full disk. A new install on a computer with a surviving data folder is handled by resetting the database password. Package-specific installation evidence is in the matching release verification record. The corrected Beta 15 source adds automatic setup recovery; exit 136 reports that its recovery transaction could not be prepared or completed. See [Chapter 10](#ch-installing).
 
 ### Updating, and going back {#arch-upgrade}
 
-Running a newer `setup.exe` over an existing station upgrades it. The upgrade engine, a Python program in the new package, takes over after the new files are in place. Figure 16-14 shows its steps and what happens if one fails.
+Running a newer `setup.exe` over an existing station upgrades it. The installer skips the generic **Already Installed** page and wraps replacement in a durable recovery transaction before the upgrade engine, a Python program in the new package, takes over. Figure 16-14 shows the database steps and what happens if one fails.
 
 ![Figure 16-14. Upgrade and rollback.](manual/diagrams/f6268a435d73.png){width=100%}
 
-**What this shows.** The engine runs a series of steps and writes a *journal* after each one, so that a run that is interrupted can be resumed. It first takes the *maintenance interlock*, a flag in the registry that the supervisor reads to start the station read-only. It stops writers and checks that the database is quiet, then takes a full backup and proves it by restoring it into a scratch database and comparing rows, checksums and the schema revision. If that proof fails, nothing has been changed and the upgrade stops. It runs the migrations, starts the new code in maintenance mode, which brings up the database and the control plane and starts no video worker, and checks that the station is healthy. Only then does it release the interlock.
+**What this shows.** The engine runs a series of steps and writes a *journal* after each one, so that a run that is interrupted can be resumed. It first takes the *maintenance interlock*, a flag in the registry that the supervisor reads to start the station read-only. It stops writers and checks that the database is quiet, then takes a full backup and proves it by restoring it into a scratch database and comparing rows, checksums and the schema revision. If that proof fails, nothing has been changed and the upgrade stops. It runs the migrations, starts the new code in maintenance mode, which brings up the database and the control plane and starts no video worker, and checks that the station is healthy. Only then does it release the interlock. The enclosing installer transaction retains a size-checked temporary snapshot of the prior application and station state until setup commits.
 
-If the migration itself, or a step after it, fails, the engine restores the database from the backup. (A failure before the migration changes nothing in the database, so nothing is restored.) If the restore itself fails, the engine halts with the service stopped, keeps the backup and the journal, writes `UPGRADE-RECOVERY.md` and setup exits 113. A new release can also declare that its migration cannot be reversed; the engine then refuses to upgrade automatically (the engine exits 30, which setup reports as exit 114). The setup script does not appear to pass the flag that declares such a migration, so we did not see this refusal happen. An older setup over a newer install is refused outright (exit 129), because the database is not moved backwards.
+If the migration itself, or a step after it, fails, the engine restores the database from its backup. If that restore fails, the engine halts and writes `UPGRADE-RECOVERY.md`; setup then attempts to restore the whole pre-setup snapshot, including the old application files, database and service state. Exit 136 means the installer's own recovery could not be prepared or completed, and the durable recovery task retains the journal and temporary copy for retry. A new release can also declare that its migration cannot be reversed; the engine then refuses to upgrade automatically (the engine exits 30, which setup reports as exit 114). An older setup over a newer install is refused outright (exit 129), because the database is not moved backwards.
 
 **What a rollback does not do.**
 
-- **It does not put the old program files back.** In the layout the installer uses, the new files are extracted into the one `runtime` folder before the engine starts, so there is no previous folder to return to. After a rollback the database is the old version's, the files on disk are the new version's, and the service is left stopped. The recovery document says to run the old version's `setup.exe` over the machine before starting the service.
+- **The engine's own rollback does not put old program files back.** The installer's enclosing transaction does: when its temporary snapshot is intact, setup restores the previous application files, database, relevant app state and service state after a failed setup step. Keep a separate station backup; this temporary copy exists only until commit or successful restoration.
 - **The backup does not contain your recordings.** It is a database dump with an integrity manifest, saved in `C:\ProgramData\CivicCast\upgrade\backups\pre-<version>`. The upgrade does not touch `data\uploads`, but the backup does not protect it either.
 - **A failed upgrade blocks the next one.** The journal of a run that ended in failure makes later runs stop (exit 128) until someone moves `upgrade-journal.json` aside; nothing removes it automatically.
 - **There is no manual restore tool in setup.** The exit 114 message mentions a manual path with operator acknowledgement; we did not find the steps for it.

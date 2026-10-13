@@ -46,8 +46,10 @@ entries:
       Exact-source manual verification passed. Package execution observations
       from the earlier producer 7899ee9234428b0b3c93b369392ae5114d292533 remain
       separately identified in docs/releases/v1.0.0-beta.15-verification.md;
-      they do not verify these refreshed bytes. Public-download install and
-      uninstall checks are pending. Automatic late-failure restoration and
+      they do not verify these refreshed bytes. Public-download clean installation and first-admin setup passed on
+      October 13. The Welcome sample reached identified HLS output and returned to
+      slate; installed Help matched the published manual hash. Built-in uninstall
+      remains pending. Automatic late-failure restoration and
       repeated-rollover state recovery remain unfinished.
   - tag: v1.0.0-beta.14
     status: superseded

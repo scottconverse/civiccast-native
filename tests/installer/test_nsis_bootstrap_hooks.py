@@ -48,6 +48,44 @@ def _hooks_source() -> str:
     return BOOTSTRAP_HOOKS_NSH.read_text(encoding="utf-8")
 
 
+def test_failed_install_restores_prior_station_before_aborting() -> None:
+    source = _hooks_source()
+    fail = _slice(source, "!macro CIVICCAST_FAIL CODE TEXT", "!macroend")
+    assert "CIVICCAST_TRANSACTION_RESTORE" in fail, (
+        "failed setup currently contains the new payload but never restores the prior station"
+    )
+    pre = _slice(source, "!macro NSIS_HOOK_PREINSTALL", "!macroend")
+    assert pre.index("CIVICCAST_TRANSACTION_BEGIN") < pre.index("sc.exe\" query")
+    assert "CIVICCAST_TRANSACTION_SNAPSHOT" in pre
+    post = _slice(source, "!macro NSIS_HOOK_POSTINSTALL", "!macroend")
+    assert post.index("CIVICCAST_TRANSACTION_COMMIT") > post.index('"InstalledVersion" "${VERSION}"')
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows NSIS recovery callback compilation")
+def test_transaction_macros_compile_with_tauri_early_hook_include(tmp_path: Path) -> None:
+    makensis = Path.home() / "AppData/Local/tauri/NSIS/Bin/makensis.exe"
+    if not makensis.is_file():
+        pytest.skip("Tauri NSIS compiler unavailable")
+    source = tmp_path / "recovery.nsi"
+    source.write_text(
+        'Unicode true\n!include MUI2.nsh\n!include LogicLib.nsh\n!include FileFunc.nsh\n'
+        # Tauri includes hooks before defining product constants/page variables.
+        f'!include "{BOOTSTRAP_HOOKS_NSH}"\n'
+        '!define VERSION "999.0.0"\n!define UNINSTKEY "Software\\CivicCastRecoveryProbe"\n'
+        'Var AppStartMenuFolder\nName "Recovery compile probe"\nRequestExecutionLevel user\n'
+        f'OutFile "{tmp_path / "recovery.exe"}"\n'
+        '!insertmacro MUI_PAGE_INSTFILES\n!insertmacro MUI_LANGUAGE English\n'
+        'Section\n!insertmacro CIVICCAST_TRANSACTION_RECOVER_PENDING\n'
+        '!insertmacro CIVICCAST_TRANSACTION_BEGIN\n!insertmacro CIVICCAST_TRANSACTION_SNAPSHOT\n'
+        '!insertmacro CIVICCAST_TRANSACTION_COMMIT ${CIVICCAST_EXIT_INSTALL_RECOVERY}\nSectionEnd\n'
+        '!insertmacro CIVICCAST_TRANSACTION_CALLBACKS\n',
+        encoding="utf-8",
+    )
+    compiled = subprocess.run([str(makensis), "/V2", str(source)], capture_output=True, text=True, timeout=60)
+    assert compiled.returncode == 0, compiled.stdout + compiled.stderr
+    # Do not execute: this probe checks wiring without touching host state.
+
+
 def _slice(source: str, start_marker: str, end_marker: str) -> str:
     start = source.find(start_marker)
     assert start != -1, f"{start_marker!r} not found in {BOOTSTRAP_HOOKS_NSH}"

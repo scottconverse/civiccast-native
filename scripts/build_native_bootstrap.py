@@ -366,13 +366,26 @@ def _find_makensis() -> Path:
 
 
 def add_nsis_version_preflight(script: str) -> str:
-    """Run the read-only version guard before Tauri's pages/prerequisites."""
+    """Recover interrupted setup, then guard version before pages/prerequisites."""
     marker = "Function .onInit\n"
-    guard = "  !insertmacro CIVICCAST_VERSION_PREFLIGHT\n"
+    guard = (
+        "  !insertmacro CIVICCAST_TRANSACTION_RECOVER_PENDING\n"
+        "  !insertmacro CIVICCAST_VERSION_PREFLIGHT\n"
+    )
     if script.count(marker) != 1:
         raise ValueError("generated NSIS onInit entrypoint changed; cannot place version preflight")
     if marker + guard not in script:
         script = script.replace(marker, marker + guard, 1)
+    # Native setup upgrades in place. Tauri's generic reinstall page can run
+    # the old uninstaller BEFORE PREINSTALL, destroying the recovery input.
+    # Skip that page entirely; installed products use our transaction instead.
+    reinstall = "Function PageReinstall\n"
+    skip = "  Abort ; Native upgrades use the recoverable PREINSTALL transaction.\n"
+    if reinstall in script and reinstall + skip not in script:
+        script = script.replace(reinstall, reinstall + skip, 1)
+    callbacks = "!insertmacro CIVICCAST_TRANSACTION_CALLBACKS\n"
+    if callbacks not in script:
+        script = script.rstrip() + "\n\n" + callbacks
     return script
 
 

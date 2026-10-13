@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased]
+
+### Beta 15 completion corrections
+
+- Save the prior native installation before replacement and automatically
+  restore its application, owned database, activation, service and shortcut
+  state after a failed or interrupted installation. A protected journal and
+  Windows startup recovery task retain the recovery point until restoration
+  succeeds; successful installation or restoration removes the backup.
+- Keep service startup manual until installation commits, and bypass the
+  generic reinstall page that could uninstall the old application first.
+- Resolve a repeated short-programme remainder to the next eligible programme
+  or slate. Track the schedule occurrence so a separately scheduled replay of
+  the same short video remains playable; report the new source after the
+  worker confirms the change.
+
+These source corrections are separate from the initially published Beta 15
+installer. Package verification is recorded against its actual build in the
+Beta 15 verification record; the original package evidence remains historical.
+
 ## [1.0.0-beta.15] - 2026-10-13
 
 This release updates the native installer, operator guidance, release pages and
@@ -24,7 +44,7 @@ bytes in this release edition.
 ### Documentation and public site
 
 - Reconcile support, tester and manual-source guidance with the Beta 15
-  candidate while preserving Beta 14 as the latest published package.
+  release while preserving Beta 14 results as historical evidence.
 - Describe Whistle recovery as automatic, serialized, and backoff-limited;
   attribute the 72-hour 99.78% host result to historical Beta 11 evidence.
 - Improve public home-page link contrast on dark sections and wrap the long

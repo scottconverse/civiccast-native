@@ -1136,6 +1136,7 @@ def _segment_from_item(
         ),
         kind="program",
         source_ref=item.asset_id,
+        schedule_occurrence_id=str(item.id),
         inpoint_seconds=inpoint,
         outpoint_seconds=outpoint,
     )
