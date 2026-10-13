@@ -54,3 +54,26 @@ tests. Full mypy passed 701 files afterward.
 Remaining policy bookkeeping updates refresh documentation-only DR bindings,
 current native test counts/platform classification, workflow input bindings,
 and tracked PDF/DOCX manual downloads. These do not require an installer rebuild.
+
+On head 82372258581c6f91e365a76ac0d7c44945a47591, CI job 115537552943
+passed 11376 tests (100 skipped, 5 deselected), but the native execution
+verifier rejected six Windows-only cases incorrectly selected on Linux.
+The dedicated native selection passed 2024 tests and skipped those six.
+The claims verifier consequently rejected the failed producer; its named
+claim tests had passed in the same log.
+
+Those six identity/DPAPI tests now carry explicit windows_only markers.
+Portable identity tests remain selected, all assertions are unchanged,
+and the Windows collection remains 2256 non-integration tests. The pure
+collection is 2024 with the existing 50-test-margin floor set to 1974.
+All six workflow blob bindings were refreshed for that floor-only change.
+
+Focused verification on Windows:
+- Both changed modules without a marker filter: 10 passed.
+- The same modules with -m "not windows_only": 4 passed, 6 deselected.
+- Exact collection and workflow-floor policy checks: 2 passed.
+- Registered-claims verifier check: 1 passed.
+- Affected Ruff lint/format and git diff --check passed.
+
+No production code or signed package changed. CI on the new head remains
+required before merge; these local checks do not claim a new Linux run.

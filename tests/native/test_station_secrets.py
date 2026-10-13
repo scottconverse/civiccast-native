@@ -11,6 +11,7 @@ from civiccast.native.station_secrets import StationSecretVault
 pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows DPAPI vault")
 
 
+@pytest.mark.windows_only
 def test_vault_encrypts_and_exports_portable_credentials(tmp_path):
     vault = StationSecretVault(tmp_path / "source.dpapi")
     vault.set("civiccast.live-source", "camera", "test-only-password")
@@ -23,6 +24,7 @@ def test_vault_encrypts_and_exports_portable_credentials(tmp_path):
     assert restored.get("civiccast.live-source", "camera") is None
 
 
+@pytest.mark.windows_only
 def test_vault_grants_service_access_without_public_access(tmp_path):
     import win32security
 
@@ -41,6 +43,7 @@ def test_vault_grants_service_access_without_public_access(tmp_path):
     assert not {"S-1-1-0", "S-1-5-11", "S-1-5-32-545"} & grants.keys()
 
 
+@pytest.mark.windows_only
 def test_invalid_import_preserves_existing_vault(tmp_path):
     vault = StationSecretVault(tmp_path / "vault.dpapi")
     vault.set("civiccast.staff-token", "operator", "retained")
@@ -50,6 +53,7 @@ def test_invalid_import_preserves_existing_vault(tmp_path):
     assert vault.path.read_bytes() == before
 
 
+@pytest.mark.windows_only
 def test_corrupt_vault_fails_closed(tmp_path):
     vault = StationSecretVault(tmp_path / "vault.dpapi")
     vault.path.write_bytes(b"not-a-dpapi-blob")
@@ -58,6 +62,7 @@ def test_corrupt_vault_fails_closed(tmp_path):
     assert vault.path.read_bytes() == b"not-a-dpapi-blob"
 
 
+@pytest.mark.windows_only
 def test_old_account_retry_refreshes_changed_and_deleted_credentials(tmp_path, monkeypatch):
     import win32cred
 

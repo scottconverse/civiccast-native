@@ -61,6 +61,7 @@ def test_copy_failure_does_not_promote_or_remove_source(tmp_path, monkeypatch):
     assert (source / "state").read_text() == "preserve"
 
 
+@pytest.mark.windows_only
 def test_migration_only_start_never_launches_station(monkeypatch):
     import os
 

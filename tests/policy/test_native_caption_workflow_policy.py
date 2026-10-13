@@ -1190,12 +1190,12 @@ def test_native_marker_collections_match_the_workflow_floors() -> None:
     # cases in test_admin_recovery.py now carry windows_only in addition to
     # their runtime skip guards. That checkpoint collected 1957 pure and
     # 2168 total tests.
-    # 2026-10-13 station-operations candidate collection: 2030 platform-
-    # independent tests and 2259 total tests. The 12 installer service-
-    # identity cases are explicitly windows_only; the Windows
-    # non-integration collection is 2256. ci-test.yml floors 1980 and 2206
-    # leave the standard 50-test margin in the two executed collections.
-    assert (collect("not windows_only"), collect()) == (2030, 2259)
+    # 2026-10-13 station-operations collection: six Windows service/DPAPI
+    # tests in identity migration and station secrets are explicitly
+    # windows_only, leaving 2024 platform-independent tests and 2259 total.
+    # The Windows non-integration collection remains 2256. ci-test.yml floors
+    # 1974 and 2206 leave the standard 50-test margin in both executed lanes.
+    assert (collect("not windows_only"), collect()) == (2024, 2259)
 
 
 def test_linux_unit_job_runs_native_tests_once_in_the_dedicated_pure_lane() -> None:
