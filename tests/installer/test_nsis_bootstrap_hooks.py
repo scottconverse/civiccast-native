@@ -75,7 +75,8 @@ def test_transaction_macros_compile_with_tauri_early_hook_include(
         pytest.skip("Tauri NSIS compiler unavailable")
     source = tmp_path / "recovery.nsi"
     template = (
-        "Unicode true\n!include MUI2.nsh\n!include LogicLib.nsh\n!include FileFunc.nsh\n"
+        # Tauri emits a UTF-8 BOM; prepending directives must not move it mid-file.
+        "\ufeffUnicode true\n!include MUI2.nsh\n!include LogicLib.nsh\n!include FileFunc.nsh\n"
         # Tauri includes hooks before defining product constants/page variables.
         f'!include "{BOOTSTRAP_HOOKS_NSH}"\n'
         '!define VERSION "999.0.0"\n!define UNINSTKEY "Software\\CivicCastRecoveryProbe"\n'
@@ -94,6 +95,7 @@ def test_transaction_macros_compile_with_tauri_early_hook_include(
             "!insertmacro MUI_PAGE_INSTFILES"
         )
         assert template.count("!insertmacro CIVICCAST_TRANSACTION_CALLBACKS") == 1
+        assert add_nsis_version_preflight(template) == template
     source.write_text(template, encoding="utf-8")
     compiled = subprocess.run(
         [str(makensis), "/V2", str(source)], capture_output=True, text=True, timeout=60

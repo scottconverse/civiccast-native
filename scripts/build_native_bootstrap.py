@@ -367,6 +367,9 @@ def _find_makensis() -> Path:
 
 def add_nsis_version_preflight(script: str) -> str:
     """Recover interrupted setup, then guard version before pages/prerequisites."""
+    # Keep Tauri's optional UTF-8 signature at byte zero when prepending code.
+    bom = "\ufeff" if script.startswith("\ufeff") else ""
+    script = script.removeprefix("\ufeff")
     marker = "Function .onInit\n"
     guard = (
         "  !insertmacro CIVICCAST_TRANSACTION_RECOVER_PENDING\n"
@@ -392,7 +395,7 @@ def add_nsis_version_preflight(script: str) -> str:
     callbacks = "!insertmacro CIVICCAST_TRANSACTION_CALLBACKS\n"
     if callbacks not in script:
         script = script.rstrip() + "\n\n" + callbacks
-    return script
+    return bom + script
 
 
 def normalize_nsis_bootstrap() -> None:
