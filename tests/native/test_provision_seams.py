@@ -207,27 +207,36 @@ def test_default_detect_postgres_cluster_returns_stripped_version(tmp_path: Path
 def test_windows_pwfile_acl_command_removes_inheritance() -> None:
     path = Path(r"C:\ProgramData\CivicCast\provision\tmp\initdb-pwfile-123-abc.tmp")
 
-    command = _windows_pwfile_acl_command(path, username="operator")
+    command = _windows_pwfile_acl_command(path, caller_sid="S-1-5-21-123-456-789-1001")
 
     assert command == [
         "icacls",
         str(path),
         "/inheritance:r",
         "/grant:r",
-        "operator:F",
-        "SYSTEM:F",
-        "Administrators:F",
+        "*S-1-5-21-123-456-789-1001:F",
+        "*S-1-5-18:F",
+        "*S-1-5-32-544:F",
     ]
 
 
-def test_restrict_windows_pwfile_acl_requires_username(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    monkeypatch.delenv("USERNAME", raising=False)
-    monkeypatch.delenv("USER", raising=False)
+@pytest.mark.parametrize(
+    "username, sid",
+    [("machine-account$", "S-1-5-18"), ("operator", "S-1-5-21-123-456-789-1001"), ("", "S-1-5-18")],
+)
+def test_restrict_windows_pwfile_acl_uses_token_not_environment(
+    monkeypatch, tmp_path, username, sid
+):
+    import civiccast.native.provision.seams as seams_module
 
-    with pytest.raises(RuntimeError, match="USERNAME is unset"):
-        _restrict_windows_pwfile_acl(tmp_path / "pwfile.tmp")
+    monkeypatch.setenv("USERNAME", username)
+    monkeypatch.setattr(seams_module, "_current_process_sid", lambda: sid, raising=False)
+    calls = []
+    monkeypatch.setattr(
+        seams_module.subprocess, "run", lambda command, **kwargs: calls.append(command)
+    )
+    _restrict_windows_pwfile_acl(tmp_path / "pwfile.tmp")
+    assert calls[0][4:] == [f"*{sid}:F", "*S-1-5-18:F", "*S-1-5-32-544:F"]
 
 
 def test_restrict_windows_pwfile_acl_runs_icacls_without_shell(
@@ -238,6 +247,9 @@ def test_restrict_windows_pwfile_acl_runs_icacls_without_shell(
     calls: list[dict[str, object]] = []
     pwfile = tmp_path / "pwfile.tmp"
     monkeypatch.setenv("USERNAME", "operator")
+    monkeypatch.setattr(
+        seams_module, "_current_process_sid", lambda: "S-1-5-21-123-456-789-1001", raising=False
+    )
 
     def fake_run(command, **kwargs):  # type: ignore[no-untyped-def]
         calls.append({"command": command, **kwargs})
@@ -253,7 +265,7 @@ def test_restrict_windows_pwfile_acl_runs_icacls_without_shell(
 
     assert calls == [
         {
-            "command": _windows_pwfile_acl_command(pwfile, username="operator"),
+            "command": _windows_pwfile_acl_command(pwfile, caller_sid="S-1-5-21-123-456-789-1001"),
             "check": True,
             "capture_output": True,
             "text": True,
@@ -960,6 +972,9 @@ def test_restrict_windows_pwfile_acl_timeout_is_a_hard_stop(
     import civiccast.native.provision.seams as seams_module
 
     monkeypatch.setenv("USERNAME", "operator")
+    monkeypatch.setattr(
+        seams_module, "_current_process_sid", lambda: "S-1-5-21-123-456-789-1001", raising=False
+    )
 
     def hanging_run(command, **kwargs):  # type: ignore[no-untyped-def]
         assert kwargs["timeout"] == seams_module.ICACLS_TIMEOUT_SECONDS
@@ -1287,3 +1302,32 @@ def test_alter_role_password_sql_rejects_a_password_outside_the_url_safe_charset
 def test_alter_role_password_sql_rejects_an_unsafe_identifier() -> None:
     with pytest.raises(ValueError, match="identifier"):
         alter_role_password_sql(username='civiccast"; DROP', password="Ab3xyz09")
+
+
+@pytest.mark.skipif(os.name != "nt", reason="real Windows password-file ACL")
+def test_pwfile_acl_survives_machine_username_and_postgres_restricted_token(monkeypatch, tmp_path):
+    import win32security
+
+    from civiccast.native.provision.seams import _current_process_sid
+    from tests.native.test_pgdata_acl_win import (
+        _build_pg_ctl_shaped_restricted_token,
+        _impersonating,
+    )
+
+    monkeypatch.setenv("USERNAME", "nonexistent-machine-account$")
+    target = tmp_path / "password.tmp"
+    target.write_text("test-only-password\n", encoding="utf-8")
+    _restrict_windows_pwfile_acl(target)
+    descriptor = win32security.GetFileSecurity(str(target), win32security.DACL_SECURITY_INFORMATION)
+    assert descriptor.GetSecurityDescriptorControl()[0] & win32security.SE_DACL_PROTECTED
+    dacl = descriptor.GetSecurityDescriptorDacl()
+    granted = {
+        win32security.ConvertSidToStringSid(dacl.GetAce(i)[2]) for i in range(dacl.GetAceCount())
+    }
+    assert granted == {_current_process_sid(), "S-1-5-18", "S-1-5-32-544"}
+    token = _build_pg_ctl_shaped_restricted_token()
+    try:
+        with _impersonating(token):
+            assert target.read_text(encoding="utf-8") == "test-only-password\n"
+    finally:
+        token.Close()

@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+This entry records documentation and product changes for the `v1.0.0-beta.15`
+unpublished candidate. Beta 14 remains the latest published release; Beta 15
+package and release verification are pending.
+
+### Product and installer fixes
+
+- Reject unsupported version downgrades earlier in setup.
+- Air intentional short programmes and align the starter schedule with its
+  20-second media duration, with five minutes of setup lead time, while retaining protection against nearly exhausted
+  long-programme tails.
+- Use the effective Windows token SID to restrict provisioning password-file
+  access, including SYSTEM context.
+- Let the optional setup wizard use a process-local fallback to find a usable
+  WebView runtime.
+- Distinguish the selected fallback device from current caption activity in the
+  operator status wording.
+
+### Documentation and public site
+
+- Reconcile support, tester and manual-source guidance with the Beta 15
+  candidate while preserving Beta 14 as the latest published package.
+- Describe Whistle recovery as automatic, serialized, and backoff-limited;
+  attribute the 72-hour 99.78% host result to historical Beta 11 evidence.
+- Improve public home-page link contrast on dark sections and wrap the long
+  operator URL at narrow widths.
+
 ## [1.0.0-beta.14] - 2026-10-12
 
 Published as a signed GitHub pre-release. A fresh offline Windows Sandbox install and one normal development-host upgrade both exited 0; after the host upgrade, the service was healthy at schema 89 with all three channels Whistle-primary and within capacity. The [verification record](docs/releases/v1.0.0-beta.14-verification.md) binds the exact package and records the evidence limits.

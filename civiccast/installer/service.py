@@ -2786,7 +2786,7 @@ _FIRST_RUN_SAMPLE_DESCRIPTION = (
     "asset once real content is ready."
 )
 _FIRST_RUN_SAMPLE_DURATION_SECONDS = 20
-_FIRST_RUN_SCHEDULE_WINDOW_SECONDS = 1800  # 30 minutes -- enough to be visibly "on now"
+_FIRST_RUN_SCHEDULE_WINDOW_SECONDS = _FIRST_RUN_SAMPLE_DURATION_SECONDS
 _FIRST_RUN_SEED_OPERATOR_ID = "civiccast-setup"
 _FIRST_RUN_SEED_OPERATOR_DISPLAY_NAME = "CivicCast Setup"
 
@@ -3001,7 +3001,8 @@ def _seed_first_run_schedule(schedule_store: Any, *, asset_id: str, channel_id: 
         asset_id=asset_id,
         channel_id=channel_id,
         mode="premiere",
-        scheduled_at=datetime.now(UTC),
+        # Leave time to save the recovery kit and approve/start the channel.
+        scheduled_at=datetime.now(UTC) + timedelta(minutes=5),
         duration_seconds=_FIRST_RUN_SCHEDULE_WINDOW_SECONDS,
         notes=(
             "Starter schedule item created automatically during first-run setup "
@@ -5371,12 +5372,11 @@ def _contributor_upload_health_check() -> SystemHealthCheck:
 
 
 def _caption_device_health_check() -> SystemHealthCheck:
-    """Owner review "option D": operator visibility into which device
-    captions are actually running on, and why -- honest reporting of the
-    presence-gated decision ``civiccast.native.station_runtime.
-    resolve_whisper_device`` makes (owner review 2026-08-15, option B: a
-    capable GPU with the CUDA component pack's DLLs not yet staged resolves
-    to cpu, not a silent cuda-then-fallback).
+    """Show caption configuration without claiming observed inference activity.
+
+    Whistle is the CPU primary. The presence-gated Whisper device decision
+    describes fallback configuration, including explicit operator overrides;
+    it cannot establish that a worker is running or that CUDA loaded.
 
     Always informational: ``kind="optional"``/``required=False`` and never a
     non-green color, because CPU captioning is the pack contract's validated,
@@ -5410,6 +5410,8 @@ def _caption_device_health_check() -> SystemHealthCheck:
     )
     from civiccast.native.supervisor.install_layout import default_program_data_root
 
+    from .station_state import resolve_live_captions_enabled_or_default
+
     install_root_value = os.environ.get("CIVICCAST_NATIVE_STATION_ROOT", "").strip()
     install_root = Path(install_root_value) if install_root_value else None
     acquisition_root = default_program_data_root() / "CivicCast"
@@ -5417,6 +5419,10 @@ def _caption_device_health_check() -> SystemHealthCheck:
     capable_gpu, libs_present = whisper_device_capability(
         install_root, acquisition_root=acquisition_root
     )
+    caption_state = (
+        "" if resolve_live_captions_enabled_or_default() else "Live captions are disabled. "
+    )
+    primary = caption_state + "Whistle device: CPU. "
 
     if device == "cuda":
         return SystemHealthCheck(
@@ -5426,8 +5432,8 @@ def _caption_device_health_check() -> SystemHealthCheck:
             required=False,
             state="ready",
             color="green",
-            message="GPU captioning active: the installed CUDA runtime is being used for captions.",
-            next_step="No action needed.",
+            message=primary + "Whisper device: GPU (CUDA) selected.",
+            next_step="See channel caption status for the current engine and health.",
         )
     if capable_gpu and not libs_present:
         return SystemHealthCheck(
@@ -5438,10 +5444,10 @@ def _caption_device_health_check() -> SystemHealthCheck:
             state="ready",
             color="green",
             message=(
-                "This machine's GPU can run captions once the GPU runtime "
-                "component is installed; captions run on CPU meanwhile."
+                primary + "Whisper device: CPU selected. "
+                "GPU fallback requires the GPU runtime component."
             ),
-            next_step="Install the CUDA runtime component pack for faster, higher-quality captions.",
+            next_step="Install the GPU runtime component to make GPU fallback available.",
         )
     return SystemHealthCheck(
         id="caption-device",
@@ -5450,8 +5456,8 @@ def _caption_device_health_check() -> SystemHealthCheck:
         required=False,
         state="ready",
         color="green",
-        message="Captions are running on CPU.",
-        next_step="No action needed.",
+        message=primary + "Whisper device: CPU selected.",
+        next_step="See channel caption status for the current engine and health.",
     )
 
 

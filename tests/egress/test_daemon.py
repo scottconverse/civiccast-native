@@ -8180,6 +8180,98 @@ def test_degenerate_tail_guard_keeps_the_tail_when_the_boundary_is_not_better(
         assert daemon._avoid_schedule_tail_plan("gov", tail) is tail
 
 
+def test_short_known_programme_is_not_replaced_by_slate_at_the_tail_floor(
+    tmp_path: Path,
+) -> None:
+    """An intentional 20s clip remains airable with 16.9s left.
+
+    The remaining plan duration alone must not make a short Welcome clip look
+    like the dying tail of a long programme.
+    """
+    store = InMemoryEgressStore()
+    config = _config()
+    store.upsert_config(config)
+    boundary_calls: list[datetime] = []
+
+    def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan | None:
+        boundary_calls.append(at)
+        return None
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        boundary_source_plan_provider=boundary,
+        fallback_source_provider=lambda _config: _plan_with_seconds(
+            tmp_path, "Fallback slate", 3600.0
+        ),
+    )
+    clip = _plan_with_seconds(tmp_path, "Welcome", 16.9)
+    clip_segment = clip.segments[0].model_copy(
+        update={
+            "inpoint_seconds": 3.1,
+            "playable_duration_seconds": 20.0,
+        }
+    )
+    clip = clip.model_copy(update={"segments": [clip_segment]})
+
+    outcome = daemon._resolve_schedule_tail(
+        "gov",
+        clip,
+        config,
+        resolved_at=datetime(2026, 10, 12, 22, 33, tzinfo=UTC),
+        slate_when_no_next=True,
+    )
+
+    assert outcome.plan is clip
+    assert outcome.slate is False
+    assert boundary_calls == []
+
+
+def test_known_long_programme_tail_still_uses_slate_without_a_next_item(
+    tmp_path: Path,
+) -> None:
+    """Known long media near EOS remains protected by the 30s tail guard."""
+    store = InMemoryEgressStore()
+    config = _config()
+    store.upsert_config(config)
+    boundary_calls: list[datetime] = []
+
+    def boundary(_channel_id: str, at: datetime) -> EgressSourcePlan | None:
+        boundary_calls.append(at)
+        return None
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        boundary_source_plan_provider=boundary,
+        fallback_source_provider=lambda _config: _plan_with_seconds(
+            tmp_path, "Fallback slate", 3600.0
+        ),
+    )
+    long_tail = _plan_with_seconds(tmp_path, "Council meeting", 16.9)
+    tail_segment = long_tail.segments[0].model_copy(
+        update={
+            "inpoint_seconds": 3590.0,
+            "playable_duration_seconds": 3600.0,
+        }
+    )
+    long_tail = long_tail.model_copy(update={"segments": [tail_segment]})
+
+    outcome = daemon._resolve_schedule_tail(
+        "gov",
+        long_tail,
+        config,
+        resolved_at=datetime(2026, 10, 12, 22, 33, tzinfo=UTC),
+        slate_when_no_next=True,
+    )
+
+    assert outcome.plan.segments[0].label == "Fallback slate"
+    assert outcome.slate is True
+    assert len(boundary_calls) == 1
+
+
 def test_degenerate_tail_guard_is_inert_without_a_boundary_provider(
     tmp_path: Path,
 ) -> None:

@@ -1534,10 +1534,11 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the version covered by this manual, newest first. The project's release-truth file and GitHub release page establish publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual describes **v1.0.0-beta.14**. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies the package and installation observations; its release page establishes availability. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual source is prepared for the unpublished **v1.0.0-beta.15 candidate**; its package verification is pending. Beta 14 remains the latest published package, and its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) identifies that package and its installation observations. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
+| **v1.0.0-beta.15** | — | Unpublished candidate; verification pending | Candidate source and documentation under preparation. No Beta 15 download is available. |
 | **v1.0.0-beta.14** | 2026-10-12 | See release page | Field fixes for installer/model selection, caption timing and recovery, recording, playback, resource protection and documentation. Exact checks are in the Beta 14 verification record. |
 | v1.0.0-beta.13 | 2026-10-11 | Published GitHub pre-release | Automatic Whistle recovery and bounded diagnostics. Fresh installation, normal Beta 11 upgrade and one interrupted-install repair passed their recorded three-channel observations. |
 | v1.0.0-beta.12 | 2026-10-10 | Superseded by beta.13 | Initial distribution and field failures, subsequent public package repair and upgrade observations are preserved in the Beta 12 verification record. |
@@ -1557,7 +1558,7 @@ The same release-truth file also lists tags from a **different, retired product*
 
 Pre-releases published after this manual was written are listed on the project's GitHub releases page: <https://github.com/scottconverse/civiccast-native/releases>.
 
-<!-- SOURCES: docs/releases/release-truth.yaml (current: v1.0.0-beta.13); docs/releases/v1.0.0-beta.14-verification.md (package source, observations and limits); docs/releases/v1.0.0-beta.11-verification.md (Beta 11 historical evidence); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
+<!-- SOURCES: docs/releases/release-truth.yaml (latest published: v1.0.0-beta.14; Beta 15 candidate unpublished); docs/releases/v1.0.0-beta.14-verification.md (package source, observations and limits); docs/releases/v1.0.0-beta.11-verification.md (Beta 11 historical evidence); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
 
 # Appendix L: Index of screens {#app-screens}
 

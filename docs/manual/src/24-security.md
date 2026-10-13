@@ -1,8 +1,8 @@
 # Security and privacy {#ch-security}
 
-This chapter is for the IT person responsible for who can use CivicCast, what the station exposes to the network, what it records about residents, and how to operate its Beta 14 security controls. It covers sign-in and roles, staff access tokens, the first-admin and recovery model, network exposure, reverse proxies and TLS, the public and staff parts of the web API, subscriber and viewer privacy, data retention, signing and checksums, and security limitations with practical precautions.
+This chapter is for the IT person responsible for who can use CivicCast, what the station exposes to the network, what it records about residents, and how to operate the Beta 15 candidate's security controls. It covers sign-in and roles, staff access tokens, the first-admin and recovery model, network exposure, reverse proxies and TLS, the public and staff parts of the web API, subscriber and viewer privacy, data retention, signing and checksums, and security limitations with practical precautions.
 
-The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records this package's installation and operating checks. Complete first setup on the station computer and follow the network-exposure guidance below before making its resident portal available remotely.
+The [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) records the latest published package's installation and operating checks; it does not qualify the unpublished Beta 15 candidate. Complete first setup on the station computer and follow the network-exposure guidance below before making its resident portal available remotely.
 
 ## Before you start
 
@@ -237,7 +237,7 @@ The control plane speaks plain HTTP only. It has no setting for a TLS certificat
 
 Live captions are off by default, and `CIVICCAST_CAPTION_TAP=off` forces them off. The native beta.11 runtime separates transient live caption work from recorded-caption review. It does not make the live worker or broadcast readiness depend on archive-wide review/evidence retention discovery. No live review/evidence archive is created by ordinary live captioning; this does not change recorded captions or original recordings.
 
-> **Historical finding (published Beta 10):** Audit findings B-003, B-004, B-005 and B-009 recorded unbounded live-caption evidence growth. The current native live path does not run that archive sweep, writes no per-cue evidence, deletes processed chunks and bounds the queued audio and rolling caption history. These are source behaviors, not a long-duration observation of the current package. See the Beta 14 verification record for the exact package scope.
+> **Historical finding (published Beta 10):** Audit findings B-003, B-004, B-005 and B-009 recorded unbounded live-caption evidence growth. The current native live path does not run that archive sweep, writes no per-cue evidence, deletes processed chunks and bounds the queued audio and rolling caption history. These are source behaviors, not a long-duration observation of the candidate package. The Beta 14 verification record covers the latest published package only.
 
 Where residents' own data may be requested for deletion, we found no console screen or command that deletes a subscriber or a viewer's records. Ask the coder to confirm before you promise a deletion process.
 

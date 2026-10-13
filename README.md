@@ -1,12 +1,14 @@
 # CivicCast
 
-**CivicCast `v1.0.0-beta.14` is the current signed native Windows pre-release.** CivicCast is a station-in-a-box for public-access and local-government media: record and broadcast meetings, review captions, prepare sourced summaries, schedule programs, and publish recordings to a resident portal. Optional cloud services may charge their own usage fees; CivicCast has no per-minute software fee.
+**CivicCast `v1.0.0-beta.15` is an unpublished candidate for native Windows; `v1.0.0-beta.14` remains the latest published signed pre-release.** CivicCast is a station-in-a-box for public-access and local-government media: record and broadcast meetings, review captions, prepare sourced summaries, schedule programs, and publish recordings to a resident portal. Optional cloud services may charge their own usage fees; CivicCast has no per-minute software fee.
+
+Beta 15 package and release verification are pending; there is no Beta 15 download yet. Use the Beta 14 release page below for the latest published package.
 
 The [Beta 14 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14) provides the signed installer, runtime packs, complete signed station-model download, manuals, and checksums. The [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md) binds the package to its source and records what has and has not been observed. Start with [Install CivicCast on Windows](INSTALL-WINDOWS.md), the [User Manual](docs/USER-MANUAL.md), or the [FAQ](FAQ.md).
 
 Beta 14 passed a fresh offline Windows Sandbox installation, followed by five observations of three channels delivering video, audio and growing Whistle captions. The installed manual, Help links and web assets passed their checks. One normal development-host upgrade also exited 0; afterward the service was healthy at Beta 14 schema 89, with all three channels using Whistle as primary and within capacity. See the [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md) for the measurements, package identity and limits. Earlier installation results remain in the [Beta 13 record](docs/releases/v1.0.0-beta.13-verification.md).
 
-**72 hours. Three channels. 99.78% live caption-input coverage.** A Beta 11 host ran Public, Government and Education together without a service restart, with 216 healthy scheduled checkpoints. See the [72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the recorded measurements.
+**Historical Beta 11 host result: 72 hours, three channels, 99.78% live caption-input coverage.** The host ran Public, Government and Education together without a service restart, with 216 healthy scheduled checkpoints. See the [72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the recorded measurements.
 
 The live-caption path automatically retries Whistle while Whisper supplies backup captions. Whistle remains the CPU live-caption primary; supported NVIDIA CUDA applies to Whisper only. The native installer registers a Windows service and supervises the control plane, PostgreSQL, and media workers from the bundled runtime. This repository is the native Windows product line; it has no WSL, Docker, or Linux installation target. See [BRANCHES.md](BRANCHES.md) for project history.
 

@@ -648,7 +648,37 @@ Var CIVICCAST_TEARDOWN_EXIT
 ; unset value behaves exactly as before.
 Var CIVICCAST_POSTCLEAR_ARMED
 
+; The builder inserts this at the FIRST instruction of .onInit. Tauri's
+; reinstall pages and WebView2 prerequisite can mutate the machine before
+; PREINSTALL, so that hook alone is too late. Only installer scratch files
+; are created here; no product/service/data state is changed on refusal.
+!define CIVICCAST_PREFLIGHT_SCRIPT "${__FILEDIR__}\version-preflight.ps1"
+!macro CIVICCAST_VERSION_PREFLIGHT
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR"
+  File /oname=civiccast-version-preflight.ps1 "${CIVICCAST_PREFLIGHT_SCRIPT}"
+  nsExec::ExecToStack /TIMEOUT=30000 '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$PLUGINSDIR\civiccast-version-preflight.ps1" -CandidateVersion "${VERSION}"'
+  Pop $0
+  Pop $1
+  ${If} $0 != 0
+    DetailPrint "$1"
+    ${If} $0 == 129
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "A newer CivicCast version is installed. This older setup was refused before stopping the service or replacing application files. Keep using the installed version, or run its matching newer setup to repair it."
+      ${EndIf}
+      SetErrorLevel 129
+    ${Else}
+      ${IfNot} ${Silent}
+        MessageBox MB_OK|MB_ICONSTOP "CivicCast setup could not safely compare the installed version. Setup stopped before changing the installation. Retry from an administrator account or contact support with this message: $1"
+      ${EndIf}
+      SetErrorLevel 130
+    ${EndIf}
+    Quit
+  ${EndIf}
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
+  !insertmacro CIVICCAST_VERSION_PREFLIGHT
   ; F-10 fix: declare the space the POSTINSTALL pack-staging chain below adds
   ; beyond what NSIS's own File statements already account for. AddSize is a
   ; compile-time directive (summed into this Section's total regardless of
@@ -1339,14 +1369,10 @@ Var CIVICCAST_POSTCLEAR_ARMED
     DetailPrint "CivicCast (Native): version ${VERSION} is already installed — there is no database migration to run, so the install/upgrade engine did nothing. Your data was not drained, backed up, migrated, or changed."
     !insertmacro CIVICCAST_STEP "step d3-engine: NO-OP (same version ${VERSION} already installed; no migration to run)"
   ${ElseIf} $0 == 13
-    ; Installer-path audit MA-05. decide_route had exactly ONE version
-    ; comparison -- string equality -- and no ordering comparison anywhere, so
-    ; running an older setup.exe over a newer station routed to UPGRADE and
-    ; drove `alembic upgrade head` toward an OLDER head. This refuses before
-    ; the interlock, the drain, the backup or any mutation.
-    !insertmacro CIVICCAST_STEP "step d3-engine: REFUSED (a newer CivicCast (Native) is installed; this setup would move the database backwards)"
-    DetailPrint "CivicCast (Native): a NEWER version is already installed; this older setup was refused before changing anything."
-    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE} "A NEWER version of CivicCast (Native) is already installed on this computer, and this setup installs an OLDER one.$\r$\n$\r$\nCivicCast cannot move a station's database backwards, so setup stopped before changing anything at all -- no recordings, database or settings were touched.$\r$\n$\r$\nTo continue: run the newer version's setup again, or uninstall CivicCast (Native) first if you genuinely mean to go back (your data in $COMMONPROGRAMDATA\CivicCast is preserved by uninstall, and an older version may not be able to read it).$\r$\n$\r$\nSee $COMMONPROGRAMDATA\CivicCast\install-progress.log for the two version numbers."
+    ; Defensive late refusal: preflight should already have caught this.
+    ; Payload replacement and station activation have happened at this point.
+    !insertmacro CIVICCAST_STEP "step d3-engine: late REFUSED_DOWNGRADE after payload replacement; newer setup repair required"
+    !insertmacro CIVICCAST_FAIL ${CIVICCAST_EXIT_D3_REFUSED_DOWNGRADE} "A newer CivicCast installation was detected after application files had already been replaced. Database downgrade was refused. Setup cannot restore the previous application files automatically, and the station may be unavailable.$\r$\n$\r$\nRun the complete signed setup kit matching the newer installed version to restore its application files and service. Do not uninstall or delete $COMMONPROGRAMDATA\CivicCast. Keep the kit available offline and contact support if repair fails. See $COMMONPROGRAMDATA\CivicCast\install-progress.log."
   ${ElseIf} $0 == 10
     ; HISTORY: a 2026-07-30 adversarial-review fix stopped this branch from
     ; recording a clean rollback as a SUCCESSFUL upgrade (it used to

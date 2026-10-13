@@ -1,6 +1,6 @@
 # CivicCast Architecture
 
-> **Current native release: `v1.0.0-beta.14`**, a signed GitHub pre-release,
+> **Latest published native release: `v1.0.0-beta.14`**, a signed GitHub pre-release,
 > not a production or SLA-backed release. Its signed source is
 > `44525c14265d21ae461c2435d4d5a9a6acd58af3`, from producer run
 > [38217950172](https://github.com/scottconverse/civiccast-native/actions/runs/38217950172).
@@ -12,6 +12,9 @@
 > The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
 > remains available for historical package evidence. See [BRANCHES.md](BRANCHES.md)
 > for release identity and status.
+>
+> This source tree is being prepared as an unpublished Beta 15 candidate.
+> Beta 15 package verification is pending, and there is no Beta 15 download.
 >
 > **Historical Beta 10 evidence:** the published Beta 10 package passed its
 > Gate A clean-install lane (10 of 10 criteria in Windows Sandbox on
@@ -169,12 +172,18 @@ flowchart LR
 - **Record keeping.** `civiccast.egress.asrun` is the seam that records what
   actually aired, as distinct from what was scheduled.
 
-For native Windows, Whistle is the CPU live-caption primary; a failure or
-timeout moves that channel to the faster-whisper runtime until the station
-runtime restarts. Recorded-media captions use faster-whisper. Needle usage
-telemetry is disabled, and the speech models run locally. Live captions,
-SDI/NDI hardware paths, and cable-headend delivery are described with their
-evidence boundaries in the [User Manual](docs/USER-MANUAL.md) and the current
+For native Windows, Whistle is the CPU live-caption primary. If it fails or
+times out for a channel, that channel uses faster-whisper while CivicCast retries Whistle
+recovery automatically. The first recovery probe waits 30 seconds; subsequent
+failed probes back off for 60, 120 and 240 seconds, capped at 300 seconds. One
+recovery probe runs at a time across the station runtime and shares Whistle's
+primary-inference lock. A successful probe promotes the replacement for later
+audio chunks; the probe transcript is not published. No service restart is
+required, and successful recovery is not guaranteed by a fixed deadline.
+Recorded-media captions use faster-whisper. Needle usage telemetry is disabled,
+and the speech models run locally. Live captions, SDI/NDI hardware paths, and
+cable-headend delivery are described with their evidence boundaries in the
+[User Manual](docs/USER-MANUAL.md) and the latest published
 [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md).
 Historical Beta 13 package observations remain in the [Beta 13 verification
 record](docs/releases/v1.0.0-beta.13-verification.md).

@@ -23,10 +23,14 @@ toccolor: black
 > operators and records clerks should start with the persona guides linked from
 > [User Manual](USER-MANUAL.md).
 >
-> **Release line.** Beta 14 (`v1.0.0-beta.14`) is the current signed
-> native Windows pre-release, not a production release. Its exact package
-> identity, installation evidence and limits are in the
-> [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md). A fresh offline Sandbox install and one normal development-host upgrade both exited 0; the host service was healthy at schema 89, with all three channels Whistle-primary and within capacity.
+> **Release line.** This reference describes the `v1.0.0-beta.15` unpublished
+> candidate, not an available package. Beta 14 (`v1.0.0-beta.14`) remains the
+> latest published signed native Windows pre-release, not a production
+> release. Its exact package identity, installation evidence and limits are in
+> the [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md).
+> A fresh offline Sandbox install and one normal development-host upgrade both
+> exited 0; the host service was healthy at schema 89, with all three channels
+> Whistle-primary and within capacity. Beta 15 package verification is pending.
 > Beta 13 results remain tied to their own release record. Consult
 > `docs/releases/release-truth.yaml` for the authored release state; this
 > reference does not claim an extended soak or general service-uptime result.
@@ -73,8 +77,9 @@ software. The application wires a production live-source probe into live
 pre-flight, in addition to the recorded-media and Portal workflows. A working
 probe is not proof that a particular station's source, hardware, output,
 archive, CDN or headend works end to end. The Beta 14 verification record
-separates focused component checks from the still-pending candidate installation;
-station-specific external services still require their own checks.
+separates focused component checks from fresh-install, host-upgrade, and
+bounded host observations; station-specific external services still require
+their own checks.
 
 ## AI models: defaults and operator selection
 
@@ -140,8 +145,8 @@ The current defaults and component identities are:
 
 Deterministic adapters are test infrastructure. Check the installed runtime
 and current station configuration before relying on an AI feature; the Beta 14
-verification record describes component evidence and pending installation
-checks separately.
+verification record describes component checks separately from its fresh-
+install and host-upgrade observations.
 
 ### Cloud and frontier tiers (optional, default OFF)
 
@@ -277,7 +282,8 @@ Before running the helper, verify its own SHA-256 against the same release's
 `SHA256SUMS.txt`. See the [Windows Release Trust And Verification](install/windows-release-trust.md)
 checklist and the [operator quick start](QUICKSTART-OPERATOR.md). The
 [Beta 14 verification record](releases/v1.0.0-beta.14-verification.md) is the
-source for current package identity, installation evidence and limits.
+source for the latest published package's identity, installation evidence and
+limits.
 
 For a direct setup-app hash check when the handoff calls for one, compare it to
 the matching checksum entry:
@@ -1224,11 +1230,13 @@ probe succeeded; it does not restore the station database, media, or configurati
 ### Monitoring the running service (`/health`)
 
 `GET /health` is public and needs no authentication. It answers two different
-questions, and monitoring setups should not confuse them.
+questions, and monitoring setups should not confuse them. This example uses the
+Beta 15 candidate source version and does not establish a verified Beta 15
+package.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.14","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.15","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the

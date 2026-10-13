@@ -5021,6 +5021,12 @@ class EgressDaemon:
         policy owns, the end of the schedule, or a boundary that fails to
         prepare all resolve to ``None`` or to the same/short plan.
 
+        A plan with known original playable media windows (after asset trims,
+        before join, slot, or preparation-horizon clipping) whose combined
+        duration is itself below the floor is an intentional short programme,
+        not a near-EOS tail of a longer programme. Preserve it whole. Plans
+        without that provenance keep the existing conservative tail behavior.
+
         It cannot skip a program that genuinely has more than the floor left:
         the body returns ``source_plan`` unchanged (identity, not a copy) before
         any boundary call whenever the tail is at or above
@@ -5054,6 +5060,15 @@ class EgressDaemon:
             # ``_reload_steps``): never reach past it for a later boundary.
             return _TailFloorOutcome(source_plan, False)
         tail_seconds = sum(segment.duration_seconds for segment in source_plan.segments)
+        playable_windows = [segment.playable_duration_seconds for segment in source_plan.segments]
+        if (
+            tail_seconds > 0.0
+            and all(segment.kind == "program" for segment in source_plan.segments)
+            and all(duration is not None for duration in playable_windows)
+            and sum(float(duration) for duration in playable_windows if duration is not None)
+            < _SCHEDULE_TAIL_FLOOR_SECONDS
+        ):
+            return _TailFloorOutcome(source_plan, False)
         if tail_seconds <= 0.0 or tail_seconds >= _SCHEDULE_TAIL_FLOOR_SECONDS:
             return _TailFloorOutcome(source_plan, False)
         base_at = datetime.now(UTC) if resolved_at is None else resolved_at

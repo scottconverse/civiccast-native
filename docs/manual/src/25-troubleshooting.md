@@ -2,7 +2,7 @@
 
 This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It explains how to identify a problem from a screen, log line or command result and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**.
 
-> **Package checks:** See the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for this package's installation and operating observations.
+> **Package checks:** Beta 14 is the latest published package; its installation and operating observations are in the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md). Beta 15 candidate results are pending verification.
 
 ## Before you start
 
@@ -70,7 +70,7 @@ Setup returns a number when it fails. Interactive setup shows a dialog with word
 
 > **Known issue (beta.11):** Interactive failure dialogs explain the step but do not show its numeric exit code. Read `install-progress.log` for the code; the installer table in [Chapter 10](#ch-installing) lists the current codes.
 
-> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 13 startup. Use `/health`, the channel's output and the current [Beta 13 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.13-verification.md) to assess the exact package and station.
+> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 15 candidate startup. Use `/health`, the channel's output and the verification record matching the installed package; the [Beta 14 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) covers the latest published package only.
 
 ## Sign-in
 

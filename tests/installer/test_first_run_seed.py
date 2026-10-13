@@ -213,6 +213,8 @@ def test_first_admin_setup_seeds_sample_content_and_starter_schedule(monkeypatch
     assert scheduled.asset_id == asset_id
     assert scheduled.channel_id == "government"
     assert scheduled.mode == "premiere"
+    assert scheduled.duration_seconds == 20
+    assert scheduled.scheduled_at > datetime.now(UTC) + timedelta(minutes=4)
 
     run = publish_store.get_run(asset_id)
     assert run is not None

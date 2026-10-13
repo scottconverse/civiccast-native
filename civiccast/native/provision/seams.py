@@ -60,7 +60,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from civiccast.native.pg_ctl_exec import CapturedProcess, run_captured_argv, run_pg_ctl_argv
-from civiccast.native.pgdata_acl import normalize_pgdata_acl
+from civiccast.native.pgdata_acl import _current_process_sid, normalize_pgdata_acl
 from civiccast.native.provision.conf import render_pg_hba_conf, render_pg_hba_trust_conf
 from civiccast.native.provision.models import (
     DatabaseDecision,
@@ -222,7 +222,7 @@ def initdb_argv(*, initdb_path: str, data_dir: str, username: str, pwfile: str) 
     ]
 
 
-def _windows_pwfile_acl_command(path: Path, *, username: str) -> list[str]:
+def _windows_pwfile_acl_command(path: Path, *, caller_sid: str) -> list[str]:
     """Return the ``icacls`` command used to remove inherited access from a
     just-written initdb superuser password file.
 
@@ -231,14 +231,16 @@ def _windows_pwfile_acl_command(path: Path, *, username: str) -> list[str]:
     the current user, SYSTEM, and Administrators; strip inheritance).
     """
 
+    if not re.fullmatch(r"S-1-\d+(?:-\d+)+", caller_sid):
+        raise RuntimeError("Cannot restrict initdb password-file ACL: invalid Windows token SID.")
     return [
         "icacls",
         str(path),
         "/inheritance:r",
         "/grant:r",
-        f"{username}:F",
-        "SYSTEM:F",
-        "Administrators:F",
+        f"*{caller_sid}:F",
+        "*S-1-5-18:F",
+        "*S-1-5-32-544:F",
     ]
 
 
@@ -248,14 +250,12 @@ def _restrict_windows_pwfile_acl(path: Path) -> None:
     :func:`_initdb_pwfile` -- so it is directly unit-testable on any host OS
     (mirrors :func:`civiccast.certs.authority._restrict_windows_private_key_acl`)."""
 
-    username = os.environ.get("USERNAME") or os.environ.get("USER")
-    if not username:
-        raise RuntimeError(
-            "Cannot restrict initdb password-file ACL on Windows because USERNAME is unset."
-        )
+    # The token user survives PostgreSQL's restricted child token; USERNAME
+    # may instead name an unresolvable machine account under LocalSystem.
+    caller_sid = _current_process_sid()
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     subprocess.run(  # noqa: S603 - fixed icacls argv; no shell or user-built command line.
-        _windows_pwfile_acl_command(path, username=username),
+        _windows_pwfile_acl_command(path, caller_sid=caller_sid),
         check=True,
         capture_output=True,
         text=True,

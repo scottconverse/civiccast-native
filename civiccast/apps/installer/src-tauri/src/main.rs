@@ -15,6 +15,7 @@ mod native_packs;
 mod native_repair;
 mod native_service_registration;
 mod native_uninstall;
+mod webview_runtime;
 
 use std::fs;
 use std::io::{Read, Write};
@@ -32,7 +33,7 @@ const RESIDENT_PORTAL_URL: &str = "http://127.0.0.1:8000/";
 const SERVICE_URL: &str = "http://127.0.0.1:8000";
 const SERVICE_HEALTH_ADDR: &str = "127.0.0.1:8000";
 const RUNTIME_HOST_MUTEX_ADDR: &str = "127.0.0.1:38474";
-const CIVICCAST_VERSION: &str = "1.0.0-beta.14";
+const CIVICCAST_VERSION: &str = "1.0.0-beta.15";
 const INSTALLER_SHUTDOWN_MARKER: &str = "shutdown-request";
 
 
@@ -6478,6 +6479,28 @@ fn main() {
              forever."
         );
         std::process::exit(native_service_registration::UNKNOWN_CIVICCAST_FLAG_EXIT_CODE);
+    }
+
+    // The Microsoft loader can reject stale evergreen registration while a
+    // runtime already present in its standard installation folder is
+    // usable. Keep this recovery local to the wizard process; don't alter
+    // EdgeUpdate registration or replace an explicit operator override.
+    #[cfg(target_os = "windows")]
+    if std::env::var_os("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER").is_none()
+        && tauri::webview_version().is_err()
+    {
+        let roots: Vec<PathBuf> = ["ProgramFiles(x86)", "ProgramFiles"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .map(|root| PathBuf::from(root).join("Microsoft/EdgeWebView/Application"))
+            .collect();
+        let selected = webview_runtime::usable_runtime_folder(&roots, |folder| {
+            std::env::set_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER", folder);
+            tauri::webview_version().is_ok()
+        });
+        if selected.is_none() {
+            std::env::remove_var("WEBVIEW2_BROWSER_EXECUTABLE_FOLDER");
+        }
     }
 
     tauri::Builder::default()

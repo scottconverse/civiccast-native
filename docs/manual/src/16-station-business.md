@@ -21,7 +21,7 @@ CivicCast gives each person one or more *roles*. A role is a named set of permis
 
 > **Note:** In a normal station, everyone signs in with the first administrator account made during First Setup. That account carries all five roles, so you will see every screen and every button. The limits in the table matter only if your IT person made narrower sign-in passes for some staff.
 
-> **Note:** This chapter describes Beta 14 operation. Use the [Beta 14 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for package identity and installation observations, and the releases page for publication status.
+> **Note:** This chapter describes the unpublished Beta 15 candidate's operation. Beta 14 remains the latest published package; use its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.14-verification.md) for Beta 14 identity and installation observations. Beta 15 package verification is pending; the releases page shows available packages.
 
 > **Warning:** Several screens in this chapter ask you to type dates. CivicCast treats those dates as **UTC**, the world reference clock. In the United States UTC is several hours ahead of local time. Mountain daylight time is 6 hours behind UTC. A meeting that starts at 7 p.m. Mountain daylight time is already 1 a.m. UTC *the next day*. When a report looks one day off, this is almost always why.
 

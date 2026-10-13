@@ -1,13 +1,17 @@
 # Support
 
-> **Current native release posture:** `v1.0.0-beta.13` is the current
+> **Current published native release:** `v1.0.0-beta.14` is the latest
 > signed GitHub pre-release, not a production or SLA-backed field release. Its installer, runtime packs, and
 > manuals are on the
-> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
-> The [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md)
-> records passing normal-upgrade, one-interruption repair and fresh-install
-> scenarios, with five-minute observations across all three channels. Community
+> [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14).
+> The [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md)
+> records the package identity, a fresh offline Sandbox install, one normal
+> development-host upgrade and bounded channel observations. Community
 > support does not turn this beta into a supported, SLA'd field release.
+>
+> Beta 15 is an unpublished candidate. Its package and release verification
+> are pending; use the latest published release above until the releases page
+> lists a newer package.
 
 > **This repository ships one product line: native Windows.** Earlier
 > revisions of this notice described "two parallel Windows product lines"
@@ -73,12 +77,12 @@ enabled throwaway development.
 ## Native Windows Beta
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
-is a **public beta**, not a finished production release. Its current release,
-`v1.0.0-beta.13`, is downloadable from its
-[GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.13).
+is a **public beta**, not a finished production release. Its latest published
+release, `v1.0.0-beta.14`, is downloadable from its
+[GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.14).
 There is no dedicated, SLA'd support intake for it; the same community-driven,
 no-SLA posture above applies. Its package-specific scope and limits are in the
-[Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md).
+[Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md).
 
 If you are working on, evaluating, or running the native line:
 
@@ -90,8 +94,8 @@ If you are working on, evaluating, or running the native line:
   have a native-specific path, so context has to be spelled out by hand.
 - Do not treat anything reported against the native line as a supported,
   SLA'd, or fully field-proven path. The same "community-driven, no SLA"
-  posture above applies. The Beta 13 verification record
-  ([`docs/releases/v1.0.0-beta.13-verification.md`](docs/releases/v1.0.0-beta.13-verification.md))
+  posture above applies. The Beta 14 verification record
+  ([`docs/releases/v1.0.0-beta.14-verification.md`](docs/releases/v1.0.0-beta.14-verification.md))
   states what was and was not proven. Historical Beta 12 evidence remains in its
   [verification record](docs/releases/v1.0.0-beta.12-verification.md). Superseded Beta 11 and Beta 10
   records, including the Beta 11 host caption report, remain version-scoped
