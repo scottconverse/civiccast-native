@@ -1905,6 +1905,17 @@ export interface EgressStateRow {
   last_error?: string | null
 }
 
+export interface EgressStorageStatusResponse {
+  worker_log_bytes: number
+  worker_log_file_count: number
+  command_history_rows: number
+  pending_commands: number
+  command_table_bytes?: number | null
+  work_volume_free_bytes?: number | null
+  low_disk_warning?: boolean | null
+  low_disk_threshold_bytes: number
+}
+
 export interface EmergencyOverlay {
   overlay_id: string
   severity: 'watch' | 'warning' | 'emergency'
@@ -3694,6 +3705,7 @@ export interface RecurrenceSpec {
   start?: string | null
   weekdays?: Array<number>
   time_hhmm?: string
+  time_zone?: 'UTC' | 'station'
 }
 
 export interface RehearsalReport {

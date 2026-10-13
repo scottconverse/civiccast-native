@@ -412,8 +412,8 @@ class TestSingleAlembicHead:
         # so 0083 was the sole other head when this branch re-parented onto
         # it. 0087 added retention-term authoring; 0088 seeds live-caption health.
         # 0089 adds unverified remote-guest media-control request state.
-        assert heads[0] == "0089_contribution_media_control_requests", (
-            f"Expected head '0089_contribution_media_control_requests'; got {heads[0]!r}."
+        assert heads[0] == "0090_egress_command_history_storage", (
+            f"Expected head '0090_egress_command_history_storage'; got {heads[0]!r}."
         )
 
 

@@ -10,6 +10,7 @@ import {
   deleteSavedSearch,
   deleteScheduleBlock,
   getStaffIdentity,
+  getStationProfile,
   listAutoScheduleRules,
   listSavedSearches,
   listScheduleBlocks,
@@ -40,6 +41,7 @@ import {
 } from './autoschedule-format'
 import { stateLabel } from './status-language'
 import { EmptyState } from '../components/EmptyState'
+import { effectiveStationTimeZone, formatStationInstant } from '../lib/station-time'
 
 type AssetStateValue = NonNullable<AssetQuery['states']>[number]
 
@@ -345,10 +347,14 @@ export function BlockForm({
   submitting,
   onSubmit,
   initial,
+  timeZone = 'UTC',
+  timeZoneAvailable = true,
 }: {
   submitting: boolean
   onSubmit: (payload: ScheduleBlockInput) => void
   initial?: ScheduleBlock
+  timeZone?: string
+  timeZoneAvailable?: boolean
 }) {
   const [channel, setChannel] = useState(initial?.channel_id ?? '')
   const [name, setName] = useState(initial?.name ?? '')
@@ -374,11 +380,11 @@ export function BlockForm({
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Prime time" className="rounded-md px-2 py-1.5" style={fieldStyle} />
         </label>
         <label className="grid gap-1 text-xs">
-          <span className="font-semibold">Start</span>
+          <span className="font-semibold">Start ({timeZone})</span>
           <input type="time" value={start} onChange={(e) => setStart(e.target.value)} className="rounded-md px-2 py-1.5" style={fieldStyle} />
         </label>
         <label className="grid gap-1 text-xs">
-          <span className="font-semibold">End</span>
+          <span className="font-semibold">End ({timeZone})</span>
           <input type="time" value={end} onChange={(e) => setEnd(e.target.value)} className="rounded-md px-2 py-1.5" style={fieldStyle} />
           <span style={{ color: 'var(--cc-ink-3)' }}>00:00 = midnight (end of day). An end before the start wraps past midnight.</span>
         </label>
@@ -398,9 +404,12 @@ export function BlockForm({
           ))}
         </div>
       </fieldset>
+      <p className="m-0 text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+        A daypart whose start or end falls in a spring-forward gap is skipped for that day. A repeated fall-back boundary uses its earlier occurrence.
+      </p>
       <button
         type="button"
-        disabled={!valid || submitting}
+        disabled={!valid || submitting || !timeZoneAvailable}
         onClick={() =>
           onSubmit({
             channel_id: channel.trim(),
@@ -422,7 +431,12 @@ export function BlockForm({
   )
 }
 
-function BlocksSection({ canWrite, canRead }: { canWrite: boolean; canRead: boolean }) {
+function BlocksSection({ canWrite, canRead, timeZone, timeZoneAvailable }: {
+  canWrite: boolean
+  canRead: boolean
+  timeZone: string
+  timeZoneAvailable: boolean
+}) {
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -457,8 +471,7 @@ function BlocksSection({ canWrite, canRead }: { canWrite: boolean; canRead: bool
         <div>
           <h2 className="m-0 text-base font-semibold">Dayparts</h2>
           <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-            Recurring time windows on a channel that a rule fills (e.g. weeknights 6–10pm). Times are the station's
-            local wall-clock (set by CIVICCAST_STATION_TZ; UTC if unset).
+            Recurring time windows on a channel that a rule fills (e.g. weeknights 6–10pm). Times use station time ({timeZone}).
           </p>
         </div>
         {canWrite && (
@@ -476,7 +489,7 @@ function BlocksSection({ canWrite, canRead }: { canWrite: boolean; canRead: bool
               {apiMessage(error, 'The daypart could not be saved.')}
             </div>
           )}
-          {creating && canWrite && <BlockForm submitting={create.isPending} onSubmit={(p) => create.mutate(p)} />}
+          {creating && canWrite && <BlockForm timeZone={timeZone} timeZoneAvailable={timeZoneAvailable} submitting={create.isPending} onSubmit={(p) => create.mutate(p)} />}
           {query.isLoading && <LoadingNote what="dayparts" />}
           {!query.isLoading && blocks.length === 0 && (
             <EmptyState
@@ -491,7 +504,7 @@ function BlocksSection({ canWrite, canRead }: { canWrite: boolean; canRead: bool
                   <div>
                     <h3 className="m-0 text-sm font-semibold">{block.name}</h3>
                     <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-                      {block.channel_id} · {minuteToHHMM(block.start_minute)}–{minuteToHHMM(block.end_minute)} · {formatDays(block.days_of_week ?? [])}
+                      {block.channel_id} · {minuteToHHMM(block.start_minute)}–{minuteToHHMM(block.end_minute)} {timeZone} · {formatDays(block.days_of_week ?? [])}
                     </p>
                   </div>
                   {canWrite && (
@@ -506,6 +519,8 @@ function BlocksSection({ canWrite, canRead }: { canWrite: boolean; canRead: bool
                 {editingId === block.block_id && canWrite && (
                   <BlockForm
                     initial={block}
+                    timeZone={timeZone}
+                    timeZoneAvailable={timeZoneAvailable}
                     submitting={update.isPending}
                     onSubmit={(payload) => update.mutate({ id: block.block_id, payload })}
                   />
@@ -523,7 +538,7 @@ function BlocksSection({ canWrite, canRead }: { canWrite: boolean; canRead: bool
 // Rules (bind a saved search to a daypart) + simulate
 // ---------------------------------------------------------------------------
 
-export function RulePreviewPanel({ preview }: { preview: RulePreview }) {
+export function RulePreviewPanel({ preview, timeZone = 'UTC' }: { preview: RulePreview; timeZone?: string }) {
   if (preview.missing_dependency) {
     return (
       <div role="status" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}>
@@ -542,7 +557,7 @@ export function RulePreviewPanel({ preview }: { preview: RulePreview }) {
           const colors = SLOT_TONE[slotActionTone(slot.action)]
           return (
             <div key={index} className="flex flex-wrap items-center justify-between gap-2 rounded-md px-2 py-1 text-xs" style={{ background: 'var(--cc-surface-2)' }}>
-              <span>{new Date(slot.starts_at).toLocaleString()}</span>
+              <span>{formatStationInstant(new Date(slot.starts_at), timeZone)} ({timeZone})</span>
               <span className="flex items-center gap-2">
                 {slot.title && <span style={{ color: 'var(--cc-ink-2)' }}>{slot.title}</span>}
                 <span className="rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase" style={{ background: colors.bg, color: colors.fg }}>
@@ -566,6 +581,8 @@ function RuleCard({
   onEdit,
   onDelete,
   deleting,
+  timeZone,
+  timeZoneAvailable,
 }: {
   rule: AutoScheduleRule
   searches: SavedSearch[]
@@ -575,6 +592,8 @@ function RuleCard({
   onEdit: () => void
   onDelete: (id: string) => void
   deleting: boolean
+  timeZone: string
+  timeZoneAvailable: boolean
 }) {
   const preview = useMutation({ mutationFn: (id: string) => previewAutoScheduleRule(id) })
   const searchName = searches.find((s) => s.saved_search_id === rule.saved_search_id)?.name ?? rule.saved_search_id
@@ -596,7 +615,7 @@ function RuleCard({
           </p>
         </div>
         <div className="flex gap-2">
-          <button type="button" disabled={preview.isPending} onClick={() => preview.mutate(rule.rule_id)} className="rounded-md px-3 py-1.5 text-xs font-semibold" style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
+          <button type="button" disabled={preview.isPending || !timeZoneAvailable} onClick={() => preview.mutate(rule.rule_id)} className="rounded-md px-3 py-1.5 text-xs font-semibold" style={{ background: 'var(--cc-surface-3)', color: 'var(--cc-ink-2)' }}>
             {preview.isPending ? 'Simulating...' : 'Simulate'}
           </button>
           {canWrite && (
@@ -612,7 +631,7 @@ function RuleCard({
           {apiMessage(preview.error, 'Simulation failed.')}
         </div>
       )}
-      {preview.data && <RulePreviewPanel preview={preview.data} />}
+      {preview.data && <RulePreviewPanel preview={preview.data} timeZone={timeZone} />}
     </article>
   )
 }
@@ -718,7 +737,7 @@ export function RuleForm({
   )
 }
 
-function RulesSection({ canWrite, canRead }: { canWrite: boolean; canRead: boolean }) {
+function RulesSection({ canWrite, canRead, timeZone, timeZoneAvailable }: { canWrite: boolean; canRead: boolean; timeZone: string; timeZoneAvailable: boolean }) {
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -788,6 +807,8 @@ function RulesSection({ canWrite, canRead }: { canWrite: boolean; canRead: boole
                   editing={editingId === rule.rule_id}
                   onEdit={() => setEditingId((id) => (id === rule.rule_id ? null : rule.rule_id))}
                   deleting={remove.isPending && remove.variables === rule.rule_id}
+                  timeZone={timeZone}
+                  timeZoneAvailable={timeZoneAvailable}
                   onDelete={(id) => remove.mutate(id)}
                 />
                 {editingId === rule.rule_id && canWrite && (
@@ -808,7 +829,7 @@ function RulesSection({ canWrite, canRead }: { canWrite: boolean; canRead: boole
   )
 }
 
-function CompileBar({ canWrite }: { canWrite: boolean }) {
+function CompileBar({ canWrite, timeZoneAvailable }: { canWrite: boolean; timeZoneAvailable: boolean }) {
   const queryClient = useQueryClient()
   const compile = useMutation({
     mutationFn: () => compileAutoSchedule(),
@@ -825,7 +846,7 @@ function CompileBar({ canWrite }: { canWrite: boolean }) {
             Run every enabled rule. Compilation publishes its selected picks directly, without another operator approval.
           </p>
         </div>
-        <button type="button" disabled={compile.isPending} onClick={() => compile.mutate()} className="rounded-md px-3 py-2 text-sm font-semibold" style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}>
+        <button type="button" disabled={compile.isPending || !timeZoneAvailable} onClick={() => compile.mutate()} className="rounded-md px-3 py-2 text-sm font-semibold" style={{ background: 'var(--cc-ink)', color: 'var(--cc-ink-inv)' }}>
           {compile.isPending ? 'Compiling...' : 'Compile now'}
         </button>
       </div>
@@ -845,6 +866,8 @@ function CompileBar({ canWrite }: { canWrite: boolean }) {
 
 export function AutoScheduleScreen() {
   const identityQuery = useQuery({ queryKey: ['staff-identity'], queryFn: getStaffIdentity, retry: false })
+  const stationProfileQuery = useQuery({ queryKey: ['station-profile'], queryFn: getStationProfile, retry: false })
+  const stationTimeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)
   // Fail CLOSED: writes/compile need publish_operator or setup_admin (the same
   // gate the router enforces); reads also allow support_admin.
   const canWrite =
@@ -866,10 +889,15 @@ export function AutoScheduleScreen() {
           Commit-to-Air approval.
         </p>
       </header>
+      {stationProfileQuery.isError && (
+        <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+          Could not load the station timezone. Daypart saves and rule compilation are disabled; retry after the station profile is available.
+        </div>
+      )}
       <SavedSearchesSection canWrite={canWrite} canRead={canRead} />
-      <BlocksSection canWrite={canWrite} canRead={canRead} />
-      <RulesSection canWrite={canWrite} canRead={canRead} />
-      <CompileBar canWrite={canWrite} />
+      <BlocksSection canWrite={canWrite} canRead={canRead} timeZone={stationTimeZone} timeZoneAvailable={stationProfileQuery.isSuccess} />
+      <RulesSection canWrite={canWrite} canRead={canRead} timeZone={stationTimeZone} timeZoneAvailable={stationProfileQuery.isSuccess} />
+      <CompileBar canWrite={canWrite} timeZoneAvailable={stationProfileQuery.isSuccess} />
     </div>
   )
 }

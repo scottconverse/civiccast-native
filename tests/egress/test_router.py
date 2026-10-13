@@ -36,7 +36,7 @@ from civiccast.egress.models import (
     EgressStateRow,
 )
 from civiccast.egress.operator_state import operator_state_projection
-from civiccast.egress.router import get_egress_store
+from civiccast.egress.router import get_egress_store, get_egress_work_dir
 from civiccast.egress.store import PostgresEgressStore
 from civiccast.live.router import get_live_session_store
 
@@ -96,6 +96,58 @@ def _config_payload(channel_id: str = "gov") -> dict[str, object]:
                 "secret_ref": "EGRESS_SRT_PASSPHRASE",
             }
         ],
+    }
+
+
+def test_staff_egress_storage_reports_logs_commands_and_low_disk(
+    client: TestClient,
+    store: PostgresEgressStore,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    log_dir = tmp_path / "gov" / "logs"
+    log_dir.mkdir(parents=True)
+    (log_dir / "gst-worker.stdout.log").write_bytes(b"stdout")
+    (log_dir / "gst-worker.stdout.log.1").write_bytes(b"old")
+    (log_dir / "other.log").write_bytes(b"ignore")
+    client.app.dependency_overrides[get_egress_work_dir] = lambda: tmp_path
+    monkeypatch.setattr(
+        egress_router.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(total=100, used=90, free=10 * 1024**3),
+    )
+    now = datetime.now(UTC)
+    store.enqueue_commands(
+        [
+            EgressCommand(
+                channel_id="gov",
+                action="start",
+                issued_at=now,
+                issued_by="test",
+                command_id="consumed",
+            ),
+            EgressCommand(
+                channel_id="other",
+                action="start",
+                issued_at=now,
+                issued_by="test",
+                command_id="pending",
+            ),
+        ]
+    )
+    assert len(store.pop_pending_commands("gov")) == 1
+
+    response = client.get("/api/staff/egress/storage")
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "worker_log_bytes": 9,
+        "worker_log_file_count": 2,
+        "command_history_rows": 2,
+        "pending_commands": 1,
+        "command_table_bytes": None,
+        "work_volume_free_bytes": 10 * 1024**3,
+        "low_disk_warning": True,
+        "low_disk_threshold_bytes": 20 * 1024**3,
     }
 
 

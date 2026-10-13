@@ -5,6 +5,7 @@ import {
   cancelSchedule,
   commitToAir,
   getStaffIdentity,
+  getStationProfile,
   listSchedule,
   prepareCommit,
 } from '../api/client'
@@ -22,6 +23,13 @@ import {
 import type { CommitToAirPlan } from '../types/api.generated'
 import { DryRunReview } from './CommitToAirPanel'
 import { groupByDay } from './scheduleGrouping'
+import {
+  dateFromStationDateKey,
+  effectiveStationTimeZone,
+  formatStationInstant,
+  stationDateKey,
+  stationDateParts,
+} from '../lib/station-time'
 
 function apiMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError) return error.detail ?? fallback
@@ -40,20 +48,18 @@ const DEFAULT_HOURS_START = 6
 const DEFAULT_HOURS_END = 22
 const ROW_PX = 56
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-
-function startOfWeek(d: Date): Date {
-  const out = new Date(d)
-  out.setHours(0, 0, 0, 0)
-  // ISO week start = Monday. JS getDay(): 0=Sun..6=Sat. Shift Sun to 7 then sub.
-  const dow = out.getDay() === 0 ? 7 : out.getDay()
-  out.setDate(out.getDate() - (dow - 1))
+function startOfWeek(d: Date, timeZone: string): Date {
+  const out = dateFromStationDateKey(stationDateKey(d, timeZone))
+  // The Date stores a station calendar date at UTC midnight. UTC accessors
+  // keep the week grid independent of the operator's browser timezone.
+  const dow = out.getUTCDay() === 0 ? 7 : out.getUTCDay()
+  out.setUTCDate(out.getUTCDate() - (dow - 1))
   return out
 }
 
 function addDays(d: Date, n: number): Date {
   const out = new Date(d)
-  out.setDate(out.getDate() + n)
+  out.setUTCDate(out.getUTCDate() + n)
   return out
 }
 
@@ -63,26 +69,26 @@ function fmtHourLabel(h: number): string {
   return h < 12 ? `${h} am` : `${h - 12} pm`
 }
 
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
+function fmtTime(iso: string, timeZone: string): string {
+  return formatStationInstant(new Date(iso), timeZone, {
     hour: 'numeric',
     minute: '2-digit',
   })
 }
 
-function fmtRangeLabel(item: ScheduleItem): string {
+function fmtRangeLabel(item: ScheduleItem, timeZone: string): string {
   const start = new Date(item.scheduled_at)
-  const startStr = fmtTime(item.scheduled_at)
+  const startStr = fmtTime(item.scheduled_at, timeZone)
   if (!item.duration_seconds || item.mode === 'embargo') return startStr
   const end = new Date(start.getTime() + item.duration_seconds * 1000)
-  return `${startStr} – ${end.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+  return `${startStr} – ${formatStationInstant(end, timeZone, { hour: 'numeric', minute: '2-digit' })}`
 }
 
 function sameDay(a: Date, b: Date): boolean {
   return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
+    a.getUTCFullYear() === b.getUTCFullYear() &&
+    a.getUTCMonth() === b.getUTCMonth() &&
+    a.getUTCDate() === b.getUTCDate()
   )
 }
 
@@ -96,6 +102,7 @@ interface EventLayout {
 function computeVisibleHours(
   items: ScheduleItem[],
   weekStart: Date,
+  timeZone: string,
 ): { start: number; end: number; list: number[] } {
   // QA-003 / ENG-006 (audit-team v0.3.0): the week grid auto-extends
   // to span every event in the visible week so early-morning and
@@ -104,16 +111,24 @@ function computeVisibleHours(
   let minHour = DEFAULT_HOURS_START
   let maxHour = DEFAULT_HOURS_END
   const weekEnd = new Date(weekStart)
-  weekEnd.setDate(weekEnd.getDate() + 7)
+  weekEnd.setUTCDate(weekEnd.getUTCDate() + 7)
   for (const item of items) {
     const start = new Date(item.scheduled_at)
-    if (start < weekStart || start >= weekEnd) continue
-    const startHour = start.getHours() + start.getMinutes() / 60
+    const itemDay = dateFromStationDateKey(stationDateKey(start, timeZone))
+    if (itemDay < weekStart || itemDay >= weekEnd) continue
+    const parts = stationDateParts(start, timeZone)
+    if (!parts) continue
+    const startHour = parts.hour + parts.minute / 60
     const durSec =
       item.mode === 'embargo' || !item.duration_seconds
         ? 30 * 60
         : item.duration_seconds
-    const endHour = startHour + durSec / 3600
+    const end = new Date(start.getTime() + durSec * 1000)
+    const endDay = dateFromStationDateKey(stationDateKey(end, timeZone))
+    const endParts = stationDateParts(end, timeZone)
+    const endHour = endParts && sameDay(endDay, itemDay)
+      ? endParts.hour + endParts.minute / 60
+      : 24
     if (startHour < minHour) minHour = Math.max(0, Math.floor(startHour))
     if (endHour > maxHour) maxHour = Math.min(24, Math.ceil(endHour))
   }
@@ -129,14 +144,18 @@ function layoutEvents(
   items: ScheduleItem[],
   weekStart: Date,
   hoursStart: number,
+  timeZone: string,
 ): EventLayout[] {
   return items.flatMap((item) => {
     const start = new Date(item.scheduled_at)
+    const itemDay = dateFromStationDateKey(stationDateKey(start, timeZone))
+    const parts = stationDateParts(start, timeZone)
+    if (!parts || Number.isNaN(itemDay.getTime())) return []
     const dayIdx = Math.floor(
-      (start.getTime() - weekStart.getTime()) / (24 * 3600 * 1000),
+      (itemDay.getTime() - weekStart.getTime()) / (24 * 3600 * 1000),
     )
     if (dayIdx < 0 || dayIdx > 6) return []
-    const hour = start.getHours() + start.getMinutes() / 60
+    const hour = parts.hour + parts.minute / 60
     const top = (hour - hoursStart) * ROW_PX
     const durSec =
       item.mode === 'embargo' || !item.duration_seconds
@@ -310,28 +329,29 @@ function LoadingState() {
 interface WeekGridProps {
   weekStart: Date
   items: ScheduleItem[]
+  timeZone: string
   onItemSelect: (item: ScheduleItem) => void
 }
 
-function WeekGrid({ weekStart, items, onItemSelect }: WeekGridProps) {
+function WeekGrid({ weekStart, items, timeZone, onItemSelect }: WeekGridProps) {
   // QA-003 / ENG-006 (audit-team v0.3.0): hour range is computed from
   // the visible week's actual events so an early-morning rebroadcast or
   // overnight emergency-meeting recording cannot render off-grid.
   const hours = useMemo(
-    () => computeVisibleHours(items, weekStart),
-    [items, weekStart],
+    () => computeVisibleHours(items, weekStart, timeZone),
+    [items, weekStart, timeZone],
   )
   const layouts = useMemo(
-    () => layoutEvents(items, weekStart, hours.start),
-    [items, weekStart, hours.start],
+    () => layoutEvents(items, weekStart, hours.start, timeZone),
+    [items, weekStart, hours.start, timeZone],
   )
   const todayIdx = useMemo(() => {
-    const today = new Date()
+    const today = dateFromStationDateKey(stationDateKey(new Date(), timeZone))
     for (let i = 0; i < 7; i++) {
       if (sameDay(today, addDays(weekStart, i))) return i
     }
     return -1
-  }, [weekStart])
+  }, [weekStart, timeZone])
 
   // The hour-rail and the body share the same row count; height is
   // (hours.list.length - 1) * ROW_PX because hour labels mark
@@ -370,7 +390,7 @@ function WeekGrid({ weekStart, items, onItemSelect }: WeekGridProps) {
           className="cc-mono px-2 py-2 text-[10px] uppercase tracking-wider"
           style={{ color: 'var(--cc-ink-3)', borderBottom: '1px solid var(--cc-line)' }}
         >
-          Local
+          Station
         </div>
         {Array.from({ length: 7 }, (_, i) => {
           const d = addDays(weekStart, i)
@@ -386,9 +406,9 @@ function WeekGrid({ weekStart, items, onItemSelect }: WeekGridProps) {
                 fontWeight: isToday ? 600 : 500,
               }}
             >
-              <span>{DAY_NAMES[d.getDay()]}</span>{' '}
+              <span>{d.toLocaleDateString(undefined, { timeZone: 'UTC', weekday: 'short' })}</span>{' '}
               <span className="cc-mono cc-tabular text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
-                {d.getMonth() + 1}/{String(d.getDate()).padStart(2, '0')}
+                {d.getUTCMonth() + 1}/{String(d.getUTCDate()).padStart(2, '0')}
               </span>
             </div>
           )
@@ -466,7 +486,7 @@ function WeekGrid({ weekStart, items, onItemSelect }: WeekGridProps) {
             // asset_id is demoted to a tiny meta line for engineer-
             // debug recognizability.
             const display = item.asset_title?.trim() || item.asset_id
-            const ariaLabel = `${MODE_META[item.mode].label} · ${display} · ${fmtRangeLabel(item)} on ${item.channel_id}`
+            const ariaLabel = `${MODE_META[item.mode].label} · ${display} · ${fmtRangeLabel(item, timeZone)} on ${item.channel_id}`
             return (
               <button
                 type="button"
@@ -506,7 +526,7 @@ function WeekGrid({ weekStart, items, onItemSelect }: WeekGridProps) {
                   {item.asset_id}
                 </div>
                 <div className="cc-mono cc-tabular mt-0.5 text-[10px]">
-                  {fmtRangeLabel(item)}
+                  {fmtRangeLabel(item, timeZone)}
                 </div>
               </button>
             )
@@ -519,15 +539,17 @@ function WeekGrid({ weekStart, items, onItemSelect }: WeekGridProps) {
 
 interface ScheduleListProps {
   items: ScheduleItem[]
+  timeZone?: string
   onCancel: (item: ScheduleItem) => void
 }
 
 // Exported for ScheduleList.publish.test.tsx (the "Publish to residents"
 // container test), mirroring how CommitToAirPanel.tsx exports DryRunReview /
 // CommitReportRow for the same reason.
-export function ScheduleList({ items, onCancel }: ScheduleListProps) {
-  const { groups, unreadable } = useMemo(() => groupByDay(items), [items])
-  const today = new Date()
+export function ScheduleList({ items, timeZone, onCancel }: ScheduleListProps) {
+  const stationTimeZone = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC'
+  const { groups, unreadable } = useMemo(() => groupByDay(items, stationTimeZone), [items, stationTimeZone])
+  const today = dateFromStationDateKey(stationDateKey(new Date(), stationTimeZone))
   const queryClient = useQueryClient()
   const toast = useToast()
 
@@ -633,6 +655,7 @@ export function ScheduleList({ items, onCancel }: ScheduleListProps) {
             >
               <span>
                 {g.day.toLocaleDateString(undefined, {
+                  timeZone: 'UTC',
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
@@ -670,7 +693,7 @@ export function ScheduleList({ items, onCancel }: ScheduleListProps) {
                         className="cc-mono cc-tabular w-32 shrink-0"
                         style={{ color: 'var(--cc-ink-2)' }}
                       >
-                        {fmtRangeLabel(it)}
+                        {fmtRangeLabel(it, stationTimeZone)}
                       </span>
                       <ModeChip mode={it.mode} />
                       <StateChip state={it.state} />
@@ -786,8 +809,21 @@ function _initialView(): ViewMode {
 }
 
 export function ScheduleScreen() {
+  const stationProfileQuery = useQuery({
+    queryKey: ['station-profile'],
+    queryFn: getStationProfile,
+    retry: false,
+  })
+  const stationTimeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)
   const [view, setView] = useState<ViewMode>(() => _initialView())
-  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()))
+  const [weekSelection, setWeekSelection] = useState<{ timeZone: string; start: Date }>(() => ({
+    timeZone: 'UTC',
+    start: startOfWeek(new Date(), 'UTC'),
+  }))
+  const weekStart = weekSelection.timeZone === stationTimeZone
+    ? weekSelection.start
+    : startOfWeek(new Date(), stationTimeZone)
+  const setWeekStart = (start: Date) => setWeekSelection({ timeZone: stationTimeZone, start })
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   const queryClient = useQueryClient()
@@ -826,23 +862,25 @@ export function ScheduleScreen() {
   const visibleWeekItems = useMemo(() => {
     const end = addDays(weekStart, 7)
     return items.filter((it) => {
-      const d = new Date(it.scheduled_at)
-      return d >= weekStart && d < end
+      const d = dateFromStationDateKey(stationDateKey(new Date(it.scheduled_at), stationTimeZone))
+      return !Number.isNaN(d.getTime()) && d >= weekStart && d < end
     })
-  }, [items, weekStart])
+  }, [items, stationTimeZone, weekStart])
 
   const fmtWeekLabel = (start: Date) => {
     const end = addDays(start, 6)
-    const sameMonth = start.getMonth() === end.getMonth()
+    const sameMonth = start.getUTCMonth() === end.getUTCMonth()
     const startLabel = start.toLocaleDateString(undefined, {
+      timeZone: 'UTC',
       month: 'short',
       day: 'numeric',
     })
     const endLabel = end.toLocaleDateString(undefined, {
+      timeZone: 'UTC',
       month: sameMonth ? undefined : 'short',
       day: 'numeric',
     })
-    return `Week of ${startLabel} – ${endLabel}, ${end.getFullYear()}`
+    return `Week of ${startLabel} – ${endLabel}, ${end.getUTCFullYear()}`
   }
 
   return (
@@ -856,9 +894,14 @@ export function ScheduleScreen() {
         </div>
         <h1 className="m-0 text-2xl font-semibold tracking-tight">Schedule</h1>
         <p className="mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
-          {fmtWeekLabel(weekStart)} · times shown in your browser timezone.
+          {fmtWeekLabel(weekStart)} · times shown in station time ({stationTimeZone}).
           Conflicts on the same channel are rejected at the database layer.
         </p>
+        {stationProfileQuery.isError && (
+          <p role="alert" className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-err)' }}>
+            The station timezone could not be loaded; existing items are shown in UTC and new scheduling is disabled.
+          </p>
+        )}
       </header>
 
       <div
@@ -899,7 +942,7 @@ export function ScheduleScreen() {
           </button>
           <button
             type="button"
-            onClick={() => setWeekStart(startOfWeek(new Date()))}
+            onClick={() => setWeekStart(startOfWeek(new Date(), stationTimeZone))}
             className="rounded-md px-3 py-1.5 text-xs font-medium"
             style={{ border: '1px solid var(--cc-line)', color: 'var(--cc-ink-2)' }}
           >
@@ -942,6 +985,7 @@ export function ScheduleScreen() {
             <WeekGrid
               weekStart={weekStart}
               items={visibleWeekItems}
+              timeZone={stationTimeZone}
               onItemSelect={(it) => {
                 // UX-002: clicking an event in the week grid opens the
                 // list view scrolled to that day so the operator can
@@ -951,7 +995,7 @@ export function ScheduleScreen() {
                 setView('list')
                 // Anchor the week to the item's date so the list view
                 // shows the correct day group.
-                setWeekStart(startOfWeek(new Date(it.scheduled_at)))
+                setWeekStart(startOfWeek(new Date(it.scheduled_at), stationTimeZone))
               }}
             />
           ) : (
@@ -966,6 +1010,7 @@ export function ScheduleScreen() {
         ) : (
           <ScheduleList
             items={items}
+            timeZone={stationTimeZone}
             onCancel={(it) => {
               const display = it.asset_title?.trim() || it.asset_id
               setPendingConfirm({
@@ -988,16 +1033,13 @@ export function ScheduleScreen() {
             // to the polished 409-conflict path. Acknowledge the create
             // through the portal-toast surface so the operator's
             // confidence on success matches their confidence on failure.
-            const localTime = new Date(item.scheduled_at).toLocaleString(
-              undefined,
-              {
+            const localTime = formatStationInstant(new Date(item.scheduled_at), stationTimeZone, {
                 weekday: 'short',
                 month: 'short',
                 day: 'numeric',
                 hour: 'numeric',
                 minute: '2-digit',
-              },
-            )
+              })
             toast.push({
               tone: 'success',
               message: 'Scheduled.',

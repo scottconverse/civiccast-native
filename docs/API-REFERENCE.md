@@ -2763,6 +2763,15 @@ BYO-SDI readiness and supervised relay statuses.
 - Request body: none
 - Responses: 200 `SdiReadinessResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/egress/storage`
+
+Read egress worker log and command storage use.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `EgressStorageStatusResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.; 503 Durable storage not ready -- run Setup storage or set DATABASE_URL
+
 ### `GET /api/staff/epg/configs`
 
 List EPG export configs for the station.
@@ -6577,6 +6586,17 @@ Read CivicCast local federation metadata.
 - `state` (required): `'STOPPED' | 'STARTING' | 'ON_AIR' | 'TRANSITIONING' | 'FALLBACK_SLATE' | 'DRAINING' | 'STOPPING' | 'ERROR'`
 - `updated_at` (required): `string`
 
+### `EgressStorageStatusResponse`
+
+- `command_history_rows` (required): `number`
+- `command_table_bytes` (optional): `number | null`
+- `low_disk_threshold_bytes` (required): `number`
+- `low_disk_warning` (optional): `boolean | null`
+- `pending_commands` (required): `number`
+- `work_volume_free_bytes` (optional): `number | null`
+- `worker_log_bytes` (required): `number`
+- `worker_log_file_count` (required): `number`
+
 ### `EmergencyOverlay`
 
 - `aria_live` (optional): `'polite' | 'assertive'`
@@ -8372,6 +8392,7 @@ rule (S13 §5.1).
 - `kind` (required): `'one_shot' | 'weekly'`
 - `start` (optional): `string | null`
 - `time_hhmm` (optional): `string`
+- `time_zone` (optional): `'UTC' | 'station'`
 - `weekdays` (optional): `Array<number>`
 
 ### `RehearsalReport`

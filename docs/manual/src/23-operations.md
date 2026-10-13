@@ -101,7 +101,24 @@ CivicCast reads many settings from environment variables (the full list is in [A
 
 ## Read the logs
 
-All logs are in `C:\ProgramData\CivicCast\logs`.
+Service logs are in `C:\ProgramData\CivicCast\logs`. GStreamer worker logs are
+under each channel's egress work folder, in its `logs` subfolder.
+
+On **System Health → Egress storage**, check worker-log bytes and file count,
+command-history rows and database storage, pending commands, and free space on
+the work volume. The panel warns below 20 GiB free. An unavailable measurement is
+shown as unavailable, rather than zero.
+
+Each GStreamer stdout/stderr stream rotates at 10 MiB and keeps ten older files.
+An older oversized active log is reduced to its newest 10 MiB before the next
+worker starts. If the disk cannot accept diagnostics, CivicCast continues draining
+the worker output so logging does not stall playout. Free disk space to restore
+diagnostic logging; this does not make a full disk safe for recordings.
+
+Consumed egress command history is trimmed in batches of up to 1,000 when a
+channel exceeds 10,000 consumed commands. Pending commands are preserved. Database
+space can be reused after pruning without immediately shrinking the database file.
+These limits do not delete recordings or retain live-caption audio evidence.
 
 | File | What is in it | Rotation |
 | --- | --- | --- |

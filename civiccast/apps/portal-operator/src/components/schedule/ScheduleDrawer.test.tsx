@@ -13,6 +13,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 import type { AssetRow } from '../../types/asset'
 import type { ChannelProfile } from '../../types/api.generated'
+import type { StationProfile } from '../../types/api.generated'
 
 afterEach(cleanup)
 
@@ -27,12 +28,14 @@ vi.mock('../../api/client', () => ({
     }
   },
   createSchedule: vi.fn(),
+  getStationProfile: vi.fn(),
   listChannelProfiles: vi.fn(),
   listStaffAssets: vi.fn(),
 }))
 
 import {
   createSchedule,
+  getStationProfile,
   listChannelProfiles,
   listStaffAssets,
 } from '../../api/client'
@@ -58,7 +61,12 @@ const validatedAsset: AssetRow = {
   state: 'validated',
 } as AssetRow
 
-function renderDrawer() {
+function renderDrawer(profileAvailable = true) {
+  if (profileAvailable) {
+    vi.mocked(getStationProfile).mockResolvedValue({ station_timezone: 'America/Denver' } as StationProfile)
+  } else {
+    vi.mocked(getStationProfile).mockRejectedValue(new Error('profile unavailable'))
+  }
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -165,6 +173,18 @@ describe('ScheduleDrawer unparseable start time', () => {
     return view
   }
 
+  it('blocks scheduling if the station timezone could not be loaded', async () => {
+    vi.mocked(createSchedule).mockClear()
+    vi.mocked(listStaffAssets).mockResolvedValue([validatedAsset])
+    vi.mocked(listChannelProfiles).mockResolvedValue([
+      channelProfile('government', 'Government Channel'),
+    ])
+    const view = renderDrawer(false)
+    expect(await view.findByText(/Could not load the station timezone/i)).toBeTruthy()
+    expect((view.getByRole('button', { name: /Schedule premiere/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect(createSchedule).not.toHaveBeenCalled()
+  })
+
   it('does not throw when the date field is cleared', async () => {
     const view = await drawerWithChannels()
     // Pre-fix this render threw RangeError out of the click handler.
@@ -214,6 +234,7 @@ describe('ScheduleDrawer unparseable start time', () => {
     const input = findStartInput(view)
     fireEvent.change(input, { target: { value: '' } })
     fireEvent.change(input, { target: { value: '2026-08-20T12:00' } })
+    expect(view.getByText(/station time \(America\/Denver\)/i)).toBeTruthy()
 
     const submit = view.getByRole('button', { name: /Schedule premiere/i })
     await waitFor(() =>
@@ -223,6 +244,17 @@ describe('ScheduleDrawer unparseable start time', () => {
 
     await waitFor(() => expect(createSchedule).toHaveBeenCalledTimes(1))
     const sent = vi.mocked(createSchedule).mock.calls[0][0].scheduled_at
-    expect(Number.isNaN(new Date(sent as string).getTime())).toBe(false)
+    expect(sent).toBe('2026-08-20T18:00:00.000Z')
+  })
+
+  it('rejects a station-local start in the spring-forward gap', async () => {
+    const view = await drawerWithChannels()
+    vi.mocked(createSchedule).mockClear()
+    fireEvent.change(findStartInput(view), {
+      target: { value: '2026-03-08T02:30' },
+    })
+    expect(view.getByText(/does not exist during the spring clock change/i)).toBeTruthy()
+    expect((view.getByRole('button', { name: /Schedule premiere/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect(createSchedule).not.toHaveBeenCalled()
   })
 })

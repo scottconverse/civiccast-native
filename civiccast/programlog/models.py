@@ -3,13 +3,13 @@
 """Program-log persistence models (cable automation CA-1).
 
 A :class:`ProgramSlot` is the operator's intent ("Council replay, Fridays at
-19:00 UTC"); a :class:`SlotOccurrence` records each materialized instance and
+19:00 station time"); a :class:`SlotOccurrence` records each materialized instance and
 points at the real ``schedule_items`` row the playout path consumes. The
 UNIQUE (slot_id, occurrence_start) key makes materialization idempotent.
 
-All recurrence math is timezone-aware UTC. A slot scheduled at 19:00 UTC
-stays 19:00 UTC across DST shifts; station-local-time recurrence is an
-explicit later feature, documented rather than half-implemented.
+Occurrence timestamps are persisted as UTC instants. Recurrence calendar dates
+and wall-clock times use the configured station timezone, including explicit
+handling of skipped spring-forward clocks and the first fall-back fold.
 """
 
 from __future__ import annotations

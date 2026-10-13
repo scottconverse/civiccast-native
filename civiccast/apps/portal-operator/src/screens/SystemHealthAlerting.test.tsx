@@ -3,8 +3,9 @@ import { cleanup, fireEvent, render } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 
 import type { ChannelProfile, RuntimeSafeToAirStatus, SystemResourceSample, SystemSelfTest } from '../types/api.generated'
-import type { EgressHealthSample, EgressStateRow } from '../api/client'
-import { EgressReadinessPanel, ResourceSnapshotPanel, RuntimeSafeToAirBanner, SelfTestPanel } from './SystemHealthScreen'
+import type { EgressHealthSample, EgressStateRow, EgressStorageStatus } from '../api/client'
+import { canViewEgressStorage } from '../auth/roles'
+import { EgressReadinessPanel, EgressStoragePanel, ResourceSnapshotPanel, RuntimeSafeToAirBanner, SelfTestPanel } from './SystemHealthScreen'
 import { processLabel } from './status-language'
 
 // No global afterEach in vitest config → register testing-library cleanup
@@ -161,6 +162,39 @@ describe('RuntimeSafeToAirBanner', () => {
       <RuntimeSafeToAirBanner status={{ ...greenStatus, channels: [] }} />,
     )
     expect(container.textContent).toContain('nothing on air to watch yet')
+  })
+})
+
+describe('EgressStoragePanel', () => {
+  it('allows only the roles accepted by the storage endpoint', () => {
+    expect(canViewEgressStorage({ operator_id: 'setup', operator_display_name: 'Setup', roles: ['setup_admin'] })).toBe(true)
+    expect(canViewEgressStorage({ operator_id: 'support', operator_display_name: 'Support', roles: ['support_admin'] })).toBe(true)
+    expect(canViewEgressStorage({ operator_id: 'meeting', operator_display_name: 'Meeting', roles: ['meeting_operator'] })).toBe(true)
+    expect(canViewEgressStorage({ operator_id: 'records', operator_display_name: 'Records', roles: ['records_clerk'] })).toBe(false)
+    expect(canViewEgressStorage({ operator_id: 'publish', operator_display_name: 'Publish', roles: ['publish_operator'] })).toBe(false)
+    expect(canViewEgressStorage(undefined)).toBe(false)
+  })
+
+  it('shows bounded usage and warns when the work volume is below the free-space floor', () => {
+    const status: EgressStorageStatus = {
+      worker_log_bytes: 2048,
+      worker_log_file_count: 2,
+      command_history_rows: 12,
+      pending_commands: 1,
+      command_table_bytes: null,
+      work_volume_free_bytes: 5 * 1024 ** 3,
+      low_disk_warning: true,
+      low_disk_threshold_bytes: 20 * 1024 ** 3,
+    }
+    const { container } = render(
+      <EgressStoragePanel status={status} loading={false} error={undefined} />,
+    )
+
+    expect(container.textContent).toContain('10 MiB with 10 backups')
+    expect(container.textContent).toContain('Pending commands')
+    expect(container.textContent).toContain('Low disk space on the egress work volume')
+    expect(container.textContent).toContain('5.0 GiB free')
+    expect(container.querySelector('[role="alert"]')).not.toBeNull()
   })
 })
 

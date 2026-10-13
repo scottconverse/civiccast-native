@@ -10,6 +10,12 @@ import type {
   RecordingSource,
   RecurrenceSpec,
 } from '../api/client'
+import {
+  formatStationDateTimeLocal,
+  formatStationInstant,
+  nextStationOneShotFireTimes,
+  nextStationWeeklyFireTimes,
+} from '../lib/station-time'
 
 export const LIVE_SOURCE_KINDS = ['sdi', 'hdmi', 'ndi'] as const
 
@@ -27,20 +33,18 @@ export function humanizeSource(source: RecordingSource): string {
 
 /** Pretty recurrence label: "One-shot 2026-06-20 19:00 UTC" or
  *  "Weekly Mon/Wed 19:00 UTC". */
-export function humanizeRecurrence(rec: RecurrenceSpec): string {
+export function humanizeRecurrence(rec: RecurrenceSpec, timeZone = 'UTC'): string {
   if (rec.kind === 'one_shot') {
-    // The backend stores ISO-8601 in UTC. We pretty-print as
-    // "YYYY-MM-DD HH:MM UTC" (no seconds, no timezone juggling) so the
-    // operator sees the same value across machines.
-    const m = rec.start.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/)
-    if (m) return `One-shot ${m[1]} ${m[2]} UTC`
+    const local = formatStationDateTimeLocal(new Date(rec.start), timeZone)
+    if (local) return `One-shot ${local} ${timeZone}`
     return `One-shot ${rec.start}`
   }
   const days = rec.weekdays
     .filter((d) => d >= 0 && d < 7)
     .map((d) => WEEKDAY_LABELS[d])
     .join('/')
-  return `Weekly ${days || '(no days)'} ${rec.time_hhmm} UTC`
+  const recurrenceZone = rec.time_zone === 'station' ? timeZone : 'UTC'
+  return `Weekly ${days || '(no days)'} ${rec.time_hhmm} ${recurrenceZone}`
 }
 
 /** Total-seconds → "HH:MM:SS". Negatives clamp to zero so we never render a
@@ -87,11 +91,11 @@ export function humanizeBytes(bytes: number): string {
 /** ISO-8601 UTC → local-time short string for the jobs table. We accept
  *  anything the browser's `Date` parser accepts; on parse failure we render
  *  the raw value so the operator can still see what came back. */
-export function formatPlannedStart(isoString: string): string {
+export function formatPlannedStart(isoString: string, timeZone = 'UTC'): string {
   if (!isoString) return '—'
   const d = new Date(isoString)
   if (Number.isNaN(d.getTime())) return isoString
-  return d.toLocaleString()
+  return formatStationInstant(d, timeZone)
 }
 
 /** Wall-clock time the capture job has actually run, separate from media
@@ -110,15 +114,8 @@ export function jobDuration(job: RecordingJob, now: Date = new Date()): string {
 
 // --- UTC ↔ local time honesty helpers (UX-2 / UX-8) -----------------------
 //
-// The schedule form stores wall-clock UTC values (datetime-local for one-shot,
-// "HH:MM" for weekly). The browser renders datetime-local in the operator's
-// local zone by default — so a label that says "(UTC)" next to a control the
-// browser is showing in PDT will silently book the recording at the wrong
-// wall-clock time. These helpers compute a live local-time echo + the next
-// three fire times so the operator can sanity-check before saving.
-//
-// All math is timezone-aware via `Intl.DateTimeFormat`; we don't ship a tz
-// library. The "local" zone is the runtime zone of the operator's browser.
+// Station-aware scheduling previews use the helpers below. The browser-local
+// echo helpers remain exported for older callers that explicitly handle UTC.
 
 /** Browser's local timezone short name (e.g. "PDT", "EST", "GMT+1"). Returns
  *  an empty string in environments where Intl is missing or partial. */
@@ -148,8 +145,8 @@ export function formatLocalEcho(date: Date): string {
   return tz ? `${y}-${mo}-${d} ${h}:${mi} ${tz}` : `${y}-${mo}-${d} ${h}:${mi}`
 }
 
-/** UTC "YYYY-MM-DDTHH:MM" (the datetime-local input value, treated as UTC) →
- *  formatted local echo. Returns '' for blank / malformed input. */
+/** Interpret a datetime-local value as UTC and format it in the browser zone.
+ *  Returns '' for blank / malformed input. */
 export function utcDateTimeLocalToLocalEcho(value: string): string {
   if (!value) return ''
   const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/)
@@ -173,60 +170,37 @@ export function utcHHMMToLocalEcho(value: string, now: Date = new Date()): strin
   return formatLocalEcho(fire)
 }
 
-/** Compute the next N fire times for a weekly schedule. `weekdays` are
- *  Mon=0..Sun=6 (matches the backend / form convention). `timeHHMM` is the
- *  wall-clock UTC time. Returns Dates anchored to UTC. */
+/** Compute the next N fires. `weekdays` are Mon=0..Sun=6; `timeHHMM` is a
+ *  wall clock in `timeZone` (UTC by default). Returned Dates are instants. */
 export function nextWeeklyFireTimes(
   weekdays: number[],
   timeHHMM: string,
   count = 3,
   now: Date = new Date(),
+  timeZone = 'UTC',
 ): Date[] {
-  const tm = timeHHMM.trim().match(/^([01]\d|2[0-3]):([0-5]\d)$/)
-  if (!tm) return []
-  const days = Array.from(new Set(weekdays.filter((d) => d >= 0 && d < 7))).sort()
-  if (days.length === 0) return []
-  const hh = Number(tm[1])
-  const mm = Number(tm[2])
-  const out: Date[] = []
-  // Walk forward up to 14 UTC-days; a weekly schedule fires at least once
-  // per 7-day window, so 14 is a safe outer bound for the first three.
-  const cursor = new Date(now)
-  cursor.setUTCSeconds(0, 0)
-  for (let i = 0; i < 14 && out.length < count; i++) {
-    const day = new Date(cursor)
-    day.setUTCDate(day.getUTCDate() + i)
-    day.setUTCHours(hh, mm, 0, 0)
-    // Convert UTC day-of-week (0=Sun..6=Sat) to Mon=0..Sun=6.
-    const utcDow = day.getUTCDay() // 0..6, Sun=0
-    const monFirst = (utcDow + 6) % 7
-    if (!days.includes(monFirst)) continue
-    if (day.getTime() <= now.getTime()) continue
-    out.push(day)
-  }
-  return out
+  return nextStationWeeklyFireTimes(weekdays, timeHHMM, timeZone, count, now)
 }
 
-/** UTC "YYYY-MM-DDTHH:MM" + duration_seconds → next-fire previews for a
- *  one-shot schedule. Returns at most 1 date (one-shot fires once). */
-export function nextOneShotFireTimes(value: string, now: Date = new Date()): Date[] {
-  if (!value) return []
-  const m = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/)
-  if (!m) return []
-  const d = new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00Z`)
-  if (Number.isNaN(d.getTime())) return []
-  if (d.getTime() <= now.getTime()) return []
-  return [d]
+/** Resolve a datetime-local wall clock in `timeZone` and return its next-fire
+ *  preview, if still upcoming. Returns at most 1 date. */
+export function nextOneShotFireTimes(
+  value: string,
+  now: Date = new Date(),
+  timeZone = 'UTC',
+): Date[] {
+  return nextStationOneShotFireTimes(value, timeZone, now)
 }
 
-/** Format a Date for the next-fire preview: "UTC YYYY-MM-DD HH:MM · local
- *  YYYY-MM-DD HH:MM TZ". */
-export function formatFirePreview(date: Date): string {
+/** Format an instant in UTC and in the selected station timezone. */
+export function formatFirePreview(date: Date, timeZone = 'UTC'): string {
   if (Number.isNaN(date.getTime())) return ''
   const pad = (n: number) => n.toString().padStart(2, '0')
   const utc =
     `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}` +
     ` ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`
-  const local = formatLocalEcho(date)
-  return local ? `${utc} · ${local}` : utc
+  const station = formatStationInstant(date, timeZone, {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  })
+  return station ? `${utc} · ${station} (${timeZone})` : utc
 }

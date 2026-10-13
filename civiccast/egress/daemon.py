@@ -75,6 +75,7 @@ from civiccast.egress.hls_relay import (
 from civiccast.egress.models import (
     MAX_PLAYLIST_SUBCHAINS,
     RESTART_RECOVERY_COMMAND_PREFIX,
+    SLATE_RESTART_COMMAND_PREFIX,
     CaptionStatus,
     EgressCommand,
     EgressConfig,
@@ -439,10 +440,8 @@ _OUTPUT_AV_GUARD_MAX_OFFSET_S = 1.0
 #: Consecutive over-limit probes before the guard acts.
 _OUTPUT_AV_GUARD_CONSECUTIVE_PROBES = 3
 #: Restarts the guard may spend per channel inside the rolling window below.
-#: Past it the channel keeps being reported but is NOT restarted again: a
-#: channel whose output is still desynced after three replacement workers is
-#: not fixed by a fourth, and an unbounded restart loop on a station that is
-#: otherwise on air is worse than a channel an operator has been told about.
+#: Once spent, the guard requests the fallback slate and holds it until the
+#: latest restart ages out; then it makes one program retry.
 _OUTPUT_AV_GUARD_RESTART_BUDGET = 3
 _OUTPUT_AV_GUARD_BUDGET_WINDOW_S = 3600.0
 #: Cadence of the budget-exhausted ERROR line (it repeats, but not per probe).
@@ -458,13 +457,13 @@ _OUTPUT_AV_GUARD_EXHAUSTED_LOG_INTERVAL_S = 600.0
 # ffmpeg child once -- and that child then writes nothing either. The one-shot
 # ``heal_attempted`` latch (hls_relay audit finding 4) deliberately prevents a
 # second heal in the same episode, so the relay path is out of moves and the
-# channel sits frozen until a human restarts it. Both live incidents ended
+# channel sits frozen until the operator restarts it. Both live incidents ended
 # exactly that way: ``STALE 36s -> 144s -> full channel restart``.
 #
 # This guard is the missing second step, modeled on the U16 output A/V guard
 # above (same shape: probe on the existing poll tick, act through the existing
-# bounded worker termination, bounded restarts per rolling hour, throttled
-# CRITICAL once the budget is gone).
+# bounded worker termination, bounded restarts per rolling hour, then fallback
+# slate and one program retry after the latest restart ages out).
 #
 # SIGNAL DECISION: the HLS live window is the signal, and it is the only one.
 # It is what residents actually see, the daemon already reads it every tick for
@@ -489,15 +488,18 @@ _OUTPUT_AV_GUARD_EXHAUSTED_LOG_INTERVAL_S = 600.0
 # introducing a second magic number.
 _FREEZE_ESCALATION_AFTER_HEAL_S = 30.0
 #: Worker restarts this escalation may spend per channel inside the window
-#: below, mirroring the U16 budget. Past it the channel is reported and NOT
-#: restarted again: a freeze that survives three replacement workers (each of
-#: which also replaces the relay child) is not fixed by a fourth, and a station
-#: otherwise on air is worse off in an unbounded restart loop than with one
-#: channel an operator has been told about.
+#: below, mirroring the U16 budget. Once spent, the channel stays on its
+#: fallback slate until the latest restart ages out, then gets one program retry.
 _FREEZE_ESCALATION_RESTART_BUDGET = 3
 _FREEZE_ESCALATION_BUDGET_WINDOW_S = 3600.0
 #: Cadence of the budget-exhausted CRITICAL line (it repeats, but not per tick).
 _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S = 600.0
+
+# A quality-guard budget exhaustion uses the same rolling-hour horizon as the
+# restart budget. The channel stays on its fallback slate through that window;
+# only then does the supervisor make one program retry.
+_QUALITY_RECOVERY_COOLDOWN_S = 3600.0
+_CHILD_STDERR_TAIL_BYTES = 256 * 1024
 
 
 class _PendingReloadSettlement(NamedTuple):
@@ -739,6 +741,14 @@ class _FreezeEscalationState:
     last_exhausted_log_at: float | None = None
 
 
+@dataclass
+class _QualityRecoveryState:
+    """One bounded fallback/cooldown cycle after a quality guard exhausts its budget."""
+
+    retry_at: float
+    reason: str
+
+
 class EgressDaemon:
     """Consume egress commands and run the configured output encoder."""
 
@@ -891,6 +901,11 @@ class EgressDaemon:
         # alongside ``_started_at`` so a fresh worker never inherits a stale
         # offset from the worker it replaced.
         self._stderr_spawn_offset: dict[str, int] = {}
+        # Identity of the active append/rotating log generation when each
+        # worker was spawned. A rotating writer can replace the base path while
+        # keeping the same name; offsets from the previous inode then point into
+        # the wrong generation.
+        self._stderr_spawn_identity: dict[str, tuple[int, int] | None] = {}
         # Per channel: the horizon of the source plan actually DISPATCHED to the
         # encoder (see dispatched_plan_horizon / _record_dispatched_plan).
         self._dispatched_plan_horizon: dict[str, tuple[str | None, tuple[float, ...], bool]] = {}
@@ -1150,6 +1165,11 @@ class EgressDaemon:
         # bookkeeping. No seam is needed here -- its input signal is the relay
         # supervisor's ``heal_frozen_seconds``, which the daemon already holds.
         self._freeze_escalation: dict[str, _FreezeEscalationState] = {}
+        # Shared, session-local fallback cooldown for both quality guards.
+        self._quality_recovery: dict[str, _QualityRecoveryState] = {}
+        # An operator stop is stronger than configured auto_start for this
+        # daemon session. Only an explicit operator start clears this latch.
+        self._operator_stopped_channels: set[str] = set()
         # The STORED config each live pipeline was built from (review round 3
         # delta, MAJOR 2). Health samples key ``sink_connected`` by sink label
         # from this, not from whatever the config row says NOW: a sink saved
@@ -1448,6 +1468,11 @@ class EgressDaemon:
             # this way means a heal performed this tick is observable by the
             # escalation immediately rather than a tick late.
             self._poll_freeze_escalation,
+            # A budget-exhausted quality recovery keeps a channel on its
+            # fallback slate for one rolling-hour cooldown, then issues one
+            # program retry. It runs after both detectors so either guard can
+            # create the latch in this same tick.
+            self._poll_quality_recovery,
             # BETA.10 U67: the reload-stall watchdog goes after everything else,
             # for the same reason the A/V guard and the freeze escalation do --
             # it judges the settled state row (it needs ``_poll_process``'s
@@ -1602,6 +1627,10 @@ class EgressDaemon:
             if not config.enabled:
                 continue
             channel_id = config.channel_id
+            if self.has_operator_stop_intent(channel_id) or self._has_pending_terminal_command(
+                channel_id
+            ):
+                continue
             if channel_id in self._processes:
                 # This daemon OWNS a worker for the channel -- and a worker that
                 # has ALREADY exited stays owned: ``_poll_process`` is what sees
@@ -1730,6 +1759,143 @@ class EgressDaemon:
         should_defer_switch``)."""
 
         return False
+
+    def has_operator_stop_intent(self, channel_id: str) -> bool:
+        """Whether a human-issued stop/drain remains authoritative this session."""
+
+        return channel_id in self._operator_stopped_channels
+
+    @staticmethod
+    def _is_operator_command(command: EgressCommand) -> bool:
+        """Separate direct staff actions from supervisor-generated commands."""
+
+        return not (
+            command.issued_by in {"channel-automation", "restart-recovery"}
+            or command.command_id.startswith(
+                (SLATE_RESTART_COMMAND_PREFIX, RESTART_RECOVERY_COMMAND_PREFIX, "commit-start-")
+            )
+        )
+
+    def _has_pending_terminal_command(self, channel_id: str) -> bool:
+        return any(
+            command.action in {"stop", "drain"}
+            for command in self._store.peek_pending_commands(channel_id)
+        )
+
+    def _quality_guard_deferred(self, channel_id: str) -> bool:
+        return (
+            channel_id in self._quality_recovery
+            or self.has_operator_stop_intent(channel_id)
+            or self._has_pending_terminal_command(channel_id)
+        )
+
+    def _begin_quality_recovery(
+        self,
+        channel_id: str,
+        *,
+        restarted_at: list[float],
+        now: float,
+        detail: str,
+    ) -> None:
+        """Use the existing slate for one cooldown, then allow a bounded retry."""
+
+        if self._quality_guard_deferred(channel_id):
+            return
+        spent_restarts = [
+            at
+            for timestamps in (
+                restarted_at,
+                self._output_av_guard[channel_id].restarted_at
+                if channel_id in self._output_av_guard
+                else [],
+                self._freeze_escalation[channel_id].restarted_at
+                if channel_id in self._freeze_escalation
+                else [],
+            )
+            for at in timestamps
+            if at > now - _QUALITY_RECOVERY_COOLDOWN_S
+        ]
+        retry_at = max(spent_restarts, default=now) + _QUALITY_RECOVERY_COOLDOWN_S
+        reason = f"automatic quality recovery cooldown: {detail}"
+        recovery = _QualityRecoveryState(retry_at=retry_at, reason=reason)
+        self._quality_recovery[channel_id] = recovery
+        if self.has_manual_override(channel_id):
+            return
+        request = getattr(self, "request_fallback_slate", None)
+        if not callable(request):
+            _LOG.error(
+                "channel %s: quality recovery budget exhausted; no fallback-slate capability "
+                "is available, so retry is deferred until the restart cooldown expires.",
+                channel_id,
+            )
+            return
+        try:
+            request(channel_id=channel_id, reason=reason)
+        except Exception:
+            # The cooldown itself is the bound. Do not call a failing slate
+            # transition again on every process tick.
+            _LOG.exception(
+                "channel %s: fallback-slate request failed; quality recovery remains in its "
+                "cooldown until %.1f.",
+                channel_id,
+                retry_at,
+            )
+
+    def _clear_quality_recovery(self, channel_id: str, *, clear_slate: bool) -> None:
+        recovery = self._quality_recovery.pop(channel_id, None)
+        if recovery is None or not clear_slate:
+            return
+        clear = getattr(self, "clear_fallback_slate", None)
+        if not callable(clear):
+            return
+        try:
+            clear(channel_id=channel_id, reason=recovery.reason)
+        except Exception:
+            _LOG.exception(
+                "channel %s: could not clear the quality-recovery slate before terminal intent.",
+                channel_id,
+            )
+
+    def _poll_quality_recovery(self, channel_id: str) -> None:
+        recovery = self._quality_recovery.get(channel_id)
+        if recovery is None:
+            return
+        if self.has_operator_stop_intent(channel_id) or self._has_pending_terminal_command(
+            channel_id
+        ):
+            self._clear_quality_recovery(channel_id, clear_slate=True)
+            return
+        now = self._monotonic()
+        if now < recovery.retry_at:
+            return
+
+        # Remove the latch before external calls: an exception must not turn
+        # the next two-second poll into another automatic program retry.
+        self._quality_recovery.pop(channel_id, None)
+        is_ours = getattr(self, "has_fallback_slate_reason", None)
+        exit_slate = getattr(self, "request_slate_exit", None)
+        try:
+            if (
+                callable(is_ours)
+                and is_ours(channel_id=channel_id, reason=recovery.reason)
+                and callable(exit_slate)
+            ):
+                exit_slate(channel_id=channel_id)
+        except Exception:
+            _LOG.exception(
+                "channel %s: program retry after the quality-recovery cooldown failed; "
+                "automatic recovery will not repeat until a new failure episode.",
+                channel_id,
+            )
+
+        guard = self._output_av_guard.get(channel_id)
+        if guard is not None:
+            guard.streak = 0
+            guard.offsets.clear()
+            guard.last_probe_at = now
+        freeze = self._freeze_escalation.get(channel_id)
+        if freeze is not None:
+            freeze.escalated_for_pid = None
 
     def dispatched_plan_horizon(
         self, channel_id: str
@@ -1944,12 +2110,27 @@ class EgressDaemon:
                     required_state,
                 )
                 return
+        operator_command = self._is_operator_command(command)
+        if command.action in {"stop", "drain"} and operator_command:
+            self._operator_stopped_channels.add(command.channel_id)
+        if command.action in {"stop", "drain"}:
+            self._clear_quality_recovery(command.channel_id, clear_slate=True)
         if command.action == "start":
             config = self._store.get_config(command.channel_id)
             if config is not None and not config.enabled:
                 _LOG.info(
                     "channel %s: ignoring queued start because the channel is disabled",
                     command.channel_id,
+                )
+                return
+            if operator_command:
+                self._operator_stopped_channels.discard(command.channel_id)
+            elif self.has_operator_stop_intent(command.channel_id):
+                _LOG.info(
+                    "channel %s: ignoring automatic start %s while an operator stop is "
+                    "active; an explicit start is required.",
+                    command.channel_id,
+                    command.command_id,
                 )
                 return
             # NOTE on ordering: the caption session-start hook is NOT called here.
@@ -2743,6 +2924,11 @@ class EgressDaemon:
                     if previous_stderr_path is not None
                     else 0
                 )
+                pre_spawn_stderr_identity = (
+                    _stderr_log_identity(previous_stderr_path)
+                    if previous_stderr_path is not None
+                    else None
+                )
                 try:
                     encoder_result = self._encoder_strategy.start(_encoder_request(source_plan))
                 except (EncoderUnavailableError, FfmpegNotFoundError) as exc:
@@ -2807,8 +2993,17 @@ class EgressDaemon:
                 # now, which may already include this worker's own output).
                 self._stderr_spawn_offset[channel_id] = (
                     pre_spawn_stderr_size
-                    if previous_stderr_path == encoder_result.stderr_path
+                    if (
+                        previous_stderr_path == encoder_result.stderr_path
+                        and pre_spawn_stderr_identity is not None
+                        and pre_spawn_stderr_identity
+                        == _stderr_log_identity(encoder_result.stderr_path)
+                        and _stderr_log_size(encoder_result.stderr_path) >= pre_spawn_stderr_size
+                    )
                     else 0
+                )
+                self._stderr_spawn_identity[channel_id] = _stderr_log_identity(
+                    encoder_result.stderr_path
                 )
                 # This IS a fresh spawn -- any on-air evidence latched for a
                 # PREVIOUS worker no longer describes this one.
@@ -3124,7 +3319,7 @@ class EgressDaemon:
         log_path = self._stderr_logs.get(channel_id)
         if log_path is None:
             return False
-        offset = self._stderr_spawn_offset.get(channel_id, 0)
+        offset = self._current_stderr_spawn_offset(channel_id, log_path)
         expected_pid = _process_pid(self._processes.get(channel_id))
         if worker_produced_output(log_path, offset=offset, expected_pid=expected_pid):
             return True
@@ -3140,6 +3335,18 @@ class EgressDaemon:
         """
         name = getattr(self._encoder_strategy, "name", "") or ""
         return "GStreamer playout worker" if "gstreamer" in name.lower() else "FFmpeg encoder"
+
+    def _current_stderr_spawn_offset(self, channel_id: str, log_path: Path) -> int:
+        """Offset for the current base-file generation, resetting after rotation."""
+
+        identity = _stderr_log_identity(log_path)
+        spawn_identity = self._stderr_spawn_identity.get(channel_id)
+        offset = self._stderr_spawn_offset.get(channel_id, 0)
+        if identity != spawn_identity or _stderr_log_size(log_path) < offset:
+            self._stderr_spawn_identity[channel_id] = identity
+            self._stderr_spawn_offset[channel_id] = 0
+            return 0
+        return offset
 
     def _child_stderr_tail(self, channel_id: str, *, max_lines: int = 8) -> str | None:
         """Last few non-blank stderr lines of the channel's just-exited child.
@@ -3157,7 +3364,12 @@ class EgressDaemon:
         if log_path is None:
             return None
         try:
-            text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+            offset = self._current_stderr_spawn_offset(channel_id, Path(log_path))
+            size = _stderr_log_size(Path(log_path))
+            start = max(offset, size - _CHILD_STDERR_TAIL_BYTES)
+            with Path(log_path).open("rb") as stream:
+                stream.seek(start)
+                text = stream.read(_CHILD_STDERR_TAIL_BYTES).decode("utf-8", errors="replace")
         except OSError:
             return None
         lines = [line.strip() for line in text.splitlines() if line.strip()]
@@ -3537,6 +3749,8 @@ class EgressDaemon:
         process = self._processes.get(channel_id)
         if process is None:
             return
+        if self._quality_guard_deferred(channel_id):
+            return
 
         pid = _process_pid(process)
         guard = self._output_av_guard.get(channel_id)
@@ -3620,7 +3834,7 @@ class EgressDaemon:
         *,
         now: float,
     ) -> None:
-        """Report a confirmed output desync and restart the worker, or refuse.
+        """Report a confirmed output desync, restart, or enter cooldown recovery.
 
         The restart is the SAME route a dead encoder takes, and deliberately not
         a private one: this terminates the worker WITHOUT recording it in
@@ -3638,6 +3852,8 @@ class EgressDaemon:
         guard.restarted_at = [
             at for at in guard.restarted_at if at > now - _OUTPUT_AV_GUARD_BUDGET_WINDOW_S
         ]
+        if self._quality_guard_deferred(channel_id):
+            return
         measured = "; ".join(
             f"{segment} measured {offset:+.3f}s" for offset, segment in guard.offsets
         )
@@ -3655,11 +3871,16 @@ class EgressDaemon:
                 guard.last_exhausted_log_at = now
                 _LOG.error(
                     "%s. Guard restart budget exhausted (%d restarts already spent in the "
-                    "last hour): NOT restarting the worker again. The output is still "
-                    "desynced after replacement workers, so this needs an operator -- "
-                    "check the channel's source program and encoder.",
+                    "last hour): moving to the fallback slate for a bounded cooldown before "
+                    "one program retry.",
                     detail,
                     len(guard.restarted_at),
+                )
+                self._begin_quality_recovery(
+                    channel_id,
+                    restarted_at=guard.restarted_at,
+                    now=now,
+                    detail="output A/V desync",
                 )
             return
         guard.restarted_at.append(now)
@@ -3721,6 +3942,8 @@ class EgressDaemon:
         process = self._processes.get(channel_id)
         if process is None:
             self._freeze_escalation.pop(channel_id, None)
+            return
+        if self._quality_guard_deferred(channel_id):
             return
 
         state = self._freeze_escalation_state(channel_id)
@@ -3800,11 +4023,14 @@ class EgressDaemon:
         switched off.
 
         Past ``_FREEZE_ESCALATION_RESTART_BUDGET`` restarts in the rolling hour
-        the channel is reported and NOT restarted again.
+        the channel moves to its fallback slate through the cooldown, then gets
+        one program retry after the latest restart ages out.
         """
         state.restarted_at = [
             at for at in state.restarted_at if at > now - _FREEZE_ESCALATION_BUDGET_WINDOW_S
         ]
+        if self._quality_guard_deferred(channel_id):
+            return
         detail = (
             f"channel {channel_id}: the HLS live window is still frozen {frozen:.1f}s after "
             f"the relay self-heal replaced its ffmpeg child, so the self-heal did not "
@@ -3818,11 +4044,16 @@ class EgressDaemon:
                 state.last_exhausted_log_at = now
                 _LOG.critical(
                     "%s. Freeze escalation budget exhausted (%d worker restarts already "
-                    "spent in the last hour): NOT restarting the worker again. The window is "
-                    "still frozen after replacement workers, so this needs an operator -- "
-                    "check the channel's source program and the relay child's own output.",
+                    "spent in the last hour): moving to the fallback slate for a bounded "
+                    "cooldown before one program retry.",
                     detail,
                     len(state.restarted_at),
+                )
+                self._begin_quality_recovery(
+                    channel_id,
+                    restarted_at=state.restarted_at,
+                    now=now,
+                    detail="frozen HLS output after relay self-heal",
                 )
             return
         state.restarted_at.append(now)
@@ -3943,7 +4174,6 @@ class EgressDaemon:
         self._processes.pop(channel_id, None)
         self._started_at.pop(channel_id, None)
         self._on_air_confirmed_at.pop(channel_id, None)
-        self._stderr_spawn_offset.pop(channel_id, None)
         was_draining = channel_id in self._draining_channels
         self._draining_channels.discard(channel_id)
         # A deliberate filler kill (issue #157) exits non-zero on real
@@ -6574,6 +6804,7 @@ class EgressDaemon:
 
     def _drain(self, channel_id: str) -> None:
         self._cancel_preparation(channel_id)
+        self._clear_quality_recovery(channel_id, clear_slate=True)
         process = self._processes.get(channel_id)
         if process is None:
             self._close_as_run(channel_id)  # nothing on air to drain — close any open row
@@ -6617,6 +6848,7 @@ class EgressDaemon:
 
     def _stop(self, channel_id: str, *, draining: bool) -> None:
         self._cancel_preparation(channel_id)
+        self._clear_quality_recovery(channel_id, clear_slate=True)
         # Item 78 fix 3 (coordinator review, round 3): the channel is coming
         # off air (or draining toward it) -- any rollover plan_end automation
         # recorded for an in-flight content-reload attempt is moot now (there
@@ -6628,6 +6860,7 @@ class EgressDaemon:
         self._started_at.pop(channel_id, None)
         self._on_air_confirmed_at.pop(channel_id, None)
         self._stderr_spawn_offset.pop(channel_id, None)
+        self._stderr_spawn_identity.pop(channel_id, None)
         # Operator stop -- clear crash back-off AND the slate-EOS relaunch
         # counter (round-2 hostile review, item 4).
         self._reset_restart_tracking(channel_id, slate_eos_relaunches=True)
@@ -7047,6 +7280,16 @@ def _stderr_log_size(path: Path) -> int:
         return path.stat().st_size
     except OSError:
         return 0
+
+
+def _stderr_log_identity(path: Path) -> tuple[int, int] | None:
+    """File identity for append-log generation tracking across rotation."""
+
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_dev, stat.st_ino
 
 
 class _PollableProcess(Protocol):

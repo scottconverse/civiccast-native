@@ -42,7 +42,8 @@ import logging
 import time
 import uuid
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
+from datetime import time as wall_time
 from typing import Any, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,6 +62,7 @@ from civiccast.recording.store import (
     RecordingScheduleNotFoundError,
     RecordingStore,
 )
+from civiccast.timezones import resolve_wall_clock
 
 logger = logging.getLogger(__name__)
 
@@ -331,6 +333,7 @@ class RecordingService:
         clock: Callable[[], datetime] | None = None,
         arm_lead: timedelta = DEFAULT_ARM_LEAD,
         max_jobs_per_tick: int = DEFAULT_MAX_JOBS_PER_TICK,
+        tz: tzinfo | Callable[[], tzinfo] = UTC,
     ) -> None:
         self._store = store
         self._pipeline = capture_pipeline
@@ -338,6 +341,7 @@ class RecordingService:
         self._alert_sink = alert_sink
         self._clock = clock or _utcnow
         self._arm_lead = arm_lead
+        self._tz = tz
         # E-5 fix: cap is explicit and configurable; exceeding it logs +
         # alerts rather than silently truncating.
         self._max_jobs_per_tick = max_jobs_per_tick
@@ -394,7 +398,7 @@ class RecordingService:
             )
         # The materializer compares (schedule_id, planned_start) — a
         # one-shot's start is exact; a weekly's materialized start is
-        # the UTC-midnight + time_hhmm of the target day. We compare
+        # the station-local wall clock converted to UTC. We compare
         # by epoch seconds (timezone-aware) to avoid tz-naive surprises
         # against SQLite's date storage.
         taken: set[tuple[str, float]] = {
@@ -403,14 +407,48 @@ class RecordingService:
             if job.schedule_id is not None
         }
         created: list[RecordingJob] = []
+        tz = self._current_tz()
         for schedule in schedules:
-            for planned_start in _materialize_starts(schedule.recurrence, now, deadline):
+            station_weekly = (
+                schedule.recurrence.kind == "weekly" and schedule.recurrence.time_zone == "station"
+            )
+            # New station-time jobs encode their logical local day in a
+            # deterministic id. Existing legacy ids are UTC occurrences.
+            protected_through = max(
+                (
+                    max(
+                        _recording_occurrence_day(job),
+                        job.planned_start.astimezone(tz if station_weekly else UTC).date(),
+                    )
+                    for job in existing_jobs
+                    if job.schedule_id == schedule.schedule_id
+                ),
+                default=None,
+            )
+            for planned_start in _materialize_starts(schedule.recurrence, now, deadline, tz=tz):
                 key = (schedule.schedule_id, planned_start.timestamp())
                 if key in taken:
                     continue
+                day = planned_start.astimezone(tz).date()
+                recurrence_day = day if station_weekly else planned_start.astimezone(UTC).date()
+                if (
+                    schedule.recurrence.kind == "weekly"
+                    and protected_through is not None
+                    and recurrence_day <= protected_through
+                ):
+                    continue
                 planned_end = planned_start + timedelta(seconds=schedule.duration_seconds)
+                job_id = (
+                    _job_id_for(
+                        schedule.schedule_id,
+                        datetime.combine(day, wall_time(), UTC),
+                        prefix="jobday",
+                    )
+                    if station_weekly
+                    else _job_id_for(schedule.schedule_id, planned_start)
+                )
                 job = RecordingJob(
-                    job_id=_job_id_for(schedule.schedule_id, planned_start),
+                    job_id=job_id,
                     station_id=schedule.station_id,
                     schedule_id=schedule.schedule_id,
                     planned_start=planned_start,
@@ -1152,6 +1190,9 @@ class RecordingService:
             raise RecordingJobNotFoundError(f"Recording job {job_id!r} not found.")
         return job
 
+    def _current_tz(self) -> tzinfo:
+        return self._tz() if callable(self._tz) else self._tz
+
     def _require_pipeline(self, op: str) -> CapturePipelineProtocol:
         if self._pipeline is None:
             raise RecordingPipelineUnwiredError(
@@ -1304,25 +1345,30 @@ def _materialize_starts(
     recurrence: RecurrenceSpec,
     now: datetime,
     deadline: datetime,
+    *,
+    tz: tzinfo = UTC,
 ) -> list[datetime]:
-    """Return the start timestamps of ``recurrence`` that fall inside
-    ``[now, deadline]``. UTC throughout.
+    """Return UTC starts for ``recurrence`` inside ``[now, deadline]``.
 
     * ``one_shot`` produces at most one element (its ``start``), and
       only if it's in-window. Past one-shots are filtered out so a
       historical schedule doesn't re-materialize on every tick.
-    * ``weekly`` walks day-by-day from ``now`` (UTC) to ``deadline``
-      and yields the time-of-day (``time_hhmm`` parsed as UTC) on each
-      matching weekday.
+    * ``weekly`` repeats ``time_hhmm`` on matching calendar dates in its
+      `time_zone` (legacy/default UTC or the dynamic station timezone).
+      Nonexistent spring-forward clocks are skipped; repeated fall-back
+      clocks use the earlier fold once.
     """
     if recurrence.kind == "one_shot":
         start = recurrence.start
         if start is None:
             return []
         # Ensure tz-aware comparison.
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=UTC)
-        if now <= start <= deadline:
+        start = start.replace(tzinfo=UTC) if start.tzinfo is None else start.astimezone(UTC)
+        now_utc = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
+        deadline_utc = (
+            deadline.replace(tzinfo=UTC) if deadline.tzinfo is None else deadline.astimezone(UTC)
+        )
+        if now_utc <= start <= deadline_utc:
             return [start]
         return []
 
@@ -1330,20 +1376,35 @@ def _materialize_starts(
     weekdays = set(recurrence.weekdays)
     if not weekdays or not recurrence.time_hhmm:
         return []
-    hour = int(recurrence.time_hhmm[:2])
-    minute = int(recurrence.time_hhmm[3:])
-    # Walk day-by-day from now's calendar date through deadline's; for
-    # each matching weekday, the start is that day's hour/minute in UTC.
+    hour, minute = (int(value) for value in recurrence.time_hhmm.split(":"))
+    recurrence_tz = tz if recurrence.time_zone == "station" else UTC
+    # Walk station-local dates through the horizon so a recurring capture
+    # stays at the selected wall clock when DST changes its UTC offset.
     starts: list[datetime] = []
-    cursor = datetime(now.year, now.month, now.day, tzinfo=UTC)
-    end_day = datetime(deadline.year, deadline.month, deadline.day, tzinfo=UTC)
+    now_utc = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
+    deadline_utc = (
+        deadline.replace(tzinfo=UTC) if deadline.tzinfo is None else deadline.astimezone(UTC)
+    )
+    cursor = now_utc.astimezone(recurrence_tz).date()
+    end_day = deadline_utc.astimezone(recurrence_tz).date()
     while cursor <= end_day:
         if cursor.weekday() in weekdays:
-            candidate = cursor.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            if now <= candidate <= deadline:
-                starts.append(candidate)
-        cursor = cursor + timedelta(days=1)
+            local_candidate = resolve_wall_clock(cursor, wall_time(hour, minute), recurrence_tz)
+            if local_candidate is not None:
+                candidate = local_candidate.astimezone(UTC)
+                if now_utc <= candidate <= deadline_utc:
+                    starts.append(candidate)
+        cursor += timedelta(days=1)
     return starts
+
+
+def _recording_occurrence_day(job: RecordingJob) -> date:
+    if job.job_id.startswith("jobday-"):
+        try:
+            return datetime.strptime(job.job_id.rsplit("-", 1)[-1], "%Y%m%dt%H%M%Sz").date()
+        except ValueError:
+            pass
+    return job.planned_start.astimezone(UTC).date()
 
 
 def _job_id_for(

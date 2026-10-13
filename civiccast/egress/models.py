@@ -288,6 +288,13 @@ class EgressCommandDb(Base):
 
     __tablename__ = "egress_commands"
     __table_args__ = (
+        Index(
+            "ix_egress_commands_channel_consumed_issued",
+            "channel_id",
+            "consumed_at",
+            "issued_at",
+            "command_id",
+        ),
         CheckConstraint(
             "action IN ('start', 'stop', 'reload', 'drain', 'takeover', 'handback')",
             name="egress_commands_action_check",

@@ -28,10 +28,11 @@ vi.mock('../../api/client', () => ({
     }
   },
   createProgramSlot: vi.fn(),
+  getStationProfile: vi.fn(),
   listStaffAssets: vi.fn(),
 }))
 
-import { createProgramSlot, listStaffAssets } from '../../api/client'
+import { createProgramSlot, getStationProfile, listStaffAssets } from '../../api/client'
 import { ProgramSlotDrawer } from './ProgramSlotDrawer'
 
 const validatedAsset: AssetRow = {
@@ -56,6 +57,7 @@ function renderDrawer() {
 }
 
 async function drawerWithAssets() {
+  vi.mocked(getStationProfile).mockResolvedValue({ station_timezone: 'America/Denver' } as never)
   vi.mocked(listStaffAssets).mockResolvedValue([validatedAsset])
   const view = renderDrawer()
   await waitFor(() =>
@@ -111,6 +113,16 @@ describe('ProgramSlotDrawer unparseable first-airing date', () => {
     expect(createProgramSlot).not.toHaveBeenCalled()
   })
 
+  it('rejects a first airing in the station spring-forward gap', async () => {
+    const view = await drawerWithAssets()
+    vi.mocked(createProgramSlot).mockClear()
+    const { firstAiring } = dateInputs(view)
+    fireEvent.change(firstAiring, { target: { value: '2026-03-08T02:30' } })
+    expect(view.getByText(/does not exist during a spring clock change/i)).toBeTruthy()
+    expect((view.getByRole('button', { name: /Add to guide/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect(createProgramSlot).not.toHaveBeenCalled()
+  })
+
   it('clears the inline error and re-enables submit once a valid date is entered again', async () => {
     const view = await drawerWithAssets()
     const { firstAiring } = dateInputs(view)
@@ -141,7 +153,7 @@ describe('ProgramSlotDrawer unparseable repeat-until date', () => {
     await waitFor(() => expect(submit.disabled).toBe(false))
     expect(
       view.queryByText(
-        'The repeat-until date could not be read. Re-enter it.',
+        /station-local date and time does not exist/i,
       ),
     ).toBeNull()
   })
@@ -163,7 +175,7 @@ describe('ProgramSlotDrawer unparseable repeat-until date', () => {
     }) as HTMLButtonElement
     await waitFor(() => expect(submit.disabled).toBe(true))
     expect(
-      view.getByText('The repeat-until date could not be read. Re-enter it.'),
+      view.getByText(/station-local date and time does not exist or could not be read/i),
     ).toBeTruthy()
     expect(repeatUntil.getAttribute('aria-invalid')).toBe('true')
     expect(repeatUntil.getAttribute('aria-describedby')).toBeTruthy()
@@ -218,7 +230,10 @@ describe('ProgramSlotDrawer unparseable repeat-until date', () => {
     fireEvent.click(submit)
 
     await waitFor(() => expect(createProgramSlot).toHaveBeenCalledTimes(1))
-    const sent = vi.mocked(createProgramSlot).mock.calls[0][0].repeat_until
+    const payload = vi.mocked(createProgramSlot).mock.calls[0][0]
+    expect(payload.first_start_at).toBe('2026-08-20T18:00:00.000Z')
+    expect(payload.repeat_until).toBe('2026-09-20T18:00:00.000Z')
+    const sent = payload.repeat_until
     expect(Number.isNaN(new Date(sent as string).getTime())).toBe(false)
   })
 })

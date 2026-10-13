@@ -6,6 +6,7 @@ import {
   type EgressCommandAction,
   type EgressHealthSample,
   type EgressSchemaCurrency,
+  type EgressStorageStatus,
   type EgressStateRow,
   configureRollbackArtifact,
   createSupportBundle,
@@ -13,6 +14,7 @@ import {
   getEgressHealth,
   getEgressSchemaCurrency,
   getEgressState,
+  getEgressStorageStatus,
   getRuntimeSafeToAir,
   getStaffIdentity,
   getStationProfile,
@@ -32,7 +34,7 @@ import {
   runUpdatePreflight,
   startFirstBroadcastRehearsal,
 } from '../api/client'
-import { hasOperatorRole } from '../auth/roles'
+import { canViewEgressStorage, hasOperatorRole } from '../auth/roles'
 import { ConfirmDialog, type PendingConfirm } from '../components/ConfirmDialog'
 import { humanizeDuration } from '../format'
 import { feedCommandConfirmCopy } from './feed-command-confirm'
@@ -662,6 +664,65 @@ export function SchemaBadge({ schema }: { schema: EgressSchemaCurrency | undefin
 
 function formatMeasured(value: number | null | undefined, unit: string): string {
   return value == null ? 'Not measured yet' : `${value} ${unit}`
+}
+
+function formatStorageBytes(value: number | null): string {
+  if (value == null) return 'Not reported'
+  if (value < 1024) return `${value} bytes`
+  const units = ['KiB', 'MiB', 'GiB', 'TiB']
+  let scaled = value / 1024
+  let unitIndex = 0
+  while (scaled >= 1024 && unitIndex < units.length - 1) {
+    scaled /= 1024
+    unitIndex += 1
+  }
+  return `${scaled.toFixed(1)} ${units[unitIndex]}`
+}
+
+export function EgressStoragePanel({
+  status,
+  loading,
+  error,
+}: {
+  status: EgressStorageStatus | undefined
+  loading: boolean
+  error: unknown
+}) {
+  return (
+    <section
+      className="grid gap-3 rounded-md p-4"
+      style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)' }}
+    >
+      <div>
+        <h2 className="m-0 text-base font-semibold">Egress storage</h2>
+        <p className="m-0 mt-1 text-xs" style={{ color: 'var(--cc-ink-3)' }}>
+          Worker logs rotate at 10 MiB with 10 backups per stream. Consumed command history is
+          pruned in batches; pending commands are retained.
+        </p>
+      </div>
+      {loading && <div className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>Checking storage…</div>}
+      {Boolean(error) && (
+        <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+          {apiMessage(error, 'Egress storage status could not load.')}
+        </div>
+      )}
+      {status && (
+        <>
+          {status.low_disk_warning === true && (
+            <div role="alert" className="rounded-md p-3 text-xs" style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink)' }}>
+              Low disk space on the egress work volume: {formatStorageBytes(status.work_volume_free_bytes)} free; warning threshold {formatStorageBytes(status.low_disk_threshold_bytes)}. Worker output continues draining if a log write fails.
+            </div>
+          )}
+          <dl className="m-0 grid gap-2 text-xs sm:grid-cols-2">
+            <div><dt style={{ color: 'var(--cc-ink-3)' }}>Worker log files</dt><dd className="m-0">{status.worker_log_file_count} · {formatStorageBytes(status.worker_log_bytes)}</dd></div>
+            <div><dt style={{ color: 'var(--cc-ink-3)' }}>Command history</dt><dd className="m-0">{status.command_history_rows} rows · {formatStorageBytes(status.command_table_bytes)}</dd></div>
+            <div><dt style={{ color: 'var(--cc-ink-3)' }}>Pending commands</dt><dd className="m-0">{status.pending_commands}</dd></div>
+            <div><dt style={{ color: 'var(--cc-ink-3)' }}>Work volume free</dt><dd className="m-0">{formatStorageBytes(status.work_volume_free_bytes)}</dd></div>
+          </dl>
+        </>
+      )}
+    </section>
+  )
 }
 
 export function EgressReadinessPanel({
@@ -1427,6 +1488,15 @@ export function SystemHealthScreen() {
     queryFn: getStaffIdentity,
     retry: false,
   })
+  const canViewStorage =
+    staffIdentityQuery.isSuccess && canViewEgressStorage(staffIdentityQuery.data)
+  const egressStorageQuery = useQuery({
+    queryKey: ['system-health-egress-storage'],
+    queryFn: getEgressStorageStatus,
+    retry: false,
+    refetchInterval: 60_000,
+    enabled: canViewStorage,
+  })
   // The live-captions switch, so the per-channel "Captions" row can say
   // "off" instead of "not yet confirmed" when the operator switched it off.
   // 404 before first-admin setup is fine: undefined keeps the fail-closed copy.
@@ -1657,6 +1727,14 @@ export function SystemHealthScreen() {
               })
             }}
           />
+
+          {canViewStorage && (
+            <EgressStoragePanel
+              status={egressStorageQuery.data}
+              loading={egressStorageQuery.isLoading}
+              error={egressStorageQuery.error}
+            />
+          )}
 
           <GstreamerRepairPanel
             result={gstreamerRepair.data}

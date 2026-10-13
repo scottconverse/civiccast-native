@@ -17,3 +17,11 @@ export function hasOperatorRole(
 ): boolean {
   return identity?.roles?.includes(role) ?? false
 }
+
+export function canViewEgressStorage(identity: StaffIdentityResponse | undefined): boolean {
+  return (
+    hasOperatorRole(identity, 'setup_admin') ||
+    hasOperatorRole(identity, 'support_admin') ||
+    hasOperatorRole(identity, 'meeting_operator')
+  )
+}

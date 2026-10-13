@@ -44,9 +44,12 @@ makes the two-write non-atomicity safe — a re-run re-stamps and adds nothing).
 
 from __future__ import annotations
 
+import json
 import logging
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta, tzinfo
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Literal
 
 from sqlalchemy import select
@@ -74,6 +77,7 @@ _MIN_DURATION_SECONDS = 1
 _MAX_DURATION_SECONDS = 1_209_600  # 14 days
 
 _LOG = logging.getLogger(__name__)
+COMPILE_LOCK = threading.RLock()
 
 # Upper bound on enabled rules compiled per run (matches the store's list cap).
 # A station with more rules than this would otherwise truncate silently; we log
@@ -166,6 +170,65 @@ def _seed_occupied(
     return [(_ensure_utc(start), _ensure_utc(end)) for start, end in session.execute(stmt)]
 
 
+_PROVENANCE_PREFIX = "auto-schedule:"
+
+
+def _protected_through(
+    session: Session, rule: AutoScheduleRule, block: ScheduleBlock, tz: tzinfo
+) -> date | None:
+    """Preserve the generated calendar horizon across station timezone edits.
+
+    Notes carry ownership/date for new rows. Pre-station-time compiles wrote
+    UTC rows without ownership; matching published UTC block starts are kept
+    conservatively, including a manual placement at that same start.
+    """
+    days: list[date] = []
+    notes = session.execute(
+        select(ScheduleItem.notes, ScheduleItem.scheduled_at).where(
+            ScheduleItem.channel_id == rule.channel_id,
+            ScheduleItem.notes.startswith(_PROVENANCE_PREFIX),
+        )
+    )
+    for note, start in notes:
+        if note is None:
+            continue
+        try:
+            provenance = json.loads(note[len(_PROVENANCE_PREFIX) :])
+            if provenance["rule_id"] == rule.rule_id:
+                days.append(
+                    max(
+                        date.fromisoformat(provenance["day"]),
+                        _ensure_utc(start).astimezone(tz).date(),
+                    )
+                )
+        except (ValueError, KeyError, TypeError):
+            continue
+    if rule.last_materialized_at is not None:
+        legacy_slots = expand_block_slots(
+            block,
+            start_date=_ensure_utc(rule.last_materialized_at).astimezone(UTC).date(),
+            num_days=rule.rolling_window_days,
+            tz=UTC,
+        )
+        if legacy_slots:
+            expected = {slot.starts_at for slot in legacy_slots}
+            starts = session.scalars(
+                select(ScheduleItem.scheduled_at).where(
+                    ScheduleItem.channel_id == rule.channel_id,
+                    ScheduleItem.notes.is_(None),
+                    ScheduleItem.state == SCHEDULE_STATE_PUBLISHED,
+                    ScheduleItem.scheduled_at >= legacy_slots[0].starts_at,
+                    ScheduleItem.scheduled_at <= legacy_slots[-1].starts_at,
+                )
+            )
+            days.extend(
+                max(_ensure_utc(start).date(), _ensure_utc(start).astimezone(tz).date())
+                for start in starts
+                if _ensure_utc(start) in expected
+            )
+    return max(days, default=None)
+
+
 def plan_rule_slots(
     session: Session,
     *,
@@ -187,13 +250,17 @@ def plan_rule_slots(
     write loop can observe).
     """
     slots = expand_block_slots(
-        block, start_date=now.date(), num_days=rule.rolling_window_days, tz=tz
+        block,
+        start_date=now.astimezone(tz).date(),
+        num_days=rule.rolling_window_days,
+        tz=tz,
     )
     if not slots:
         return []
 
     horizon_start, horizon_end = slots[0].starts_at, slots[-1].ends_at
     occupied = _seed_occupied(session, rule.channel_id, horizon_start, horizon_end)
+    protected_through = _protected_through(session, rule, block, tz)
     # Repeat-prevention is a coarse, horizon-relative window ([start-N, end+N]),
     # not precise per-slot N-day spacing — intentional (step-6 audit ENG-003): the
     # in-run dedup below + the DB window across runs prevent a within-N-days
@@ -209,7 +276,9 @@ def plan_rule_slots(
     decisions: list[SlotDecision] = []
 
     for slot in slots:
-        if _overlaps(occupied, slot.starts_at, slot.ends_at):
+        if (
+            protected_through is not None and slot.starts_at.date() <= protected_through
+        ) or _overlaps(occupied, slot.starts_at, slot.ends_at):
             decisions.append(SlotDecision(slot.starts_at, slot.ends_at, "occupied"))
             continue
         asset = pick_asset(
@@ -295,6 +364,14 @@ def _materialize_rule(
             scheduled_at=scheduled_at,
             scheduled_at_end=scheduled_at + timedelta(seconds=decision.duration_seconds),
             duration_seconds=decision.duration_seconds,
+            notes=_PROVENANCE_PREFIX
+            + json.dumps(
+                {
+                    "rule_id": rule.rule_id,
+                    "day": decision.starts_at.date().isoformat(),
+                },
+                separators=(",", ":"),
+            ),
         )
         try:
             with session.begin_nested():
@@ -322,6 +399,20 @@ def compile_rules(
     autoschedule_store: AutoScheduleStore,
     *,
     now: datetime,
+    tz: tzinfo | Callable[[], tzinfo] = UTC,
+    rng: object | None = None,
+) -> MaterializeReport:
+    """Serialize API/background compiles through all per-rule commits."""
+    with COMPILE_LOCK:
+        resolved_tz = tz() if callable(tz) else tz
+        return _compile_rules(session, autoschedule_store, now=now, tz=resolved_tz, rng=rng)
+
+
+def _compile_rules(
+    session: Session,
+    autoschedule_store: AutoScheduleStore,
+    *,
+    now: datetime,
     tz: tzinfo = UTC,
     rng: object | None = None,
 ) -> MaterializeReport:
@@ -330,7 +421,7 @@ def compile_rules(
     ``session`` is the materializer's write/read session (committed per rule).
     ``autoschedule_store`` loads the rules / searches / blocks and stamps
     ``last_materialized_at``. ``now`` is the injected clock (slot expansion
-    anchors on ``now.date()``); ``tz`` is the station's wall-clock zone (default
+    anchors on its date in ``tz``); ``tz`` is the station's wall-clock zone (default
     UTC — see the planner's timezone note); ``rng`` is an optional
     ``random.Random`` for deterministic ``random_result`` picks in tests.
     """

@@ -11,6 +11,7 @@ DST shifts (station-local-time recurrence is an explicit later feature).
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 from civiccast.programlog.models import ProgramSlot
 from civiccast.programlog.occurrences import compute_occurrences
@@ -149,3 +150,56 @@ class TestComputeOccurrences:
             window_end=datetime(2026, 6, 13, 0, 0, tzinfo=UTC),
         )
         assert result == [datetime(2026, 6, 12, 0, 0, tzinfo=UTC)]
+
+    def test_weekly_occurrence_keeps_station_wall_clock_across_dst(self) -> None:
+        station_tz = ZoneInfo("America/Denver")
+        first = datetime(2026, 3, 1, 19, 0, tzinfo=station_tz).astimezone(UTC)
+        slot = _slot(recurrence="weekly", first_start_at=first)
+
+        result = compute_occurrences(
+            slot,
+            window_start=datetime(2026, 3, 1, tzinfo=UTC),
+            window_end=datetime(2026, 3, 17, tzinfo=UTC),
+            tz=station_tz,
+        )
+
+        assert result == [
+            datetime(2026, 3, 2, 2, 0, tzinfo=UTC),
+            datetime(2026, 3, 9, 1, 0, tzinfo=UTC),
+            datetime(2026, 3, 16, 1, 0, tzinfo=UTC),
+        ]
+
+    def test_nonexistent_spring_forward_occurrence_is_skipped(self) -> None:
+        station_tz = ZoneInfo("America/Denver")
+        first = datetime(2026, 3, 1, 2, 30, tzinfo=station_tz).astimezone(UTC)
+        slot = _slot(recurrence="weekly", first_start_at=first)
+
+        result = compute_occurrences(
+            slot,
+            window_start=datetime(2026, 3, 1, tzinfo=UTC),
+            window_end=datetime(2026, 3, 16, tzinfo=UTC),
+            tz=station_tz,
+        )
+
+        assert result == [
+            datetime(2026, 3, 1, 9, 30, tzinfo=UTC),
+            datetime(2026, 3, 15, 8, 30, tzinfo=UTC),
+        ]
+
+    def test_repeated_fall_back_occurrence_uses_earlier_fold_once(self) -> None:
+        station_tz = ZoneInfo("America/Denver")
+        first = datetime(2026, 10, 25, 1, 30, tzinfo=station_tz).astimezone(UTC)
+        slot = _slot(recurrence="weekly", first_start_at=first)
+
+        result = compute_occurrences(
+            slot,
+            window_start=datetime(2026, 10, 25, tzinfo=UTC),
+            window_end=datetime(2026, 11, 9, tzinfo=UTC),
+            tz=station_tz,
+        )
+
+        assert result == [
+            datetime(2026, 10, 25, 7, 30, tzinfo=UTC),
+            datetime(2026, 11, 1, 7, 30, tzinfo=UTC),
+            datetime(2026, 11, 8, 8, 30, tzinfo=UTC),
+        ]

@@ -3,10 +3,17 @@ import { useQuery } from '@tanstack/react-query'
 import {
   ApiError,
   createSchedule,
+  getStationProfile,
   listChannelProfiles,
   listStaffAssets,
 } from '../../api/client'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
+import {
+  dateToStationDateTimeLocal,
+  effectiveStationTimeZone,
+  formatStationInstant,
+  stationWallClockToDate,
+} from '../../lib/station-time'
 import { RadioCardGroup } from '../RadioCardGroup'
 import type {
   ScheduleConflictDetail,
@@ -29,36 +36,24 @@ interface Props {
 // severed schedule→air: programs were written to channel ids the commit
 // panel could never see (clean-VM gauntlet finding F-RC3-6).
 
-// Returns null rather than throwing when the field is empty or the browser
-// hands back a value Date cannot parse. `toISOString()` on an Invalid Date
-// raises RangeError, and this used to be called while building the request
-// payload OUTSIDE the submit try/catch — so a cleared date field made the
-// Schedule button do nothing at all, with no error shown to the operator.
-function localIsoToUtcIso(localIso: string): string | null {
-  // Browser parses naive ISO as local time. Add tz suffix from the Date.
-  const d = new Date(localIso)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toISOString()
-}
-
-function defaultStartLocal(): string {
-  const d = new Date()
-  d.setMinutes(0, 0, 0)
-  d.setHours(d.getHours() + 1)
-  // Format YYYY-MM-DDTHH:mm in local time for <input type="datetime-local">
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function fmtClientTimezone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone
+function defaultStartLocal(timeZone: string): string {
+  const nextHour = new Date((Math.floor(Date.now() / 3_600_000) + 1) * 3_600_000)
+  return dateToStationDateTimeLocal(nextHour, timeZone)
 }
 
 export function ScheduleDrawer({ onClose, onCreated }: Props) {
+  const stationProfileQuery = useQuery({
+    queryKey: ['station-profile'],
+    queryFn: getStationProfile,
+    retry: false,
+  })
+  const timeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)
+  const defaultStart = useMemo(() => defaultStartLocal(timeZone), [timeZone])
   const [mode, setMode] = useState<ScheduleMode>('premiere')
   const [assetId, setAssetId] = useState<string>('')
   const [channelId, setChannelId] = useState<string>('')
-  const [startLocal, setStartLocal] = useState<string>(() => defaultStartLocal())
+  const [startLocalOverride, setStartLocalOverride] = useState<string | null>(null)
+  const startLocal = startLocalOverride ?? defaultStart
   const [durationMinutes, setDurationMinutes] = useState<number>(60)
   const [notes, setNotes] = useState<string>('')
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -116,9 +111,12 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
   }, [onClose])
 
   const requiresDuration = mode !== 'embargo'
-  const startAtUtc = localIsoToUtcIso(startLocal)
+  const startInstant = stationWallClockToDate(startLocal, timeZone)
+  const startAtUtc = startInstant?.toISOString() ?? null
   const submitDisabled =
     submitting ||
+    stationProfileQuery.isLoading ||
+    stationProfileQuery.isError ||
     !effectiveAssetId ||
     !effectiveChannelId ||
     startAtUtc === null ||
@@ -127,6 +125,10 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
   const handleSubmit = async () => {
     setSubmitError(null)
     setConflictItem(null)
+    if (stationProfileQuery.isLoading || stationProfileQuery.isError) {
+      setSubmitError('Could not load the station timezone. Close this drawer and retry after the station profile is available.')
+      return
+    }
     if (startAtUtc === null) {
       setSubmitError(
         mode === 'embargo'
@@ -166,19 +168,15 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
     }
   }
 
-  const tz = fmtClientTimezone()
-  const startPreview = (() => {
-    if (!startLocal) return ''
-    const d = new Date(startLocal)
-    if (Number.isNaN(d.getTime())) return ''
-    return d.toLocaleString(undefined, {
+  const startPreview = startInstant
+    ? formatStationInstant(startInstant, timeZone, {
       weekday: 'short',
       month: 'short',
       day: 'numeric',
       hour: 'numeric',
       minute: '2-digit',
     })
-  })()
+    : ''
 
   return (
     <div
@@ -350,12 +348,14 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
                 className="mb-1 block text-[10px] font-semibold uppercase tracking-wider"
                 style={{ color: 'var(--cc-ink-3)' }}
               >
-                {mode === 'embargo' ? 'Release at' : 'Start at'}
+              {mode === 'embargo' ? 'Release at' : 'Start at'} (station time: {timeZone})
               </span>
               <input
                 type="datetime-local"
                 value={startLocal}
-                onChange={(e) => setStartLocal(e.target.value)}
+                onChange={(e) => {
+                  setStartLocalOverride(e.target.value)
+                }}
                 aria-invalid={startAtUtc === null}
                 aria-describedby={startAtUtc === null ? startErrorId : undefined}
                 className="cc-mono w-full rounded-md px-3 py-2 text-sm"
@@ -373,7 +373,9 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
                   className="mt-1 block text-xs"
                   style={{ color: 'var(--cc-danger, var(--cc-ink-2))' }}
                 >
-                  Enter a date and time to schedule this.
+                  {startLocal
+                    ? `That station time does not exist during the spring clock change, or the value is invalid. Choose another time in ${timeZone}.`
+                    : 'Enter a date and time to schedule this.'}
                 </span>
               )}
             </label>
@@ -409,7 +411,13 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
               className="mb-3 rounded-md p-2 text-[11px]"
               style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
             >
-              {startPreview} <span className="cc-mono">({tz})</span>
+              {startPreview} <span className="cc-mono">({timeZone})</span>
+            </div>
+          )}
+
+          {stationProfileQuery.isError && (
+            <div role="alert" className="mb-3 rounded-md p-2 text-[11px]" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+              Could not load the station timezone. Close this drawer and retry after the station profile is available.
             </div>
           )}
 
@@ -417,10 +425,8 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
             className="mb-3 rounded-md p-2 text-[11px]"
             style={{ background: 'var(--cc-warn-soft)', color: 'var(--cc-ink-2)' }}
           >
-            <strong style={{ color: 'var(--cc-ink)' }}>Timezone check:</strong>{' '}
-            this time is saved from the browser timezone shown above. During
-            daylight-saving changes, confirm the local meeting time against the
-            station calendar before creating the schedule item.
+            <strong style={{ color: 'var(--cc-ink)' }}>Station time ({timeZone}):</strong>{' '}
+            a time skipped by the spring clock change cannot be scheduled. A repeated fall-back time uses its earlier occurrence.
           </div>
 
           <label className="mb-3 block">
@@ -464,6 +470,7 @@ export function ScheduleDrawer({ onClose, onCreated }: Props) {
                 {new Date(
                   conflictItem.conflicting_item.scheduled_at,
                 ).toLocaleString(undefined, {
+                  timeZone,
                   hour: 'numeric',
                   minute: '2-digit',
                   month: 'short',

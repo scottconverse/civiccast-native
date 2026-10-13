@@ -8,16 +8,18 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
 import civiccast.egress.models
+import civiccast.egress.store as egress_store_module
 import civiccast.schedule.models  # noqa: F401
 from civiccast.db import Base, bind_engine, reset_engine
 from civiccast.egress.models import (
     EgressCaptionProofSample,
     EgressCommand,
+    EgressCommandDb,
     EgressConfig,
     EgressHealthSample,
     EgressProofEvent,
@@ -69,6 +71,53 @@ def _config(*, channel_id: str = "gov", uri: str = "srt://headend.example:9000")
             )
         ],
     )
+
+
+def test_command_history_prunes_in_indexed_batches_on_idle_runtime_poll(
+    store: PostgresEgressStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(egress_store_module, "MAX_COMMAND_HISTORY_PER_CHANNEL", 2)
+    monkeypatch.setattr(egress_store_module, "COMMAND_HISTORY_TRIM_BATCH_SIZE", 1)
+    now = datetime.now(UTC)
+    store.enqueue_commands(
+        [
+            EgressCommand(
+                channel_id="gov",
+                action="start",
+                issued_at=now + timedelta(seconds=index),
+                issued_by="test",
+                command_id=f"consumed-{index}",
+            )
+            for index in range(4)
+        ]
+        + [
+            EgressCommand(
+                channel_id="other",
+                action="start",
+                issued_at=now,
+                issued_by="test",
+                command_id="still-pending",
+            )
+        ]
+    )
+
+    drained = store.pop_pending_commands("gov")
+    assert len(drained) == 4
+    # The first pass removes only one old consumed row even though two are over
+    # the cap. A later regular daemon poll reaps the remaining excess without
+    # needing a new command, and never touches another channel's pending intent.
+    first_pass = store.command_storage_usage()
+    assert first_pass == {"row_count": 4, "pending_count": 1, "storage_bytes": None}
+    assert store.pop_pending_commands("gov") == []
+    after_idle_poll = store.command_storage_usage()
+    assert after_idle_poll == {"row_count": 3, "pending_count": 1, "storage_bytes": None}
+
+    with store._session_factory() as session:
+        pending = session.execute(
+            select(EgressCommandDb.command_id).where(EgressCommandDb.command_id == "still-pending")
+        ).scalar_one()
+    assert pending == "still-pending"
 
 
 def test_postgres_egress_store_upserts_config_and_replaces_sinks(

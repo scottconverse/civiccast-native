@@ -114,6 +114,55 @@ def _slot(store: PostgresProgramLogStore, **overrides) -> ProgramSlot:  # type: 
 
 
 class TestMaterializer:
+    def test_zone_change_extends_saved_local_day_even_when_utc_date_differs(self):
+        from zoneinfo import ZoneInfo
+
+        with _sqlite_store() as store:
+            _slot(store, first_start_at=datetime(2026, 1, 1, 2, tzinfo=UTC))
+            zone = [ZoneInfo("America/Denver")]
+            materializer = ProgramLogMaterializer(
+                store,
+                _FakeScheduleStore(),
+                _FakeAssetResolver({"council-2026-06-10": 3600}),
+                settings=ProgramLogSettings(horizon_hours=72),
+                tz=lambda: zone[0],
+            )
+            original = materializer.run_once(now=_NOW)
+            assert len(original) == 3
+            assert original[-1].occurrence_start.date().isoformat() == "2026-06-15"
+            zone[0] = UTC
+            assert materializer.run_once(now=_NOW) == []
+            extended = materializer.run_once(now=_NOW + timedelta(days=1))
+            assert len(extended) == 1
+            assert extended[0].occurrence_start.date().isoformat() == "2026-06-16"
+            assert materializer.run_once(now=_NOW) == []
+
+    def test_zone_change_preserves_occurrences_through_last_calendar_day(self):
+        from zoneinfo import ZoneInfo
+
+        with _sqlite_store() as store:
+            _slot(store, first_start_at=datetime(2026, 1, 1, 19, tzinfo=UTC))
+            schedule = _FakeScheduleStore()
+            zone = [UTC]
+            materializer = ProgramLogMaterializer(
+                store,
+                schedule,
+                _FakeAssetResolver({"council-2026-06-10": 3600}),
+                settings=ProgramLogSettings(horizon_hours=72),
+                tz=lambda: zone[0],
+            )
+            now = datetime(2026, 6, 12, 6, tzinfo=UTC)
+            original = materializer.run_once(now=now)
+            zone[0] = ZoneInfo("America/Denver")
+            assert materializer.run_once(now=now) == []
+            extended = materializer.run_once(now=now + timedelta(days=1))
+            assert len(extended) == 1
+            assert (
+                extended[0].occurrence_start.astimezone(zone[0]).date().isoformat() == "2026-06-15"
+            )
+            assert store.list_occurrences(slot_id="cps_council")[:3] == original
+            assert schedule.cancelled == []
+
     def _materializer(
         self,
         store: PostgresProgramLogStore,

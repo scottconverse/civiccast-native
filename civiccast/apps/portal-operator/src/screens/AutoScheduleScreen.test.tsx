@@ -201,6 +201,7 @@ describe('RulePreviewPanel', () => {
 vi.mock('../api/client', () => ({
   ApiError: class ApiError extends Error {},
   getStaffIdentity: vi.fn(),
+  getStationProfile: vi.fn(),
   listSavedSearches: vi.fn(),
   listScheduleBlocks: vi.fn(),
   listAutoScheduleRules: vi.fn(),
@@ -217,6 +218,7 @@ vi.mock('../api/client', () => ({
 import type { StaffIdentityResponse } from '../types/api.generated'
 import {
   getStaffIdentity,
+  getStationProfile,
   listAutoScheduleRules,
   listSavedSearches,
   listScheduleBlocks,
@@ -228,6 +230,7 @@ function identity(roles: StaffIdentityResponse['roles']): StaffIdentityResponse 
 }
 
 function renderScreen() {
+  vi.mocked(getStationProfile).mockResolvedValue({ station_timezone: 'America/Denver' } as never)
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <QueryClientProvider client={client}>

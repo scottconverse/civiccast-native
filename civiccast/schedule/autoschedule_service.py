@@ -102,7 +102,7 @@ class AutoScheduleService:
         *,
         session_factory: SessionFactory | None = None,
         clock: Callable[[], datetime] | None = None,
-        tz: tzinfo = UTC,
+        tz: tzinfo | Callable[[], tzinfo] = UTC,
         rng: object | None = None,
     ) -> None:
         self._store = store
@@ -356,7 +356,7 @@ class AutoScheduleService:
                 search=search,
                 block=block,
                 now=self._clock(),
-                tz=self._tz,
+                tz=self._tz() if callable(self._tz) else self._tz,
                 rng=self._rng,
             )
         slots = [

@@ -5432,6 +5432,32 @@ def test_playout_supervisor_live_takeover_and_handback_use_explicit_live_plan(
     assert any("released live source" in summary for summary in summaries)
 
 
+def test_quality_recovery_cleanup_only_clears_its_matching_forced_slate(
+    tmp_path: Path,
+) -> None:
+    supervisor = PlayoutSupervisor(
+        InMemoryEgressStore(),
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: None,
+    )
+    supervisor._forced_slate_reasons["gov"] = "automatic quality recovery cooldown"
+    supervisor._source_lookahead["gov"] = []
+
+    assert (
+        supervisor.clear_fallback_slate(channel_id="gov", reason="a newer operator slate") is False
+    )
+    assert supervisor.has_manual_override("gov") is True
+
+    assert (
+        supervisor.clear_fallback_slate(
+            channel_id="gov", reason="automatic quality recovery cooldown"
+        )
+        is True
+    )
+    assert supervisor.has_manual_override("gov") is False
+    assert "gov" not in supervisor._source_lookahead
+
+
 def test_playout_supervisor_forces_fallback_slate_and_exits_to_schedule(
     tmp_path: Path,
 ) -> None:
@@ -6492,6 +6518,111 @@ def test_child_stderr_tail_is_ascii_folded_before_it_reaches_last_error(tmp_path
     assert "�" not in message
     message.encode("cp1252")
     assert "CTRL stall: no output for 10s" in message
+
+
+def test_child_stderr_tail_excludes_bytes_written_before_this_worker_spawned(
+    tmp_path: Path,
+) -> None:
+    store = InMemoryEgressStore()
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+    log_path = tmp_path / "gov-stderr.log"
+    old_line = "CTRL stall: stale worker failure\n"
+    log_path.write_text(old_line, encoding="utf-8")
+    daemon._stderr_logs["gov"] = log_path
+    daemon._stderr_spawn_offset["gov"] = log_path.stat().st_size
+    daemon._stderr_spawn_identity["gov"] = (
+        log_path.stat().st_dev,
+        log_path.stat().st_ino,
+    )
+    with log_path.open("a", encoding="utf-8") as stream:
+        stream.write("current worker diagnostic\n")
+
+    tail = daemon._child_stderr_tail("gov")
+
+    assert tail is not None
+    assert "current worker diagnostic" in tail
+    assert "stale worker failure" not in tail
+
+
+def test_on_air_evidence_restarts_its_offset_after_stderr_rotation(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=lambda _args: _FakeProcess(),
+    )
+    log_path = tmp_path / "gov-stderr.log"
+    log_path.write_text("x" * 700, encoding="utf-8")
+    prior_identity = (log_path.stat().st_dev, log_path.stat().st_ino)
+    daemon._stderr_logs["gov"] = log_path
+    daemon._stderr_spawn_offset["gov"] = log_path.stat().st_size
+    daemon._stderr_spawn_identity["gov"] = prior_identity
+    daemon._processes["gov"] = _FakeProcess(pid=4242)
+
+    log_path.rename(tmp_path / "gov-stderr.log.1")
+    log_path.write_text(
+        "CTRL first-output: first buffer after 0.1s pid=4242\n" + "y" * 700,
+        encoding="utf-8",
+    )
+
+    assert log_path.stat().st_size > daemon._stderr_spawn_offset["gov"]
+    assert daemon._observed_on_air_evidence("gov") is True
+
+
+def test_operator_stop_blocks_recovery_start_until_explicit_start(tmp_path: Path) -> None:
+    store = InMemoryEgressStore()
+    store.upsert_config(_config())
+    workers: list[_FakeProcess] = []
+
+    def starter(_args: list[str]) -> _FakeProcess:
+        worker = _FakeProcess(pid=5100 + len(workers))
+        workers.append(worker)
+        return worker
+
+    daemon = EgressDaemon(
+        store,
+        work_dir=tmp_path,
+        source_plan_provider=lambda _channel_id: _source_plan(tmp_path),
+        ffmpeg_starter=starter,
+    )
+    store.enqueue_command(_command("stop"))
+    daemon.process_once("gov")
+
+    assert daemon.has_operator_stop_intent("gov") is True
+
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 12, 1, tzinfo=UTC),
+            issued_by="restart-recovery",
+            command_id="restart-recovery-ON_AIR-test",
+        )
+    )
+    daemon.process_once("gov")
+
+    assert daemon.has_operator_stop_intent("gov") is True
+    assert workers == []
+
+    store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action="start",
+            issued_at=datetime(2026, 6, 5, 12, 2, tzinfo=UTC),
+            issued_by="operator",
+            command_id="operator-start",
+        )
+    )
+    daemon.process_once("gov")
+
+    assert daemon.has_operator_stop_intent("gov") is False
+    assert len(workers) == 1
 
 
 def test_current_source_label_with_an_accented_title_survives_a_cp1252_write(

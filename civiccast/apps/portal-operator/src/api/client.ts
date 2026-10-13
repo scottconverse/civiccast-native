@@ -1353,6 +1353,21 @@ export function getEgressSchemaCurrency(channelId: string): Promise<EgressSchema
   )
 }
 
+export interface EgressStorageStatus {
+  worker_log_bytes: number
+  worker_log_file_count: number
+  command_history_rows: number
+  pending_commands: number
+  command_table_bytes: number | null
+  work_volume_free_bytes: number | null
+  low_disk_warning: boolean | null
+  low_disk_threshold_bytes: number
+}
+
+export function getEgressStorageStatus(): Promise<EgressStorageStatus> {
+  return request<EgressStorageStatus>('/api/staff/egress/storage')
+}
+
 export function queueEgressCommand(
   channelId: string,
   action: EgressCommandAction,
@@ -3815,7 +3830,7 @@ export interface RecordingSource {
 
 export type RecurrenceSpec =
   | { kind: 'one_shot'; start: string }
-  | { kind: 'weekly'; weekdays: number[]; time_hhmm: string }
+  | { kind: 'weekly'; weekdays: number[]; time_hhmm: string; time_zone?: 'UTC' | 'station' }
 
 export interface RecordingSchedule {
   schedule_id: string

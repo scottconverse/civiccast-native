@@ -100,7 +100,7 @@ class FfmpegResult:
 class FfmpegProcessHandle:
     """Handle for a running ffmpeg subprocess."""
 
-    process: subprocess.Popen[str]
+    process: subprocess.Popen[str] | subprocess.Popen[bytes]
     _stdout_file: object | None = None
     _stderr_file: object | None = None
     #: The read end of the child's stderr pipe, present only when the caller

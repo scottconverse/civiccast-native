@@ -13,6 +13,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -110,6 +111,27 @@ def test_first_tick_compiles_then_gates_until_interval(engine: Engine) -> None:
     assert worker.tick(monotonic=100.0) is None  # within the interval -> not due
     assert worker.tick(monotonic=3700.0) is not None  # past the interval -> fires
     assert len(calls) == 2
+
+
+def test_timezone_provider_is_read_on_each_compile(engine: Engine) -> None:
+    station_zone = [ZoneInfo("America/Denver")]
+    observed: list[str] = []
+
+    def fake_compile(_session, _store, *, now, tz) -> MaterializeReport:  # type: ignore[no-untyped-def]
+        observed.append(tz.key)
+        return MaterializeReport()
+
+    worker = AutoScheduleCompileWorker(
+        _factory(engine),
+        clock=lambda: _NOW,
+        settings=AutoScheduleCompileSettings(compile_interval_seconds=1.0),
+        tz=lambda: station_zone[0],
+        compile_fn=fake_compile,
+    )
+    worker.tick(monotonic=0.0)
+    station_zone[0] = ZoneInfo("America/Los_Angeles")
+    worker.tick(monotonic=2.0)
+    assert observed == ["America/Denver", "America/Los_Angeles"]
 
 
 def test_compile_failure_is_swallowed_and_does_not_hot_loop(engine: Engine) -> None:

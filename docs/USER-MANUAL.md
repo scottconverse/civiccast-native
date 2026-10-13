@@ -598,19 +598,29 @@ Residents see two different lists, built from two different sources.
 
 ### Which time zone are you typing in?
 
-Several boxes ask for a time. They do not all use the same time zone. Read the label under the box.
+Schedule, Program Guide, Auto-schedule and Recording use the station's time zone. Set a named zone, such as `America/Denver`, in **Station Profile > Timezone**, and check the zone shown beside the form before saving. These times do not depend on the computer you use to open the console.
 
 | Where you type | Time zone it uses |
 | --- | --- |
-| Schedule: **Start at** | Your computer's local time. The line under the box shows the date and your zone name. |
-| Program Guide: **First airing**, **Repeat until (optional)** | Your computer's local time when you type it. After that, the repeats are counted in UTC (see the warning below). |
+| Schedule: **Start at** | The station's time zone. |
+| Program Guide: **First airing**, **Repeat until (optional)** | The station's time zone; recurring programmes keep that local clock time. |
 | Auto-schedule dayparts: **Start**, **End** | The station's time zone, set in the **Timezone** box on the **Station Profile** screen (the First Setup form has no such box). If it is still "local" or was never set, UTC. |
-| Recording: **Start (UTC)**, **Time (HH:MM UTC)** and the weekday boxes | **UTC**, not your local time. |
+| Recording: start time, weekly time and weekday boxes | The station's local date, time and weekday. |
 | Contributors: producer's **Requested air date** | The producer's own computer, with no zone saved (see Known issue under Contributors). |
 
-*UTC* (Coordinated Universal Time) is the world's reference clock. It has no daylight saving time. A US station in Mountain Time is 6 hours behind UTC in summer and 7 hours behind in winter. Only the Recording screen makes you type UTC yourself.
+*UTC* (Coordinated Universal Time) is the world's reference clock. CivicCast still uses UTC internally for timestamps; you do not need to convert station scheduling forms to UTC yourself.
 
-> **Warning:** Daily, Weekly and Weekdays slots on **Program Guide**, and weekly captures on **Recording**, repeat on a fixed UTC clock. When daylight saving time starts or ends, the program or capture moves one hour on your local clock. After each clock change, check your repeating slots and recording schedules and edit them if the local time is no longer right. **Auto-schedule** dayparts use the station's time zone and do not drift.
+> **Daylight-saving changes:** A recurring start in the hour skipped when clocks move forward is omitted for that date. A clock time that occurs twice when clocks move back runs once, at its earlier occurrence. A one-time booking in a nonexistent hour is rejected with an explanation. Check the preview when booking near a clock change; ordinary recurring programmes keep their station-local time without seasonal edits.
+
+Existing weekly recording schedules created with the older UTC-only form retain
+their UTC timing; CivicCast does not silently move them on upgrade. These schedules
+are identified as UTC. New weekly recording schedules use the station's time zone.
+Review an older schedule before replacing it with a station-local schedule.
+
+Changing **Station Profile > Timezone** does not move airings or captures that
+CivicCast has already planned. Those commitments keep their original timestamps;
+the changed zone applies when the recurring schedule is extended beyond that
+existing horizon. Review already-planned entries separately if they must move.
 
 ### Put a recording on a channel once
 
@@ -621,7 +631,7 @@ Use the **Schedule** screen to place one recording on a channel at one time. Thi
 3. Under **Mode**, click **Premiere**.
 4. In the **Asset** drop-down, choose the video. Each entry reads "title · asset id".
 5. In the **Channel** drop-down, choose the channel by its display name.
-6. In **Start at**, type the date and time. Use your local time. A line under the box repeats it as "Day, Mon d, h:mm" with your time zone name, so you can check it. The box starts at the next full hour.
+6. In **Start at**, type the date and time in the station's time zone. Check the local-time preview and zone before saving.
 7. In **Duration (min)**, type the length in whole minutes. It starts at 60. The largest allowed length is 14 days.
 8. In **Notes (optional)**, type anything you want recorded. The box says the note is "visible in the audit log" (the station's record of who did what).
 9. Click **Schedule premiere**. The button reads "Scheduling…" while it works.
@@ -638,7 +648,7 @@ You should see the panel close and a message, "Scheduled.", with a line such as 
 
 #### Read the Schedule screen
 
-The top of the screen says "Week of" and a date range, with "times shown in your browser timezone."
+The top of the screen shows the week and the station time zone used for its dates and times.
 
 1. Click **week** to see a grid of the week, or **list** to see every item as a row. On a phone the screen opens in the list.
 2. Use **‹** (previous week), **Today**, and **›** (next week) to move through weeks.
@@ -661,7 +671,7 @@ A program on the Schedule screen airs only after someone with the publish operat
    - "Dead-air gap before this program (it can still air):" followed by a list, if the channel has nothing scheduled just before this program. *Dead air* means time when nothing is playing. A gap is for information only and does not stop the approval.
 5. If the panel says **Safe to air**, click **Publish to residents** in the panel. The button reads "Publishing…". Click **Cancel** in the panel instead if you want to back out.
 
-You should see the message "Visible to residents." with the program title, and the row now reads "Visible to residents". The item is **Published**. CivicCast also tells the channel's playout engine to read the schedule again, and starts the channel if it was stopped.
+You should see the message "Visible to residents." with the program title, and the row now reads "Visible to residents". The item is **Published**. CivicCast also tells the channel's playout engine to read the schedule again, and can start a stopped channel unless an intentional operator stop is active. After an intentional stop, press Start explicitly to resume the feed.
 
 > **Warning:** The final **Publish to residents** click has no further confirmation. It approves the program to air on the channel, not only to appear on the portal.
 
@@ -713,7 +723,7 @@ Use **Program Guide** when a recording should air again and again, for example e
    - **Daily**: "Airs every day at this time."
    - **Weekly**: "Airs every week on this weekday." (This is chosen when the panel opens.)
    - **Weekdays**: "Airs Monday through Friday."
-6. In **First airing**, type the date and time in your local time. A line under it shows the date, time and your zone name.
+6. In **First airing**, type the date and time in the station's time zone. Check the date, time and station zone shown with the form.
 7. If you chose Daily, Weekly or Weekdays, you may fill **Repeat until (optional)** with the last date it may air. Leave it blank to repeat with no end.
 8. Either keep **Use the recording's own length** ticked, or untick it and type **Duration (min)** (at least 1).
 9. In **Guide title (optional)**, type a title if you want residents to see a different title than the recording's. It can be up to 200 characters.
@@ -725,7 +735,7 @@ The guide is rebuilt in the background. By default it looks 72 hours ahead and r
 
 > **For IT staff:** the background job, its 5-minute interval and its 72-hour reach are set by environment variables; see [Part II, Running it day to day](#ch-operations).
 
-> **Known issue (beta.11):** The **Weekdays** rule counts days on the UTC calendar, not on your local calendar. For a US evening start, a Friday-evening program lands on Saturday in UTC and is left out, while a Sunday-evening program lands on Monday in UTC and is included. We derived this from reading the program and did not run it on a live station. Until it is fixed, use **Weekly** with a separate slot for each day, or check the **Next 7 days** list after adding a Weekdays slot.
+The **Weekdays** rule uses the station's Monday-through-Friday calendar. A Friday evening remains Friday even when its internal UTC timestamp falls on Saturday.
 
 > **Known issue (beta.11):** The status in **Next 7 days** stays **Scheduled** even after you publish the item, so this list cannot tell you whether a program is approved. Check **Schedule** for that. Items you added directly on the Schedule screen are also listed here, with the status shown as the lower-case word `manual` and the detail "Scheduled directly (no recurring slot)."
 
@@ -854,18 +864,18 @@ A *recording schedule* is a saved plan: one source, one time pattern, one length
    - For **NDI**, type the name in **Input ID** (the placeholder is `studio-ndi`).
    - For a network stream, type the address in **URI** (the placeholder is `rtsp://camera.local/stream`).
 6. Under **Recurrence**, choose **One-shot** (one capture) or **Weekly**.
-7. For **One-shot**, type **Start (UTC)**. For **Weekly**, click **Weekdays**, **Weekend**, **Every day** or **Clear**, tick the day boxes you want, and type **Time (HH:MM UTC)**, for example `19:00`. See the warning below.
+7. For **One-shot**, enter the start in the station's local time. For **Weekly**, click **Weekdays**, **Weekend**, **Every day** or **Clear**, tick the station-local days you want, and enter the local time, for example `19:00`.
 8. In **Duration (HH:MM:SS)**, type the length with two digits in each part. It starts at `01:00:00`. The minimum is one minute (`00:01:00`). A value such as `1:5:0` is refused; type `01:05:00`.
 9. In **Quality preset (encoder profile)**, leave `default`, or type a name your administrator gave you. The screen suggests default, copy, h264-1080p, h264-720p, hw-h264-1080p and hw-h264-720p.
 10. In **Loudness regime**, choose how loud the recording should be. The choices are **Inherit station default**, **Copy source audio**, **Cable / ATSC A/85 (-24 LKFS)**, **Broadcast / EBU R128 (-23 LUFS)** and **Streaming (-16 LUFS)**. One line under the choice explains it.
 11. Leave **Target series (optional)** blank unless your administrator tells you what to put there. We could not confirm what it does.
 12. Keep **Enabled** ticked so the schedule runs.
-13. Check the **Next fire** (or **Next 3 fires**) lines. Each shows the time as "UTC … · local …".
+13. Check the **Next fire** (or **Next 3 fires**) preview in the station's time zone before saving.
 14. Click **Create schedule**.
 
 You should see the new schedule appear in the **Schedules** table above the form.
 
-> **Warning:** The time you type is **UTC**, not local time. Under **Start (UTC)** and **Time (HH:MM UTC)** the screen shows "In your local time: …" so you can check it. The weekday boxes are also UTC days, and they get no such line. A Monday 7 PM meeting in US Mountain Time (UTC−6 in summer, UTC−7 in winter) is already Tuesday in UTC: in summer it is Tuesday 01:00 UTC, in winter Tuesday 02:00 UTC. Tick **Tue**, not **Mon**. Use the **Next 3 fires** lines to confirm the local day and time before you save. After the clocks change, edit the schedule: the UTC time does not move, so your local time does.
+> **Time-zone check:** For a Monday 7 PM meeting, select Monday and `19:00` in the station's zone. Weekly recordings keep that local time across daylight-saving changes. A nonexistent recurring time is skipped; a repeated time runs once at its earlier occurrence. Use **Next 3 fires** to confirm the planned dates.
 
 > **Known issue (beta.11):** After **Create schedule** works, the form is not cleared and no "saved" message appears. Look for the new row in the **Schedules** table. If you click **Create schedule** a second time, the station answers "Recording schedule '&lt;id&gt;' already exists. Use PATCH to update." That means the first click worked.
 
@@ -1094,7 +1104,7 @@ There are **no confirmation boxes**. Each click acts at once.
 | --- | --- | --- |
 | "Slug required: lowercase letters, digits, hyphens." | Schedule ID has a bad character | Use only lowercase letters, digits and hyphens |
 | "Duration must be HH:MM:SS — minutes and seconds need two digits (e.g. 01:05:00 not 1:5:0)." | Wrong time format | Type `01:05:00` |
-| "Time must be HH:MM (24h UTC)." or "Pick at least one weekday." | Weekly fields incomplete | Fix the time and tick a day |
+| Invalid weekly time or "Pick at least one weekday." | Weekly fields incomplete | Enter a 24-hour `HH:MM` time in the zone shown by the form and tick a day |
 | "No SDI capture input was detected or configured." (it names the source kind you chose, for example HDMI) | No card found | Check the card is installed, click **Inspect capture devices**, then ask your IT person |
 | Amber banner "Scheduled recording runtime is unavailable in this deployment…" after **Record now** | The recorder part of the station is not running | Ask your IT person. Schedules can still be saved. |
 | "An overlapping recording is already armed/active on this source" | A capture is already running on that input | Wait for it, or stop it |
@@ -1322,7 +1332,7 @@ Use the same **Outgoing channel feed** box.
 
 > **Warning:** all three commands change what residents see right now. **Stop** drops the stream at once. Use **Finish current item, then stop** at the end of a meeting if you want the program to end cleanly.
 
-> **Warning:** **Stop** may not keep the channel stopped. If **Keep this channel on air** is switched on for that channel (see the next task), CivicCast starts the channel again by itself after you stop it. The Stop box does not mention this.
+> **Stop is intentional:** Stop and Finish current item, then stop suppress automatic restarts for the current service session, even when Keep this channel on air is enabled. Press Start to resume. A service restart clears this suppression and applies the configured auto-start setting again.
 
 > **Known issue (beta.11):** the screen refreshes every 30 seconds, and only **Start** is watched more closely. The screen does re-read the feed state once right after you confirm **Stop**, **Restart feed** or **Finish current item, then stop**, but the feed program may not have acted yet, so the state tag can take up to about 30 seconds to change. Do not click the button again straight away. Wait for the tag to change.
 
@@ -1335,12 +1345,12 @@ The checkbox's own hint reads "Starts the feed automatically after restarts and 
 What "Keep this channel on air" really does, from the code we read:
 
 * By default, about every 2 seconds, CivicCast's automation looks at every enabled channel with this setting on.
-* If the channel's feed is not running, CivicCast queues a **Start** for it. If the channel still is not running, it queues another about every 30 seconds.
-* The code does not remember that a person pressed **Stop**. Its own comments describe "a stop the operator issued" as a reason to send a new start.
+* If the channel is dark and no intentional stop is active, CivicCast queues Start. Failed starts retain their existing retry cooldown.
+* An intentional Stop or Finish current item, then stop is remembered for this service session. Automation cannot override it; an explicit Start clears it.
 
 > **Warning:** **Save automation settings** has **no confirmation box**. Saving with **Keep this channel on air** ticked, on a channel whose configuration is enabled, can put the channel on the air without anyone pressing **Start**.
 
-> **Known issue (beta.11):** with **Keep this channel on air** on, pressing **Stop** or **Finish current item, then stop** may only pause the channel for a short time. We read this in the code and have not watched it on a running station, so treat the exact timing as approximate. To keep a channel off the air, have a Setup admin untick **Keep this channel on air** and click **Save automation settings** first, then use **Stop**.
+> To keep a channel off air across service or computer restarts, untick **Keep this channel on air** and save before stopping it. The session-local stop suppression is not a permanent change to that setting.
 
 > **Known issue (beta.11):** if a channel has no outgoing-feed configuration, this box says "This channel has no outgoing-feed configuration yet. Create one from the channel egress runbook (or the setup flow) first; then automation settings appear here." A non-technical person cannot do that. The real fix is for a Setup admin to apply a headend preset (see the Cable headend box on the same screen, or ask IT).
 
@@ -1392,7 +1402,7 @@ Programs that you want to play on a channel have to be *committed*. The box **Co
 
 You should see the program move to the "Recent commits" list with a tag: **Preparing**, **Queued to air**, **Couldn't reach the engine** or **Rolled back**.
 
-> **Warning:** **Approve & put on air** has **no confirmation box**. It is a single click once the review says **Safe to air**. It publishes the schedule item to residents, saves an approval record in your name, and then queues a **Start** for the channel if the feed is stopped, or a reload if it is running, so the schedule is read again. The program plays at its scheduled time, not at the moment you click. On a stopped channel the click also starts the whole channel's feed.
+> **Warning:** **Approve & put on air** has **no confirmation box**. It is a single click once the review says **Safe to air**. It publishes the schedule item to residents, saves an approval record in your name, and then queues a **Start** for the channel if the feed is stopped, or a reload if it is running, so the schedule is read again. The program plays at its scheduled time, not at the moment you click. It does not override an intentional operator stop in the current service session; press Start explicitly to resume that feed.
 
 To undo an approval:
 
@@ -3939,7 +3949,7 @@ What you can tune (all optional, all in the service environment; defaults are wh
 - **Starting and reloading.** `CIVICCAST_EGRESS_SEAMLESS_RELOAD` is on unless set to `0`, `false`, `no` or `off`; turning it off makes the encoder restart at every plan boundary (for diagnosis only). The worker waits for the picture to start `CIVICCAST_GST_PREROLL_TIMEOUT_S` seconds (default 30, clamped to 5-45) and for the first output `CIVICCAST_GST_FIRST_OUTPUT_TIMEOUT_S` (default 45, clamped to 10-120). A running worker that makes no output for `CIVICCAST_STALL_TIMEOUT_S` (default 10) quits so the service restarts it. A reload waits `CIVICCAST_RELOAD_TIMEOUT_S` (default 10) for the new source and `CIVICCAST_RELOAD_COMMIT_TIMEOUT_S` (default 15; clamped 3-120 inside the engine) for the switch.
 - **NDI and SDI.** CivicCast's bundled ffmpeg cannot contain the NDI muxer (a licensing limit). To publish a channel as NDI, set `CIVICCAST_NDI_FFMPEG` to your own NDI-capable ffmpeg and put a name in **NDI output name**. For SDI set `CIVICCAST_SDI_FFMPEG` to a DeckLink-capable ffmpeg and a device in **SDI output device**. `CIVICCAST_NDI_RELAY` and `CIVICCAST_SDI_RELAY` accept `inline` (default) or `off`. Without the variable, the console's readiness check says to set it.
 
-> **Known issue (beta.11):** The text under **Stop** on the Channels screen says residents lose the stream until the feed is started again. With **Keep this channel on air** ticked, channel automation may start a stopped channel again after its retry cooldown. Untick **Keep this channel on air** and save the automation settings before you stop a channel you want to keep off the air. Saving that box ticked on an enabled channel can also put the channel on air without anyone pressing Start; the Save button has no confirmation.
+> **Operator stops:** Stop and Finish current item, then stop suppress automatic starts for the current service session. An explicit Start clears that suppression. Disable **Keep this channel on air** if the channel must also stay off after a service or computer restart. Enabling that setting can start an eligible dark channel without another Start command.
 
 #### Repeat the published schedule
 
@@ -4413,7 +4423,24 @@ CivicCast reads many settings from environment variables (the full list is in [A
 
 ### Read the logs
 
-All logs are in `C:\ProgramData\CivicCast\logs`.
+Service logs are in `C:\ProgramData\CivicCast\logs`. GStreamer worker logs are
+under each channel's egress work folder, in its `logs` subfolder.
+
+On **System Health > Egress storage**, check worker-log bytes and file count,
+command-history rows and database storage, pending commands, and free space on
+the work volume. The panel warns below 20 GiB free. An unavailable measurement is
+shown as unavailable, rather than zero.
+
+Each GStreamer stdout/stderr stream rotates at 10 MiB and keeps ten older files.
+An older oversized active log is reduced to its newest 10 MiB before the next
+worker starts. If the disk cannot accept diagnostics, CivicCast continues draining
+the worker output so logging does not stall playout. Free disk space to restore
+diagnostic logging; this does not make a full disk safe for recordings.
+
+Consumed egress command history is trimmed in batches of up to 1,000 when a
+channel exceeds 10,000 consumed commands. Pending commands are preserved. Database
+space can be reused after pruning without immediately shrinking the database file.
+These limits do not delete recordings or retain live-caption audio evidence.
 
 | File | What is in it | Rotation |
 | --- | --- | --- |
@@ -5980,7 +6007,7 @@ CivicCast keeps its data in a database, in folders of files, in a few small file
 
 - **Station backup is separate from installer rollback.** The operator backup workflow creates encrypted `.ccbackup` archives with the configured database, station files, portable credentials and selected media; daily UTC scheduling, retention and offline restore are available. See the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md). The pre-upgrade database copy remains temporary rollback protection, not a substitute for this archive.
 - **Installer recovery is temporary protection, not a station backup.** Before replacing files, setup saves an access-restricted journal and a temporary copy under `C:\ProgramData\CivicCast\install-transaction`. The copy is limited to the application tree except `packs\.station-cache`, the native PostgreSQL cluster, `provision` and `upgrade`, relevant registry and firewall state, service configuration and shortcuts. It does not copy recordings or uploads. Setup checks the required copy size and leaves a 256 MB free-space reserve; after commit or successful restore it removes the temporary copy. If recovery cannot finish, the journal and copy remain for the startup recovery task or a later setup run.
-- **There is no automatic clean-up of the command table.** The conform cache (60 GB by default), prepared plan folders (5 GB by default) and relay logs have limits. Beta.11 also bounds live caption working audio, recent caption history and delivery tracking; those bounds do not limit original recordings or archived caption tracks. Watch the free space on the drive that holds `C:\ProgramData\CivicCast\data`.
+- **Disposable command history and worker logs are bounded.** The normal command-consumption path trims up to 1,000 oldest consumed commands when a channel exceeds 10,000; it preserves pending commands and also trims on idle polls. GStreamer stdout and stderr rotate at 10 MiB with ten backups per stream, while pipe drainage continues if the log sink fails. System Health reports their storage use and work-volume headroom. The conform cache (60 GB by default), prepared plan folders (5 GB by default), relay logs and live-caption working data retain their existing limits. Original recordings and archived caption tracks are not deleted by these operational limits.
 - **Uninstalling does not remove your data.** The uninstaller removes the program files, the service, the firewall rule and the registry values, but leaves `C:\ProgramData\CivicCast`. Because the uninstaller deletes the stored database password, a reinstall over a surviving data folder has to set a new password on the existing database. The installer does this using a short-lived loopback-only access rule.
 
 <!-- SOURCES: ops/docs-sprint/inventory/screens/installer-install-layout.md sections 1-3 and 8; civiccast/native/supervisor/install_layout.py:79-338; civiccast/native/supervisor/children.py:272-314; civiccast/native/supervisor/service_env.py:1-60; civiccast/native/provision/conf.py:55-135; civiccast/native/station_runtime.py:1337, 1421-1437; civiccast/installer/station_state.py:595-608; civiccast/reporting/asrun_outbox.py:100-147; docs/history/2026-09-codex-work/BLACKWELL-CAPTION-FIX-REPORT-v6.md:55-64; civiccast/schema_check.py:244-279; civiccast/app.py:2376-2447; civiccast/dr/backup.py; civiccast/native/upgrade/orchestrator.py:198-215; civiccast/native/upgrade/seams.py:100-215; civiccast/native/upgrade/__main__.py (no media_root); civiccast/app.py:1255-1292 (retention/media-integrity flag only); docs/adr/0008, 0011, 0023-asrun-durable-outbox; civiccast/apps/installer/src-tauri/src/native_uninstall.rs:2145-2215 (credential cleared); civiccast/native/provision/conf.py:102-135 (transient trust rule); app-auth-db fact sheet subagent sections 3-5 -->
@@ -6078,7 +6105,7 @@ If the worker declines or aborts (a source that cannot be decoded, a timeout), t
 | Stall watchdog | inside the worker | no output left the multiplexer for 10 seconds (default), or one stream (picture or sound) stopped advancing | ends the worker with exit code 1; the daemon relaunches it |
 | Reload-stall watchdog | in the daemon | a channel pinned in `TRANSITIONING` with nothing in flight for longer than the plan length plus lead plus settle time (1,650 seconds at least) | logs an error, re-issues the reload once, and 300 seconds later, if still pinned, ends the worker so the crash relaunch re-plans from the schedule |
 
-Two further guards act on the output a resident would see: if the audio and video start times of the newest HLS segment differ by more than 1 second on three probes in a row (probes are 30 seconds apart), the daemon restarts that channel's worker; and if the HLS playlist stops advancing for 30 seconds after the relay has already tried to heal itself, the daemon also restarts the worker. Each of these two guards is limited to three restarts per channel per hour, after which it reports the problem and stops restarting.
+Two further guards act on the output a resident would see: if the audio and video start times of the newest HLS segment differ by more than 1 second on three probes in a row (probes are 30 seconds apart), the daemon restarts that channel's worker; and if the HLS playlist stops advancing for 30 seconds after the relay has already tried to heal itself, the daemon also restarts the worker. Each of these two guards is limited to three restarts per channel per hour, after which the shared fallback/cooldown recovery below takes over.
 
 **Why the watchdog that ends a stuck program change matters.** Before the reload-stall watchdog existed, a program change on the education channel in the lab once left the channel black and silent for about 34 hours. The beta.10 verification record names the watchdog that ends a stuck program change as the fix. The code shows why it can: the daemon measures how long a channel has been pinned in `TRANSITIONING`. The exact stall did not recur in the 8-hour lab run, which was on an earlier internal build.
 
@@ -6103,8 +6130,8 @@ Every channel has one of eight states, shown in the operator console and stored 
 | The HLS output freezes, or sound and picture drift apart | The guards described above restart the worker (limited to three times an hour). |
 | The as-run record cannot be written (database busy or disk full) | The row is written to a local SQLite journal first, retried on every tick, and an alert `asrun-outbox-degraded` is raised. Playout is never stopped by a record-keeping error. |
 | A channel is in `ERROR` (invalid configuration, a missing secret, ffmpeg not found) | **Does not self-heal.** An operator must correct the cause and press start. |
-| A channel was stopped by an operator, with `auto_start` off | Stays stopped. This is deliberate. |
-| The restart budgets of the output guards are spent | The problem is logged and reported; the worker is not restarted again. |
+| A channel was stopped or drained by an operator | Stays stopped for the current service session, even with `auto_start` enabled. An explicit Start clears this suppression. After a service restart, the configured auto-start setting applies again. |
+| The restart budgets of the output guards are spent | Enters a shared recovery cooldown and requests the existing fallback slate, unless an operator override is active. The cooldown ends one hour after the latest budgeted restart. CivicCast then attempts one return to the programme if that recovery slate is still active. Further failures remain subject to the rolling restart limits. An operator stop or drain cancels recovery. |
 
 In the 8-hour lab run on a three-channel station, the service ran without a restart, no channel showed slate after start-up, and the watchdogs did not fire. Two program changes aborted at a sub-second boundary and recovered by themselves in about 3 seconds. That run was on an earlier internal build of the same engine, on one lab computer; it was not repeated on the published installer.
 

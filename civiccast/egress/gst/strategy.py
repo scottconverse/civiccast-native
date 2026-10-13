@@ -56,6 +56,19 @@ from civiccast.native.supervisor.replay import (
 from civiccast.native.supervisor.replay import (
     Command as ReplayCommand,
 )
+from civiccast.platform.child_logs import (
+    CHILD_LOG_BACKUP_COUNT as _WORKER_LOG_BACKUP_COUNT,
+)
+from civiccast.platform.child_logs import (
+    CHILD_LOG_MAX_BYTES as _WORKER_LOG_MAX_BYTES,
+)
+from civiccast.platform.child_logs import (
+    CHILD_LOG_READ_SIZE as _WORKER_LOG_READ_SIZE,
+)
+from civiccast.platform.child_logs import (
+    BestEffortRotatingFileHandler,
+    drain_child_output,
+)
 from civiccast.stream._ffmpeg import FfmpegProcessHandle
 
 logger = logging.getLogger(__name__)
@@ -754,10 +767,40 @@ def _default_worker_launcher(
     argv: list[str], stdout_path: Path, stderr_path: Path
 ) -> FfmpegProcessHandle:
     """Launch the worker subprocess; return a generic poll/pid/terminate handle."""
-    stdout_path.parent.mkdir(parents=True, exist_ok=True)
-    stderr_path.parent.mkdir(parents=True, exist_ok=True)
-    stdout_file = stdout_path.open("a", encoding="utf-8")
-    stderr_file = stderr_path.open("a", encoding="utf-8")
+
+    def _log_handler(path: Path) -> logging.Handler:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if path.is_symlink():
+                return logging.NullHandler()
+            # Earlier builds appended these files without rotation. Preserve
+            # their newest bounded tail before the rotating handler opens them,
+            # or a large pre-upgrade file would survive as an oversized backup.
+            try:
+                existing = path.open("r+b")
+            except FileNotFoundError:
+                existing = None
+            if existing is not None:
+                with existing:
+                    existing.seek(0, os.SEEK_END)
+                    if existing.tell() > _WORKER_LOG_MAX_BYTES:
+                        existing.seek(-_WORKER_LOG_MAX_BYTES, os.SEEK_END)
+                        tail = existing.read(_WORKER_LOG_MAX_BYTES)
+                        existing.seek(0)
+                        existing.write(tail)
+                        existing.truncate()
+            return BestEffortRotatingFileHandler(
+                path,
+                maxBytes=_WORKER_LOG_MAX_BYTES,
+                backupCount=_WORKER_LOG_BACKUP_COUNT,
+                encoding="utf-8",
+                delay=False,
+            )
+        except OSError:
+            # Keep the child's pipes draining during low-disk / inaccessible-log
+            # conditions. The system-health storage view reports the volume warning.
+            return logging.NullHandler()
+
     # Production worker runs run_forever; scrub the smoke-only SWAPS/INTERVAL so a
     # stray value in the daemon's environment can't put it in fixed-swap mode (audit M4).
     env = {key: value for key, value in os.environ.items() if key not in ("SWAPS", "INTERVAL")}
@@ -780,22 +823,75 @@ def _default_worker_launcher(
     # this worker imports `gi`). See `_worker_creationflags` for what the
     # flags are and why playout is raised above the control plane.
     creationflags = _worker_creationflags()
+    stdout_handler = _log_handler(stdout_path)
+    stderr_handler = _log_handler(stderr_path)
     try:
         process = subprocess.Popen(  # noqa: S603
             argv,
-            stdout=stdout_file,
-            stderr=stderr_file,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             env=env,
             creationflags=creationflags,
         )
-    except Exception:  # close the log handles if the spawn failed, then re-raise
-        stdout_file.close()
-        stderr_file.close()
+    except Exception:
+        stdout_handler.close()
+        stderr_handler.close()
         raise
-    return FfmpegProcessHandle(process=process, _stdout_file=stdout_file, _stderr_file=stderr_file)
+
+    stdout_stream = process.stdout
+    stderr_stream = process.stderr
+    if stdout_stream is None or stderr_stream is None:
+        process.kill()
+        process.wait()
+        stdout_handler.close()
+        stderr_handler.close()
+        raise RuntimeError("GStreamer worker stdout/stderr pipes were not created")
+
+    threads = (
+        threading.Thread(
+            target=drain_child_output,
+            args=(stdout_stream, stdout_handler),
+            kwargs={
+                "logger_name": "civiccast.egress.gst.worker.stdout",
+                "read_size": _WORKER_LOG_READ_SIZE,
+            },
+            name=f"gst-worker-stdout-{process.pid}",
+            daemon=True,
+        ),
+        threading.Thread(
+            target=drain_child_output,
+            args=(stderr_stream, stderr_handler),
+            kwargs={
+                "logger_name": "civiccast.egress.gst.worker.stderr",
+                "read_size": _WORKER_LOG_READ_SIZE,
+            },
+            name=f"gst-worker-stderr-{process.pid}",
+            daemon=True,
+        ),
+    )
+    try:
+        for thread in threads:
+            thread.start()
+    except RuntimeError:
+        # Without both drainers a child can block forever on the pipe that no
+        # thread owns. Stop it before returning a handle with partial drainage.
+        process.kill()
+        process.wait()
+        for stream in (stdout_stream, stderr_stream):
+            with contextlib.suppress(Exception):
+                stream.close()
+        for thread in threads:
+            if thread.is_alive():
+                thread.join(timeout=1.0)
+        stdout_handler.close()
+        stderr_handler.close()
+        raise
+
+    handle = FfmpegProcessHandle(process=process)
+    # Keep a narrow join seam for tests and orderly process reaping. Production
+    # does not join the drainers on the long-running worker's stop path.
+    handle._child_log_threads = threads  # type: ignore[attr-defined]
+    return handle
 
 
 class GstPlayoutStrategy:

@@ -183,7 +183,7 @@ Use the same **Outgoing channel feed** box.
 
 > **Warning:** all three commands change what residents see right now. **Stop** drops the stream at once. Use **Finish current item, then stop** at the end of a meeting if you want the program to end cleanly.
 
-> **Warning:** **Stop** may not keep the channel stopped. If **Keep this channel on air** is switched on for that channel (see the next task), CivicCast starts the channel again by itself after you stop it. The Stop box does not mention this.
+> **Stop is intentional:** Stop and Finish current item, then stop suppress automatic restarts for the current service session, even when Keep this channel on air is enabled. Press Start to resume. A service restart clears this suppression and applies the configured auto-start setting again.
 
 > **Known issue (beta.11):** the screen refreshes every 30 seconds, and only **Start** is watched more closely. The screen does re-read the feed state once right after you confirm **Stop**, **Restart feed** or **Finish current item, then stop**, but the feed program may not have acted yet, so the state tag can take up to about 30 seconds to change. Do not click the button again straight away. Wait for the tag to change.
 
@@ -196,12 +196,12 @@ The checkbox's own hint reads "Starts the feed automatically after restarts and 
 What "Keep this channel on air" really does, from the code we read:
 
 * By default, about every 2 seconds, CivicCast's automation looks at every enabled channel with this setting on.
-* If the channel's feed is not running, CivicCast queues a **Start** for it. If the channel still is not running, it queues another about every 30 seconds.
-* The code does not remember that a person pressed **Stop**. Its own comments describe "a stop the operator issued" as a reason to send a new start.
+* If the channel is dark and no intentional stop is active, CivicCast queues Start. Failed starts retain their existing retry cooldown.
+* An intentional Stop or Finish current item, then stop is remembered for this service session. Automation cannot override it; an explicit Start clears it.
 
 > **Warning:** **Save automation settings** has **no confirmation box**. Saving with **Keep this channel on air** ticked, on a channel whose configuration is enabled, can put the channel on the air without anyone pressing **Start**.
 
-> **Known issue (beta.11):** with **Keep this channel on air** on, pressing **Stop** or **Finish current item, then stop** may only pause the channel for a short time. We read this in the code and have not watched it on a running station, so treat the exact timing as approximate. To keep a channel off the air, have a Setup admin untick **Keep this channel on air** and click **Save automation settings** first, then use **Stop**.
+> To keep a channel off air across service or computer restarts, untick **Keep this channel on air** and save before stopping it. The session-local stop suppression is not a permanent change to that setting.
 
 > **Known issue (beta.11):** if a channel has no outgoing-feed configuration, this box says "This channel has no outgoing-feed configuration yet. Create one from the channel egress runbook (or the setup flow) first; then automation settings appear here." A non-technical person cannot do that. The real fix is for a Setup admin to apply a headend preset (see the Cable headend box on the same screen, or ask IT).
 
@@ -253,7 +253,7 @@ Programs that you want to play on a channel have to be *committed*. The box **Co
 
 You should see the program move to the "Recent commits" list with a tag: **Preparing**, **Queued to air**, **Couldn't reach the engine** or **Rolled back**.
 
-> **Warning:** **Approve & put on air** has **no confirmation box**. It is a single click once the review says **Safe to air**. It publishes the schedule item to residents, saves an approval record in your name, and then queues a **Start** for the channel if the feed is stopped, or a reload if it is running, so the schedule is read again. The program plays at its scheduled time, not at the moment you click. On a stopped channel the click also starts the whole channel's feed.
+> **Warning:** **Approve & put on air** has **no confirmation box**. It is a single click once the review says **Safe to air**. It publishes the schedule item to residents, saves an approval record in your name, and then queues a **Start** for the channel if the feed is stopped, or a reload if it is running, so the schedule is read again. The program plays at its scheduled time, not at the moment you click. It does not override an intentional operator stop in the current service session; press Start explicitly to resume that feed.
 
 To undo an approval:
 

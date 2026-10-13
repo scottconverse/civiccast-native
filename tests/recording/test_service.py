@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine
@@ -203,8 +204,12 @@ def _src(kind: str = "rtsp", **kw) -> RecordingSource:
     return RecordingSource(**base)
 
 
-def _weekly(weekdays: list[int], time_hhmm: str = "19:00") -> RecurrenceSpec:
-    return RecurrenceSpec(kind="weekly", weekdays=weekdays, time_hhmm=time_hhmm)
+def _weekly(
+    weekdays: list[int], time_hhmm: str = "19:00", time_zone: str = "UTC"
+) -> RecurrenceSpec:
+    return RecurrenceSpec(
+        kind="weekly", weekdays=weekdays, time_hhmm=time_hhmm, time_zone=time_zone
+    )
 
 
 def _oneshot(start: datetime) -> RecurrenceSpec:
@@ -313,6 +318,71 @@ class TestMaterializer:
         out = _materialize_starts(rec, _FROZEN_NOW, _FROZEN_NOW + timedelta(hours=23))
         assert out == []
 
+    def test_weekly_station_time_stays_fixed_across_dst(self):
+        station_tz = ZoneInfo("America/Denver")
+        now = datetime(2026, 3, 1, 8, 0, tzinfo=UTC)
+        recurrence = _weekly([6], "19:00", time_zone="station")
+
+        out = _materialize_starts(
+            recurrence,
+            now,
+            datetime(2026, 3, 17, tzinfo=UTC),
+            tz=station_tz,
+        )
+
+        assert out == [
+            datetime(2026, 3, 2, 2, 0, tzinfo=UTC),
+            datetime(2026, 3, 9, 1, 0, tzinfo=UTC),
+            datetime(2026, 3, 16, 1, 0, tzinfo=UTC),
+        ]
+
+    def test_legacy_weekly_recurrence_stays_utc_with_station_zone_configured(self):
+        now = datetime(2026, 3, 1, 8, 0, tzinfo=UTC)
+        out = _materialize_starts(
+            _weekly([6], "19:00"),
+            now,
+            datetime(2026, 3, 17, tzinfo=UTC),
+            tz=ZoneInfo("America/Denver"),
+        )
+        assert out == [
+            datetime(2026, 3, 1, 19, 0, tzinfo=UTC),
+            datetime(2026, 3, 8, 19, 0, tzinfo=UTC),
+            datetime(2026, 3, 15, 19, 0, tzinfo=UTC),
+        ]
+
+    def test_weekly_nonexistent_spring_clock_is_skipped(self):
+        station_tz = ZoneInfo("America/Denver")
+        now = datetime(2026, 3, 1, 8, 0, tzinfo=UTC)
+
+        out = _materialize_starts(
+            _weekly([6], "02:30", time_zone="station"),
+            now,
+            datetime(2026, 3, 16, tzinfo=UTC),
+            tz=station_tz,
+        )
+
+        assert out == [
+            datetime(2026, 3, 1, 9, 30, tzinfo=UTC),
+            datetime(2026, 3, 15, 8, 30, tzinfo=UTC),
+        ]
+
+    def test_weekly_repeated_fall_clock_uses_earlier_fold_once(self):
+        station_tz = ZoneInfo("America/Denver")
+        now = datetime(2026, 10, 25, 6, 0, tzinfo=UTC)
+
+        out = _materialize_starts(
+            _weekly([6], "01:30", time_zone="station"),
+            now,
+            datetime(2026, 11, 9, tzinfo=UTC),
+            tz=station_tz,
+        )
+
+        assert out == [
+            datetime(2026, 10, 25, 7, 30, tzinfo=UTC),
+            datetime(2026, 11, 1, 7, 30, tzinfo=UTC),
+            datetime(2026, 11, 8, 8, 30, tzinfo=UTC),
+        ]
+
     def test_round_trip_deterministic(self):
         rec = _weekly([1, 3, 5], "20:15")
         a = _materialize_starts(rec, _FROZEN_NOW, _FROZEN_NOW + timedelta(days=14))
@@ -344,6 +414,45 @@ class TestMaterializer:
 
 
 class TestExpand:
+    def test_timezone_shift_over_one_day_preserves_projected_last_day(self, store):
+        zone = [ZoneInfo("Etc/GMT+12")]
+        store.upsert_schedule(_schedule(recurrence=_weekly(list(range(7)), "18:00", "station")))
+        service = RecordingService(store, clock=_frozen_clock(), tz=lambda: zone[0])
+        original = service.expand_jobs_for_horizon(_STATION, timedelta(days=2))
+        zone[0] = ZoneInfo("Pacific/Kiritimati")
+        protected_day = original[-1].planned_start.astimezone(zone[0]).date()
+        changed = service.expand_jobs_for_horizon(_STATION, timedelta(days=4))
+        assert changed
+        assert all(job.planned_start.astimezone(zone[0]).date() > protected_day for job in changed)
+
+    def test_zone_change_uses_saved_calendar_day_when_job_utc_date_differs(self, store):
+        zone = [ZoneInfo("Asia/Tokyo")]
+        store.upsert_schedule(_schedule(recurrence=_weekly(list(range(7)), "01:00", "station")))
+        service = RecordingService(store, clock=_frozen_clock(), tz=lambda: zone[0])
+        original = service.expand_jobs_for_horizon(_STATION, timedelta(days=2))
+        assert len(original) == 2
+        assert original[-1].planned_start.date().isoformat() == "2026-06-19"
+        zone[0] = UTC
+        assert service.expand_jobs_for_horizon(_STATION, timedelta(days=2)) == []
+        extended = service.expand_jobs_for_horizon(_STATION, timedelta(days=3))
+        assert len(extended) == 1
+        assert extended[0].planned_start.date().isoformat() == "2026-06-21"
+
+    @pytest.mark.parametrize("new_zone", ["America/Denver", "Europe/London"])
+    def test_timezone_change_preserves_horizon_and_extends_next_day(self, store, new_zone):
+        zone = [UTC]
+        schedule = _schedule(recurrence=_weekly(list(range(7)), "19:00", "station"))
+        store.upsert_schedule(schedule)
+        service = RecordingService(store, clock=_frozen_clock(), tz=lambda: zone[0])
+        original = service.expand_jobs_for_horizon(_STATION, timedelta(days=2))
+        assert len(original) == 2
+        zone[0] = ZoneInfo(new_zone)
+        assert service.expand_jobs_for_horizon(_STATION, timedelta(days=2)) == []
+        extended = service.expand_jobs_for_horizon(_STATION, timedelta(days=3))
+        assert len(extended) == 1
+        assert extended[0].planned_start.astimezone(zone[0]).date().isoformat() == "2026-06-20"
+        assert [store.get_job(job.job_id) for job in original] == original
+
     def test_oneshot_in_window_materializes_one_job(self, store: RecordingStore):
         sched = _schedule(recurrence=_oneshot(_FROZEN_NOW + timedelta(minutes=10)))
         store.upsert_schedule(sched)
