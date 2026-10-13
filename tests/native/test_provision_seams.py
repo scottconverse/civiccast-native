@@ -1306,6 +1306,7 @@ def test_alter_role_password_sql_rejects_an_unsafe_identifier() -> None:
 
 @pytest.mark.skipif(os.name != "nt", reason="real Windows password-file ACL")
 def test_pwfile_acl_survives_machine_username_and_postgres_restricted_token(monkeypatch, tmp_path):
+    import ntsecuritycon
     import win32security
 
     from civiccast.native.provision.seams import _current_process_sid
@@ -1318,13 +1319,47 @@ def test_pwfile_acl_survives_machine_username_and_postgres_restricted_token(monk
     target = tmp_path / "password.tmp"
     target.write_text("test-only-password\n", encoding="utf-8")
     _restrict_windows_pwfile_acl(target)
-    descriptor = win32security.GetFileSecurity(str(target), win32security.DACL_SECURITY_INFORMATION)
-    assert descriptor.GetSecurityDescriptorControl()[0] & win32security.SE_DACL_PROTECTED
+
+    allowed = {_current_process_sid(), "S-1-5-18", "S-1-5-32-544"}
+    owner_rights_sid = "S-1-3-4"
+    security_info = (
+        win32security.DACL_SECURITY_INFORMATION | win32security.OWNER_SECURITY_INFORMATION
+    )
+    descriptor = win32security.GetNamedSecurityInfo(
+        str(target), win32security.SE_FILE_OBJECT, security_info
+    )
+    owner_sid = win32security.ConvertSidToStringSid(descriptor.GetSecurityDescriptorOwner())
     dacl = descriptor.GetSecurityDescriptorDacl()
-    granted = {
-        win32security.ConvertSidToStringSid(dacl.GetAce(i)[2]) for i in range(dacl.GetAceCount())
-    }
-    assert granted == {_current_process_sid(), "S-1-5-18", "S-1-5-32-544"}
+    sddl = win32security.ConvertSecurityDescriptorToStringSecurityDescriptor(
+        descriptor, win32security.SDDL_REVISION_1, security_info
+    )
+    diagnostic = f"path={target}, owner={owner_sid}, SDDL={sddl}"
+
+    assert descriptor.GetSecurityDescriptorControl()[0] & win32security.SE_DACL_PROTECTED, (
+        diagnostic
+    )
+    assert dacl is not None, diagnostic
+    # S-1-3-4 is Owner Rights: it resolves to this object's owner. Count it
+    # only when that owner is already one of the three explicitly permitted
+    # identities, so the alias cannot expand the password file's readership.
+    assert owner_sid in allowed, diagnostic
+    actual_principals = set()
+    ace_rows = []
+    allowed_flags = {0, win32security.INHERITED_ACE}
+    for index in range(dacl.GetAceCount()):
+        ace = dacl.GetAce(index)
+        assert len(ace) == 3 and len(ace[0]) == 2, f"{diagnostic}; ACE[{index}]={ace!r}"
+        ace_type, ace_flags = ace[0]
+        access_mask = ace[1]
+        trustee_sid = win32security.ConvertSidToStringSid(ace[2])
+        ace_rows.append((ace_type, ace_flags, hex(access_mask), trustee_sid))
+        ace_diagnostic = f"{diagnostic}; ACEs={ace_rows!r}"
+        assert ace_type == win32security.ACCESS_ALLOWED_ACE_TYPE, ace_diagnostic
+        assert ace_flags in allowed_flags, ace_diagnostic
+        assert access_mask == ntsecuritycon.FILE_ALL_ACCESS, ace_diagnostic
+        actual_principals.add(owner_sid if trustee_sid == owner_rights_sid else trustee_sid)
+
+    assert actual_principals == allowed, f"{diagnostic}; ACEs={ace_rows!r}"
     token = _build_pg_ctl_shaped_restricted_token()
     try:
         with _impersonating(token):
