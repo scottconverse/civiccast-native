@@ -16,8 +16,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from civiccast.auth.roles import require_any_role
 from civiccast.dr.station_backup import BackupSchedule, StationBackupService
 
-staff_router = APIRouter(prefix="/api/staff/backups", tags=["staff", "backup"])
-_WRITE = Depends(require_any_role("setup_admin", "support_admin"))
+staff_router = APIRouter(
+    prefix="/api/staff/backups",
+    tags=["staff", "backup"],
+    dependencies=[Depends(require_any_role("setup_admin", "support_admin"))],
+)
 _ARCHIVE_ID = re.compile(r"^station-backup-[0-9TZ-]+-[0-9a-f]{8}$")
 
 
@@ -57,13 +60,13 @@ def _artifact_payload(item: Any) -> dict[str, Any]:
     }
 
 
-@staff_router.get("", dependencies=[_WRITE])
+@staff_router.get("")
 def list_station_backups(request: Request) -> dict[str, Any]:
     service = _service(request)
     return {"backups": [_artifact_payload(item) for item in service.list_backups()]}
 
 
-@staff_router.get("/status", dependencies=[_WRITE])
+@staff_router.get("/status")
 def station_backup_status(request: Request) -> dict[str, Any]:
     status_data = _service(request).status()
     if isinstance(status_data.get("last_success"), dict):
@@ -80,7 +83,7 @@ def station_backup_status(request: Request) -> dict[str, Any]:
     return status_data
 
 
-@staff_router.post("/create", dependencies=[_WRITE])
+@staff_router.post("/create")
 def create_station_backup(body: CreateBackupRequest, request: Request) -> dict[str, Any]:
     service = _service(request)
     try:
@@ -89,7 +92,7 @@ def create_station_backup(body: CreateBackupRequest, request: Request) -> dict[s
         raise HTTPException(status_code=500, detail=_public_error(exc)) from exc
 
 
-@staff_router.post("/verify", dependencies=[_WRITE])
+@staff_router.post("/verify")
 def verify_station_backup(body: VerifyBackupRequest, request: Request) -> dict[str, Any]:
     if not _ARCHIVE_ID.fullmatch(body.backup_id):
         raise HTTPException(status_code=400, detail="Backup identifier is invalid")
@@ -112,7 +115,7 @@ def verify_station_backup(body: VerifyBackupRequest, request: Request) -> dict[s
         raise HTTPException(status_code=400, detail=_public_error(exc)) from exc
 
 
-@staff_router.put("/schedule", dependencies=[_WRITE])
+@staff_router.put("/schedule")
 def update_station_backup_schedule(body: ScheduleRequest, request: Request) -> dict[str, Any]:
     service = _service(request)
     try:
@@ -123,7 +126,7 @@ def update_station_backup_schedule(body: ScheduleRequest, request: Request) -> d
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@staff_router.put("/schedule/passphrase", dependencies=[_WRITE])
+@staff_router.put("/schedule/passphrase")
 def set_scheduled_passphrase(body: ScheduledPassphraseRequest, request: Request) -> dict[str, bool]:
     service = _service(request)
     try:
@@ -133,7 +136,7 @@ def set_scheduled_passphrase(body: ScheduledPassphraseRequest, request: Request)
     return {"configured": service.has_scheduled_passphrase()}
 
 
-@staff_router.get("/{backup_id}/download", dependencies=[_WRITE])
+@staff_router.get("/{backup_id}/download")
 def download_station_backup(backup_id: str, request: Request) -> StreamingResponse:
     if not _ARCHIVE_ID.fullmatch(backup_id):
         raise HTTPException(status_code=400, detail="Backup identifier is invalid")

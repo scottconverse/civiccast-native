@@ -77,7 +77,7 @@ function StaffLoginRoute() {
       : '/schedule'
 
   return (
-    <main className="min-h-screen px-6 py-12" style={{ background: 'var(--cc-bg)', color: 'var(--cc-ink)' }}>
+    <main className="min-h-screen px-6 py-12" style={{ background: 'var(--cc-paper)', color: 'var(--cc-ink)' }}>
       <div className="mx-auto grid max-w-4xl gap-5">
         <header className="space-y-1">
           <CivicCastLogo />

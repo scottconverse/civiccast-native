@@ -42,3 +42,15 @@ The mutation baseline also exposed a platform-specific test fixture: the saved
 network-settings test wrote to the Windows location on Linux. It now isolates
 both platform environment roots under its temporary directory and uses the real
 path resolver. The focused test passed locally; Linux confirmation remains CI.
+
+The first randomized suite completed with 24 failed, 11,344 passed and 100
+skipped. Follow-up corrections normalize restore URLs and bound database
+connection timeouts, use the defined login background token, put the unchanged
+backup role dependency at router level so the policy checker recognizes it,
+and document the intentional unauthenticated login exception. Focused restore
+checks passed (28); CSS/role/backup checks passed (30), with overlapping backup
+tests. Full mypy passed 701 files afterward.
+
+Remaining policy bookkeeping updates refresh documentation-only DR bindings,
+current native test counts/platform classification, workflow input bindings,
+and tracked PDF/DOCX manual downloads. These do not require an installer rebuild.

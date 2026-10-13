@@ -10,7 +10,10 @@ from civiccast.native import install_service_identity as migration
 from civiccast.native.install_service_identity import _grant_tree as grant_windows_tree
 from civiccast.native.service_identity import SERVICE_ACCOUNT
 
-pytestmark = pytest.mark.skipif(os.name != "nt", reason="Windows installer APIs")
+pytestmark = [
+    pytest.mark.windows_only,
+    pytest.mark.skipif(os.name != "nt", reason="Windows installer APIs"),
+]
 
 
 @pytest.fixture

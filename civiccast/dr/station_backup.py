@@ -1016,7 +1016,9 @@ def _verify_members(bundle: Path, manifest: Mapping[str, Any]) -> int:
 def _restore_sqlite(artifact: Path, target_database_url: str) -> None:
     from sqlalchemy.engine import make_url
 
-    parsed_url = make_url(target_database_url)
+    from civiccast.db.url import normalize_database_url
+
+    parsed_url = make_url(normalize_database_url(target_database_url))
     if not parsed_url.drivername.startswith("sqlite") or not parsed_url.database:
         raise ValueError("SQLite backup requires a sqlite:/// target database URL")
     target = Path(parsed_url.database).expanduser().absolute()
@@ -1198,9 +1200,15 @@ def _remap_database_media_paths(database_url: str, mappings: Sequence[tuple[Path
     )
     from sqlalchemy.sql.elements import BindParameter
 
+    from civiccast.db.session import connect_options
     from civiccast.db.url import normalize_database_url
 
-    engine = create_engine(normalize_database_url(database_url), future=True)
+    normalized_database_url = normalize_database_url(database_url)
+    engine = create_engine(
+        normalized_database_url,
+        future=True,
+        **connect_options(normalized_database_url),
+    )
     total_updated = 0
     try:
         schema = "civiccast" if engine.dialect.name == "postgresql" else None

@@ -10,8 +10,8 @@ package is the drill underneath: it backs up the REAL database, restores it
 into a completely fresh database, and verifies row counts, per-table content
 checksums, and that the app's own stores can read the restored data.
 
-The operator-facing portable backup workflow is implemented separately by
-:class:`civiccast.dr.station_backup.StationBackupService`; it includes
+The operator-facing portable backup workflow is separate from these drills
+and lives in :class:`civiccast.dr.station_backup.StationBackupService`; it includes
 encrypted configuration/credential payloads and complete selected media
 files. The boundaries below describe the DR *drill* functions, not that
 operator backup package.
