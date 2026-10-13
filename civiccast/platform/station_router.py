@@ -66,6 +66,7 @@ class StationTimeZone(BaseModel):
 
     station_timezone: str
 
+
 box_profile_router = APIRouter(prefix="/api/staff", tags=["staff", "platform"])
 
 staff_router = APIRouter(prefix="/api/staff/station", tags=["staff", "station"])
