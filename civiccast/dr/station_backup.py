@@ -32,7 +32,7 @@ from uuid import uuid4
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from civiccast.dr.backup import (
     read_backup_manifest,
@@ -47,6 +47,9 @@ _PBKDF2_ITERATIONS = 600_000
 _CHUNK_SIZE = 1024 * 1024
 _ARCHIVE_GLOB = "station-backup-*.ccbackup"
 _MAX_RETENTION = 100
+_MAX_SCHEDULED_ATTEMPTS = 3
+_SCHEDULED_RETRY_DELAYS_SECONDS = (15 * 60, 60 * 60)
+_STATE_LOAD_ERROR = "_load_error"
 
 
 class BackupSchedule(BaseModel):
@@ -84,6 +87,11 @@ class BackupSchedule(BaseModel):
                 normalized.append(canonical)
                 seen.add(key)
         return normalized
+
+    @model_validator(mode="after")
+    def destination_must_be_separate_from_media(self) -> BackupSchedule:
+        _validate_destination_media_overlap(self.destination, self.selected_media_roots)
+        return self
 
 
 @dataclass(frozen=True)
@@ -191,12 +199,32 @@ class StationBackupService:
 
     def _load_state(self) -> dict[str, Any]:
         try:
-            raw = json.loads(self.state_path.read_text(encoding="utf-8"))
-            return raw if isinstance(raw, dict) else {}
-        except (OSError, json.JSONDecodeError):
+            serialized = self.state_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            if os.path.lexists(self.state_path) or any(
+                parent.is_symlink() and not parent.exists() for parent in self.state_path.parents
+            ):
+                return {
+                    _STATE_LOAD_ERROR: "FileNotFoundError: station backup state path is redirected"
+                }
             return {}
+        except OSError as exc:
+            return {
+                _STATE_LOAD_ERROR: (f"{type(exc).__name__}: station backup state could not be read")
+            }
+        except UnicodeError:
+            return {_STATE_LOAD_ERROR: "UnicodeError: station backup state is not valid UTF-8"}
+        try:
+            raw = json.loads(serialized)
+        except json.JSONDecodeError:
+            return {_STATE_LOAD_ERROR: "JSONDecodeError: station backup state is invalid"}
+        if not isinstance(raw, dict):
+            return {_STATE_LOAD_ERROR: "ValueError: station backup state must be a JSON object"}
+        return raw
 
     def _save_state(self) -> None:
+        if _STATE_LOAD_ERROR in self._state:
+            return
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         temp = self.state_path.with_suffix(self.state_path.suffix + ".tmp")
         temp.write_text(json.dumps(self._state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -226,12 +254,16 @@ class StationBackupService:
         """Snapshot live state, encrypt it, atomically publish, then prune old archives."""
 
         _require_passphrase(passphrase)
+        schedule = self._schedule()
+        if _STATE_LOAD_ERROR in self._state:
+            raise RuntimeError("repair the persisted backup state before creating another backup")
+        _validate_destination_media_overlap(self.destination, self.media_roots)
         if not self._job_lock.acquire(blocking=False):
             raise RuntimeError("another station backup operation is already running")
         try:
             self.destination.mkdir(parents=True, exist_ok=True)
             effective_retention = (
-                self._schedule().retention_count if retention_count is None else retention_count
+                schedule.retention_count if retention_count is None else retention_count
             )
             _validate_retention(effective_retention)
             started = datetime.now(UTC)
@@ -547,13 +579,27 @@ class StationBackupService:
     def set_schedule(self, schedule: BackupSchedule) -> BackupSchedule:
         if schedule.enabled and not self.has_scheduled_passphrase():
             raise ValueError("set an unattended recovery passphrase before enabling the schedule")
-        self.destination = Path(schedule.destination).expanduser().absolute()
-        self.media_roots = tuple(
+        destination = Path(schedule.destination).expanduser().absolute()
+        media_roots = tuple(
             Path(root).expanduser().absolute() for root in schedule.selected_media_roots
         )
+        _validate_destination_media_overlap(destination, media_roots)
         with self._lock:
+            previous_destination = self.destination
+            previous_media_roots = self.media_roots
+            previous_state = self._state.copy()
+            self.destination = destination
+            self.media_roots = media_roots
+            if self._state.pop(_STATE_LOAD_ERROR, None) is not None:
+                self._state["last_error"] = None
             self._state["schedule"] = schedule.model_dump(mode="json")
-            self._save_state()
+            try:
+                self._save_state()
+            except OSError:
+                self.destination = previous_destination
+                self.media_roots = previous_media_roots
+                self._state = previous_state
+                raise
         return schedule
 
     def set_scheduled_passphrase(self, passphrase: str) -> None:
@@ -569,13 +615,20 @@ class StationBackupService:
 
     def _schedule(self) -> BackupSchedule:
         raw = self._state.get("schedule")
-        if isinstance(raw, dict):
+        if "schedule" in self._state and isinstance(raw, dict):
+            raw = dict(raw)
             try:
                 if "selected_media_roots" not in raw:
                     raw["selected_media_roots"] = [str(path) for path in self.media_roots]
                 return BackupSchedule.model_validate(raw)
             except ValueError:
-                pass
+                self._state.setdefault(
+                    _STATE_LOAD_ERROR, "ValueError: persisted station backup schedule is invalid"
+                )
+        elif "schedule" in self._state:
+            self._state.setdefault(
+                _STATE_LOAD_ERROR, "ValueError: persisted station backup schedule is invalid"
+            )
         return BackupSchedule(
             enabled=False,
             destination=str(self.destination),
@@ -592,14 +645,18 @@ class StationBackupService:
                 "scheduled_passphrase_configured": self.has_scheduled_passphrase(),
                 "job": self._state.get("job", {"phase": "idle", "percent": 0}),
                 "last_success": self._state.get("last_success"),
-                "last_error": self._state.get("last_error"),
+                "last_error": self._state.get(_STATE_LOAD_ERROR) or self._state.get("last_error"),
                 "backups": [
                     asdict(item) | {"path": str(item.path)} for item in self.list_backups()
                 ],
             }
 
     def start_worker(self, passphrase_provider: Callable[[], str] | None = None) -> None:
-        """Start the daily scheduler; ``passphrase_provider`` must use OS-protected storage."""
+        """Start the daily scheduler; failed runs retry after 15 minutes, then one hour.
+
+        The worker makes at most three attempts per UTC day. The passphrase
+        provider must use OS-protected storage.
+        """
 
         passphrase_provider = passphrase_provider or self._scheduled_passphrase_provider
         if passphrase_provider is None:
@@ -619,11 +676,33 @@ class StationBackupService:
                 if (
                     not schedule.enabled
                     or not scheduled
-                    or self._state.get("last_attempt_day") == today
+                    or self._state.get("last_success_day") == today
                 ):
                     continue
+                attempt_count = (
+                    self._state.get("attempt_count", 0)
+                    if self._state.get("last_attempt_day") == today
+                    else 0
+                )
+                if not isinstance(attempt_count, int) or attempt_count < 0:
+                    attempt_count = 0
+                if attempt_count >= _MAX_SCHEDULED_ATTEMPTS:
+                    continue
+                retry_at = self._state.get("next_attempt_at")
+                if self._state.get("last_attempt_day") == today and retry_at:
+                    try:
+                        retry_time = datetime.fromisoformat(str(retry_at))
+                    except ValueError:
+                        retry_time = now
+                    if retry_time.tzinfo is None:
+                        retry_time = retry_time.replace(tzinfo=UTC)
+                    if now < retry_time:
+                        continue
+                attempt_count += 1
                 with self._lock:
                     self._state["last_attempt_day"] = today
+                    self._state["attempt_count"] = attempt_count
+                    self._state["next_attempt_at"] = None
                     self._save_state()
                 try:
                     self.create_backup(
@@ -632,6 +711,18 @@ class StationBackupService:
                 except Exception as exc:
                     with self._lock:
                         self._state["last_error"] = _safe_error(exc)
+                        if attempt_count < _MAX_SCHEDULED_ATTEMPTS:
+                            delay = _SCHEDULED_RETRY_DELAYS_SECONDS[attempt_count - 1]
+                            next_attempt = datetime.fromtimestamp(
+                                datetime.now(UTC).timestamp() + delay, UTC
+                            )
+                            self._state["next_attempt_at"] = next_attempt.isoformat()
+                        self._save_state()
+                else:
+                    with self._lock:
+                        self._state["last_success_day"] = today
+                        self._state["next_attempt_at"] = None
+                        self._state["last_error"] = None
                         self._save_state()
 
         self._worker = threading.Thread(target=run, name="civiccast-backup", daemon=True)
@@ -667,6 +758,25 @@ def _merge_paths(configured: Sequence[Path], dynamic: Sequence[Path]) -> tuple[P
             ordered.append(path)
             seen.add(key)
     return tuple(ordered)
+
+
+def _validate_destination_media_overlap(
+    destination: str | Path, media_roots: Sequence[str | Path]
+) -> None:
+    """Reject backup/media paths that overlap after resolving symlink components."""
+
+    try:
+        backup_path = Path(destination).expanduser().resolve()
+        resolved_roots = [Path(root).expanduser().resolve() for root in media_roots]
+    except (OSError, RuntimeError) as exc:
+        raise ValueError("backup destination and media roots must resolve safely") from exc
+    for media_root in resolved_roots:
+        if (
+            backup_path == media_root
+            or backup_path in media_root.parents
+            or media_root in backup_path.parents
+        ):
+            raise ValueError("backup destination must not overlap a selected media root")
 
 
 def _protect_staging_directory(path: Path) -> None:

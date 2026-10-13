@@ -379,6 +379,32 @@ def _restrict_windows_private_key_acl(
         text=True,
         creationflags=creationflags,
     )
+    if result.returncode == 1332 and SERVICE_SID in f"{result.stdout}\n{result.stderr}":
+        # icacls resolves even a *S-1-... trustee through the local account
+        # database. A virtual service SID has no account mapping before its
+        # service is registered, while Windows ACL APIs accept the SID itself.
+        import win32security
+
+        grants = {
+            principal_sid: "FA",
+            _SYSTEM_SID: "FA",
+            _ADMINISTRATORS_SID: "FA",
+        }
+        grants.setdefault(SERVICE_SID, "FRFW")
+        sddl = "D:P" + "".join(f"(A;;{rights};;;{sid})" for sid, rights in grants.items())
+        descriptor = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1)
+        try:
+            win32security.SetFileSecurity(
+                str(path),
+                win32security.DACL_SECURITY_INFORMATION
+                | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+                descriptor,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to restrict CivicCast private-key ACL on Windows with native SID ACL: {exc}"
+            ) from exc
+        return
     if result.returncode != 0:
         raise RuntimeError(
             "Failed to restrict CivicCast private-key ACL on Windows: icacls exited "

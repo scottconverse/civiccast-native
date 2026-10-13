@@ -21,6 +21,8 @@ Backup creation reports database snapshot, media copy, encryption, and completio
 5. Add each selected media folder as an absolute path in the schedule. The list persists with the schedule and every file beneath those roots is included in later archives. Review the selected roots when media storage changes.
 6. Periodically verify an off-station copy.
 
+The backup destination and selected media roots must be separate, non-overlapping paths. The scheduler retries a failed daily run after 15 minutes, then after one hour, with at most three attempts per UTC day. A successful run suppresses further attempts until the next UTC day; the latest failure remains visible in backup status until a later success. If the persisted schedule state cannot be read or validated, status reports the error and backups remain blocked until a valid schedule is saved.
+
 ## Restore after disk replacement
 
 Restore is an offline operation. Do not overlay a running CivicCast station or database.

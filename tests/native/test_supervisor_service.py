@@ -1185,7 +1185,11 @@ def test_default_dependency_provider_builds_real_deps_without_raising(
 def test_default_provider_uses_saved_network_settings_for_env_and_health_probe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from civiccast.native.network import NetworkSettings, NetworkSettingsStore
+    from civiccast.native.network import (
+        NetworkSettings,
+        NetworkSettingsStore,
+        default_network_settings_path,
+    )
 
     settings = NetworkSettings.model_validate(
         {
@@ -1197,7 +1201,9 @@ def test_default_provider_uses_saved_network_settings_for_env_and_health_probe(
             "upstream_port": 8123,
         }
     )
-    settings_path = Path(os.environ["LOCALAPPDATA"]) / "CivicCast" / "network-settings.json"
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData" / "Local"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg" / "state"))
+    settings_path = default_network_settings_path()
     NetworkSettingsStore(settings_path).save(settings)
     monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
 

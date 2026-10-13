@@ -108,7 +108,80 @@ def _grant_tree(path: Path, rights: str, *, recursive: bool = True) -> None:
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode:
+        if result.returncode == 1332 and SERVICE_SID in f"{result.stdout}\n{result.stderr}":
+            _grant_tree_native_sid(path, rights, recursive=recursive)
+            return
         raise RuntimeError(f"Could not grant restricted service access to {path}.")
+
+
+def _grant_tree_native_sid(path: Path, rights: str, *, recursive: bool) -> None:
+    """Grant the service's raw SID when icacls cannot map its virtual account.
+
+    Other ACL entries are retained, explicit grants for this service SID are
+    replaced, and recursive calls remain within the tree checked by
+    :func:`_grant_tree`.
+    """
+
+    import win32security
+
+    masks = {"M": 0x001301BF, "RX": 0x001200A9}
+    try:
+        access_mask = masks[rights]
+    except KeyError as exc:
+        raise RuntimeError(f"Unsupported restricted service access right: {rights}") from exc
+
+    service_sid = win32security.ConvertStringSidToSid(SERVICE_SID)
+    members = [path]
+    if recursive and path.is_dir():
+        members.extend(path.rglob("*"))
+    for member in members:
+        descriptor = win32security.GetFileSecurity(
+            str(member), win32security.DACL_SECURITY_INFORMATION
+        )
+        acl = descriptor.GetSecurityDescriptorDacl()
+        if acl is None:
+            raise RuntimeError(f"Cannot add restricted service access to a NULL DACL: {member}")
+        for index in range(acl.GetAceCount() - 1, -1, -1):
+            ace = acl.GetAce(index)
+            header = ace[0]
+            if not isinstance(header, tuple) or len(header) < 2:
+                continue
+            ace_type, ace_flags = header[:2]
+            if (
+                ace_type == win32security.ACCESS_ALLOWED_ACE_TYPE
+                and not ace_flags & win32security.INHERITED_ACE
+                and len(ace) == 3
+                and win32security.ConvertSidToStringSid(ace[2]) == SERVICE_SID
+            ):
+                acl.DeleteAce(index)
+
+        inheritance_flags = (
+            win32security.OBJECT_INHERIT_ACE | win32security.CONTAINER_INHERIT_ACE
+            if member.is_dir()
+            else 0
+        )
+        acl.AddAccessAllowedAceEx(
+            win32security.ACL_REVISION_DS, inheritance_flags, access_mask, service_sid
+        )
+        if not recursive and member.is_dir():
+            # A protected child (for example the upgrade journal) will not
+            # inherit this grant from its parent.
+            win32security.SetNamedSecurityInfo(
+                str(member),
+                win32security.SE_FILE_OBJECT,
+                win32security.DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                acl,
+                None,
+            )
+        else:
+            # GetSecurityDescriptorDacl returns the ACL object, but mutating
+            # that object does not update the descriptor's DACL field.
+            descriptor.SetSecurityDescriptorDacl(1, acl, 0)
+            win32security.SetFileSecurity(
+                str(member), win32security.DACL_SECURITY_INFORMATION, descriptor
+            )
 
 
 def configure_service_identity(install_root: Path) -> None:

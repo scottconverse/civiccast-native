@@ -9,9 +9,15 @@ network access, staff/session administration, and restricted service identity.
 See [current implementation and evidence](docs/ops/station-operations-goal.md).
 Actual restricted SCM migration, healthy PostgreSQL/API startup and encrypted
 backup passed in an isolated guest; the guest is closed and the host is unchanged.
-Pre-push reconciliation is correcting type declarations and stale manual text.
-Published Beta 15 remains unchanged. Current PR/CI identity will be recorded on
-the pull request rather than embedding a self-referential commit hash here.
+Pre-push type declarations and manual text were reconciled. PR #245 is open:
+https://github.com/scottconverse/civiccast-native/pull/245
+Its first CI run found operator form lint, a missing login version label, and
+clean-machine service-SID ACL failures. Its review also identified backup-state,
+retry and destination-overlap defects; a Linux network test fixture used a
+Windows-only path. Focused corrections pass; merge awaits corrected-head CI.
+See `.agent-runs/native-windows/station-operations-1-0/evidence/pr245-ci-corrections.md`.
+Published Beta 15 remains unchanged. Current PR/CI
+identity is recorded on the pull request.
 
 ## Historical Beta 14 publication handoff
 

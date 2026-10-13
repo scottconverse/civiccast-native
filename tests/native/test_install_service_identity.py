@@ -130,6 +130,56 @@ def test_data_root_grant_does_not_override_protected_installer_subtrees(installe
     assert SERVICE_SID not in trustees
 
 
+def test_unregistered_service_sid_grant_uses_native_acl_and_keeps_protected_child(
+    tmp_path, monkeypatch
+):
+    import win32security
+
+    from civiccast.certs.authority import _current_process_sid
+
+    fake_service_sid = "S-1-5-80-1111111111-2222222222-3333333333-1234567890-987654321"
+    writer_sid = _current_process_sid()
+    monkeypatch.setattr(migration, "SERVICE_SID", fake_service_sid)
+    data_root = tmp_path / "CivicCast"
+    protected = data_root / "upgrade"
+    protected.mkdir(parents=True)
+    state_file = data_root / "station-state.json"
+    state_file.write_text("{}", encoding="utf-8")
+    sddl = f"D:P(A;OICI;FA;;;{writer_sid})(A;OICI;FA;;;S-1-5-18)(A;OICI;FA;;;S-1-5-32-544)"
+    descriptor = win32security.ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1)
+    for directory in (data_root, protected):
+        win32security.SetFileSecurity(
+            str(directory),
+            win32security.DACL_SECURITY_INFORMATION
+            | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+            descriptor,
+        )
+    win32security.SetFileSecurity(
+        str(state_file),
+        win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+        descriptor,
+    )
+
+    migration._grant_tree(data_root, "M", recursive=False)
+    migration._grant_tree(state_file, "M", recursive=False)
+
+    def grants(path):
+        security = win32security.GetFileSecurity(str(path), win32security.DACL_SECURITY_INFORMATION)
+        acl = security.GetSecurityDescriptorDacl()
+        return {
+            win32security.ConvertSidToStringSid(acl.GetAce(index)[2]): acl.GetAce(index)[1]
+            for index in range(acl.GetAceCount())
+        }
+
+    root_grants = grants(data_root)
+    assert root_grants[fake_service_sid] == 0x001301BF
+    assert set(root_grants) == {writer_sid, "S-1-5-18", "S-1-5-32-544", fake_service_sid}
+    assert fake_service_sid not in grants(protected)
+    file_grants = grants(state_file)
+    assert file_grants[fake_service_sid] == 0x001301BF
+    assert set(file_grants) == {writer_sid, "S-1-5-18", "S-1-5-32-544", fake_service_sid}
+
+
 @pytest.mark.parametrize("stop_finishes", [True, False])
 def test_timed_out_migration_waits_for_stopped_before_restoring_environment(
     installed, monkeypatch, stop_finishes

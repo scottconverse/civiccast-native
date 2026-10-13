@@ -191,6 +191,31 @@ def test_restrict_real_icacls_succeeds_and_grants_expected_principals(tmp_path: 
     assert "BUILTIN\\Administrators:(F)" in text
 
 
+@windows_only
+def test_unregistered_service_sid_uses_native_acl_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A raw but unregistered virtual SID fails icacls, then succeeds natively."""
+
+    import win32security
+
+    fake_service_sid = "S-1-5-80-1111111111-2222222222-3333333333-1234567890-987654321"
+    monkeypatch.setattr(authority, "SERVICE_SID", fake_service_sid)
+    key = tmp_path / "key.pem"
+    key.write_text("secret")
+
+    authority._restrict_windows_private_key_acl(key, sid_reader=lambda: "S-1-5-18")
+
+    descriptor = win32security.GetFileSecurity(str(key), win32security.DACL_SECURITY_INFORMATION)
+    acl = descriptor.GetSecurityDescriptorDacl()
+    grants = {
+        win32security.ConvertSidToStringSid(acl.GetAce(index)[2]): acl.GetAce(index)[1]
+        for index in range(acl.GetAceCount())
+    }
+    assert set(grants) == {"S-1-5-18", "S-1-5-32-544", fake_service_sid}
+    assert grants[fake_service_sid] == 0x0012019F  # FILE_GENERIC_READ | FILE_GENERIC_WRITE
+
+
 # --------------------------------------------------------------------------- #
 # Full first-admin path under the exact LocalSystem condition (N-01)          #
 # --------------------------------------------------------------------------- #

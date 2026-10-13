@@ -10,6 +10,7 @@ import {
 import { lazy, Suspense, useEffect, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Layout, MAIN_CONTENT_ID } from './components/shell/Layout'
+import { CivicCastLogo } from './components/shell/TopBar'
 import type { RoleName } from './components/shell/Sidebar'
 import { SampleSeedNotice } from './components/SampleSeedNotice'
 import { ApiError, getStaffIdentity, STAFF_SIGNED_OUT_NOTICE_KEY, storeStaffToken } from './api/client'
@@ -78,9 +79,10 @@ function StaffLoginRoute() {
   return (
     <main className="min-h-screen px-6 py-12" style={{ background: 'var(--cc-bg)', color: 'var(--cc-ink)' }}>
       <div className="mx-auto grid max-w-4xl gap-5">
-        <header>
+        <header className="space-y-1">
+          <CivicCastLogo />
           <div className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--cc-ink-3)' }}>
-            CivicCast operator console
+            Operator console
           </div>
           <h1 className="m-0 mt-1 text-2xl font-semibold tracking-tight">Sign in</h1>
         </header>

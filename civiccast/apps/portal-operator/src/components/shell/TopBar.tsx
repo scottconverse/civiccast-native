@@ -23,7 +23,7 @@ function bundledVersion(): string | undefined {
   return runtimeVersion ?? import.meta.env.VITE_CIVICCAST_VERSION
 }
 
-function Logo() {
+export function CivicCastLogo() {
   const versionQuery = useQuery({
     queryKey: ['civiccast-version'],
     queryFn: getCivicCastVersion,
@@ -272,7 +272,7 @@ export function TopBar({ showMenuButton = false, onMenuClick }: TopBarProps = {}
       }}
     >
       {showMenuButton && onMenuClick && <MenuButton onClick={onMenuClick} />}
-      <Logo />
+      <CivicCastLogo />
       <div className="hidden flex-1 items-center justify-center gap-3 md:flex">
         <StreamingPill />
         <Clock />

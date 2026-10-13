@@ -71,6 +71,7 @@ def station_backup_status(request: Request) -> dict[str, Any]:
         path_value = last_success.pop("path", None)
         if path_value:
             last_success["file_name"] = Path(str(path_value)).name
+        status_data["last_success"] = last_success
     status_data["backups"] = [
         {key: value for key, value in item.items() if key != "path"}
         | {"file_name": Path(str(item["path"])).name}

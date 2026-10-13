@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AuthRequiredState } from '../components/AuthRequiredState'
 import { ApiError, getNetworkSettings, getStaffIdentity, saveNetworkSettings } from '../api/client'
@@ -16,6 +16,20 @@ const EMPTY_SETTINGS: NetworkSettings = {
   caddy_bind_addresses: [],
   upstream_host: '127.0.0.1',
   upstream_port: 8000,
+}
+
+interface NetworkSettingsDraft {
+  settings: NetworkSettings
+  cidrText: string
+  bindText: string
+}
+
+function makeDraft(settings: NetworkSettings): NetworkSettingsDraft {
+  return {
+    settings,
+    cidrText: settings.staff_allowed_cidrs.join('\n'),
+    bindText: settings.caddy_bind_addresses.join('\n'),
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -49,27 +63,18 @@ export function NetworkSettingsScreen() {
     retry: false,
     enabled: identityQuery.isSuccess && canRead,
   })
-  const [settings, setSettings] = useState<NetworkSettings>(EMPTY_SETTINGS)
-  const [cidrText, setCidrText] = useState('')
-  const [bindText, setBindText] = useState('')
+  const current = settingsQuery.data
+  const [draft, setDraft] = useState<NetworkSettingsDraft | null>(null)
   const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    const loaded = settingsQuery.data?.settings
-    if (loaded) {
-      setSettings(loaded)
-      setCidrText(loaded.staff_allowed_cidrs.join('\n'))
-      setBindText(loaded.caddy_bind_addresses.join('\n'))
-    }
-  }, [settingsQuery.data])
+  const settings = draft?.settings ?? current?.settings ?? EMPTY_SETTINGS
+  const cidrText = draft?.cidrText ?? current?.settings.staff_allowed_cidrs.join('\n') ?? ''
+  const bindText = draft?.bindText ?? current?.settings.caddy_bind_addresses.join('\n') ?? ''
 
   const saveMutation = useMutation({
     mutationFn: saveNetworkSettings,
     onSuccess: async (result) => {
       await queryClient.setQueryData<NetworkSettingsResponse>(['network-settings'], result)
-      setSettings(result.settings)
-      setCidrText(result.settings.staff_allowed_cidrs.join('\n'))
-      setBindText(result.settings.caddy_bind_addresses.join('\n'))
+      setDraft(null)
     },
   })
 
@@ -87,7 +92,6 @@ export function NetworkSettingsScreen() {
     )
   }
 
-  const current = settingsQuery.data
   const caddyfile = current?.caddyfile ?? ''
   const busy = settingsQuery.isLoading || saveMutation.isPending
   const hasChanges = current != null && JSON.stringify(settings) !== JSON.stringify(current.settings)
@@ -95,7 +99,20 @@ export function NetworkSettingsScreen() {
   const bindAddresses = bindText.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)
 
   function update<K extends keyof NetworkSettings>(key: K, value: NetworkSettings[K]) {
-    setSettings((previous) => ({ ...previous, [key]: value }))
+    setDraft((previous) => {
+      const base = previous ?? makeDraft(current?.settings ?? EMPTY_SETTINGS)
+      return { ...base, settings: { ...base.settings, [key]: value } }
+    })
+  }
+
+  function updateListText(key: 'staff_allowed_cidrs' | 'caddy_bind_addresses', value: string) {
+    const items = value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)
+    setDraft((previous) => {
+      const base = previous ?? makeDraft(current?.settings ?? EMPTY_SETTINGS)
+      return key === 'staff_allowed_cidrs'
+        ? { ...base, cidrText: value, settings: { ...base.settings, staff_allowed_cidrs: items } }
+        : { ...base, bindText: value, settings: { ...base.settings, caddy_bind_addresses: items } }
+    })
   }
 
   async function copyCaddyfile() {
@@ -169,12 +186,12 @@ export function NetworkSettingsScreen() {
               </label>
               <label className="grid gap-1 text-xs">
                 <span>Staff network CIDRs</span>
-                <textarea aria-label="Staff network CIDRs" rows={3} placeholder={'192.168.50.0/24\n2001:db8:50::/64'} value={cidrText} disabled={!canWrite || busy} onChange={(event) => { setCidrText(event.target.value); update('staff_allowed_cidrs', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)) }} className="rounded-md px-2 py-2 font-mono text-xs" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }} />
+                <textarea aria-label="Staff network CIDRs" rows={3} placeholder={'192.168.50.0/24\n2001:db8:50::/64'} value={cidrText} disabled={!canWrite || busy} onChange={(event) => updateListText('staff_allowed_cidrs', event.target.value)} className="rounded-md px-2 py-2 font-mono text-xs" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }} />
                 <span style={{ color: 'var(--cc-ink-3)' }}>Enter the source networks allowed to reach the staff hostname, one CIDR per line.</span>
               </label>
               <label className="grid gap-1 text-xs">
                 <span>Caddy listener IP addresses (optional)</span>
-                <textarea aria-label="Caddy listener IP addresses" rows={2} placeholder={'192.168.50.10\n2001:db8:50::10'} value={bindText} disabled={!canWrite || busy} onChange={(event) => { setBindText(event.target.value); update('caddy_bind_addresses', event.target.value.split(/[\r\n,]+/).map((item) => item.trim()).filter(Boolean)) }} className="rounded-md px-2 py-2 font-mono text-xs" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }} />
+                <textarea aria-label="Caddy listener IP addresses" rows={2} placeholder={'192.168.50.10\n2001:db8:50::10'} value={bindText} disabled={!canWrite || busy} onChange={(event) => updateListText('caddy_bind_addresses', event.target.value)} className="rounded-md px-2 py-2 font-mono text-xs" style={{ background: 'var(--cc-surface)', border: '1px solid var(--cc-line)', color: 'var(--cc-ink)' }} />
                 <span style={{ color: 'var(--cc-ink-3)' }}>One assigned, non-loopback interface IP per line. Leave blank to let Caddy bind all available interfaces.</span>
               </label>
               <Notice tone="warn">Caddy must be directly reachable from clients. Do not place an untrusted CDN or reverse proxy in front; the generated staff network check relies on the direct client address.</Notice>
