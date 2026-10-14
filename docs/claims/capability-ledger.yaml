@@ -42,6 +42,10 @@
 #   per this file's own rule, do not re-bind a row to 3e3356dee without a
 #   proof committed at that sha.
 #
+#   Publishing-provider implementation is not represented by a proof row in
+#   this historical ledger. See CAPABILITIES.md for the scoped behavior and
+#   evidence limits; do not infer provider acceptance from the adapters.
+#
 # RULES. Update this file in the same commit as the evidence that changes a
 # status. A status may only move to `proven` alongside evidence at the
 # candidate sha. Moving a capability to `never` requires a NOT-FOUND search

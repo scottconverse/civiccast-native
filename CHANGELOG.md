@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Documentation reconciliation
+
+- Align the roadmap, handoff, capability matrix, release guidance, manual and
+  generated Help with current source while identifying the published Beta 15
+  package separately.
+- Correct installer rollback and recovery instructions, retire the completed
+  payload-staging task, and explain publishing provider configuration and
+  unavailable publishing workflows.
+
 ### Recorded captions and broadcast outputs
 
 - Add recorded-caption station settings for enabled processing, English with

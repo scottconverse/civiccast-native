@@ -2,6 +2,8 @@
 
 This chapter explains how a recording goes from your library to the public: the Publish screen, what "published" really means, what each publishing step does, and the Playback policy and Paywall screens. The second half is a tour of the resident portal, the public website that residents use to watch meetings. It is written for the people who publish (normally a publish operator) and for anyone who needs to know what a resident sees.
 
+The signed Beta 15 installer is the current published package. Provider behavior here describes the checked-in source and does not qualify that installer; the [capability matrix](https://github.com/scottconverse/civiccast-native/blob/main/CAPABILITIES.md) states the boundary. Provider selectors default to mocks. The Setup Provider form saves its values for station setup, but those saved values do not configure the publishing adapters; IT must set the service environment described in [Integrations](#ch-integrations).
+
 ## Before you start
 
 - The recording must already be **packaged**, which means it has a ready-to-stream copy. If it is not, CivicCast refuses to publish it. See [After the meeting](#ch-after-meeting).
@@ -38,7 +40,7 @@ At the top of the screen, tiles count your recordings: Total, Draft, Portal live
 When you approve the Portal row, CivicCast does these things in this order:
 
 1. It checks the recording has a streamable copy. If not, it stops with "Publish preflight blocked: this asset has no manifest_url. Run the packager or fix ingest before approving publish."
-2. It queues the recording's caption job. This happens on every approval, even one that leaves the Portal row unticked, and a recording with no stored video file gets no caption job. If it cannot queue the job, it stops with "Publish blocked: CivicCast cannot queue this recording's caption job ... Nothing was published." and names the cause.
+2. In the current source branch, it queues recorded-caption work only when the station's recorded-caption setting is enabled, and only for a recording with a stored video file. When captions are disabled, approval can proceed without captions; existing jobs pause, and uncaptioned media is not marked caption-complete. The signed Beta 15 package predates this setting and attempts to queue caption work on approval. See [Recorded-caption settings](#recorded-captions) for the current-source controls. If enabled caption work cannot be queued, publishing stops with "Publish blocked: CivicCast cannot queue this recording's caption job ... Nothing was published." and names the cause.
 3. It runs the surfaces you ticked.
 4. It sets the public publish date. If that fails, the Portal row shows "Failed", the message says "The recording remains private", and you can click **Retry this surface**.
 
@@ -48,14 +50,14 @@ When you approve the Portal row, CivicCast does these things in this order:
 
 Each card has nine rows. Each row shows a status dot, a name, badges (**Required**, an approval word, or **Coming in a future release**), a line such as "archive / Succeeded", a message and a **Next step**.
 
-| Row | What it does in beta.11 |
+| Row | What it does in the current source |
 | --- | --- |
-| Portal | Makes the recording public on the resident portal, and queues captions. |
-| Internet Archive | With the default setting nothing is sent; the row shows the note "Simulated — nothing was actually archived." A real upload happens only if IT has switched the real connection on. |
-| Local NAS rsync, Local NAS ZFS | Copies to the station's network storage. Simulated by default. |
-| YouTube Live, YouTube VOD | YouTube VOD sends the recording to YouTube; YouTube Live is a separate live-stream row. Both are simulated by default (see the Known issue below). |
-| Podcast episode | Marked "Coming in a future release". You cannot tick it. |
-| Subscriber notifications | Marked "Coming in a future release". You cannot tick it. It sends no mail. |
+| Portal | Makes the recording public on the resident portal. Recorded-caption job behavior follows the source/package version and station setting described above. |
+| Internet Archive | Mock by default. A real adapter requires the `CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real` service setting and credentials. It uploads the recording when a local file resolves; without one, the adapter receives an asset/title payload rather than the media. |
+| Local NAS rsync, Local NAS ZFS | These two rows share the mock-by-default local archive adapter. A real adapter copies to the configured mounted folder (local path or UNC) and verifies the copies; the names do not mean CivicCast runs rsync or manages ZFS. Without a local recording file the copy is metadata only. |
+| YouTube Live, YouTube VOD | Mock by default. Real VOD upload requires a resolved recording file or the configured `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. The Live adapter provisions and binds a YouTube broadcast and stream, but this Publish path does not send CivicCast's live output to YouTube's ingest address. |
+| Podcast episode | Marked "Coming in a future release". You cannot tick it. A legacy API branch can return placeholder URLs but does not persist an episode in the public feed. |
+| Subscriber notifications | Marked "Coming in a future release". You cannot tick it. Publishing sends no mail or webhook notification. |
 | Cable file package | Builds a ZIP with the video, captions, details and file fingerprints for the cable headend, in a folder IT has chosen. If no folder is set the row says it is "not set up (optional)". |
 
 A step's status reads **Not run yet**, **Running**, **Succeeded**, **Failed**, **Blocked**, **Overridden** or **Not set up yet**. (The two "coming in a future release" rows show "not built yet" instead.) The recording as a whole shows one of **Draft**, **Preflight blocked**, **Publishing**, **Archive pending**, **Archive verified**, **Reaching fewer places than planned**, **Complete** or **Needs action**.

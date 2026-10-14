@@ -337,24 +337,21 @@ The station archive is intended for a replacement installation: provision the st
 
 ## Update and upgrade
 
-An upgrade runs the new `setup.exe` over the existing install. The installer includes an upgrade engine, which acts in this order:
-
-1. It takes a verified database backup to `C:\ProgramData\CivicCast\upgrade\backups\pre-<new_version>`.
-2. It upgrades the program and migrates the database.
-3. If a step fails, it rolls back automatically, restoring the database from that backup in a single transaction.
+An upgrade runs the new `setup.exe` over the existing install. The following describes current installer source behavior; the published Beta 15 verification record applies to that signed package and does not establish later installer-recovery changes. Current source first compares versions without stopping the service or replacing files. If the installed version is newer, setup exits 129. For an accepted upgrade, setup stops the service and takes a size-checked snapshot of the prior application and station state before replacing files. The engine then takes a verified database backup to `C:\ProgramData\CivicCast\upgrade\backups\pre-<new_version>`, upgrades the program and migrates the database. If a step fails, the engine attempts database rollback and the enclosing installer transaction then attempts to restore the pre-setup snapshot. When that restoration succeeds, the prior application, local database and service state are returned; if it cannot finish, keep the recovery records and station data intact.
 
 It writes `upgrade-engine.log`, `upgrade-journal.json` and, if a rollback itself fails, `UPGRADE-RECOVERY.md`, all under `C:\ProgramData\CivicCast\upgrade`. Setup's exit codes tell you what happened:
 
 | Setup exit | Engine code | Meaning | What to do |
 | --- | --- | --- | --- |
 | 0 | 0 | Upgrade committed | Check `/health` |
-| 124 | 10 | Upgrade failed and was rolled back | Read `upgrade-engine.log`. The installer stops the service and sets it to manual start on purpose, because the new program files are already in place over the old, unmigrated database. Do not set it back to automatic by hand; fix the cause and run setup again, and a successful run restores automatic start. |
+| 124 | 10 | The engine rolled back its database work; setup then attempts to restore the pre-setup snapshot | Read `install-progress.log` and the failed-run engine log and journal under `C:\ProgramData\CivicCast\install-transaction\failure-diagnostics` when present. If restoration succeeded, the previous service configuration is restored; fix the cause before running setup again. Keep recovery records if restoration did not finish. |
 | continue | 11 | Fresh install, nothing to upgrade | None |
 | continue | 12 | Same version already installed | None |
-| 129 | 13 | The installer is older than the installed version | Use the newer installer |
-| 113 | 20 | Rollback failed | Read `UPGRADE-RECOVERY.md` first |
+| 129 | 13 | An older setup was refused by the version guard | Use the setup matching the installed version. The normal read-only check exits before stopping the service or replacing files; a defensive late check also triggers snapshot restoration. |
+| 113 | 20 | The engine's database rollback failed; setup also attempts to restore the prior installer snapshot | Read `install-progress.log` and retained diagnostics. `UPGRADE-RECOVERY.md` may not remain under `upgrade` after successful outer restoration. If restoration failed, keep `install-transaction` and station data intact. |
 | 114 | 30 | A migration cannot be restored | Read the engine log; do not retry blindly |
-| 128 | 31 | A stale journal from an earlier attempt exists | Move `upgrade-journal.json` aside; do not delete it |
+| 128 | 31 | A terminal failure journal from an earlier attempt remains | Inspect `upgrade-journal.json` and any retained `install-transaction\failure-diagnostics` copy, then archive or move the prior terminal journal aside; do not delete it. |
+| 136 | — | Installer recovery could not be prepared or completed | Keep `install-transaction` and station data intact; let the recovery task or next setup retry. |
 | 115 | other | Other failure | Read the engine log |
 
 Related provisioning exits: 75 maps to setup exit 116, 87 to 135 (another CivicCast product or the WSL runtime is present), 85 to 127.

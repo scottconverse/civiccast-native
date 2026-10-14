@@ -376,7 +376,20 @@ The list has two columns that describe the same file in two vocabularies.
 | Needs action | A required surface failed. |
 | Complete | Everything required is done. |
 
-Each surface (Portal, Internet Archive, local NAS copies, YouTube, cable file package, and the Podcast episode and Subscriber notifications rows, which are marked as coming in a future release) has its own state: Blocked, Not set up yet, Coming soon (shown as "not built yet"), Not run yet, Running, Succeeded, Failed, Overridden. Its approval is `pending`, `approved` or `overridden`. A badge marks a surface completed by a simulated (mock) provider rather than a real write.
+Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "not built yet"), Not run yet, Running, Succeeded, Failed, Overridden. Its approval is `pending`, `approved` or `overridden`. A badge marks a surface completed by a simulated (mock) provider rather than a real write. The published Beta 15 installer uses the same provider code described below; selectors default to `mock`, which writes or sends nothing.
+
+| Surface | What it does now |
+| --- | --- |
+| Portal | The only default-selected surface; it makes the record public when its manifest exists. |
+| Internet Archive, Local NAS | Optional for other assets; public-record archive rows are required for archive completion but are not default-selected. A real provider uploads the full recording only when its local source file resolves; otherwise it receives an asset/title payload. Local NAS writes filesystem copies, not rsync or ZFS. |
+| YouTube VOD | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise the configured media-root path must exist. |
+| YouTube Live | Mock by default. The real adapter creates and binds a YouTube broadcast and stream, but CivicCast does not connect its live output to the returned RTMP ingest address. |
+| Cable package | Optional; `not_configured` when unset. |
+| Podcast | The UI and readiness say unavailable; a stale API branch creates only a deterministic placeholder episode and does not persist it into the public feed. |
+| Subscriber notifications | `coming_soon`; publishing sends nothing. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
+| ActivityPub | Off by default; when enabled, a note is delivered only after the portal surface succeeds. |
+
+**Provider setup note:** **Setup > Provider setup** saves fields to `provider-credentials.json`, while the Publish registry reads `CIVICCAST_PROVIDER_*` selectors and adapter credentials from the service environment. Saving that file alone does not enable real delivery. Keep public webhooks set to mock: the resident-supplied URL and identifier-derived secret make real webhook selection unsafe.
 
 ## Captions
 
@@ -466,14 +479,14 @@ Child programs (PostgreSQL, control plane): pending, stopped, starting, ready, s
 
 ## Setup program exit codes
 
-When setup fails it ends with a number. Interactive setup shows a message box (not the number); a silent install (`/S`) shows only the number. Re-running setup after any failure is the supported recovery; nothing in these steps deletes `C:\ProgramData\CivicCast`.
+When setup fails it ends with a number. Interactive setup shows a message box (not the number); a silent install (`/S`) shows only the number. The rows describe current installer source behavior; the Beta 15 verification record applies to its specific signed package and does not establish later recovery changes. Follow the row for stale upgrade journals and keep recovery records when restoration has not finished; nothing in these steps intentionally deletes station data.
 
 | Code | Step | What it means | What to do |
 | --- | --- | --- | --- |
 | 82 | uninstall | The service stop could not be confirmed. | Stop the service in services.msc or reboot, then uninstall again. |
 | 110 | stage packs | A required component pack is missing or not trusted, or the optional GPU pack is not trusted. | Put the named `.ccpack` files in the `packs` folder beside setup.exe and run again. |
 | 111, 112, 121, 122 | verify | The unpacked server (111), app (112), ffmpeg (121) or Ollama (122) files do not match their signature. | Replace your copy of the kit and run again. |
-| 113 | upgrade | The upgrade failed and its rollback failed. | Follow `C:\ProgramData\CivicCast\upgrade\UPGRADE-RECOVERY.md`. |
+| 113 | upgrade | The engine could not restore its database backup; setup also attempts full pre-setup restoration. | Read `install-progress.log` and any failed-run diagnostics under `install-transaction\failure-diagnostics`. `UPGRADE-RECOVERY.md` may not remain under `upgrade` after successful outer restoration. Keep recovery records if restoration did not finish. |
 | 114 | upgrade | This release has a database change that cannot be rolled back; the automatic upgrade was refused. | No manual steps are given by setup. Ask the project. |
 | 115 | upgrade | An unexpected fault. | Read the log. |
 | 116 | database | PostgreSQL could not be provisioned. | Read the log and `provision\PROVISION-RECOVERY.md`. |
@@ -482,12 +495,12 @@ When setup fails it ends with a number. Interactive setup shows a message box (n
 | 119 | firewall | The firewall rule could not be created. | Read the log. |
 | 120 | before install | The existing service could not be proved stopped, or its state could not be read. | Fix it and retry as Administrator. |
 | 123 | activation | The station could not be activated or its self-test failed (see the next table). | See below. |
-| 124 | upgrade | The upgrade was rolled back and the previous database is intact. | Read `upgrade\upgrade-engine.log`. |
+| 124 | upgrade | The engine rolled back its database work; setup attempts to restore the prior application and station snapshot. | Read `install-progress.log` and, when present, the failed-run engine log and journal under `install-transaction\failure-diagnostics`. |
 | 125 | service | The service started but is not serving (health check failed). | Read `install-progress.log` and `upgrade-engine.log`. |
 | 126 | service | The service would not start. | Read the `logs` folder and the Windows Application event log. |
 | 127 | database | Setup cannot tell which CivicCast edition owns this machine. | If there is no WSL edition, set `HKLM\SOFTWARE\CivicCast\ActiveRuntime` to `native`; see `OWNERSHIP-RECOVERY.md`. |
-| 128 | upgrade | An earlier failed upgrade left its record on disk. | Move `upgrade\upgrade-journal.json` aside and run again. |
-| 129 | upgrade | An older setup was run over a newer install. The database is untouched, but the older program files were already copied over and the service is stopped. | Do not start the service. Run the newer setup, or uninstall first. |
+| 128 | upgrade | A prior terminal upgrade-failure journal remains; when restoration succeeds, setup returns the pre-setup state and preserves that earlier journal. | Inspect and archive or move `upgrade\upgrade-journal.json` aside (do not delete it), then run setup again. |
+| 129 | upgrade | An older setup was refused by the read-only version guard, normally before the service is stopped or files are replaced. A defensive late check also attempts snapshot restoration. | Use the setup matching the installed version. If the late recovery did not finish, keep the recovery records and station data. |
 | 130 | uninstall | You declined the ownership-transfer prompt. | None. |
 | 131 | uninstall | The ownership transfer failed. | Read the detail in the message. |
 | 132 | uninstall | Blocked (active edition conflict, or state unreadable). | As the message says. |
@@ -843,8 +856,8 @@ Do this once before the first public meeting, and again after any reinstall.
 - [ ] Readiness, Update and rollback panel: save the path to the installer you would roll back to (the field is labelled **Rollback artifact path**; its own example is an older installer) with **Save rollback artifact**, then run **Run rollback rehearsal**, then **Run update preflight**.
 - [ ] On Readiness, **Open maintenance window** (60 minutes). It needs the update preflight and a passed rollback rehearsal first. During the upgrade itself the service holds the station in maintenance mode, and changes are refused with HTTP 503.
 - [ ] Note the free disk space.
-- [ ] Run the new `setup.exe` over the existing install. It stops the service, re-checks the packs, backs up and migrates the database (with rollback if it fails), registers the service again and starts it. An older setup over a newer install is refused (exit 129).
-- [ ] If setup fails, note the exit number ([Appendix E](#app-status)), read `install-progress.log` and `upgrade\upgrade-engine.log`, and re-run setup (a re-run is the supported recovery).
+- [ ] Run the new `setup.exe` over the existing install. The current source first checks the installed version without stopping the service or replacing files, then arms recovery, stops the service and snapshots prior state before payload replacement. It re-checks the packs, backs up and migrates the database, then registers and starts the service. An older setup is refused (exit 129). The published Beta 15 verification record describes only that signed package's checks and limits.
+- [ ] If setup fails, note the exit number ([Appendix E](#app-status)) and read `install-progress.log`. For upgrade failures, check the failed-run engine log and journal under `install-transaction\failure-diagnostics` when present. Follow Appendix E: exit 128 requires archiving or moving the stale journal aside; if restoration did not finish, keep `install-transaction` and station data intact before retrying setup.
 - [ ] After: Readiness is green, the version in the top bar changed, **Run post-update proof**, then run the go-live items that touch channels and captions.
 
 ## G.7 Disaster-recovery drill {#g-drill}

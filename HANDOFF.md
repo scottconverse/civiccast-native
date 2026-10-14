@@ -1,23 +1,14 @@
-# Current handoff: station operations (2026-10-13)
+# Current handoff: post-Beta-15 main (2026-10-14)
 
-Current branch: `codex/station-operations-1-0`, based on
-`431585942c9ced93e730b1e6b506c707a6adecb8` (corrected Beta 15).
-Owner authorizes push and merge after green CI; no tag or production cutover.
+Published release: [CivicCast Beta 15](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15), published October 13, 2026 from `431585942c9ced93e730b1e6b506c707a6adecb8`. Its exact package identities and observations are in the [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md).
 
-The four selected source goals are implemented: station backup/restore,
-network access, staff/session administration, and restricted service identity.
-See [current implementation and evidence](docs/ops/station-operations-goal.md).
-Actual restricted SCM migration, healthy PostgreSQL/API startup and encrypted
-backup passed in an isolated guest; the guest is closed and the host is unchanged.
-Pre-push type declarations and manual text were reconciled. PR #245 is open:
-https://github.com/scottconverse/civiccast-native/pull/245
-Its first CI run found operator form lint, a missing login version label, and
-clean-machine service-SID ACL failures. Its review also identified backup-state,
-retry and destination-overlap defects; a Linux network test fixture used a
-Windows-only path. Focused corrections pass; merge awaits corrected-head CI.
-See `.agent-runs/native-windows/station-operations-1-0/evidence/pr245-ci-corrections.md`.
-Published Beta 15 remains unchanged. Current PR/CI
-identity is recorded on the pull request.
+Current main is `ab9a9d3a852000e9a7a5f9365ef0deae4a02eff4`, after these post-release merges:
+
+- [PR #245](https://github.com/scottconverse/civiccast-native/pull/245): station backup, network access, staff management and service identity. Implementation and evidence: [station operations](docs/ops/station-operations-goal.md).
+- [PR #246](https://github.com/scottconverse/civiccast-native/pull/246): station-local scheduling and unattended operation. Its [Sprint 2 record](docs/ops/sprint2-unattended.md) preserves the verification detail.
+- [PR #247](https://github.com/scottconverse/civiccast-native/pull/247): broadcast outputs, programme transitions, HLS retention and recorded-caption settings. Its [Sprint 3 record](docs/ops/sprint3-output-completion.md) links the focused evidence.
+
+These merges update source on `main`; published Beta 15 remains the release above. The sprint records retain their contemporaneous verification trails, and their earlier “merge pending” notes are superseded by the merged status above. No newer package or release is recorded here.
 
 ## Historical Beta 14 publication handoff
 

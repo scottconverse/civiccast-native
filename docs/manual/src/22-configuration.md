@@ -365,6 +365,8 @@ The Provider setup block on the Setup page lists twelve cards: Local resident po
 
 The same providers can be configured with environment variables instead (for example `CIVICCAST_R2_ACCOUNT_ID`, `CIVICCAST_R2_ACCESS_KEY_ID`, `CIVICCAST_R2_SECRET_ACCESS_KEY`, `CIVICCAST_R2_BUCKET`, `CIVICCAST_R2_PUBLIC_BASE_URL`, `CIVICCAST_CDN_PROVIDER`, and the `CIVICCAST_BUNNY_*`, `CIVICCAST_FASTLY_*`, `CIVICCAST_AKAMAI_*`, `CIVICCAST_IA_*`, `CIVICCAST_YOUTUBE_*` and `CIVICCAST_SMTP_*` families listed in [Appendix: settings](#app-settings)). The CDN, archive and mail details are in [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations).
 
+For Internet Archive, local archive, YouTube, mail and subscriber webhooks, saving a credential in `provider-credentials.json` does **not** set the publishing adapter's selector or service environment. The adapter registry reads `CIVICCAST_PROVIDER_*` selectors and credentials from the running service environment. IT must set those using the [service environment procedure](#configuration-env) and restart the service; use the [provider behavior notes](#ch-integrations) to see which Publish paths are actually available.
+
 ## Run Cable Commissioning {#configuration-commissioning}
 
 Cable Commissioning is a four-step wizard for a station that sends a channel to a cable company's headend. Skip it for a station that only serves residents on the web. It is available to `setup_admin` (who can press things) and `support_admin` (who can only look). Progress is saved to `station-state.json` after each step, so you can leave and come back.
