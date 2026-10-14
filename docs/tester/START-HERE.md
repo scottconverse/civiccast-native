@@ -1,15 +1,10 @@
 # Beta16 tester quickstart
 
-**`v1.0.0-beta.16` is an unpublished candidate.** Check the [candidate
-verification record](../releases/v1.0.0-beta.16-verification.md) and the active
-[owner handoff](../../HANDOFF.md) for package status and the exact kit assigned
-for testing. Public release downloads continue to serve Beta15 until publication.
+**`v1.0.0-beta.16` is the current published release.** Get its complete kit from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16). Check the [package verification record](../releases/v1.0.0-beta.16-verification.md) for the exact signed installer and scoped results.
 
 ## Install, open, and check
 
-1. **Confirm the candidate is ready for your assigned check.** The verification
-   record must identify the package, and the active handoff must name the exact
-   artifact and requested test. Do not substitute the public Beta15 download.
+1. **Confirm package identity.** Use the published Beta 16 release and compare its installer with the verification record before testing.
 2. **Prepare the complete kit.** Keep `setup.exe`, `packs\\`, and `station\\`
    together. Compare its manifest, installer hash, and signature with the active
    handoff using [Windows release trust](../install/windows-release-trust.md).
@@ -53,10 +48,7 @@ manual](../USER-MANUAL.md) describes operator features.
 
 ## Historical package evidence
 
-The currently published native release remains `v1.0.0-beta.15`; its public
-download is not the Beta16 candidate. The [Beta15 verification
-record](../releases/v1.0.0-beta.15-verification.md) contains package-specific
-results. Its R9 field findings and follow-up work are listed in the
+The previous `v1.0.0-beta.15` release has [package-specific verification](../releases/v1.0.0-beta.15-verification.md). Its R9 field findings and follow-up work are listed in the
 [Beta17 deferred backlog](../ops/beta17-deferred.md). Those observations do not
 establish Beta16 runtime behavior.
 

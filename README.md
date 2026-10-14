@@ -6,23 +6,21 @@ system. Staff use one operator console; residents watch through a separate
 portal. Optional cloud services may charge their own usage fees, while CivicCast
 has no per-minute software fee.
 
-## Current source work
+## Current release
 
-The owner is preparing `v1.0.0-beta.16` as an unpublished candidate from the
-current source. Recent work adds encrypted backup and restore, network access
+Signed `v1.0.0-beta.16` is the current [downloadable release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16). It adds encrypted backup and restore, network access
 and staff sessions, a restricted Windows service identity, station-local
 scheduling, bounded operational storage, automatic output recovery, RTMP
 output, complete programme endings, coordinated HLS retention, and configurable
 recorded-caption languages. The [roadmap](docs/ROADMAP.md) links the
-implementation records; the [candidate verification
-record](docs/releases/v1.0.0-beta.16-verification.md) tracks package status.
+implementation records; the [package verification
+record](docs/releases/v1.0.0-beta.16-verification.md) identifies the tested installer.
 
 ## Current published package
 
-The current downloadable release remains signed `v1.0.0-beta.15`. Its [release
-page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15)
+The signed Beta 16 [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16)
 provides the installer, runtime packs, station-model bundle, manuals, and
-checksums. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
+checksums. The [Beta 16 verification record](docs/releases/v1.0.0-beta.16-verification.md)
 identifies the exact package and its scoped installation results. For
 installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
 for operation, use the [User Manual](docs/USER-MANUAL.md) or [FAQ](FAQ.md).
@@ -38,12 +36,12 @@ identities are recorded in
 
 ## Install and run
 
-Download the signed Beta 15 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
+Download the signed Beta 16 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
 
 ```powershell
-$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta15.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.15/download_windows_release_artifacts.ps1' -OutFile $installerScript
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta15"
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta16.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.16/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta16"
 ```
 
 Keep the PowerShell window open until it reports **Done**. During silent setup,
@@ -60,7 +58,7 @@ The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs
 Source contributors can inspect the [station operations record](docs/ops/station-operations-goal.md),
 [Sprint 2](docs/ops/sprint2-unattended.md), and
 [Sprint 3](docs/ops/sprint3-output-completion.md) for the implementation scope
-and focused evidence behind the Beta 16 preparation. Use the published Beta 15
+and focused evidence behind Beta 16. Use the published Beta 16
 release page for installation.
 
 ```bash
@@ -132,7 +130,7 @@ apps. The [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml) is a
 repo-verified, fail-closed manifest that checks each spec item's claimed
 status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
-release. The Beta 15 verification record describes the current package
+release. The Beta 16 verification record describes the current package
 boundary, and the Beta 11 host report is separately scoped historical runtime
 evidence.
 

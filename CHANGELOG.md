@@ -2,15 +2,16 @@
 
 ## [Unreleased]
 
-### v1.0.0-beta.16 — station operations and broadcast reliability
+## [1.0.0-beta.16] - 2026-10-14
+
+### Station operations and broadcast reliability
 
 Beta 16 brings the station operations, unattended scheduling, broadcast output
-and documentation improvements below together in one candidate. It adds encrypted
+and documentation improvements below together in one release. It adds encrypted
 station backups, staff administration, supported HTTPS configuration, a restricted
 Windows service account, station-local scheduling, bounded operational storage,
 output recovery, RTMP and loudness controls, and recorded-caption preferences.
-The installer and bundled manual/Help are being prepared and verified together.
-Publication awaits owner authorization.
+The installer, bundled manual and Help were built and verified together.
 
 The installer stops the service after the upgrade health check before migrating
 its Windows account, so upgrades from Beta 15 can complete service registration.
@@ -21,8 +22,7 @@ by owner decision; they are not fixes claimed by this release.
 ### Documentation reconciliation
 
 - Align the roadmap, handoff, capability matrix, release guidance, manual and
-  generated Help with current source while identifying the published Beta 15
-  package separately.
+  generated Help with current source while preserving Beta 15 history separately.
 - Correct installer rollback and recovery instructions, retire the completed
   payload-staging task, and explain publishing provider configuration and
   unavailable publishing workflows.
