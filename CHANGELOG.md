@@ -12,6 +12,9 @@ output recovery, RTMP and loudness controls, and recorded-caption preferences.
 The installer and bundled manual/Help are being prepared and verified together.
 Publication awaits owner authorization.
 
+The installer stops the service after the upgrade health check before migrating
+its Windows account, so upgrades from Beta 15 can complete service registration.
+
 The R9 Beta 15 field findings are assigned to [Beta 17](docs/ops/beta17-deferred.md)
 by owner decision; they are not fixes claimed by this release.
 
