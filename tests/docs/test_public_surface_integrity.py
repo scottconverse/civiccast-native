@@ -82,6 +82,8 @@ UNSIGNED_FAMILY = re.compile(
 # Known-legitimate mentions (substring must appear on the flagged line). Adding to
 # this list is a deliberate, reviewable act — that is the point.
 ALLOWED_UNSIGNED_CONTEXTS = [
+    "observed an unsigned installed native executable while the setup executable",  # R9 Beta 15 field finding
+    "A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed",  # manual: same historical finding
     'hardcoded "unsigned" literal',  # README: describes the build-metadata fix
     "unsigned software would say",  # SMARTSCREEN: contrast vs "Unknown publisher"
     "allow unsigned software",  # SMARTSCREEN: IT-policy note (none needed)
