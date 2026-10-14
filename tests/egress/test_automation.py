@@ -53,12 +53,16 @@ class _FakeDaemon:
         # this set stands in for an active operator live takeover or forced
         # fallback slate.
         self.manual_override_channels = manual_override_channels or set()
+        self.operator_stopped_channels: set[str] = set()
 
     def has_live_process(self, channel_id: str) -> bool:
         return channel_id in self.live_channels
 
     def has_manual_override(self, channel_id: str) -> bool:
         return channel_id in self.manual_override_channels
+
+    def has_operator_stop_intent(self, channel_id: str) -> bool:
+        return channel_id in self.operator_stopped_channels
 
     def process_once(self, channel_id: str) -> int:
         self.processed.append(channel_id)
@@ -713,6 +717,42 @@ class TestAutoStart:
         # but no second start is issued.
         service.run_once(now=_NOW)
         assert _pending_actions(store, "public") == []
+
+    def test_operator_stop_suppresses_auto_start_but_channel_stays_supervised(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public", auto_start=True))
+        daemon = _FakeDaemon()
+        daemon.operator_stopped_channels.add("public")
+        service = ChannelAutomationService(
+            store, daemon, lambda _cid: None, settings=ChannelAutomationSettings()
+        )
+
+        assert service.run_once(now=_NOW) == ["public"]
+
+        assert _pending_actions(store, "public") == []
+        assert daemon.processed == ["public"]
+
+    def test_pending_terminal_command_wins_over_same_pass_auto_start(self) -> None:
+        store = InMemoryEgressStore()
+        store.upsert_config(_config("public", auto_start=True))
+        store.enqueue_command(
+            EgressCommand(
+                channel_id="public",
+                action="stop",
+                issued_at=_NOW,
+                issued_by="operator",
+                command_id="operator-stop",
+            )
+        )
+        daemon = _FakeDaemon()
+        service = ChannelAutomationService(
+            store, daemon, lambda _cid: None, settings=ChannelAutomationSettings()
+        )
+
+        service.run_once(now=_NOW)
+
+        assert _pending_actions(store, "public") == ["stop"]
+        assert daemon.processed == ["public"]
 
     def test_live_channel_gets_no_start_and_latch_resets_after_drop(self) -> None:
         store = InMemoryEgressStore()

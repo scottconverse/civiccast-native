@@ -15,6 +15,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine
@@ -110,6 +111,37 @@ def test_wall_clock_honours_non_utc_tz() -> None:
     assert slot.starts_at.hour == 18  # 18:00 wall-clock, not drifted
     assert slot.starts_at.utcoffset() == timedelta(hours=-5)
     assert slot.starts_at.astimezone(UTC).hour == 23
+
+
+def test_wall_clock_skips_nonexistent_spring_forward_start() -> None:
+    station_tz = ZoneInfo("America/Denver")
+    block = _block(start_minute=2 * 60 + 30, end_minute=3 * 60)
+
+    assert (
+        expand_block_slots(
+            block,
+            start_date=date(2026, 3, 8),
+            num_days=1,
+            tz=station_tz,
+        )
+        == []
+    )
+
+
+def test_fall_back_daypart_uses_earlier_fold_and_elapsed_duration() -> None:
+    station_tz = ZoneInfo("America/Denver")
+    block = _block(start_minute=90, end_minute=150)
+
+    [slot] = expand_block_slots(
+        block,
+        start_date=date(2026, 11, 1),
+        num_days=1,
+        tz=station_tz,
+    )
+
+    assert slot.starts_at.astimezone(UTC) == datetime(2026, 11, 1, 7, 30, tzinfo=UTC)
+    assert slot.ends_at.astimezone(UTC) == datetime(2026, 11, 1, 9, 30, tzinfo=UTC)
+    assert slot.duration_seconds == 2 * 60 * 60
 
 
 # ---------------------------------------------------------------------------

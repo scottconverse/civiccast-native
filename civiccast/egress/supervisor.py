@@ -178,6 +178,25 @@ class PlayoutSupervisor(EgressDaemon):
         self._source_lookahead.pop(channel_id, None)
         self._reload_or_swap(channel_id, "program")
 
+    def has_fallback_slate_reason(self, *, channel_id: str, reason: str) -> bool:
+        """Whether the current forced slate is the one a caller requested."""
+
+        return self._forced_slate_reasons.get(channel_id) == reason
+
+    def clear_fallback_slate(self, *, channel_id: str, reason: str) -> bool:
+        """Drop a matching forced-slate request without switching output.
+
+        Terminal stop/drain intent uses this to discard a pending automatic
+        recovery slate. The reason guard prevents cleanup from removing a newer
+        operator-requested override.
+        """
+
+        if not self.has_fallback_slate_reason(channel_id=channel_id, reason=reason):
+            return False
+        self._forced_slate_reasons.pop(channel_id, None)
+        self._source_lookahead.pop(channel_id, None)
+        return True
+
     def _reload_or_swap(self, channel_id: str, role: str) -> None:
         """Toggle between the two always-hot legs (``program`` pad 0, ``slate``
         pad 1) via an in-place selector swap when the encoder strategy supports it

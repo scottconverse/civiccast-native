@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ApiError, createProgramSlot, listStaffAssets } from '../../api/client'
+import { ApiError, createProgramSlot, getStationTimeZone, listStaffAssets } from '../../api/client'
 import { useFocusTrap } from '../../hooks/useFocusTrap'
 import { RadioCardGroup } from '../RadioCardGroup'
 import type { ProgramSlot, ProgramSlotCreate } from '../../types/api.generated'
 import type { AssetRow } from '../../types/asset'
+import {
+  dateToStationDateTimeLocal,
+  effectiveStationTimeZone,
+  stationWallClockToDate,
+} from '../../lib/station-time'
 
 interface Props {
   channelId: string
@@ -15,10 +20,10 @@ interface Props {
 type Recurrence = ProgramSlotCreate['recurrence']
 
 const RECURRENCE_META: Record<Recurrence, { label: string; description: string }> = {
-  once: { label: 'Once', description: 'Airs a single time at the start time.' },
-  daily: { label: 'Daily', description: 'Airs every day at this time.' },
-  weekly: { label: 'Weekly', description: 'Airs every week on this weekday.' },
-  weekdays: { label: 'Weekdays', description: 'Airs Monday through Friday.' },
+  once: { label: 'Once', description: 'Airs a single time at the station-local start time.' },
+  daily: { label: 'Daily', description: 'Airs every day at this station-local time.' },
+  weekly: { label: 'Weekly', description: 'Airs every week at this station-local time.' },
+  weekdays: { label: 'Weekdays', description: 'Airs Monday through Friday at this station-local time.' },
 }
 
 // Returns null rather than throwing on a value Date cannot parse.
@@ -34,36 +39,32 @@ const RECURRENCE_META: Record<Recurrence, { label: string; description: string }
 // rather than relying on the click handler, so an inert button never ships
 // without an explanation next to the field that caused it (Codex review,
 // PR #427).
-function localIsoToUtcIso(localIso: string): string | null {
-  // Browser parses naive ISO as local time. Add tz suffix from the Date.
-  const d = new Date(localIso)
-  if (Number.isNaN(d.getTime())) return null
-  return d.toISOString()
+function localIsoToUtcIso(localIso: string, timeZone: string): string | null {
+  return stationWallClockToDate(localIso, timeZone)?.toISOString() ?? null
 }
 
-function defaultStartLocal(): string {
-  const d = new Date()
-  d.setMinutes(0, 0, 0)
-  d.setHours(d.getHours() + 1)
-  // Format YYYY-MM-DDTHH:mm in local time for <input type="datetime-local">
-  const pad = (n: number) => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-function fmtClientTimezone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone
+function defaultStartLocal(timeZone: string): string {
+  const d = new Date((Math.floor(Date.now() / 3_600_000) + 1) * 3_600_000)
+  return dateToStationDateTimeLocal(d, timeZone)
 }
 
 export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
+  const stationProfileQuery = useQuery({
+    queryKey: ['station-timezone'],
+    queryFn: getStationTimeZone,
+    retry: false,
+  })
+  const timeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)
   const [assetId, setAssetId] = useState<string>('')
   const [recurrence, setRecurrence] = useState<Recurrence>('weekly')
-  const [startLocal, setStartLocal] = useState<string>(() => defaultStartLocal())
+  const [startLocal, setStartLocal] = useState<string>('')
   const [useAssetDuration, setUseAssetDuration] = useState(true)
   const [durationMinutes, setDurationMinutes] = useState<number>(60)
   const [titleOverride, setTitleOverride] = useState<string>('')
   const [repeatUntilLocal, setRepeatUntilLocal] = useState<string>('')
   const [submitError, setSubmitError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const startEdited = useRef(false)
   const sheetRef = useRef<HTMLElement>(null)
   const headingId = 'program-slot-drawer-heading'
   const startErrorId = 'program-slot-drawer-start-error'
@@ -92,14 +93,22 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  useEffect(() => {
+    if (!stationProfileQuery.isLoading && !startEdited.current && !startLocal) {
+      setStartLocal(defaultStartLocal(timeZone))
+    }
+  }, [stationProfileQuery.isLoading, startLocal, timeZone])
+
   const repeatable = recurrence !== 'once'
-  const firstStartUtc = localIsoToUtcIso(startLocal)
+  const firstStartUtc = localIsoToUtcIso(startLocal, timeZone)
   const repeatUntilUtc =
-    repeatable && repeatUntilLocal ? localIsoToUtcIso(repeatUntilLocal) : null
+    repeatable && repeatUntilLocal ? localIsoToUtcIso(repeatUntilLocal, timeZone) : null
   const repeatUntilInvalid =
     repeatable && repeatUntilLocal !== '' && repeatUntilUtc === null
   const submitDisabled =
     submitting ||
+    stationProfileQuery.isLoading ||
+    stationProfileQuery.isError ||
     !effectiveAssetId ||
     !startLocal ||
     firstStartUtc === null ||
@@ -108,6 +117,10 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
 
   const handleSubmit = async () => {
     setSubmitError(null)
+    if (stationProfileQuery.isError) {
+      setSubmitError('Could not load the station timezone. Retry after the station profile is available.')
+      return
+    }
     if (firstStartUtc === null) {
       setSubmitError('Enter a start date and time before adding this slot.')
       return
@@ -142,12 +155,12 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
     }
   }
 
-  const tz = fmtClientTimezone()
   const startPreview = (() => {
     if (!startLocal) return ''
-    const d = new Date(startLocal)
-    if (Number.isNaN(d.getTime())) return ''
+    const d = stationWallClockToDate(startLocal, timeZone)
+    if (!d) return ''
     return d.toLocaleString(undefined, {
+      timeZone,
       weekday: 'short',
       month: 'short',
       day: 'numeric',
@@ -281,12 +294,15 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
                 className="mb-1 block text-[10px] font-semibold uppercase tracking-wider"
                 style={{ color: 'var(--cc-ink-3)' }}
               >
-                First airing
+                First airing ({timeZone})
               </span>
               <input
                 type="datetime-local"
                 value={startLocal}
-                onChange={(e) => setStartLocal(e.target.value)}
+                onChange={(e) => {
+                  startEdited.current = true
+                  setStartLocal(e.target.value)
+                }}
                 aria-invalid={firstStartUtc === null}
                 aria-describedby={firstStartUtc === null ? startErrorId : undefined}
                 className="cc-mono w-full rounded-md px-3 py-2 text-sm"
@@ -304,7 +320,9 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
                   className="mt-1 block text-xs"
                   style={{ color: 'var(--cc-danger, var(--cc-ink-2))' }}
                 >
-                  Enter a date and time for the first airing.
+                  {startLocal
+                    ? `That station-local time does not exist during a spring clock change, or the value is invalid. Choose another time in ${timeZone}.`
+                    : 'Enter a date and time for the first airing.'}
                 </span>
               )}
             </label>
@@ -314,7 +332,7 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
                   className="mb-1 block text-[10px] font-semibold uppercase tracking-wider"
                   style={{ color: 'var(--cc-ink-3)' }}
                 >
-                  Repeat until (optional)
+                  Repeat until (station time: {timeZone}, optional)
                 </span>
                 <input
                   type="datetime-local"
@@ -337,21 +355,33 @@ export function ProgramSlotDrawer({ channelId, onClose, onCreated }: Props) {
                     className="mt-1 block text-xs"
                     style={{ color: 'var(--cc-danger, var(--cc-ink-2))' }}
                   >
-                    The repeat-until date could not be read. Re-enter it.
+                    That station-local date and time does not exist or could not be read. Choose another time.
                   </span>
                 )}
               </label>
             )}
           </div>
 
+          {stationProfileQuery.isError && (
+            <div role="alert" className="mb-3 rounded-md p-2 text-[11px]" style={{ background: 'var(--cc-err-soft)', color: 'var(--cc-err)' }}>
+              Could not load the station timezone. Close this drawer and retry after the station profile is available.
+            </div>
+          )}
+          <p className="mb-3 text-[11px]" style={{ color: 'var(--cc-ink-3)' }}>
+            A recurring time skipped by the spring clock change is skipped. A repeated fall-back time uses its earlier occurrence.
+          </p>
+
           {startPreview && (
             <div
               className="mb-3 rounded-md p-2 text-[11px]"
               style={{ background: 'var(--cc-surface-2)', color: 'var(--cc-ink-2)' }}
             >
-              {startPreview} <span className="cc-mono">({tz})</span>
+              {startPreview} <span className="cc-mono">({timeZone})</span>
             </div>
           )}
+          <p className="mb-3 text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
+            Recurring times follow the station timezone. A time skipped by the spring clock change is skipped; a repeated fall-back time airs once at its earlier occurrence.
+          </p>
 
           <div className="mb-3">
             <label className="flex items-center gap-2 text-xs">

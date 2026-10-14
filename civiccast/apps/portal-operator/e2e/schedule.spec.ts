@@ -79,6 +79,13 @@ test.beforeEach(async ({ page }) => {
       }),
     })
   })
+  await page.route('**/api/staff/station/timezone', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ station_timezone: 'America/Denver' }),
+    })
+  })
   // The drawer loads real station channels (F-RC3-6 fix) — every test in this
   // file needs the endpoint mocked or the channel select stays empty and
   // submit stays disabled.

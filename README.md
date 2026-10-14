@@ -39,6 +39,11 @@ and a [restricted Windows service account](docs/ops/restricted-service-identity.
 These changes are implemented and checked in the development branch, and are not included in the published Beta 15
 download. See the [implementation status](docs/ops/station-operations-goal.md).
 
+[Sprint 2](docs/ops/sprint2-unattended.md) adds station-local scheduling,
+bounded operational storage with usage reporting, and automatic recovery after
+output-restart budgets are exhausted. These changes are also unreleased source
+work, separate from the signed Beta 15 download.
+
 ```bash
 # One-time: install uv, then sync the workspace.
 uv sync --all-extras --group dev

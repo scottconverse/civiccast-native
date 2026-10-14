@@ -41,6 +41,7 @@ class PostgresProgramLogStore:
                     title_override=slot.title_override,
                     recurrence=slot.recurrence,
                     first_start_at=slot.first_start_at,
+                    recurrence_anchor_local=slot.recurrence_anchor_local,
                     duration_seconds=slot.duration_seconds,
                     repeat_until=slot.repeat_until,
                     enabled=slot.enabled,
@@ -77,6 +78,7 @@ class PostgresProgramLogStore:
             row.title_override = slot.title_override
             row.recurrence = slot.recurrence
             row.first_start_at = slot.first_start_at
+            row.recurrence_anchor_local = slot.recurrence_anchor_local
             row.duration_seconds = slot.duration_seconds
             row.repeat_until = slot.repeat_until
             row.enabled = slot.enabled
@@ -164,6 +166,7 @@ def _slot_row_to_model(row: ChannelProgramSlotDb) -> ProgramSlot:
         title_override=row.title_override,
         recurrence=row.recurrence,  # type: ignore[arg-type]
         first_start_at=_coerce_datetime(row.first_start_at),
+        recurrence_anchor_local=row.recurrence_anchor_local,
         duration_seconds=row.duration_seconds,
         repeat_until=(_coerce_datetime(row.repeat_until) if row.repeat_until is not None else None),
         enabled=row.enabled,

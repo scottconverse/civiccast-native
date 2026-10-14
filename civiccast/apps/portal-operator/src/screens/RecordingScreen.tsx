@@ -52,6 +52,7 @@ import {
   createRecordingSchedule,
   deleteRecordingSchedule,
   getStaffIdentity,
+  getStationTimeZone,
   listRecordingJobs,
   listRecordingInputPresets,
   listRecordingSchedules,
@@ -84,10 +85,13 @@ import {
   nextOneShotFireTimes,
   nextWeeklyFireTimes,
   parseDurationHMS,
-  utcDateTimeLocalToLocalEcho,
-  utcHHMMToLocalEcho,
 } from './recording-format'
 import { EmptyState } from '../components/EmptyState'
+import {
+  dateToStationDateTimeLocal,
+  effectiveStationTimeZone,
+  stationWallClockToDate,
+} from '../lib/station-time'
 
 const VIEW_ROLES = ['setup_admin', 'meeting_operator', 'support_admin']
 const WRITE_ROLES = ['setup_admin', 'meeting_operator']
@@ -302,6 +306,13 @@ const DEFAULT_JOBS_FILTER: JobsFilterState = {
 function RecordingBody({ canWrite }: { canWrite: boolean }) {
   const qc = useQueryClient()
 
+  const stationProfileQuery = useQuery({
+    queryKey: ['station-timezone'],
+    queryFn: getStationTimeZone,
+    retry: false,
+  })
+  const stationTimeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)
+
   const schedulesQuery = useQuery<RecordingSchedule[]>({
     queryKey: ['recording-schedules'],
     queryFn: listRecordingSchedules,
@@ -424,6 +435,10 @@ function RecordingBody({ canWrite }: { canWrite: boolean }) {
     },
   })
 
+  if (stationProfileQuery.isLoading) {
+    return <div className="px-6 py-10 text-sm" style={{ color: 'var(--cc-ink-3)' }}>Loading station timezone…</div>
+  }
+
   return (
     <div className="space-y-4 px-6 py-6">
       <div>
@@ -434,6 +449,10 @@ function RecordingBody({ canWrite }: { canWrite: boolean }) {
           finalization, and alerts; this screen owns configuration and history.
         </p>
       </div>
+
+      {stationProfileQuery.isError && (
+        <Banner tone="warn">Could not load the station timezone. Schedule creation and edits are disabled; retry after the station profile is available.</Banner>
+      )}
 
       {engineUnwired && (
         <Banner tone="warn">
@@ -462,6 +481,7 @@ function RecordingBody({ canWrite }: { canWrite: boolean }) {
             : null
         }
         engineUnwired={engineUnwired}
+        stationTimeZone={stationTimeZone}
         onEdit={(id) => setEditingId(id)}
         onArmDelete={(id) => setConfirmDeleteId(id)}
         onCancelDelete={() => setConfirmDeleteId(null)}
@@ -482,6 +502,8 @@ function RecordingBody({ canWrite }: { canWrite: boolean }) {
                 : null
           }
           inputPresets={inputPresetsQuery.data ?? []}
+          stationTimeZone={stationTimeZone}
+          stationTimeZoneAvailable={!stationProfileQuery.isError}
           inputPresetsLoading={inputPresetsQuery.isLoading}
           inputPresetsError={
             inputPresetsQuery.isError
@@ -520,6 +542,7 @@ function RecordingBody({ canWrite }: { canWrite: boolean }) {
         lastRefreshedAt={lastRefreshedAt}
         stoppingId={stopMut.isPending ? (stopMut.variables ?? null) : null}
         confirmStopJobId={confirmStopJobId}
+        stationTimeZone={stationTimeZone}
         onFilterChange={setJobsFilter}
         onRefresh={() => jobsQuery.refetch()}
         onToggleAutoRefresh={() => setAutoRefreshPaused((p) => !p)}
@@ -544,6 +567,7 @@ function SchedulesSection({
   recordingNowId,
   recordNowError,
   engineUnwired,
+  stationTimeZone,
   onEdit,
   onArmDelete,
   onCancelDelete,
@@ -560,6 +584,7 @@ function SchedulesSection({
   recordingNowId: string | null
   recordNowError: string | null
   engineUnwired: boolean
+  stationTimeZone: string
   onEdit: (id: string) => void
   onArmDelete: (id: string) => void
   onCancelDelete: () => void
@@ -634,7 +659,7 @@ function SchedulesSection({
                       </div>
                     </td>
                     <td className="py-1.5 pr-3">{humanizeSource(s.source)}</td>
-                    <td className="py-1.5 pr-3">{humanizeRecurrence(s.recurrence)}</td>
+                    <td className="py-1.5 pr-3">{humanizeRecurrence(s.recurrence, stationTimeZone)}</td>
                     <td className="py-1.5 pr-3">{formatDurationHMS(s.duration_seconds)}</td>
                     <td className="py-1.5 pr-3">
                       <StatusPill ok={s.enabled} okLabel="enabled" offLabel="disabled" />
@@ -785,7 +810,7 @@ function emptyFormState(): ScheduleFormState {
   }
 }
 
-function stateFromSchedule(s: RecordingSchedule): ScheduleFormState {
+function stateFromSchedule(s: RecordingSchedule, stationTimeZone: string): ScheduleFormState {
   const weeklyDays = [false, false, false, false, false, false, false]
   let weeklyTime = ''
   let oneShotStart = ''
@@ -796,7 +821,7 @@ function stateFromSchedule(s: RecordingSchedule): ScheduleFormState {
     weeklyTime = s.recurrence.time_hhmm
   } else {
     // Use the first 16 chars (YYYY-MM-DDTHH:MM) for the datetime-local input.
-    oneShotStart = s.recurrence.start.slice(0, 16)
+    oneShotStart = dateToStationDateTimeLocal(new Date(s.recurrence.start), stationTimeZone)
   }
   return {
     schedule_id: s.schedule_id,
@@ -828,6 +853,7 @@ interface ValidationErrors {
 function validateForm(
   state: ScheduleFormState,
   inputPresets: readonly RecordingInputPreset[] = [],
+  stationTimeZone = 'UTC',
 ): ValidationErrors {
   const errs: ValidationErrors = {}
   if (!state.schedule_id.trim() || !/^[a-z0-9][a-z0-9-]*$/.test(state.schedule_id.trim())) {
@@ -847,11 +873,14 @@ function validateForm(
   }
   if (state.recurrence_kind === 'one_shot') {
     if (!state.one_shot_start.trim()) errs.recurrence = 'Start time is required.'
+    else if (!stationWallClockToDate(state.one_shot_start, stationTimeZone)) {
+      errs.recurrence = 'That station-local time does not exist during the spring clock change. Choose another time.'
+    }
   } else {
     if (!state.weekly_days.some(Boolean))
       errs.recurrence = 'Pick at least one weekday.'
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(state.weekly_time.trim()))
-      errs.recurrence = errs.recurrence ?? 'Time must be HH:MM (24h UTC).'
+      errs.recurrence = errs.recurrence ?? 'Time must be HH:MM (24-hour station time).'
   }
   const durationSeconds = parseDurationHMS(state.duration_text)
   if (durationSeconds == null) {
@@ -871,6 +900,8 @@ function ScheduleForm({
   submitting,
   submitError,
   inputPresets,
+  stationTimeZone,
+  stationTimeZoneAvailable,
   inputPresetsLoading,
   inputPresetsError,
   refreshingInputPresets,
@@ -882,6 +913,8 @@ function ScheduleForm({
   submitting: boolean
   submitError: string | null
   inputPresets: RecordingInputPreset[]
+  stationTimeZone: string
+  stationTimeZoneAvailable: boolean
   inputPresetsLoading: boolean
   inputPresetsError: string | null
   refreshingInputPresets: boolean
@@ -893,8 +926,14 @@ function ScheduleForm({
   ) => void
 }) {
   const [state, setState] = useState<ScheduleFormState>(() =>
-    editing ? stateFromSchedule(editing) : emptyFormState(),
+    editing ? stateFromSchedule(editing, stationTimeZone) : emptyFormState(),
   )
+  const legacyUtcWeekly = Boolean(
+    state.recurrence_kind === 'weekly' &&
+      editing?.recurrence.kind === 'weekly' &&
+      editing.recurrence.time_zone !== 'station',
+  )
+  const weeklyTimeZone = legacyUtcWeekly ? 'UTC' : stationTimeZone
   // Validation errors surface only after the operator has tried to submit
   // once. Until then the form stays "clean" so we don't yell at a half-typed
   // input.
@@ -952,7 +991,7 @@ function ScheduleForm({
   const durationRef = useRef<HTMLInputElement | null>(null)
   const encoderRef = useRef<HTMLInputElement | null>(null)
 
-  const errors = validateForm(state, inputPresets)
+  const errors = validateForm(state, inputPresets, stationTimeZone)
   const hasErrors = Object.keys(errors).length > 0
   const isUpdate = editing != null
   const isLive = (LIVE_SOURCE_KINDS as readonly string[]).includes(state.source_kind)
@@ -1001,6 +1040,9 @@ function ScheduleForm({
 
   const handleSubmit = () => {
     setShowErrors(true)
+    if (!stationTimeZoneAvailable) {
+      return
+    }
     if (hasErrors) {
       focusFirstInvalid()
       return
@@ -1014,9 +1056,9 @@ function ScheduleForm({
       state.recurrence_kind === 'one_shot'
         ? {
             kind: 'one_shot',
-            // datetime-local gives "YYYY-MM-DDTHH:MM"; add seconds + Z so the
-            // backend's pydantic ISO-8601 parser doesn't trip.
-            start: `${state.one_shot_start}:00Z`,
+            // Resolve the station wall clock to its UTC instant. The shared
+            // resolver rejects spring gaps and chooses the earlier fall fold.
+            start: stationWallClockToDate(state.one_shot_start, stationTimeZone)!.toISOString(),
           }
         : {
             kind: 'weekly',
@@ -1024,6 +1066,7 @@ function ScheduleForm({
               .map((on, i) => (on ? i : -1))
               .filter((i) => i >= 0),
             time_hhmm: state.weekly_time.trim(),
+            time_zone: legacyUtcWeekly ? 'UTC' : 'station',
           }
     if (isUpdate && editing) {
       const payload: RecordingScheduleUpdate = {
@@ -1306,7 +1349,7 @@ function ScheduleForm({
 
         {state.recurrence_kind === 'one_shot' ? (
           <label htmlFor={idStart} className="grid gap-1 text-xs">
-            <span style={{ color: 'var(--cc-ink-3)' }}>Start (UTC)</span>
+            <span style={{ color: 'var(--cc-ink-3)' }}>Start (station time: {stationTimeZone})</span>
             <input
               ref={oneShotStartRef}
               id={idStart}
@@ -1318,18 +1361,19 @@ function ScheduleForm({
               aria-invalid={showErrors && Boolean(errors.recurrence) ? true : undefined}
               aria-describedby={showErrors && errors.recurrence ? idRecurrenceError : undefined}
             />
-            {/* UX-2: the browser renders datetime-local in the OPERATOR's
-                local zone, but we store + send the value as UTC. Show a
-                live local-time echo so the operator can sanity-check what
-                wall-clock will fire. */}
+            {/* datetime-local follows the station zone regardless of the
+                operator's browser timezone. */}
             {state.one_shot_start && (
               <span
                 data-testid="one-shot-local-echo"
                 style={{ color: 'var(--cc-ink-3)' }}
               >
-                In your local time: {utcDateTimeLocalToLocalEcho(state.one_shot_start) || '—'}
+                Station time: {stationTimeZone}
               </span>
             )}
+            <span className="text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
+              A time skipped by the spring clock change is invalid; during the fall repeated hour, the earlier occurrence is used.
+            </span>
           </label>
         ) : (
           <div
@@ -1431,7 +1475,9 @@ function ScheduleForm({
               ))}
             </div>
             <label htmlFor={idTime} className="grid gap-1 text-xs">
-              <span style={{ color: 'var(--cc-ink-3)' }}>Time (HH:MM UTC)</span>
+              <span style={{ color: 'var(--cc-ink-3)' }}>
+                Time (HH:MM {legacyUtcWeekly ? 'UTC (legacy schedule)' : `station time: ${stationTimeZone}`})
+              </span>
               <input
                 ref={weeklyTimeRef}
                 id={idTime}
@@ -1452,15 +1498,19 @@ function ScheduleForm({
                     : undefined
                 }
               />
-              {/* UX-2: live local-time echo of the typed UTC time. */}
               {state.weekly_time && (
                 <span
                   data-testid="weekly-time-local-echo"
                   style={{ color: 'var(--cc-ink-3)' }}
                 >
-                  In your local time: {utcHHMMToLocalEcho(state.weekly_time) || '—'}
+                  Weekly recurrence uses {state.weekly_time} in {weeklyTimeZone}.
                 </span>
               )}
+              <span className="text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
+                {legacyUtcWeekly
+                  ? 'This saved schedule uses UTC for weekday and time. Keep it in UTC, or create a new schedule to use station time.'
+                  : 'Recurrences in a spring-forward gap are skipped. A repeated fall-back time fires once at its earlier occurrence.'}
+              </span>
             </label>
           </div>
         )}
@@ -1471,13 +1521,15 @@ function ScheduleForm({
         {(() => {
           const previews =
             state.recurrence_kind === 'one_shot'
-              ? nextOneShotFireTimes(state.one_shot_start)
+              ? nextOneShotFireTimes(state.one_shot_start, new Date(), stationTimeZone)
               : nextWeeklyFireTimes(
                   state.weekly_days
                     .map((on, i) => (on ? i : -1))
                     .filter((i) => i >= 0),
                   state.weekly_time,
                   3,
+                  new Date(),
+                  weeklyTimeZone,
                 )
           if (previews.length === 0) return null
           return (
@@ -1491,7 +1543,7 @@ function ScheduleForm({
               </div>
               <ul className="ml-4 list-disc">
                 {previews.map((d) => (
-                  <li key={d.toISOString()}>{formatFirePreview(d)}</li>
+                  <li key={d.toISOString()}>{formatFirePreview(d, state.recurrence_kind === 'weekly' ? weeklyTimeZone : stationTimeZone)}</li>
                 ))}
               </ul>
             </div>
@@ -1620,7 +1672,7 @@ function ScheduleForm({
         <button
           type="button"
           aria-label={isUpdate ? 'Save schedule changes' : 'Create schedule'}
-          disabled={submitting}
+          disabled={submitting || !stationTimeZoneAvailable}
           onClick={handleSubmit}
           className="rounded-md px-3 py-1.5 text-xs font-semibold disabled:opacity-50"
           style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}
@@ -1636,6 +1688,9 @@ function ScheduleForm({
       </div>
 
       {submitError && <Banner tone="warn">{submitError}</Banner>}
+      {!stationTimeZoneAvailable && (
+        <Banner tone="warn">Could not load the station timezone. Retry after the station profile is available before saving this schedule.</Banner>
+      )}
     </section>
   )
 }
@@ -1654,6 +1709,7 @@ function JobsSection({
   lastRefreshedAt,
   stoppingId,
   confirmStopJobId,
+  stationTimeZone,
   onFilterChange,
   onRefresh,
   onToggleAutoRefresh,
@@ -1672,6 +1728,7 @@ function JobsSection({
   lastRefreshedAt: Date | null
   stoppingId: string | null
   confirmStopJobId: string | null
+  stationTimeZone: string
   onFilterChange: (next: JobsFilterState) => void
   onRefresh: () => void
   onToggleAutoRefresh: () => void
@@ -1826,7 +1883,7 @@ function JobsSection({
             <caption className="sr-only">Recordings</caption>
             <thead>
               <tr style={{ color: 'var(--cc-ink-3)' }}>
-                <th className="py-1 pr-3 font-semibold">Planned start</th>
+                <th className="py-1 pr-3 font-semibold">Planned start ({stationTimeZone})</th>
                 <th className="py-1 pr-3 font-semibold">Source</th>
                 <th className="py-1 pr-3 font-semibold">State</th>
                 <th className="py-1 pr-3 font-semibold" title="Wall-clock capture time; media duration may be shorter after source interruptions.">
@@ -1844,7 +1901,7 @@ function JobsSection({
                 const isConfirmingStop = confirmStopJobId === j.job_id
                 return (
                   <tr key={j.job_id} style={{ borderTop: '1px solid var(--cc-line)' }}>
-                    <td className="py-1.5 pr-3">{formatPlannedStart(j.planned_start)}</td>
+                    <td className="py-1.5 pr-3">{formatPlannedStart(j.planned_start, stationTimeZone)}</td>
                     <td className="py-1.5 pr-3">{humanizeSource(j.source_snapshot)}</td>
                     <td className="py-1.5 pr-3">
                       <StateBadge state={j.state} />

@@ -68,19 +68,29 @@ Residents see two different lists, built from two different sources.
 
 ## Which time zone are you typing in?
 
-Several boxes ask for a time. They do not all use the same time zone. Read the label under the box.
+Schedule, Program Guide, Auto-schedule and Recording use the station's time zone. Set a named zone, such as `America/Denver`, in **Station Profile → Timezone**, and check the zone shown beside the form before saving. These times do not depend on the computer you use to open the console.
 
 | Where you type | Time zone it uses |
 | --- | --- |
-| Schedule: **Start at** | Your computer's local time. The line under the box shows the date and your zone name. |
-| Program Guide: **First airing**, **Repeat until (optional)** | Your computer's local time when you type it. After that, the repeats are counted in UTC (see the warning below). |
+| Schedule: **Start at** | The station's time zone. |
+| Program Guide: **First airing**, **Repeat until (optional)** | The station's time zone; recurring programmes keep that local clock time. |
 | Auto-schedule dayparts: **Start**, **End** | The station's time zone, set in the **Timezone** box on the **Station Profile** screen (the First Setup form has no such box). If it is still "local" or was never set, UTC. |
-| Recording: **Start (UTC)**, **Time (HH:MM UTC)** and the weekday boxes | **UTC**, not your local time. |
+| Recording: start time, weekly time and weekday boxes | The station's local date, time and weekday. |
 | Contributors: producer's **Requested air date** | The producer's own computer, with no zone saved (see Known issue under Contributors). |
 
-*UTC* (Coordinated Universal Time) is the world's reference clock. It has no daylight saving time. A US station in Mountain Time is 6 hours behind UTC in summer and 7 hours behind in winter. Only the Recording screen makes you type UTC yourself.
+*UTC* (Coordinated Universal Time) is the world's reference clock. CivicCast still uses UTC internally for timestamps; you do not need to convert station scheduling forms to UTC yourself.
 
-> **Warning:** Daily, Weekly and Weekdays slots on **Program Guide**, and weekly captures on **Recording**, repeat on a fixed UTC clock. When daylight saving time starts or ends, the program or capture moves one hour on your local clock. After each clock change, check your repeating slots and recording schedules and edit them if the local time is no longer right. **Auto-schedule** dayparts use the station's time zone and do not drift.
+> **Daylight-saving changes:** A recurring start in the hour skipped when clocks move forward is omitted for that date. A clock time that occurs twice when clocks move back runs once, at its earlier occurrence. A one-time booking in a nonexistent hour is rejected with an explanation. Check the preview when booking near a clock change; ordinary recurring programmes keep their station-local time without seasonal edits.
+
+Existing weekly recording schedules created with the older UTC-only form retain
+their UTC timing; CivicCast does not silently move them on upgrade. These schedules
+are identified as UTC. New weekly recording schedules use the station's time zone.
+Review an older schedule before replacing it with a station-local schedule.
+
+Changing **Station Profile → Timezone** does not move airings or captures that
+CivicCast has already planned. Those commitments keep their original timestamps;
+the changed zone applies when the recurring schedule is extended beyond that
+existing horizon. Review already-planned entries separately if they must move.
 
 ## Put a recording on a channel once
 
@@ -91,7 +101,7 @@ Use the **Schedule** screen to place one recording on a channel at one time. Thi
 3. Under **Mode**, click **Premiere**.
 4. In the **Asset** drop-down, choose the video. Each entry reads "title · asset id".
 5. In the **Channel** drop-down, choose the channel by its display name.
-6. In **Start at**, type the date and time. Use your local time. A line under the box repeats it as "Day, Mon d, h:mm" with your time zone name, so you can check it. The box starts at the next full hour.
+6. In **Start at**, type the date and time in the station's time zone. Check the local-time preview and zone before saving.
 7. In **Duration (min)**, type the length in whole minutes. It starts at 60. The largest allowed length is 14 days.
 8. In **Notes (optional)**, type anything you want recorded. The box says the note is "visible in the audit log" (the station's record of who did what).
 9. Click **Schedule premiere**. The button reads "Scheduling…" while it works.
@@ -108,7 +118,7 @@ You should see the panel close and a message, "Scheduled.", with a line such as 
 
 ### Read the Schedule screen
 
-The top of the screen says "Week of" and a date range, with "times shown in your browser timezone."
+The top of the screen shows the week and the station time zone used for its dates and times.
 
 1. Click **week** to see a grid of the week, or **list** to see every item as a row. On a phone the screen opens in the list.
 2. Use **‹** (previous week), **Today**, and **›** (next week) to move through weeks.
@@ -131,7 +141,7 @@ A program on the Schedule screen airs only after someone with the publish operat
    - "Dead-air gap before this program (it can still air):" followed by a list, if the channel has nothing scheduled just before this program. *Dead air* means time when nothing is playing. A gap is for information only and does not stop the approval.
 5. If the panel says **Safe to air**, click **Publish to residents** in the panel. The button reads "Publishing…". Click **Cancel** in the panel instead if you want to back out.
 
-You should see the message "Visible to residents." with the program title, and the row now reads "Visible to residents". The item is **Published**. CivicCast also tells the channel's playout engine to read the schedule again, and starts the channel if it was stopped.
+You should see the message "Visible to residents." with the program title, and the row now reads "Visible to residents". The item is **Published**. CivicCast also tells the channel's playout engine to read the schedule again, and can start a stopped channel unless an intentional operator stop is active. After an intentional stop, press Start explicitly to resume the feed.
 
 > **Warning:** The final **Publish to residents** click has no further confirmation. It approves the program to air on the channel, not only to appear on the portal.
 
@@ -183,7 +193,7 @@ Use **Program Guide** when a recording should air again and again, for example e
    - **Daily**: "Airs every day at this time."
    - **Weekly**: "Airs every week on this weekday." (This is chosen when the panel opens.)
    - **Weekdays**: "Airs Monday through Friday."
-6. In **First airing**, type the date and time in your local time. A line under it shows the date, time and your zone name.
+6. In **First airing**, type the date and time in the station's time zone. Check the date, time and station zone shown with the form.
 7. If you chose Daily, Weekly or Weekdays, you may fill **Repeat until (optional)** with the last date it may air. Leave it blank to repeat with no end.
 8. Either keep **Use the recording's own length** ticked, or untick it and type **Duration (min)** (at least 1).
 9. In **Guide title (optional)**, type a title if you want residents to see a different title than the recording's. It can be up to 200 characters.
@@ -195,7 +205,7 @@ The guide is rebuilt in the background. By default it looks 72 hours ahead and r
 
 > **For IT staff:** the background job, its 5-minute interval and its 72-hour reach are set by environment variables; see [Part II, Running it day to day](#ch-operations).
 
-> **Known issue (beta.11):** The **Weekdays** rule counts days on the UTC calendar, not on your local calendar. For a US evening start, a Friday-evening program lands on Saturday in UTC and is left out, while a Sunday-evening program lands on Monday in UTC and is included. We derived this from reading the program and did not run it on a live station. Until it is fixed, use **Weekly** with a separate slot for each day, or check the **Next 7 days** list after adding a Weekdays slot.
+The **Weekdays** rule uses the station's Monday-through-Friday calendar. A Friday evening remains Friday even when its internal UTC timestamp falls on Saturday.
 
 > **Known issue (beta.11):** The status in **Next 7 days** stays **Scheduled** even after you publish the item, so this list cannot tell you whether a program is approved. Check **Schedule** for that. Items you added directly on the Schedule screen are also listed here, with the status shown as the lower-case word `manual` and the detail "Scheduled directly (no recurring slot)."
 
@@ -324,18 +334,18 @@ A *recording schedule* is a saved plan: one source, one time pattern, one length
    - For **NDI**, type the name in **Input ID** (the placeholder is `studio-ndi`).
    - For a network stream, type the address in **URI** (the placeholder is `rtsp://camera.local/stream`).
 6. Under **Recurrence**, choose **One-shot** (one capture) or **Weekly**.
-7. For **One-shot**, type **Start (UTC)**. For **Weekly**, click **Weekdays**, **Weekend**, **Every day** or **Clear**, tick the day boxes you want, and type **Time (HH:MM UTC)**, for example `19:00`. See the warning below.
+7. For **One-shot**, enter the start in the station's local time. For **Weekly**, click **Weekdays**, **Weekend**, **Every day** or **Clear**, tick the station-local days you want, and enter the local time, for example `19:00`.
 8. In **Duration (HH:MM:SS)**, type the length with two digits in each part. It starts at `01:00:00`. The minimum is one minute (`00:01:00`). A value such as `1:5:0` is refused; type `01:05:00`.
 9. In **Quality preset (encoder profile)**, leave `default`, or type a name your administrator gave you. The screen suggests default, copy, h264-1080p, h264-720p, hw-h264-1080p and hw-h264-720p.
 10. In **Loudness regime**, choose how loud the recording should be. The choices are **Inherit station default**, **Copy source audio**, **Cable / ATSC A/85 (-24 LKFS)**, **Broadcast / EBU R128 (-23 LUFS)** and **Streaming (-16 LUFS)**. One line under the choice explains it.
 11. Leave **Target series (optional)** blank unless your administrator tells you what to put there. We could not confirm what it does.
 12. Keep **Enabled** ticked so the schedule runs.
-13. Check the **Next fire** (or **Next 3 fires**) lines. Each shows the time as "UTC … · local …".
+13. Check the **Next fire** (or **Next 3 fires**) preview in the station's time zone before saving.
 14. Click **Create schedule**.
 
 You should see the new schedule appear in the **Schedules** table above the form.
 
-> **Warning:** The time you type is **UTC**, not local time. Under **Start (UTC)** and **Time (HH:MM UTC)** the screen shows "In your local time: …" so you can check it. The weekday boxes are also UTC days, and they get no such line. A Monday 7 PM meeting in US Mountain Time (UTC−6 in summer, UTC−7 in winter) is already Tuesday in UTC: in summer it is Tuesday 01:00 UTC, in winter Tuesday 02:00 UTC. Tick **Tue**, not **Mon**. Use the **Next 3 fires** lines to confirm the local day and time before you save. After the clocks change, edit the schedule: the UTC time does not move, so your local time does.
+> **Time-zone check:** For a Monday 7 PM meeting, select Monday and `19:00` in the station's zone. Weekly recordings keep that local time across daylight-saving changes. A nonexistent recurring time is skipped; a repeated time runs once at its earlier occurrence. Use **Next 3 fires** to confirm the planned dates.
 
 > **Known issue (beta.11):** After **Create schedule** works, the form is not cleared and no "saved" message appears. Look for the new row in the **Schedules** table. If you click **Create schedule** a second time, the station answers "Recording schedule '&lt;id&gt;' already exists. Use PATCH to update." That means the first click worked.
 
@@ -564,7 +574,7 @@ There are **no confirmation boxes**. Each click acts at once.
 | --- | --- | --- |
 | "Slug required: lowercase letters, digits, hyphens." | Schedule ID has a bad character | Use only lowercase letters, digits and hyphens |
 | "Duration must be HH:MM:SS — minutes and seconds need two digits (e.g. 01:05:00 not 1:5:0)." | Wrong time format | Type `01:05:00` |
-| "Time must be HH:MM (24h UTC)." or "Pick at least one weekday." | Weekly fields incomplete | Fix the time and tick a day |
+| Invalid weekly time or "Pick at least one weekday." | Weekly fields incomplete | Enter a 24-hour `HH:MM` time in the zone shown by the form and tick a day |
 | "No SDI capture input was detected or configured." (it names the source kind you chose, for example HDMI) | No card found | Check the card is installed, click **Inspect capture devices**, then ask your IT person |
 | Amber banner "Scheduled recording runtime is unavailable in this deployment…" after **Record now** | The recorder part of the station is not running | Ask your IT person. Schedules can still be saved. |
 | "An overlapping recording is already armed/active on this source" | A capture is already running on that input | Wait for it, or stop it |

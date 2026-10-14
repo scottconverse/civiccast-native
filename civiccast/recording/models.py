@@ -288,9 +288,14 @@ class RecurrenceSpec(BaseModel):
     kind: RecurrenceKind
     # one_shot uses ``start`` (UTC) verbatim.
     start: datetime | None = None
-    # weekly uses ``weekdays`` (set of Mon=0..Sun=6) + ``time_hhmm`` like ``"19:00"`` UTC.
+    # weekly uses ``weekdays`` (set of Mon=0..Sun=6) + ``time_hhmm``. Missing
+    # `time_zone` means legacy UTC; new station UI writes the dynamic sentinel.
     weekdays: list[int] = Field(default_factory=list)
     time_hhmm: Annotated[str, Field(default="", max_length=5)] = ""
+    # Older API writes stored weekly wall times as UTC. Keep that as the
+    # default for old JSON/API clients; new station forms use the "station"
+    # sentinel so profile timezone changes apply without rewriting rows.
+    time_zone: Literal["UTC", "station"] = "UTC"
 
     @field_validator("weekdays")
     @classmethod
@@ -309,11 +314,13 @@ class RecurrenceSpec(BaseModel):
                 raise ValueError("one_shot recurrence requires a 'start' timestamp.")
             if self.weekdays or self.time_hhmm:
                 raise ValueError("one_shot recurrence must NOT carry weekdays or time_hhmm.")
+            if self.time_zone != "UTC":
+                raise ValueError("one_shot recurrence does not use time_zone.")
         else:  # weekly
             if not self.weekdays:
                 raise ValueError("weekly recurrence requires non-empty 'weekdays'.")
             if not self.time_hhmm:
-                raise ValueError("weekly recurrence requires 'time_hhmm' (HH:MM UTC).")
+                raise ValueError("weekly recurrence requires 'time_hhmm' (HH:MM local time).")
             # Parse HH:MM to bound-check.
             if not (
                 len(self.time_hhmm) == 5
@@ -323,7 +330,9 @@ class RecurrenceSpec(BaseModel):
                 and 0 <= int(self.time_hhmm[:2]) <= 23
                 and 0 <= int(self.time_hhmm[3:]) <= 59
             ):
-                raise ValueError(f"time_hhmm must be 'HH:MM' (24h UTC); got {self.time_hhmm!r}.")
+                raise ValueError(
+                    f"time_hhmm must be 'HH:MM' (24-hour clock); got {self.time_hhmm!r}."
+                )
         return self
 
 

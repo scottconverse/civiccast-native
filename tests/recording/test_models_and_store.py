@@ -855,9 +855,10 @@ class TestMigration0056AndMerge:
         # was the sole other head when this branch re-parented onto it.
         # 0087_retention_terms added asset retention terms, 0088 added the
         # caption-health alert defaults, and 0089 records unverified remote
-        # guest media-control requests as the current head.
-        assert list(heads) == ["0089_contribution_media_control_requests"], (
-            f"Expected single head 0089_contribution_media_control_requests, got {heads!r}"
+        # guest media-control requests. 0090 indexes consumed egress commands
+        # for bounded history pruning and is the current head.
+        assert list(heads) == ["0091_programlog_local_anchor"], (
+            f"Expected single head 0091_programlog_local_anchor, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:

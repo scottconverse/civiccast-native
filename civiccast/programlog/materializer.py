@@ -23,8 +23,9 @@ import os
 import secrets
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 from typing import Any, Protocol
 
 from civiccast.programlog.models import ProgramSlot, SlotOccurrence
@@ -33,6 +34,7 @@ from civiccast.programlog.store import PostgresProgramLogStore
 from civiccast.schedule.models import ScheduleItemCreate
 
 _LOG = logging.getLogger(__name__)
+_MATERIALIZE_LOCK = threading.RLock()
 
 WORKER_MODE_INLINE = "inline"
 WORKER_MODE_OFF = "off"
@@ -83,8 +85,18 @@ def _env_float(name: str, default: float) -> float:
         raise ValueError(f"{name} must be a number; got {raw!r}.") from exc
 
 
-def _new_occurrence_id() -> str:
-    return "cpo_" + secrets.token_urlsafe(16).replace("-", "").replace("_", "")
+def _new_occurrence_id(day: date) -> str:
+    # Keep the logical calendar day durable without a schema change. Legacy
+    # ids predate station-local recurrence and therefore identify UTC days.
+    token = secrets.token_urlsafe(16).replace("-", "").replace("_", "")
+    return f"cpo_{token}_{day:%Y%m%d}"
+
+
+def _occurrence_day(occurrence: SlotOccurrence) -> date:
+    try:
+        return datetime.strptime(occurrence.occurrence_id.rsplit("_", 1)[-1], "%Y%m%d").date()
+    except ValueError:
+        return occurrence.occurrence_start.astimezone(UTC).date()
 
 
 class ProgramLogMaterializer:
@@ -97,11 +109,13 @@ class ProgramLogMaterializer:
         asset_resolver: AssetResolver,
         *,
         settings: ProgramLogSettings,
+        tz: tzinfo | Callable[[], tzinfo] = UTC,
     ) -> None:
         self._store = store
         self._schedule_store = schedule_store
         self._asset_resolver = asset_resolver
         self._settings = settings
+        self._tz = tz
 
     def run_forever(
         self,
@@ -123,23 +137,78 @@ class ProgramLogMaterializer:
 
     def run_once(self, *, now: datetime | None = None) -> list[SlotOccurrence]:
         """Materialize every due occurrence once; return newly recorded rows."""
+        # API instances and the background worker share the entire read/write
+        # boundary, including the current timezone snapshot.
+        with _MATERIALIZE_LOCK:
+            return self._run_once(now=now)
+
+    def local_anchor(self, first_start: datetime) -> datetime:
+        """Capture a slot's calendar/clock anchor in the current station zone."""
+        with _MATERIALIZE_LOCK:
+            tz = self._tz() if callable(self._tz) else self._tz
+            return first_start.astimezone(tz).replace(tzinfo=None)
+
+    def pin_legacy_anchors(self) -> None:
+        """Adopt the current zone for legacy slots before a profile zone edit.
+
+        Prior station timezone history was not stored and cannot be recovered.
+        This only pins intent, including disabled slots; it creates no airings.
+        """
+        with _MATERIALIZE_LOCK:
+            tz = self._tz() if callable(self._tz) else self._tz
+            for slot in self._store.list_slots():
+                self._pin_anchor(slot, tz)
+
+    def _pin_anchor(self, slot: ProgramSlot, tz: tzinfo) -> ProgramSlot:
+        if slot.recurrence_anchor_local is not None:
+            return slot
+        return self._store.update_slot(
+            slot.model_copy(
+                update={
+                    "recurrence_anchor_local": slot.first_start_at.astimezone(tz).replace(
+                        tzinfo=None
+                    ),
+                }
+            )
+        )
+
+    def _run_once(self, *, now: datetime | None = None) -> list[SlotOccurrence]:
 
         resolved_now = now or datetime.now(UTC)
         window_end = resolved_now + timedelta(hours=self._settings.horizon_hours)
+        tz = self._tz() if callable(self._tz) else self._tz
         recorded: list[SlotOccurrence] = []
         for slot in self._store.list_slots():
+            slot = self._pin_anchor(slot, tz)
             if not slot.enabled:
                 continue
-            existing = {
-                occurrence.occurrence_start
-                for occurrence in self._store.list_occurrences(slot_id=slot.slot_id)
-            }
+            occurrences = self._store.list_occurrences(slot_id=slot.slot_id)
+            existing = {occurrence.occurrence_start for occurrence in occurrences}
+            protected_through = max(
+                (
+                    max(_occurrence_day(row), row.occurrence_start.astimezone(tz).date())
+                    for row in occurrences
+                ),
+                default=None,
+            )
             for start in compute_occurrences(
-                slot, window_start=resolved_now, window_end=window_end
+                slot,
+                window_start=resolved_now,
+                window_end=window_end,
+                tz=tz,
             ):
                 if start in existing:
                     continue
-                recorded.append(self._materialize(slot, start, now=resolved_now))
+                day = start.astimezone(tz).date()
+                # A zone/rule edit applies beyond the materialized horizon;
+                # preserve earlier commitments, including skipped/cancelled rows.
+                if (
+                    slot.recurrence != "once"
+                    and protected_through is not None
+                    and day <= protected_through
+                ):
+                    continue
+                recorded.append(self._materialize(slot, start, now=resolved_now, day=day))
         return recorded
 
     def disable_slot(self, slot_id: str, *, now: datetime | None = None) -> list[SlotOccurrence]:
@@ -177,11 +246,13 @@ class ProgramLogMaterializer:
             cancelled.append(self._store.update_occurrence(updated))
         return cancelled
 
-    def _materialize(self, slot: ProgramSlot, start: datetime, *, now: datetime) -> SlotOccurrence:
+    def _materialize(
+        self, slot: ProgramSlot, start: datetime, *, now: datetime, day: date
+    ) -> SlotOccurrence:
         from civiccast.schedule.store import AssetNotFoundError, ScheduleConflictError
 
         base = SlotOccurrence(
-            occurrence_id=_new_occurrence_id(),
+            occurrence_id=_new_occurrence_id(day),
             slot_id=slot.slot_id,
             occurrence_start=start,
             schedule_item_id=None,

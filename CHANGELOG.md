@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Unattended station operation
+
+- Use station-local calendar times for new recording schedules, recurring
+  programmes, scheduling forms and previews, including daylight-saving gaps and
+  repeated clock times. Preserve older UTC recording schedules explicitly.
+- Rotate GStreamer worker output logs, prune consumed command history in bounded
+  batches, and show their storage use and low-disk warnings in System Health.
+  Pending commands and original recordings are preserved.
+- Recover from exhausted frozen-output and audio/video-sync restart budgets
+  through fallback slate, a cooldown and a bounded programme retry. An intentional
+  stop or drain suppresses automatic starts until an explicit Start or service
+  restart.
+
+These source changes are not in the published Beta 15 package. See
+[Sprint 2](docs/ops/sprint2-unattended.md) for implementation and check status.
+
 ### Station operations
 
 - Add encrypted station backups with scheduled destinations, retained-backup

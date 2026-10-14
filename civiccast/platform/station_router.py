@@ -31,7 +31,10 @@ is genuinely public (no role gate at all).
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict
 
 from civiccast.auth.roles import require_any_role
 from civiccast.installer.models import DeploymentProfile, StationProfile
@@ -50,8 +53,19 @@ from civiccast.platform.station_box_profile import (
     StationBoxProfile,
     probe_station_box_profile,
 )
+from civiccast.programlog.router import get_program_log_materializer
 
 _DIAGNOSTIC_ROLES = ("setup_admin", "meeting_operator", "support_admin")
+_SCHEDULING_TIMEZONE_READ_ROLES = (*_DIAGNOSTIC_ROLES, "publish_operator")
+
+
+class StationTimeZone(BaseModel):
+    """The minimal station setting required to enter scheduling times."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    station_timezone: str
+
 
 box_profile_router = APIRouter(prefix="/api/staff", tags=["staff", "platform"])
 
@@ -120,6 +134,25 @@ def get_station_profile() -> StationProfile:
     )
 
 
+@staff_router.get(
+    "/timezone",
+    response_model=StationTimeZone,
+    summary="Read the station timezone used by scheduling forms",
+    dependencies=[Depends(require_any_role(*_SCHEDULING_TIMEZONE_READ_ROLES))],
+)
+def get_station_timezone() -> StationTimeZone:
+    from civiccast.installer.service import operator_console_url
+    from civiccast.installer.station_state import read_station_setup_state
+
+    state = read_station_setup_state(operator_console_url=operator_console_url())
+    if state.profile is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="First-admin setup has not completed yet; no station profile exists.",
+        )
+    return StationTimeZone(station_timezone=resolve_station_timezone())
+
+
 @staff_router.put(
     "/profile",
     response_model=StationProfile,
@@ -128,8 +161,23 @@ def get_station_profile() -> StationProfile:
     ),
     dependencies=[Depends(require_any_role("setup_admin"))],
 )
-def put_station_profile(payload: StationProfileUpdateRequest) -> StationProfile:
+def put_station_profile(
+    payload: StationProfileUpdateRequest,
+    program_log_materializer: Any = Depends(get_program_log_materializer),
+) -> StationProfile:
     try:
+        if payload.station_timezone is not None and program_log_materializer is not None:
+            from civiccast.installer.service import operator_console_url
+            from civiccast.installer.station_state import read_station_setup_state
+
+            state = read_station_setup_state(operator_console_url=operator_console_url())
+            if (
+                state.profile is not None
+                and payload.station_timezone.strip() != state.profile.station_timezone
+            ):
+                # Pin the current station-local intent before the dynamic TZ
+                # provider starts resolving to the new profile value.
+                program_log_materializer.pin_legacy_anchors()
         return update_station_profile_fields(payload)
     except StationSetupNotCompleteError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

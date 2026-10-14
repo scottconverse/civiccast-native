@@ -1364,7 +1364,14 @@ class ChannelAutomationService:
     def _run_channel_pass_body(self, config: Any, channel_id: str, now: datetime | None) -> None:
         if self._daemon.has_live_process(channel_id):
             self._start_retry_at.pop(channel_id, None)
-        elif config.auto_start:
+        elif (
+            config.auto_start
+            and not self._daemon_has_operator_stop_intent(channel_id)
+            and not any(
+                command.action in {"stop", "drain"}
+                for command in self._store.peek_pending_commands(channel_id)
+            )
+        ):
             retry_at = self._start_retry_at.get(channel_id)
             if retry_at is None or self._monotonic() >= retry_at:
                 # Do not double-enqueue against a start already queued this
@@ -2884,6 +2891,12 @@ class ChannelAutomationService:
         if not callable(has_override):
             return False
         return bool(has_override(channel_id))
+
+    def _daemon_has_operator_stop_intent(self, channel_id: str) -> bool:
+        """Optional daemon latch: a direct operator stop suppresses auto_start."""
+
+        has_stop = getattr(self._daemon, "has_operator_stop_intent", None)
+        return bool(callable(has_stop) and has_stop(channel_id))
 
     def _daemon_has_pending_reload_settlement(self, channel_id: str) -> bool:
         """F1 redesign follow-up (coordinator hostile review, 2026-09-06): a

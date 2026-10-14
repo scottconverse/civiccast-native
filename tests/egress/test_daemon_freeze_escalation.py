@@ -9,13 +9,14 @@ advancing; the relay supervisor correctly detects the frozen window, correctly
 replaces its ffmpeg child ONCE -- and that child writes nothing either. The
 one-shot ``heal_attempted`` latch (hls_relay audit finding 4) deliberately
 forbids a second heal in the same episode, so the relay path has run out of
-moves and the channel sits frozen until a human restarts it. Both live incidents
-ended exactly that way (``STALE 36s -> 144s -> full channel restart``).
+moves and the channel sits frozen until the next bounded recovery action. Both
+live incidents ended exactly that way (``STALE 36s -> 144s -> full channel restart``).
 
 This guard is the missing second step, and it is modeled line for line on the
 U16 output A/V guard: same shape (judge a settled channel, act through the
-ordinary bounded worker termination, bounded restarts per rolling hour, then a
-throttled CRITICAL). Four disciplines, each with a test below:
+ordinary bounded worker termination, bounded restarts per rolling hour, then
+fallback slate and one program retry after cooldown). Four disciplines, each
+with a test below:
 
 * The signal is the HLS live window, and only that. It is what residents see,
   the daemon already reads it every tick, and the relay stamps an exact clock
@@ -509,15 +510,30 @@ def test_u30_a_new_worker_incarnation_may_be_escalated_again(tmp_path: Path) -> 
     assert fixture.daemon._freeze_escalation["gov"].restarted_at != []
 
 
-def test_u30_the_budget_is_exhausted_after_three_restarts_then_critical(
+def test_u30_budget_exhaustion_falls_back_then_retries_after_cooldown(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Three restarts in the rolling hour, then the channel is REPORTED and not
-    restarted again. The fourth verdict must be a CRITICAL and must leave the
-    worker alone -- a station otherwise on air is worse off in a restart loop
-    than with one channel an operator has been told about."""
+    """Three restarts, then fallback slate through cooldown and one program retry."""
     fixture = _freeze_fixture(tmp_path)
     fixture.relay.frozen = _FREEZE_ESCALATION_AFTER_HEAL_S + 1.0
+    forced_slate: dict[str, str] = {}
+    fallback_requests: list[str] = []
+    program_retries: list[str] = []
+
+    def request_fallback_slate(*, channel_id: str, reason: str) -> None:
+        fallback_requests.append(channel_id)
+        forced_slate[channel_id] = reason
+
+    def has_fallback_slate_reason(*, channel_id: str, reason: str) -> bool:
+        return forced_slate.get(channel_id) == reason
+
+    def request_slate_exit(*, channel_id: str) -> None:
+        program_retries.append(channel_id)
+        forced_slate.pop(channel_id, None)
+
+    fixture.daemon.request_fallback_slate = request_fallback_slate  # type: ignore[attr-defined]
+    fixture.daemon.has_fallback_slate_reason = has_fallback_slate_reason  # type: ignore[attr-defined]
+    fixture.daemon.request_slate_exit = request_slate_exit  # type: ignore[attr-defined]
 
     # The deltas are counted rather than ``caplog.clear()``-ed: the assertion
     # "the fourth verdict logged NO error line" is about what the fourth poll
@@ -540,20 +556,120 @@ def test_u30_the_budget_is_exhausted_after_three_restarts_then_critical(
         assert len(_critical_lines(caplog)) == criticals_before + 1
         critical = _critical_lines(caplog)[-1]
 
-        # ...and it keeps being reported, throttled, not once per tick.
+        assert fallback_requests == ["gov"]
+        recovery = fixture.daemon._quality_recovery["gov"]
+
+        # A live cooldown suppresses repeated diagnostics and fallback calls.
         reported = len(_critical_lines(caplog))
         fixture.clock.value += 2.0
         fixture.daemon._poll_freeze_escalation("gov")
         assert len(_critical_lines(caplog)) == reported, "must be throttled, not per-tick"
-        fixture.clock.value += _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S
+        assert fallback_requests == ["gov"]
+
+        fixture.clock.value = recovery.retry_at - 1.0
         fixture.daemon._poll_freeze_escalation("gov")
-        assert len(_critical_lines(caplog)) == reported + 1
+        assert program_retries == []
+
+        fixture.clock.value = recovery.retry_at
+        fixture.daemon._poll_quality_recovery("gov")
+        assert program_retries == ["gov"]
+        assert "gov" not in fixture.daemon._quality_recovery
 
     assert not fourth.terminated
     assert fixture.relay.stopped == []
     assert "gov" in critical
     assert "budget exhausted" in critical
-    assert "NOT restarting the worker again" in critical
+    assert "fallback slate" in critical
+
+    # Once all three timestamps age out, a still-frozen program gets one new
+    # bounded worker-repair attempt after the one-shot program retry.
+    fixture.daemon._poll_freeze_escalation("gov")
+    assert fourth.terminated
+
+
+@pytest.mark.parametrize("terminal_action", ["stop", "drain"])
+def test_u30_pending_terminal_intent_cancels_recovery_slate(
+    tmp_path: Path, terminal_action: str
+) -> None:
+    fixture = _freeze_fixture(tmp_path)
+    _started_on_air(fixture)
+    forced_slate: dict[str, str] = {}
+    program_retries: list[str] = []
+
+    def request_fallback_slate(*, channel_id: str, reason: str) -> None:
+        forced_slate[channel_id] = reason
+
+    def has_fallback_slate_reason(*, channel_id: str, reason: str) -> bool:
+        return forced_slate.get(channel_id) == reason
+
+    def clear_fallback_slate(*, channel_id: str, reason: str) -> bool:
+        if not has_fallback_slate_reason(channel_id=channel_id, reason=reason):
+            return False
+        forced_slate.pop(channel_id, None)
+        return True
+
+    def request_slate_exit(*, channel_id: str) -> None:
+        program_retries.append(channel_id)
+
+    fixture.daemon.request_fallback_slate = request_fallback_slate  # type: ignore[attr-defined]
+    fixture.daemon.has_fallback_slate_reason = has_fallback_slate_reason  # type: ignore[attr-defined]
+    fixture.daemon.clear_fallback_slate = clear_fallback_slate  # type: ignore[attr-defined]
+    fixture.daemon.request_slate_exit = request_slate_exit  # type: ignore[attr-defined]
+    fixture.daemon._begin_quality_recovery(
+        "gov",
+        restarted_at=[fixture.clock.value],
+        now=fixture.clock.value,
+        detail="test quality failure",
+    )
+    reason = forced_slate["gov"]
+    fixture.store.enqueue_command(
+        EgressCommand(
+            channel_id="gov",
+            action=terminal_action,  # type: ignore[arg-type]
+            issued_at=_NOW,
+            issued_by="operator",
+            command_id=f"operator-{terminal_action}",
+        )
+    )
+
+    fixture.daemon.process_once("gov")
+
+    assert "gov" not in fixture.daemon._quality_recovery
+    assert forced_slate == {}
+    assert program_retries == []
+    assert fixture.daemon.has_operator_stop_intent("gov") is True
+    assert reason
+
+
+def test_u30_failed_fallback_request_is_not_retried_each_poll(tmp_path: Path) -> None:
+    fixture = _freeze_fixture(tmp_path)
+    worker = _started_on_air(fixture)
+    attempts: list[str] = []
+
+    def fail_fallback(*, channel_id: str, reason: str) -> None:
+        attempts.append(channel_id)
+        raise RuntimeError("simulated selector failure")
+
+    fixture.daemon.request_fallback_slate = fail_fallback  # type: ignore[attr-defined]
+    state = fixture.daemon._freeze_escalation_state("gov")
+    now = fixture.clock.value
+    state.restarted_at = [now - 3.0, now - 2.0, now - 1.0]
+
+    fixture.daemon._restart_frozen_channel(
+        "gov",
+        state,
+        worker,
+        pid=worker.pid,
+        frozen=_FREEZE_ESCALATION_AFTER_HEAL_S + 1.0,
+        now=now,
+    )
+    retry_at = fixture.daemon._quality_recovery["gov"].retry_at
+    for _ in range(3):
+        fixture.daemon._poll_quality_recovery("gov")
+
+    assert attempts == ["gov"]
+    assert not worker.terminated
+    assert fixture.daemon._quality_recovery["gov"].retry_at == retry_at
 
 
 def test_u30_the_budget_window_rolls_so_an_old_restart_does_not_linger(

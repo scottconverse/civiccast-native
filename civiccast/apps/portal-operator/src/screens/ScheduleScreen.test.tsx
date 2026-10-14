@@ -88,6 +88,14 @@ describe('groupByDay unreadable scheduled_at', () => {
 })
 
 describe('groupByDay ordering', () => {
+  it('groups by station calendar date when the browser date is different', () => {
+    const { groups } = groupByDay([
+      item('before-station-midnight', '2026-08-20T05:30:00Z'),
+      item('after-station-midnight', '2026-08-20T06:30:00Z'),
+    ], 'America/Denver')
+    expect(groups.map((group) => group.key)).toEqual(['2026-08-19', '2026-08-20'])
+  })
+
   it('orders days oldest first and orders items within a day', () => {
     const { groups } = groupByDay([
       item('later-day', '2026-08-21T18:00:00Z'),

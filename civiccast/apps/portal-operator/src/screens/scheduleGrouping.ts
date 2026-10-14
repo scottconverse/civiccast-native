@@ -10,6 +10,7 @@
 // ScheduleScreen.test.tsx can unit-test the grouping logic directly, the way
 // the beta-blocker regression tests below require.
 import type { ScheduleItem } from '../types/schedule'
+import { dateFromStationDateKey, stationDateKey } from '../lib/station-time'
 
 export type DayGroup = { key: string; day: Date; items: ScheduleItem[] }
 export type GroupedSchedule = { groups: DayGroup[]; unreadable: ScheduleItem[] }
@@ -48,7 +49,10 @@ export function parseAirTime(raw: unknown): Date | null {
  * read instead of dying silently. One bad row must never cost the whole
  * screen.
  */
-export function groupByDay(items: ScheduleItem[]): GroupedSchedule {
+export function groupByDay(
+  items: ScheduleItem[],
+  timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+): GroupedSchedule {
   const map = new Map<string, DayGroup>()
   const unreadable: ScheduleItem[] = []
   for (const it of items) {
@@ -57,13 +61,17 @@ export function groupByDay(items: ScheduleItem[]): GroupedSchedule {
       unreadable.push(it)
       continue
     }
-    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+    const key = stationDateKey(d, timeZone)
+    if (!key) {
+      unreadable.push(it)
+      continue
+    }
     const existing = map.get(key)
     if (existing) {
       existing.items.push(it)
     } else {
-      const day = new Date(d)
-      day.setHours(0, 0, 0, 0)
+      // `day` is station calendar date at UTC midnight, not an instant.
+      const day = dateFromStationDateKey(key)
       map.set(key, { key, day, items: [it] })
     }
   }

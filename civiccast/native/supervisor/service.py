@@ -149,6 +149,21 @@ from civiccast.native.win_probes import (
     read_interlock,
     read_selector,
 )
+from civiccast.platform.child_logs import (
+    CHILD_LOG_BACKUP_COUNT as _SHARED_CHILD_LOG_BACKUP_COUNT,
+)
+from civiccast.platform.child_logs import (
+    CHILD_LOG_MAX_BYTES as _SHARED_CHILD_LOG_MAX_BYTES,
+)
+from civiccast.platform.child_logs import (
+    CHILD_LOG_READ_SIZE as _SHARED_CHILD_LOG_READ_SIZE,
+)
+from civiccast.platform.child_logs import (
+    BestEffortRotatingFileHandler as _SharedBestEffortRotatingFileHandler,
+)
+from civiccast.platform.child_logs import (
+    drain_child_output as _shared_drain_child_output,
+)
 
 if TYPE_CHECKING:
     from civiccast.alerting.models import AlertConditionKind
@@ -196,13 +211,13 @@ SERVICE_DESCRIPTION = (
 # diverged from every other ProgramData consumer in the package).
 DEFAULT_LOG_ROOT = Path(r"C:\ProgramData\CivicCast\logs")
 SUPERVISOR_LOG_NAME = "supervisor.log"
-LOG_MAX_BYTES = 10 * 1024 * 1024  # 10 MiB
-LOG_BACKUP_COUNT = 10
+LOG_MAX_BYTES = _SHARED_CHILD_LOG_MAX_BYTES
+LOG_BACKUP_COUNT = _SHARED_CHILD_LOG_BACKUP_COUNT
 # Raw control-plane and PostgreSQL stdio is drained by the supervisor so the
 # child can keep writing while Windows rotates the supervisor-owned file.
 CHILD_LOG_MAX_BYTES = LOG_MAX_BYTES
 CHILD_LOG_BACKUP_COUNT = LOG_BACKUP_COUNT
-CHILD_LOG_READ_SIZE = 64 * 1024
+CHILD_LOG_READ_SIZE = _SHARED_CHILD_LOG_READ_SIZE
 _ROTATED_CHILD_LOGS = frozenset({"control_plane", "postgres"})
 LOGGER_NAME = "civiccast.native.supervisor"
 #: The package-root logger ``configure_logging`` ALSO wires to supervisor.log.
@@ -231,14 +246,7 @@ def child_log_path(name: str, *, log_root: Path | str | None = None) -> Path:
     return root / f"{name}.log"
 
 
-class _BestEffortRotatingFileHandler(logging.handlers.RotatingFileHandler):
-    """A bounded raw-child sink whose failures never stop pipe drainage."""
-
-    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802
-        # The child pipe must still be consumed if a disk is full or a log
-        # rename is temporarily denied. Losing diagnostic output is preferable
-        # to blocking a service child on a full pipe.
-        return
+_BestEffortRotatingFileHandler = _SharedBestEffortRotatingFileHandler
 
 
 def _drain_child_output(stream: Any, handler: logging.Handler) -> None:
@@ -251,34 +259,12 @@ def _drain_child_output(stream: Any, handler: logging.Handler) -> None:
     never joins this thread.
     """
 
-    try:
-        while True:
-            try:
-                chunk = stream.read(CHILD_LOG_READ_SIZE)
-            except (OSError, ValueError):
-                break
-            if not chunk:
-                break
-            try:
-                record = logging.LogRecord(
-                    name="civiccast.native.supervisor.child_output",
-                    level=logging.INFO,
-                    pathname="",
-                    lineno=0,
-                    msg=chunk.decode("utf-8", errors="replace"),
-                    args=(),
-                    exc_info=None,
-                )
-                handler.handle(record)
-            except Exception:  # noqa: S112 -- sink failures must not stop pipe drainage
-                # Keep draining even if a handler or formatter fails. A log
-                # sink is diagnostic and must never be a child-process gate.
-                continue
-    finally:
-        with contextlib.suppress(Exception):
-            stream.close()
-        with contextlib.suppress(Exception):
-            handler.close()
+    _shared_drain_child_output(
+        stream,
+        handler,
+        read_size=CHILD_LOG_READ_SIZE,
+        logger_name="civiccast.native.supervisor.child_output",
+    )
 
 
 class _DurableRotatingFileHandler(logging.handlers.RotatingFileHandler):

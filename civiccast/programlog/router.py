@@ -142,6 +142,11 @@ def create_slot(
             title_override=payload.title_override,
             recurrence=payload.recurrence,
             first_start_at=payload.first_start_at,
+            recurrence_anchor_local=(
+                materializer.local_anchor(payload.first_start_at)
+                if materializer is not None
+                else payload.first_start_at.astimezone(UTC).replace(tzinfo=None)
+            ),
             duration_seconds=payload.duration_seconds,
             repeat_until=payload.repeat_until,
             enabled=True,
@@ -203,6 +208,12 @@ def update_slot(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Program slot not found: {slot_id}"
         )
     updates = payload.model_dump(exclude_unset=True)
+    if "first_start_at" in updates and updates["first_start_at"] != slot.first_start_at:
+        updates["recurrence_anchor_local"] = (
+            materializer.local_anchor(updates["first_start_at"])
+            if materializer is not None
+            else updates["first_start_at"].astimezone(UTC).replace(tzinfo=None)
+        )
     updates["updated_at"] = datetime.now(UTC)
     updated = store.update_slot(slot.model_copy(update=updates))
     if materializer is not None:

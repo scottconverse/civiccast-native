@@ -19,8 +19,9 @@ import random
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from sqlalchemy import create_engine, func, select
@@ -156,6 +157,116 @@ def test_full_compile_fills_every_daypart_slot(engine: Engine) -> None:
     assert result.items_created == 14
     assert _item_count(engine) == 14
     assert {f.asset_id for f in result.filled} == {"a1"}
+
+
+def test_timezone_shift_over_one_day_preserves_projected_last_day(engine):
+    _seed_assets(engine, [("a1", "City Council", 1800, _T0)])
+    store = _store(engine)
+    store.upsert_saved_search(_council_search())
+    store.upsert_schedule_block(_daily_block())
+    store.upsert_auto_schedule_rule(_rule())
+    original = _compile(engine, store, tz=ZoneInfo("Etc/GMT+12"))
+    last = original.results[0].filled[-1].starts_at
+    zone = ZoneInfo("Pacific/Kiritimati")
+    protected_day = last.astimezone(zone).date()
+    with _session(engine) as session:
+        changed = compile_rules(session, store, now=_NOW + timedelta(days=2), tz=zone)
+    assert changed.items_created > 0
+    assert all(fill.starts_at.date() > protected_day for fill in changed.results[0].filled)
+
+
+def test_overlapping_compile_waits_for_commit_before_reading_timezone(engine, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    _seed_assets(engine, [("a1", "City Council", 1800, _T0)])
+    store = _store(engine)
+    store.upsert_saved_search(_council_search())
+    store.upsert_schedule_block(_daily_block())
+    store.upsert_auto_schedule_rule(_rule())
+    at_commit, release_commit, committed, second_started, zone_read = (Event() for _ in range(5))
+    with Session(bind=engine) as first_session:
+        original_commit = first_session.commit
+
+        def delayed_commit():
+            at_commit.set()
+            assert release_commit.wait(5)
+            original_commit()
+            committed.set()
+
+        monkeypatch.setattr(first_session, "commit", delayed_commit)
+
+        def next_zone():
+            zone_read.set()
+            assert committed.is_set()
+            return ZoneInfo("America/Denver")
+
+        def second_compile():
+            second_started.set()
+            with Session(bind=engine) as session:
+                return compile_rules(session, store, now=_NOW, tz=next_zone)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(compile_rules, first_session, store, now=_NOW)
+            assert at_commit.wait(5)
+            second = pool.submit(second_compile)
+            try:
+                assert second_started.wait(5)
+                assert not zone_read.wait(0.1)
+            finally:
+                release_commit.set()
+            assert first.result(timeout=5).items_created == 14
+            assert second.result(timeout=5).items_created == 0
+
+
+@pytest.mark.parametrize("zone", ["America/Denver", "Europe/London"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_timezone_edit_preserves_published_horizon_and_extends_next_day(engine, zone, legacy):
+    _seed_assets(engine, [("a1", "City Council", 1800, _T0)])
+    store = _store(engine)
+    store.upsert_saved_search(_council_search())
+    store.upsert_schedule_block(_daily_block())
+    store.upsert_auto_schedule_rule(_rule())
+    _compile(engine, store)
+    with Session(bind=engine) as session:
+        rows = session.scalars(select(ScheduleItem)).all()
+        original = {row.id: (row.scheduled_at, row.state) for row in rows}
+        if legacy:
+            for row in rows:
+                row.notes = None
+            session.commit()
+    assert _compile(engine, store, tz=ZoneInfo(zone)).items_created == 0
+    with _session(engine) as session:
+        report = compile_rules(session, store, now=_NOW + timedelta(days=1), tz=ZoneInfo(zone))
+    assert report.items_created == 1
+    assert report.results[0].filled[0].starts_at.date().isoformat() == "2026-06-15"
+    with Session(bind=engine) as session:
+        for item_id, expected in original.items():
+            row = session.get(ScheduleItem, item_id)
+            assert (row.scheduled_at, row.state) == expected
+            assert row.state == SCHEDULE_STATE_PUBLISHED
+
+
+def test_compile_window_starts_on_station_local_date(engine: Engine) -> None:
+    _seed_assets(engine, [("a1", "City Council", 1800, datetime(2025, 12, 30, tzinfo=UTC))])
+    store = _store(engine)
+    store.upsert_saved_search(_council_search())
+    store.upsert_schedule_block(_daily_block())
+    store.upsert_auto_schedule_rule(_rule())
+
+    with _session(engine) as session:
+        report = compile_rules(
+            session,
+            store,
+            now=datetime(2026, 1, 1, 0, 30, tzinfo=UTC),
+            tz=ZoneInfo("Pacific/Honolulu"),
+            rng=random.Random(0),
+        )
+
+    [result] = report.results
+    assert result.items_created == 14
+    fill = result.filled[0]
+    assert fill.starts_at == datetime(2025, 12, 31, 18, 0, tzinfo=ZoneInfo("Pacific/Honolulu"))
 
 
 def test_materialized_items_are_auto_approved_published_not_scheduled(engine: Engine) -> None:

@@ -28,6 +28,7 @@ vi.mock('../api/client', () => ({
     }
   },
   getStaffIdentity: vi.fn(),
+  getStationTimeZone: vi.fn(),
   listRecordingSchedules: vi.fn(),
   createRecordingSchedule: vi.fn(),
   updateRecordingSchedule: vi.fn(),
@@ -43,6 +44,7 @@ import {
   createRecordingSchedule,
   deleteRecordingSchedule,
   getStaffIdentity,
+  getStationTimeZone,
   listRecordingJobs,
   listRecordingInputPresets,
   listRecordingSchedules,
@@ -124,6 +126,7 @@ function renderScreen() {
 beforeEach(() => {
   vi.clearAllMocks()
   vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+  vi.mocked(getStationTimeZone).mockResolvedValue({ station_timezone: 'America/Denver' })
   vi.mocked(listRecordingSchedules).mockResolvedValue([])
   vi.mocked(listRecordingJobs).mockResolvedValue([])
   vi.mocked(listRecordingInputPresets).mockResolvedValue([
@@ -199,6 +202,12 @@ describe('RecordingScreen formatters', () => {
     expect(
       humanizeRecurrence({ kind: 'weekly', weekdays: [0, 2], time_hhmm: '19:00' }),
     ).toBe('Weekly Mon/Wed 19:00 UTC')
+    expect(
+      humanizeRecurrence(
+        { kind: 'weekly', weekdays: [0, 2], time_hhmm: '19:00' },
+        'America/Denver',
+      ),
+    ).toBe('Weekly Mon/Wed 19:00 UTC')
   })
 
   it('humanizes bytes with decimal SI shape', () => {
@@ -211,6 +220,21 @@ describe('RecordingScreen formatters', () => {
 // --- Role gate -------------------------------------------------------------
 
 describe('RecordingScreen role gate', () => {
+  it('keeps a legacy weekly schedule in UTC when edited', async () => {
+    vi.mocked(listRecordingSchedules).mockResolvedValue([schedule()])
+    const { findByRole, findByLabelText, findByText } = renderScreen()
+    fireEvent.click(await findByRole('button', { name: /Edit schedule Evening News/i }))
+    expect(await findByLabelText(/Time \(HH:MM UTC \(legacy schedule\)\)/i)).toBeTruthy()
+    expect(await findByText(/Keep it in UTC, or create a new schedule to use station time/i)).toBeTruthy()
+    fireEvent.click(await findByRole('button', { name: /Save schedule changes/i }))
+    await waitFor(() => expect(updateRecordingSchedule).toHaveBeenCalledWith(
+      'evening-news',
+      expect.objectContaining({
+        recurrence: { kind: 'weekly', weekdays: [0, 2], time_hhmm: '19:00', time_zone: 'UTC' },
+      }),
+    ))
+  })
+
   it('shows Forbidden for a role outside view roles', async () => {
     vi.mocked(getStaffIdentity).mockResolvedValue(identity(['publish_operator']))
     const { findByText } = renderScreen()
@@ -269,13 +293,21 @@ describe('RecordingScreen empty states', () => {
 // --- Form validation ------------------------------------------------------
 
 describe('RecordingScreen form validation', () => {
+  it('blocks schedule creation when the station timezone lookup fails', async () => {
+    vi.mocked(getStationTimeZone).mockRejectedValue(new Error('timezone unavailable'))
+    const { findByRole, findByText } = renderScreen()
+    expect(await findByText(/Schedule creation and edits are disabled/i)).toBeTruthy()
+    expect((await findByRole('button', { name: /Create schedule/i }) as HTMLButtonElement).disabled).toBe(true)
+    expect(createRecordingSchedule).not.toHaveBeenCalled()
+  })
+
   it('flags missing URI on a network-stream source', async () => {
     const { findByLabelText, findByRole, findByText } = renderScreen()
     fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), { target: { value: 'late-news' } })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
     fireEvent.change(await findByLabelText(/Source kind/i), { target: { value: 'rtsp' } })
     // intentionally leave URI blank
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
@@ -291,7 +323,7 @@ describe('RecordingScreen form validation', () => {
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
     fireEvent.change(await findByLabelText(/Recurrence/i), { target: { value: 'weekly' } })
     // Don't tick any weekdays. Set a valid time so only the weekdays-error surfaces.
-    fireEvent.change(await findByLabelText(/Time \(HH:MM UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Time \(HH:MM station time/i), {
       target: { value: '19:00' },
     })
     fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
@@ -314,7 +346,7 @@ describe('RecordingScreen form validation', () => {
     fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), { target: { value: 'late-news' } })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {
@@ -332,7 +364,7 @@ describe('RecordingScreen form validation', () => {
     fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), { target: { value: 'late-news' } })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {
@@ -345,7 +377,7 @@ describe('RecordingScreen form validation', () => {
           schedule_id: 'late-news',
           duration_seconds: 5400,
           source: { kind: 'sdi', input_id: 'sdi-1' },
-          recurrence: { kind: 'one_shot', start: '2026-06-20T19:00:00Z' },
+          recurrence: { kind: 'one_shot', start: '2026-06-21T01:00:00.000Z' },
           enabled: true,
         }),
       ),
@@ -408,7 +440,7 @@ describe('RecordingScreen validation accessibility wiring', () => {
     })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
     fireEvent.change(await findByLabelText(/Source kind/i), { target: { value: 'rtsp' } })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
@@ -431,7 +463,7 @@ describe('RecordingScreen validation accessibility wiring', () => {
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
     fireEvent.change(await findByLabelText(/Recurrence/i), { target: { value: 'weekly' } })
     // Don't tick any weekdays. Set a valid time so only the weekdays-error surfaces.
-    fireEvent.change(await findByLabelText(/Time \(HH:MM UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Time \(HH:MM station time/i), {
       target: { value: '19:00' },
     })
     fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
@@ -457,12 +489,12 @@ describe('RecordingScreen validation accessibility wiring', () => {
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
     fireEvent.change(await findByLabelText(/Recurrence/i), { target: { value: 'weekly' } })
     fireEvent.click(await findByLabelText(/Weekly day Mon/i))
-    fireEvent.change(await findByLabelText(/Time \(HH:MM UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Time \(HH:MM station time/i), {
       target: { value: 'not-a-time' },
     })
     fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
 
-    const time = (await findByLabelText(/Time \(HH:MM UTC\)/i)) as HTMLInputElement
+    const time = (await findByLabelText(/Time \(HH:MM station time/i)) as HTMLInputElement
     await waitFor(() => expect(document.activeElement).toBe(time))
     expect(time.getAttribute('aria-invalid')).toBe('true')
     const describedBy = time.getAttribute('aria-describedby')
@@ -478,7 +510,7 @@ describe('RecordingScreen validation accessibility wiring', () => {
     })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {
@@ -502,7 +534,7 @@ describe('RecordingScreen validation accessibility wiring', () => {
     })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Short recording' } })
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {
@@ -528,7 +560,7 @@ describe('RecordingScreen validation accessibility wiring', () => {
     })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Server minimum' } })
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {
@@ -549,7 +581,7 @@ describe('RecordingScreen validation accessibility wiring', () => {
     const slug = (await findByLabelText(/Schedule ID \(slug\)/i)) as HTMLInputElement
     const name = (await findByLabelText(/^Name$/i)) as HTMLInputElement
     const inputId = (await findByLabelText(/Input ID/i)) as HTMLInputElement
-    const start = (await findByLabelText(/Start \(UTC\)/i)) as HTMLInputElement
+    const start = (await findByLabelText(/Start \(station time/i)) as HTMLInputElement
 
     fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
     expect(slug.getAttribute('aria-invalid')).toBe('true')
@@ -734,24 +766,20 @@ describe('RecordingScreen stop active job', () => {
 // These tests pin the audit-deep-dive findings closed — if a future refactor
 // regresses one, the test for the specific UX-id flags it.
 
-describe('RecordingScreen UX-2 timezone honesty', () => {
-  it('renders a live local-time echo under the one-shot Start (UTC) input', async () => {
+describe('RecordingScreen station timezone scheduling', () => {
+  it('renders station timezone context under the one-shot input', async () => {
     const { findByLabelText, findByTestId } = renderScreen()
     fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
       target: { value: 'late-news' },
     })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     const echo = await findByTestId('one-shot-local-echo')
-    // The echo always starts with the "In your local time:" preamble; we
-    // don't pin the exact zone because vitest's TZ floats by host.
-    expect(echo.textContent ?? '').toMatch(/In your local time:/)
-    // It must NOT just be the dash placeholder.
-    expect(echo.textContent ?? '').not.toMatch(/In your local time:\s*—\s*$/)
+    expect(echo.textContent ?? '').toContain('America/Denver')
   })
 
-  it('renders a live local-time echo under the weekly HH:MM UTC input', async () => {
+  it('renders a live local-time echo under the weekly HH:MM station time input', async () => {
     const { findByLabelText, findByTestId } = renderScreen()
     fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
       target: { value: 'late-news' },
@@ -759,31 +787,57 @@ describe('RecordingScreen UX-2 timezone honesty', () => {
     fireEvent.change(await findByLabelText(/Recurrence/i), {
       target: { value: 'weekly' },
     })
-    fireEvent.change(await findByLabelText(/Time \(HH:MM UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Time \(HH:MM station time/i), {
       target: { value: '19:00' },
     })
     const echo = await findByTestId('weekly-time-local-echo')
-    expect(echo.textContent ?? '').toMatch(/In your local time:/)
+    expect(echo.textContent ?? '').toContain('America/Denver')
   })
 
-  it('UTC datetime-local submits with the correct :00Z suffix', async () => {
+  it('submits the selected station wall clock as its UTC instant regardless of browser zone', async () => {
     const { findByLabelText, findByRole } = renderScreen()
     fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), {
       target: { value: 'late-news' },
     })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-07-04T19:00' },
     })
     fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
     await waitFor(() =>
       expect(vi.mocked(createRecordingSchedule)).toHaveBeenCalledWith(
         expect.objectContaining({
-          recurrence: { kind: 'one_shot', start: '2026-07-04T19:00:00Z' },
+          recurrence: { kind: 'one_shot', start: '2026-07-05T01:00:00.000Z' },
         }),
       ),
     )
+  })
+
+  it('saves new weekly recurrences as station-time schedules', async () => {
+    const { findByLabelText, findByRole, getByLabelText } = renderScreen()
+    fireEvent.change(await findByLabelText(/Schedule ID \(slug\)/i), { target: { value: 'late-news' } })
+    fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
+    fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
+    fireEvent.change(await findByLabelText(/Recurrence/i), { target: { value: 'weekly' } })
+    fireEvent.click(getByLabelText(/Weekly day Sun/i))
+    fireEvent.change(await findByLabelText(/Time \(HH:MM station time/i), { target: { value: '19:00' } })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+    await waitFor(() => expect(createRecordingSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recurrence: { kind: 'weekly', weekdays: [6], time_hhmm: '19:00', time_zone: 'station' },
+      }),
+    ))
+  })
+
+  it('rejects a one-shot station time in the spring-forward gap', async () => {
+    const { findByLabelText, findByRole, findByText } = renderScreen()
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
+      target: { value: '2026-03-08T02:30' },
+    })
+    fireEvent.click(await findByRole('button', { name: /Create schedule/i }))
+    expect(await findByText(/does not exist during the spring clock change/i)).toBeTruthy()
+    expect(createRecordingSchedule).not.toHaveBeenCalled()
   })
 })
 
@@ -801,7 +855,7 @@ describe('RecordingScreen UX-8 next-fire preview', () => {
     const wedBox = getAllByLabelText(/Weekly day Wed/i)[0]
     fireEvent.click(monBox)
     fireEvent.click(wedBox)
-    fireEvent.change(await findByLabelText(/Time \(HH:MM UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Time \(HH:MM station time/i), {
       target: { value: '19:00' },
     })
     const preview = await findByTestId('next-fire-preview')
@@ -813,7 +867,7 @@ describe('RecordingScreen UX-8 next-fire preview', () => {
   it('shows a single Next fire preview for a one-shot schedule', async () => {
     const { findByLabelText, findByTestId } = renderScreen()
     // Pick a date safely in the future so the preview isn't filtered out.
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2099-01-15T18:30' },
     })
     const preview = await findByTestId('next-fire-preview')
@@ -1008,7 +1062,7 @@ describe('RecordingScreen UX-9 duration error spells out the rule', () => {
     })
     fireEvent.change(await findByLabelText(/^Name$/i), { target: { value: 'Late News' } })
     fireEvent.change(await findByLabelText(/Input ID/i), { target: { value: 'sdi-1' } })
-    fireEvent.change(await findByLabelText(/Start \(UTC\)/i), {
+    fireEvent.change(await findByLabelText(/Start \(station time/i), {
       target: { value: '2026-06-20T19:00' },
     })
     fireEvent.change(await findByLabelText(/Duration \(HH:MM:SS\)/i), {

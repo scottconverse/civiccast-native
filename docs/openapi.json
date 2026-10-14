@@ -14576,6 +14576,47 @@
         ]
       }
     },
+    "/api/staff/station/timezone": {
+      "get": {
+        "tags": [
+          "staff",
+          "station"
+        ],
+        "summary": "Read the station timezone used by scheduling forms",
+        "operationId": "get_station_timezone_api_staff_station_timezone_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StationTimeZone"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/cable/commissioning/state": {
       "get": {
         "tags": [
@@ -30176,6 +30217,50 @@
         }
       }
     },
+    "/api/staff/egress/storage": {
+      "get": {
+        "tags": [
+          "staff",
+          "egress"
+        ],
+        "summary": "Read egress worker log and command storage use",
+        "operationId": "get_egress_storage_status_api_staff_egress_storage_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EgressStorageStatusResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable storage not ready -- run Setup storage or set DATABASE_URL"
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/egress/channels": {
       "get": {
         "tags": [
@@ -44495,6 +44580,74 @@
         "title": "EgressStateRow",
         "description": "Last-known daemon state for one channel."
       },
+      "EgressStorageStatusResponse": {
+        "properties": {
+          "worker_log_bytes": {
+            "type": "integer",
+            "title": "Worker Log Bytes"
+          },
+          "worker_log_file_count": {
+            "type": "integer",
+            "title": "Worker Log File Count"
+          },
+          "command_history_rows": {
+            "type": "integer",
+            "title": "Command History Rows"
+          },
+          "pending_commands": {
+            "type": "integer",
+            "title": "Pending Commands"
+          },
+          "command_table_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Command Table Bytes"
+          },
+          "work_volume_free_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Volume Free Bytes"
+          },
+          "low_disk_warning": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Low Disk Warning"
+          },
+          "low_disk_threshold_bytes": {
+            "type": "integer",
+            "title": "Low Disk Threshold Bytes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "worker_log_bytes",
+          "worker_log_file_count",
+          "command_history_rows",
+          "pending_commands",
+          "low_disk_threshold_bytes"
+        ],
+        "title": "EgressStorageStatusResponse",
+        "description": "Bounded egress log/command storage and work-volume headroom."
+      },
       "EmergencyOverlay": {
         "properties": {
           "overlay_id": {
@@ -52654,6 +52807,20 @@
             "format": "date-time",
             "title": "First Start At"
           },
+          "recurrence_anchor_local": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recurrence Anchor Local",
+            "description": "Original station-local calendar/clock anchor without a timezone offset.",
+            "readOnly": true
+          },
           "duration_seconds": {
             "anyOf": [
               {
@@ -55845,6 +56012,15 @@
             "maxLength": 5,
             "title": "Time Hhmm",
             "default": ""
+          },
+          "time_zone": {
+            "type": "string",
+            "enum": [
+              "UTC",
+              "station"
+            ],
+            "title": "Time Zone",
+            "default": "UTC"
           }
         },
         "additionalProperties": false,
@@ -61749,6 +61925,21 @@
         ],
         "title": "StationStorageLocations",
         "description": "Local station storage paths created or proposed during first-run setup."
+      },
+      "StationTimeZone": {
+        "properties": {
+          "station_timezone": {
+            "type": "string",
+            "title": "Station Timezone"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "station_timezone"
+        ],
+        "title": "StationTimeZone",
+        "description": "The minimal station setting required to enter scheduling times."
       },
       "StorageBudgetResponse": {
         "properties": {

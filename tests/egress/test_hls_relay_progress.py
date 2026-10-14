@@ -37,7 +37,6 @@ from pathlib import Path
 import pytest
 
 from civiccast.egress.daemon import (
-    _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S,
     _FREEZE_ESCALATION_RESTART_BUDGET,
     EgressDaemon,
 )
@@ -628,12 +627,15 @@ def test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm(
         criticals = _critical_lines(caplog)
         assert len(criticals) == 1
         assert "budget exhausted" in criticals[0]
-        assert "NOT restarting the worker again" in criticals[0]
+        assert (
+            "moving to the fallback slate for a bounded cooldown before one program retry"
+            in (criticals[0])
+        )
         assert not worker_procs[-1].terminated
 
         # The tail: the window is still frozen for another 20 ticks and NOTHING
-        # more is spawned or killed -- and the operator is re-told on the
-        # throttle, not on every tick (20 ticks would be 20 CRITICALs).
+        # more is spawned, killed, or reported as a fresh budget exhaustion while
+        # the recovery cooldown keeps this spent guard deferred.
         relay_procs_at_refusal = len(relay_procs)
         worker_procs_at_refusal = len(worker_procs)
         tail_ticks = 20
@@ -641,9 +643,7 @@ def test_daemon_tick_sequence_with_escalation_is_bounded_not_a_storm(
             _stall_tick(daemon, clock)
         assert len(relay_procs) == relay_procs_at_refusal
         assert len(worker_procs) == worker_procs_at_refusal
-        assert len(_critical_lines(caplog)) == 1 + int(
-            tail_ticks * 60.0 // _FREEZE_ESCALATION_EXHAUSTED_LOG_INTERVAL_S
-        ), "the report is throttled, not per-tick"
+        assert len(_critical_lines(caplog)) == 1, "cooldown defers repeat exhaustion reports"
         assert relay_procs[-1].poll() is None, "the surviving relay child is left running"
 
 

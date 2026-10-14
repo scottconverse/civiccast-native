@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import shutil
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from civiccast.alerting.resource_sampler import ResourceThresholds
 from civiccast.auth.models import OperatorIdentity
 from civiccast.auth.roles import require_any_role
 from civiccast.egress.caption_proof import build_caption_status_provider
@@ -188,6 +190,24 @@ class StaffEgressChannelDetail(BaseModel):
     latest_health: EgressHealthSample | None = None
 
 
+class EgressStorageStatusResponse(BaseModel):
+    """Bounded egress log/command storage and work-volume headroom."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    worker_log_bytes: int
+    worker_log_file_count: int
+    command_history_rows: int
+    pending_commands: int
+    command_table_bytes: int | None = None
+    work_volume_free_bytes: int | None = None
+    low_disk_warning: bool | None = None
+    low_disk_threshold_bytes: int
+
+
+_EGRESS_LOW_DISK_THRESHOLD_BYTES = int(ResourceThresholds().min_media_free_gb * 1024**3)
+
+
 START_WITHOUT_CONFIG_DESCRIPTION = (
     "Start refused: the channel has no outgoing-feed configuration (or it is disabled)"
 )
@@ -256,6 +276,55 @@ def _require_store(store: EgressStore | None, *, surface: str) -> EgressStore:
             detail=f"{_DB_NOT_READY_DETAIL} Surface: {surface}.",
         )
     return store
+
+
+@staff_router.get(
+    "/storage",
+    response_model=EgressStorageStatusResponse,
+    summary="Read egress worker log and command storage use",
+    dependencies=[Depends(require_any_role("setup_admin", "support_admin", "meeting_operator"))],
+    responses={503: {"description": _DB_NOT_READY_DESCRIPTION}},
+)
+def get_egress_storage_status(
+    egress_store: EgressStore | None = Depends(get_egress_store),
+    work_dir: Path = Depends(get_egress_work_dir),
+) -> EgressStorageStatusResponse:
+    store = _require_store(egress_store, surface="egress storage status")
+    usage = store.command_storage_usage()
+    worker_log_bytes = 0
+    worker_log_file_count = 0
+    try:
+        for path in work_dir.expanduser().glob("*/logs/gst-worker.*.log*"):
+            try:
+                if path.is_file():
+                    worker_log_bytes += path.stat().st_size
+                    worker_log_file_count += 1
+            except OSError:
+                continue
+    except OSError:
+        pass
+
+    free_bytes: int | None = None
+    probe_path = work_dir.expanduser()
+    try:
+        while not probe_path.exists() and probe_path.parent != probe_path:
+            probe_path = probe_path.parent
+        free_bytes = shutil.disk_usage(probe_path).free
+    except OSError:
+        pass
+
+    return EgressStorageStatusResponse(
+        worker_log_bytes=worker_log_bytes,
+        worker_log_file_count=worker_log_file_count,
+        command_history_rows=usage["row_count"],
+        pending_commands=usage["pending_count"],
+        command_table_bytes=usage["storage_bytes"],
+        work_volume_free_bytes=free_bytes,
+        low_disk_warning=(
+            free_bytes < _EGRESS_LOW_DISK_THRESHOLD_BYTES if free_bytes is not None else None
+        ),
+        low_disk_threshold_bytes=_EGRESS_LOW_DISK_THRESHOLD_BYTES,
+    )
 
 
 @public_router.get(

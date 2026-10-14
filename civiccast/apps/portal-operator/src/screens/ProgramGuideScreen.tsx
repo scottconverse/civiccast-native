@@ -4,6 +4,7 @@ import {
   ApiError,
   disableProgramSlot,
   getChannelProgramLog,
+  getStationTimeZone,
   listChannelProfiles,
   listProgramSlots,
   materializeProgramLog,
@@ -19,6 +20,12 @@ import type {
   SlotOccurrence,
 } from '../types/api.generated'
 import { EmptyState } from '../components/EmptyState'
+import {
+  dateFromStationDateKey,
+  effectiveStationTimeZone,
+  formatStationInstant,
+  stationDateKey,
+} from '../lib/station-time'
 
 const DEFAULT_CHANNEL = 'public'
 const LOG_HOURS = 168 // operator view: one rolling week
@@ -59,11 +66,35 @@ function StatusChip({ status }: { status: string }) {
   )
 }
 
-function fmtTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString(undefined, {
+function fmtTime(iso: string, timeZone: string): string {
+  return formatStationInstant(new Date(iso), timeZone, {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function fmtRecurrenceTime(
+  anchorLocal: string | null | undefined,
+  recurrence: ProgramSlot['recurrence'],
+): string | null {
+  if (!anchorLocal || recurrence === 'once') return null
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(anchorLocal)
+  if (!match) return null
+  const [, year, month, day, hour, minute] = match
+  const wallClock = new Date(
+    Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute)),
+  )
+  const weekday = wallClock.toLocaleDateString(undefined, {
+    weekday: 'short',
+    timeZone: 'UTC',
+  })
+  const time = formatStationInstant(wallClock, 'UTC', {
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+  const cadence =
+    recurrence === 'weekly' ? `${weekday} ` : recurrence === 'weekdays' ? 'weekdays ' : 'daily '
+  return `recurs ${cadence}at ${time} station time`
 }
 
 function fmtDuration(seconds: number | null | undefined): string {
@@ -100,7 +131,7 @@ export type GroupedLog = {
  * but arrive through a blind `as T` cast over the wire, so the type is a
  * contract, not a guarantee.
  */
-function groupLogByDay(entries: ChannelLogEntry[]): GroupedLog {
+function groupLogByDay(entries: ChannelLogEntry[], timeZone: string): GroupedLog {
   const map = new Map<string, LogDayGroup>()
   const unreadable: ChannelLogEntry[] = []
   for (const entry of entries) {
@@ -114,13 +145,12 @@ function groupLogByDay(entries: ChannelLogEntry[]): GroupedLog {
       unreadable.push(entry)
       continue
     }
-    const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+    const key = stationDateKey(d, timeZone)
     const existing = map.get(key)
     if (existing) {
       existing.entries.push(entry)
     } else {
-      const day = new Date(d)
-      day.setHours(0, 0, 0, 0)
+      const day = dateFromStationDateKey(key)
       map.set(key, { key, day, entries: [entry] })
     }
   }
@@ -175,11 +205,12 @@ function ErrorState({ error, onRetry }: { error: Error; onRetry: () => void }) {
 
 interface SlotListProps {
   slots: ProgramSlot[]
+  timeZone: string
   onDisable: (slot: ProgramSlot) => void
   disabling: boolean
 }
 
-function SlotList({ slots, onDisable, disabling }: SlotListProps) {
+function SlotList({ slots, timeZone, onDisable, disabling }: SlotListProps) {
   if (slots.length === 0) {
     return (
       <EmptyState
@@ -211,14 +242,16 @@ function SlotList({ slots, onDisable, disabling }: SlotListProps) {
             </div>
             <div className="cc-mono cc-truncate text-[10px]" style={{ color: 'var(--cc-ink-3)' }}>
               {slot.asset_id} · first{' '}
-              {new Date(slot.first_start_at).toLocaleString(undefined, {
+              {formatStationInstant(new Date(slot.first_start_at), timeZone, {
                 month: 'short',
                 day: 'numeric',
                 hour: 'numeric',
                 minute: '2-digit',
               })}
+              {fmtRecurrenceTime(slot.recurrence_anchor_local, slot.recurrence) &&
+                ` · ${fmtRecurrenceTime(slot.recurrence_anchor_local, slot.recurrence)}`}
               {slot.repeat_until
-                ? ` · until ${new Date(slot.repeat_until).toLocaleDateString()}`
+                ? ` · until ${formatStationInstant(new Date(slot.repeat_until), timeZone, { dateStyle: 'medium' })}`
                 : ''}
             </div>
           </div>
@@ -254,12 +287,12 @@ function SlotList({ slots, onDisable, disabling }: SlotListProps) {
   )
 }
 
-function LogList({ entries }: { entries: ChannelLogEntry[] }) {
+function LogList({ entries, timeZone }: { entries: ChannelLogEntry[]; timeZone: string }) {
   const { groups, unreadable } = useMemo(
-    () => groupLogByDay(entries),
-    [entries],
+    () => groupLogByDay(entries, timeZone),
+    [entries, timeZone],
   )
-  const today = new Date()
+  const today = stationDateKey(new Date(), timeZone)
   if (entries.length === 0) {
     return (
       <EmptyState
@@ -287,10 +320,7 @@ function LogList({ entries }: { entries: ChannelLogEntry[] }) {
         </div>
       )}
       {groups.map((g) => {
-        const isToday =
-          g.day.getFullYear() === today.getFullYear() &&
-          g.day.getMonth() === today.getMonth() &&
-          g.day.getDate() === today.getDate()
+        const isToday = g.key === today
         return (
           <div key={g.key}>
             <div
@@ -302,6 +332,7 @@ function LogList({ entries }: { entries: ChannelLogEntry[] }) {
                   weekday: 'short',
                   month: 'short',
                   day: 'numeric',
+                  timeZone: 'UTC',
                 })}
               </span>
               {isToday && (
@@ -332,7 +363,7 @@ function LogList({ entries }: { entries: ChannelLogEntry[] }) {
                       className="cc-mono cc-tabular w-20 shrink-0"
                       style={{ color: 'var(--cc-ink-2)' }}
                     >
-                      {fmtTime(entry.occurrence_start)}
+                      {fmtTime(entry.occurrence_start, timeZone)}
                     </span>
                     <StatusChip status={entry.status} />
                     <div className="min-w-0 flex-1">
@@ -365,6 +396,13 @@ export function ProgramGuideScreen() {
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null)
   const queryClient = useQueryClient()
   const toast = useToast()
+
+  const stationProfileQuery = useQuery({
+    queryKey: ['station-timezone'],
+    queryFn: getStationTimeZone,
+    retry: false,
+  })
+  const stationTimeZone = effectiveStationTimeZone(stationProfileQuery.data?.station_timezone)
 
   const channelsQuery = useQuery<ChannelProfile[], Error>({
     queryKey: ['cable-channels'],
@@ -446,8 +484,13 @@ export function ProgramGuideScreen() {
         <p className="mt-1 text-xs" style={{ color: 'var(--cc-ink-2)' }}>
           Place recordings on a channel&apos;s recurring guide. Only Published entries
           are scheduled to air; the engine uses filler between programs. Times are
-          shown in your browser timezone.
+          shown in station time ({stationTimeZone}).
         </p>
+        {stationProfileQuery.isError && (
+          <p role="alert" className="m-0 mt-2 text-xs" style={{ color: 'var(--cc-err)' }}>
+            The station timezone could not be loaded; times are currently shown in UTC, and new slots are disabled.
+          </p>
+        )}
       </header>
 
       <div
@@ -536,6 +579,7 @@ export function ProgramGuideScreen() {
             </h2>
             <SlotList
               slots={slots}
+              timeZone={stationTimeZone}
               disabling={disableMutation.isPending}
               onDisable={(slot) => {
                 const display = slot.title_override?.trim() || slot.asset_id
@@ -556,7 +600,7 @@ export function ProgramGuideScreen() {
             >
               Next 7 days
             </h2>
-            <LogList entries={entries} />
+            <LogList entries={entries} timeZone={stationTimeZone} />
           </section>
         </div>
       )}

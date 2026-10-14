@@ -15,8 +15,9 @@ normal (segment cuts land on video keyframes, and the audio in a cut segment can
 legitimately lead or lag by a fraction of a frame). A difference that persists
 across three consecutive probes is a fault the operator cannot fix and the
 channel cannot air through, so the guard restarts that channel's WORKER -- the
-same restart a dead encoder gets -- under a hard budget (3 restarts per channel
-per rolling hour, then ERROR every 10 minutes and no restart).
+same restart a dead encoder gets -- under a hard budget. Once the rolling-hour
+budget is spent, the channel uses its fallback slate through the cooldown and
+gets one program retry when the most recent restart ages out.
 
 Three disciplines this file pins, all inherited from U12's relay probe:
 
@@ -574,10 +575,26 @@ def test_u16_guard_slate_restart_rebinds_the_hls_relay_to_the_new_worker_session
 def test_u16_guard_restart_budget_is_three_per_rolling_hour(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Three restarts inside the hour, then ERROR on a 10-minute cadence and no
-    restart -- and the budget is a ROLLING window, so it frees up again once the
-    oldest restart leaves it."""
+    """Three restarts inside the hour, then one slate cooldown and program retry."""
     fixture = _guard_fixture(tmp_path)
+    forced_slate: dict[str, str] = {}
+    fallback_requests: list[str] = []
+    program_retries: list[str] = []
+
+    def request_fallback_slate(*, channel_id: str, reason: str) -> None:
+        fallback_requests.append(channel_id)
+        forced_slate[channel_id] = reason
+
+    def has_fallback_slate_reason(*, channel_id: str, reason: str) -> bool:
+        return forced_slate.get(channel_id) == reason
+
+    def request_slate_exit(*, channel_id: str) -> None:
+        program_retries.append(channel_id)
+        forced_slate.pop(channel_id, None)
+
+    fixture.daemon.request_fallback_slate = request_fallback_slate  # type: ignore[attr-defined]
+    fixture.daemon.has_fallback_slate_reason = has_fallback_slate_reason  # type: ignore[attr-defined]
+    fixture.daemon.request_slate_exit = request_slate_exit  # type: ignore[attr-defined]
     # Six episodes' worth of over-limit measurements (plus slack): episodes 1-3
     # restart, 4-6 are refused and only logged.
     probe = _RecordingProbe([(0.0, 2.5)] * 30)
@@ -606,19 +623,28 @@ def test_u16_guard_restart_budget_is_three_per_rolling_hour(
         assert "gov" in exhausted[-1]
         assert "2.500" in exhausted[-1]
 
-        # Further refusals inside the 10-minute window stay silent...
+        assert fallback_requests == ["gov"]
+        recovery = fixture.daemon._quality_recovery["gov"]
+
+        # The detector stays suppressed for the whole cooldown; it does not
+        # repeat the slate request or spend more restarts on each poll.
         _probe_ticks(fixture, _OUTPUT_AV_GUARD_CONSECUTIVE_PROBES)
         assert len(_error_lines(caplog)) == _OUTPUT_AV_GUARD_RESTART_BUDGET + 1
+        assert fallback_requests == ["gov"]
 
-        # ...and the next one past it says so again -- still without restarting.
-        fixture.clock.value += _OUTPUT_AV_GUARD_EXHAUSTED_LOG_INTERVAL_S + 1.0
+        fixture.clock.value = recovery.retry_at - 1.0
         fixture.daemon._poll_output_av_guard("gov")
-        assert len(_error_lines(caplog)) == _OUTPUT_AV_GUARD_RESTART_BUDGET + 2
+        assert len([worker for worker in fixture.workers if worker.terminated]) == 3
+        assert program_retries == []
+
+        fixture.clock.value = recovery.retry_at
+        fixture.daemon._poll_quality_recovery("gov")
+        assert program_retries == ["gov"]
+        assert "gov" not in fixture.daemon._quality_recovery
         assert len([worker for worker in fixture.workers if worker.terminated]) == 3
 
-        # A rolling window: once the oldest restart ages out, the budget frees.
-        fixture.clock.value += _OUTPUT_AV_GUARD_BUDGET_WINDOW_S + 1.0
-        fixture.daemon._poll_output_av_guard("gov")
+        # The program retry happens only after the latest restart ages out.
+        _probe_ticks(fixture, _OUTPUT_AV_GUARD_CONSECUTIVE_PROBES)
         assert len([worker for worker in fixture.workers if worker.terminated]) == 4
 
 

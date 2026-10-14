@@ -12,6 +12,7 @@ import type {
   RevokeOtherSessionsResponse,
   StationBoxProfile,
   StationProfile,
+  StationTimeZone,
 } from '../types/api.generated'
 import type {
   ActivityPubDeliveriesResponse,
@@ -980,6 +981,10 @@ export function getStationProfile(): Promise<StationProfile> {
   return request<StationProfile>('/api/staff/station/profile')
 }
 
+export function getStationTimeZone(): Promise<StationTimeZone> {
+  return request<StationTimeZone>('/api/staff/station/timezone')
+}
+
 // S3 commissioning wizard (screens 8-11).
 export function getCommissioningState(): Promise<CommissioningState> {
   return request<CommissioningState>('/api/staff/cable/commissioning/state')
@@ -1351,6 +1356,21 @@ export function getEgressSchemaCurrency(channelId: string): Promise<EgressSchema
   return request<EgressSchemaCurrency>(
     `/api/staff/egress/channels/${encodeURIComponent(channelId)}/schema-currency`,
   )
+}
+
+export interface EgressStorageStatus {
+  worker_log_bytes: number
+  worker_log_file_count: number
+  command_history_rows: number
+  pending_commands: number
+  command_table_bytes: number | null
+  work_volume_free_bytes: number | null
+  low_disk_warning: boolean | null
+  low_disk_threshold_bytes: number
+}
+
+export function getEgressStorageStatus(): Promise<EgressStorageStatus> {
+  return request<EgressStorageStatus>('/api/staff/egress/storage')
 }
 
 export function queueEgressCommand(
@@ -3815,7 +3835,7 @@ export interface RecordingSource {
 
 export type RecurrenceSpec =
   | { kind: 'one_shot'; start: string }
-  | { kind: 'weekly'; weekdays: number[]; time_hhmm: string }
+  | { kind: 'weekly'; weekdays: number[]; time_hhmm: string; time_zone?: 'UTC' | 'station' }
 
 export interface RecordingSchedule {
   schedule_id: string

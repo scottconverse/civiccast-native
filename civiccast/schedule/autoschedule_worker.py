@@ -32,7 +32,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING
 
-from civiccast.schedule.autoschedule_materializer import MaterializeReport, compile_rules
+from civiccast.schedule.autoschedule_materializer import (
+    COMPILE_LOCK,
+    MaterializeReport,
+    compile_rules,
+)
 from civiccast.schedule.autoschedule_store import AutoScheduleStore
 
 if TYPE_CHECKING:
@@ -65,7 +69,7 @@ class AutoScheduleCompileWorker:
         *,
         store: AutoScheduleStore | None = None,
         clock: Callable[[], datetime] | None = None,
-        tz: tzinfo = UTC,
+        tz: tzinfo | Callable[[], tzinfo] = UTC,
         settings: AutoScheduleCompileSettings | None = None,
         compile_fn: CompileFn | None = None,
     ) -> None:
@@ -90,8 +94,9 @@ class AutoScheduleCompileWorker:
         # Stamp before running so a failed compile can't hot-loop within the interval.
         self._last_monotonic = monotonic
         try:
-            with self._session_factory() as session:
-                report = self._compile_fn(session, self._store, now=self._clock(), tz=self._tz)
+            with COMPILE_LOCK, self._session_factory() as session:
+                tz = self._tz() if callable(self._tz) else self._tz
+                report = self._compile_fn(session, self._store, now=self._clock(), tz=tz)
             if report.items_created:
                 _LOG.info(
                     "auto-schedule compile added %d scheduled items across %d rules",

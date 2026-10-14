@@ -38,6 +38,7 @@ from sqlalchemy.orm import Session
 
 from civiccast.schedule.autoschedule_models import ScheduleBlock
 from civiccast.schedule.models import SCHEDULE_STATE_CANCELLED, ScheduleItem
+from civiccast.timezones import resolve_wall_clock
 
 
 @dataclass(frozen=True)
@@ -51,16 +52,17 @@ class SlotWindow:
 
     @property
     def duration_seconds(self) -> float:
-        return (self.ends_at - self.starts_at).total_seconds()
+        # Same-zone datetime subtraction ignores offset changes across DST.
+        return (self.ends_at.astimezone(UTC) - self.starts_at.astimezone(UTC)).total_seconds()
 
 
-def _wall_clock(day: date, minute_of_day: int, tz: tzinfo) -> datetime:
-    """The tz-aware datetime for ``minute_of_day`` (0..1439) on ``day`` in ``tz``."""
+def _wall_clock(day: date, minute_of_day: int, tz: tzinfo) -> datetime | None:
+    """Resolve a wall clock; a nonexistent spring-forward time returns None."""
     hours, minutes = divmod(minute_of_day, 60)
-    return datetime.combine(day, time(hour=hours, minute=minutes), tzinfo=tz)
+    return resolve_wall_clock(day, time(hour=hours, minute=minutes), tz)
 
 
-def _slot_end(block: ScheduleBlock, day: date, tz: tzinfo) -> datetime:
+def _slot_end(block: ScheduleBlock, day: date, tz: tzinfo) -> datetime | None:
     """End datetime for ``block``'s daypart starting on ``day``.
 
     * wrap (``end_minute <= start_minute``) → ends on the next calendar day;
@@ -102,12 +104,12 @@ def expand_block_slots(
             continue
         if block.active_until is not None and day > block.active_until:
             continue
-        slots.append(
-            SlotWindow(
-                starts_at=_wall_clock(day, block.start_minute, tz),
-                ends_at=_slot_end(block, day, tz),
-            )
-        )
+        starts_at = _wall_clock(day, block.start_minute, tz)
+        ends_at = _slot_end(block, day, tz)
+        # Skip a daypart if either configured boundary falls in a spring gap.
+        if starts_at is None or ends_at is None:
+            continue
+        slots.append(SlotWindow(starts_at=starts_at, ends_at=ends_at))
     return slots
 
 

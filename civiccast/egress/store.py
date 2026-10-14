@@ -6,10 +6,11 @@ from __future__ import annotations
 
 import json
 import threading
+from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager
 from datetime import UTC, datetime
-from typing import Literal, Protocol, cast
+from typing import Literal, Protocol, TypedDict, cast
 
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
@@ -43,6 +44,18 @@ SessionFactory = Callable[[], AbstractContextManager[Session]]
 MAX_PROOF_EVENTS_PER_CHANNEL = 10_000
 TRIM_BATCH_SIZE = 1_000
 
+# Keep consumed command history in the same bounded forensic window as egress
+# proof events. Pending commands are never eligible for pruning.
+MAX_COMMAND_HISTORY_PER_CHANNEL = MAX_PROOF_EVENTS_PER_CHANNEL
+COMMAND_HISTORY_TRIM_BATCH_SIZE = TRIM_BATCH_SIZE
+
+
+class CommandStorageUsage(TypedDict):
+    row_count: int
+    pending_count: int
+    storage_bytes: int | None
+
+
 # S11a — caption decode-back proofs are sampled periodically per ON_AIR channel;
 # keep a bounded forensic window the same GC way as proof events.
 MAX_CAPTION_PROOFS_PER_CHANNEL = 5_000
@@ -72,6 +85,10 @@ class EgressStore(Protocol):
         ...
 
     def pop_pending_commands(self, channel_id: str) -> list[EgressCommand]: ...
+
+    def command_storage_usage(self) -> CommandStorageUsage:
+        """Return command-row counts and table bytes when the dialect reports them."""
+        ...
 
     def peek_pending_commands(self, channel_id: str) -> list[EgressCommand]:
         """The channel's not-yet-consumed commands WITHOUT marking them consumed
@@ -133,7 +150,8 @@ class InMemoryEgressStore:
         self._recover_lock = threading.RLock()
         self._configs: dict[str, EgressConfig] = {}
         self._commands: list[EgressCommand] = []
-        self._consumed_command_ids: set[str] = set()
+        self._consumed_command_channels: dict[str, str] = {}
+        self._consumed_command_ids_by_channel: dict[str, OrderedDict[str, None]] = {}
         self._states: dict[str, EgressStateRow] = {}
         self._health: list[EgressHealthSample] = []
         self._proof_events: list[EgressProofEvent] = []
@@ -156,7 +174,7 @@ class InMemoryEgressStore:
         # either none of the batch or all of it, never a prefix.
         pending = list(self._commands)
         for cmd in cmds:
-            if cmd.command_id in self._consumed_command_ids:
+            if cmd.command_id in self._consumed_command_channels:
                 continue
             if any(existing.command_id == cmd.command_id for existing in pending):
                 continue
@@ -169,8 +187,28 @@ class InMemoryEgressStore:
             return []
         pending_ids = {cmd.command_id for cmd in pending}
         self._commands = [cmd for cmd in self._commands if cmd.command_id not in pending_ids]
-        self._consumed_command_ids.update(pending_ids)
-        return sorted(pending, key=lambda cmd: (cmd.issued_at, cmd.command_id))
+        ordered_pending = sorted(pending, key=lambda cmd: (cmd.issued_at, cmd.command_id))
+        self._remember_consumed_commands(channel_id, [cmd.command_id for cmd in ordered_pending])
+        return ordered_pending
+
+    def _remember_consumed_commands(self, channel_id: str, command_ids: Sequence[str]) -> None:
+        recent = self._consumed_command_ids_by_channel.setdefault(channel_id, OrderedDict())
+        for command_id in command_ids:
+            recent[command_id] = None
+            self._consumed_command_channels[command_id] = channel_id
+        while len(recent) > MAX_COMMAND_HISTORY_PER_CHANNEL:
+            oldest_id, _ = recent.popitem(last=False)
+            self._consumed_command_channels.pop(oldest_id, None)
+
+    def command_storage_usage(self) -> CommandStorageUsage:
+        consumed_rows = sum(
+            len(command_ids) for command_ids in self._consumed_command_ids_by_channel.values()
+        )
+        return {
+            "row_count": len(self._commands) + consumed_rows,
+            "pending_count": len(self._commands),
+            "storage_bytes": None,
+        }
 
     def peek_pending_commands(self, channel_id: str) -> list[EgressCommand]:
         pending = [cmd for cmd in self._commands if cmd.channel_id == channel_id]
@@ -187,7 +225,7 @@ class InMemoryEgressStore:
         # check-then-write; the command is published BEFORE the state so a
         # concurrent reader never sees STOPPED without its queued start.
         with self._recover_lock:
-            if command.command_id in self._consumed_command_ids or any(
+            if command.command_id in self._consumed_command_channels or any(
                 existing.command_id == command.command_id for existing in self._commands
             ):
                 raise ValueError(f"recovery command id already exists: {command.command_id!r}")
@@ -444,16 +482,80 @@ class PostgresEgressStore:
                 .scalars()
                 .all()
             )
-            if not rows:
-                return []
-            ids = [row.command_id for row in rows]
-            session.execute(
-                update(EgressCommandDb)
-                .where(EgressCommandDb.command_id.in_(ids))
-                .values(consumed_at=consumed_at)
+            commands = [_command_from_row(row) for row in rows]
+            if rows:
+                ids = [row.command_id for row in rows]
+                session.execute(
+                    update(EgressCommandDb)
+                    .where(EgressCommandDb.command_id.in_(ids))
+                    .values(consumed_at=consumed_at)
+                )
+            trimmed = self._trim_consumed_command_history(session, channel_id)
+            if rows or trimmed:
+                session.commit()
+            return commands
+
+    @staticmethod
+    def _trim_consumed_command_history(session: Session, channel_id: str) -> int:
+        """Prune one batch only when an indexed lookup finds row cap + 1."""
+        oldest_over_limit = session.execute(
+            select(EgressCommandDb.command_id)
+            .where(EgressCommandDb.channel_id == channel_id)
+            .where(EgressCommandDb.consumed_at.is_not(None))
+            .order_by(
+                EgressCommandDb.consumed_at.asc(),
+                EgressCommandDb.issued_at.asc(),
+                EgressCommandDb.command_id.asc(),
             )
-            session.commit()
-            return [_command_from_row(row) for row in rows]
+            .offset(MAX_COMMAND_HISTORY_PER_CHANNEL)
+            .limit(1)
+        ).scalar_one_or_none()
+        if oldest_over_limit is None:
+            return 0
+        oldest_ids = (
+            session.execute(
+                select(EgressCommandDb.command_id)
+                .where(EgressCommandDb.channel_id == channel_id)
+                .where(EgressCommandDb.consumed_at.is_not(None))
+                .order_by(
+                    EgressCommandDb.consumed_at.asc(),
+                    EgressCommandDb.issued_at.asc(),
+                    EgressCommandDb.command_id.asc(),
+                )
+                .limit(COMMAND_HISTORY_TRIM_BATCH_SIZE)
+            )
+            .scalars()
+            .all()
+        )
+        if not oldest_ids:
+            return 0
+        session.execute(delete(EgressCommandDb).where(EgressCommandDb.command_id.in_(oldest_ids)))
+        return len(oldest_ids)
+
+    def command_storage_usage(self) -> CommandStorageUsage:
+        with self._session_factory() as session:
+            row_count = session.execute(
+                select(func.count()).select_from(EgressCommandDb)
+            ).scalar_one()
+            pending_count = session.execute(
+                select(func.count())
+                .select_from(EgressCommandDb)
+                .where(EgressCommandDb.consumed_at.is_(None))
+            ).scalar_one()
+            storage_bytes: int | None = None
+            if session.get_bind().dialect.name == "postgresql":
+                from sqlalchemy import text
+
+                storage_bytes = int(
+                    session.execute(
+                        text("SELECT pg_total_relation_size('civiccast.egress_commands')")
+                    ).scalar_one()
+                )
+            return {
+                "row_count": int(row_count),
+                "pending_count": int(pending_count),
+                "storage_bytes": storage_bytes,
+            }
 
     def peek_pending_commands(self, channel_id: str) -> list[EgressCommand]:
         with self._session_factory() as session:

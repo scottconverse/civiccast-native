@@ -8,6 +8,8 @@ import dataclasses
 import json
 import os
 import subprocess
+import sys
+import time
 from collections import deque
 from pathlib import Path
 from types import SimpleNamespace
@@ -107,6 +109,78 @@ def test_graph_json_round_trip_sourceleg() -> None:
     assert restored.mux.factory == "mpegtsmux"
     assert restored.sinks[0][-1].factory == "filesink"
     assert restored.encoder[-1].factory == graph.encoder[-1].factory
+
+
+def test_default_worker_launcher_drains_and_rotates_real_child_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(strategy_module, "_WORKER_LOG_MAX_BYTES", 512)
+    monkeypatch.setattr(strategy_module, "_WORKER_LOG_BACKUP_COUNT", 2)
+    monkeypatch.setattr(strategy_module, "_WORKER_LOG_READ_SIZE", 128)
+    stdout_path = tmp_path / "channel" / "logs" / "gst-worker.stdout.log"
+    stderr_path = tmp_path / "channel" / "logs" / "gst-worker.stderr.log"
+    stdout_path.parent.mkdir(parents=True)
+    stdout_path.write_bytes(b"previous-stdout-log\n" * 100)
+    stderr_path.write_bytes(b"previous-stderr-log\n" * 100)
+    child_script = (
+        "import sys\n"
+        "for i in range(160):\n"
+        " print(f'OUT-{i:03d}-' + 'o'*40)\n"
+        " print(f'ERR-{i:03d}-' + 'e'*40, file=sys.stderr)\n"
+        "print('OUT-END')\n"
+        "print('ERR-END', file=sys.stderr)\n"
+    )
+
+    handle = strategy_module._default_worker_launcher(
+        [sys.executable, "-u", "-c", child_script], stdout_path, stderr_path
+    )
+    try:
+        handle.process.wait(timeout=10)
+        threads = handle._child_log_threads  # type: ignore[attr-defined]
+        for thread in threads:
+            thread.join(timeout=3)
+        assert all(not thread.is_alive() for thread in threads)
+
+        for base_path, marker in ((stdout_path, b"OUT-"), (stderr_path, b"ERR-")):
+            files = list(base_path.parent.glob(base_path.name + "*"))
+            assert 1 <= len(files) <= 3
+            assert all(path.stat().st_size <= 512 + 128 + 16 for path in files)
+            assert any(marker in path.read_bytes() for path in files)
+            assert any(b"END" in path.read_bytes() for path in files)
+    finally:
+        handle.terminate(grace_seconds=1)
+
+
+def test_default_worker_launcher_logs_short_output_while_child_is_alive(
+    tmp_path: Path,
+) -> None:
+    stdout_path = tmp_path / "channel" / "logs" / "gst-worker.stdout.log"
+    stderr_path = tmp_path / "channel" / "logs" / "gst-worker.stderr.log"
+    child_script = (
+        "import sys, time\n"
+        "sys.stdout.write('OUT-LIVE\\n'); sys.stdout.flush()\n"
+        "sys.stderr.write('ERR-LIVE\\n'); sys.stderr.flush()\n"
+        "time.sleep(3)\n"
+    )
+    handle = strategy_module._default_worker_launcher(
+        [sys.executable, "-u", "-c", child_script], stdout_path, stderr_path
+    )
+    try:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            stdout_text = stdout_path.read_text(encoding="utf-8") if stdout_path.exists() else ""
+            stderr_text = stderr_path.read_text(encoding="utf-8") if stderr_path.exists() else ""
+            if "OUT-LIVE" in stdout_text and "ERR-LIVE" in stderr_text:
+                break
+            time.sleep(0.01)
+        assert handle.process.poll() is None
+        assert "OUT-LIVE" in stdout_text
+        assert "ERR-LIVE" in stderr_text
+    finally:
+        handle.terminate(grace_seconds=1)
+        for thread in handle._child_log_threads:  # type: ignore[attr-defined]
+            thread.join(timeout=2)
 
 
 def test_serialized_caps_property_is_coerced_for_live_appsrc() -> None:

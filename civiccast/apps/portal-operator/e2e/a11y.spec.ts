@@ -201,6 +201,13 @@ test.describe('operator portal accessibility (desktop)', () => {
 
 test.describe('operator portal accessibility — Recording screen (WP-11 item 1)', () => {
   test.beforeEach(async ({ page }) => {
+    await page.route('**/api/staff/station/timezone', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ station_timezone: 'America/Denver' }),
+      })
+    })
     await page.route('**/api/staff/recording/schedules', async (route) => {
       if (route.request().method() !== 'GET') return route.fallback()
       await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' })

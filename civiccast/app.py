@@ -963,6 +963,7 @@ def _build_program_log_materializer(session_factory: Any) -> ProgramLogMateriali
         PostgresScheduleStore(session_factory),
         asset_store.get_staff_row,
         settings=ProgramLogSettings.from_env(),
+        tz=_station_tz,
     )
 
 
@@ -1524,7 +1525,7 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
 
     # S18 periodic auto-schedule compile (periodic compiler behavior). Idempotent
     # and safe on a fresh box (no rules -> no-op); off via CIVICCAST_AUTOSCHEDULE=off.
-    autoschedule_compile = AutoScheduleCompileWorker(session_factory, tz=_station_tz())
+    autoschedule_compile = AutoScheduleCompileWorker(session_factory, tz=_station_tz)
     autoschedule_compile_settings = AutoScheduleCompileSettings()
     app.state.background_supervisors.append(
         ThreadSupervisor(
@@ -2998,7 +2999,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
         return AutoScheduleService(
             AutoScheduleStore(_session_factory),
             session_factory=_session_factory,
-            tz=_station_tz(),
+            tz=_station_tz,
         )
 
     def _resolve_takeover_service() -> TakeoverService:
@@ -3423,6 +3424,7 @@ def _wire_durable_stores(app: FastAPI) -> None:
         ),
         asset_finalizer=ScheduledRecordingAssetFinalizer(_session_factory),
         alert_sink=RecordingAlertSink(_session_factory),
+        tz=_station_tz,
     )
     app.state.scheduled_recording_settings = scheduled_recording_settings
     app.state.scheduled_recording_worker = ScheduledRecordingWorker(

@@ -3,13 +3,13 @@
 """Program-log persistence models (cable automation CA-1).
 
 A :class:`ProgramSlot` is the operator's intent ("Council replay, Fridays at
-19:00 UTC"); a :class:`SlotOccurrence` records each materialized instance and
+19:00 station time"); a :class:`SlotOccurrence` records each materialized instance and
 points at the real ``schedule_items`` row the playout path consumes. The
 UNIQUE (slot_id, occurrence_start) key makes materialization idempotent.
 
-All recurrence math is timezone-aware UTC. A slot scheduled at 19:00 UTC
-stays 19:00 UTC across DST shifts; station-local-time recurrence is an
-explicit later feature, documented rather than half-implemented.
+Occurrence timestamps are persisted as UTC instants. Recurrence calendar dates
+and wall-clock times use the configured station timezone, including explicit
+handling of skipped spring-forward clocks and the first fall-back fold.
 """
 
 from __future__ import annotations
@@ -40,6 +40,13 @@ class ProgramSlot(BaseModel):
     title_override: Annotated[str, Field(max_length=200)] | None = None
     recurrence: SlotRecurrence
     first_start_at: datetime
+    # Server-derived local calendar/clock anchor, independent of mutable station TZ.
+    # Null legacy rows adopt the station zone on their first materialization.
+    recurrence_anchor_local: datetime | None = Field(
+        default=None,
+        description="Original station-local calendar/clock anchor without a timezone offset.",
+        json_schema_extra={"readOnly": True},
+    )
     duration_seconds: Annotated[int, Field(gt=0, le=1_209_600)] | None = None
     repeat_until: datetime | None = None
     enabled: bool = True
@@ -72,6 +79,9 @@ class ChannelProgramSlotDb(Base):
     title_override: Mapped[str | None] = mapped_column(String(200), nullable=True)
     recurrence: Mapped[str] = mapped_column(String(16), nullable=False)
     first_start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recurrence_anchor_local: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=False), nullable=True
+    )
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     repeat_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="1")
