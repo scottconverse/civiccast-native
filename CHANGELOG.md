@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+### v1.0.0-beta.16 — station operations and broadcast reliability
+
+Beta 16 brings the station operations, unattended scheduling, broadcast output
+and documentation improvements below together in one candidate. It adds encrypted
+station backups, staff administration, supported HTTPS configuration, a restricted
+Windows service account, station-local scheduling, bounded operational storage,
+output recovery, RTMP and loudness controls, and recorded-caption preferences.
+The installer and bundled manual/Help are being prepared and verified together.
+Publication awaits owner authorization.
+
+The R9 Beta 15 field findings are assigned to [Beta 17](docs/ops/beta17-deferred.md)
+by owner decision; they are not fixes claimed by this release.
+
 ### Documentation reconciliation
 
 - Align the roadmap, handoff, capability matrix, release guidance, manual and
@@ -24,8 +37,7 @@
 - Preserve both available programme tails at a normal transition, repeating
   the final picture or supplying silence until the longer stream ends.
 
-These source changes and focused results are recorded in [Sprint 3](docs/ops/sprint3-output-completion.md),
-which records their check status. They are not in the published Beta 15 package.
+Implementation and focused results are recorded in [Sprint 3](docs/ops/sprint3-output-completion.md).
 
 ### Unattended station operation
 
@@ -40,8 +52,7 @@ which records their check status. They are not in the published Beta 15 package.
   stop or drain suppresses automatic starts until an explicit Start or service
   restart.
 
-These source changes are not in the published Beta 15 package. See
-[Sprint 2](docs/ops/sprint2-unattended.md) for implementation and check status.
+See [Sprint 2](docs/ops/sprint2-unattended.md) for implementation and check status.
 
 ### Station operations
 
@@ -55,8 +66,7 @@ These source changes are not in the published Beta 15 package. See
 - Replace LocalSystem with a dedicated Windows virtual service account and
   preserve existing station profiles and credentials during migration.
 
-These changes are not in the published Beta 15 package. Integration results and
-verification scope are recorded in [station operations](docs/ops/station-operations-goal.md).
+Integration results are recorded in [station operations](docs/ops/station-operations-goal.md).
 
 ## [1.0.0-beta.15] - 2026-10-13
 

@@ -201,7 +201,7 @@ def main():
         "title: CivicCast User Manual\n"
         f"subtitle: For station staff, volunteers and city IT staff - {VERSION} (native Windows line)\n"
         "author: The CivicCast Authors\n"
-        "date: 2026-10-12\n"
+        "date: 2026-10-14\n"
         "urlcolor: blue\n"
         "toccolor: black\n"
         "---\n\n"

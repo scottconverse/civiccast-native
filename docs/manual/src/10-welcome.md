@@ -1,6 +1,6 @@
 # What CivicCast is and who uses it {#ch-welcome}
 
-This chapter explains what CivicCast does, which jobs the people at a small station do with it, and what happens to a meeting from the day it is put on the calendar to the day a resident watches it. It also gives a short word list for Part I and states plainly what has and has not been proven in this release. Everyone reading Part I should read it first.
+This chapter explains what CivicCast does, which jobs the people at a small station do with it, and what happens to a meeting from the day it is put on the calendar to the day a resident watches it. It also gives a short word list for Part I. Everyone reading Part I should read it first.
 
 ## What CivicCast is
 
@@ -28,8 +28,6 @@ The installer puts a shortcut named **CivicCast Operator Console** on the Deskto
 
 > **For IT staff:** The console and portal addresses, the Windows service that runs them, and how to make the portal reachable from residents' own devices are covered in [Installing, first run, upgrading, uninstalling](#ch-installing) and [Planning your station](#ch-planning).
 
-> **Note:** This manual describes Beta 15. Beta 11/10 notes below are historical observations scoped to those releases; they do not state current Beta 15 behavior unless the note says it was rechecked later.
-
 ## The people and their roles
 
 CivicCast has five *roles*. A role is a set of things a signed-in person is allowed to do. The roles are named after jobs that exist at a small station, where one or two people usually do all of them. Think of a role as a hat. One person can wear all five hats.
@@ -50,11 +48,11 @@ Some screens ask for no role at all. The sidebar shows them to every signed-in p
 
 > **Warning:** A screen that appears in your sidebar can still refuse you. The sidebar hides some screens by role, but each screen and each button is checked again when you use it. For example, anyone can open Schedule, but a person without the Publish operator, Setup admin or Support admin role gets a red "Could not load schedule." box. If a screen refuses you, you do not have the role it needs. Chapter 2 lists the wording you will see.
 
-### How people get roles at beta.11
+### How people get roles
 
-The first account, created on First Setup, holds all five roles. So does anyone who signs in with that account's password or one of its recovery codes. The beta.11 console has no screen for adding people or giving them roles. In a normal station, everyone who signs in does so as that one account, so everyone holds all five hats.
+The first account, created on First Setup, holds all five roles and remains the station's recovery account. A setup admin can add staff accounts, assign roles, disable sign-in, reset passwords and manage sessions from **Staff accounts**. Each staff member signs in with their own username and password and receives only their assigned roles. See [Chapter 2](#ch-signing-in) and [Security and privacy](#ch-security).
 
-CivicCast's command-line tool can make access keys that carry a narrower set of roles. That is IT work. In testing we could not confirm how such a key is loaded into a browser, because the console has no field to paste one into.
+The command-line tool also makes access tokens for scripts and tools. Those tokens are separate from browser sign-in.
 
 > **For IT staff:** Role-limited keys, the role-to-screen table and the access rules by feature are in [Security and privacy](#ch-security) and the roles appendix ([Roles and permissions](#app-roles)).
 
@@ -134,15 +132,15 @@ These are the words used most in Part I. Each is explained again where it first 
 | **Test mode** | The mode a new station starts in. The First-run defaults card on First Setup shows a **Mode** heading with "Test mode" under it. |
 | **Headend** | The cable company's equipment that receives a channel's signal. |
 
-## What is and is not proven for Beta 15
+## Beta 16 source and release evidence
 
-This manual describes **Beta 15**. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) identifies the signed package, observed installation behavior, and evidence limits. Use the complete download and installation instructions in [Chapter 10](#ch-installing) only with a package listed on the [releases page](https://github.com/scottconverse/civiccast-native/releases). Historical results retain their named release.
+This manual describes the merged Beta 16 source. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its matching verification record. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks that edition's package checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies to its signed package only. Keep each historical result with its named release.
 
-**Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This is a Beta 11 host measurement, not a Beta 15 soak. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
+**Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This is a Beta 11 host measurement, not a Beta 16 measurement. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
 **Live captions:** Whistle is the CPU primary, publishes first-pass recognition, and uses Whisper fallback for the affected channel when needed. CivicCast automatically probes Whistle recovery after an initial 30-second cooldown and retries with bounded backoff; a successful probe returns later chunks to Whistle without a service restart. Probe timing is not a fixed recovery guarantee. Optional NVIDIA CUDA applies to supported Whisper work; Whistle remains CPU-only.
 
-The [evidence appendix](#app-evidence) separates current package evidence from historical Beta.10 measurements and development-station results.
+The [evidence appendix](#app-evidence) keeps historical measurements with their original builds and runs.
 
 ## If it did not work
 

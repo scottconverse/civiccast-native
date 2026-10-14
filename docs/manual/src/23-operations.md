@@ -1,6 +1,6 @@
 # Running it day to day: service, logs, backups, updates {#ch-operations}
 
-This chapter is for the IT person who keeps a CivicCast station running on native Windows. It covers the one Windows service that runs everything, where the logs are, how to tell whether the station is healthy, what to check each day and each week, how disk space is used, what a backup does and does not protect, and how updates work. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) states the package-specific observations and limits. Where the code and a convenient assumption disagree, a **Known issue** callout explains the current source behavior.
+This chapter is for the IT person who keeps a CivicCast station running on native Windows. It explains the Windows service and logs, daily and weekly checks, disk use, backup and restore, and updates.
 
 ## Before you start
 
@@ -11,13 +11,11 @@ You need:
 - The data folder, `C:\ProgramData\CivicCast`. Everything the station writes while it runs lives here (the code honours the `PROGRAMDATA` environment variable if it is set differently).
 - An elevated PowerShell window for the commands below.
 
-> **Note:** Earlier descriptions of CivicCast mention a message bus called NATS. NATS JetStream was removed from the product and is not part of beta.11. Do not look for it, monitor it or open a firewall port for it.
-
-> **Note:** The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) records the package installation observations and limits. Historical station measurements are collected in [Appendix H](#app-evidence).
+> **Note:** Earlier descriptions of CivicCast mention NATS JetStream. The native Windows station does not use it; do not monitor it or open a firewall port for it.
 
 ## What the service runs
 
-CivicCast on Windows is one Windows service named **CivicCastSupervisor** (display name **CivicCast Native Supervisor**). It starts automatically at boot as the restricted virtual account `NT SERVICE\CivicCastSupervisor` and is registered so that Windows restarts it on failure: restart after 5 seconds, then 10 seconds, then 30 seconds, with the failure count resetting after 86,400 seconds (one day). Existing default LocalSystem installations migrate their profile and CivicCast credentials before the account changes. An isolated Windows Sandbox run with the current source overlay verified profile and CivicCast credential migration, startup under this virtual account, and a healthy API with the current schema. This is development-source evidence, not qualification of a rebuilt or signed installer or production cutover; see the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md). The supervisor starts and watches a small number of child programs. Everything else (the playout workers, relays and caption tap) lives inside the control plane child.
+CivicCast on Windows is one Windows service named **CivicCastSupervisor** (display name **CivicCast Native Supervisor**). It starts automatically at boot as the restricted virtual account `NT SERVICE\CivicCastSupervisor` and is registered so that Windows restarts it on failure: restart after 5 seconds, then 10 seconds, then 30 seconds, with the failure count resetting after 86,400 seconds (one day). Existing default LocalSystem installations migrate their profile and CivicCast credentials before the account changes; see the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md). The supervisor starts and watches a small number of child programs. Everything else (the playout workers, relays and caption tap) lives inside the control plane child.
 
 ```mermaid
 flowchart TB
@@ -222,7 +220,7 @@ This routine uses checks that exist in beta.11.
 
 1. Read the result of the Sunday weekly self-test.
 2. Check the size of `ollama.log`; it is not rotated. The control-plane and PostgreSQL raw output logs rotate at 10 MiB and retain ten older files.
-3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The native beta.11 live-caption work area is bounded automatically and does not require weekly audio cleanup.
+3. Check the size of `C:\ProgramData\CivicCast\data\egress` (see the next section). The native live-caption work area is bounded automatically and does not require weekly audio cleanup.
 4. Run `civiccast egress trim-health --older-than-days 30 --dry-run` and decide whether to trim (see the next section).
 5. Run the disaster-recovery drill (see below) at least when you have changed anything, and keep the report.
 6. Copy the things the drill does not back up (see below) to storage that is not on this computer.
@@ -236,9 +234,11 @@ This routine uses checks that exist in beta.11.
 | `C:\ProgramData\CivicCast\data\pgdata` | The Postgres database | With use | No |
 | `C:\ProgramData\CivicCast\data\uploads` | Uploaded media | With use | No |
 | `C:\ProgramData\CivicCast\data\egress` | Playout working files, including `conform-cache` | Yes | Yes, see below |
-| `C:\ProgramData\CivicCast\data\caption-tap` | Temporary live-caption audio; `active.vtt` is in the channel's egress caption folder | Bounded in the native beta.11 runtime | Processed chunks deleted; queued audio limited, see below |
+| `C:\ProgramData\CivicCast\data\caption-tap` | Temporary live-caption audio; `active.vtt` is in the channel's egress caption folder | Bounded in the native runtime | Processed chunks deleted; queued audio limited, see below |
 | `C:\ProgramData\CivicCast\logs` | Logs | Yes | Only the rotated logs |
 | `C:\ProgramData\CivicCast\upgrade` | Upgrade engine log, journal and pre-upgrade backups | Per upgrade | No |
+
+> **Note:** A Beta 15 field run measured a 15.117 GiB drop in free space on the R9 station, but did not identify the responsible paths. This is a Beta 17 storage-accounting follow-up, not a confirmed CivicCast leak or a statement about Beta 16. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 ### The conform cache
 
@@ -337,7 +337,7 @@ The station archive is intended for a replacement installation: provision the st
 
 ## Update and upgrade
 
-An upgrade runs the new `setup.exe` over the existing install. The following describes current installer source behavior; the published Beta 15 verification record applies to that signed package and does not establish later installer-recovery changes. Current source first compares versions without stopping the service or replacing files. If the installed version is newer, setup exits 129. For an accepted upgrade, setup stops the service and takes a size-checked snapshot of the prior application and station state before replacing files. The engine then takes a verified database backup to `C:\ProgramData\CivicCast\upgrade\backups\pre-<new_version>`, upgrades the program and migrates the database. If a step fails, the engine attempts database rollback and the enclosing installer transaction then attempts to restore the pre-setup snapshot. When that restoration succeeds, the prior application, local database and service state are returned; if it cannot finish, keep the recovery records and station data intact.
+An upgrade runs the new `setup.exe` over the existing install. The current installer source first compares versions without stopping the service or replacing files. If the installed version is newer, setup exits 129. For an accepted upgrade, setup stops the service and takes a size-checked snapshot of the prior application and station state before replacing files. The engine then takes a verified database backup to `C:\ProgramData\CivicCast\upgrade\backups\pre-<new_version>`, upgrades the program and migrates the database. If a step fails, the engine attempts database rollback and the enclosing installer transaction then attempts to restore the pre-setup snapshot. When that restoration succeeds, the prior application, local database and service state are returned; if it cannot finish, keep the recovery records and station data intact.
 
 It writes `upgrade-engine.log`, `upgrade-journal.json` and, if a rollback itself fails, `UPGRADE-RECOVERY.md`, all under `C:\ProgramData\CivicCast\upgrade`. Setup's exit codes tell you what happened:
 
@@ -356,7 +356,7 @@ It writes `upgrade-engine.log`, `upgrade-journal.json` and, if a rollback itself
 
 Related provisioning exits: 75 maps to setup exit 116, 87 to 135 (another CivicCast product or the WSL runtime is present), 85 to 127.
 
-> **Upgrade verification:** Read the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for the exact installer and completed checks. It does not claim a normal cross-version upgrade. Before upgrading an on-air station, take a separate backup and schedule a maintenance window with the recovery kit available.
+Before upgrading an on-air station, take a separate backup and schedule a maintenance window with the recovery kit available.
 
 > **Warning:** Do not upgrade during a meeting. The upgrade stops the service and takes every channel off the air.
 
@@ -364,12 +364,11 @@ After any upgrade, run through the daily routine, then run the drill.
 
 ## Capacity guidance
 
-The 72-hour three-channel host measurement is recorded in the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). Historical Beta 12 upgrade observations are described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
+The 72-hour three-channel host measurement is recorded in the [Beta 11 host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). Historical Beta 12 upgrade observations are described in the [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
-- The cache cap default is 60 GB. A 3-channel, 8-hour lab run used 46 GB of it.
-- The longest conform in that run took 389 seconds.
-- That run used a single service process and had 0 holes in 50 program changes.
-- Known limits from the same evidence: live-caption audio can be dropped under heavy load (13 catch-up discards in 8 hours), there were two program-change aborts that recovered themselves, and one single-frame drop. DeckLink SDI output and a real cable headend are unproven. The separate 72-hour, three-channel host measurement is documented in the [72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md).
+- In the historical eight-hour C16 lab run, the cache used 46 GB of its 60 GB cap and the longest conform took 389 seconds.
+- That earlier run used a single service process and had 0 holes in 50 program changes. Its recorded limits included 13 live-caption catch-up discards, two self-recovered program-change aborts and one single-frame drop. These are historical C16 observations, not Beta 16 measurements. DeckLink SDI output and a real cable headend were not exercised in that run.
+- The separate historical Beta 11, 72-hour, three-channel host measurement is documented in the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md).
 
 Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning) and is not repeated here.
 
@@ -391,6 +390,10 @@ Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning
 | Disk full | Cache, logs, caption data or uploads grew | Stop the service, free space (logs first), then start. Do not delete files from `pgdata`. |
 | Ollama shows `stopped` | `ollama.exe` or the model store is missing | The supervisor skips Ollama when its program or model store is absent. Nothing else depends on it. |
 | Setup exit 135 during install | Another CivicCast product or the WSL runtime is present | See [Chapter 10](#ch-installing). |
+
+## Package status and verification
+
+This chapter describes the merged Beta 16 source. For package results, use the matching release record: the [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its checks, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
 
 ## Related
 

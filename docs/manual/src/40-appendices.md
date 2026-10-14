@@ -94,7 +94,7 @@ Other protocol and utility routes include `/health`, federation discovery and Ac
 6. **Read versus write.** In beta.11 almost every `/api/staff/` route that changes something requires a role. The staff routes with no role requirement are all reads (lists, status, thumbnails) plus `POST /api/staff/auth/sign-out`; for those any valid token is enough. In the console this shows up as screens a role can open but cannot use ([Appendix F](#app-roles)).
 7. **Maintenance mode.** While the service holds the station in maintenance mode (the installer does this during an upgrade, and during a hand-over between CivicCast editions), every request that changes data (POST, PUT, PATCH, DELETE) is refused with HTTP 503 and the body `{"error": "maintenance"}`. Reads still work.
 
-> **Known issue (beta.11):** Nothing in the console lets you create operators or assign roles. The first admin and anyone signing in with that admin's password or a recovery code gets scope `admin`, which is all five roles. Role-limited behavior appears only for tokens you issue yourself on the command line.
+> **Note:** A Beta 11 console limitation was the lack of a screen for creating operators or assigning roles. The merged Beta 16 source includes **Staff accounts** for creating staff users and assigning roles; see [Security and privacy](#ch-security).
 
 ## Getting the OpenAPI document
 
@@ -289,7 +289,7 @@ The Windows Event Log also receives service messages under the source `CivicCast
 | --- | --- |
 | Name | `CivicCastSupervisor` (display name "CivicCast Native Supervisor") |
 | Starts | Automatically with Windows. |
-| Runs as | LocalSystem. |
+| Runs as | The restricted virtual account `NT SERVICE\CivicCastSupervisor`. |
 | If it crashes | Windows restarts it after 5 seconds, then 10, then 30. |
 | What it launches | PostgreSQL, then the control plane (the web server and playout engine), and the Ollama AI engine when its files are present. They start in that order and stop in reverse; each gets 15 seconds to stop politely before it is ended. |
 | Restarting a child | After a child program fails, the service retries with a delay that grows from 1 second to 30 seconds. Five restarts within ten minutes put the station in the `degraded` state (the service stays up). |
@@ -376,7 +376,7 @@ The list has two columns that describe the same file in two vocabularies.
 | Needs action | A required surface failed. |
 | Complete | Everything required is done. |
 
-Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "not built yet"), Not run yet, Running, Succeeded, Failed, Overridden. Its approval is `pending`, `approved` or `overridden`. A badge marks a surface completed by a simulated (mock) provider rather than a real write. The published Beta 15 installer uses the same provider code described below; selectors default to `mock`, which writes or sends nothing.
+Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "not built yet"), Not run yet, Running, Succeeded, Failed, Overridden. Its approval is `pending`, `approved` or `overridden`. A badge marks a surface completed by a simulated (mock) provider rather than a real write. Selectors default to `mock`, which writes or sends nothing.
 
 | Surface | What it does now |
 | --- | --- |
@@ -479,7 +479,7 @@ Child programs (PostgreSQL, control plane): pending, stopped, starting, ready, s
 
 ## Setup program exit codes
 
-When setup fails it ends with a number. Interactive setup shows a message box (not the number); a silent install (`/S`) shows only the number. The rows describe current installer source behavior; the Beta 15 verification record applies to its specific signed package and does not establish later recovery changes. Follow the row for stale upgrade journals and keep recovery records when restoration has not finished; nothing in these steps intentionally deletes station data.
+When setup fails it ends with a number. Interactive setup shows a message box (not the number); a silent install (`/S`) shows only the number. Follow the row for stale upgrade journals and keep recovery records when restoration has not finished; nothing in these steps intentionally deletes station data.
 
 | Code | Step | What it means | What to do |
 | --- | --- | --- | --- |
@@ -673,7 +673,7 @@ From the current beta.11 server's checks. Read "any signed-in role" as: the serv
 
 This role-by-area matrix is a Beta 11 source snapshot and has not been independently rechecked for Beta 12. For each area it lists routes with a role requirement and which roles may call them; a dash means none in that snapshot. Routes with no role requirement are reads, plus `POST /api/staff/auth/sign-out`; any valid token may use them. Areas that have no role-gated route (`auth`, `first-run`, `release`, `doctor`) are not listed.
 
-How this was made: the application was loaded and each route's role requirement was read from the Beta 11 source. These counts are historical reference, not Beta 15 authorization evidence. For a current request, rely on the live server's authorization response and the generated API reference in [Appendix B](#app-api).
+How this was made: the application was loaded and each route's role requirement was read from the Beta 11 source. These counts are historical reference, not a Beta 16 authorization measurement. For a current request, rely on the live server's authorization response and the generated API reference in [Appendix B](#app-api).
 
 | Area | Gated routes | S | M | R | P | A |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -732,9 +732,9 @@ How this was made: the application was loaded and each route's role requirement 
 
 # Appendix G: Checklists {#app-checklists}
 
-Copy these into your own notebook or ticket system. Each box is one action. Where a screen name is given, it is the menu name. Times typed on some screens are UTC, which is a common cause of a meeting airing a day early or late, so read the "Times" box in the go-live list first.
+Copy these into your own notebook or ticket system. Each box is one action. Where a screen name is given, it is the menu name. Schedule and recording entries use the station's configured time zone; reports and exports may retain UTC, as noted below.
 
-> **Warning:** Beta.11 is a GitHub pre-release. Check the current verification record for the source, hash and tests tied to the package you are using. These lists help prepare and operate a station; they do not certify the package.
+> **Warning:** Check the matching verification record for the source, hash and tests tied to the package you are using. These lists help prepare and operate a station; they do not certify the package.
 
 ## G.1 Go-live checklist
 
@@ -743,16 +743,16 @@ Do this once before the first public meeting, and again after any reinstall.
 **The computer and the service**
 
 - [ ] The Windows service `CivicCastSupervisor` is Running and set to start automatically (`Get-Service CivicCastSupervisor`).
-- [ ] The top bar shows the version you meant to install (`v1.0.0-beta.11`).
+- [ ] The top bar shows the version you meant to install.
 - [ ] The console opens at `http://127.0.0.1:8000/operator/` on the station computer.
-- [ ] Decide how residents and other staff will reach the station. As built, the program listens only on the station computer itself; reaching it from anywhere else needs something you add ([Appendix D](#app-files)). Test it from a second computer.
+- [ ] Decide how residents and other staff will reach the station. Configure Caddy with separate public and CIDR-restricted staff hostnames if remote access is needed; test each from the intended network ([Appendix D](#app-files)).
 - [ ] Free disk space is comfortable on the drive holding `C:\ProgramData\CivicCast` (the conform cache alone may use up to 60 GB by default) and on the drive for `CIVICCAST_UPLOAD_DIR` (the Live screen needs 50 GiB free there).
 
 **Accounts and the recovery kit**
 
 - [ ] First Setup is done: station name, time zone, first admin.
 - [ ] The recovery kit (admin username, password, the 8 one-time recovery codes) is saved or printed and stored where a second person can find it, and you pressed **I found the kit — it is stored safely**. Until you do, the whole menu except Manual is locked.
-- [ ] Each person who needs the console has been told how they will sign in: the console signs in only as the first admin. Anyone who needs a narrower role needs an access token ([Appendix F](#app-roles)).
+- [ ] Each staff member has an account with the needed roles and knows how to sign in. The first administrator remains the recovery account ([Appendix F](#app-roles)).
 
 **Configuration**
 
@@ -766,13 +766,12 @@ Do this once before the first public meeting, and again after any reinstall.
 - [ ] If you send a channel to a cable company: Cable Commissioning is complete, and you have read the warning that the test signal goes to the headend address.
 - [ ] Emergency Alerts: you know that CivicCast is not an emergency-alert device, and who adds alert sources (setup admin only, through the API).
 
-**Times** (UTC and local)
+**Times** (station zone and UTC)
 
-- [ ] Recording: start time and weekday are typed in **UTC**. The screen echoes your local time; check it.
-- [ ] Schedule and Program Guide: you type your browser's local time and it is stored in UTC. Program Guide weekday rules count days on the UTC calendar, so an evening meeting can land on a different weekday; check the 7-day view.
+- [ ] New recording entries, Schedule and Program Guide use the station time zone. Check the displayed local time and weekday; older weekly recording schedules can retain UTC timing.
 - [ ] Alerts: quiet hours are typed in UTC.
 - [ ] EPG Export: dates and times in the file are UTC.
-- [ ] Auto-schedule dayparts use the station time zone from First Setup.
+- [ ] Auto-schedule dayparts use the station time zone from Station Profile.
 
 **Public side**
 
@@ -847,7 +846,7 @@ Do this once before the first public meeting, and again after any reinstall.
 
 ## G.6 Before-upgrade checklist
 
-> **Warning:** Read the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for checks tied to that exact package. Before upgrading an on-air station, keep a separate backup and its recovery information.
+> **Warning:** Read the verification record matching the package you plan to install. Before upgrading an on-air station, keep a separate backup and its recovery information.
 
 - [ ] Read the release notes and the verification record for the version you are installing. Note what was and was not proven.
 - [ ] Choose a time when no meeting is scheduled and no channel is needed.
@@ -856,7 +855,7 @@ Do this once before the first public meeting, and again after any reinstall.
 - [ ] Readiness, Update and rollback panel: save the path to the installer you would roll back to (the field is labelled **Rollback artifact path**; its own example is an older installer) with **Save rollback artifact**, then run **Run rollback rehearsal**, then **Run update preflight**.
 - [ ] On Readiness, **Open maintenance window** (60 minutes). It needs the update preflight and a passed rollback rehearsal first. During the upgrade itself the service holds the station in maintenance mode, and changes are refused with HTTP 503.
 - [ ] Note the free disk space.
-- [ ] Run the new `setup.exe` over the existing install. The current source first checks the installed version without stopping the service or replacing files, then arms recovery, stops the service and snapshots prior state before payload replacement. It re-checks the packs, backs up and migrates the database, then registers and starts the service. An older setup is refused (exit 129). The published Beta 15 verification record describes only that signed package's checks and limits.
+- [ ] Run the new `setup.exe` over the existing install. The installer first checks the installed version without stopping the service or replacing files, then arms recovery, stops the service and snapshots prior state before payload replacement. It re-checks the packs, backs up and migrates the database, then registers and starts the service. An older setup is refused (exit 129).
 - [ ] If setup fails, note the exit number ([Appendix E](#app-status)) and read `install-progress.log`. For upgrade failures, check the failed-run engine log and journal under `install-transaction\failure-diagnostics` when present. Follow Appendix E: exit 128 requires archiving or moving the stale journal aside; if restoration did not finish, keep `install-transaction` and station data intact before retrying setup.
 - [ ] After: Readiness is green, the version in the top bar changed, **Run post-update proof**, then run the go-live items that touch channels and captions.
 
@@ -1298,7 +1297,7 @@ Readiness
 :   The menu name for the screen that answers "can we broadcast now?" (the page calls itself "Safe to broadcast").
 
 Recording schedule
-:   A rule for capturing a live input at set times. Times are typed in UTC.
+:   A rule for capturing a live input at set times. New entries use the station's configured time zone; older weekly entries can retain UTC timing.
 
 Recovery code
 :   One of 8 one-time codes in the recovery kit. Using one sets a new admin password.
@@ -1404,7 +1403,7 @@ Tier (hardware)
 :   The recommendation `civiccast doctor` gives for how capable the computer is.
 
 Time zone
-:   Where "9 AM" is measured. Some screens use UTC, some the browser's zone, some the station's.
+:   Where "9 AM" is measured. Scheduling forms use the station's configured zone; reports and some other dated fields use UTC.
 
 Token
 :   See *Bearer token* and *Console token*.
@@ -1430,7 +1429,7 @@ Upgrade
 :   Running a newer setup over an existing install. Check the release verification record for the exact package to see whether its upgrade lane was tested.
 
 UTC
-:   Universal Coordinated Time, the clock that does not change with seasons or places. Several screens use it.
+:   Coordinated Universal Time, the clock that does not change with seasons or places. Reports, exports and some dated controls use it.
 
 **V**
 
@@ -1519,7 +1518,7 @@ LGPL means you receive the right to use and replace the library, and CivicCast s
 | Microsoft Visual C++ Redistributable | the installer's own copy | Proprietary (Microsoft's terms) | Required by the Windows programs. CivicCast has no right to reproduce the text; it ships a pointer to where the real terms are. |
 | NVIDIA CUDA and cuDNN libraries (optional GPU pack) | optional | NVIDIA's end-user license terms | Faster captions on an NVIDIA graphics card. The pack carries reference texts, not NVIDIA's copyrighted text. |
 
-> **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of a particular package are in its `LICENSE-BOM.md` files and the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md); use those for that package's component inventory.
+> **Note:** Names and versions in the table are from the project's lock files and license tables. The exact contents of an installed package are in its `LICENSE-BOM.md` files and matching verification record; use those for that package's component inventory.
 
 ## Where the license texts are
 
@@ -1545,13 +1544,14 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 # Appendix K: Release history {#app-history}
 
-The native Windows release history and the version covered by this manual, newest first. The project's release-truth file and GitHub release page establish publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
+The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual is the **v1.0.0-beta.15** edition. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) identifies the package checks and limits. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual covers the merged Beta 16 source edition. Its [candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package identity and checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies to that signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **v1.0.0-beta.15** | — | Current manual edition | Package observations and limitations are in the Beta 15 verification record; no extended soak or normal cross-version upgrade is claimed. |
+| **Beta 16 source edition** | — | Manual source edition; use its candidate/release record for package identity and checks | Includes the source work from Sprints 1–4. |
+| **v1.0.0-beta.15** | — | Published package; historical record | Package observations and limits are in the Beta 15 verification record; no extended soak or normal cross-version upgrade is claimed. |
 | **v1.0.0-beta.14** | 2026-10-12 | See release page | Field fixes for installer/model selection, caption timing and recovery, recording, playback, resource protection and documentation. Exact checks are in the Beta 14 verification record. |
 | v1.0.0-beta.13 | 2026-10-11 | Published GitHub pre-release | Automatic Whistle recovery and bounded diagnostics. Fresh installation, normal Beta 11 upgrade and one interrupted-install repair passed their recorded three-channel observations. |
 | v1.0.0-beta.12 | 2026-10-10 | Superseded by beta.13 | Initial distribution and field failures, subsequent public package repair and upgrade observations are preserved in the Beta 12 verification record. |
@@ -1569,9 +1569,9 @@ The native Windows release history and the version covered by this manual, newes
 
 The same release-truth file also lists tags from a **different, retired product**: the older WSL-based CivicCast edition (v1.0.0-rc1 through rc15 and earlier). They are not releases of this line and are not installation targets for it. Of those, rc13 was withdrawn after a clean Windows test found installer bootstrap failures.
 
-Pre-releases published after this manual was written are listed on the project's GitHub releases page: <https://github.com/scottconverse/civiccast-native/releases>.
+Published packages are listed on the project's GitHub releases page: <https://github.com/scottconverse/civiccast-native/releases>.
 
-<!-- SOURCES: docs/releases/release-truth.yaml (current release: v1.0.0-beta.15); docs/releases/v1.0.0-beta.15-verification.md (package source, observations and limits); docs/releases/v1.0.0-beta.14-verification.md and docs/releases/v1.0.0-beta.11-verification.md (historical evidence); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
+<!-- SOURCES: docs/releases/release-truth.yaml; docs/releases/v1.0.0-beta.16-verification.md (candidate/package status); docs/releases/v1.0.0-beta.15-verification.md and docs/releases/v1.0.0-beta.14-verification.md (historical package evidence); docs/releases/v1.0.0-beta.11-verification.md (historical host evidence); civiccast/native/app_payload.py (Whistle model/engine versions and licenses); CHANGELOG.md: beta.10 summary and older release entries; docs/releases/v1.0.0-beta.10-verification.md and Appendix H (historical beta.10 evidence); MANUAL-STYLE.md section 2 -->
 
 # Appendix L: Index of screens {#app-screens}
 

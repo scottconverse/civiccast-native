@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>CivicCast - public meetings, on the air</title>
-  <meta name="description" content="Open-source broadcast and publishing software for public-access stations and small cities. CivicCast Beta 15 is the current signed native Windows pre-release.">
+  <meta name="description" content="Schedule, broadcast, record, caption and publish public meetings with CivicCast, an open-source native Windows station system.">
   <link rel="canonical" href="https://scottconverse.github.io/civiccast-native/">
   <link rel="icon" href="brand/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="brand/favicon.ico" sizes="48x48">
   <link rel="apple-touch-icon" href="brand/png/civiccast-app-icon-180.png">
   <meta property="og:type" content="website">
   <meta property="og:title" content="CivicCast - public meetings, on the air">
-  <meta property="og:description" content="Open-source broadcast and publishing software for public-access stations and small cities. CivicCast Beta 15 is the current signed native Windows pre-release.">
+  <meta property="og:description" content="Schedule, broadcast, record, caption and publish public meetings with CivicCast, an open-source native Windows station system.">
   <meta property="og:image" content="https://scottconverse.github.io/civiccast-native/brand/png/civiccast-social-preview.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="preload" href="assets/web/fonts/Barlow-Regular.woff2" as="font" type="font/woff2" crossorigin>
@@ -38,16 +38,13 @@
 
 <main id="main">
 
-<aside class="wrap" aria-label="Release status"><p><strong>Beta 15 (`v1.0.0-beta.15`) is the current signed native Windows pre-release.</strong> Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and uninstall checks. Its corrected installer restored a working station after a simulated activation failure, and the bundled Welcome programme aired and returned to slate in the short-programme rollover check. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md">Beta 15 verification record</a> for the exact package and results.</p></aside>
-
 <section class="hero on-dark" id="top">
   <div class="wrap">
     <div class="hero-grid">
       <div>
-        <p class="release-tag"><span>v1.0.0-beta.15</span> &middot; signed native Windows pre-release</p>
+        <p class="release-tag">Native Windows station software</p>
         <h1>Public meetings, <em>on the air.</em></h1>
         <p class="lede">CivicCast is open-source software for public-access stations and small cities. It schedules your channels and keeps them on the air, records and captions your meetings, and publishes them to a portal where residents can watch. It runs on one Windows PC that you control.</p>
-        <p class="lede"><strong>Historical Beta 11 host result: 72 hours, three channels, 99.78% live caption-input coverage.</strong> Read the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md">Beta 11 72-hour host report</a>.</p>
         <div class="btn-row">
           <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15">Get Beta.15</a>
           <a class="button ghost" href="https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.15/USER-MANUAL.pdf">Read the manual</a>
@@ -68,7 +65,6 @@
         <li><strong>Open source</strong>Code under Apache-2.0, documentation under CC BY 4.0.</li>
         <li><strong>One Windows PC</strong>Installs as a Windows service on hardware you own.</li>
         <li><strong>Whistle CPU captions</strong>When live captions are enabled, Whistle is the CPU primary; Whisper backs up the affected channel, with optional NVIDIA acceleration for Whisper.</li>
-        <li><strong>Historical Beta 11 host run</strong>Public, Government and Education ran together for 72 hours with 99.78% live caption-input coverage. <a href="#evidence">See the results.</a></li>
         <li><strong>Free to use</strong>Local captioning without a per-minute service charge.</li>
       </ul>
     </div>
@@ -95,7 +91,7 @@
   <div class="wrap">
     <p class="eyebrow">What it does</p>
     <h2>The whole path from agenda to archive.</h2>
-    <p class="lede">Schedule, broadcast, record, caption, publish and monitor from one staff console. A historical Beta 11 host run across three channels recorded <strong>99.78% live caption-input coverage</strong>.</p>
+    <p class="lede">Schedule, broadcast, record, caption, publish and monitor from one staff console.</p>
     <ul class="caps">
       <li>
         <div><h3>Schedule and air</h3><span class="tag proven">Three channels</span></div>
@@ -267,6 +263,16 @@
         </ul>
       </aside>
     </div>
+    <p class="fine">The separate Beta 15 R9 field evaluation later sampled slate during scheduled speech and did not establish useful three-channel live captions. The cause was unconfirmed; the report does not attribute the result to Whistle. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md">owner-deferred follow-up record</a> for the Beta 15 findings and their evidence boundaries.</p>
+  </div>
+</section>
+
+<section class="band" id="source-candidate">
+  <div class="wrap">
+    <p class="eyebrow">Current source work</p>
+    <h2>More station operations are being prepared.</h2>
+    <p class="lede">The owner is preparing <code>v1.0.0-beta.16</code> as an unpublished candidate with encrypted backup and restore, network and staff administration, a restricted Windows service identity, station-local scheduling, bounded operational storage, automatic output recovery, RTMP output, coordinated HLS retention and configurable recorded captions.</p>
+    <p>These changes are in the current source and its operator guidance. The download links on this page still lead to Beta 15. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ROADMAP.md">roadmap</a> and the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md">candidate verification record</a> for source scope and package status.</p>
   </div>
 </section>
 
@@ -312,9 +318,19 @@
   </div>
 </section>
 
+<section id="release-status">
+  <div class="wrap">
+    <p class="eyebrow">Release and field evidence</p>
+    <h2>Beta 15 is the current published download.</h2>
+    <p>The signed <code>v1.0.0-beta.15</code> release page carries the installer, runtime packs, station models and manuals. Its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md">verification record</a> binds installation results to that package. <code>v1.0.0-beta.16</code> is an unpublished candidate; its <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md">verification record</a> tracks package status.</p>
+    <p>The October 13 Beta 15 R9 report also recorded a CG playlist advertising segments that returned 404, an installed native executable reported as <code>NotSigned</code> while the setup executable was signed, and a trimmed-caption range extending beyond packaged playback. These are Beta 15 observations; unresolved causes and unfinished workflows are listed in the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md">Beta 17 deferred backlog</a>.</p>
+    <p class="fine">Historical Beta 11 evidence remains separate: 72 hours across three channels with 99.78% live caption-input coverage. See the <a href="https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md">Beta 11 host report</a>; it does not qualify Beta 15 or Beta 16.</p>
+  </div>
+</section>
+
 <section class="on-dark final">
   <div class="wrap">
-    <h2>Bring your station together with beta.15.</h2>
+    <h2>Bring your station together.</h2>
     <p class="lede">Download the signed pre-release, set up your channels and explore the operator console. Share your experience to help shape the next release.</p>
     <div class="btn-row">
       <a class="button primary" href="https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15">View the beta.15 release</a>

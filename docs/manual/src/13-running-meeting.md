@@ -2,8 +2,6 @@
 
 This chapter is for the people who work the room on meeting night: the camera operator, the meeting operator, and the volunteer who watches the screen while the council meets. It shows you how to check that the station is ready, run a live session, start and stop a channel, take a channel live from a camera, put scheduled programs on the air, drive the production control room, show community announcements between programs, and bring in remote guests. It also tells you, control by control, what each button really does. In this version of CivicCast several buttons that sound like "go on air" do something smaller than their names say, and a few things happen without any "Are you sure?" box.
 
-> **Note:** This chapter describes Beta 15 controls. Its package identity and installation observations are in the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md). Known-issue notes retain the version in which their behavior was checked.
-
 ## Before you start
 
 **Where the screens are.** Everything in this chapter is in the left-hand menu of the operator console, in the section called **Run Meeting**: **Live**, **Facility**, **Control Room**, **Remote Contribution**, **Channels**, **CG Board** and **CG Designer**. The **Readiness** screen is in the section called **System Health**, which is folded shut until you click its name. If you have yet to sign in, see [Signing in and finding your way around](#ch-signing-in).
@@ -27,7 +25,7 @@ This chapter is for the people who work the room on meeting night: the camera op
 | Change the board layout (CG Designer) | Publish operator or Setup admin (Support admin can look only) |
 | Facility router previews | Meeting operator or Support admin (see the Known issue in the Facility task) |
 
-> **Note:** The sign-in screen accepts the station administrator's password or a recovery code, and that account carries all five roles. On most stations that means everyone who signs in can do everything in the table. The limits matter only if your IT person has arranged limited sign-ins. See [Signing in and finding your way around](#ch-signing-in).
+> **Note:** The first administrator account carries all five roles. Staff accounts carry only their assigned roles, so another person's sign-in may not enable every action in the table. See [Signing in and finding your way around](#ch-signing-in).
 
 **What must already be set up.** CivicCast cannot do these things from the screens in this chapter, so someone with the Setup admin role must have done them first.
 

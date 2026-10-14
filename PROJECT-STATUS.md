@@ -10,18 +10,15 @@
 > are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
 > source audit, not the current defect list.
 
-> **Current release: v1.0.0-beta.15**, a signed GitHub pre-release, not a
-> production release. [Release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15).
-> The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
-> identifies the exact package and separates original candidate execution
-> evidence from the refreshed Help bytes in this release edition.
+## Beta 16 candidate
 
-The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
-states which installation checks were completed and what they do and do not
-establish. The original signed candidate passed one fresh offline Sandbox
-install; no normal cross-version upgrade or extended soak is claimed. Earlier
-Beta 14 field-fix evidence remains in its dated [execution record](docs/ops/beta14-task-completion.md)
-and [verification record](docs/releases/v1.0.0-beta.14-verification.md).
+Sprints 1–4 are merged: station backup and staff access, unattended scheduling,
+broadcast outputs and recorded captions, and documentation reconciliation.
+Beta 16 packages these changes together. Candidate preparation and installation
+results are tracked in the [Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md).
+Publication requires owner authorization; Beta 15 remains the published download.
+
+The R9 field findings are assigned to [Beta 17](docs/ops/beta17-deferred.md).
 
 ## Historical Beta 11 package and evidence
 

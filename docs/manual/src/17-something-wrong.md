@@ -10,8 +10,6 @@ The four screens live in the left sidebar under **System Health**: **Readiness**
 
 > **Known issue (beta.11):** One place has three names. The sidebar says **Readiness**, the page's heading says **Safe to broadcast**, and other text says **System Health**. They are the same screen.
 
-> **Note:** These procedures describe Beta 15. Its installer identity and observations are in the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md). A **Known issue (version)** identifies the version in which a behavior was checked.
-
 ## Check whether the station is ready (Readiness)
 
 Readiness answers one question: "Can we broadcast right now?"
@@ -328,7 +326,7 @@ If you have the Support admin role, you can also make a *support bundle*. This i
 
 ## Report a beta issue
 
-CivicCast is a beta. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) records checks and limits for this package; the [releases page](https://github.com/scottconverse/civiccast-native/releases) shows available downloads. Support is community-driven, with no contract and no guaranteed response time. Problems that stop broadcasting or installation, lose data or expose a secret are handled first.
+CivicCast is a beta. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads and use the verification record that matches the installed package. Support is community-driven, with no contract and no guaranteed response time. Problems that stop broadcasting or installation, lose data or expose a secret are handled first.
 
 1. In the operator console, click **Report a beta issue** at the bottom of the sidebar. It opens the Manual at the section "Don't Have A GitHub Account?".
 2. If you have a free GitHub account, open a new issue on the project's issue page: <https://github.com/scottconverse/civiccast-native/issues>.
@@ -336,7 +334,7 @@ CivicCast is a beta. The [Beta 15 verification record](https://github.com/scottc
 
 In every report, include:
 
-- The CivicCast version. It is shown at the top of the console; the Beta 15 release identifies itself as `v1.0.0-beta.15`.
+- The CivicCast version. It is shown at the top of the console and in the health answer.
 - Your Windows version.
 - The screen where it happened.
 - The exact message.

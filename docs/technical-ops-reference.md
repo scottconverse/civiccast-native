@@ -23,21 +23,6 @@ toccolor: black
 > operators and records clerks should start with the persona guides linked from
 > [User Manual](USER-MANUAL.md).
 >
-> **Release line.** This reference describes `CivicCast 1.0.0-beta.15`. The
-> [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
-> identifies the original signed candidate and the limits of its package
-> observations; those observations do not transfer to the refreshed Help
-> bytes in this release edition. One fresh offline Sandbox installation passed.
-> No normal cross-version upgrade or extended soak is claimed. Beta 14 and
-> Beta 13 results remain tied to their own release records. Consult
-> `docs/releases/release-truth.yaml` for the authored release state; this
-> reference does not claim an extended soak or general service-uptime result.
->
-> The `v1.0.0-rcNN` line this document used to describe is the RETIRED
-> WSL2/Linux deployment, published from the archived repository. Its release
-> and verification artifacts are not in this repository and its rc numbering
-> does not continue here.
->
 > This reference focuses on the installer-first path, first-admin recovery,
 > backup and restore rehearsal, provider setup guidance, safe-to-broadcast,
 > support bundles, release trust, safer secret defaults, real-boundary smoke
@@ -1229,12 +1214,13 @@ probe succeeded; it does not restore the station database, media, or configurati
 
 `GET /health` is public and needs no authentication. It answers two different
 questions, and monitoring setups should not confuse them. This illustrative
-response uses the Beta 15 version string; it is not evidence of package
-installation or health.
+response uses the current source version string for the unpublished Beta 16
+candidate; it is not evidence of package installation or health. Read the
+version from the station you are monitoring.
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-{"status":"degraded","version":"1.0.0-beta.15","schema":"not-configured"}
+{"status":"degraded","version":"1.0.0-beta.16","schema":"not-configured"}
 ```
 
 **The HTTP status code is liveness.** `/health` returns `200` whenever the
@@ -1348,3 +1334,21 @@ You are free to fork, modify, redistribute, and adapt CivicCast and its document
 ## Source of truth
 
 This reference is maintained in `docs/technical-ops-reference.md`. The user-facing PDF and DOCX are generated from `docs/USER-MANUAL.md`.
+
+## Published package evidence and historical release identity
+
+This working-tree reference follows `CivicCast 1.0.0-beta.16`, an unpublished
+candidate. Beta 15 remains the latest published package until a later candidate
+is authorized and published. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
+identifies the original signed candidate and the limits of its package
+observations; those observations do not transfer to the refreshed Help bytes
+in this source edition. One fresh offline Sandbox installation passed. No
+normal cross-version upgrade or extended soak is claimed. Beta 14 and Beta 13
+results remain tied to their own release records. Consult
+`docs/releases/release-truth.yaml` for the authored release state; this
+reference does not claim an extended soak or general service-uptime result.
+
+The `v1.0.0-rcNN` line this document used to describe is the retired WSL2/Linux
+deployment, published from the archived repository. Its release and
+verification artifacts are not in this repository and its rc numbering does
+not continue here.

@@ -38,8 +38,9 @@ This whole document is historical (retired WSL2 line). For the native line
 this repository ships, read [START-HERE](../tester/START-HERE.md),
 [INSTALL-WINDOWS.md](../../INSTALL-WINDOWS.md), and
 [Windows Release Trust And Verification](../install/windows-release-trust.md)
-instead -- they carry the current `v1.0.0-beta.15` release guidance. The
-Beta 15 verification record distinguishes original candidate observations from
+instead -- they carry the latest published `v1.0.0-beta.15` release guidance.
+The current source identity, `v1.0.0-beta.16`, is an unpublished candidate.
+The Beta 15 verification record distinguishes original candidate observations from
 the refreshed manual/Help bytes in this release edition. The historical native
 release identities below remain background only.
 

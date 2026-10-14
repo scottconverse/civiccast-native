@@ -1,30 +1,12 @@
 # CivicCast FAQ
 
-> **Release state:** `v1.0.0-beta.15` is the current signed native Windows
-> pre-release, not a production release. See the
-> [Beta 15 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15),
-> [verification record](docs/releases/v1.0.0-beta.15-verification.md), and
-> [current User Manual](docs/USER-MANUAL.md). Earlier package records remain
-> historical and apply only to their named release. See
-> [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml) for
-> the authored release-state record.
-
-> **This repository ships one product line: native Windows.** Earlier
-> revisions of this notice described "two parallel Windows product lines"
-> shipping from this repository -- that described the OLD
-> `scottconverse/civiccast` repository. This repository (`civiccast-native`)
-> was created by copying only the native product out of it with fresh
-> history, and the WSL2 lane was retired outright under the owner's "no
-> linux" decision (2026-08-19). See [BRANCHES.md](BRANCHES.md) for the full
-> explanation and where the retired line's history now lives (private, not
-> archived).
+Questions and practical answers for CivicCast Beta 16.
 
 ## What is CivicCast?
 
 CivicCast is open-source broadcast software for public meetings and community
 media. It helps a small organization stream or upload a meeting, publish it to
-a public portal, preserve archive copies, create captions and summaries, and
-notify residents when the replay is ready.
+a public portal, preserve archive copies, create captions and summaries, and manage the public replay.
 
 ## Who is it for?
 
@@ -35,11 +17,7 @@ Optional cloud AI providers may charge for usage.
 
 ## How do I install it?
 
-Follow [Install CivicCast on Windows](INSTALL-WINDOWS.md). The Beta 15 helper downloads the installer, the matching runtime packs and complete signed station-model bundle, verifies them, creates the correct folders and runs setup. You do not need Git, Python, Docker, WSL or a separate Ollama installation. Open **CivicCast Operator Console** after setup completes and create the first administrator on the station computer.
-
-Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and built-in uninstall checks. Its corrected installer also restored a working station automatically after a simulated activation failure. The bundled Welcome programme aired and returned to slate in the short-programme rollover check. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies each tested package and its results.
-
-Beta 13's earlier normal upgrade, controlled interruption and repair, and separate fresh-install observations are historical and apply only to that release. See its [verification record](docs/releases/v1.0.0-beta.13-verification.md) and [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json). Optional raw-model downloads in the separate acquisition screen cannot substitute for signed activation packs. The earlier Beta 12 distribution history is recorded in its [verification record](docs/releases/v1.0.0-beta.12-verification.md).
+Follow [Install CivicCast on Windows](INSTALL-WINDOWS.md). The download helper supplies the installer, the matching runtime packs and complete signed station-model bundle, verifies them, creates the correct folders and runs setup. You do not need Git, Python, Docker, WSL or a separate Ollama installation. Open **CivicCast Operator Console** after setup completes and create the first administrator on the station computer.
 
 Use the same complete kit for a new station or an existing installation. Back up a working station and plan the upgrade interruption. The installation guide includes supported local administrator-password recovery for previous test installs.
 
@@ -137,17 +115,19 @@ there. Residents do not need an operator account.
 
 ## How do subscribers work?
 
-Residents can use email double opt-in, public RSS feeds, podcast feeds, or
-webhook delivery depending on what the station enables. Email handles and
+Residents can use email double opt-in and public RSS feeds. Automatic
+subscriber notifications on publication and podcast publication are not available
+in this edition. Email handles and
 webhook secrets are encrypted at rest. Public subscribe endpoints are
 rate-limited to reduce spam and abuse.
 
 ## Can CivicCast publish to YouTube or the Internet Archive?
 
-The source tree includes those optional surfaces, but stock acceptance is
-Portal-only. Internet Archive, YouTube, NAS, podcast, and notification delivery
-require real station credentials plus separate redacted provider evidence. A
-missing or unverified credential must show as blocked, not successful.
+Internet Archive and YouTube VOD adapters use local recording files and configured
+provider credentials. NAS export copies files to the configured destination.
+YouTube Live creates and binds a broadcast; station output must still be
+connected to its ingest. Provider adapters default to mock mode; configure the
+service environment as described in the manual before using a real provider.
 
 ## Does ActivityPub work?
 
@@ -193,3 +173,12 @@ tokens, passwords, private keys, resident data, or private meeting content.
   repository and are not present in this repository, so they are not linked.)
 - [LPM beta handoff](docs/tester/lpm-beta-test-handoff.md) for the controlled
   Longmont Public Media tester artifact and station-side proof steps.
+
+## Release status and evidence
+
+Beta 16 is an unpublished candidate; its [verification record](docs/releases/v1.0.0-beta.16-verification.md)
+tracks package checks. Beta 15 remains the published download until release.
+
+Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and built-in uninstall checks. Its corrected installer also restored a working station automatically after a simulated activation failure. The bundled Welcome programme aired and returned to slate in the short-programme rollover check. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies each tested package and its results.
+
+Beta 13's earlier normal upgrade, controlled interruption and repair, and separate fresh-install observations are historical and apply only to that release. See its [verification record](docs/releases/v1.0.0-beta.13-verification.md) and [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json). Optional raw-model downloads in the separate acquisition screen cannot substitute for signed activation packs. The earlier Beta 12 distribution history is recorded in its [verification record](docs/releases/v1.0.0-beta.12-verification.md).

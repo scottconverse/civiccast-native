@@ -1,14 +1,34 @@
-# Current handoff: post-Beta-15 main (2026-10-14)
+# Current handoff: Beta 16 preparation (2026-10-14)
 
-Published release: [CivicCast Beta 15](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15), published October 13, 2026 from `431585942c9ced93e730b1e6b506c707a6adecb8`. Its exact package identities and observations are in the [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md).
+The current source brings together station operations, unattended scheduling,
+broadcast output, programme transitions, HLS retention, and recorded-caption
+work. The owner is preparing `v1.0.0-beta.16` as an unpublished candidate; the
+[candidate verification record](docs/releases/v1.0.0-beta.16-verification.md)
+tracks package status.
 
-Current main is `ab9a9d3a852000e9a7a5f9365ef0deae4a02eff4`, after these post-release merges:
+Current source work includes:
 
-- [PR #245](https://github.com/scottconverse/civiccast-native/pull/245): station backup, network access, staff management and service identity. Implementation and evidence: [station operations](docs/ops/station-operations-goal.md).
-- [PR #246](https://github.com/scottconverse/civiccast-native/pull/246): station-local scheduling and unattended operation. Its [Sprint 2 record](docs/ops/sprint2-unattended.md) preserves the verification detail.
-- [PR #247](https://github.com/scottconverse/civiccast-native/pull/247): broadcast outputs, programme transitions, HLS retention and recorded-caption settings. Its [Sprint 3 record](docs/ops/sprint3-output-completion.md) links the focused evidence.
+- [Station operations](docs/ops/station-operations-goal.md): encrypted backup and restore, supported network setup, staff accounts and sessions, and restricted Windows service identity.
+- [Sprint 2](docs/ops/sprint2-unattended.md): station-local recurrence, bounded operational storage, low-disk handling, and recovery after repeated output failures.
+- [Sprint 3](docs/ops/sprint3-output-completion.md): RTMP output, per-output audio processing, complete programme endings, coordinated HLS retention, and recorded-caption settings.
+- Updated product guidance for the combined source edition; see the [roadmap](docs/ROADMAP.md).
 
-These merges update source on `main`; published Beta 15 remains the release above. The sprint records retain their contemporaneous verification trails, and their earlier “merge pending” notes are superseded by the merged status above. No newer package or release is recorded here.
+The only current published package remains [CivicCast Beta
+15](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15),
+published October 13, 2026. Its exact package identity and scoped results are
+in the [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md).
+Use the release page and its matching verification record for any Beta 15
+install or package claim; do not describe current-source features as present in
+that installer.
+
+The Beta 15 R9 field report recorded scheduled speech appearing as slate, a CG
+playlist referring to missing segments, an unsigned installed native
+executable, and a trimmed-caption range mismatch. Its causes and incomplete
+workflows remain bounded as described in the [Beta 17 deferred
+backlog](docs/ops/beta17-deferred.md). The owner deferred those follow-ups
+until after Beta 16 is released. They are not Beta 16 package results.
+
+Historical source merges remain traceable through [PR #245](https://github.com/scottconverse/civiccast-native/pull/245), [PR #246](https://github.com/scottconverse/civiccast-native/pull/246), and [PR #247](https://github.com/scottconverse/civiccast-native/pull/247). Their sprint records preserve contemporaneous implementation evidence and limitations.
 
 ## Historical Beta 14 publication handoff
 
