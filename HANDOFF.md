@@ -6,6 +6,14 @@ work. The owner is preparing `v1.0.0-beta.16` as an unpublished candidate; the
 [candidate verification record](docs/releases/v1.0.0-beta.16-verification.md)
 tracks package status.
 
+Verified `main` as of October 14 is
+`ba8f4473afa123014ef023ae94d01c507afa7ed5` (Sprint 4 merged).
+The unpublished Beta 16 signed candidate is built from
+`9b83d7b89cddc987fbbcc5e23a1433339810d5d6` on `codex/beta16-release`,
+[build 38579665236](https://github.com/scottconverse/civiccast-native/actions/runs/38579665236).
+Installation results and the Sandbox upgrade-space limitation are tracked in
+the candidate verification record above. Publication requires owner authorization.
+
 Current source work includes:
 
 - [Station operations](docs/ops/station-operations-goal.md): encrypted backup and restore, supported network setup, staff accounts and sessions, and restricted Windows service identity.

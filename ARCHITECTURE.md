@@ -4,6 +4,10 @@ CivicCast Beta 16 combines native Windows playout, local AI captions, station
 backup and staff administration in one installation. This architecture describes
 the Beta 16 candidate source.
 
+The current published download remains signed `v1.0.0-beta.15` ([release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15));
+Beta 16 remains an unpublished source candidate.
+
 This document orients engineers and integrators to the current CivicCast
 system. The binding product contract is
 [docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md](docs/spec/3.0/civiccast-3.0-station-in-a-box-MASTER.md);

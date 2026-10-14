@@ -48,8 +48,8 @@ def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
     assert "current published release described in this manual" not in introduction
     assert "installation and sustained-operation checks are pending" not in introduction
     assert "remains the current public pre-release" not in introduction
-    assert "https://github.com/scottconverse/civiccast-native/releases" in introduction
-    assert "does not itself establish publication or installation acceptance" in introduction
+    assert "https://github.com/scottconverse/civiccast-native/releases" in manual
+    assert "does not establish Beta 16 package results" in manual
     manual_version = render_user_manual._source_version_token(manual)
     if manual_version != PUBLISHED_RELEASE_TAG:
         published_history_rows = [
@@ -57,7 +57,7 @@ def test_packaged_manual_does_not_freeze_mutable_publication_status() -> None:
             for line in manual.splitlines()
             if line.startswith("|") and PUBLISHED_RELEASE_TAG in line
         ]
-        assert any("Published GitHub pre-release" in line for line in published_history_rows)
+        assert any("Published package" in line for line in published_history_rows)
     assert "is the current native-line pre-release" not in manual
 
 

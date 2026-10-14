@@ -471,12 +471,13 @@ jobs:
         # 2026-10-12 Beta 14 collection: 1985 pure tests, with a floor of 1935.
         # 2026-10-13 station-operations collection: 2024 pure tests after
         # marking six Windows-only identity/DPAPI cases; preserve the same
-        # 50-test margin with a floor of 1974.
+        # 50-test margin with a floor of 1974. The 2026-10-14 Beta16 license
+        # closure assertion adds one pure test, so the floor is now 1975.
         if: always()
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-pure.xml \
-            --floor 1974 \
+            --floor 1975 \
             --label "tests/native pure suite"
 
       - name: Upload junit (ws3 claims-evidence D3/D7)
@@ -625,13 +626,14 @@ jobs:
         # 2143.
         # 2026-10-13 station-operations collection: 2256 Windows
         # non-integration tests; preserve the same 50-test margin with a
-        # floor of 2206.
+        # floor of 2206. The 2026-10-14 Beta16 license closure assertion adds
+        # one platform-independent test, so the floor is now 2207.
         if: always()
         shell: bash
         run: |
           python scripts/verify_native_junit_floor.py \
             --junit junit-native-win.xml \
-            --floor 2206 \
+            --floor 2207 \
             --label "tests/native Windows suite"
 
       - name: Upload Windows native junit

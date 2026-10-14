@@ -141,19 +141,19 @@ def test_readme_keeps_source_and_field_proof_distinct() -> None:
     assert PUBLISHED_RELEASE_TAG.casefold() in normalized
     assert f"releases/tag/{PUBLISHED_RELEASE_TAG}".casefold() in normalized
     if CURRENT_CANDIDATE_TAG.casefold() != PUBLISHED_RELEASE_TAG.casefold():
-        assert f"`{CURRENT_CANDIDATE_TAG}` is an unpublished candidate".casefold() in normalized
-        assert "remains the published download until" in normalized
+        assert (
+            f"preparing `{CURRENT_CANDIDATE_TAG}` as an unpublished candidate from the current source".casefold()
+            in normalized
+        )
+        assert "the current downloadable release remains signed" in normalized
     assert (
-        "historical beta 11 host result: 72 hours, three channels, 99.78% live caption-input coverage"
-        in normalized
+        "historical beta 11 host result: 72 hours across public, government, and education, "
+        "with 99.78% live caption-input coverage" in normalized
     )
-    assert (
-        "the host ran public, government and education together without a service restart"
-        in normalized
-    )
-    assert "with 216 healthy scheduled checkpoints" in normalized
+    assert "result remains beta 11 evidence and does not qualify later packages" in normalized
+    assert "216 healthy scheduled checkpoints" in normalized
     assert "verification record" in normalized
-    assert "72-hour host report" in normalized
+    assert "72-hour report" in normalized
 
 
 def test_architecture_doc_names_current_release() -> None:

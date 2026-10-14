@@ -6,8 +6,9 @@ CivicCast Beta 16 is a complete native Windows station. It includes Python, Post
 
 Beta 16 is an unpublished candidate. Testers with the candidate kit run its
 `setup.exe` with the adjacent `packs` and `station` folders intact. The public
-download command below supplies the currently published Beta 15 until Beta 16
-is authorized for publication.
+download command below supplies the currently published `v1.0.0-beta.15`
+([release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15))
+until Beta 16 is authorized for publication.
 
 ## Download and install the complete station
 

@@ -67,6 +67,7 @@ live caption-input coverage and 216 healthy scheduled checkpoints. See the
 
 Older Beta10 and earlier verification records are retained in
 [`docs/releases`](../releases/). They describe their specific packages and do
-not establish Beta15 or Beta16 results. The retired WSL2 product line and its
-`rc` releases belong to a separate repository and are not current tester
-instructions.
+not establish Beta15 or Beta16 results. Current native Windows source is in
+[civiccast-native](https://github.com/scottconverse/civiccast-native). The
+retired WSL2 product line and its `rc` releases belong to a separate repository
+and are not current tester instructions.
