@@ -58,3 +58,18 @@ The final affected-module result is recorded in `eos.md`.
   overlay and combined-normalizer-transition limitations remain explicit.
 
 CI and merge status are not claimed by this local record.
+
+## Initial CI correction
+
+PR #247's initial lint job reported two mypy errors in the new EOS path:
+optional dictionary lookup before `is_set`, and an `Any` result from the
+GStreamer time constant. The event is a required initialized field, so the
+lookup now uses that invariant; the deadline explicitly returns `float`.
+`.venv\Scripts\python.exe -m mypy civiccast/egress/gst/engine.py` passed,
+and the affected-file Ruff check passed. No additional media run was needed
+for these typing corrections.
+
+The informational mutation job stopped during its baseline on the manual TOC
+count: the recorded-caption section increased it from 645 to 646. The existing
+complete-manual assertion was updated to the actual count; its single focused
+test passed in 1.96 seconds. The generated manual itself was already correct.

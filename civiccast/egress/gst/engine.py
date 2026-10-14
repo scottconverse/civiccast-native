@@ -5713,7 +5713,7 @@ class GstPlayoutEngine:
         if (
             self._pending_reload is not pending
             or self._stopping
-            or pending.get("tail_padding_stop").is_set()
+            or pending["tail_padding_stop"].is_set()
         ):
             return False
         short_pad = pending.get("tail_padding_pad")
@@ -7844,7 +7844,7 @@ class GstPlayoutEngine:
         mux-pad drain observation before selector handoff.
         """
         latency_ns = max(0, int(getattr(self, "output_audio_latency_ns", 0) or 0))
-        return _REBASE_DRAIN_DEADLINE_S + latency_ns / Gst.SECOND
+        return float(_REBASE_DRAIN_DEADLINE_S + latency_ns / Gst.SECOND)
 
     def _arm_rebase_segment_observers(self, pending: dict[str, Any]) -> bool:
         """Watch this switch's pre-rebase arrivals at the affected mux sink pads.
