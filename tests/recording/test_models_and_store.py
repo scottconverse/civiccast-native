@@ -857,8 +857,8 @@ class TestMigration0056AndMerge:
         # caption-health alert defaults, and 0089 records unverified remote
         # guest media-control requests. 0090 indexes consumed egress commands
         # for bounded history pruning and is the current head.
-        assert list(heads) == ["0090_egress_command_history_storage"], (
-            f"Expected single head 0090_egress_command_history_storage, got {heads!r}"
+        assert list(heads) == ["0091_programlog_local_anchor"], (
+            f"Expected single head 0091_programlog_local_anchor, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:
