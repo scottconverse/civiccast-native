@@ -174,7 +174,11 @@ def test_relay_argv_requires_video_and_audio_for_a_video_sink(tmp_path: Path) ->
     assert "0:a:0?" not in maps, f"audio must not be optional for a video+audio sink; maps={maps}"
     # -map is an OUTPUT option: after -i, before the muxer args HlsSink owns.
     assert args.index("-map") > args.index("-i")
-    output_args = HlsSink(sink).output_args()
+    # The relay removes segment deletion because its manifest publisher owns
+    # retention, and opts into temp-file writes so readers never see a partial
+    # segment. Compare against the relay's output contract, not the standalone
+    # HlsSink args.
+    output_args = hls_relay_mod._relay_hls_output_args(HlsSink(sink))
     assert args[-len(output_args) :] == output_args
 
 

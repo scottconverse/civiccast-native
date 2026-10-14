@@ -73,3 +73,17 @@ The informational mutation job stopped during its baseline on the manual TOC
 count: the recorded-caption section increased it from 645 to 646. The existing
 complete-manual assertion was updated to the actual count; its single focused
 test passed in 1.96 seconds. The generated manual itself was already correct.
+
+The completed initial unit run reported 11,425 passed and 21 failed; the
+randomized run reported the same 21 failures. The remaining corrections
+update two obsolete output expectations (RTMP is now accepted and persisted;
+HLS relay owns deletion flags), and rebind seven current-source registry
+references for the reviewed engine, graph and native-test files. Historical
+acceptance remains historical. The two output checks passed (4.64 seconds);
+the existing claims-evidence module passed all 125 checks (96.18 seconds).
+Ruff lint/format and diff whitespace checks passed for the correction.
+
+Correction review: engineering preserves the required EOS event invariant;
+UX has no new strings; output tests retain mapping and persistence checks;
+docs retain historical/package boundaries; QA found no further issue in
+this correction diff. CI for the pushed correction remains authoritative.

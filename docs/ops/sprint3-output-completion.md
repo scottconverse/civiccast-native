@@ -1,6 +1,6 @@
 # Sprint 3 — output completion
 
-Status: implementation and focused verification complete; CI and merge remain. No release or package claim.
+Status: implementation and focused verification complete; CI and merge are tracked in PR #247 (https://github.com/scottconverse/civiccast-native/pull/247). No release or package claim.
 Branch: `codex/sprint3-output-completion`, based on Sprint 2 merge `eb1b5e5b9753d468dec0eeccea76e0ed31f51584`.
 
 ## Authorized scope
