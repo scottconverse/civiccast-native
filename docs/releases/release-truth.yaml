@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.15
+current: v1.0.0-beta.16
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,19 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.15
+  - tag: v1.0.0-beta.16
     status: current
+    notes: >-
+      Published October 14, 2026 from signed artifact source
+      e92bebd4b5289dce969f81b72515cfa0d45eba55, build 38635220200,
+      setup SHA-256 ff862ec76de94a6dd201a4fc7d3f94a28cf02a4287f960066e6fdfe144f054f0.
+      PR 249 merged as efcab4c1f618e4a46bf62491ee410a9fcd9e7618, the release tag target.
+      The exact package passed Beta 15 upgrade, clean installation, restricted
+      service identity, installed runtime smoke and both uninstall paths in the
+      Windows 11 Hyper-V guest. See its verification record for scope.
+  - tag: v1.0.0-beta.15
+    status: superseded
+    superseded_by: v1.0.0-beta.16
     notes: >-
       Corrected edition published October 13: artifact source
       ff5515021c70ed453589feb9ed4796aaa49aece4, signed build 38408874006,

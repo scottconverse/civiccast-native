@@ -18,10 +18,8 @@ Two asset-set families are supported:
     constants by tests/policy/test_windows_release_downloader.py so the two
     cannot drift.
 
-The defaults match the current Beta 16 candidate tag and product version. Beta 16
-is an unpublished candidate until authorized; for the latest published Beta 15
-release, specify both `-Tag` and `-Version`. For a historical beta.12 or beta.7
-download, specify both `-Tag` and `-Version` for that release.
+The defaults target the current published Beta 16 tag and product version.
+For a historical release, specify both `-Tag` and `-Version` for that release.
 
   ProofKit / TesterPackage / All (the retired WSL2 rc line's shape): fetch the
     release-artifacts manifest plus the tester package and/or proof kit,

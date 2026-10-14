@@ -25,11 +25,10 @@ community-driven; there is no commercial support contract or SLA.
    repository). Examples: whether CivicCast is a fit for an HOA,
    public-access station, school board, or nonprofit workflow.
 
-The current source manual and built-in Help describe the work being prepared
-for Beta 16, including station-operation, scheduling, output, and recorded-
-caption settings. For the published Beta 15 interface, use the Help installed
-with Beta 15 or the manual assets from its release page. Source changes do not
-update an installed station.
+The Beta 16 manual and built-in Help describe station operation, scheduling,
+output and recorded-caption settings. For an installed station, use the Help
+bundled with its release or the matching manual assets from that release page.
+Source changes do not update an installed station.
 
 ## Retired WSL2 Support History
 
@@ -61,14 +60,13 @@ enabled throwaway development.
 ## Native Windows Beta
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
-is a public beta. The current published package is `v1.0.0-beta.15`, available
-from its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15).
-The owner is preparing `v1.0.0-beta.16` as an unpublished candidate from newer
-source; the [candidate verification
-record](docs/releases/v1.0.0-beta.16-verification.md) tracks its package status.
+is a public beta. The current published package is `v1.0.0-beta.16`, available
+from its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16).
+Its [package verification record](docs/releases/v1.0.0-beta.16-verification.md)
+identifies the signed installer and scoped results.
 Package and installation claims must name the exact published version; source
 changes do not update an installed station. The
-[Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
+[Beta 16 verification record](docs/releases/v1.0.0-beta.16-verification.md)
 contains package-specific results and boundaries. There is no dedicated,
 SLA-backed support intake for the native beta.
 
@@ -78,8 +76,7 @@ If you are working on, evaluating, or running the native line:
   [BRANCHES.md](BRANCHES.md) first.
 - When reporting a source issue, include the branch or commit being used. The
   station-operation, unattended-scheduling, broadcast-output, and recorded-
-  caption updates being prepared for Beta 16 are not in the published Beta 15
-  installer.
+  caption updates ship in Beta 16; Beta 15 remains a separate historical package.
 - Use a regular [GitHub Issue](https://github.com/scottconverse/civiccast-native/issues)
   for questions (GitHub Discussions is not enabled on this repository), and say explicitly in the report
   that it concerns the native line and which release tag or source commit you're on -- the templates don't yet

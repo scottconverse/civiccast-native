@@ -1,7 +1,7 @@
 # Beta 17 deferred field follow-up
 
 **Owner decision:** defer these field and workflow follow-ups until after the
-`v1.0.0-beta.16` candidate is released. They are not a Beta 16 release gate or
+`v1.0.0-beta.16` release. They are not a Beta 16 release gate or
 evidence that Beta 16 has the same behavior. Recheck relevant items against the
 actual candidate when the owner schedules that work.
 

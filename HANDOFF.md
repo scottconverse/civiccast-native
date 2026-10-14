@@ -1,29 +1,27 @@
-# Current handoff: Beta 16 preparation (2026-10-14)
+# Current handoff: Beta 16 published (2026-10-14)
 
 The current source brings together station operations, unattended scheduling,
 broadcast output, programme transitions, HLS retention, and recorded-caption
-work. The owner is preparing `v1.0.0-beta.16` as an unpublished candidate; the
-[candidate verification record](docs/releases/v1.0.0-beta.16-verification.md)
-tracks package status.
+work. Signed `v1.0.0-beta.16` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16); the
+[package verification record](docs/releases/v1.0.0-beta.16-verification.md)
+identifies its installer and checks.
 
-Verified `main` as of October 14 is
-`ba8f4473afa123014ef023ae94d01c507afa7ed5` (Sprint 4 merged).
-The corrected unpublished Beta 16 signed candidate is built from
+PR #249 merged to `main` as `efcab4c1f618e4a46bf62491ee410a9fcd9e7618`, the Beta 16 tag target.
+The signed Beta 16 package was built from
 `e92bebd4b5289dce969f81b72515cfa0d45eba55`, successful
 [build 38635220200](https://github.com/scottconverse/civiccast-native/actions/runs/38635220200).
 The corrected package passed upgrade, administrator/profile preservation,
 restricted service/process identity, installed GStreamer smoke, and uninstall
 in the 240 GiB Hyper-V guest. Clean fresh installation also passed, including
 new administrator setup, healthy/current Beta 16, restricted process ownership
-and installed runtime smoke. Publication still requires owner authorization.
+and installed runtime smoke. The owner subsequently authorized publication.
 The earlier candidate used
 `9b83d7b89cddc987fbbcc5e23a1433339810d5d6` on `codex/beta16-release`,
 [build 38579665236](https://github.com/scottconverse/civiccast-native/actions/runs/38579665236).
 That candidate failed upgrade service registration in the replacement 160 GiB
 Hyper-V guest and restored healthy Beta 15 with the saved station profile.
 The corrected source stops the service before migrating its identity.
-Results are tracked in the
-candidate verification record above. Publication requires owner authorization.
+Results are tracked in the package verification record above.
 
 Current source work includes:
 
@@ -32,13 +30,7 @@ Current source work includes:
 - [Sprint 3](docs/ops/sprint3-output-completion.md): RTMP output, per-output audio processing, complete programme endings, coordinated HLS retention, and recorded-caption settings.
 - Updated product guidance for the combined source edition; see the [roadmap](docs/ROADMAP.md).
 
-The only current published package remains [CivicCast Beta
-15](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15),
-published October 13, 2026. Its exact package identity and scoped results are
-in the [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md).
-Use the release page and its matching verification record for any Beta 15
-install or package claim; do not describe current-source features as present in
-that installer.
+The previous [CivicCast Beta 15 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15), published October 13, 2026, retains its exact package identity and scoped results in the [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md).
 
 The Beta 15 R9 field report recorded scheduled speech appearing as slate, a CG
 playlist referring to missing segments, an unsigned installed native

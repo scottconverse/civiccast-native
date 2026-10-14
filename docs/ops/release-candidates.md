@@ -12,7 +12,7 @@ without the checks below all passing. `scripts/release/publish_beta_candidate.py
 is fail-closed at every step (see its module docstring) -- it refuses rather
 than proceeds past any failed check.
 
-Current published package: [Beta 15](../releases/v1.0.0-beta.15-verification.md). The release branch's current source identity is `v1.0.0-beta.16`, an unpublished candidate. Bind it to its own source, generated manual/Help, checksums and package results before publication; prior package receipts remain historical. Documentation-only corrections do not require rebuilding an existing signed installer.
+Current published package: [Beta 16](../releases/v1.0.0-beta.16-verification.md). Its release assets, generated manual/Help, checksums and package results are bound to the signed source named in that record. Prior package receipts remain historical. Documentation-only corrections do not require rebuilding an existing signed installer.
 
 ## 1. Build
 
