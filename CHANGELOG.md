@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Recorded captions and broadcast outputs
+
+- Add recorded-caption station settings for enabled processing, English with
+  optional Spanish, and attachment after reviewed English or all selected
+  languages. Disabled processing pauses existing jobs and skips new jobs
+  without refusing startup.
+- Keep live HLS playlist reads consistent with publication and let the
+  publisher retain retired segments for the lifetime of their advertised window.
+- Add GStreamer output branches for FLV/RTMP, destination-specific loudness
+  normalization and configured SRT/RTMP alert-tone filtering.
+- Preserve both available programme tails at a normal transition, repeating
+  the final picture or supplying silence until the longer stream ends.
+
+These source changes and focused results are recorded in [Sprint 3](docs/ops/sprint3-output-completion.md),
+which records their check status. They are not in the published Beta 15 package.
+
 ### Unattended station operation
 
 - Use station-local calendar times for new recording schedules, recurring

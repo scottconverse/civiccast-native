@@ -4,9 +4,10 @@ This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.15**, the 
 
 ## What state this software is in
 
-**Development edition:** the staff-account, scheduled-backup, network-access and
-restricted-service-account instructions describe the current unreleased source
-work. They are not features of the published Beta 15 installer. The Beta 15
+**Development edition:** the staff-account, scheduled-backup, network-access,
+restricted-service-account, station-local scheduling, output-processing and
+recorded-caption settings instructions include current unreleased source
+work. Those additions are not features of the published Beta 15 installer. The Beta 15
 release and its installation evidence remain identified separately below.
 
 This manual describes **Beta 15**. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads and publication status, and read the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for the exact package identity, observations, and limits. Start with the complete download helper in [Chapter 10](#ch-installing), then create the station administrator on the station computer. Whistle provides CPU live captioning; Whisper supplies fallback and recorded captions. A historical **Beta 11** 72-hour run across Public, Government, and Education recorded **99.78% live caption-input coverage**. See the [Beta 11 host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and measurement. Earlier history remains in the evidence appendix and dated verification records.

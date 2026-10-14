@@ -20,6 +20,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from civiccast.app import create_app
+from civiccast.captions.settings import RecordedCaptionSettings, RecordedCaptionSettingsStore
+from civiccast.captions.settings_router import get_recorded_caption_settings_store
 from civiccast.captions.vod_job import (
     OFFLINE_CAPTION_JOB_STATE_COMPLETE,
     OFFLINE_CAPTION_JOB_STATE_PENDING,
@@ -37,6 +39,15 @@ from civiccast.schedule.router import get_postgres_store
 _ASSET_ID = "council-2026-08-16"
 _STAFF_HEADERS = {"Authorization": "Bearer operator-token-a"}
 _APPROVAL = {"operator_id": "staff-1", "operator_display_name": "Avery Operator"}
+
+
+@pytest.fixture(autouse=True)
+def _use_deterministic_staff_token(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep a developer's configured token list from shadowing this test token."""
+
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS", raising=False)
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", raising=False)
+    monkeypatch.setenv("CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN", "1")
 
 
 class FakeAssetStore:
@@ -128,6 +139,25 @@ class TestPublishEnqueuesOfflineCaptions:
         # The package directory the job will caption must be the same one
         # the packager wrote and /media/vod serves.
         assert Path(job.package_dir) == (upload_root / ".civiccast-packages" / _ASSET_ID).resolve()
+
+    def test_disabled_station_settings_skip_new_caption_jobs(
+        self,
+        client: TestClient,
+        job_store: InMemoryOfflineCaptionJobStore,
+        tmp_path: Path,
+    ) -> None:
+        settings_store = RecordedCaptionSettingsStore(
+            tmp_path / "offline-caption-settings.json",
+            defaults=RecordedCaptionSettings(enabled=False),
+        )
+        client.app.dependency_overrides[get_recorded_caption_settings_store] = lambda: (
+            settings_store
+        )
+
+        response = client.post(f"/api/staff/publish/assets/{_ASSET_ID}/approve", json=_APPROVAL)
+
+        assert response.status_code == 200
+        assert job_store.active_for_asset(_ASSET_ID) is None
 
     def test_reapproving_does_not_requeue_work_an_operator_is_reviewing(
         self,

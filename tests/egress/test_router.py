@@ -176,30 +176,22 @@ def test_staff_egress_config_accepts_hls_sink(client: TestClient, hls_root: Path
     assert r.json()["sinks"][0]["kind"] == "hls"
 
 
-def test_staff_egress_config_rejects_unsupported_sink_kind_at_save_time(
+def test_staff_egress_config_allows_rtmp_on_default_gstreamer_engine(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """DEFECT B: an accept-then-crash gap is the actual root defect — a
-    sink kind the active engine cannot run must be refused HERE, at config
-    save, with a clear reason, not accepted with 200 OK and left to explode
-    deep inside a later ``start`` pass. rtmp is genuinely unsupported by the
-    default (GStreamer) engine in Stage 1."""
+    """RTMP is implemented by the default GStreamer engine and saves normally."""
     monkeypatch.delenv("CIVICCAST_EGRESS_ENGINE", raising=False)  # ensure GStreamer default
     payload = _config_payload() | {
         "sinks": [{"kind": "rtmp", "label": "Restream", "uri": "rtmp://example.com/live"}]
     }
     r = client.put("/api/staff/egress/channels/gov/config", json=payload)
-    assert r.status_code == 422, r.text
-    detail = r.json()["detail"]
-    assert "rtmp" in detail
-    # The message must name what IS supported, not just what wasn't.
-    for kind in ("srt", "local-ts", "udp-ts", "file", "sdi", "hls"):
-        assert kind in detail
+    assert r.status_code == 200, r.text
+    assert r.json()["sinks"][0]["kind"] == "rtmp"
 
-    # And the config must NOT have been persisted (a 422 that still wrote the
-    # row would be the same accept-then-crash gap with extra steps).
+    # The accepted config must reach the durable row, not merely return 200.
     r = client.get("/api/staff/egress/channels/gov/config")
-    assert r.status_code == 404
+    assert r.status_code == 200, r.text
+    assert r.json()["sinks"][0]["kind"] == "rtmp"
 
 
 def test_staff_egress_graphics_overlay_round_trip(client: TestClient) -> None:

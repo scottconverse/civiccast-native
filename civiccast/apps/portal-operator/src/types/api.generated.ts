@@ -3577,6 +3577,12 @@ export interface RecordExportResponse {
   artifact_digest?: string | null
 }
 
+export interface RecordedCaptionSettings {
+  enabled?: boolean
+  languages?: Array<'en' | 'es'>
+  completion_requirement?: 'all_selected_languages' | 'english_reviewed'
+}
+
 export interface RecordingInputPreset {
   preset_id: string
   label: string

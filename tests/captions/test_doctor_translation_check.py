@@ -2,12 +2,10 @@
 # Copyright (c) The CivicCast Authors
 """`civiccast doctor` must answer the question the caption job sends it.
 
-When no translation model is available, the offline caption job holds the
-recording and puts a remediation on the row telling the operator to "run
-'civiccast doctor'". Doctor printed nothing at all about translation, so an
-operator who followed that instruction got a screen with no mention of the
-broken thing -- a remediation that points at a dead end is worse than none,
-because it costs the operator the trip.
+When no translation model is available for selected Spanish captions, the
+offline caption job records the issue on the row and points the operator to
+"run 'civiccast doctor'". The report follows the station's completion choice:
+reviewed English may already be attached in English-first mode.
 
 These tests pin the report content, not the plumbing: the check resolves
 through the same S13 ``AiModelService`` seam the worker's ``build_translator``
@@ -21,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from civiccast.ai_models.models import AiModelAvailability, FeatureModelAvailability
+from civiccast.captions.settings import RecordedCaptionSettings, RecordedCaptionSettingsStore
 from civiccast.captions.vod_job import CAPTIONS_SPANISH_ENV_VAR
 from civiccast.cli import _doctor_translation_lines
 
@@ -119,12 +118,32 @@ class TestDoctorTranslationReport:
         assert "translategemma-4b" in report
         assert "NOT AVAILABLE" in report
         assert "not installed" in report
-        # The operator must learn what happens to recordings, not just that a
-        # model is missing -- and specifically that they are HELD, because the
-        # obvious wrong guess is "it publishes English only".
-        assert "HELD" in report
-        assert "English only" in report
+        assert "selected Spanish track is not ready" in report
+        assert "does not attach the selected tracks" in report
         assert "Settings > AI Models > Translation" in report
+
+    def test_english_reviewed_setting_explains_english_can_attach_first(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stub_availability
+    ) -> None:
+        monkeypatch.delenv(CAPTIONS_SPANISH_ENV_VAR, raising=False)
+        monkeypatch.delenv("CIVICCAST_OFFLINE_CAPTION_JOB", raising=False)
+        state_path = tmp_path / "station-state.json"
+        monkeypatch.setenv("CIVICCAST_STATION_STATE_PATH", str(state_path))
+        RecordedCaptionSettingsStore(state_path.with_name("offline-caption-settings.json")).save(
+            RecordedCaptionSettings(completion_requirement="english_reviewed")
+        )
+        stub_availability(
+            _availability(
+                runtime_reachable=False,
+                model_present=False,
+                detail="Translation model is not available.",
+            )
+        )
+
+        report = "\n".join(_doctor_translation_lines())
+
+        assert "Reviewed English can attach after its review" in report
+        assert "Spanish remains in progress" in report
 
     def test_an_unreachable_runtime_is_also_not_available(
         self, monkeypatch: pytest.MonkeyPatch, stub_availability
@@ -174,15 +193,10 @@ class TestDoctorTranslationReport:
         assert "database is locked" in report
         assert "OK" not in report.replace("could not", "")
 
-    def test_the_retired_spanish_switch_is_called_out(
+    def test_legacy_spanish_default_points_to_station_settings(
         self, monkeypatch: pytest.MonkeyPatch, stub_availability
     ) -> None:
-        """A station carrying the retired switch will not start; say so here.
-
-        An operator whose station refuses to boot runs doctor to find out
-        why, so the retired variable has to be named on this screen and not
-        only in the startup error.
-        """
+        """Explain that the environment value is only an initial default."""
 
         monkeypatch.setenv(CAPTIONS_SPANISH_ENV_VAR, "off")
         stub_availability(
@@ -196,5 +210,5 @@ class TestDoctorTranslationReport:
         report = "\n".join(_doctor_translation_lines())
 
         assert CAPTIONS_SPANISH_ENV_VAR in report
-        assert "retired" in report
-        assert "Remove it" in report
+        assert "initial Spanish-language setting" in report
+        assert "Setup > Station Profile" in report

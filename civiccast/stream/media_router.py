@@ -36,7 +36,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.orm import Session
@@ -50,6 +50,7 @@ from civiccast.live.models import LiveFinalizationJob
 from civiccast.live.surge_service import get_surge_switch_service
 from civiccast.schedule.models import Asset
 from civiccast.schedule.paths import resolve_upload_root, resolve_vod_package_root
+from civiccast.stream import live_manifest_lock
 
 _DB_NOT_READY = "Durable storage is not ready yet."
 _LOG = logging.getLogger(__name__)
@@ -146,6 +147,23 @@ def _serve_from_directory(
     (VOD manifests are effectively immutable per asset; live manifests
     change every segment interval — see the module docstring).
     """
+    candidate, content_type, cache_control = _resolve_media_file(
+        base_dir, file_path, manifest_cache_control=manifest_cache_control
+    )
+    return FileResponse(
+        candidate,
+        media_type=content_type,
+        headers={"Cache-Control": cache_control},
+    )
+
+
+def _resolve_media_file(
+    base_dir: Path,
+    file_path: str,
+    *,
+    manifest_cache_control: str,
+) -> tuple[Path, str, str]:
+    """Apply the shared containment check and return response metadata."""
     candidate = (base_dir / file_path).resolve()
     if not candidate.is_relative_to(base_dir) or not candidate.is_file():
         raise HTTPException(
@@ -156,8 +174,32 @@ def _serve_from_directory(
     cache_control = (
         manifest_cache_control if candidate.suffix.lower() == ".m3u8" else _SEGMENT_CACHE_CONTROL
     )
-    return FileResponse(
-        candidate,
+    return candidate, content_type, cache_control
+
+
+def _serve_live_from_directory(base_dir: Path, file_path: str) -> Response:
+    """Snapshot a live manifest under the publisher lock; stream segments as files."""
+    candidate, content_type, cache_control = _resolve_media_file(
+        base_dir, file_path, manifest_cache_control=_LIVE_MANIFEST_CACHE_CONTROL
+    )
+    if candidate.suffix.lower() != ".m3u8":
+        return FileResponse(
+            candidate,
+            media_type=content_type,
+            headers={"Cache-Control": cache_control},
+        )
+    try:
+        with live_manifest_lock.LIVE_MANIFEST_LOCK:
+            body = candidate.read_bytes()
+    except FileNotFoundError as exc:
+        # The publisher/cleanup can remove the path between containment check
+        # and open. Match the route's ordinary missing-file behavior.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Media file not found: {file_path}",
+        ) from exc
+    return Response(
+        content=body,
         media_type=content_type,
         headers={"Cache-Control": cache_control},
     )
@@ -300,7 +342,7 @@ def get_live_media_file(
     file_path: str,
     request: Request,
     egress_store: EgressStore | None = Depends(get_egress_store),
-) -> FileResponse:
+) -> Response:
     """Serve one file from a channel's rolling live-HLS output directory.
 
     ``file_path`` is the manifest/segment path relative to the directory
@@ -322,9 +364,7 @@ def get_live_media_file(
             surge.observe(channel_id, resolve_client_ip(request))
     with degrade_on_storage_failure():
         live_dir = _live_dir_for_channel(channel_id, egress_store)
-    return _serve_from_directory(
-        live_dir, file_path, manifest_cache_control=_LIVE_MANIFEST_CACHE_CONTROL
-    )
+    return _serve_live_from_directory(live_dir, file_path)
 
 
 __all__ = ["live_router", "router"]

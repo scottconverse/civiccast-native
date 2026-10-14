@@ -16,6 +16,8 @@ from civiccast.activitypub.remote import ActivityPubDeliveryClient, ActivityPubR
 from civiccast.activitypub.service import deliver_publish_activity, record_publish_activity
 from civiccast.activitypub.store import ActivityPubStore
 from civiccast.auth.roles import require_any_role
+from civiccast.captions.settings import RecordedCaptionSettings
+from civiccast.captions.settings_router import get_recorded_caption_settings
 from civiccast.captions.vod_job import OfflineCaptionJobStore, enqueue_offline_caption_job
 from civiccast.live.recording_paths import local_recording_path
 from civiccast.live.router import get_live_finalization_worker
@@ -174,7 +176,7 @@ class CaptionJobNotQueueableError(Exception):
 #: one outcome this route must not produce.
 CAPTION_JOB_UNQUEUEABLE_DETAIL = (
     "Publish blocked: CivicCast cannot queue this recording's caption job, so approving "
-    "would put it on the public record with no path to the captions the law requires. "
+    "would put it on the public record with no path to the station's configured captions. "
     "Nothing was published. Cause: {cause} Fix that and approve again."
 )
 
@@ -241,14 +243,13 @@ def _queue_offline_captions(
     staff_asset: StaffAssetRow,
     *,
     finalization_worker: Any = None,
+    caption_settings: RecordedCaptionSettings | None = None,
     require_published: bool = True,
 ) -> None:
     """Queue captioning for a recording that is becoming public (K3).
 
-    Publishing is the trigger because "captioned published files" is the
-    legal obligation the offline caption path exists to meet — the moment
-    a recording becomes a public record is the moment its captions become
-    owed. The job transcribes with the station's staged caption model and
+    When recorded captions are enabled, publishing queues the job using the
+    station's staged caption model and
     files every cue in the operator review queue; nothing reaches the
     resident-facing package until an operator has decided on it.
 
@@ -273,6 +274,12 @@ def _queue_offline_captions(
     because nothing afterwards goes looking for one.
     """
 
+    if caption_settings is not None and not caption_settings.enabled:
+        _LOG.info(
+            "Skipping offline caption enqueue for %s: recorded captions are disabled in station settings.",
+            staff_asset.asset_id,
+        )
+        return
     if require_published and staff_asset.published_at is None:
         return
     source_path = Path(staff_asset.file_path) if staff_asset.file_path else None
@@ -437,6 +444,7 @@ def approve_publish_asset(
     broker_client: BrokerClient = Depends(get_broker_client),
     finalization_worker: Any = Depends(get_live_finalization_worker),
     caption_job_store: OfflineCaptionJobStore | None = Depends(get_caption_job_store),
+    caption_settings: RecordedCaptionSettings = Depends(get_recorded_caption_settings),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
 ) -> PublishAssetStatus:
@@ -472,6 +480,7 @@ def approve_publish_asset(
             caption_job_store,
             staff_asset,
             finalization_worker=finalization_worker,
+            caption_settings=caption_settings,
             require_published=False,
         )
     except CaptionJobNotQueueableError as exc:
@@ -553,6 +562,7 @@ def retry_publish_asset_surface(
     postgres_store: Any = Depends(get_postgres_store),
     publish_store: PublishStore = Depends(get_publish_store),
     caption_job_store: OfflineCaptionJobStore | None = Depends(get_caption_job_store),
+    caption_settings: RecordedCaptionSettings = Depends(get_recorded_caption_settings),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
     # Same seam the approve route uses: a portal retry that makes a
@@ -639,7 +649,10 @@ def retry_publish_asset_surface(
         # enqueue is idempotent per asset.
         try:
             _queue_offline_captions(
-                caption_job_store, staff_asset, finalization_worker=finalization_worker
+                caption_job_store,
+                staff_asset,
+                finalization_worker=finalization_worker,
+                caption_settings=caption_settings,
             )
         except CaptionJobNotQueueableError as exc:
             raise HTTPException(

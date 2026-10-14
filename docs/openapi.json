@@ -19823,6 +19823,106 @@
         ]
       }
     },
+    "/api/staff/captions/settings": {
+      "get": {
+        "tags": [
+          "staff",
+          "captions"
+        ],
+        "summary": "Read recorded-caption station settings",
+        "operationId": "read_recorded_caption_settings_api_staff_captions_settings_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordedCaptionSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "staff",
+          "captions"
+        ],
+        "summary": "Save recorded-caption station settings",
+        "operationId": "save_recorded_caption_settings_api_staff_captions_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RecordedCaptionSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RecordedCaptionSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, revoked, or misconfigured CivicCast staff bearer token."
+          },
+          "429": {
+            "description": "The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the failure window reopens.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "CivicCastStaffBearer": []
+          }
+        ]
+      }
+    },
     "/api/staff/summaries/review-items": {
       "get": {
         "tags": [
@@ -55158,6 +55258,43 @@
         ],
         "title": "RecordExportResponse",
         "description": "Response returned by signed-record export and verification."
+      },
+      "RecordedCaptionSettings": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "languages": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "en",
+                "es"
+              ]
+            },
+            "type": "array",
+            "title": "Languages",
+            "default": [
+              "en",
+              "es"
+            ]
+          },
+          "completion_requirement": {
+            "type": "string",
+            "enum": [
+              "all_selected_languages",
+              "english_reviewed"
+            ],
+            "title": "Completion Requirement",
+            "default": "all_selected_languages"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RecordedCaptionSettings",
+        "description": "Operator-selected policy for recorded captions."
       },
       "RecordingInputPreset": {
         "properties": {

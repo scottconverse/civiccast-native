@@ -320,6 +320,37 @@ class AudioTapLeg:
 
 
 @dataclass(frozen=True)
+class OutputBranch:
+    """One independently muxed delivery target.
+
+    ``audio_chain`` and ``video_chain`` start after the raw selected-program
+    tees.  A branch owns its mux and sink tail so destinations can use distinct
+    containers and audio processing without changing the shared encoder or
+    another destination's signal.
+    """
+
+    label: str
+    mux: ElementSpec
+    sinks: tuple[ElementSpec, ...]
+    audio_chain: tuple[ElementSpec, ...] = ()
+    video_chain: tuple[ElementSpec, ...] = ()
+    # Known processing hold on this branch's selected-program audio. The value
+    # is part of the graph contract so transition/EOS handling can distinguish
+    # filter latency from queue capacity.
+    audio_latency_ns: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.label.strip():
+            raise ValueError("OutputBranch requires a label")
+        if not self.sinks:
+            raise ValueError(f"OutputBranch {self.label!r} requires a sink tail")
+        if not self.audio_chain and not self.video_chain:
+            raise ValueError(f"OutputBranch {self.label!r} requires an audio or video chain")
+        if self.audio_latency_ns < 0:
+            raise ValueError(f"OutputBranch {self.label!r} audio_latency_ns cannot be negative")
+
+
+@dataclass(frozen=True)
 class PlayoutGraph:
     """The full playout element graph (gi-free)."""
 
@@ -343,14 +374,29 @@ class PlayoutGraph:
     # leg). None = today's behavior (no overlay stage; the graph is byte-identical to
     # the pre-overlay graph).
     graphics_overlay: GraphicsOverlayLeg | None = None
+    # Optional per-destination mux/encode branches. When present, ``sinks`` and
+    # the shared audio/video mux path above are unused; each branch receives the
+    # same encoded video and selected raw audio, then applies its own filters.
+    output_branches: tuple[OutputBranch, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.sources:
             raise ValueError("PlayoutGraph requires at least one source")
-        if not self.sinks:
+        if not self.sinks and not self.output_branches:
             raise ValueError("PlayoutGraph requires at least one sink")
-        if self.audio_tap is not None and not self.audio_encoder:
+        if self.sinks and self.output_branches:
+            raise ValueError("PlayoutGraph cannot mix legacy sinks and output_branches")
+        if (
+            self.audio_tap is not None
+            and not self.audio_encoder
+            and not any(branch.audio_chain for branch in self.output_branches)
+        ):
             raise ValueError("PlayoutGraph audio_tap requires a program audio encoder")
+
+    @property
+    def max_output_audio_latency_ns(self) -> int:
+        """Largest declared processing hold across parallel output audio branches."""
+        return max((branch.audio_latency_ns for branch in self.output_branches), default=0)
 
 
 def encode_chain_specs(
@@ -653,27 +699,37 @@ def graph_to_json(graph: PlayoutGraph) -> str:
             "audio": [_elem_to_dict(e) for e in source.audio],
         }
 
-    return json.dumps(
-        {
-            "sources": [src(s) for s in graph.sources],
-            "encoder": [_elem_to_dict(e) for e in graph.encoder],
-            "audio_encoder": [_elem_to_dict(e) for e in graph.audio_encoder],
-            "audio_tap": (
-                {
-                    "tap_dir": graph.audio_tap.tap_dir,
-                    "segment_seconds": graph.audio_tap.segment_seconds,
-                }
-                if graph.audio_tap is not None
-                else None
-            ),
-            "mux": _elem_to_dict(graph.mux),
-            "sinks": [[_elem_to_dict(e) for e in branch] for branch in graph.sinks],
-            "captions": _captions_to_dict(graph.captions),
-            "secondary_audio": [_secondary_to_dict(leg) for leg in graph.secondary_audio],
-            "graphics_overlay": _graphics_overlay_to_dict(graph.graphics_overlay),
-        },
-        indent=2,
-    )
+    data = {
+        "sources": [src(s) for s in graph.sources],
+        "encoder": [_elem_to_dict(e) for e in graph.encoder],
+        "audio_encoder": [_elem_to_dict(e) for e in graph.audio_encoder],
+        "audio_tap": (
+            {
+                "tap_dir": graph.audio_tap.tap_dir,
+                "segment_seconds": graph.audio_tap.segment_seconds,
+            }
+            if graph.audio_tap is not None
+            else None
+        ),
+        "mux": _elem_to_dict(graph.mux),
+        "sinks": [[_elem_to_dict(e) for e in branch] for branch in graph.sinks],
+        "captions": _captions_to_dict(graph.captions),
+        "secondary_audio": [_secondary_to_dict(leg) for leg in graph.secondary_audio],
+        "graphics_overlay": _graphics_overlay_to_dict(graph.graphics_overlay),
+    }
+    if graph.output_branches:
+        data["output_branches"] = [
+            {
+                "label": branch.label,
+                "mux": _elem_to_dict(branch.mux),
+                "sinks": [_elem_to_dict(e) for e in branch.sinks],
+                "audio_chain": [_elem_to_dict(e) for e in branch.audio_chain],
+                "video_chain": [_elem_to_dict(e) for e in branch.video_chain],
+                "audio_latency_ns": branch.audio_latency_ns,
+            }
+            for branch in graph.output_branches
+        ]
+    return json.dumps(data, indent=2)
 
 
 def graph_from_json(text: str) -> PlayoutGraph:
@@ -711,4 +767,15 @@ def graph_from_json(text: str) -> PlayoutGraph:
         captions=_captions_from_dict(data.get("captions")),
         secondary_audio=tuple(_secondary_from_dict(obj) for obj in data.get("secondary_audio", [])),
         graphics_overlay=_graphics_overlay_from_dict(data.get("graphics_overlay")),
+        output_branches=tuple(
+            OutputBranch(
+                label=branch["label"],
+                mux=_elem_from_dict(branch["mux"]),
+                sinks=tuple(_elem_from_dict(e) for e in branch["sinks"]),
+                audio_chain=tuple(_elem_from_dict(e) for e in branch.get("audio_chain", [])),
+                video_chain=tuple(_elem_from_dict(e) for e in branch.get("video_chain", [])),
+                audio_latency_ns=int(branch.get("audio_latency_ns", 0)),
+            )
+            for branch in data.get("output_branches", [])
+        ),
     )

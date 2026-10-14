@@ -43,7 +43,6 @@ import secrets
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Literal, Protocol
@@ -55,16 +54,19 @@ from civiccast.captions.models import CaptionCue
 from civiccast.captions.retention import CaptionEvidenceRetentionPolicy, CaptionRetentionResult
 from civiccast.captions.review import CaptionReviewStore
 from civiccast.captions.runtime import CaptionRuntime
+from civiccast.captions.settings import RecordedCaptionSettings
 from civiccast.captions.vod import (
     OFFLINE_CAPTION_CHUNK_SECONDS,
     OFFLINE_CAPTION_LANGUAGE,
     SPANISH_CAPTION_LANGUAGE,
     ReviewedCaptions,
     attach_reviewed_captions,
+    published_caption_sidecar,
     queue_translated_captions,
     reviewed_caption_cues,
     transcribe_asset_captions,
 )
+from civiccast.captions.webvtt import render_webvtt
 from civiccast.translate.models import TranslationTarget
 from civiccast.translate.service import TranslationProvider, translated_cue_id
 
@@ -97,56 +99,36 @@ OFFLINE_CAPTION_JOB_MODE_INLINE = "inline"
 OFFLINE_CAPTION_JOB_MODE_OFF = "off"
 _OFFLINE_CAPTION_JOB_MODES = (OFFLINE_CAPTION_JOB_MODE_INLINE, OFFLINE_CAPTION_JOB_MODE_OFF)
 
-#: The switch that used to be able to turn the recorded-Spanish leg off.
-#: It no longer can (see ``OfflineCaptionJobSettings.spanish_enabled``);
-#: ``from_env`` still *reads* it, only to fail fast rather than silently
-#: ignore a station that is asking for English-only output.
+#: Legacy environment setting retained as the initial default when no station
+#: settings file has been saved. The operator API and JSON file are authoritative
+#: once present.
 CAPTIONS_SPANISH_ENV_VAR = "CIVICCAST_OFFLINE_CAPTION_SPANISH"
-#: Legacy private alias -- this module's own call sites predate the export.
-_SPANISH_ENV_VAR = CAPTIONS_SPANISH_ENV_VAR
 
-#: The ONLY way to run with offline captioning switched off, and it exists
-#: for automated tests -- suites that must not start a caption worker, and
-#: the mutation check that proves the refusal fails closed. Never set on a
-#: station: captions on the published file are a legal obligation, so
-#: ``CIVICCAST_OFFLINE_CAPTION_JOB=off`` alone refuses to start.
-CAPTIONS_OFF_TEST_OVERRIDE_ENV = "CIVICCAST_ALLOW_CAPTIONS_OFF_FOR_TESTS"
-_TRUE_ENV_VALUES = ("1", "true", "on", "yes", "es")
-_FALSE_ENV_VALUES = ("0", "false", "off", "no")
+_CAPTION_CDN_REPUBLISH_ERROR_PREFIX = "Caption CDN republish failed: "
 
-#: Put on the job row (and therefore in front of the operator) when the
-#: station has no translation runtime wired but a recording is waiting on
-#: its Spanish track. Names the thing to fix, not the internal symbol.
+#: Put on the job row when the station has no translation runtime wired but
+#: Spanish is selected. Names the thing to fix, not the internal symbol.
 MISSING_TRANSLATOR_REMEDIATION = (
     "This recording's English captions are approved, but CivicCast has no translation "
-    "model available to produce the required Spanish track, so the recording cannot "
-    "finish publishing. Install or repair the station's translation model (Settings > "
+    "model available to produce the selected Spanish track. Install or repair the "
+    "station's translation model (Settings > "
     "AI Models > Translation) and run 'civiccast doctor'; the job retries on its own."
 )
 
-#: Put on the job row when the operator rejected every Spanish cue. English
-#: alone is not a publishable outcome, so the job waits for a usable Spanish
-#: track instead of completing.
+#: Put on the job row when the operator rejected every Spanish cue.
 ALL_SPANISH_REJECTED_REMEDIATION = (
-    "Every Spanish caption cue for this recording was rejected. A published recording "
-    "must carry a reviewed Spanish track alongside English, so it is being held here "
-    "rather than published in English only. Open the caption review queue, filter to "
+    "Every Spanish caption cue for this recording was rejected, so the Spanish track "
+    "has not been attached. Open the caption review queue, filter to "
     "Spanish, and edit the cues with the correct wording (or approve the ones that are "
-    "right); publication continues automatically once at least one Spanish cue is "
-    "approved or edited."
+    "right); the selected Spanish track attaches after its cues are reviewed."
 )
 
-#: Put on the job row when the operator rejected every ENGLISH cue. The
-#: recording would otherwise be marked captioned while carrying no caption
-#: track at all -- the same failure shape as an English-only publish.
+#: Put on the job row when the operator rejected every English cue.
 ALL_ENGLISH_REJECTED_REMEDIATION = (
     "Every English caption cue for this recording was rejected, so it has no caption "
-    "track in either language. A published recording must carry reviewed English and "
-    "Spanish captions, so it is being held here rather than marked captioned with "
-    "nothing attached. Open the caption review queue, filter to English, and edit the "
-    "cues with the correct wording (or approve the ones that are right). If the audio "
-    "is genuinely unusable, ask a technical admin to cancel the caption job rather "
-    "than leaving it held."
+    "track. Spanish uses the reviewed English text as its source, so the job remains "
+    "open. Open the caption review queue, filter to English, and edit the cues with the "
+    "correct wording (or approve the ones that are right)."
 )
 
 #: Put on the job row when the translation pass could not produce a review
@@ -154,11 +136,15 @@ ALL_ENGLISH_REJECTED_REMEDIATION = (
 #: published as if it were the whole recording.
 INCOMPLETE_TRANSLATION_REMEDIATION = (
     "CivicCast could translate only {queued} of this recording's {expected} approved "
-    "English caption cues into Spanish, so the Spanish track would be incomplete and "
-    "the recording is being held rather than published with part of it. This is "
+    "English caption cues into Spanish, so the selected Spanish track would be "
+    "incomplete and is being held. This is "
     "usually the translation model failing partway through a long meeting. Check the "
     "station's translation model (Settings > AI Models > Translation) and run "
     "'civiccast doctor'; the job retries the missing cues on its own."
+)
+SPANISH_REVIEW_PENDING_REMEDIATION = (
+    "The reviewed English caption track is attached. The selected Spanish track remains "
+    "in progress and will attach after its cues are reviewed."
 )
 
 
@@ -182,7 +168,6 @@ TranslationProviderFactory = Callable[[], TranslationProvider]
 __all__ = [
     "ALL_ENGLISH_REJECTED_REMEDIATION",
     "ALL_SPANISH_REJECTED_REMEDIATION",
-    "CAPTIONS_OFF_TEST_OVERRIDE_ENV",
     "CAPTIONS_SPANISH_ENV_VAR",
     "INCOMPLETE_TRANSLATION_REMEDIATION",
     "MISSING_TRANSLATOR_REMEDIATION",
@@ -194,6 +179,7 @@ __all__ = [
     "OFFLINE_CAPTION_JOB_STATE_COMPLETE",
     "OFFLINE_CAPTION_JOB_STATE_FAILED",
     "OFFLINE_CAPTION_JOB_STATE_PENDING",
+    "SPANISH_REVIEW_PENDING_REMEDIATION",
     "InMemoryOfflineCaptionJobStore",
     "OfflineCaptionJobConflictError",
     "OfflineCaptionJobRecord",
@@ -375,35 +361,29 @@ class InMemoryOfflineCaptionJobStore:
         ]
 
 
-@dataclass(frozen=True)
-class OfflineCaptionJobSettings:
-    """Deployment configuration for the offline caption job worker."""
+class OfflineCaptionJobSettings(RecordedCaptionSettings):
+    """Station policy plus worker timing for the offline caption job."""
 
-    mode: str = OFFLINE_CAPTION_JOB_MODE_INLINE
-    poll_seconds: float = 60.0
-    backoff_seconds: float = 300.0
-    max_attempts: int = 4
-    chunk_seconds: float = OFFLINE_CAPTION_CHUNK_SECONDS
-    #: Recorded-Spanish translation leg. **Not configurable in a shipping
-    #: profile, and never set from the environment** -- a published
-    #: recording carrying a reviewed Spanish track alongside English is an
-    #: owner requirement, not a station preference (Longmont is ~30%
-    #: Latino). A published recording's operator-approved English captions
-    #: are translated to Spanish and queued for their OWN review pass, and
-    #: neither track attaches until both passes are complete.
-    #:
-    #: The field survives only so a *test fixture* can construct a worker
-    #: with the leg off to exercise the English half in isolation. Nothing
-    #: in ``from_env`` (or anywhere else in production wiring) can set it
-    #: to ``False``; ``from_env`` raises when the retired
-    #: ``CIVICCAST_OFFLINE_CAPTION_SPANISH`` switch asks for English-only,
-    #: rather than starting a station that would quietly publish
-    #: English-only recordings.
-    spanish_enabled: bool = True
-    #: Target language tag for that leg. ``es`` today; kept configurable so
-    #: another station could translate to a different language without a code
-    #: change, though only Spanish is a shipped requirement.
-    spanish_target_language: str = SPANISH_CAPTION_LANGUAGE
+    poll_seconds: float = Field(default=60.0, gt=0)
+    backoff_seconds: float = Field(default=300.0, gt=0)
+    max_attempts: int = Field(default=4, gt=0)
+    chunk_seconds: float = Field(default=OFFLINE_CAPTION_CHUNK_SECONDS, gt=0)
+
+    @property
+    def mode(self) -> str:
+        """Compatibility view for existing startup diagnostics."""
+
+        return OFFLINE_CAPTION_JOB_MODE_INLINE if self.enabled else OFFLINE_CAPTION_JOB_MODE_OFF
+
+    @property
+    def spanish_enabled(self) -> bool:
+        """Whether Spanish is selected for this station."""
+
+        return "es" in self.languages
+
+    @property
+    def spanish_target_language(self) -> str:
+        return SPANISH_CAPTION_LANGUAGE
 
     @classmethod
     def from_env(cls) -> OfflineCaptionJobSettings:
@@ -417,23 +397,12 @@ class OfflineCaptionJobSettings:
                 f"CIVICCAST_OFFLINE_CAPTION_JOB must be one of "
                 f"{', '.join(_OFFLINE_CAPTION_JOB_MODES)}; got {mode!r}."
             )
-        if mode == OFFLINE_CAPTION_JOB_MODE_OFF and not _captions_off_override_allowed():
-            raise ValueError(
-                "CIVICCAST_OFFLINE_CAPTION_JOB=off disables offline captioning entirely, "
-                "so published recordings would carry no caption track in any language. "
-                "Captions on the published file are the legal obligation this job exists "
-                "to meet (spec section 4), not a performance option, so CivicCast will "
-                "not start with them switched off. Remove CIVICCAST_OFFLINE_CAPTION_JOB "
-                "from the station environment and start CivicCast again. If the caption "
-                "model is the problem, run 'civiccast doctor' -- a station with no model "
-                "staged still starts, queues the work, and reports the gap on each job "
-                f"rather than silently publishing uncaptioned. ({CAPTIONS_OFF_TEST_OVERRIDE_ENV} "
-                "exists for automated tests only and must never be set on a station.)"
-            )
-        _reject_retired_spanish_switch()
         defaults = cls()
+        station_defaults = RecordedCaptionSettings.from_env()
         return cls(
-            mode=mode,
+            enabled=(mode == OFFLINE_CAPTION_JOB_MODE_INLINE) and station_defaults.enabled,
+            languages=station_defaults.languages,
+            completion_requirement=station_defaults.completion_requirement,
             poll_seconds=_env_positive_float(
                 "CIVICCAST_OFFLINE_CAPTION_POLL_SECONDS", defaults.poll_seconds
             ),
@@ -446,9 +415,6 @@ class OfflineCaptionJobSettings:
             chunk_seconds=_env_positive_float(
                 "CIVICCAST_OFFLINE_CAPTION_CHUNK_SECONDS", defaults.chunk_seconds
             ),
-            # spanish_enabled is deliberately NOT read from the environment
-            # -- see the field's docstring. It keeps its ``True`` default in
-            # every profile this classmethod can produce.
         )
 
 
@@ -463,65 +429,6 @@ def _env_positive_float(name: str, default: float) -> float:
     if value <= 0:
         raise ValueError(f"{name} must be greater than zero; got {raw!r}.")
     return value
-
-
-def _captions_off_override_allowed() -> bool:
-    """True only when the explicit test-only captions-off override is set.
-
-    Deliberately a separate variable from ``CIVICCAST_OFFLINE_CAPTION_JOB``
-    rather than an extra accepted value on it: a station operator following
-    a stale runbook types ``off``, and the point is that ``off`` must fail.
-    Turning captions off takes two coordinated variables, one of which says
-    ``FOR_TESTS`` in its own name, so it cannot be reached by accident or
-    copied out of a support thread without the person noticing what they are
-    doing. Set by test fixtures only -- see ``tests/conftest.py`` and
-    ``TestCaptionsCannotBeSwitchedOff``.
-    """
-
-    return os.environ.get(CAPTIONS_OFF_TEST_OVERRIDE_ENV, "").strip().lower() in _TRUE_ENV_VALUES
-
-
-def _reject_retired_spanish_switch() -> None:
-    """Fail startup rather than silently ignore an English-only request.
-
-    ``CIVICCAST_OFFLINE_CAPTION_SPANISH`` used to be able to turn the
-    recorded-Spanish leg off. It cannot any more: a caption-eligible
-    published recording must carry a reviewed Spanish track, so there is no
-    supported English-only configuration. A station that still carries the
-    switch set to a false value is asking for behavior CivicCast will not
-    do, and the worst possible answer is to start anyway and let the
-    operator believe the setting took -- they would find out from a
-    resident. So it raises here, at ``from_env``, which the app factory
-    calls during startup (before any recording is queued), with the name of
-    the variable to remove.
-
-    A true value asks for what already happens unconditionally, so it is a
-    no-op rather than a failure; it is logged so the operator learns the
-    variable no longer does anything.
-    """
-
-    raw = os.environ.get(_SPANISH_ENV_VAR, "").strip().lower()
-    if not raw:
-        return
-    if raw in _TRUE_ENV_VALUES:
-        _LOG.info(
-            "%s is set to %r, which is now the only supported behavior; the variable "
-            "no longer does anything and can be removed.",
-            _SPANISH_ENV_VAR,
-            raw,
-        )
-        return
-    if raw in _FALSE_ENV_VALUES:
-        raise ValueError(
-            f"{_SPANISH_ENV_VAR}={raw!r} would publish recordings with English captions "
-            "only. A published recording must carry an operator-reviewed Spanish caption "
-            "track alongside English, so this switch can no longer disable it. Remove "
-            f"{_SPANISH_ENV_VAR} from the station environment and start CivicCast again."
-        )
-    raise ValueError(
-        f"{_SPANISH_ENV_VAR} must be one of "
-        f"{', '.join((*_TRUE_ENV_VALUES, *_FALSE_ENV_VALUES))}; got {raw!r}."
-    )
 
 
 def _env_positive_int(name: str, default: int) -> int:
@@ -661,6 +568,7 @@ class OfflineCaptionJobWorker:
         *,
         runtime_factory: CaptionRuntimeFactory,
         settings: OfflineCaptionJobSettings,
+        settings_provider: Callable[[], RecordedCaptionSettings] | None = None,
         translation_provider_factory: TranslationProviderFactory | None = None,
         cdn_republisher: CaptionPackageCdnRepublisher | None = None,
         retention_policy: CaptionEvidenceRetentionPolicy | None = None,
@@ -669,13 +577,13 @@ class OfflineCaptionJobWorker:
         self._review_store = review_store
         self._runtime_factory = runtime_factory
         self._settings = settings
+        self._settings_provider = settings_provider
         # Built lazily on first Spanish translation, same reason as
         # ``_runtime`` -- a station with nothing to translate never loads
         # the translation model. ``None`` means "no translation runtime
-        # configured", which is a station MISCONFIGURATION, not an
-        # English-only mode: a job that reaches the Spanish leg without a
-        # translator fails with MISSING_TRANSLATOR_REMEDIATION on the row
-        # rather than publishing English alone. app.py always supplies the
+        # configured", which records MISSING_TRANSLATOR_REMEDIATION when a
+        # selected Spanish track cannot be generated. In english_reviewed
+        # mode the reviewed English track can already be attached. app.py supplies the
         # factory in production.
         self._translation_provider_factory = translation_provider_factory
         self._translation_provider: TranslationProvider | None = None
@@ -731,6 +639,12 @@ class OfflineCaptionJobWorker:
         not-ready result and is never treated as a refusal here -- see
         ``_sweep_retention``.
         """
+
+        if self._settings_provider is not None:
+            station_settings = self._settings_provider()
+            self._settings = self._settings.model_copy(update=station_settings.model_dump())
+        if not self._settings.enabled:
+            return []
 
         retention = self._sweep_retention()
         if retention is not None and not retention.ready:
@@ -889,28 +803,12 @@ class OfflineCaptionJobWorker:
     ) -> OfflineCaptionJobRecord:
         """Two-phase publish gate (spec §4.2, operator review before publish).
 
-        Phase one gates on the ENGLISH review pass. Once English is fully
-        decided and something was approved, the recorded-Spanish leg
-        translates those approved English cues, queues the Spanish cues for
-        their OWN review pass, and gates a second time on that pass. Only
-        when BOTH passes are complete are both tracks attached in a single
-        manifest rewrite. Nothing is published while either language still
-        has pending rows -- an early attach would put unreviewed AI text on
-        the public record.
-
-        There is no English-only success path (owner requirement: Spanish
-        captions on published recordings are required, not optional). The
-        two ways the Spanish leg can fail to produce a track are both
-        handled as *blocked*, never as completion:
-
-        * no translation runtime wired -> ``_record_failure`` with
-          :data:`MISSING_TRANSLATOR_REMEDIATION`;
-        * every Spanish cue rejected -> ``_await_spanish_rework``, which
-          holds the job open with :data:`ALL_SPANISH_REJECTED_REMEDIATION`.
-
-        The one case that does complete without any track is an asset whose
-        *English* pass approved nothing: there is no English to publish
-        either, so nothing was captioned and there is nothing to hold for.
+        English is always the transcription/source language. Selected
+        Spanish cues are translated from reviewed English and receive their
+        own review pass. Under ``all_selected_languages`` neither track is
+        attached until both passes are ready. Under ``english_reviewed`` the
+        reviewed English track can attach first while the active job keeps
+        polling for Spanish; no unreviewed cue is published in either mode.
         """
 
         english = reviewed_caption_cues(
@@ -921,12 +819,9 @@ class OfflineCaptionJobWorker:
             # not a failure -- just poll again without burning the budget.
             return self._poll_again(row, now=now)
         if not english.cues:
-            # Every English cue was rejected. Symmetric with the Spanish
-            # all-rejected case below: completing here marks a published
-            # recording "captioned" while it carries no caption track in any
-            # language, and a legally required artifact that quietly resolves
-            # to zero is the same failure shape as one that quietly resolves
-            # to English alone. Hold the job actionable instead.
+            # Every English cue was rejected. Completing here would mark a
+            # recording "captioned" while it carries no caption track.
+            # Keep the job actionable instead.
             return self._hold_for_review(
                 row,
                 now=now,
@@ -937,18 +832,19 @@ class OfflineCaptionJobWorker:
                 ),
             )
 
-        # English is approved. Spanish is REQUIRED before anything attaches:
-        # both tracks land together, or neither does. There is no
-        # English-only success path for a caption-eligible recording.
+        # English is approved. Required mode keeps the historical atomic
+        # two-track attach; english_reviewed may publish English while the
+        # selected Spanish pass continues in this active job.
         spanish_cues: list[CaptionCue] | None = None
         if self._settings.spanish_enabled:
             if self._translation_provider_factory is None:
-                # Station misconfiguration, not a mode. Blocked with a
-                # remediation on the row rather than a green English-only
-                # publish. Consumes the attempt budget so the job lands in
-                # ``failed`` (and out of the polling loop) if the operator
-                # never repairs the runtime -- ``failed`` keeps the reason
-                # on the row for the staff "what's stuck and why" view.
+                if self._settings.completion_requirement == "english_reviewed":
+                    return self._publish_english_while_spanish_waits(
+                        row,
+                        english.cues,
+                        now=now,
+                        reason=MISSING_TRANSLATOR_REMEDIATION,
+                    )
                 return self._record_failure(
                     row,
                     now=now,
@@ -958,28 +854,33 @@ class OfflineCaptionJobWorker:
             try:
                 spanish = self._resolve_spanish_review(row.asset_id, english.cues)
             except Exception as exc:
-                # Covers both a crashing translator and
-                # OfflineCaptionTranslationError (a queue that came back
-                # short) -- either way the Spanish track cannot be trusted,
-                # so nothing attaches. The short-queue message is already
-                # the operator-facing remediation and goes on the row as-is.
+                if self._settings.completion_requirement == "english_reviewed":
+                    return self._publish_english_while_spanish_waits(
+                        row,
+                        english.cues,
+                        now=now,
+                        reason=f"Spanish translation is waiting to retry: {exc}",
+                    )
                 return self._record_failure(
                     row, now=now, error=str(exc), stage="caption translation"
                 )
             if spanish is None:
-                # Spanish cues are queued but still under review -- gate the
-                # final attach without burning the retry budget, exactly like
-                # a pending English pass.
+                if self._settings.completion_requirement == "english_reviewed":
+                    return self._publish_english_while_spanish_waits(
+                        row,
+                        english.cues,
+                        now=now,
+                        reason=SPANISH_REVIEW_PENDING_REMEDIATION,
+                    )
                 return self._poll_again(row, now=now)
             if not spanish.cues:
-                # Every Spanish cue was rejected. Publishing English alone
-                # here is precisely the fail-open this policy forbids, and
-                # failing the job would take the operator's remaining move
-                # away, so the job stays active and actionable: the operator
-                # edits or approves Spanish rows in the review queue and the
-                # next poll finishes the publish. Review decisions are not
-                # terminal (see CaptionReviewStore.edit/approve), so that
-                # move is really available.
+                if self._settings.completion_requirement == "english_reviewed":
+                    return self._publish_english_while_spanish_waits(
+                        row,
+                        english.cues,
+                        now=now,
+                        reason=ALL_SPANISH_REJECTED_REMEDIATION,
+                    )
                 return self._hold_for_review(
                     row,
                     now=now,
@@ -1030,6 +931,70 @@ class OfflineCaptionJobWorker:
                     "next_attempt_at": None,
                     "published_cue_count": attached.cue_count,
                     "last_error": "",
+                    "updated_at": now,
+                }
+            )
+        )
+
+    def _publish_english_while_spanish_waits(
+        self,
+        row: OfflineCaptionJobRecord,
+        english_cues: list[CaptionCue],
+        *,
+        now: datetime,
+        reason: str,
+    ) -> OfflineCaptionJobRecord:
+        """Attach reviewed English once, then keep the job active for Spanish."""
+
+        sidecar = published_caption_sidecar(Path(row.package_dir))
+        english_vtt = render_webvtt(english_cues)
+        try:
+            english_is_current = (
+                row.published_cue_count == len(english_cues)
+                and sidecar.is_file()
+                and sidecar.read_text(encoding="utf-8") == english_vtt
+            )
+        except OSError:
+            english_is_current = False
+
+        # The local sidecar can already match after an attach succeeded but
+        # its CDN upload failed. Preserve that retry obligation in last_error
+        # so the next poll does not mistake local equality for public delivery.
+        cdn_republish_retry_pending = (
+            self._cdn_republisher is not None
+            and row.last_error.startswith(_CAPTION_CDN_REPUBLISH_ERROR_PREFIX)
+        )
+        published_cue_count = row.published_cue_count
+        if not english_is_current or cdn_republish_retry_pending:
+            try:
+                attached = attach_reviewed_captions(Path(row.package_dir), english_cues)
+            except Exception as exc:
+                return self._record_failure(row, now=now, error=str(exc), stage="caption attach")
+            if self._cdn_republisher is not None:
+                try:
+                    self._cdn_republisher.republish(
+                        asset_id=row.asset_id,
+                        package_dir=Path(row.package_dir),
+                        attached=attached,
+                    )
+                except Exception as exc:
+                    return self._record_failure(
+                        row,
+                        now=now,
+                        error=f"{_CAPTION_CDN_REPUBLISH_ERROR_PREFIX}{exc}",
+                        stage="caption CDN republish",
+                    )
+            published_cue_count = attached.cue_count
+
+        if row.last_error == reason and row.published_cue_count == published_cue_count:
+            return row
+        return self._store.save(
+            row.model_copy(
+                update={
+                    "state": OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW,
+                    "next_attempt_at": now,
+                    "published_cue_count": published_cue_count,
+                    "last_error": reason,
                     "updated_at": now,
                 }
             )
@@ -1099,8 +1064,8 @@ class OfflineCaptionJobWorker:
         so a store error on cue 4 of 6 leaves 3 rows behind -- came back to a
         non-zero total on the retry, never queued the rest, and then, once an
         operator decided those 3, reported ``pending == 0`` and published a
-        3-of-6 Spanish track as ``complete``. Silent truncation of a legal
-        accessibility artifact, with nothing on the row to show it.
+            3-of-6 Spanish track as ``complete``. Silent truncation of a
+            selected caption track, with nothing on the row to show it.
 
         So the expected id set is derived up front from the approved English
         cues (:func:`~civiccast.translate.service.translated_cue_id`, the same

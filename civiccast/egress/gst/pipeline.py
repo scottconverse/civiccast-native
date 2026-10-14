@@ -72,9 +72,9 @@ def _file_location(uri: str) -> str:
 
 
 def gst_sink_element(spec: EgressSinkSpec) -> str:
-    """Return the GStreamer sink element that consumes the muxed MPEG-TS.
+    """Return the terminal GStreamer sink element for an egress target.
 
-    Raises ``ValueError`` for sink kinds that need a non-TS branch (sdi/rtmp).
+    RTMP's returned element is used after its per-target ``flvmux`` branch.
     """
     kind = spec.kind
     if kind == "file":
@@ -93,10 +93,13 @@ def gst_sink_element(spec: EgressSinkSpec) -> str:
     if kind == "srt":
         return f'srtsink uri="{spec.uri}"'
     if kind == "rtmp":
-        raise ValueError(
-            "rtmp sink needs an flvmux branch off the raw tee, not the TS mux; "
-            "Stage 1 ships TS sinks (udp-ts/local-ts/file/srt) — rtmp restream is a later slice"
-        )
+        if spec.secret_ref is not None:
+            raise ValueError(
+                "rtmp stream keys are credential handles and cannot be rendered into a "
+                "launch string; use the structured GStreamer output graph"
+            )
+        uri = spec.uri.replace("\\", "\\\\").replace('"', '\\"')
+        return f'rtmp2sink location="{uri}"'
     if kind == "sdi":
         raise ValueError(
             "sdi output is a pre-mux decklinkvideosink branch (SDI tier), not a TS sink"
@@ -169,15 +172,47 @@ def build_playout_pipeline_desc(
     if not sinks:
         raise ValueError("at least one egress sink is required")
 
-    head = f"input-selector name={selector_name} ! {encoder_chain(profile)} ! mpegtsmux name=mux"
-
-    sink_elements = [gst_sink_element(spec) for spec in sinks]
-    if len(sink_elements) == 1:
-        output = f"mux. ! queue ! {sink_elements[0]}"
-    else:
-        output = "mux. ! tee name=t " + " ".join(
-            f"t. ! queue ! {element}" for element in sink_elements
+    rtmp_sinks = [spec for spec in sinks if spec.kind == "rtmp"]
+    ts_sinks = [spec for spec in sinks if spec.kind != "rtmp"]
+    if not rtmp_sinks:
+        head = (
+            f"input-selector name={selector_name} ! {encoder_chain(profile)} ! mpegtsmux name=mux"
         )
+        sink_elements = [gst_sink_element(spec) for spec in ts_sinks]
+        if len(sink_elements) == 1:
+            output = f"mux. ! queue ! {sink_elements[0]}"
+        else:
+            output = "mux. ! tee name=t " + " ".join(
+                f"t. ! queue ! {element}" for element in sink_elements
+            )
+    else:
+        # This pure description helper carries video only. The active structured
+        # graph adds the corresponding per-output AAC chain before each FLV mux.
+        # Keep a separate mux for TS and a branch-local FLV mux for each RTMP
+        # target, with the common encoded video tee shared across them.
+        head = (
+            f"input-selector name={selector_name} ! {encoder_chain(profile)} ! "
+            "tee name=encoded_video"
+        )
+        outputs: list[str] = []
+        if ts_sinks:
+            if len(ts_sinks) == 1:
+                outputs.append(
+                    "encoded_video. ! queue ! mpegtsmux name=mux ! queue ! "
+                    + gst_sink_element(ts_sinks[0])
+                )
+            else:
+                outputs.append("encoded_video. ! queue ! mpegtsmux name=mux")
+                outputs.append(
+                    "mux. ! tee name=t "
+                    + " ".join(f"t. ! queue ! {gst_sink_element(spec)}" for spec in ts_sinks)
+                )
+        for index, spec in enumerate(rtmp_sinks):
+            outputs.append(
+                f"encoded_video. ! queue ! flvmux name=flv_{index} streamable=true ! "
+                f"{gst_sink_element(spec)}"
+            )
+        output = " ".join(outputs)
 
     source_legs = " ".join(
         f"{source.upstream} ! {selector_name}.sink_{index}" for index, source in enumerate(sources)

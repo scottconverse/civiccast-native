@@ -745,10 +745,10 @@ def test_f1_commit_log_requires_current_preroll_holds(engine_module, capsys) -> 
 # --- (1) settle only the current reload's first A/V boundary --------------------
 
 
-def test_deferred_commit_uses_first_current_outgoing_stream_eos(
+def test_deferred_commit_waits_for_both_outgoing_eos_and_tail_fill(
     engine_module, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The first A/V EOS is the boundary; waiting for both can stop the mux."""
+    """The first EOS starts a bridge; settlement waits for the common A/V end."""
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
     video_pad = _FakeOldPad("old-video", recorder, peer=None)
@@ -768,18 +768,45 @@ def test_deferred_commit_uses_first_current_outgoing_stream_eos(
         "old_audio_pad": audio_pad,
         "old_leg_eos": False,
         "new_leg_ready": True,
+        "outgoing_end": {},
+        "tail_padding_done": True,
+        "tail_padding_started": False,
+        "tail_padding_pad": None,
+        "tail_padding_target_ns": None,
+        "tail_padding_target_final": False,
+        "tail_padding_wake": threading.Event(),
+        "tail_padding_stop": threading.Event(),
+        "tail_padding_thread": None,
+        "tail_padding_start_id": None,
     }
+    # Keep this a state-ordering unit test: the native emitted-output check owns
+    # the real producer; this fake records its later completion explicitly.
+    engine._schedule_tail_padding = lambda _pending: None  # type: ignore[method-assign]
 
     assert engine._on_old_leg_eos(video_pad, 1) is False
-    assert commits == ["commit"]
-    # Queued sibling/duplicate callbacks arrive after the real commit cleared the
-    # transaction and cannot settle anything a second time.
-    assert engine._on_old_leg_eos(video_pad, 1) is False
+    assert commits == []
+    assert engine._pending_reload["tail_padding_pad"] is video_pad
     assert engine._on_old_leg_eos(audio_pad, 1) is False
+    assert commits == []
+    assert engine._pending_reload["tail_padding_target_final"] is True
+    engine._tail_padding_finished(1, None)
     assert commits == ["commit"]
     stderr = capsys.readouterr().err
     assert "CTRL reload: outgoing EOS observed stream=video (1/2 stream(s))" in stderr
-    assert "stream=audio" not in stderr
+    assert "CTRL reload: outgoing EOS observed stream=audio (2/2 stream(s))" in stderr
+    assert "tail-padding-complete" in stderr
+
+
+def test_switch_running_time_uses_common_maximum_without_trimming(engine_module) -> None:
+    switch, trim, spread, exceeded = engine_module.GstPlayoutEngine._select_switch_running_time(
+        [("video", 4_000_000_000), ("audio", 4_600_000_000)],
+        max_trim_ns=2_000_000_000,
+    )
+
+    assert switch == 4_600_000_000
+    assert trim is None
+    assert spread == 600_000_000
+    assert exceeded is False
 
 
 def test_deferred_video_only_commit_still_settles_on_its_only_eos(engine_module) -> None:
@@ -1078,8 +1105,8 @@ def test_finite_commit_arms_selector_cutoffs_before_rebase_snapshot(engine_modul
     video_cutoff = _index_of(calls, "add_probe:old-video:7:_drop_past_switch_point_probe")
     audio_cutoff = _index_of(calls, "add_probe:old-audio:7:_drop_past_switch_point_probe")
     snapshot = _index_of(calls, "outgoing-end-snapshot")
-    video_offset = _index_of(calls, "set_offset:new-video-src:1000")
-    audio_offset = _index_of(calls, "set_offset:new-audio-src:1000")
+    video_offset = _index_of(calls, "set_offset:new-video-src:1100")
+    audio_offset = _index_of(calls, "set_offset:new-audio-src:1100")
     switch_video = _index_of(calls, "video_sel.set_property:active-pad")
     switch_audio = _index_of(calls, "audio_sel.set_property:active-pad")
     release_video = _index_of(calls, "remove_probe:new-video-src:video-hold")
@@ -1391,6 +1418,7 @@ def test_first_selector_setter_failure_restores_current_leg(
         "rebase_new_leg": False,
         "on_settled": lambda committed, reason: results.append((committed, reason)),
         "commit_in_progress": False,
+        **_tail_padding_state(),
     }
 
     assert engine._commit_reload() is False
@@ -1955,6 +1983,7 @@ def test_retirement_thread_start_failure_aborts_before_selector_switch(
         "boundary_probes": [],
         "on_settled": lambda committed, reason: results.append((committed, reason)),
         "commit_in_progress": False,
+        **_tail_padding_state(),
     }
 
     class _NoStartThread:
@@ -2001,6 +2030,7 @@ def test_commit_watchdog_start_failure_cancels_retirement_and_aborts_before_swit
         "boundary_probes": [],
         "on_settled": lambda committed, reason: results.append((committed, reason)),
         "commit_in_progress": False,
+        **_tail_padding_state(),
     }
     monkeypatch.setattr(
         engine,
@@ -2349,6 +2379,19 @@ def _abort_pending(recorder: _Recorder, pads: list[Any], elements: list[Any]) ->
         "new_elements": elements,
         "commit_in_progress": False,
         "on_settled": None,
+        **_tail_padding_state(),
+    }
+
+
+def _tail_padding_state() -> dict[str, Any]:
+    """Lifecycle fields present on every production pending reload transaction."""
+    return {
+        "tail_padding_done": True,
+        "tail_padding_started": False,
+        "tail_padding_stop": threading.Event(),
+        "tail_padding_wake": threading.Event(),
+        "tail_padding_start_id": None,
+        "tail_padding_thread": None,
     }
 
 
@@ -2733,8 +2776,8 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
     engine._begin_reload_commit(pending)
 
     calls = recorder.calls
-    video_offset = _index_of(calls, "set_offset:new-video-src:1000000000")
-    audio_offset = _index_of(calls, "set_offset:new-audio-src:1000000000")
+    video_offset = _index_of(calls, "set_offset:new-video-src:1100000000")
+    audio_offset = _index_of(calls, "set_offset:new-audio-src:1100000000")
     arm_video = _index_of(calls, "add_probe:new-video-src:1:_report_new_leg_first_buffer")
     arm_audio = _index_of(calls, "add_probe:new-audio-src:1:_report_new_leg_first_buffer")
     release_video = _index_of(calls, "remove_probe:new-video-src:video-hold")
@@ -2746,7 +2789,7 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
     assert (
         "CTRL reload diagnostic: rebase-reference reload_id=28 mode=immediate "
         "streams=2 fallback=no ends=[video=1.000,audio=1.100] "
-        "pipeline_running_time=none switch_running_time=1.000"
+        "pipeline_running_time=none switch_running_time=1.100"
     ) in err
 
     # Fire each recorded new-leg probe the way the leg's own streaming thread
@@ -2762,7 +2805,7 @@ def test_u16_commit_arms_the_new_leg_observation_before_it_releases_the_holds(
         )
         assert (
             f"CTRL reload diagnostic: new-leg-first-buffer stream={label} reload_id=28 "
-            f"applied_offset=1.000 pts=5.000 {running} segment_base=1.100"
+            f"applied_offset=1.100 pts=5.000 {running} segment_base=1.100"
         ) in capsys.readouterr().err
 
 
@@ -2874,8 +2917,8 @@ def test_u16_commit_arms_the_selector_side_observation_in_the_same_window(
         _index_of(calls, "remove_probe:new-audio-src:audio-hold"),
     ]
     offsets = [
-        _index_of(calls, "set_offset:new-video-src:1000000000"),
-        _index_of(calls, "set_offset:new-audio-src:1000000000"),
+        _index_of(calls, "set_offset:new-video-src:1100000000"),
+        _index_of(calls, "set_offset:new-audio-src:1100000000"),
     ]
     assert max(offsets) < min(arms), calls
     assert max(arms) < min(releases), calls
@@ -2891,7 +2934,7 @@ def test_u16_commit_arms_the_selector_side_observation_in_the_same_window(
         )
         assert (
             f"CTRL reload diagnostic: new-leg-selector-first-buffer stream={label} "
-            f"pad=new-{label}-selector reload_id=28 applied_offset=1.000 pts=5.000 "
+            f"pad=new-{label}-selector reload_id=28 applied_offset=1.100 pts=5.000 "
             "running_time=6.100 segment_base=1.100"
         ) in capsys.readouterr().err
 
@@ -4556,7 +4599,7 @@ def test_u30_outgoing_eos_is_dropped_while_the_reload_is_still_building(
     assert observed["armed_during_build"] == 2, observed
     assert observed["video_boundary_probes"] == 1, observed
     assert observed["probe_return"] == engine_module.Gst.PadProbeReturn.DROP, observed
-    assert observed["old_leg_eos_during_build"] is True, observed
+    assert observed["old_leg_eos_during_build"] is False, observed
     err = capsys.readouterr().err
     assert (
         "CTRL reload diagnostic: outgoing-EOS-dropped pad=sink_0 stream=video pending_txn=1"
@@ -5179,8 +5222,8 @@ def test_u62_a_measured_switch_is_never_reclamped(
     assert "stage=fallback-switch-point-reclamped" not in capsys.readouterr().err
     applied = [call for call in recorder.calls if call.startswith("set_offset:new-")]
     assert applied == [
-        "set_offset:new-video-src:1000000000",
-        "set_offset:new-audio-src:1000000000",
+        "set_offset:new-video-src:1100000000",
+        "set_offset:new-audio-src:1100000000",
     ], applied
 
 
@@ -5441,6 +5484,9 @@ def test_u62b_the_measured_path_still_targets_its_own_measured_end(
     recorder = _Recorder()
     engine = _bare_engine_for_commit(engine_module, recorder)
     pending, _video_src, _audio_src = _u16_pending(recorder, txn_id=64)
+    # Make video the longer measured leg so the common switch cutoff and the
+    # audio mux fence target remain distinct values in this assertion.
+    pending["outgoing_end"][pending["old_video_pad"]]["end"] = 1_800_000_000
     video_pad = _FakeDrainPad("sink_65", "video/x-h264", 0, recorder)
     audio_pad = _FakeDrainPad("sink_66", "audio/mpeg", 0, recorder)
     engine._mux_input_pads = {"sink_65": video_pad, "sink_66": audio_pad}

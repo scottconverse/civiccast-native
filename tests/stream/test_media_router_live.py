@@ -13,15 +13,19 @@ from __future__ import annotations
 
 import os
 import subprocess
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, Lock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from civiccast.egress.hls_relay import _ManifestPublisher
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.store import InMemoryEgressStore
+from civiccast.stream import live_manifest_lock
 from civiccast.stream.media_router import live_router
 
 
@@ -102,6 +106,88 @@ class TestServeLiveManifest:
 
         assert "immutable" not in response.headers["cache-control"]
         assert "max-age=1" in response.headers["cache-control"]
+
+    def test_manifest_response_waits_for_publisher_and_captures_complete_bytes(
+        self,
+        store: InMemoryEgressStore,
+        client: TestClient,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _configure_hls_sink(store, channel_id="gov-ch12", directory=tmp_path)
+        _write_fake_live_tree(tmp_path)
+        manifest = tmp_path / "playlist.m3u8"
+        staging = tmp_path / "playlist.mux.m3u8"
+        replacement = b"#EXTM3U\n#EXT-X-VERSION:3\n#replacement-complete\n"
+        partial_write = Event()
+        finish_write = Event()
+
+        class _ObservedLock:
+            def __init__(self) -> None:
+                self._lock = Lock()
+                self._attempts_lock = Lock()
+                self._attempts = 0
+                self.reader_waiting = Event()
+
+            def __enter__(self):
+                with self._attempts_lock:
+                    self._attempts += 1
+                    if self._attempts == 2:
+                        self.reader_waiting.set()
+                self._lock.acquire()
+                return self
+
+            def __exit__(self, *_exc_info) -> None:
+                self._lock.release()
+
+        observed_lock = _ObservedLock()
+        monkeypatch.setattr(live_manifest_lock, "LIVE_MANIFEST_LOCK", observed_lock)
+
+        original_open = Path.open
+
+        class _PausedWriter:
+            def __init__(self, handle) -> None:
+                self._handle = handle
+
+            def __enter__(self):
+                self._handle.__enter__()
+                return self
+
+            def __exit__(self, *args):
+                return self._handle.__exit__(*args)
+
+            def write(self, data: bytes) -> int:
+                boundary = max(1, len(data) // 2)
+                written = self._handle.write(data[:boundary])
+                self._handle.flush()
+                partial_write.set()
+                assert finish_write.wait(timeout=15)
+                return written + self._handle.write(data[boundary:])
+
+            def truncate(self, *args):
+                return self._handle.truncate(*args)
+
+        def gated_open(path: Path, mode: str = "r", *args, **kwargs):
+            handle = original_open(path, mode, *args, **kwargs)
+            if path.resolve() == manifest.resolve() and mode == "r+b":
+                return _PausedWriter(handle)
+            return handle
+
+        monkeypatch.setattr(Path, "open", gated_open)
+        publisher = _ManifestPublisher(manifest_path=manifest, staging_path=staging)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            publish = pool.submit(publisher._write_manifest, replacement)
+            assert partial_write.wait(timeout=5)
+            read = pool.submit(client.get, "/media/live/gov-ch12/playlist.m3u8")
+            reader_waiting = observed_lock.reader_waiting.wait(timeout=2)
+            finish_write.set()
+            assert reader_waiting
+            assert publish.result(timeout=5)
+            response = read.result(timeout=5)
+
+        assert response.status_code == 200
+        assert response.content == replacement
 
     def test_live_segment_cache_control_is_long_lived_immutable(
         self, store: InMemoryEgressStore, client: TestClient, tmp_path: Path

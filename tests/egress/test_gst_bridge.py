@@ -17,7 +17,7 @@ from civiccast.egress.gst.bridge import (
     source_first_element,
 )
 from civiccast.egress.gst.bridge import sink_element_spec as _sink_element_spec
-from civiccast.egress.gst.graph import PlaylistLeg, SourceLeg
+from civiccast.egress.gst.graph import PlaylistLeg, SourceLeg, graph_from_json, graph_to_json
 from civiccast.egress.models import (
     CanonicalProfile,
     EgressConfig,
@@ -73,20 +73,12 @@ def test_sink_element_spec_file_and_srt() -> None:
     assert srt_spec.props["uri"] == "srt://h:7001"
 
 
-def test_sink_element_spec_rejects_rtmp() -> None:
-    with pytest.raises(ValueError, match="rtmp"):
-        sink_element_spec(EgressSinkSpec(kind="rtmp", label="r", uri="rtmp://h/app"))
-
-
-def test_sink_element_spec_rtmp_error_names_supported_kinds() -> None:
-    """DEFECT B: the fallthrough error must name the supported kinds, not just
-    say the one it rejected — an operator/log-reader needs to know what to use
-    instead, not just what didn't work."""
-    with pytest.raises(ValueError, match="rtmp") as excinfo:
-        sink_element_spec(EgressSinkSpec(kind="rtmp", label="r", uri="rtmp://h/app"))
-    message = str(excinfo.value)
-    for kind in ("srt", "local-ts", "udp-ts", "file", "sdi", "hls"):
-        assert kind in message
+def test_sink_element_spec_rtmp_uses_secret_safe_terminal_sink() -> None:
+    spec = EgressSinkSpec(kind="rtmp", label="r", uri="rtmps://h/app", secret_ref="rtmp-stream-key")
+    element = sink_element_spec(spec)
+    assert element.factory == "rtmp2sink"
+    assert element.props == {"location": "rtmps://h/app"}
+    assert element.secret_props == {"stream": "rtmp-stream-key"}
 
 
 def test_sink_element_spec_hls_produces_a_valid_element_chain() -> None:
@@ -153,6 +145,17 @@ def test_sink_branches_from_config_builds_queue_plus_sink_and_skips_sdi() -> Non
     assert branches[1][1].factory == "filesink"
 
 
+def test_sink_branches_from_config_rejects_rtmp_without_its_flv_mux_branch() -> None:
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        sinks=[EgressSinkSpec(kind="rtmp", label="rtmp", uri="rtmp://host/app/key")],
+    )
+    with pytest.raises(ValueError, match="FLV output-branch builder"):
+        sink_branches_from_config(config)
+
+
 def test_sink_branches_from_config_builds_a_real_branch_for_hls() -> None:
     """DEFECT A: an hls sink in the graph builder's own sink-branch assembly
     (the function ``graph_from_config`` actually calls) must produce a real
@@ -197,6 +200,65 @@ def test_graph_from_config_builds_program_playlist_and_slate() -> None:
     assert slate.elements[0].factory == "videotestsrc"
     assert graph.mux.factory == "mpegtsmux"
     assert graph.sinks[0][1].factory == "udpsink"
+
+
+def test_graph_from_config_builds_per_output_rtmp_and_normalized_ts_branches() -> None:
+    config = EgressConfig(
+        channel_id="ch1",
+        enabled=True,
+        slate_message="Please stand by",
+        loudness_target_lufs=-16.0,
+        sinks=[
+            EgressSinkSpec(
+                kind="file",
+                label="cable-capture",
+                uri="file:///tmp/capture.ts",
+                loudness_regime="atsc-a85",
+                eas_tone_strip_enabled=False,
+            ),
+            EgressSinkSpec(
+                kind="rtmp",
+                label="streaming",
+                uri="rtmps://ingest.example/live",
+                secret_ref="rtmp-key-handle",
+                eas_tone_strip_enabled=True,
+            ),
+        ],
+    )
+    plan = EgressSourcePlan(
+        channel_id="ch1",
+        segments=[EgressSourceSegment(label="clip", path="/m/clip.ts", duration_seconds=10)],
+    )
+
+    graph = graph_from_config(config, plan)
+    assert graph.sinks == ()
+    assert graph.audio_encoder == ()
+    assert [branch.mux.factory for branch in graph.output_branches] == ["mpegtsmux", "flvmux"]
+
+    cable, streaming = graph.output_branches
+    assert streaming.mux.props["streamable"] is True
+    normalizer = next(spec for spec in cable.audio_chain if spec.factory == "audioloudnorm")
+    assert cable.audio_latency_ns == 3_000_000_000
+    assert normalizer.props == {
+        "loudness-target": -24.0,
+        "loudness-range-target": 11.0,
+        "max-true-peak": -1.5,
+    }
+    assert not any(spec.factory == "audiochebband" for spec in cable.audio_chain)
+    assert [spec.factory for spec in streaming.audio_chain].count("audiochebband") == 2
+    assert streaming.sinks[-1].factory == "rtmp2sink"
+    assert streaming.sinks[-1].props == {"location": "rtmps://ingest.example/live"}
+    assert streaming.sinks[-1].secret_props == {"stream": "rtmp-key-handle"}
+    assert streaming.audio_latency_ns == 0
+    assert streaming.video_chain[-1].props["caps"] == "video/x-h264,stream-format=avc,alignment=au"
+    assert cable.audio_chain[0].props["max-size-time"] == 8_000_000_000
+    assert cable.video_chain[0].props["max-size-time"] == 8_000_000_000
+
+    serialized = graph_to_json(graph)
+    assert "rtmp-key-handle" in serialized  # opaque handle only; no stream key is materialized
+    restored = graph_from_json(serialized)
+    assert restored.output_branches == graph.output_branches
+    assert restored.max_output_audio_latency_ns == 3_000_000_000
 
 
 def test_graph_from_config_fails_closed_on_a_bypassed_program_plan() -> None:

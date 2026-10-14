@@ -74,6 +74,10 @@ __all__ = [
 
 PLUGIN_LICENSE: Final[dict[str, str]] = {
     "gstapp.dll": "LGPL-2.1-or-later",
+    # Probed 2026-10-13 with gst-inspect-1.0 audiochebband in the pinned
+    # 1.28.5 tree: License=LGPL, Source module=gst-plugins-good. The module's
+    # upstream COPYING.LIB is LGPL-2.1-or-later.
+    "gstaudiofx.dll": "LGPL-2.1-or-later",
     "gstaudioconvert.dll": "LGPL-2.1-or-later",
     "gstaudioparsers.dll": "LGPL-2.1-or-later",
     "gstaudioresample.dll": "LGPL-2.1-or-later",
@@ -137,6 +141,11 @@ PLUGIN_LICENSE: Final[dict[str, str]] = {
     "gstnvcodec.dll": "LGPL-2.1-or-later",
     "gstopenh264.dll": "BSD-2-Clause",
     "gstplayback.dll": "LGPL-2.1-or-later",
+    # Probed 2026-10-13 with gst-inspect-1.0 audioloudnorm in the pinned
+    # 1.28.5 tree: License=MPL, Source module=gst-plugin-audiofx, version
+    # 0.15.3-cee45224c. This Rust plugin follows gst-plugins-rs' MPL-2.0
+    # workspace license, matching gstrsclosedcaption.dll below.
+    "gstrsaudiofx.dll": "MPL-2.0",
     "gstrsclosedcaption.dll": "MPL-2.0",
     "gstrtmp.dll": "LGPL-2.1-or-later",
     "gstrtmp2.dll": "LGPL-2.1-or-later",

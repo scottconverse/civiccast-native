@@ -110,6 +110,12 @@ from civiccast.captions.persistence import (
 )
 from civiccast.captions.review import InMemoryCaptionReviewStore
 from civiccast.captions.router import staff_router as captions_staff_router
+from civiccast.captions.settings import (
+    RecordedCaptionSettings,
+    RecordedCaptionSettingsStore,
+    default_recorded_caption_settings_path,
+)
+from civiccast.captions.settings_router import staff_router as recorded_caption_settings_router
 from civiccast.captions.tap_worker import CaptionTapWorkerSettings, build_tap_worker
 from civiccast.captions.vod_job import (
     InMemoryOfflineCaptionJobStore,
@@ -1612,12 +1618,19 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
                 enabled=True,
             )
         )
-    # K3 offline caption job: captions on the PUBLISHED file, which is the
-    # legal requirement (live captioning above is the accessibility one).
-    # On by default -- the floor caption engine ships with every install --
-    # and idle until a publish enqueues something, so an unqueued station
-    # never loads a model. Settings validate fail-fast here either way.
+    # Recorded-caption settings default from legacy environment values until
+    # the operator saves a station settings file. The worker reloads that
+    # file each scan so enabling, disabling, and language changes take effect
+    # without restarting the service.
     offline_caption_settings = OfflineCaptionJobSettings.from_env()
+    app.state.recorded_caption_settings_store = RecordedCaptionSettingsStore(
+        default_recorded_caption_settings_path(),
+        defaults=RecordedCaptionSettings(
+            enabled=offline_caption_settings.enabled,
+            languages=offline_caption_settings.languages,
+            completion_requirement=offline_caption_settings.completion_requirement,
+        ),
+    )
     offline_caption_worker = OfflineCaptionJobWorker(
         PostgresOfflineCaptionJobStore(session_factory),
         PostgresCaptionReviewStore(session_factory),
@@ -1625,9 +1638,8 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         # caption tier and inherits the hardware-adaptive device the native
         # station runtime published into the environment (PR #398).
         runtime_factory=lambda: build_caption_runtime(_build_ai_model_service(session_factory)),
-        # Recorded-Spanish leg: a published recording carries an
-        # operator-reviewed Spanish track alongside English (owner
-        # requirement). Mirrors the LIVE tap's translation wiring above
+        # Selected Spanish tracks use operator-reviewed translations.
+        # Mirrors the LIVE tap's translation wiring above
         # (build_translator at the CaptionTapWorker construction) -- the
         # operator-selected translation tier (local TranslateGemma by
         # default). Built lazily per attempt, same reason as the runtime
@@ -1648,6 +1660,7 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             build_asset_cdn_package_target_lookup(session_factory),
         ),
         settings=offline_caption_settings,
+        settings_provider=app.state.recorded_caption_settings_store.load,
     )
     app.state.offline_caption_worker = offline_caption_worker
     app.state.background_supervisors.append(
@@ -1655,7 +1668,7 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
             name="civiccast-offline-caption-worker",
             run_forever=offline_caption_worker.run_forever,
             poll_seconds=offline_caption_settings.poll_seconds,
-            enabled=offline_caption_settings.mode == "inline",
+            enabled=True,
         )
     )
     # Async summary generation job: field evidence 2026-08-29 (candidate #17) --
@@ -2639,6 +2652,7 @@ def create_app() -> FastAPI:
     app.include_router(audio_tracks_staff_router)
     app.include_router(audio_tracks_public_router)
     app.include_router(captions_staff_router)
+    app.include_router(recorded_caption_settings_router)
     app.include_router(summary_staff_router)
     app.include_router(ai_models_staff_router)
     app.include_router(metadata_staff_router)

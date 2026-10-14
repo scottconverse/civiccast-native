@@ -851,31 +851,11 @@ _REBASE_OBSERVER_DEADLINE_S = 1.0
 # enough not to spin.
 _REBASE_DRAIN_POLL_MS = 20
 
-# U56 round 4: the switch point at a seamless change is the end of the SHORTER
-# outgoing leg, and this is the bound on how much of the LONGER leg it may throw
-# away. The value-bounded fence above passes the outgoing tail the switch point
-# already accounts for; taking the MAX of the two ends (the rule until now)
-# accounts for the longer leg only, so on the shorter stream's own timeline the
-# new leg starts later than the outgoing one stopped and the difference never
-# airs. Measured live 2026-09-27, the emitted hole IS that difference: 0.631s at
-# the education seam, video end 8998.836 vs audio end 8999.467, and the audio was
-# clean at every one of the 14 boundaries the coordinator tallied -- because the
-# audio is the longer leg on 291 of the 295 boundaries in this slice's census of
-# the three copied worker logs. Switching at the shorter leg's end instead cuts
-# the longer leg's tail at that value, which is exactly what the same fence
-# already did with it, and neither stream then has a gap: the shorter one has
-# nothing left to deliver, the longer one is cut where the new leg's offset
-# covers it.
-#
-# The bound is what keeps that trade from silencing a broken asset. It is right
-# only for the media's own A/V end offset; far above it the asymmetry is not a
-# boundary, and trimming would silently discard seconds of a programme to cover
-# for it. Past the bound today's max-based answer stands and the WARN in
-# ``_begin_reload_commit`` names the spread -- a truly broken asset must stay
-# visible. 2.0s sits above every healthy boundary in that census (98.3% within
-# +0.5..+0.9s, the extremes 0.033s and 2.781s) and far below the ~9.4s a
-# collapsed stream was measured to run behind, so it separates the two shapes by
-# a wide margin on both sides.
+# The switch point for a natural finite A/V ending is the later measured end.
+# The shorter stream is bridged with its final picture or silence after its EOS,
+# so choosing the common maximum preserves both tails instead of either trimming
+# the longer stream or leaving a hole on the shorter one. The previous 2s trim
+# bound described that old trade and is retained only for diagnostic compatibility.
 _SWITCH_SHORTER_LEG_MAX_TRIM_S = 2.0
 
 # U44: how far past its OWN previous arrival a video buffer may land at a mux sink
@@ -1050,6 +1030,10 @@ class GstPlayoutEngine:
                 flush=True,
             )
         self.graph = graph
+        # Per-branch processing hold is separate from mux-drain observations.
+        # Reload/EOS handoff uses this bounded graph-declared delay to avoid
+        # committing while audio remains inside a per-output normalizer.
+        self.output_audio_latency_ns = graph.max_output_audio_latency_ns
         self.swap = swap or InputSelectorSwap()
         self.teardown_timeout_s = teardown_timeout_s
         self.reload_timeout_s = reload_timeout_s
@@ -1984,51 +1968,54 @@ class GstPlayoutEngine:
             element = self._make(spec)
             self._link(prev, element)
             prev = element
-        mux = self._make(self.graph.mux)
-        self.mux = mux  # S9-5: the stall watchdog counts buffers on the mux src pad
         if self.graph.captions is not None:
-            # S11a: insert the CEA-708 embed leg between the encoder tail and the mux.
+            # S11a: insert the CEA-708 embed leg between the encoder and output fan-out.
             prev = self._build_caption_embed(self.graph.captions, prev)
-        self._link(prev, mux)
-
-        if self.graph.audio_encoder:
-            self.audio_selector = self._make_selector("asel")
-            audio_isolation_queue = self._make_selector_isolation_queue(
-                "program_audio_selector_isolation"
-            )
-            self._link(self.audio_selector, audio_isolation_queue)
-            audio_prev = audio_isolation_queue
-            if self.graph.audio_tap is not None:
-                audio_tee = self._make(ElementSpec("tee", "caption_audio_tap_tee"))
-                self._link(audio_prev, audio_tee)
-                self._build_audio_tap(audio_tee, self.graph.audio_tap)
-                audio_prev = audio_tee
-            for spec in self.graph.audio_encoder:
-                element = self._make(spec)
-                self._link(audio_prev, element)
-                audio_prev = element
-            self._link(audio_prev, mux)  # audio parser → mux (requests an audio sink pad)
-
-        # S11 gap 9: each secondary audio program (SAP / descriptive) is its own
-        # continuous source → AAC → an ADDITIONAL mux audio PID (the TV SAP button).
-        for secondary in self.graph.secondary_audio:
-            self._build_secondary_audio(secondary, mux)
-
-        if len(self.graph.sinks) == 1:
-            tail = mux
-            for spec in self.graph.sinks[0]:
-                element = self._make(spec)
-                self._link(tail, element)
-                tail = element
+        if self.graph.output_branches:
+            self._build_output_branches(prev)
         else:
-            tee = self._make(ElementSpec("tee", "t"))
-            self._link(mux, tee)
-            for branch in self.graph.sinks:
-                tail = tee  # tee src pads are request pads; link() requests one
-                for spec in branch:
+            mux = self._make(self.graph.mux)
+            self.mux = mux  # S9-5: the stall watchdog counts buffers on the mux src pad
+            self._link(prev, mux)
+
+            if self.graph.audio_encoder:
+                self.audio_selector = self._make_selector("asel")
+                audio_isolation_queue = self._make_selector_isolation_queue(
+                    "program_audio_selector_isolation"
+                )
+                self._link(self.audio_selector, audio_isolation_queue)
+                audio_prev = audio_isolation_queue
+                if self.graph.audio_tap is not None:
+                    audio_tee = self._make(ElementSpec("tee", "caption_audio_tap_tee"))
+                    self._link(audio_prev, audio_tee)
+                    self._build_audio_tap(audio_tee, self.graph.audio_tap)
+                    audio_prev = audio_tee
+                for spec in self.graph.audio_encoder:
+                    element = self._make(spec)
+                    self._link(audio_prev, element)
+                    audio_prev = element
+                self._link(audio_prev, mux)  # audio parser → mux (requests an audio sink pad)
+
+            # S11 gap 9: each secondary audio program (SAP / descriptive) is its own
+            # continuous source → AAC → an ADDITIONAL mux audio PID (the TV SAP button).
+            for secondary in self.graph.secondary_audio:
+                self._build_secondary_audio(secondary, mux)
+
+            if len(self.graph.sinks) == 1:
+                tail = mux
+                for spec in self.graph.sinks[0]:
                     element = self._make(spec)
                     self._link(tail, element)
                     tail = element
+            else:
+                tee = self._make(ElementSpec("tee", "t"))
+                self._link(mux, tee)
+                for branch in self.graph.sinks:
+                    tail = tee  # tee src pads are request pads; link() requests one
+                    for spec in branch:
+                        element = self._make(spec)
+                        self._link(tail, element)
+                        tail = element
 
         # Source halves (hot-swappable): each leg → a video (and optional audio) pad.
         for leg in self.graph.sources:
@@ -2043,6 +2030,76 @@ class GstPlayoutEngine:
 
         if self.selector_sink_pads:
             self.selector.set_property("active-pad", self.selector_sink_pads[0])
+
+    def _build_output_branches(self, encoded_video: Gst.Element) -> None:
+        """Fan shared encoded video and selected raw audio into independent muxes."""
+        branches = self.graph.output_branches
+        video_source = encoded_video
+        if len(branches) > 1:
+            video_source = self._make(ElementSpec("tee", "output_video_tee"))
+            self._link(encoded_video, video_source)
+
+        has_audio = any(branch.audio_chain for branch in branches)
+        audio_source: Gst.Element | None = None
+        if has_audio:
+            self.audio_selector = self._make_selector("asel")
+            audio_isolation_queue = self._make_selector_isolation_queue(
+                "program_audio_selector_isolation"
+            )
+            self._link(self.audio_selector, audio_isolation_queue)
+            audio_source = audio_isolation_queue
+            if self.graph.audio_tap is not None:
+                audio_tap_tee = self._make(ElementSpec("tee", "caption_audio_tap_tee"))
+                self._link(audio_source, audio_tap_tee)
+                self._build_audio_tap(audio_tap_tee, self.graph.audio_tap)
+                audio_source = audio_tap_tee
+            if sum(bool(branch.audio_chain) for branch in branches) > 1:
+                output_audio_tee = self._make(ElementSpec("tee", "output_audio_tee"))
+                self._link(audio_source, output_audio_tee)
+                audio_source = output_audio_tee
+
+        muxes: list[tuple[ElementSpec, Gst.Element]] = []
+        for branch in branches:
+            mux = self._make(branch.mux)
+            muxes.append((branch.mux, mux))
+
+            video_tail = video_source
+            for spec in branch.video_chain:
+                element = self._make(spec)
+                self._link(video_tail, element)
+                video_tail = element
+            self._link(video_tail, mux)
+
+            if branch.audio_chain:
+                if audio_source is None:
+                    raise RuntimeError(
+                        f"output branch {branch.label!r} has audio but the graph has no audio selector"
+                    )
+                audio_tail = audio_source
+                for spec in branch.audio_chain:
+                    element = self._make(spec)
+                    self._link(audio_tail, element)
+                    audio_tail = element
+                self._link(audio_tail, mux)
+
+            # Secondary SAP/descriptive programs are MPEG-TS audio PIDs. They do
+            # not belong in FLV/RTMP output branches.
+            if branch.mux.factory == "mpegtsmux":
+                for secondary in self.graph.secondary_audio:
+                    self._build_secondary_audio(secondary, mux)
+
+            sink_tail = mux
+            for spec in branch.sinks:
+                element = self._make(spec)
+                self._link(sink_tail, element)
+                sink_tail = element
+
+        # The watchdog observes one actual mux output. Prefer TS when the graph
+        # has one; it carries the existing buffer-list counter contract.
+        self.mux = next(
+            (mux for spec, mux in muxes if spec.factory == "mpegtsmux"),
+            muxes[0][1] if muxes else None,
+        )
 
     def _instantiate_source_leg(
         self, leg: SourceLeg | PlaylistLeg
@@ -5142,6 +5199,21 @@ class GstPlayoutEngine:
             "old_leg_eos": (not switch_at_end_of_current) or self._plan_eos_held,
             "boundary_forced": False,
             "defer_timeout_id": None,
+            # A natural A/V end waits for BOTH EOS events. Once the first stream
+            # ends, a small producer keeps that selector's output continuous with
+            # a repeated final video frame or format-correct audio silence until
+            # the other stream's measured end. It is always off the streaming and
+            # GLib threads; the events are only wake/stop signals, never locks held
+            # across pad.push().
+            "tail_padding_done": True,
+            "tail_padding_started": False,
+            "tail_padding_pad": None,
+            "tail_padding_target_ns": None,
+            "tail_padding_target_final": False,
+            "tail_padding_wake": threading.Event(),
+            "tail_padding_stop": threading.Event(),
+            "tail_padding_thread": None,
+            "tail_padding_start_id": None,
             # Finite replacement timing state (immediate or deferred):
             #   new_src_pads   -- the new leg's own tail src pad(s) (video, audio).
             #                     These carry the hold probes AND the running-time
@@ -5314,7 +5386,8 @@ class GstPlayoutEngine:
                 max(1, int(self.defer_switch_timeout_s)), self._on_defer_switch_timeout, txn_id
             )
             return False
-        self._commit_reload()
+        if pending.get("tail_padding_done", True):
+            self._commit_reload()
         return False
 
     def _on_new_leg_hold(
@@ -5409,6 +5482,17 @@ class GstPlayoutEngine:
                 computed = self._buffer_end_running_time(pad, buffer, state["segment"])
                 if computed is not None:
                     state["end"], state["segment"] = computed
+                    # Keep only a ref to the latest buffer. The producer makes a
+                    # deep copy once on EOS; copying every raw video frame here
+                    # would turn a boundary observer into a frame-sized memcpy.
+                    with contextlib.suppress(Exception):
+                        state["last_buffer"] = buffer.copy()
+                    fill_pad = pending.get("tail_padding_pad")
+                    if fill_pad is not None and pad is not fill_pad:
+                        # Live frontier: let the filler follow the stream that is
+                        # still running without getting ahead of its latest end.
+                        pending["tail_padding_target_ns"] = int(computed[0])
+                        pending["tail_padding_wake"].set()
             return Gst.PadProbeReturn.OK
         event = info.get_event()
         if event is None:
@@ -5542,7 +5626,7 @@ class GstPlayoutEngine:
         *,
         max_trim_ns: int,
     ) -> tuple[int, tuple[str, int] | None, int, bool]:
-        """The switch point, from the two FINAL outgoing ends (U56 round 4).
+        """The shared switch point is the later observed outgoing end.
 
         Returns ``(switch_running_time, trim, spread_ns, bound_exceeded)``:
 
@@ -5550,17 +5634,12 @@ class GstPlayoutEngine:
           the value ``old_tail_cutoff_ns`` publishes to the fence. One number, two
           readers, and it has to stay that way: the fence exists to cut the
           retiring leg exactly where the offset stops accounting for it.
-        * ``trim`` -- ``(longer_stream, spread_ns)`` when the SHORTER leg's end was
-          chosen and the longer leg's tail past it is therefore cut, else ``None``.
-          ``None`` covers three different situations on purpose -- the two ends
-          agree (nothing to cut), only one stream was measured (nothing to compare
-          against), and the spread was over the bound -- because in all three the
-          answer is the same single end and the diagnostic names which one it was.
+        * ``trim`` -- always ``None``: the longer tail is retained, and the shorter
+          stream is bridged by ``_run_tail_padding`` through this common end.
         * ``spread_ns`` -- the difference between the two ends, ``0`` when fewer
           than two were measured. Reported even when nothing was trimmed, so the
           bound's own decision is readable from the log line.
-        * ``bound_exceeded`` -- the spread was over ``max_trim_ns``. The longer
-          leg's end stands (today's pre-round-4 answer) and the caller WARNs.
+        * ``bound_exceeded`` -- always false. No tail is trimmed by this choice.
 
         ``measured_ends`` is ``(label, end)`` in leg order, video first, from
         ``_reload_outgoing_ends_in_order`` -- labelled by PAD IDENTITY, so the
@@ -5570,17 +5649,10 @@ class GstPlayoutEngine:
         if not ends:
             raise ValueError("no outgoing end measured")
         longest = max(ends, key=lambda item: item[1])
-        shortest = min(ends, key=lambda item: item[1])
-        spread_ns = longest[1] - shortest[1]
+        spread_ns = longest[1] - min(item[1] for item in ends)
         if len(ends) == 1:
             return longest[1], None, 0, False
-        if spread_ns > max_trim_ns:
-            return longest[1], None, spread_ns, True
-        if spread_ns <= 0:
-            # The two legs ended together: the choice is a no-op and says so by
-            # reporting no trim, rather than naming a stream that lost nothing.
-            return longest[1], None, 0, False
-        return shortest[1], (longest[0], spread_ns), spread_ns, False
+        return longest[1], None, spread_ns, False
 
     @staticmethod
     def _switch_shorter_leg_diagnostic(
@@ -5603,7 +5675,7 @@ class GstPlayoutEngine:
         ends = dict(measured_ends)
         trimmed = _DIAGNOSTIC_NONE if trim is None else f"{trim[0]}:{trim[1] / Gst.SECOND:.3f}"
         return (
-            f"CTRL reload diagnostic: switch-at-shorter-leg reload_id={pending['txn_id']} "
+            f"CTRL reload diagnostic: switch-at-common-end reload_id={pending['txn_id']} "
             f"video_end={_seconds_or_none(ends.get('video'))} "
             f"audio_end={_seconds_or_none(ends.get('audio'))} "
             f"trimmed={trimmed} spread={_seconds_or_none(spread_ns)} "
@@ -5611,6 +5683,264 @@ class GstPlayoutEngine:
             f"bound_exceeded={'yes' if bound_exceeded else 'no'} "
             f"switch_running_time={_seconds_or_none(switch_running_time)}"
         )
+
+    def _schedule_tail_padding(self, pending: dict[str, Any]) -> None:
+        """Start the selected-output filler after the EOS probe has returned.
+
+        The probe queues a GLib callback while GStreamer still owns the selector's
+        streaming lock. A short main-loop timer moves the actual pad push out of
+        that critical section; the producer itself is also a worker thread.
+        """
+        if pending.get("tail_padding_start_id") is not None:
+            return
+        try:
+            pending["tail_padding_start_id"] = GLib.timeout_add(
+                1, self._start_tail_padding, pending
+            )
+        except Exception as exc:
+            pending["tail_padding_done"] = True
+            pending["tail_padding_error"] = f"could not schedule filler: {exc!r}"
+            print(
+                f"WARN: reload tail filler could not be scheduled for "
+                f"reload {pending['txn_id']}: {exc!r}",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    def _start_tail_padding(self, pending: dict[str, Any]) -> bool:
+        """Main-loop: start a bounded worker that bridges the first-ended stream."""
+        pending["tail_padding_start_id"] = None
+        if (
+            self._pending_reload is not pending
+            or self._stopping
+            or pending["tail_padding_stop"].is_set()
+        ):
+            return False
+        short_pad = pending.get("tail_padding_pad")
+        state = pending.get("outgoing_end", {}).get(short_pad) if short_pad is not None else None
+        template = None if state is None else state.get("last_buffer")
+        segment = None if state is None else state.get("segment")
+        if template is None or segment is None:
+            pending["tail_padding_done"] = True
+            pending["tail_padding_error"] = "the ended stream has no copyable final buffer/segment"
+            self._tail_padding_finished(pending["txn_id"], pending["tail_padding_error"])
+            return False
+        stream = "video" if short_pad is pending.get("old_video_pad") else "audio"
+        selector = self.selector if stream == "video" else self.audio_selector
+        src_pad = None if selector is None else selector.get_static_pad("src")
+        if src_pad is None:
+            pending["tail_padding_done"] = True
+            pending["tail_padding_error"] = f"{stream} selector has no src pad"
+            self._tail_padding_finished(pending["txn_id"], pending["tail_padding_error"])
+            return False
+        pending["tail_padding_done"] = False
+        pending["tail_padding_stream"] = stream
+        pending["tail_padding_thread"] = threading.Thread(
+            target=self._run_tail_padding,
+            args=(pending, short_pad, src_pad, template, segment, stream),
+            name=f"civiccast-reload-{stream}-tail-fill",
+            daemon=True,
+        )
+        try:
+            pending["tail_padding_thread"].start()
+        except Exception as exc:
+            pending["tail_padding_thread"] = None
+            self._tail_padding_finished(pending["txn_id"], repr(exc))
+        return False
+
+    @staticmethod
+    def _tail_padding_audio_shape(pad: Gst.Pad, template: Gst.Buffer) -> tuple[int, int, int]:
+        """Return (rate, bytes/sample, channels) for raw PCM silence generation."""
+        caps = pad.get_current_caps()
+        if caps is None or caps.get_size() < 1:
+            raise RuntimeError("audio selector input has no current raw caps")
+        structure = caps.get_structure(0)
+        if not structure.get_name().startswith("audio/x-raw"):
+            raise RuntimeError(f"audio filler requires raw PCM, got {structure.get_name()}")
+        fmt = structure.get_string("format") or "S16LE"
+        widths = {
+            "U8": 1,
+            "S8": 1,
+            "S16LE": 2,
+            "S16BE": 2,
+            "U16LE": 2,
+            "U16BE": 2,
+            "S24LE": 3,
+            "S24BE": 3,
+            "U24LE": 3,
+            "U24BE": 3,
+            "S24_32LE": 4,
+            "S24_32BE": 4,
+            "U24_32LE": 4,
+            "U24_32BE": 4,
+            "S32LE": 4,
+            "S32BE": 4,
+            "U32LE": 4,
+            "U32BE": 4,
+            "F32LE": 4,
+            "F32BE": 4,
+            "F64LE": 8,
+            "F64BE": 8,
+        }
+        bytes_per_sample = widths.get(fmt)
+        rate = int(structure.get_value("rate"))
+        channels = int(structure.get_value("channels"))
+        if bytes_per_sample is None or rate <= 0 or channels <= 0:
+            raise RuntimeError(f"unsupported raw audio caps for silence: {caps.to_string()}")
+        if template.get_size() % (bytes_per_sample * channels):
+            raise RuntimeError("final PCM buffer is not sample-frame aligned")
+        return rate, bytes_per_sample, channels
+
+    def _run_tail_padding(
+        self,
+        pending: dict[str, Any],
+        short_pad: Gst.Pad,
+        selector_src: Gst.Pad,
+        template_ref: Gst.Buffer,
+        segment: Gst.Segment,
+        stream: str,
+    ) -> None:
+        """Push repeated video or PCM silence up to the other stream's end.
+
+        This runs with no engine lock held and never on a pad-probe callback. The
+        other stream's buffer probe advances ``tail_padding_target_ns``; its EOS
+        makes that target final. The output clock paces synthetic buffers, and the
+        existing mux/rebase drain remains the final switch confirmation.
+        """
+        pending_id = pending["txn_id"]
+        error: str | None = None
+        try:
+            template = template_ref.copy_deep()
+            if template is None or template.pts == Gst.CLOCK_TIME_NONE:
+                raise RuntimeError("final buffer has no usable PTS")
+            duration = int(template.duration)
+            audio_shape: tuple[int, int, int] | None = None
+            audio_frames = 0
+            audio_silence = b"\x00"
+            if stream == "audio":
+                rate, bytes_per_sample, channels = self._tail_padding_audio_shape(
+                    short_pad, template
+                )
+                frame_bytes = bytes_per_sample * channels
+                audio_frames = template.get_size() // frame_bytes
+                if audio_frames <= 0:
+                    raise RuntimeError("final PCM buffer is empty")
+                duration = max(1, round(audio_frames * Gst.SECOND / rate))
+                audio_shape = (rate, bytes_per_sample, channels)
+                structure_format = (
+                    short_pad.get_current_caps().get_structure(0).get_string("format")
+                )
+                if structure_format and structure_format.startswith("U8"):
+                    audio_silence = b"\x80"
+            if duration <= 0 or duration == Gst.CLOCK_TIME_NONE:
+                raise RuntimeError("final buffer has no usable duration")
+            pts = int(template.pts) + duration
+            dts = (
+                int(template.dts) + duration
+                if template.dts != Gst.CLOCK_TIME_NONE
+                else Gst.CLOCK_TIME_NONE
+            )
+            run_now = self._pipeline_running_time_ms() * int(Gst.MSECOND)
+            mono_now = time.monotonic()
+            wake: threading.Event = pending["tail_padding_wake"]
+            stop: threading.Event = pending["tail_padding_stop"]
+            while not stop.is_set():
+                wake.clear()
+                target = pending.get("tail_padding_target_ns")
+                final = bool(pending.get("tail_padding_target_final"))
+                current_run = segment.to_running_time(Gst.Format.TIME, pts)
+                if current_run == Gst.CLOCK_TIME_NONE or current_run < 0:
+                    raise RuntimeError("cannot map synthetic PTS to running time")
+                current_run = int(current_run)
+                if target is None or current_run >= int(target):
+                    if final:
+                        break
+                    wake.wait(0.1)
+                    continue
+                remaining = int(target) - current_run
+                chunk_duration = duration
+                chunk_frames = audio_frames
+                if stream == "audio" and audio_shape is not None:
+                    rate, bytes_per_sample, channels = audio_shape
+                    chunk_frames = min(audio_frames, (remaining * rate) // int(Gst.SECOND))
+                    if chunk_frames <= 0:
+                        if final:
+                            break
+                        wake.wait(0.05)
+                        continue
+                    chunk_duration = max(1, round(chunk_frames * Gst.SECOND / rate))
+                else:
+                    chunk_duration = min(duration, remaining)
+                desired = mono_now + max(0.0, (current_run - run_now) / Gst.SECOND)
+                delay = desired - time.monotonic()
+                if delay > 0:
+                    wake.wait(min(delay, 0.1))
+                    continue
+                if stop.is_set():
+                    break
+                if stream == "video":
+                    filler = template.copy_deep()
+                    filler.pts = pts
+                    filler.dts = dts
+                    filler.duration = chunk_duration
+                else:
+                    assert audio_shape is not None
+                    _rate, bytes_per_sample, channels = audio_shape
+                    byte_count = chunk_frames * bytes_per_sample * channels
+                    filler = Gst.Buffer.new_allocate(None, byte_count, None)
+                    filler.fill(0, audio_silence * byte_count)
+                    filler.pts = pts
+                    filler.dts = dts
+                    filler.duration = chunk_duration
+                    if template.offset != Gst.BUFFER_OFFSET_NONE:
+                        filler.offset = int(template.offset) + audio_frames
+                    if template.offset_end != Gst.BUFFER_OFFSET_NONE:
+                        filler.offset_end = int(template.offset_end) + audio_frames
+                flow = selector_src.push(filler)
+                if flow != Gst.FlowReturn.OK:
+                    raise RuntimeError(f"{stream} selector filler push returned {flow.value_nick}")
+                pts += chunk_duration
+                if dts != Gst.CLOCK_TIME_NONE:
+                    dts += chunk_duration
+                if stream == "audio":
+                    audio_frames = chunk_frames
+        except Exception as exc:
+            error = repr(exc)
+        GLib.idle_add(self._tail_padding_finished, pending_id, error)
+
+    def _tail_padding_finished(self, txn_id: int, error: str | None) -> bool:
+        """Main-loop settlement after the filler producer stops pushing."""
+        pending = self._pending_reload
+        if pending is None or pending.get("txn_id") != txn_id:
+            return False
+        pending["tail_padding_thread"] = None
+        pending["tail_padding_done"] = True
+        if error:
+            pending["tail_padding_error"] = error
+            print(
+                f"WARN: reload tail filler stopped before its common end "
+                f"(reload_id={txn_id}): {error}",
+                file=sys.stderr,
+                flush=True,
+            )
+        else:
+            print(
+                f"CTRL reload diagnostic: tail-padding-complete "
+                f"stream={pending.get('tail_padding_stream', 'none')} "
+                f"target={_seconds_or_none(pending.get('tail_padding_target_ns'))} "
+                f"audio_latency={getattr(self, 'output_audio_latency_ns', 0)}ns "
+                f"reload_id={txn_id}",
+                file=sys.stderr,
+                flush=True,
+            )
+        expected = {pad for pad, _probe_id in pending.get("boundary_probes", ())}
+        if expected and expected <= pending.get("outgoing_eos_pads", set()):
+            pending["old_leg_eos"] = True
+        if pending.get("new_leg_ready") and (
+            pending.get("old_leg_eos") or pending.get("boundary_forced")
+        ):
+            self._commit_reload()
+        return False
 
     @staticmethod
     def _measure_first_buffer(pad: Any, info: Any) -> tuple[int | None, int | None, int | None]:
@@ -5838,21 +6168,12 @@ class GstPlayoutEngine:
         )
 
     def _on_old_leg_eos(self, pad: Gst.Pad, txn_id: int) -> bool:
-        """Main-loop: the first current outgoing stream reached its natural end.
+        """Main-loop: record outgoing EOS and bridge the first-ended A/V stream.
 
-        That first EOS is the A/V boundary and remains the cutover trigger. Waiting
-        for both streams is not safe behind ``cccombiner``/``mpegtsmux``: a native
-        three-worker counterexample reached video EOS on one channel, then stopped
-        output and never delivered audio EOS. The commit switches both selectors at
-        the first boundary. Native diagnostics separately identify whether the
-        subsequent retirement blocks in an element state transition
-        or in selector request-pad release.
-
-        Commit if the new leg is already ready; otherwise just record the boundary
-        -- the reload was triggered well before this point specifically so the new
-        leg should already be ready, but if the schedule/preparer ran unexpectedly
-        long the commit still waits for genuine readiness rather than switching to
-        a leg with nothing buffered yet.
+        The first EOS starts paced picture/silence padding on that selector's src
+        while the other stream continues. Only after both natural EOS events and
+        padding through the later measured end does the reload commit. This keeps
+        the mux fed while waiting, and preserves the complete longer tail.
 
         Known residual, disclosed rather than papered over: in THAT ordering the
         outgoing leg has ended and its EOS has been dropped, so nothing is feeding
@@ -5906,8 +6227,61 @@ class GstPlayoutEngine:
             file=sys.stderr,
             flush=True,
         )
-        pending["old_leg_eos"] = True
-        if pending["new_leg_ready"]:
+        if len(expected) <= 1:
+            pending["old_leg_eos"] = True
+            pending["tail_padding_done"] = True
+        else:
+            pending["tail_padding_done"] = False
+            ends_by_pad = {
+                outgoing_pad: pending.get("outgoing_end", {}).get(outgoing_pad, {}).get("end")
+                for outgoing_pad in expected
+            }
+            if len(seen & expected) == 1:
+                # The first-ended stream needs a live filler while its A/V partner
+                # finishes. The partner's buffer probe advances this target, so
+                # the filler never gets ahead of media still available on that leg.
+                pending["tail_padding_pad"] = pad
+                partner_end = max(
+                    (
+                        value
+                        for candidate, value in ends_by_pad.items()
+                        if candidate is not pad and value is not None
+                    ),
+                    default=None,
+                )
+                own_end = ends_by_pad.get(pad)
+                candidates = [end for end in (partner_end, own_end) if end is not None]
+                pending["tail_padding_target_ns"] = max(candidates) if candidates else None
+                pending["tail_padding_target_final"] = False
+                pending["tail_padding_started"] = True
+                pending["tail_padding_wake"].set()
+                self._schedule_tail_padding(pending)
+            else:
+                ends = self._reload_outgoing_ends_in_order(pending)
+                measured = [(label, end) for label, end in ends if end is not None]
+                if measured:
+                    short_label, _short_end = min(measured, key=lambda item: item[1])
+                    pending["tail_padding_pad"] = (
+                        pending["old_video_pad"]
+                        if short_label == "video"
+                        else pending["old_audio_pad"]
+                    )
+                    pending["tail_padding_target_ns"] = max(end for _label, end in measured)
+                pending["tail_padding_target_final"] = True
+                pending["tail_padding_wake"].set()
+                if not pending.get("tail_padding_started"):
+                    pending["tail_padding_started"] = True
+                    self._schedule_tail_padding(pending)
+                elif (
+                    pending.get("tail_padding_thread") is None
+                    and pending.get("tail_padding_start_id") is None
+                ):
+                    self._schedule_tail_padding(pending)
+        if (
+            pending.get("new_leg_ready")
+            and pending.get("old_leg_eos")
+            and pending.get("tail_padding_done", True)
+        ):
             self._commit_reload()
         return False
 
@@ -5926,6 +6300,19 @@ class GstPlayoutEngine:
             return False
         pending["boundary_forced"] = True
         print(f"CTRL reload: {reason} (reload_id={txn_id})", flush=True)
+        if pending.get("tail_padding_started") and not pending.get("tail_padding_done", True):
+            observed = [
+                end
+                for _label, end in self._reload_outgoing_ends_in_order(pending)
+                if end is not None
+            ]
+            if observed:
+                pending["tail_padding_target_ns"] = max(observed)
+            pending["tail_padding_target_final"] = True
+            pending["tail_padding_wake"].set()
+            if pending.get("tail_padding_thread") is None:
+                self._schedule_tail_padding(pending)
+            return True
         self._commit_reload()
         return True
 
@@ -6937,6 +7324,12 @@ class GstPlayoutEngine:
             # active media. Commit failure/stop owns recovery from this point.
             return
         self._pending_reload = None
+        pending["tail_padding_stop"].set()
+        pending["tail_padding_wake"].set()
+        if pending.get("tail_padding_start_id") is not None:
+            with contextlib.suppress(Exception):
+                GLib.source_remove(pending["tail_padding_start_id"])
+            pending["tail_padding_start_id"] = None
         self._release_selector_notify_handlers(pending)
         if pending["probe_id"] is not None:
             with contextlib.suppress(Exception):  # probe may already have auto-removed
@@ -7442,6 +7835,17 @@ class GstPlayoutEngine:
             affected.append((stream, match[1], match[0]))
         return affected
 
+    def _rebase_drain_deadline_s(self) -> float:
+        """Keep the mux-pad confirmation bound beyond declared output audio hold.
+
+        Per-output normalization buffers audio before the mux. Its graph metadata
+        is a real processing latency, while queue capacity is not; extend the
+        existing measured mux-drain window by that latency and still require the
+        mux-pad drain observation before selector handoff.
+        """
+        latency_ns = max(0, int(getattr(self, "output_audio_latency_ns", 0) or 0))
+        return float(_REBASE_DRAIN_DEADLINE_S + latency_ns / Gst.SECOND)
+
     def _arm_rebase_segment_observers(self, pending: dict[str, Any]) -> bool:
         """Watch this switch's pre-rebase arrivals at the affected mux sink pads.
 
@@ -7467,7 +7871,8 @@ class GstPlayoutEngine:
         affected = self._rebase_affected_mux_pads(pending)
         if not affected:
             return False
-        bound_ms = round((_REBASE_DRAIN_DEADLINE_S + _REBASE_OBSERVER_DEADLINE_S) * 1000)
+        drain_deadline_s = self._rebase_drain_deadline_s()
+        bound_ms = round((drain_deadline_s + _REBASE_OBSERVER_DEADLINE_S) * 1000)
         try:
             deadline_id = GLib.timeout_add(bound_ms, self._on_rebase_observer_deadline, pending)
         except Exception as exc:
@@ -7628,11 +8033,12 @@ class GstPlayoutEngine:
         held = self._rebase_drain_held(pending)
         started = pending.get("rebase_drain_started_t")
         waited = 0.0 if started is None else time.monotonic() - started
-        if held and waited < _REBASE_DRAIN_DEADLINE_S:
+        deadline_s = self._rebase_drain_deadline_s()
+        if held and waited < deadline_s:
             return True  # keep polling
         if held:
             print(
-                f"WARN: rebase drain did not empty within {_REBASE_DRAIN_DEADLINE_S:.1f}s "
+                f"WARN: rebase drain did not empty within {deadline_s:.1f}s "
                 f"for reload {pending['txn_id']} ({', '.join(held)} still queued at the mux); "
                 "switching anyway -- a stale buffer may still be re-dated by the segment",
                 file=sys.stderr,
@@ -7663,7 +8069,7 @@ class GstPlayoutEngine:
         )
         print(
             f"WARN: rebase arrival observer window closed after "
-            f"{_REBASE_DRAIN_DEADLINE_S + _REBASE_OBSERVER_DEADLINE_S:.1f}s for reload "
+            f"{self._rebase_drain_deadline_s() + _REBASE_OBSERVER_DEADLINE_S:.1f}s for reload "
             f"{pending.get('txn_id')}: no rebased segment crossed the mux sink pads "
             f"({pairs or 'no pads'}); removing the observers -- nothing is held off air",
             file=sys.stderr,
@@ -8370,6 +8776,17 @@ class GstPlayoutEngine:
             not pending.get("commit_in_progress", False)
             or not pending.get("selector_handoff_confirmed", False)
         ):
+            # A first-ended stream may have a producer pacing tail buffers while
+            # the other stream is still active. Stop and wake it before clearing
+            # the transaction so it cannot remain in its frontier wait after the
+            # pipeline has gone NULL.
+            pending.get("tail_padding_stop", threading.Event()).set()
+            pending.get("tail_padding_wake", threading.Event()).set()
+            tail_start_id = pending.get("tail_padding_start_id")
+            if tail_start_id is not None:
+                with contextlib.suppress(Exception):
+                    GLib.source_remove(tail_start_id)
+                pending["tail_padding_start_id"] = None
             # Do not synchronously dispose a still-prerolling leg here. Release its
             # probes and let the whole-pipeline NULL below own teardown under the
             # same bound.

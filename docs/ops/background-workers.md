@@ -231,8 +231,8 @@ proof row -- and resume on their next cycle once it is on. The runtime
 safe-to-air signal (`GET /api/staff/runtime-safe-to-air`) does not apply its
 caption-readiness gate while the switch is off; each channel reports
 `captions_expected: false`. Captions on **published recordings** (the
-offline caption job below) are unaffected — that is the legal requirement;
-this switch is the live/accessibility one.
+offline caption job below) use their separate recorded-caption settings;
+this switch controls only live captions.
 
 `CIVICCAST_CAPTION_TAP=off` in the native service environment overrides the
 profile setting and disables the tap. The native runtime normally sets the
@@ -447,18 +447,16 @@ operator review.
    `captions/captions.vtt` for records requests. Both are served by the
    existing published-gated `/media/vod/{asset_id}/...` route.
 
-Rejected cues are dropped. A queue that is rejected in full completes with
-the recording left uncaptioned rather than publishing text an operator
-refused.
+Rejected cues are dropped. Rejecting all cues does not publish rejected text
+or falsely establish that a usable caption track exists.
 
 **When captions exist relative to publication.** Approving publish makes the
 recording public immediately; the caption job runs afterwards, because a
 public record must not wait days on caption review. The operator-facing
-statement of this, used verbatim on every surface, is: *the recording is
-public immediately; captions attach after review — both languages together,
-never English alone.*
+statement is: *the recording is public immediately; selected captions attach
+after review according to the station's completion setting.*
 
-Publish-first does **not** mean best-effort. `POST /api/staff/publish/assets/
+When recorded captions are enabled, `POST /api/staff/publish/assets/
 {asset_id}/approve` queues the caption job **before** it approves anything,
 and returns **409** naming the cause if it cannot — no caption job store, no
 upload storage, or a failing enqueue. Nothing is published in that case, so
@@ -470,13 +468,13 @@ be pre-checked the same way (the recording is public by the time the retry's
 outcome is known), so it raises a 409 that says plainly that the portal
 publish succeeded and the caption job did not queue.
 
-**Recorded-Spanish captions (required, not optional).** A published
-recording carries an operator-reviewed **Spanish** caption track alongside
-English. This is a product requirement, not a station setting: there is no
-supported configuration that publishes a caption-eligible recording in
-English only, and `CIVICCAST_OFFLINE_CAPTION_SPANISH` no longer disables the
-leg (see the variable table below — a false value now stops startup with an
-error rather than silently taking effect).
+**Recorded-caption station settings.** Under **Setup > Station Profile >
+Recorded captions**, choose enabled/disabled processing, English with optional
+Spanish, and whether caption completion requires all selected languages or
+reviewed English. Existing stations retain the enabled English-and-Spanish,
+all-selected-languages defaults. English-only operation needs no translation
+runtime. Disabled processing skips new caption jobs and pauses existing work;
+it does not reject station startup or mark missing captions complete.
 
 With the Spanish leg running, `awaiting_review`
 becomes a two-phase gate. Once the **English** review pass is complete and
@@ -484,10 +482,12 @@ something was approved, the approved English cues are translated to Spanish
 through the same operator-selected translation tier the live tap uses (local
 TranslateGemma by default), and the Spanish cues are queued for their **own**
 operator review pass — the Spanish text is AI output too, so spec §4.2's
-operator-review-before-publish applies to it. The recording is not published
-until **both** passes are complete; then both tracks attach in one manifest
-rewrite (English `captions/en/playlist.m3u8` default + `captions.vtt`, Spanish
-`captions/es/playlist.m3u8` secondary + `captions.es.vtt`). The two passes are
+operator-review-before-publish applies to it. With all selected languages
+required, both tracks attach after both reviews. With reviewed English
+required, English may attach first and Spanish follows after its own review.
+The recording itself remains public while caption review proceeds. Track paths
+are English `captions/en/playlist.m3u8` default + `captions.vtt`, Spanish
+`captions/es/playlist.m3u8` secondary + `captions.es.vtt`. The two passes are
 separated by a `language` column on `caption_review_items` (migration
 `0083_caption_review_language`, default `en`); the operator console's review
 queue shows an EN/ES badge and a language filter. Spanish review rows are
@@ -497,19 +497,21 @@ cannot deadlock the Spanish track.
 
 No way the caption pass can come up empty resolves to a green job:
 
-* **No translation runtime available.** The job records an attempt with an
-  operator-facing remediation on `last_error` ("CivicCast has no translation
-  model available to produce the required Spanish track…"), retries on the
-  normal backoff, and lands in `failed` — with that same reason on the row —
-  if the runtime is never repaired. Fix it in **Settings → AI Models →
-  Translation**, or run `civiccast doctor`.
+* **Spanish selected but no translation runtime available.** With
+  `all_selected_languages`, the job records an attempt and remediation on
+  `last_error`, retries on normal backoff, and lands in `failed` if its
+  attempt budget runs out. With `english_reviewed`, reviewed English attaches
+  and the active job keeps waiting for Spanish, with the remediation visible.
+  English-only jobs need no translator. Fix translation in **Settings → AI
+  Models → Translation**, or run `civiccast doctor`.
 * **The operator rejected every Spanish cue.** The job stays in
   `awaiting_review` with a remediation on `last_error` and does **not** burn
   the retry budget: the block is a human decision, not a fault. Open the
   caption review queue, filter to Spanish, and edit the cues with the correct
   wording (or approve the ones that are right) — review decisions are not
-  terminal, so a rejected row can be edited. Publication continues on the next
-  poll once at least one Spanish cue is approved or edited.
+  terminal, so a rejected row can be edited. Spanish attachment continues on
+  the next poll after review finishes with at least one approved or edited
+  cue. Under `english_reviewed`, reviewed English can already be attached.
 * **The operator rejected every English cue.** Symmetric with the Spanish
   case: no English means nothing to translate and no track in either
   language, so the job stays in `awaiting_review` with its own remediation
@@ -558,13 +560,18 @@ record of publishing that package to the configured CDN.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `CIVICCAST_OFFLINE_CAPTION_JOB` | `inline` | `inline` runs the worker as a lifespan thread. **`off` refuses to start.** Captions on the published file are the legal obligation this job exists to meet, so switching them off is not a supported station configuration; the startup error names the variable and points at `civiccast doctor`. A station with no caption model staged still starts, still queues the work, and reports the gap on each job — it never publishes uncaptioned in silence. The model is loaded lazily, so an idle queue costs nothing. |
-| `CIVICCAST_ALLOW_CAPTIONS_OFF_FOR_TESTS` | unset | **Automated tests only; never set this on a station.** The only way to make `CIVICCAST_OFFLINE_CAPTION_JOB=off` take effect. Deliberately a second, coordinated variable with `FOR_TESTS` in its name, so captioning cannot be disabled by a stale runbook or a copied support-thread snippet. |
+| `CIVICCAST_OFFLINE_CAPTION_JOB` | `inline` | Initial processing default until recorded-caption station settings are saved: `inline` enables processing, `off` disables it without rejecting startup. Models load lazily when work needs them. |
+| `CIVICCAST_ALLOW_CAPTIONS_OFF_FOR_TESTS` | unset | No longer required. Disabling recorded-caption processing is a supported station choice. |
 | `CIVICCAST_OFFLINE_CAPTION_POLL_SECONDS` | `60` | Scan interval. |
 | `CIVICCAST_OFFLINE_CAPTION_BACKOFF_SECONDS` | `300` | Base for exponential backoff (300s, 600s, 1200s, …). |
 | `CIVICCAST_OFFLINE_CAPTION_MAX_ATTEMPTS` | `4` | Attempts per stage before the job is marked `failed` with its reason. |
 | `CIVICCAST_OFFLINE_CAPTION_CHUNK_SECONDS` | `30` | Audio handed to the model per call. Offline has no latency budget, so this is Whisper's own encoder window rather than the live tap's 5 s. |
-| `CIVICCAST_OFFLINE_CAPTION_SPANISH` | *(retired — do not set)* | The recorded-Spanish leg always runs. A false value (`off`/`0`/`false`/`no`) now **fails startup** with an error naming this variable, rather than quietly publishing English-only recordings; a true value is accepted as a no-op and logged. Remove it from the station environment. |
+| `CIVICCAST_OFFLINE_CAPTION_SPANISH` | enabled | Initial language default until station settings are saved. A false value (`off`/`0`/`false`/`no`) selects English only; a true value includes Spanish. |
+
+The saved station policy lives in `offline-caption-settings.json` beside the
+station-state file. It records `enabled`, `languages` (`en` and optional `es`)
+and `completion_requirement` (`all_selected_languages` or `english_reviewed`).
+Saving station settings takes precedence over these initial environment defaults.
 
 Model, device, and compute type are **not** configured here — the job builds
 its runtime through the same seam the live path uses, which resolves the

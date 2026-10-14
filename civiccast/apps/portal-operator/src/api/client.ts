@@ -1,5 +1,6 @@
 import type { AssetMetadataUpdate, AssetRow } from '../types/asset'
 import type { NetworkSettings, NetworkSettingsResponse } from '../types/network'
+import type { RecordedCaptionSettings } from '../types/recordedCaptions'
 import type {
   ChannelCommissioningSetup,
   CommissioningCheckReport,
@@ -640,6 +641,19 @@ export function getNetworkSettings(): Promise<NetworkSettingsResponse> {
 
 export function saveNetworkSettings(settings: NetworkSettings): Promise<NetworkSettingsResponse> {
   return request<NetworkSettingsResponse>('/api/staff/network/settings', {
+    method: 'PUT',
+    body: settings,
+  })
+}
+
+export function getRecordedCaptionSettings(): Promise<RecordedCaptionSettings> {
+  return request<RecordedCaptionSettings>('/api/staff/captions/settings')
+}
+
+export function saveRecordedCaptionSettings(
+  settings: RecordedCaptionSettings,
+): Promise<RecordedCaptionSettings> {
+  return request<RecordedCaptionSettings>('/api/staff/captions/settings', {
     method: 'PUT',
     body: settings,
   })
