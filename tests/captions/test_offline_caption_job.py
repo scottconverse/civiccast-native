@@ -45,7 +45,6 @@ from civiccast.captions.vod import (
 from civiccast.captions.vod_job import (
     ALL_ENGLISH_REJECTED_REMEDIATION,
     ALL_SPANISH_REJECTED_REMEDIATION,
-    CAPTIONS_OFF_TEST_OVERRIDE_ENV,
     MISSING_TRANSLATOR_REMEDIATION,
     OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW,
     OFFLINE_CAPTION_JOB_STATE_COMPLETE,
@@ -495,16 +494,8 @@ def _worker(
             max_attempts=max_attempts,
             backoff_seconds=60.0,
             chunk_seconds=2.0,
-            # TEST FIXTURE ONLY. Spanish is required in every shipping
-            # profile -- OfflineCaptionJobSettings.from_env cannot produce
-            # this value, and CIVICCAST_OFFLINE_CAPTION_SPANISH=off now
-            # raises rather than setting it (see
-            # TestSpanishIsNotOptional). It is set here so the tests in
-            # TestOfflineCaptionJobWorker can exercise the ENGLISH half of
-            # the two-phase job on its own; the Spanish half, and the fact
-            # that it cannot be skipped, are covered by
-            # TestTwoPhaseSpanishWorker and TestSpanishIsNotOptional.
-            spanish_enabled=False,
+            # Exercise the English-only station setting.
+            languages=("en",),
         ),
         # A real (not mocked) policy scoped to the test's own tmp_path --
         # OfflineCaptionJobWorker defaults this to the real VOD package root
@@ -1019,19 +1010,13 @@ class TestOfflineCaptionJobSettings:
         with pytest.raises(ValueError, match="greater than zero"):
             OfflineCaptionJobSettings.from_env()
 
-    def test_off_mode_is_accepted_only_with_the_test_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """``off`` is reachable for tests, and ONLY for tests.
-
-        See TestCaptionsCannotBeSwitchedOff for the station-facing half: the
-        same value without this override refuses to start.
-        """
-
+    def test_off_mode_is_an_operator_setting(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CIVICCAST_OFFLINE_CAPTION_JOB", "off")
-        monkeypatch.setenv(CAPTIONS_OFF_TEST_OVERRIDE_ENV, "1")
 
-        assert OfflineCaptionJobSettings.from_env().mode == "off"
+        settings = OfflineCaptionJobSettings.from_env()
+
+        assert settings.enabled is False
+        assert settings.mode == "off"
 
 
 class TestCaptionTrackReuse:
@@ -1052,8 +1037,8 @@ class TestCaptionTrackReuse:
 
 
 # ---------------------------------------------------------------------------
-# recorded-Spanish captions (owner requirement: a published recording carries
-# an operator-reviewed Spanish track alongside English)
+# recorded captions: English is the source; Spanish is an operator-selected
+# translated track with its own review pass.
 # ---------------------------------------------------------------------------
 
 
@@ -1213,15 +1198,9 @@ def _spanish_worker(
     *,
     tmp_path: Path,
     max_attempts: int = 3,
+    completion_requirement: str = "all_selected_languages",
 ) -> OfflineCaptionJobWorker:
-    """A fully wired worker: English transcription plus the required Spanish leg.
-
-    Deliberately does NOT expose a ``spanish_enabled`` knob -- there is no
-    shipping profile that turns the Spanish leg off, and a test helper that
-    offered one would invite a test asserting behavior the product does not
-    have. The one place the field is set to ``False`` is ``_worker`` above,
-    which exercises the English half in isolation and says so.
-    """
+    """A fully wired worker: English transcription plus optional Spanish."""
 
     return OfflineCaptionJobWorker(
         job_store,
@@ -1232,6 +1211,7 @@ def _spanish_worker(
             max_attempts=max_attempts,
             backoff_seconds=60.0,
             chunk_seconds=2.0,
+            completion_requirement=completion_requirement,  # type: ignore[arg-type]
         ),
         retention_policy=CaptionEvidenceRetentionPolicy.from_system(
             storage_root=tmp_path / "egress"
@@ -1413,6 +1393,68 @@ class TestCdnRepublishGatesCompletion:
         assert row.attempts == 1
         assert "CDN refused the upload: 403" in row.last_error
 
+    def test_english_first_cdn_failure_is_retried_after_local_edit_is_written(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        class _FailSecondRepublish:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def republish(self, *, asset_id: str, package_dir: Path, attached: object) -> str:
+                self.calls += 1
+                if self.calls == 2:
+                    raise RuntimeError("CDN refused the edited captions: 503")
+                return "https://cdn.example.org/live/ls_abc/playlist.m3u8"
+
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        republisher = _FailSecondRepublish()
+        worker = OfflineCaptionJobWorker(
+            job_store,
+            review_store,
+            runtime_factory=lambda: _ScriptedRuntime(["motion carries"]),  # type: ignore[arg-type,return-value]
+            # The selected Spanish pass remains waiting while reviewed English
+            # is attachable; this reaches the English-first retry path.
+            settings=OfflineCaptionJobSettings(
+                max_attempts=3,
+                backoff_seconds=60.0,
+                chunk_seconds=2.0,
+                completion_requirement="english_reviewed",
+            ),
+            cdn_republisher=republisher,  # type: ignore[arg-type]
+            retention_policy=CaptionEvidenceRetentionPolicy.from_system(
+                storage_root=tmp_path / "egress"
+            ),
+        )
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        now = datetime.now(UTC)
+        worker.run_once(now=now)
+        _approve_language(review_store, "en")
+
+        english = worker.run_once(now=now + timedelta(seconds=1))[0]
+        assert english.published_cue_count == 1
+        assert republisher.calls == 1
+
+        cue = review_store.list(asset_id=_ASSET_ID, language="en")[0]
+        review_store.edit(cue.review_item_id, CaptionReviewEdit(text="Motion carries."))
+        failed = worker.run_once(now=now + timedelta(seconds=2))[0]
+
+        assert failed.published_cue_count == 1
+        assert "CDN refused the edited captions: 503" in failed.last_error
+        assert "Motion carries." in published_caption_sidecar(package_dir).read_text(
+            encoding="utf-8"
+        )
+
+        retried = worker.run_once(now=now + timedelta(days=1))[0]
+
+        assert republisher.calls == 3
+        assert retried.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert retried.last_error == MISSING_TRANSLATOR_REMEDIATION
+
 
 class TestTruncatedSpanishTrackNeverPublishes:
     """A Spanish queue that came back SHORT must never publish as complete.
@@ -1422,8 +1464,8 @@ class TestTruncatedSpanishTrackNeverPublishes:
     leaves N of M rows behind. The old gate asked "does this asset have any
     Spanish rows?" -- it did -- so it never queued the rest, and once an
     operator decided those N it reported ``pending == 0`` and published an
-    N-of-M Spanish track as ``complete``. Silent truncation of a legally
-    required accessibility artifact.
+    N-of-M Spanish track as ``complete``. Silent truncation of the selected
+    Spanish track.
     """
 
     class _FlakyStore(InMemoryCaptionReviewStore):
@@ -1861,76 +1903,24 @@ class TestConcurrentTranslationTicks:
             store.create(payload)
 
 
-class TestCaptionsCannotBeSwitchedOff:
-    """Offline captioning is a legal obligation, not a performance option."""
-
-    def test_off_refuses_to_start_without_the_test_override(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("CIVICCAST_OFFLINE_CAPTION_JOB", "off")
-        monkeypatch.delenv(CAPTIONS_OFF_TEST_OVERRIDE_ENV, raising=False)
-
-        with pytest.raises(ValueError) as excinfo:
-            OfflineCaptionJobSettings.from_env()
-
-        message = str(excinfo.value)
-        # Names the variable to remove and what the operator should do about
-        # a broken caption model instead of switching captioning off.
-        assert "CIVICCAST_OFFLINE_CAPTION_JOB" in message
-        assert "civiccast doctor" in message
-        assert "no caption track in any language" in message
-
-    def test_inline_is_unaffected_by_the_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.delenv("CIVICCAST_OFFLINE_CAPTION_JOB", raising=False)
-        monkeypatch.delenv(CAPTIONS_OFF_TEST_OVERRIDE_ENV, raising=False)
-
-        assert OfflineCaptionJobSettings.from_env().mode == "inline"
-
-    def test_the_override_alone_does_not_switch_captions_off(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Two coordinated variables, so neither can do it by accident."""
-
-        monkeypatch.delenv("CIVICCAST_OFFLINE_CAPTION_JOB", raising=False)
-        monkeypatch.setenv(CAPTIONS_OFF_TEST_OVERRIDE_ENV, "1")
-
-        assert OfflineCaptionJobSettings.from_env().mode == "inline"
-
-
-class TestSpanishIsNotOptional:
-    """A caption-eligible recording cannot complete with English only.
-
-    Owner requirement (Longmont is ~30% Latino): a published recording
-    carries an operator-reviewed Spanish caption track alongside English.
-    That is shipping behavior, not a station setting, so every route that
-    used to reach a green English-only publish is pinned closed here:
-
-    * the ``CIVICCAST_OFFLINE_CAPTION_SPANISH`` switch;
-    * a station with no translation runtime wired;
-    * an operator rejecting every Spanish cue.
-
-    Each of the last two ends *blocked and actionable* -- the operator can
-    read what to do off the job row -- never ``complete`` with one track.
-    """
-
-    def test_from_env_refuses_to_turn_spanish_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
+class TestCaptionLanguageSettings:
+    def test_legacy_default_can_select_english_only(self, monkeypatch: pytest.MonkeyPatch) -> None:
         for value in ("off", "0", "false", "no"):
             monkeypatch.setenv("CIVICCAST_OFFLINE_CAPTION_SPANISH", value)
-            with pytest.raises(ValueError, match="English captions only"):
-                OfflineCaptionJobSettings.from_env()
+            assert OfflineCaptionJobSettings.from_env().languages == ("en",)
 
     def test_from_env_rejects_an_unparseable_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("CIVICCAST_OFFLINE_CAPTION_SPANISH", "maybe")
         with pytest.raises(ValueError, match="CIVICCAST_OFFLINE_CAPTION_SPANISH must be one of"):
             OfflineCaptionJobSettings.from_env()
 
-    def test_from_env_always_enables_spanish(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_spanish_is_selected_by_default_and_can_be_explicit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         monkeypatch.delenv("CIVICCAST_OFFLINE_CAPTION_SPANISH", raising=False)
-        assert OfflineCaptionJobSettings.from_env().spanish_enabled is True
-        # A true value is the only supported behavior, so it is a no-op
-        # rather than a failure -- and still yields Spanish enabled.
+        assert OfflineCaptionJobSettings.from_env().languages == ("en", "es")
         monkeypatch.setenv("CIVICCAST_OFFLINE_CAPTION_SPANISH", "on")
-        assert OfflineCaptionJobSettings.from_env().spanish_enabled is True
+        assert OfflineCaptionJobSettings.from_env().languages == ("en", "es")
 
     def test_no_translation_runtime_blocks_instead_of_publishing_english(
         self, tmp_path: Path, fake_ffmpeg: None
@@ -1972,6 +1962,65 @@ class TestSpanishIsNotOptional:
         assert exhausted.last_error == MISSING_TRANSLATOR_REMEDIATION
         assert not published_caption_sidecar(package_dir).exists()
         assert "SUBTITLES" not in (package_dir / "playlist.m3u8").read_text(encoding="utf-8")
+
+    def test_english_reviewed_attaches_first_and_job_finishes_after_spanish_review(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        worker = _spanish_worker(
+            job_store,
+            review_store,
+            _ScriptedRuntime(["motion carries"]),
+            tmp_path=tmp_path,
+            completion_requirement="english_reviewed",
+        )
+        enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+
+        worker.run_once()
+        _approve_language(review_store, "en")
+        english_attached = worker.run_once()[0]
+
+        assert english_attached.state == OFFLINE_CAPTION_JOB_STATE_AWAITING_REVIEW
+        assert english_attached.published_cue_count == 1
+        assert published_caption_sidecar(package_dir).is_file()
+        assert not published_spanish_caption_sidecar(package_dir).exists()
+        assert len(review_store.list(asset_id=_ASSET_ID, language="es")) == 1
+
+        _approve_language(review_store, "es")
+        complete = worker.run_once()[0]
+
+        assert complete.state == OFFLINE_CAPTION_JOB_STATE_COMPLETE
+        assert published_caption_sidecar(package_dir).is_file()
+        assert published_spanish_caption_sidecar(package_dir).is_file()
+
+    def test_disabled_worker_leaves_existing_job_pending(
+        self, tmp_path: Path, fake_ffmpeg: None
+    ) -> None:
+        source = _write_wav(tmp_path / "meeting.wav", seconds=2.0)
+        package_dir = _package(tmp_path / "packages")
+        job_store = InMemoryOfflineCaptionJobStore()
+        review_store = InMemoryCaptionReviewStore()
+        job = enqueue_offline_caption_job(
+            job_store, asset_id=_ASSET_ID, source_path=source, package_dir=package_dir
+        )
+        worker = OfflineCaptionJobWorker(
+            job_store,
+            review_store,
+            runtime_factory=lambda: _ScriptedRuntime(["motion carries"]),  # type: ignore[arg-type,return-value]
+            settings=OfflineCaptionJobSettings(enabled=False),
+            retention_policy=CaptionEvidenceRetentionPolicy.from_system(
+                storage_root=tmp_path / "egress"
+            ),
+        )
+
+        assert worker.run_once() == []
+        assert job_store.get(job.job_id).state == OFFLINE_CAPTION_JOB_STATE_PENDING
+        assert review_store.list(asset_id=_ASSET_ID) == []
 
     def test_all_spanish_rejected_holds_the_job_instead_of_shipping_english(
         self, tmp_path: Path, fake_ffmpeg: None

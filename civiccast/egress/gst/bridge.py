@@ -28,6 +28,7 @@ from civiccast.egress.gst.graph import (
     ElementSpec,
     GraphicsOverlayLayer,
     GraphicsOverlayLeg,
+    OutputBranch,
     PlaylistLeg,
     PlayoutGraph,
     SecondaryAudioLeg,
@@ -40,6 +41,7 @@ from civiccast.egress.gst.graph import (
 from civiccast.egress.gst.graphics_overlay import render_lower_third_png
 from civiccast.egress.gst.pipeline import _is_multicast
 from civiccast.egress.hls_relay import hls_relay_uri_for
+from civiccast.egress.loudness_plan import SinkLoudnessResolution, build_loudness_plan
 from civiccast.egress.models import (
     MAX_PLAYLIST_SUBCHAINS,
     CanonicalProfile,
@@ -72,10 +74,89 @@ _LOG = logging.getLogger(__name__)
 #: segments + a real manifest via a supervised ffmpeg child, not a native
 #: GStreamer HLS element (none ships in the runtime; see
 #: ``civiccast.egress.hls_relay``'s module docstring for the empirical proof).
-#: ``rtmp`` is the one kind genuinely unimplemented here — Stage 1 ships TS
-#: sinks only for this engine (the ffmpeg-concat engine's ``RtmpSink`` already
-#: supports it).
-SUPPORTED_SINK_KINDS = frozenset({"srt", "local-ts", "udp-ts", "file", "sdi", "hls"})
+#: ``rtmp`` uses a per-output FLV mux branch in the structured graph; it does
+#: not enter the shared MPEG-TS mux.
+SUPPORTED_SINK_KINDS = frozenset({"srt", "rtmp", "local-ts", "udp-ts", "file", "sdi", "hls"})
+
+_OTT_SINK_KINDS = frozenset({"srt", "rtmp"})
+
+
+def _tone_notch_specs() -> tuple[ElementSpec, ...]:
+    """Two IIR band-reject stages matching FFmpeg's 40 Hz EAS notches."""
+    return tuple(
+        ElementSpec(
+            "audiochebband",
+            props={
+                "mode": 1,  # GST_AUDIO_CHEBYSHEV_BAND_MODE_BAND_REJECT
+                "lower-frequency": low,
+                "upper-frequency": high,
+                "poles": 8,
+            },
+        )
+        for low, high in ((833.0, 873.0), (940.0, 980.0))
+    )
+
+
+def _per_output_audio_chain(
+    resolution: SinkLoudnessResolution, profile: CanonicalProfile
+) -> tuple[ElementSpec, ...]:
+    """Build genuine per-sink loudness/tone DSP followed by the profile AAC path."""
+    chain: list[ElementSpec] = []
+    if resolution.requires_reencode:
+        # The pinned Rust audioloudnorm element only accepts 192 kHz F64LE. It
+        # performs programme loudness normalization (BS.1770), not static gain.
+        chain.extend(
+            (
+                ElementSpec("audioconvert"),
+                ElementSpec("audioresample"),
+                ElementSpec(
+                    "capsfilter",
+                    props={
+                        "caps": (
+                            "audio/x-raw,format=F64LE,rate=192000,"
+                            f"channels={profile.audio_channels}"
+                        )
+                    },
+                ),
+                ElementSpec(
+                    "audioloudnorm",
+                    props={
+                        "loudness-target": resolution.effective_target_lufs,
+                        "loudness-range-target": 11.0,
+                        "max-true-peak": -1.5,
+                    },
+                ),
+            )
+        )
+    tone_strip = resolution.eas_tone_strip_enabled and resolution.kind in _OTT_SINK_KINDS
+    if tone_strip:
+        # audiochebband accepts F64LE and the filters operate at the canonical
+        # output rate so both attention tones remain below Nyquist.
+        chain.extend(
+            (
+                ElementSpec("audioconvert"),
+                ElementSpec("audioresample"),
+                ElementSpec(
+                    "capsfilter",
+                    props={
+                        "caps": (
+                            "audio/x-raw,format=F64LE,"
+                            f"rate={profile.audio_sample_rate},channels={profile.audio_channels}"
+                        )
+                    },
+                ),
+                *_tone_notch_specs(),
+            )
+        )
+    chain.extend(
+        audio_encode_specs(
+            codec=gst_audio_encoder_name(profile.audio_codec),
+            bitrate_kbps=profile.audio_bitrate_kbps,
+            sample_rate=profile.audio_sample_rate,
+        )
+    )
+    return tuple(chain)
+
 
 # CanonicalProfile.video_codec carries an ffmpeg encoder name (the prior pipeline was
 # ffmpeg+libx264). The public beta installer ships a bundled GStreamer runtime with
@@ -282,14 +363,12 @@ def _append_query_param(uri: str, key: str, value: str) -> str:
 def sink_element_spec(
     spec: EgressSinkSpec, resolve_secret: SecretResolver | None = None
 ) -> ElementSpec:
-    """One ``EgressSinkSpec`` → the GStreamer sink ``ElementSpec`` consuming the TS.
+    """One ``EgressSinkSpec`` → its terminal GStreamer sink element.
 
     Structured twin of ``pipeline.gst_sink_element`` (which returns a launch string);
     the engine builds this via element factory + ``set_property`` (no parse_launch).
-    Raises for sink kinds that need a non-TS branch (sdi/rtmp). ENG-007: an SRT sink's
-    ``secret_ref`` is resolved into the URI's ``passphrase`` (symmetric with the ffmpeg
-    ``SrtSink``); an unresolved ref raises ``SecretUnresolvedError`` rather than emitting
-    an unauthenticated sink.
+    RTMP's sink element is used only after its branch-specific ``flvmux``. Secret
+    handles stay out of graph JSON and are resolved by the runtime element builder.
     """
     parsed = urlsplit(spec.uri)
     if spec.kind == "file" or (spec.kind == "local-ts" and parsed.scheme == "file"):
@@ -332,11 +411,8 @@ def sink_element_spec(
         host, _, port = host_port.partition(":")
         return ElementSpec("udpsink", props={"host": host, "port": int(port)})
     if spec.kind == "rtmp":
-        raise ValueError(
-            "rtmp sink needs an flvmux branch, not the TS mux — the GStreamer engine ships "
-            f"TS sinks only in Stage 1. Supported sink kinds here: {sorted(SUPPORTED_SINK_KINDS)} "
-            "(use the ffmpeg-concat engine, CIVICCAST_EGRESS_ENGINE=ffmpeg-concat, for rtmp)."
-        )
+        secret_props = {"stream": spec.secret_ref} if spec.secret_ref is not None else {}
+        return ElementSpec("rtmp2sink", props={"location": spec.uri}, secret_props=secret_props)
     if spec.kind == "sdi":
         raise ValueError("sdi output is a pre-mux decklinkvideosink branch, not a TS sink")
     raise ValueError(
@@ -351,18 +427,105 @@ def sink_branches_from_config(
     """``EgressConfig.sinks`` → engine sink branches, each ``(queue, <sink element>)``.
 
     SDI sinks are skipped — SDI is delivered by the supervised BYO relay off the TS
-    output (S15 §4 / issue #117), not as an engine sink. Other unsupported kinds
-    (rtmp) raise rather than silently drop a configured output. ``resolve_secret`` is
-    threaded through for SRT-sink ``secret_ref`` resolution (ENG-007).
+    output (S15 §4 / issue #117). RTMP is a non-TS output and must use
+    ``output_branches_from_config``. ``resolve_secret`` is threaded through for
+    SRT-sink ``secret_ref`` resolution (ENG-007).
     """
     branches: list[tuple[ElementSpec, ...]] = []
     for spec in config.sinks:
         if spec.kind == "sdi":
             continue  # delivered by the supervised relay, not an engine TS sink
+        if spec.kind == "rtmp":
+            raise ValueError("rtmp sink requires the FLV output-branch builder")
         branches.append((ElementSpec("queue"), sink_element_spec(spec, resolve_secret)))
     if not branches:
         raise ValueError("config has no TS-capable sinks for the GStreamer engine")
     return tuple(branches)
+
+
+def output_branches_from_config(
+    config: EgressConfig,
+    resolve_secret: SecretResolver | None = None,
+) -> tuple[OutputBranch, ...]:
+    """Build independent mux/audio chains for RTMP, loudness, or configured tone filtering."""
+    profile = config.canonical_profile
+    resolutions = {item.label: item for item in build_loudness_plan(config).sinks}
+    branches: list[OutputBranch] = []
+    for spec in config.sinks:
+        if spec.kind == "sdi":
+            continue
+        resolution = resolutions[spec.label]
+        audio_chain = _per_output_audio_chain(resolution, profile)
+        # The pinned audioloudnorm element buffers a 3 s BS.1770 window. This
+        # is processing latency, not the mux queues' 8 s capacity below; the
+        # graph carries it so the transition drain can wait for emitted tails.
+        audio_latency_ns = (
+            3_000_000_000
+            if any(element.factory == "audioloudnorm" for element in audio_chain)
+            else 0
+        )
+        # audioloudnorm has a measured 3 s processing window. Keep a bounded
+        # 8 s non-leaky buffer at each mux input so the matching video can wait
+        # for normalized audio without back-pressuring the tee or losing PTS.
+        queue_props = (
+            {"max-size-time": 8_000_000_000, "max-size-bytes": 0, "max-size-buffers": 0}
+            if resolution.requires_reencode
+            else {}
+        )
+        if spec.kind == "rtmp":
+            encoder = gst_encoder_name(profile.video_codec)
+            if "265" in encoder.lower() or "hevc" in encoder.lower():
+                raise ValueError("RTMP/FLV output requires an H.264 video profile")
+            branches.append(
+                OutputBranch(
+                    label=spec.label,
+                    mux=ElementSpec(
+                        "flvmux",
+                        name=f"mux_{_safe_element_name(spec.label)}_{len(branches)}",
+                        props={"streamable": True},
+                    ),
+                    sinks=(ElementSpec("queue"), sink_element_spec(spec, resolve_secret)),
+                    audio_chain=(
+                        ElementSpec("queue", props=queue_props),
+                        *audio_chain,
+                        ElementSpec(
+                            "capsfilter",
+                            props={"caps": "audio/mpeg,mpegversion=4,stream-format=raw"},
+                        ),
+                    ),
+                    video_chain=(
+                        ElementSpec("queue", props=queue_props),
+                        ElementSpec("h264parse", props={"config-interval": -1}),
+                        ElementSpec(
+                            "capsfilter",
+                            props={"caps": "video/x-h264,stream-format=avc,alignment=au"},
+                        ),
+                    ),
+                    audio_latency_ns=audio_latency_ns,
+                )
+            )
+            continue
+        branches.append(
+            OutputBranch(
+                label=spec.label,
+                mux=ElementSpec(
+                    "mpegtsmux", name=f"mux_{_safe_element_name(spec.label)}_{len(branches)}"
+                ),
+                sinks=(ElementSpec("queue"), sink_element_spec(spec, resolve_secret)),
+                audio_chain=(ElementSpec("queue", props=queue_props), *audio_chain),
+                video_chain=(ElementSpec("queue", props=queue_props),),
+                audio_latency_ns=audio_latency_ns,
+            )
+        )
+    if not branches:
+        raise ValueError("config has no deliverable outputs for the GStreamer engine")
+    return tuple(branches)
+
+
+def _safe_element_name(value: str) -> str:
+    """Stable GStreamer-safe element suffix derived from an operator label."""
+    normalized = "".join(char.lower() if char.isalnum() else "_" for char in value)
+    return normalized.strip("_") or "output"
 
 
 @dataclass(frozen=True)
@@ -705,16 +868,35 @@ def graph_from_config(
             ),
             *encoder_chain,
         )
-    return PlayoutGraph(
-        sources=(program, slate),
-        encoder=encoder_chain,
-        audio_encoder=audio_encode_specs(
+    loudness_plan = build_loudness_plan(config)
+    needs_output_branches = any(
+        sink.kind == "rtmp"
+        or resolution.requires_reencode
+        or (resolution.eas_tone_strip_enabled and resolution.kind in _OTT_SINK_KINDS)
+        for sink, resolution in zip(config.sinks, loudness_plan.sinks, strict=True)
+    )
+    output_branches = (
+        output_branches_from_config(config, resolve_secret) if needs_output_branches else ()
+    )
+    legacy_sinks = (
+        sink_branches_from_config(config, resolve_secret) if not needs_output_branches else ()
+    )
+    audio_encoder = (
+        ()
+        if needs_output_branches
+        else audio_encode_specs(
             codec=gst_audio_encoder_name(profile.audio_codec),
             bitrate_kbps=profile.audio_bitrate_kbps,
             sample_rate=profile.audio_sample_rate,
-        ),
-        mux=ElementSpec("mpegtsmux", name="mux"),
-        sinks=sink_branches_from_config(config, resolve_secret),
+        )
+    )
+    return PlayoutGraph(
+        sources=(program, slate),
+        encoder=encoder_chain,
+        audio_encoder=audio_encoder,
+        mux=(output_branches[0].mux if output_branches else ElementSpec("mpegtsmux", name="mux")),
+        sinks=legacy_sinks,
+        output_branches=output_branches,
         # S11a: CEA-708 embed leg, only when the channel opts in (else byte-identical).
         captions=caption_embed_leg(caption_embed) if caption_embed is not None else None,
         # S15 graphics-overlay operator control: None (default) preserves today's

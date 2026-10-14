@@ -1,5 +1,14 @@
 # S11 — Captions (CEA-708), Per-Headend Loudness, and the EAS Software Layer
 
+> **Sprint 3 recorded-caption requirement — October 13, 2026:** Recorded-caption
+> processing, selected output languages and completion requirements are station
+> choices. English-only operation and disabling recorded-caption processing must
+> be supported without a test override or a startup refusal. Selected captions
+> still require operator review before their text is published. This supersedes
+> blanket requirements that every recording carry both English and Spanish;
+> it introduces no numerical caption-performance or release gate. Implementation
+> and verification status are tracked in `docs/ops/sprint3-output-completion.md`.
+
 > **Owner decision — October 10, 2026:** use the
 > [master's caption performance standard](../civiccast-3.0-station-in-a-box-MASTER.md#caption-performance-reporting-and-owner-acceptance--october-10-2026).
 > The 99% and 98% benchmarks are reporting references, not release minimums.

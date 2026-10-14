@@ -57,6 +57,7 @@ import time
 import uuid
 import wave
 from dataclasses import replace
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -484,6 +485,44 @@ def _ffprobe_codec_types(path: Path) -> set[str]:
         timeout=30,
     )
     return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+
+
+def _ffprobe_max_pts_gap(path: Path, selector: str, *, near_seconds: float) -> float:
+    """Largest adjacent packet PTS gap near a transition for one TS stream."""
+    result = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            selector,
+            "-show_entries",
+            "packet=pts_time",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=True,
+    )
+    timestamps = sorted(
+        float(value.split(",", 1)[0])
+        for line in result.stdout.splitlines()
+        if (value := line.strip()) and value != "N/A"
+    )
+    # MPEG-TS PTS commonly starts at a 3600-second epoch. The engine's switch
+    # log is relative to pipeline running time, so align the requested window to
+    # this stream's first emitted packet.
+    stream_start = timestamps[0]
+    window = [
+        value
+        for value in timestamps
+        if stream_start + near_seconds - 1.5 <= value <= stream_start + near_seconds + 1.0
+    ]
+    assert len(window) >= 2, f"ffprobe found too few {selector} packets near {near_seconds:.3f}s"
+    return max(right - left for left, right in pairwise(window))
 
 
 # --- worker subprocess driver --------------------------------------------------------
@@ -2301,7 +2340,9 @@ def test_graphics_overlay_disabled_matches_existing_no_overlay_behavior(tmp_path
 # --- boundary-aligned plan rollover (deferred switch) --------------------------------
 
 
-def _finite_program_av_graph(*, seconds: float = 5.0):
+def _finite_program_av_graph(
+    *, seconds: float = 5.0, video_seconds: float | None = None, audio_seconds: float | None = None
+):
     """Production-shape A/V graph whose PROGRAM leg (source 0) is FINITE and
     SEGMENT-TIMED -- the two properties a real schedule-derived program leg has and
     the ``_av_demo_graph`` legs do not.
@@ -2319,8 +2360,10 @@ def _finite_program_av_graph(*, seconds: float = 5.0):
     Pacing comes from the SINK (see ``_paced_filesink_graph``), the way ``udpsink
     sync=true`` paces a real channel -- not from the legs.
     """
-    video_buffers = int(seconds * 30)
-    audio_buffers = int(seconds * 48000 / 1024) + 1
+    video_seconds = seconds if video_seconds is None else video_seconds
+    audio_seconds = seconds if audio_seconds is None else audio_seconds
+    video_buffers = int(video_seconds * 30)
+    audio_buffers = int(audio_seconds * 48000 / 1024) + 1
     program = graphmod.SourceLeg(
         label="program",
         elements=(
@@ -2471,7 +2514,14 @@ def _pes_pts_backward_steps(path: Path, *, tolerance_seconds: float = 0.5) -> di
     return backward
 
 
-def test_deferred_rollover_switches_at_the_boundary_without_eos(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("video_seconds", "audio_seconds"),
+    [(2.4, 4.0), (4.0, 2.4)],
+    ids=("audio-tail-longer", "video-tail-longer"),
+)
+def test_deferred_rollover_switches_at_the_common_av_end_without_eos(
+    tmp_path: Path, video_seconds: float, audio_seconds: float
+) -> None:
     """B3 / hostile-review (a)(b)(c): a ``switch_at_end_of_current`` reload must hand
     over AT the outgoing leg's own end without ever producing a pipeline EOS, without a
     timestamp jump, and with BOTH selectors switched.
@@ -2496,9 +2546,12 @@ def test_deferred_rollover_switches_at_the_boundary_without_eos(tmp_path: Path) 
         time 0 would step the PCR back by the whole uptime;
       * a clean ``stop`` teardown afterwards (rc 0).
     """
-    program_seconds = 5.0
+    program_seconds = max(video_seconds, audio_seconds)
     out_ts = tmp_path / "out.ts"
-    graph = _paced_filesink_graph(_finite_program_av_graph(seconds=program_seconds), out_ts)
+    graph = _paced_filesink_graph(
+        _finite_program_av_graph(video_seconds=video_seconds, audio_seconds=audio_seconds),
+        out_ts,
+    )
     reload_path = tmp_path / f"rollover{reloadpolicy.DEFERRED_SWITCH_SUFFIX}"
     reload_path.write_text(
         graphmod.graph_to_json(_segment_timed_reload_graph(18)), encoding="utf-8"
@@ -2532,9 +2585,17 @@ def test_deferred_rollover_switches_at_the_boundary_without_eos(tmp_path: Path) 
 
     assert returncode == 0, f"unclean teardown after a boundary rollover (rc={returncode});\n{text}"
     _assert_reload_committed(text)
+    assert re.search(r"outgoing EOS observed stream=video \([12]/2 stream\(s\)\)", text), text
+    assert re.search(r"outgoing EOS observed stream=audio \([12]/2 stream\(s\)\)", text), text
+    short_stream = "video" if video_seconds < audio_seconds else "audio"
+    assert f"tail-padding-complete stream={short_stream} " in text, text
+    assert "switch-at-common-end" in text, text
     assert "finite switch rebased to running time" in text, (
         f"the deferred switch did not rebase the new leg's running time;\n{text}"
     )
+    rebase_match = re.search(r"finite switch rebased to running time ([0-9.]+)s", text)
+    assert rebase_match is not None, text
+    switch_seconds = float(rebase_match.group(1))
     after = out_ts.stat().st_size
     assert after > committed_at_size, (
         "no TS was written after the boundary -- output stopped at the handover;\n" + text
@@ -2555,6 +2616,10 @@ def test_deferred_rollover_switches_at_the_boundary_without_eos(tmp_path: Path) 
     assert {"video", "audio"} <= _ffprobe_codec_types(out_ts), (
         f"ffprobe did not report both a video and an audio stream after the rollover;\n{text}"
     )
+    video_gap = _ffprobe_max_pts_gap(out_ts, "v:0", near_seconds=switch_seconds)
+    audio_gap = _ffprobe_max_pts_gap(out_ts, "a:0", near_seconds=switch_seconds)
+    assert video_gap < 0.15, f"video PTS gap {video_gap:.3f}s at common end;\n{text}"
+    assert audio_gap < 0.12, f"audio PTS gap {audio_gap:.3f}s at common end;\n{text}"
 
     # The timestamp-jump check with teeth. The PCR check above passes even WITHOUT the
     # running-time rebase -- the mux re-derives the video PCR across the handover -- but

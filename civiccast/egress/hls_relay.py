@@ -37,16 +37,26 @@ of reinventing the muxer:
     GStreamer program mux (already-proven MPEG-TS branch)
         --> udp://127.0.0.1:<relay-port>            (an ordinary local-ts sink)
     HlsRelaySupervisor's supervised ffmpeg child
-        -i udp://127.0.0.1:<relay-port> ! HlsSink.output_args()
+        -i udp://127.0.0.1:<relay-port> ! HLS output with publisher-owned pruning
         --> <hls sink's configured directory>/seg%09d.ts
                                               + /playlist.mux.m3u8   (private)
     HlsRelaySupervisor's manifest publisher thread (U51)
         playlist.mux.m3u8 --in-place rewrite--> <dir>/playlist.m3u8   (advertised)
 
-``civiccast.stream.media_router`` needs no changes: it already reads the
-channel's *configured* ``hls`` sink URI (the directory), not the internal
-relay plumbing, so the rewritten in-memory ``local-ts`` sink this module
-hands the graph builder is invisible to every reader except the graph.
+The relay removes FFmpeg's independent delete_segments flag. The publisher
+keeps files named by both the public and staging playlists, then prunes a
+retired segment only after the last public playlist that named it could have
+expired (that playlist's measured EXTINF duration plus the segment's measured
+duration). Unadvertised files older than the current staging window are
+eligible for pruning even if publication is stalled, which bounds hidden mux
+output.
+
+``civiccast.stream.media_router`` resolves the channel's *configured* ``hls``
+sink URI (the directory), not the internal relay plumbing, so the rewritten
+in-memory ``local-ts`` sink this module hands the graph builder is invisible to
+every reader except the graph. It snapshots the advertised playlist bytes under
+the publisher's in-process lock, then closes the file before response delivery;
+segments keep their existing file response path.
 
 Mirrors ``civiccast.egress.ts_relay.TsRelaySupervisor`` in shape (guarded
 per-channel supervised co-process dict, idempotent ``apply``/``stop_channel``/
@@ -189,6 +199,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -210,9 +221,84 @@ from civiccast.egress.relay_reclaim import (
     udp_port_of,
 )
 from civiccast.egress.sinks import HlsSink
+from civiccast.stream import live_manifest_lock
 from civiccast.stream._ffmpeg import FfmpegNotFoundError, FfmpegProcessHandle, start_ffmpeg
 
 _LOG = logging.getLogger(__name__)
+
+_HLS_SEGMENT_NAME = re.compile(r"seg\d{9}\.ts\Z")
+
+
+@dataclass(frozen=True)
+class _ClearedHlsWindow:
+    """Prior advertised references and bounded retirement state for a fresh relay."""
+
+    published_segments: dict[str, float]
+    retired_segment_names: frozenset[str]
+    retired_grace_s: float
+    next_start_number: int | None
+
+
+def _playlist_segment_durations(data: bytes) -> dict[str, float] | None:
+    """Return this local HLS playlist's safe segment names and EXTINF durations.
+
+    ``None`` means malformed or unsupported input. The publisher uses this
+    before it emits or prunes anything, so an untrusted URI can never turn into
+    a path outside the sink directory and a partial muxer write cannot retire
+    files based on an incomplete window.
+    """
+    try:
+        lines = data.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return None
+    if not lines or lines[0].strip() != "#EXTM3U":
+        return None
+
+    durations: dict[str, float] = {}
+    pending_duration: float | None = None
+    for raw_line in lines[1:]:
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#EXTINF:"):
+            if pending_duration is not None:
+                return None
+            try:
+                duration = float(line.removeprefix("#EXTINF:").split(",", 1)[0])
+            except ValueError:
+                return None
+            if not math.isfinite(duration) or duration <= 0:
+                return None
+            pending_duration = duration
+            continue
+        if line.startswith("#"):
+            continue
+        if (
+            pending_duration is None
+            or Path(line).name != line
+            or _HLS_SEGMENT_NAME.fullmatch(line) is None
+            or line in durations
+        ):
+            return None
+        durations[line] = pending_duration
+        pending_duration = None
+    if pending_duration is not None:
+        return None
+    return durations
+
+
+def _relay_hls_output_args(hls_sink: HlsSink, *, start_number: int | None = None) -> list[str]:
+    """Give segment deletion to the publisher that owns the served playlist."""
+    args = hls_sink.output_args()
+    flags_index = args.index("-hls_flags") + 1
+    flags = [flag for flag in args[flags_index].split("+") if flag != "delete_segments"]
+    if "temp_file" not in flags:
+        flags.append("temp_file")
+    args[flags_index] = "+".join(flags)
+    if start_number is not None:
+        args[-1:-1] = ["-start_number", str(start_number)]
+    return args
+
 
 #: U24 per-relay-child stderr capture. Two files are kept per (channel, sink):
 #: the current child's and its immediate predecessor's, rotated at spawn.
@@ -360,8 +446,8 @@ def _playlist_path_for(sink_uri: str) -> Path:
     return Path(sink.manifest_target())
 
 
-def _clear_hls_window(hls_sink: HlsSink) -> None:
-    """Remove the previous session's window from one sink's HLS directory.
+def _clear_hls_window(hls_sink: HlsSink) -> _ClearedHlsWindow:
+    """Withdraw the old playlist and seed a fresh publisher's retirement state.
 
     U51 item 1. Nothing ever cleared that directory: the muxer's own
     ``delete_segments`` only prunes behind ITS OWN window, so every relay start
@@ -371,54 +457,110 @@ def _clear_hls_window(hls_sink: HlsSink) -> None:
     and the playlist it finds there, so the fossils are what a fresh session
     appends behind.
 
-    So the wipe is deliberately blunt and happens at the SPAWN, before the child
-    exists (never at ``apply`` time, which is idempotent and re-entered for a
-    live relay). It takes the window itself -- ``seg*.ts`` -- plus both playlist
-    names (the advertised one; the muxer's private staging one) and any
-    ``*.tmp`` debris (a torn temp file from a killed muxer).
+    Fresh/dead cleanup happens at the SPAWN, before the child exists (never at
+    ``apply`` time, which is idempotent and re-entered for a live relay). The
+    advertised playlist is withdrawn under the same lock used by HTTP readers
+    and the publisher. Every safe numeric segment is retained: references from
+    the old playlist get their measured lifetime, while unreferenced numeric
+    files get one conservative window of grace in case a prior snapshot still
+    names them. The private staging playlist and ``*.tmp`` debris are cleared.
+    The new child starts beyond all retained segment numbers so it cannot
+    overwrite a file an old client uses.
 
-    A file locked by a reader can NEVER fail the start: on Windows a held file
-    blocks its unlink (``WinError 32``) exactly as it blocks the muxer's
-    playlist rename, and a relay that refused to start because a viewer held a
-    segment would trade a leaked file for a dead channel. Locked files are
-    skipped, the rest are still cleared, and the skip is logged -- a silent
-    skip would leave an operator with a fossil and no way to know why.
+    A file locked by an external reader can NEVER fail the start: on Windows a
+    held file blocks its unlink (``WinError 32``), and a relay that refused to
+    start because a viewer held a segment would trade a leaked file for a dead
+    channel. Locked files are skipped, the rest are still cleared, and the skip
+    is logged.
     """
     directory = Path(hls_sink.manifest_target()).parent
-    candidates: list[Path] = []
-    for pattern in ("seg*.ts", "*.tmp", hls_sink.manifest_name, hls_sink.mux_playlist_name):
-        try:
-            candidates.extend(sorted(directory.glob(pattern)))
-        except OSError:
-            continue
+    directory.mkdir(parents=True, exist_ok=True)
+    manifest_path = Path(hls_sink.manifest_target())
+    previous_segments: dict[str, float] = {}
+    retired_segment_names: set[str] = set()
     removed = 0
     locked: list[Path] = []
-    for path in candidates:
+
+    # Withdraw before unlinking any media. A route already copying the old
+    # playlist finishes first; later route reads wait and then see no playlist.
+    with live_manifest_lock.LIVE_MANIFEST_LOCK:
         try:
-            if not path.is_file():
-                continue
-            path.unlink()
+            previous_data = manifest_path.read_bytes()
         except FileNotFoundError:
-            continue
+            previous_segments = {}
         except OSError:
-            locked.append(path)
+            previous_segments = {}
+        else:
+            parsed_segments = _playlist_segment_durations(previous_data)
+            previous_segments = {} if parsed_segments is None else parsed_segments
+
+        try:
+            manifest_path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            locked.append(manifest_path)
         else:
             removed += 1
+
+        candidates: list[Path] = []
+        for pattern in ("seg*.ts", "*.tmp", hls_sink.mux_playlist_name):
+            try:
+                candidates.extend(sorted(directory.glob(pattern)))
+            except OSError:
+                continue
+
+        highest_segment: int | None = None
+        for path in candidates:
+            segment_match = _HLS_SEGMENT_NAME.fullmatch(path.name)
+            if segment_match is not None:
+                sequence = int(path.name[3:12])
+                highest_segment = max(highest_segment or sequence, sequence)
+                if path.name in previous_segments:
+                    continue
+                # Keep numeric files for a bounded grace. They may be named by
+                # a playlist snapshot that was served before this withdrawal,
+                # even when they were already absent from the last manifest.
+                retired_segment_names.add(path.name)
+                continue
+            try:
+                if not path.is_file():
+                    continue
+                path.unlink()
+            except FileNotFoundError:
+                continue
+            except OSError:
+                locked.append(path)
+            else:
+                removed += 1
+
     if removed:
         _LOG.info(
-            "HLS relay start: cleared %d stale file(s) from %s before launching the relay child.",
+            "HLS relay start: withdrew the old playlist and cleared %d stale file(s) from %s.",
             removed,
             directory,
         )
     if locked:
         _LOG.warning(
             "HLS relay start: could not remove %d file(s) from %s (held by another "
-            "process; they are left in place and the relay starts anyway): %s. "
-            "The next session appends behind whatever survives here.",
+            "process; they are left in place and the relay starts with a new segment "
+            "number anyway): %s.",
             len(locked),
             directory,
             ", ".join(str(path) for path in locked),
         )
+    measured_previous_grace_s = sum(previous_segments.values()) + max(
+        previous_segments.values(), default=0.0
+    )
+    one_window_grace_s = (
+        hls_sink.playlist_size * hls_sink.segment_seconds + hls_sink.segment_seconds
+    )
+    return _ClearedHlsWindow(
+        published_segments=previous_segments,
+        retired_segment_names=frozenset(retired_segment_names),
+        retired_grace_s=max(measured_previous_grace_s, one_window_grace_s),
+        next_start_number=None if highest_segment is None else highest_segment + 1,
+    )
 
 
 def _last_segment(path: Path) -> str | None:
@@ -1076,6 +1218,8 @@ class _ManifestPublisher:
       would turn a transient gap into a viewer-visible 404;
     * it never raises and never stops for a failed tick -- a failed read or
       write is retried next tick, warned once per episode;
+    * segment deletion is serialized with publication and waits out the
+      measured lifetime of the last public playlist that named each segment;
     * the thread references only this object -- never the supervisor, never the
       relay record -- so it keeps no channel state alive.
     """
@@ -1086,16 +1230,29 @@ class _ManifestPublisher:
         manifest_path: Path,
         staging_path: Path,
         interval_s: float = _MANIFEST_PUBLISH_INTERVAL_S,
+        clock: Callable[[], float] | None = None,
+        previous_window: _ClearedHlsWindow | None = None,
     ) -> None:
         self._manifest_path = manifest_path
         self._staging_path = staging_path
         self._interval_s = interval_s
         self._stop = Event()
         self._thread: Thread | None = None
+        self._clock: Callable[[], float] = clock or time.monotonic
+        self._published_segments = self._read_published_segments()
+        self._retired_until: dict[str, float] = {}
+        now = self._clock()
+        if previous_window is not None:
+            self._remember_retired_window(previous_window.published_segments, now=now)
+            for name in previous_window.retired_segment_names:
+                self._retired_until[name] = max(
+                    self._retired_until.get(name, 0.0),
+                    now + previous_window.retired_grace_s,
+                )
+        self._remember_existing_orphans()
         #: What the staging file looked like when this publisher started. A
-        #: fossil left by a predecessor the spawn wipe could not remove (a
-        #: reader held it) is captured HERE, so it is never advertised as if it
-        #: were the new session's window -- only what changes from now on is.
+        #: surviving prior-session staging window is never advertised as the
+        #: new session's window -- only what changes from now on is.
         self._last = self._signature()
         self._failing = False
 
@@ -1141,6 +1298,7 @@ class _ManifestPublisher:
         if signature is None or signature == self._last:
             # No staging window yet (the muxer's first cut is a segment away) or
             # nothing changed -- publish NOTHING, and never un-publish.
+            self._prune_segments()
             return
         try:
             data = self._staging_path.read_bytes()
@@ -1148,11 +1306,152 @@ class _ManifestPublisher:
             # The muxer replaced it between the stat and the read, or the file
             # is not readable right now. Retried next tick; never fatal.
             return
-        if not self._write_manifest(data):
+        segments = _playlist_segment_durations(data)
+        if segments is None or any(
+            not (self._manifest_path.parent / name).is_file() for name in segments
+        ):
+            # Do not replace a working public window with a partial muxer write
+            # or a playlist whose segment has already disappeared. Retried next
+            # tick; the muxer no longer deletes segments behind this publisher.
             self._warn_once()
             return
+        if not self._write_manifest(data):
+            self._warn_once()
+            self._prune_segments()
+            return
+        self._remember_retired_segments(segments)
+        self._published_segments = segments
         self._last = signature
         self._failing = False
+        self._prune_segments()
+
+    def _read_published_segments(self) -> dict[str, float] | None:
+        try:
+            data = self._manifest_path.read_bytes()
+        except FileNotFoundError:
+            return {}
+        except OSError:
+            return None
+        return _playlist_segment_durations(data)
+
+    def _remember_existing_orphans(self) -> None:
+        """Give files from a prior publisher one observed-window grace period.
+
+        A relay can be rebound while preserving its HLS directory. This new
+        publisher has no in-memory retirement timestamps from its predecessor,
+        so it conservatively retains unlisted files for the actual duration of
+        the last public playlist plus its longest segment.
+        """
+        published = self._published_segments
+        if published is None:
+            return
+        now = self._clock()
+        grace = sum(published.values()) + max(published.values(), default=0.0)
+        if not self._staging_path.is_file():
+            active_staging: dict[str, float] = {}
+        else:
+            try:
+                staging = _playlist_segment_durations(self._staging_path.read_bytes())
+            except OSError:
+                staging = None
+            if staging is None:
+                return
+            active_staging = staging
+            grace = max(grace, sum(staging.values()) + max(staging.values(), default=0.0))
+        active = set(published) | set(active_staging)
+        try:
+            candidates = self._manifest_path.parent.glob("seg*.ts")
+            for path in candidates:
+                if _HLS_SEGMENT_NAME.fullmatch(path.name) is not None and path.name not in active:
+                    self._retired_until[path.name] = max(
+                        self._retired_until.get(path.name, 0.0), now + grace
+                    )
+        except OSError:
+            return
+
+    def _remember_retired_segments(self, current: dict[str, float]) -> None:
+        previous = self._published_segments
+        now = self._clock()
+        if previous is None:
+            # The old public file was unreadable at publisher start. Keep every
+            # existing segment that is not in the new window for one complete
+            # observed new-window lifetime before pruning it.
+            grace = sum(current.values()) + max(current.values(), default=0.0)
+            try:
+                for path in self._manifest_path.parent.glob("seg*.ts"):
+                    if (
+                        _HLS_SEGMENT_NAME.fullmatch(path.name) is not None
+                        and path.name not in current
+                    ):
+                        self._retired_until[path.name] = max(
+                            self._retired_until.get(path.name, 0.0), now + grace
+                        )
+            except OSError:
+                pass
+        else:
+            self._remember_retired_window(previous, now=now, except_names=set(current))
+        for name in current:
+            self._retired_until.pop(name, None)
+
+    def _remember_retired_window(
+        self,
+        segments: dict[str, float],
+        *,
+        now: float,
+        except_names: set[str] | None = None,
+    ) -> None:
+        lifetime = sum(segments.values())
+        for name, duration in segments.items():
+            if except_names is not None and name in except_names:
+                continue
+            self._retired_until[name] = max(
+                self._retired_until.get(name, 0.0), now + lifetime + duration
+            )
+
+    def _prune_segments(self) -> None:
+        """Remove only files outside both live windows and every client grace."""
+        published = self._published_segments
+        if published is None:
+            return
+        try:
+            staging = _playlist_segment_durations(self._staging_path.read_bytes())
+        except OSError:
+            return
+        if staging is None or any(
+            not (self._manifest_path.parent / name).is_file() for name in staging
+        ):
+            return
+        active = set(published) | set(staging)
+        staged_sequences = [int(name[3:12]) for name in staging]
+        if not staged_sequences:
+            return
+        oldest_staged_sequence = min(staged_sequences)
+        now = self._clock()
+        try:
+            for path in self._manifest_path.parent.glob("seg*.ts"):
+                match = _HLS_SEGMENT_NAME.fullmatch(path.name)
+                if match is None or path.name in active:
+                    continue
+                retired_until = self._retired_until.get(path.name)
+                if retired_until is not None and retired_until > now:
+                    continue
+                sequence = int(match.group(0)[3:12])
+                # A segment at or newer than the staging playlist may already
+                # be open or renamed by the muxer while its playlist update is
+                # still in flight. Never prune it, even if a same-named file
+                # was an orphan recorded when this publisher started.
+                if sequence >= oldest_staged_sequence:
+                    continue
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    self._warn_once()
+                    continue
+                self._retired_until.pop(path.name, None)
+        except OSError:
+            self._warn_once()
 
     # --- the write -------------------------------------------------------------------
 
@@ -1166,10 +1465,15 @@ class _ManifestPublisher:
 
     def _write_manifest(self, data: bytes) -> bool:
         """Publish ``data`` as the advertised manifest. False means it did not land."""
+        with live_manifest_lock.LIVE_MANIFEST_LOCK:
+            return self._write_manifest_locked(data)
+
+    def _write_manifest_locked(self, data: bytes) -> bool:
         try:
-            # In place: needs write access only, so a reader holding this file
-            # cannot block it (the whole point of U51), and a reader never sees
-            # a truncated or zero-length manifest.
+            # In place preserves U51's Windows behavior: a reader holding the
+            # file cannot block the write with a replace/delete sharing lock.
+            # The live route holds this same lock only while it reads the bytes,
+            # then closes the file before sending the response to a slow client.
             with self._manifest_path.open("r+b") as handle:
                 handle.write(data)
                 handle.truncate()
@@ -1522,6 +1826,14 @@ class HlsRelaySupervisor:
         whole life.
         """
         hls_sink = HlsSink(sink)
+        previous_window: _ClearedHlsWindow | None = None
+        start_number: int | None = None
+        if not preserve_window:
+            # Withdraw the old public window before starting a fresh muxer.
+            # Referenced and orphaned numeric segments stay available through
+            # their measured or conservative grace periods.
+            previous_window = _clear_hls_window(hls_sink)
+            start_number = previous_window.next_start_number
         args = [
             *_UDP_INPUT_ARGS,
             "-i",
@@ -1534,14 +1846,10 @@ class HlsRelaySupervisor:
                 carries_video=hls_sink.carries_video,
                 carries_audio=hls_sink.carries_audio,
             ),
-            *hls_sink.output_args(),
+            *_relay_hls_output_args(hls_sink, start_number=start_number),
         ]
-        # U51 item 1: clear stale output before a fresh/dead relay starts. A
-        # live relay's window remains part of the same broadcast across an
+        # A live relay's window remains part of the same broadcast across an
         # encoder crash-relaunch, so preserve it while rebinding the child.
-        # ``output_args`` above has already created the directory.
-        if not preserve_window:
-            _clear_hls_window(hls_sink)
         log_path = self._relay_log_path(channel_id, sink.label)
         pid_offset: int | None = None
         if log_path is not None:
@@ -1619,6 +1927,7 @@ class HlsRelaySupervisor:
             manifest_path=Path(hls_sink.manifest_target()),
             staging_path=Path(hls_sink.connect_target()),
             interval_s=self._manifest_publish_interval_s,
+            previous_window=previous_window,
         )
         publisher.start()
         now = self._clock()

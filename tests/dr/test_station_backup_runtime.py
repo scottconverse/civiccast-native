@@ -213,6 +213,8 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
     state = station_config / "station-state.json"
     station_config.mkdir(parents=True)
     state.write_text('{"station_name":"Integration station"}')
+    caption_settings = station_config / "offline-caption-settings.json"
+    caption_settings.write_text('{"enabled":false,"languages":["en"]}')
     (config_root / "existing.json").write_text('{"provider":"configured"}')
     database = tmp_path / "station.db"
     with closing(sqlite3.connect(database)) as connection:
@@ -240,6 +242,7 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
     vault.set("civiccast.live-source", "camera", "camera-test-secret")
     service = build_station_backup_service()
     assert state in service.config_paths
+    assert caption_settings in service.config_paths
     assert config_root / "existing.json" in service.config_paths
     assert not service.has_scheduled_passphrase()
     service.set_scheduled_passphrase("recovery-test-passphrase")
@@ -260,5 +263,6 @@ def test_runtime_backup_includes_station_state_and_portable_credentials(tmp_path
     assert service.verify_backup(artifact.path, "recovery-test-passphrase").valid
     inventory = service.inspect_backup(artifact.path, "recovery-test-passphrase")
     assert any(record["source_path"] == str(late_config) for record in inventory["payload"])
+    assert any(record["source_path"] == str(caption_settings) for record in inventory["payload"])
     assert b"smtp-test-secret" not in artifact.path.read_bytes()
     assert b"camera-test-secret" not in artifact.path.read_bytes()

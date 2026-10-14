@@ -118,6 +118,28 @@ The **Station box profile** card is read-only. It asks the program what this com
 - **Sign out other sessions** ends every other station-local console session except this browser, after a confirmation. It requires a signed-in station session with the `setup_admin` role; database and environment API tokens cannot use it. The **Staff accounts** screen also lets a setup admin review and revoke individual sessions.
 - **Regenerate recovery kit** creates eight new codes and invalidates the old ones at once. The new codes exist only on that page. Save or print them before you leave the page, tick the confirmation and click **Done**. If you leave early the codes are lost, and the old ones no longer work.
 
+### Recorded captions
+
+The **Recorded captions** card on Station Profile controls captions for saved
+recordings separately from **Show live captions on air**. A setup admin can edit
+these settings; meeting operators and support admins can read them.
+
+1. Choose **Enable recorded captions**. Turning this off stops new caption jobs
+   from being queued and pauses existing work until processing is enabled again.
+2. Keep English selected and choose whether to include **Spanish**, translated
+   from reviewed English. Clear Spanish for English-only operation.
+3. When Spanish is selected, choose **Wait for every selected language** to
+   attach both reviewed tracks together, or **Attach English after its review**
+   to make reviewed English available while Spanish translation and review
+   continue. The job remains active until the selected Spanish work finishes.
+4. Click **Save recorded-caption settings**. The card reports save failures;
+   do not assume an unsaved change has reached the worker.
+
+Only reviewed text is attached. These choices do not change live-caption
+performance thresholds or claim that an uncaptioned recording is captioned.
+Defaults are enabled processing, English and Spanish, and waiting for every
+selected language.
+
 ## Configure channels, outputs and sinks {#configuration-channels}
 
 ### How a channel is configured

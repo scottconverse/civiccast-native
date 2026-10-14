@@ -55,10 +55,15 @@ def test_sdi_sink_rejected() -> None:
         gst_sink_element(spec)  # type: ignore[arg-type]
 
 
-def test_rtmp_sink_rejected() -> None:
-    spec = SimpleNamespace(kind="rtmp", uri="rtmp://host/app")
-    with pytest.raises(ValueError, match="rtmp"):
-        gst_sink_element(spec)  # type: ignore[arg-type]
+def test_rtmp_sink_uses_rtmp2sink_without_exposing_stream_key() -> None:
+    spec = EgressSinkSpec(kind="rtmp", label="live", uri="rtmps://host/app")
+    assert gst_sink_element(spec) == 'rtmp2sink location="rtmps://host/app"'
+
+    keyed = EgressSinkSpec(
+        kind="rtmp", label="live", uri="rtmps://host/app", secret_ref="credential-handle"
+    )
+    with pytest.raises(ValueError, match="structured GStreamer output graph"):
+        gst_sink_element(keyed)
 
 
 # --- encoder_chain -----------------------------------------------------------
@@ -127,6 +132,19 @@ def test_build_multi_sink_uses_tee() -> None:
     )
     assert "tee name=t" in desc
     assert desc.count("t. ! queue !") == 2
+
+
+def test_build_rtmp_uses_branch_local_flv_mux_and_can_share_encoded_video() -> None:
+    rtmp = EgressSinkSpec(kind="rtmp", label="stream", uri="rtmp://host/app/key")
+    desc = build_playout_pipeline_desc(
+        sources=[PlayoutSource("program", "videotestsrc is-live=true")],
+        profile=EncodeProfile(),
+        sinks=[_file(), rtmp],
+    )
+    assert "tee name=encoded_video" in desc
+    assert "encoded_video. ! queue ! mpegtsmux name=mux" in desc
+    assert "encoded_video. ! queue ! flvmux name=flv_0 streamable=true" in desc
+    assert 'rtmp2sink location="rtmp://host/app/key"' in desc
 
 
 def test_build_multiple_sources_get_indexed_pads() -> None:

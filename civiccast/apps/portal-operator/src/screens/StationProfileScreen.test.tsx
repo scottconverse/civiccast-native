@@ -25,6 +25,8 @@ vi.mock('../api/client', () => ({
   getStationBoxProfile: vi.fn(),
   regenerateRecoveryKit: vi.fn(),
   revokeOtherOperatorSessions: vi.fn(),
+  getRecordedCaptionSettings: vi.fn(),
+  saveRecordedCaptionSettings: vi.fn(),
   updateStationProfile: vi.fn(),
 }))
 
@@ -34,8 +36,10 @@ import {
   getStaffIdentity,
   getStationBoxProfile,
   getStationProfile,
+  getRecordedCaptionSettings,
   regenerateRecoveryKit,
   revokeOtherOperatorSessions,
+  saveRecordedCaptionSettings,
   updateStationProfile,
 } from '../api/client'
 import { StationProfileScreen } from './StationProfileScreen'
@@ -161,6 +165,12 @@ describe('StationProfileScreen', () => {
     vi.clearAllMocks()
     vi.mocked(getStationBoxProfile).mockResolvedValue(boxProfile())
     vi.mocked(getStationProfile).mockResolvedValue(profile())
+    vi.mocked(getRecordedCaptionSettings).mockResolvedValue({
+      enabled: true,
+      languages: ['en', 'es'],
+      completion_requirement: 'all_selected_languages',
+    })
+    vi.mocked(saveRecordedCaptionSettings).mockImplementation(async (settings) => settings)
     vi.mocked(updateStationProfile).mockResolvedValue(profile({ station_name: 'Pinegrove PEG' }))
   })
 
@@ -236,6 +246,41 @@ describe('StationProfileScreen', () => {
       ),
     )
     expect(await findByText(/station profile saved/i)).toBeTruthy()
+  })
+
+  it('lets a setup admin save English-only caption settings', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const { findByLabelText, findByRole } = renderScreen()
+    const spanish = (await findByLabelText('Spanish captions')) as HTMLInputElement
+    expect(spanish.checked).toBe(true)
+    fireEvent.click(spanish)
+
+    const save = await findByRole('button', { name: 'Save recorded-caption settings' })
+    fireEvent.click(save)
+
+    await waitFor(() =>
+      expect(vi.mocked(saveRecordedCaptionSettings)).toHaveBeenCalledWith({
+        enabled: true,
+        languages: ['en'],
+        completion_requirement: 'all_selected_languages',
+      }, expect.anything()),
+    )
+  })
+
+  it('lets a setup admin select English-first completion', async () => {
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity(['setup_admin']))
+    const { findByLabelText, findByRole } = renderScreen()
+    fireEvent.click(await findByLabelText(/Attach English after its review/))
+
+    fireEvent.click(await findByRole('button', { name: 'Save recorded-caption settings' }))
+
+    await waitFor(() =>
+      expect(vi.mocked(saveRecordedCaptionSettings)).toHaveBeenCalledWith({
+        enabled: true,
+        languages: ['en', 'es'],
+        completion_requirement: 'english_reviewed',
+      }, expect.anything()),
+    )
   })
 
   it('copies the recordings path and explains why Explorer may not find it', async () => {

@@ -2533,20 +2533,18 @@ def _doctor_check_captions() -> None:
         )
 
     typer.echo("")
-    typer.echo("Recorded-Spanish captions (translation runtime)")
+    typer.echo("Recorded captions (Spanish translation runtime)")
     for line in _doctor_translation_lines():
         typer.echo(line)
 
 
 def _doctor_translation_lines() -> list[str]:
-    """Report whether the required Spanish caption track can actually be produced.
+    """Report whether the station's selected Spanish caption track can be produced.
 
-    A published recording must carry a reviewed Spanish track alongside
-    English, and the offline caption job blocks — telling the operator to
-    "run 'civiccast doctor'" — when no translation model is available. Doctor
-    used to say nothing whatsoever about translation, so following that
-    instruction produced a screen with no mention of the thing that was
-    broken. This closes that loop.
+    This check follows the station settings: it is irrelevant when recorded
+    captions are disabled or Spanish is not selected. When Spanish is selected,
+    the completion setting determines whether reviewed English can attach while
+    translation and Spanish review continue.
 
     Resolves through the SAME seam the worker does: the S13
     :class:`~civiccast.ai_models.service.AiModelService`, whose
@@ -2559,19 +2557,36 @@ def _doctor_translation_lines() -> list[str]:
     test without capturing stdout.
     """
 
+    from civiccast.captions.settings import (
+        RecordedCaptionSettingsStore,
+        default_recorded_caption_settings_path,
+    )
     from civiccast.captions.vod_job import CAPTIONS_SPANISH_ENV_VAR
 
     lines: list[str] = []
-    # The retired switch first: a station still carrying it will fail to
-    # start, and an operator running doctor to find out why deserves the
-    # answer here rather than only in the startup traceback.
-    retired = os.environ.get(CAPTIONS_SPANISH_ENV_VAR, "").strip()
-    if retired:
+    # Explain the legacy default source so an operator knows where an
+    # unsaved station setting came from.
+    legacy_value = os.environ.get(CAPTIONS_SPANISH_ENV_VAR, "").strip()
+    if legacy_value:
         lines.append(
-            f"  {CAPTIONS_SPANISH_ENV_VAR}={retired!r} is set. That switch is retired; "
-            "Spanish captions are required and it can no longer disable them. Remove it "
-            "from the station environment (a false value stops CivicCast from starting)."
+            f"  {CAPTIONS_SPANISH_ENV_VAR}={legacy_value!r} supplies the initial Spanish-language "
+            "setting until an operator saves Recorded captions under Setup > Station Profile."
         )
+    try:
+        caption_settings = RecordedCaptionSettingsStore(
+            default_recorded_caption_settings_path()
+        ).load()
+    except (OSError, ValueError) as exc:
+        lines.append(
+            f"  recorded-caption settings: UNKNOWN — could not read station settings ({exc})."
+        )
+        return lines
+    if not caption_settings.enabled:
+        lines.append("  recorded captions: OFF (Setup > Station Profile).")
+        return lines
+    if "es" not in caption_settings.languages:
+        lines.append("  Spanish captions are not selected for recorded captions.")
+        return lines
     try:
         from civiccast.ai_models.service import AiModelService
         from civiccast.ai_models.store import AiModelStore
@@ -2587,8 +2602,8 @@ def _doctor_translation_lines() -> list[str]:
     except Exception as exc:
         lines.append(f"  translation model: UNKNOWN — could not read the model settings ({exc}).")
         lines.append(
-            "    Recorded recordings cannot publish until this is readable; check that "
-            "the station database is reachable."
+            "    Check that the station database is reachable. Selected Spanish caption "
+            "jobs cannot continue until the model settings are readable."
         )
         return lines
 
@@ -2601,11 +2616,17 @@ def _doctor_translation_lines() -> list[str]:
     if feature.model_present is False or feature.runtime_reachable is False:
         lines.append("  status:            NOT AVAILABLE")
         lines.append(f"    {feature.detail}")
-        lines.append(
-            "    Published recordings will be HELD, not published in English only: the "
-            "caption job records the gap on each affected recording. Fix the model under "
-            "Settings > AI Models > Translation."
-        )
+        if caption_settings.completion_requirement == "english_reviewed":
+            lines.append(
+                "    Reviewed English can attach after its review; Spanish remains in progress "
+                "until translation is available and the Spanish cues are reviewed."
+            )
+        else:
+            lines.append(
+                "    The selected Spanish track is not ready. The job records the issue and "
+                "does not attach the selected tracks until review is complete."
+            )
+        lines.append("    Fix the model under Settings > AI Models > Translation.")
     elif feature.model_present is None and feature.runtime_reachable is None:
         lines.append("  status:            NOT PROBED")
         lines.append(f"    {feature.detail}")

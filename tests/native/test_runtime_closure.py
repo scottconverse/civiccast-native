@@ -86,11 +86,15 @@ def test_linux_only_factories_are_never_shipped_on_windows() -> None:
     assert not (LINUX_ONLY_FACTORIES & set(FACTORY_PLUGIN))
 
 
-def test_required_factory_count_includes_the_mandatory_caption_audio_appsink() -> None:
-    """The caption audio fork extends the measured closure with appsink."""
+def test_required_factory_count_includes_live_audio_processing_factories() -> None:
+    """Captions, per-output normalization, and configured EAS filtering ship."""
     assert "appsink" in REQUIRED_FACTORIES
     assert FACTORY_PLUGIN["appsink"] == FACTORY_PLUGIN["appsrc"] == "gstapp.dll"
-    assert len(REQUIRED_FACTORIES) == 52
+    assert "audioloudnorm" in REQUIRED_FACTORIES
+    assert FACTORY_PLUGIN["audioloudnorm"] == "gstrsaudiofx.dll"
+    assert "audiochebband" in REQUIRED_FACTORIES
+    assert FACTORY_PLUGIN["audiochebband"] == "gstaudiofx.dll"
+    assert len(REQUIRED_FACTORIES) == 54
 
 
 # --------------------------------------------------------------------------

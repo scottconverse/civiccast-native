@@ -206,7 +206,9 @@ FACTORY_PLUGIN: Mapping[str, str] = {
     # -- core elements (gstreamer_libs) ------------------------------------
     "appsink": "gstapp.dll",
     "appsrc": "gstapp.dll",
+    "audiochebband": "gstaudiofx.dll",
     "audioconvert": "gstaudioconvert.dll",
+    "audioloudnorm": "gstrsaudiofx.dll",
     "audioresample": "gstaudioresample.dll",
     "audiotestsrc": "gstaudiotestsrc.dll",
     "capsfilter": "gstcoreelements.dll",
@@ -286,17 +288,19 @@ FACTORY_PLUGIN: Mapping[str, str] = {
 #: The 52 factories the product's pipelines cannot run without. Derived from
 #: the spike's measured closure
 #: (`.agent-runs/native-windows/spike-gstreamer-bundle/evidence/elements-required.txt`)
-#: with two deliberate corrections: GPL `x264enc` is dropped (no-ship), and
-#: `mfh265enc` is added because the encoder-completion slice made HEVC a real
-#: native path. The mandatory live-caption audio fork adds ``appsink`` from the
-#: already-shipped gstapp plugin. The count is asserted by a test so runtime
-#: graph growth cannot silently outrun the closure.
+#: with deliberate corrections/additions: GPL `x264enc` is dropped (no-ship),
+#: `mfh265enc` is added for native HEVC, `appsink` for live captions, and the
+#: audioloudnorm/audiochebband pair for per-output normalization and EAS
+#: filtering. Their DLLs come from the already-pinned gstreamer-plugins wheel.
+#: The count is asserted so runtime graph growth cannot silently outrun closure.
 REQUIRED_FACTORIES = frozenset(
     {
         "aacparse",
         "appsink",
         "appsrc",
         "audioconvert",
+        "audiochebband",
+        "audioloudnorm",
         "audioresample",
         "audiotestsrc",
         "avdec_aac",

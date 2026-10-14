@@ -1845,6 +1845,24 @@ Reject a caption review item.
 - Request body: `CaptionReviewDecision`
 - Responses: 200 `CaptionReviewItemResponse`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 404 Caption review item not found; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
 
+### `GET /api/staff/captions/settings`
+
+Read recorded-caption station settings.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: none
+- Responses: 200 `RecordedCaptionSettings`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
+### `PUT /api/staff/captions/settings`
+
+Save recorded-caption station settings.
+
+- Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
+- Parameters: none
+- Request body: `RecordedCaptionSettings`
+- Responses: 200 `RecordedCaptionSettings`; 401 Missing, invalid, revoked, or misconfigured CivicCast staff bearer token.; 422 `HTTPValidationError`; 429 The observed peer exceeded the failed staff authentication budget. Wait for Retry-After before another invalid attempt; valid staff tokens remain accepted.
+
 ### `GET /api/staff/cg/channels/{channel_id}/board`
 
 Read the active CG board for a channel (board + zones + feeds).
@@ -8272,6 +8290,12 @@ rule (S13 §5.1).
 - `status` (required): `'verified' | 'failed'`
 - `summary_id` (required): `string`
 - `timestamp_proof` (required): `Rfc3161TimestampProof`
+
+### `RecordedCaptionSettings`
+
+- `completion_requirement` (optional): `'all_selected_languages' | 'english_reviewed'`
+- `enabled` (optional): `boolean`
+- `languages` (optional): `Array<'en' | 'es'>`
 
 ### `RecordingInputPreset`
 

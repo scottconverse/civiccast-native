@@ -44,6 +44,12 @@ bounded operational storage with usage reporting, and automatic recovery after
 output-restart budgets are exhausted. These changes are also unreleased source
 work, separate from the signed Beta 15 download.
 
+[Sprint 3](docs/ops/sprint3-output-completion.md) covers GStreamer RTMP and
+per-output audio processing, complete programme endings, HLS segment lifetime,
+and configurable recorded-caption languages and completion. The linked record
+tracks implementation and focused output checks; these changes are not in the
+published Beta 15 installer.
+
 ```bash
 # One-time: install uv, then sync the workspace.
 uv sync --all-extras --group dev

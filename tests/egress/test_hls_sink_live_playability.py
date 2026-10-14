@@ -42,7 +42,7 @@ import pytest
 import uvicorn
 from fastapi import FastAPI
 
-from civiccast.egress.hls_relay import _ManifestPublisher
+from civiccast.egress.hls_relay import _ManifestPublisher, _relay_hls_output_args
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
 from civiccast.egress.router import get_egress_store
 from civiccast.egress.sinks import HlsSink, build_sink
@@ -186,9 +186,10 @@ def _write_encoded_test_source(path: Path) -> None:
 def _start_live_hls_encoder(live_dir: Path, encoded_source: Path) -> FfmpegProcessHandle:
     """Start a real, persistent ffmpeg process: a looping, ENCODED test
     source (infinite by construction -- the same "no defined end" shape a
-    live RTMP/SRT feed has) muxed to rolling HLS via HlsSink's own args.
+    live RTMP/SRT feed has) muxed to rolling HLS with the relay's
+    publisher-owned segment lifetime.
 
-    This exercises HlsSink.output_args() exactly as
+    This exercises the HLS relay's output args exactly as
     ``civiccast.egress.runtime.build_persistent_encoder_args`` would append
     it to a channel's sink list -- the only difference from the real egress
     path is the source being a looping lavfi file instead of the encoder's
@@ -215,7 +216,7 @@ def _start_live_hls_encoder(live_dir: Path, encoded_source: Path) -> FfmpegProce
         "-i",
         str(encoded_source),
     ]
-    return start_ffmpeg([*input_args, *sink.output_args()])
+    return start_ffmpeg([*input_args, *_relay_hls_output_args(sink)])
 
 
 def _read_segment_names(manifest_text: str) -> set[str]:
@@ -345,26 +346,22 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
 
             print("FFPROBE PROOF:", ffprobe_result.stdout)
 
-            # The rolling-window proof: wait past several segment durations
-            # and confirm the referenced segment set actually changed (old
-            # segments dropped by ffmpeg's own delete_segments, new ones
-            # appended) -- this is what makes it LIVE output, not a static
-            # file that happens to be reachable over HTTP.
-            deadline = time.monotonic() + 20.0
-            rotated = False
+            # Wait until at least one entry from the prior public playlist has
+            # left the sliding window. A mere set change can be just an append
+            # and would not prove the publisher's retired-segment grace.
+            deadline = time.monotonic() + 30.0
             later_segments: set[str] = set()
             while time.monotonic() < deadline:
                 time.sleep(1.0)
                 later_response = httpx.get(served_manifest_url, timeout=10.0)
                 assert later_response.status_code == 200
                 later_segments = _read_segment_names(later_response.text)
-                if later_segments and later_segments != first_segments:
-                    rotated = True
+                if first_segments - later_segments:
                     break
-            assert rotated, (
-                f"live manifest never rotated: first={first_segments} "
-                f"still={later_segments} after 20s -- this would mean the "
-                f"output is static, not a real rolling live window"
+            retired_segments = first_segments - later_segments
+            assert retired_segments, (
+                f"live manifest never retired an initial segment: first={first_segments} "
+                f"still={later_segments} after 30s"
             )
             later_durations = _read_segment_durations(later_response.text)
             for duration in later_durations:
@@ -374,14 +371,21 @@ def test_hls_sink_produces_rolling_playable_live_manifest(
                 )
 
             # New segments referenced by the rotated manifest must themselves
-            # be servable (delete_segments must not have raced ahead of the
-            # manifest write and 404'd a segment the manifest still lists).
+            # be servable, and the old-only entries remain usable by clients
+            # holding the prior public playlist during its measured grace.
             for segment_name in later_segments:
                 segment_response = httpx.get(
                     f"{server.base_url}/media/live/gov-ch12/{segment_name}", timeout=10.0
                 )
                 assert segment_response.status_code == 200, (
                     f"manifest references {segment_name} but it 404s"
+                )
+            for segment_name in retired_segments:
+                segment_response = httpx.get(
+                    f"{server.base_url}/media/live/gov-ch12/{segment_name}", timeout=10.0
+                )
+                assert segment_response.status_code == 200, (
+                    f"prior playlist segment {segment_name} was removed before its grace expired"
                 )
     finally:
         handle.terminate(grace_seconds=5.0)

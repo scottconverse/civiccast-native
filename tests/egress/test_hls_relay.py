@@ -15,8 +15,15 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from civiccast.egress.hls_relay import HlsRelaySupervisor, hls_relay_uri_for
+from civiccast.egress.hls_relay import (
+    HlsRelaySupervisor,
+    _clear_hls_window,
+    _ManifestPublisher,
+    _relay_hls_output_args,
+    hls_relay_uri_for,
+)
 from civiccast.egress.models import EgressConfig, EgressSinkSpec
+from civiccast.egress.sinks import HlsSink
 from civiccast.stream._ffmpeg import FfmpegNotFoundError
 
 
@@ -104,7 +111,181 @@ def test_apply_feeds_the_relay_the_real_hls_muxer_args() -> None:
     input_uri = args[args.index("-i") + 1]
     assert input_uri.startswith(hls_relay_uri_for(sink.uri))
     expected_output_args = HlsSink(sink).output_args()
+    flags_index = expected_output_args.index("-hls_flags") + 1
+    expected_output_args[flags_index] = "+".join(
+        flag for flag in expected_output_args[flags_index].split("+") if flag != "delete_segments"
+    )
+    expected_output_args[flags_index] += "+temp_file"
     assert args[-len(expected_output_args) :] == expected_output_args
+
+
+def test_relay_leaves_segment_deletion_to_the_manifest_publisher() -> None:
+    sup, calls, _procs = _supervisor()
+    sup.apply(_config(_hls_sink()))
+
+    args = calls[0]
+    flags = args[args.index("-hls_flags") + 1].split("+")
+    assert "delete_segments" not in flags
+    assert "temp_file" in flags
+
+
+def _playlist(entries: list[tuple[float, str]]) -> bytes:
+    lines = ["#EXTM3U", "#EXT-X-TARGETDURATION:8", "#EXT-X-MEDIA-SEQUENCE:1"]
+    for duration, name in entries:
+        lines.extend((f"#EXTINF:{duration},", name))
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+class _Clock:
+    def __init__(self) -> None:
+        self.now = 100.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def test_publisher_retains_retired_segments_for_the_previous_playlist_lifetime(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "hls"
+    directory.mkdir()
+    manifest = directory / "playlist.m3u8"
+    staging = directory / "playlist.mux.m3u8"
+    retired = "seg000000001.ts"
+    shared = "seg000000002.ts"
+    newest = "seg000000003.ts"
+    for name in (retired, shared, newest):
+        (directory / name).write_bytes(b"segment")
+    manifest.write_bytes(_playlist([(7.25, retired), (1.5, shared)]))
+    clock = _Clock()
+    publisher = _ManifestPublisher(manifest_path=manifest, staging_path=staging, clock=clock)
+
+    staging.write_bytes(_playlist([(1.5, shared), (1.25, newest)]))
+    publisher._publish_once()
+    assert retired not in manifest.read_text(encoding="utf-8")
+    assert (directory / retired).exists()
+
+    # The previous published playlist lasted 8.75s and its retired segment
+    # lasted 7.25s. A client may still be using that playlist for their sum.
+    clock.now += 15.99
+    publisher._publish_once()
+    assert (directory / retired).exists()
+
+    clock.now += 0.02
+    publisher._publish_once()
+    assert not (directory / retired).exists()
+    assert (directory / shared).exists()
+    assert (directory / newest).exists()
+
+
+def test_publisher_pruning_protects_unpublished_new_segments_and_exact_names(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "hls"
+    directory.mkdir()
+    manifest = directory / "playlist.m3u8"
+    staging = directory / "playlist.mux.m3u8"
+    active = "seg000000010.ts"
+    old = "seg000000009.ts"
+    ahead = "seg000000011.ts"
+    malformed = "seg-not-a-segment.ts"
+    for name in (active, old, ahead, malformed):
+        (directory / name).write_bytes(b"segment")
+    window = _playlist([(2.0, active)])
+    manifest.write_bytes(window)
+    staging.write_bytes(window)
+    clock = _Clock()
+    publisher = _ManifestPublisher(manifest_path=manifest, staging_path=staging, clock=clock)
+
+    # The old orphan gets one observed-window grace. Even after expiry, a
+    # segment newer than the staging playlist can be in the muxer's
+    # rename-before-playlist-update interval, so it remains protected.
+    clock.now += 4.01
+    publisher._publish_once()
+
+    assert not (directory / old).exists()
+    assert (directory / ahead).exists()
+    assert (directory / malformed).exists()
+    assert (directory / active).exists()
+
+
+def test_publisher_does_not_publish_a_playlist_with_a_missing_segment(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "hls"
+    directory.mkdir()
+    manifest = directory / "playlist.m3u8"
+    staging = directory / "playlist.mux.m3u8"
+    existing = "seg000000001.ts"
+    (directory / existing).write_bytes(b"segment")
+    original = _playlist([(2.0, existing)])
+    manifest.write_bytes(original)
+    publisher = _ManifestPublisher(manifest_path=manifest, staging_path=staging)
+
+    staging.write_bytes(_playlist([(2.0, "seg000000002.ts")]))
+    publisher._publish_once()
+
+    assert manifest.read_bytes() == original
+
+
+def test_fresh_restart_withdraws_old_playlist_and_retains_its_segments_until_expiry(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "hls"
+    directory.mkdir()
+    spec = _hls_sink(uri=str(directory))
+    sink = HlsSink(spec)
+    manifest = Path(sink.manifest_target())
+    staging = Path(sink.connect_target())
+    retired = "seg000000001.ts"
+    shared = "seg000000002.ts"
+    orphan = "seg000000000.ts"
+    for name in (retired, shared, orphan):
+        (directory / name).write_bytes(name.encode())
+    previous = _playlist([(7.25, retired), (1.5, shared)])
+    manifest.write_bytes(previous)
+
+    clear_result = _clear_hls_window(sink)
+
+    assert not manifest.exists()
+    assert (directory / retired).read_bytes() == retired.encode()
+    assert (directory / shared).read_bytes() == shared.encode()
+    assert (directory / orphan).read_bytes() == orphan.encode()
+    assert clear_result.published_segments == {retired: 7.25, shared: 1.5}
+    assert clear_result.retired_segment_names == frozenset({orphan})
+    assert clear_result.retired_grace_s == 16.0
+    assert clear_result.next_start_number == 3
+
+    output_args = _relay_hls_output_args(sink, start_number=clear_result.next_start_number)
+    assert output_args[output_args.index("-start_number") + 1] == "3"
+
+    clock = _Clock()
+    publisher = _ManifestPublisher(
+        manifest_path=manifest,
+        staging_path=staging,
+        clock=clock,
+        previous_window=clear_result,
+    )
+    new_segment = "seg000000003.ts"
+    (directory / new_segment).write_bytes(b"new segment")
+    next_window = _playlist([(1.5, new_segment)])
+    staging.write_bytes(next_window)
+    publisher._publish_once()
+
+    assert manifest.read_bytes() == next_window
+    assert (directory / retired).read_bytes() == retired.encode()
+    assert (directory / new_segment).read_bytes() == b"new segment"
+
+    # The previous playlist lasted 8.75s and its oldest segment lasted 7.25s.
+    clock.now = 115.99
+    publisher._publish_once()
+    assert (directory / retired).exists()
+    assert (directory / orphan).exists()
+    clock.now = 116.01
+    publisher._publish_once()
+    assert not (directory / retired).exists()
+    assert not (directory / shared).exists()
+    assert not (directory / orphan).exists()
 
 
 def test_apply_is_idempotent_for_an_unchanged_sink() -> None:
@@ -231,7 +412,7 @@ def test_apply_without_new_session_keeps_the_relay_for_an_in_place_reload() -> N
     assert not procs[0].terminated
 
 
-def test_new_session_preserves_a_live_window_but_clears_fresh_or_dead_windows(
+def test_new_session_withdraws_fresh_or_dead_playlist_but_preserves_referenced_segments(
     tmp_path: Path,
 ) -> None:
     directory = tmp_path / "live"
@@ -239,14 +420,17 @@ def test_new_session_preserves_a_live_window_but_clears_fresh_or_dead_windows(
     config = _config(_hls_sink(uri=str(directory)))
     playlist = directory / "playlist.m3u8"
     segment = directory / "seg000000001.ts"
-    sup, _calls, procs = _supervisor()
+    sup, calls, procs = _supervisor()
 
-    # A fresh relay must remove a previous broadcast's window.
-    playlist.write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    # A fresh relay withdraws the old playlist first but retains the segment
+    # its already-served bytes may still reference. The replacement starts at
+    # a distinct segment number.
+    playlist.write_bytes(_playlist([(2.0, segment.name)]))
     segment.write_bytes(b"stale segment")
     sup.apply(config)
     assert not playlist.exists()
-    assert not segment.exists()
+    assert segment.read_bytes() == b"stale segment"
+    assert calls[0][calls[0].index("-start_number") + 1] == "2"
 
     # A live relay's window belongs to the same broadcast during a worker
     # crash-relaunch and stays visible while its relay child is rebound.
@@ -258,27 +442,29 @@ def test_new_session_preserves_a_live_window_but_clears_fresh_or_dead_windows(
     assert segment.is_file()
 
     # A same-label sink redirected to another directory is not the same
-    # output window. Stale files at the new destination must still be cleared.
+    # output window. Its manifest is withdrawn while referenced files stay
+    # available to clients holding snapshots.
     directory = tmp_path / "redirected"
     directory.mkdir()
     config = _config(_hls_sink(uri=str(directory)))
     playlist = directory / "playlist.m3u8"
     segment = directory / "seg000000001.ts"
-    playlist.write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    playlist.write_bytes(_playlist([(2.0, segment.name)]))
     segment.write_bytes(b"stale segment")
     sup.apply(config, new_session=True)
     assert procs[1].terminated
     assert not playlist.exists()
-    assert not segment.exists()
+    assert segment.read_bytes() == b"stale segment"
 
-    # A dead relay cannot prove that the old window is still live. Clear it
-    # before starting the replacement so it cannot advertise stale media.
-    playlist.write_text("#EXTM3U\n#stale\n", encoding="utf-8")
+    # A dead relay cannot prove that the old window is still live. Withdraw
+    # its playlist before starting the replacement, retaining its references
+    # through the previous window's grace period.
+    playlist.write_bytes(_playlist([(2.0, segment.name)]))
     segment.write_bytes(b"stale segment")
     procs[2]._returncode = 1
     sup.apply(config, new_session=True)
     assert not playlist.exists()
-    assert not segment.exists()
+    assert segment.read_bytes() == b"stale segment"
 
 
 def test_apply_with_new_session_drops_a_previous_sessions_relay_with_no_hls_sink() -> None:

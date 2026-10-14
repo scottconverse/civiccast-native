@@ -34,6 +34,7 @@ import type {
   StationProfile,
 } from '../types/api.generated'
 import { hasRole } from './contribution-format'
+import { RecordedCaptionSettingsPanel } from './RecordedCaptionSettingsPanel'
 
 const READ_ROLES = ['setup_admin', 'meeting_operator', 'support_admin']
 const WRITE_ROLES = ['setup_admin']
@@ -859,6 +860,7 @@ export function StationProfileScreen() {
         <StationIdentityPanel canWrite={canWrite} />
         <StationBoxProfilePanel />
       </div>
+      <RecordedCaptionSettingsPanel canWrite={canWrite} />
       <SecurityPanel canWrite={canWrite} />
     </div>
   )
