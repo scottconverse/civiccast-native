@@ -8,13 +8,21 @@ tracks package status.
 
 Verified `main` as of October 14 is
 `ba8f4473afa123014ef023ae94d01c507afa7ed5` (Sprint 4 merged).
-The unpublished Beta 16 signed candidate is built from
+The corrected unpublished Beta 16 signed candidate is built from
+`e92bebd4b5289dce969f81b72515cfa0d45eba55`, successful
+[build 38635220200](https://github.com/scottconverse/civiccast-native/actions/runs/38635220200).
+The corrected package passed upgrade, administrator/profile preservation,
+restricted service/process identity, installed GStreamer smoke, and uninstall
+in the 240 GiB Hyper-V guest. Clean fresh installation also passed, including
+new administrator setup, healthy/current Beta 16, restricted process ownership
+and installed runtime smoke. Publication still requires owner authorization.
+The earlier candidate used
 `9b83d7b89cddc987fbbcc5e23a1433339810d5d6` on `codex/beta16-release`,
 [build 38579665236](https://github.com/scottconverse/civiccast-native/actions/runs/38579665236).
 That candidate failed upgrade service registration in the replacement 160 GiB
 Hyper-V guest and restored healthy Beta 15 with the saved station profile.
-Source now stops the service before migrating its identity; a corrected signed
-candidate and package verification are pending. Results are tracked in the
+The corrected source stops the service before migrating its identity.
+Results are tracked in the
 candidate verification record above. Publication requires owner authorization.
 
 Current source work includes:
