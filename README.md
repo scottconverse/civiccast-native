@@ -1,18 +1,40 @@
 # CivicCast
 
-**CivicCast `v1.0.0-beta.15` is the current signed native Windows pre-release.** CivicCast is a station-in-a-box for public-access and local-government media: record and broadcast meetings, review captions, prepare sourced summaries, schedule programs, and publish recordings to a resident portal. Optional cloud services may charge their own usage fees; CivicCast has no per-minute software fee.
+CivicCast brings station scheduling, channel playout, meeting recording, caption
+review, sourced summaries, and resident publication into one native Windows
+system. Staff use one operator console; residents watch through a separate
+portal. Optional cloud services may charge their own usage fees, while CivicCast
+has no per-minute software fee.
 
-The [Beta 15 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15) provides the signed installer, runtime packs, complete signed station-model download, manuals, and checksums. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies the package and states its evidence limits. Start with [Install CivicCast on Windows](INSTALL-WINDOWS.md), the [User Manual](docs/USER-MANUAL.md), or the [FAQ](FAQ.md).
+## Current source work
 
-Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and built-in uninstall checks. Its corrected installer also restored a working station automatically after a simulated activation failure. The bundled Welcome programme aired and returned to slate in the short-programme rollover check. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies each tested package and its results.
+The owner is preparing `v1.0.0-beta.16` as an unpublished candidate from the
+current source. Recent work adds encrypted backup and restore, network access
+and staff sessions, a restricted Windows service identity, station-local
+scheduling, bounded operational storage, automatic output recovery, RTMP
+output, complete programme endings, coordinated HLS retention, and configurable
+recorded-caption languages. The [roadmap](docs/ROADMAP.md) links the
+implementation records; the [candidate verification
+record](docs/releases/v1.0.0-beta.16-verification.md) tracks package status.
 
-**Historical Beta 11 host result: 72 hours, three channels, 99.78% live caption-input coverage.** The host ran Public, Government and Education together without a service restart, with 216 healthy scheduled checkpoints. See the [72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the recorded measurements.
+## Current published package
 
-The Publish screen makes the resident portal public by default; archive and YouTube destinations are separate, opt-in provider workflows. Real external adapters are environment-gated, and the Provider setup form's saved credentials do not enable those adapters. Podcast publication and automatic subscriber notices are unavailable. See the [capability matrix](CAPABILITIES.md) for current-source behavior; it does not qualify the signed Beta 15 package.
+The current downloadable release remains signed `v1.0.0-beta.15`. Its [release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15)
+provides the installer, runtime packs, station-model bundle, manuals, and
+checksums. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
+identifies the exact package and its scoped installation results. For
+installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
+for operation, use the [User Manual](docs/USER-MANUAL.md) or [FAQ](FAQ.md).
 
-The live-caption path automatically retries Whistle while Whisper supplies backup captions. Whistle remains the CPU live-caption primary; supported NVIDIA CUDA applies to Whisper only. The native installer registers a Windows service and supervises the control plane, PostgreSQL, and media workers from the bundled runtime. This repository is the native Windows product line; it has no WSL, Docker, or Linux installation target. See [BRANCHES.md](BRANCHES.md) for project history.
-
-Current release state is recorded in [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml). Earlier package and lab evidence remains available in its release records, including the [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) and [Beta 10 verification](docs/releases/v1.0.0-beta.10-verification.md); those records apply only to their named releases.
+Whistle is the CPU live-caption primary; Whisper supplies per-channel backup
+captions, with supported NVIDIA CUDA applying to Whisper only. The native
+installer registers a Windows service and supervises the control plane,
+PostgreSQL, and media workers from the bundled runtime. This repository carries
+the native Windows product line, with no WSL, Docker, or Linux installation
+target. See [BRANCHES.md](BRANCHES.md) for project history. Current release
+identities are recorded in
+[`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml).
 
 ## Install and run
 
@@ -35,22 +57,11 @@ The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs
 
 ### Developer — run from source, contribute
 
-The current station-operations work adds [encrypted backup and restore](docs/ops/station-backup.md),
-[network access](docs/ops/network-access.md), [staff accounts and sessions](docs/ops/staff-accounts.md),
-and a [restricted Windows service account](docs/ops/restricted-service-identity.md).
-These changes are implemented and checked in the development branch, and are not included in the published Beta 15
-download. See the [implementation status](docs/ops/station-operations-goal.md).
-
-[Sprint 2](docs/ops/sprint2-unattended.md) adds station-local scheduling,
-bounded operational storage with usage reporting, and automatic recovery after
-output-restart budgets are exhausted. These changes are also unreleased source
-work, separate from the signed Beta 15 download.
-
-[Sprint 3](docs/ops/sprint3-output-completion.md) covers GStreamer RTMP and
-per-output audio processing, complete programme endings, HLS segment lifetime,
-and configurable recorded-caption languages and completion. The linked record
-tracks implementation and focused output checks; these changes are not in the
-published Beta 15 installer.
+Source contributors can inspect the [station operations record](docs/ops/station-operations-goal.md),
+[Sprint 2](docs/ops/sprint2-unattended.md), and
+[Sprint 3](docs/ops/sprint3-output-completion.md) for the implementation scope
+and focused evidence behind the Beta 16 preparation. Use the published Beta 15
+release page for installation.
 
 ```bash
 # One-time: install uv, then sync the workspace.
@@ -163,6 +174,33 @@ do not open public issues for security reports.
 ## Support
 
 See [SUPPORT.md](SUPPORT.md).
+
+## Package evidence and limits
+
+The Publish screen makes the resident portal public by default; archive and
+YouTube destinations are separate, opt-in provider workflows. Real external
+adapters are environment-gated, and credentials saved in Provider setup do not
+enable those adapters. Podcast publication and automatic subscriber notices
+are unavailable. See the [capability matrix](CAPABILITIES.md) for current-source
+behavior and its package boundary.
+
+The Beta 15 package passed scoped Windows Sandbox installation, first-admin
+setup, installed Help, uninstall, simulated activation-failure restoration, and
+a short Welcome-programme rollover check. Its [verification
+record](docs/releases/v1.0.0-beta.15-verification.md) binds those results to
+the named package. A separate Beta 15 R9 field evaluation later sampled slate
+during scheduled speech, found a CG playlist advertising missing segments,
+observed an unsigned installed native executable while the setup executable
+was signed, and found a caption-range mismatch after trimming. Causes and
+follow-up workflows remain as stated in the [owner-deferred Beta 17
+backlog](docs/ops/beta17-deferred.md); these are Beta 15 observations, not Beta
+16 package results.
+
+**Historical Beta 11 host result:** 72 hours across Public, Government, and
+Education, with 99.78% live caption-input coverage and 216 healthy scheduled
+checkpoints. See the [72-hour
+report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). This
+result remains Beta 11 evidence and does not qualify later packages.
 
 ## Code Of Conduct
 

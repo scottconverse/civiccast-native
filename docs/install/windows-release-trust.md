@@ -7,8 +7,9 @@
 
 ## Current Release State
 
-`v1.0.0-beta.15` is the current signed GitHub pre-release, not a production
-release. Download from the [Beta 15 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15),
+`v1.0.0-beta.15` remains the latest signed GitHub pre-release, not a production
+release. The current source identity, `v1.0.0-beta.16`, is an unpublished
+candidate until authorized. Download Beta 15 from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15),
 and use its own `SHA256SUMS.txt`, installer signature and station/pack
 manifests to verify the bytes you receive. The [Beta 15 verification
 record](../releases/v1.0.0-beta.15-verification.md) identifies the original
@@ -38,7 +39,7 @@ upgrade-baseline kit.
 This page explains how an operator should verify a CivicCast Windows setup
 download before running it.
 
-The repository manual and generated Help on `main` are a development edition and include unreleased station-operation, scheduling, output and recorded-caption settings. For the published Beta 15 interface, use the Help installed with Beta 15 or the manual assets from its release page. Merged source changes do not update an installed station.
+The repository manual and generated Help are a development edition and include unreleased station-operation, scheduling, output and recorded-caption settings. For the published Beta 15 interface, use the Help installed with Beta 15 or the manual assets from its release page. Source changes do not update an installed station.
 
 ## Read The Release Docs First
 

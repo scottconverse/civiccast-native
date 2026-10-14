@@ -1,6 +1,6 @@
 # Installing, first run, upgrading, uninstalling {#ch-installing}
 
-This chapter describes Beta 15 Windows setup, the first-run window and first setup in the operator console. It also covers setup exit codes, logs, upgrade, repair and uninstall. The steps below are based on the current installer and runtime sources. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) identifies the package checks and limits. Read [Chapter 9](#ch-planning) first.
+This chapter walks through Windows setup, first run, first setup in the operator console, upgrade, repair and uninstall. It also explains setup exit codes and logs. Read [Chapter 9](#ch-planning) first.
 
 ## Before you start
 
@@ -18,7 +18,7 @@ Setup has two phases. The **Windows setup** (`setup.exe`) runs with administrato
 
 | What you start with | Installer behavior | Package evidence |
 | --- | --- | --- |
-| Complete offline kit: setup, runtime packs under `packs\`, signed index and station packs under `station\` | Verifies signed components and activates the local station | Use the record matching the package; see the Beta 15 verification record for this release |
+| Complete offline kit: setup, runtime packs under `packs\`, signed index and station packs under `station\` | Verifies signed components and activates the local station | Use the verification record matching the package |
 | Release download helper with `-Install` | Downloads and verifies the complete set, creates the folder layout, then runs setup | Use all matching archive parts and release checksum metadata |
 | Raw caption or AI model downloads from the first-run GUI | Acquires required and selected optional components | Does not replace signed activation packs |
 | Incomplete kit or mismatched station resources | Reports the missing or invalid component; activation cannot complete | Obtain the matching complete kit before retrying |
@@ -92,9 +92,9 @@ If WebView2 is missing, setup installs the full offline copy it carries (the bui
 
 ### Step 2: The "Already Installed" page (only if CivicCast is on the computer)
 
-Before the normal setup pages or prerequisite installers, Beta 15 checks the installed CivicCast version. If the installed version is newer, setup exits with code 129 before installing prerequisites, stopping the service, replacing application files, or changing station data. Keep using the installed version, or use its complete matching signed setup kit if it needs repair. If setup cannot safely read or compare the installed version, it exits with code 130 before changing the installation; follow the message and contact support if it persists.
+Before the normal setup pages or prerequisite installers, setup checks the installed CivicCast version. If the installed version is newer, setup exits with code 129 before installing prerequisites, stopping the service, replacing application files, or changing station data. Keep using the installed version, or use its complete matching signed setup kit if it needs repair. If setup cannot safely read or compare the installed version, it exits with code 130 before changing the installation; follow the message and contact support if it persists.
 
-If that check passes, NSIS may show its **Already Installed** page with the installed version and choices such as **Add/Reinstall components** and **Uninstall CivicCast (Native)**. For an upgrade, choose the option that does **not** uninstall first. See "Upgrade" below for why. The older silent-installer downgrade message is historical; Beta 15 refuses a downgrade in the early version check for both graphical and silent setup.
+If that check passes, NSIS may show its **Already Installed** page with the installed version and choices such as **Add/Reinstall components** and **Uninstall CivicCast (Native)**. For an upgrade, choose the option that does **not** uninstall first. See "Upgrade" below for why. The older silent-installer downgrade message is historical; the current setup refuses a downgrade in the early version check for both graphical and silent setup.
 
 ### Step 3: Choose the install folder
 
@@ -120,7 +120,7 @@ Start the install. The details list fills with lines. Setup also writes each ste
 | "Activating the CivicCast (Native) station (K1)..." then "CivicCast (Native): using the station bundle beside setup.exe (`<folder>\station`)." | Extracts the speech and AI models and runs the self-test (next section). This is the longest step |
 | "Registering the CivicCast (Native) supervisor service (D4)..." | Registers the service, starts it and waits for it to answer |
 | "Registering the CivicCast (Native) portal/API firewall rule (D4)..." | Adds the firewall rule |
-| "CivicCast (Native): recorded InstalledVersion 1.0.0-beta.15 for the next install/upgrade run." | The last step before success |
+| "CivicCast (Native): recorded InstalledVersion `<installed version>` for the next install/upgrade run." | The last step before success |
 | "CivicCast (Native) bootstrap install complete: required component packs staged and D2-verified, D3 install/upgrade engine run, PostgreSQL provisioned, service and firewall rule registered." | Setup finished |
 
 Setup can take time while it extracts components and runs its self-test. Keep the window open and check `C:\ProgramData\CivicCast\install-progress.log` if the details list is quiet. Do not interrupt setup while a step is still running.
@@ -153,7 +153,7 @@ The self-test runs the real programs once. The caption test is forced onto the p
 
 #### Service, firewall and finish
 
-Setup registers **CivicCast Native Supervisor** (`CivicCastSupervisor`) to run automatically as the restricted Windows virtual account `NT SERVICE\CivicCastSupervisor`, starts it, and waits up to 120 seconds for Windows to report it running and up to 180 seconds for the web server to answer `/health`. On an existing default LocalSystem installation, setup first migrates the old service profile and CivicCast credentials before changing the account. See the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md). An isolated Windows Sandbox run with the current source overlay verified migration of an existing default LocalSystem profile and CivicCast credentials, virtual-account service startup, and a healthy API with the current schema. This is development-source evidence, not qualification of a rebuilt or signed installer or production cutover; the published Beta 15 installer remains unchanged. Setup then adds the firewall rule, records the version, fixes the "Apps" entry's size and uninstall command, and writes three shortcuts: **CivicCast Operator Console** on the Desktop and in the Start menu folder "CivicCast (Native)", and **CivicCast Public Portal** in that folder. The shortcuts open the local loopback listener at `http://127.0.0.1:8000/operator/` and `http://127.0.0.1:8000/`.
+Setup registers **CivicCast Native Supervisor** (`CivicCastSupervisor`) to run automatically as the restricted Windows virtual account `NT SERVICE\CivicCastSupervisor`, starts it, and waits up to 120 seconds for Windows to report it running and up to 180 seconds for the web server to answer `/health`. On an existing default LocalSystem installation, setup first migrates the old service profile and CivicCast credentials before changing the account. See the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md). Setup then adds the firewall rule, records the version, fixes the "Apps" entry's size and uninstall command, and writes three shortcuts: **CivicCast Operator Console** on the Desktop and in the Start menu folder "CivicCast (Native)", and **CivicCast Public Portal** in that folder. The shortcuts open the local loopback listener at `http://127.0.0.1:8000/operator/` and `http://127.0.0.1:8000/`.
 
 > **Known issue (beta.11):** The shortcuts are plain web links. If the service is stopped they show a browser error, and nothing tells the operator to start the service. See "If it did not work".
 
@@ -227,11 +227,11 @@ When first-run sample content is enabled, the bundled Welcome video gets a
 20-second starter slot five minutes ahead. Use Schedule to approve it for air
 and start its channel before that time. If setup takes longer, schedule the
 same Welcome asset for a new future time; approving an expired item does not
-move its airtime. The Beta 15 package check confirmed the sample played and
-returned the channel to slate. A separate one-minute slot containing the
-20-second clip showed repeated rollover attempts and a `Changing source`
-status during the observation; this was not shown to be an indefinite stall
-or corrected by this release. See the Beta 15 verification record for scope.
+move its airtime. The corrected Beta 15 package played the sample in both a
+20-second slot and a 60-second slot, then returned the channel to slate. An
+earlier Beta 15 candidate had repeated rollover attempts in the 60-second slot;
+the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md)
+distinguishes that initial observation from the corrected package result.
 
 ## Silent install
 
@@ -277,7 +277,7 @@ When a step fails, the dialog shows text but not the number, and a silent run sh
 | 126 | Service | Windows registered the service but could not start it | Read `C:\ProgramData\CivicCast\logs` and the Windows Application event log (Event Viewer, Windows Logs, Application) |
 | 127 | Database | Setup cannot tell which CivicCast runtime owns the machine | If there is no older WSL edition, an administrator sets `HKLM\SOFTWARE\CivicCast\ActiveRuntime` to `native` and runs setup again. The exact command is in `provision\OWNERSHIP-RECOVERY.md` |
 | 128 | Upgrade engine | An earlier failed upgrade's record is still on disk. Setup restores the pre-setup application and station state when automatic recovery succeeds | Move (do not delete) `C:\ProgramData\CivicCast\upgrade\upgrade-journal.json` somewhere safe, then run setup again |
-| 129 | Version preflight | Beta 15 is older than the installed version. Setup stops before prerequisites, service changes, application-file replacement, or station-data changes | Keep using the installed version. If it needs repair, use the complete signed setup kit matching that installed version |
+| 129 | Version preflight | The setup version is older than the installed version. Setup stops before prerequisites, service changes, application-file replacement, or station-data changes | Keep using the installed version. If it needs repair, use the complete signed setup kit matching that installed version |
 | 129 | Upgrade engine (defensive late refusal) | A newer version was detected after application files had been replaced and the database downgrade was refused | Setup automatically restores the pre-setup files and station state when recovery succeeds. Check `install-progress.log`; if restoration did not complete, keep the recovery records and follow exit 136 |
 | 130 | Version preflight | Setup could not safely compare the installed version or identity; it stopped before changing the installation | Follow the setup message; retry from an administrator account or contact support with the message |
 | 130 | Uninstall | You declined the ownership-transfer question (this code is phase-specific; see the setup log) | None; nothing was removed |
@@ -338,18 +338,18 @@ Get-Content C:\ProgramData\CivicCast\install-progress.log -Tail 5
 ```
 
 - The service is **CivicCast Native Supervisor**, `Status` **Running**, `StartType` **Automatic**.
-- `/health` answers `status: healthy`, `schema: current` and `version: 1.0.0-beta.15`. The HTTP status is always 200 while the process answers. A `degraded` body means database readiness or live-caption processing needs attention; inspect `schema` and `live_captions`, then authenticated System Health for details.
+- `/health` answers `status: healthy`, `schema: current` and the installed `version`. The HTTP status is always 200 while the process answers. A `degraded` body means database readiness or live-caption processing needs attention; inspect `schema` and `live_captions`, then authenticated System Health for details.
 - The firewall rule exists.
 - Both `station-set.json` and `activation-self-test.json` exist in the install folder.
-- The last log lines include "postinstall: SUCCESS (InstalledVersion 1.0.0-beta.15 recorded)".
-- Settings, Apps shows **CivicCast (Native)**, version 1.0.0-beta.15.
+- The last log lines include `postinstall: SUCCESS` and record the installed version.
+- Settings, Apps shows **CivicCast (Native)** and the installed version.
 - The operator console and the resident portal at `http://127.0.0.1:8000/` both load on the station.
 
-Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) states the package observations and limits; it does not claim a normal cross-version upgrade or an extended soak.
+Then sign in and open **Readiness** (the page headed "Safe to broadcast") and run a private rehearsal ([Chapter 4](#ch-running-meeting), [Chapter 8](#ch-something-wrong)). Restart Windows once and confirm that the service starts automatically. This is an operational check for your station.
 
 ## Upgrade
 
-To upgrade, run the newer `setup.exe` over the existing installation. Use the release helper to assemble the runtime `packs\` and signed `station\` folders. Read the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for the tested installation scope; it does not claim a normal cross-version upgrade. Make a separate backup first ([Chapter 12](#ch-operations)); the installer's upgrade backup is not your only recovery copy.
+To upgrade, run the newer `setup.exe` over the existing installation. Use the release helper to assemble the runtime `packs\` and signed `station\` folders. Make a separate backup first ([Chapter 12](#ch-operations)); the installer's upgrade backup is not your only recovery copy.
 
 > **Warning:** Setup stops the CivicCast service before it replaces any file. That takes every channel off the air until setup finishes and the service starts again. Do not run an upgrade during a meeting or a scheduled program.
 
@@ -430,6 +430,10 @@ Because the database password is deleted from the registry, the surviving databa
 | "Could not read setup state." | The console reached the station but the station could not answer | Wait and reload. Check the service is running. Collect `install-progress.log` and do not run setup again until someone has read it |
 | A required station pack is missing | Model acquisition in the first-run window cannot provide signed station packs | Check the error detail; confirm `station-models.json` and every archive part are available | Run `scripts\download_windows_release_artifacts.ps1 -Install` to verify and assemble the kit, then retry setup |
 | The station will not stay up after a failed upgrade | Containment left the service on manual start | Fix the cause, run setup again |
+
+## Package status and verification
+
+This chapter describes the merged Beta 16 source. Use only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package-specific checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; the intended signing boundary is recorded as a Beta 17 follow-up. That observation does not establish the status of another package.
 
 ## Related
 

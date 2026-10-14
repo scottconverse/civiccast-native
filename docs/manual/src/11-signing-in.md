@@ -66,7 +66,7 @@ The **Sign out** button appears only after the console has confirmed who you are
 
 ### The top bar
 
-The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the installed version number, such as `v1.0.0-beta.15`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
+The top bar runs across the whole screen. From the left it shows the **C** logo, the word **CivicCast** and the installed version number, in the form `v1.0.0-beta.N`. On a wide screen the middle shows a pill reading **No live meeting broadcast** and a clock reading "Local &lt;time&gt; / Next No events scheduled". On the right are a theme button (**Switch to dark theme**), a round badge with your initials, and **Sign out**.
 
 Hover over the round badge to see your name and your roles, in the form "&lt;your display name&gt; / &lt;your role names&gt;". Setup admins can also review account role assignments in **Staff accounts**.
 
@@ -156,7 +156,7 @@ These screens open for every role but refuse some things:
 >
 > Some on-screen messages also say "System Health" when they mean the **Readiness** screen.
 
-> **Note:** The console shows dates and times in your browser's own settings. Several screens where you type a time, such as Recording, read what you type as UTC (a world-standard clock) and not as local time. Chapter 3 explains each one where you type a time.
+> **Note:** Schedule, Program Guide, Auto-schedule and Recording use the station's configured time zone. The browser may show other timestamps in its own zone; [Chapter 3](#ch-before-meeting) identifies the zone used by each time-entry screen.
 
 ## Read the colors and status words
 

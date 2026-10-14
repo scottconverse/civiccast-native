@@ -78,15 +78,13 @@ def test_readme_separates_published_downloads_from_field_evidence() -> None:
     readme = _normalized_plaintext(ROOT / "README.md")
     assert PUBLISHED_RELEASE_LINK in readme
     assert (
-        "historical beta 11 host result: 72 hours, three channels, 99.78% live caption-input coverage"
-        in readme
+        "historical beta 11 host result: 72 hours across public, government, and education, "
+        "with 99.78% live caption-input coverage" in readme
     )
-    assert (
-        "the host ran public, government and education together without a service restart" in readme
-    )
-    assert "with 216 healthy scheduled checkpoints" in readme
+    assert "result remains beta 11 evidence and does not qualify later packages" in readme
+    assert "216 healthy scheduled checkpoints" in readme
     assert "verification record" in readme
-    assert "72-hour host report" in readme
+    assert "72-hour report" in readme
 
 
 def test_quickstart_uses_the_release_helper_and_verifies_its_exact_inputs() -> None:

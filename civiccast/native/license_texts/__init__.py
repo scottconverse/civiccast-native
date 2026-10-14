@@ -108,6 +108,15 @@ def _spdx_source(spdx_id: str) -> str:
 #: Every `sha256` was confirmed against the pinned commit by fetching each
 #: text and comparing bytes -- not copied from an audit report.
 LICENSE_TEXT_SOURCES: Final[dict[str, LicenseTextSource]] = {
+    "LGPL-2.0-or-later": LicenseTextSource(
+        source=_spdx_source("LGPL-2.0-or-later"),
+        fetched="2026-10-14",
+        sha256="86dc99d7e5060915ab1dfc1378b7dd351c62088bfa74067e8aa1868c6fdba7d8",
+        note=(
+            "Governs the GStreamer code compiled into gstfft-1.0-0.dll; "
+            "see the pinned GStreamer 1.28.5 gst-plugins-base FFT sources."
+        ),
+    ),
     "LGPL-2.1-or-later": LicenseTextSource(
         source=_spdx_source("LGPL-2.1-or-later"),
         fetched="2026-07-23",

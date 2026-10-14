@@ -2,8 +2,6 @@
 
 This chapter covers the "business side" of a station: how many residents watched, what aired and when, the schedule file that outside TV-guide services read, sponsor messages, the resident apps, and the optional paid-access feature. A PEG station employee, a records clerk or a station manager normally uses these screens. You do not need any technical background, but a few steps need an IT person, and this chapter says so each time.
 
-Read the "Known issue" boxes for their version scope. Some describe current behavior; an older version label identifies an observation from that release, not automatically a current defect.
-
 ## Before you start
 
 You need to be signed in (see [Chapter 2](#ch-signing-in)). Five of the screens in this chapter sit in the left sidebar under **Publish**: **Analytics**, **Reports**, **EPG Export**, **Underwriting** and **App Admin**. The sixth, **Paywall**, sits under **Setup**.
@@ -19,9 +17,7 @@ CivicCast gives each person one or more *roles*. A role is a named set of permis
 | App Admin | Setup admin, Publish operator | Both can view and track; only Setup admin can start a build |
 | Paywall | Setup admin | Everything |
 
-> **Note:** In a normal station, everyone signs in with the first administrator account made during First Setup. That account carries all five roles, so you will see every screen and every button. The limits in the table matter only if your IT person made narrower sign-in passes for some staff.
-
-> **Note:** This chapter describes Beta 15 operation. Use its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for package identity, observations, and limits; the releases page shows available downloads.
+> **Note:** The first administrator account carries all five roles. A setup admin can create staff accounts with narrower roles; your assigned roles determine which screens and actions are available.
 
 > **Warning:** Several screens in this chapter ask you to type dates. CivicCast treats those dates as **UTC**, the world reference clock. In the United States UTC is several hours ahead of local time. Mountain daylight time is 6 hours behind UTC. A meeting that starts at 7 p.m. Mountain daylight time is already 1 a.m. UTC *the next day*. When a report looks one day off, this is almost always why.
 

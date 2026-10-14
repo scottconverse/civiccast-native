@@ -1,8 +1,14 @@
 # Install CivicCast on Windows
 
-The current release is **`v1.0.0-beta.15`**, the signed native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
+CivicCast Beta 16 is a complete native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
 
-[Beta 15 downloads](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15) · [User manual](docs/USER-MANUAL.md) · [Package verification](docs/releases/v1.0.0-beta.15-verification.md)
+[User manual](docs/USER-MANUAL.md) · [Beta 16 candidate verification](docs/releases/v1.0.0-beta.16-verification.md)
+
+Beta 16 is an unpublished candidate. Testers with the candidate kit run its
+`setup.exe` with the adjacent `packs` and `station` folders intact. The public
+download command below supplies the currently published `v1.0.0-beta.15`
+([release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15))
+until Beta 16 is authorized for publication.
 
 ## Download and install the complete station
 
@@ -25,7 +31,7 @@ names the step in progress.
 
 For download only, replace `-Install` with `-IncludePacks`. Keep the resulting folder together when copying it to USB. The complete folder supplies the dependencies for offline installation.
 
-[Downloader source](scripts/download_windows_release_artifacts.ps1). It targets this exact release.
+[Beta 16 downloader source](scripts/download_windows_release_artifacts.ps1). Its defaults target Beta 16 when published; the command above deliberately downloads the published Beta 15 helper.
 
 ## First start
 
@@ -41,10 +47,6 @@ The live-caption path automatically retries Whistle while Whisper supplies backu
 
 Use the same complete download and run setup over the installation. Do not uninstall or delete station data first. Setup stops the station during upgrade: back up a working station and plan the interruption. It is intended to preserve accounts, settings, schedules, recordings and model caches. The verification record identifies the exact paths observed; it does not guarantee every historical version pair.
 
-Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and built-in uninstall checks. Its corrected installer also restored a working station automatically after a simulated activation failure. The bundled Welcome programme aired and returned to slate in the short-programme rollover check. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies each tested package and its results.
-
-Historical Beta 13 installation evidence: its normal Beta 11 upgrade, controlled interruption and same-candidate repair, and separate fresh installation apply to Beta 13 only. See the [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md) and [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json). Raw Whisper or Ollama directories do not substitute for signed station packs.
-
 For an unknown existing administrator password, a Windows administrator on the station can use the supported interactive reset with the service stopped:
 
 ```powershell
@@ -59,8 +61,11 @@ It prompts privately, preserves station data and revokes that administrator's ex
 
 The release's `station-models.zip.001`, `.002` and subsequent parts form one ZIP64 archive. **Use the helper to verify and extract them.** Individual parts are not runtime packs.
 
+The layout below is the Beta 16 candidate kit. The published-download command
+above creates the corresponding `CivicCast-Beta15` folder until Beta 16 is released.
+
 ```text
-CivicCast-Beta15/
+CivicCast-Beta16/
   setup.exe
   packs/
     native-app-payload.ccpack
@@ -88,3 +93,13 @@ Read `C:\ProgramData\CivicCast\install-progress.log`. Exit 110 concerns runtime-
 First setup must be opened on the station. If its URL refuses connection, check the `CivicCastSupervisor` Windows service and installation log. A missing service is an installation failure, not a password problem.
 
 See [Windows release trust](docs/install/windows-release-trust.md) and [Support](SUPPORT.md). Exclude passwords, recovery codes and provider secrets from reports.
+
+## Package evidence and historical results
+
+[Beta 16 package checks](docs/releases/v1.0.0-beta.16-verification.md) track the
+new candidate. [Beta 17 follow-up](docs/ops/beta17-deferred.md) records deferred
+field findings.
+
+Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help and built-in uninstall checks. Its corrected installer also restored a working station automatically after a simulated activation failure. The bundled Welcome programme aired and returned to slate in the short-programme rollover check. The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md) identifies each tested package and its results.
+
+Historical Beta 13 installation evidence: its normal Beta 11 upgrade, controlled interruption and same-candidate repair, and separate fresh installation apply to Beta 13 only. See the [Beta 13 verification record](docs/releases/v1.0.0-beta.13-verification.md) and [fresh-install evidence](docs/ops/evidence/beta13-fresh-install-observations-2026-10-11.json). Raw Whisper or Ollama directories do not substitute for signed station packs.

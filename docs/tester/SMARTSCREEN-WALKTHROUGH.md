@@ -1,40 +1,14 @@
 # "Windows protected your PC" — what to expect, and what to do
 
-> **Current published native installer:** `v1.0.0-beta.15` is the signed
-> GitHub pre-release, not a production release. Follow the [current User
-> Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
-> [Windows release-trust guide](../install/windows-release-trust.md), and the
-> exact owner-authorized handoff. The Beta 10 release details below are a
-> historical snapshot and do not qualify Beta 15.
-
-## Historical Beta 10 release state (October 2, 2026 snapshot)
-
-`v1.0.0-beta.10` was the current published release when this page was written
-(published 2026-10-02), a
-GitHub **pre-release** (a "Beta Candidate", not a production release) at
-<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>:
-`setup.exe`, `.ccpack` runtime packs, `SHA256SUMS.txt`, and
-`setup.exe.sidecar.json`. `v1.0.0-beta.7` is superseded history (as are beta.5,
-beta.4, and `v1.0.0-beta.3`, the first downloadable release); beta.8 and beta.9
-were never published and their work is inside beta.10.
-`v1.0.0-beta.1` (USB-delivered, no GitHub download) is also superseded.
-`v1.0.0-beta.2` was never published -- it exists
-only as an internal Gate A upgrade-baseline kit. See
-[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
-authored release-state record.
-
-Beta 10 was a beta candidate: its clean-install automated check
-passed, upgrade paths were not run for it, and the human/station acceptance
-pass is not done (see
-[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)).
-A familiar filename or a passing SmartScreen check is not evidence that its
-release checks have passed.
-
 When you open a CivicCast installer, Windows may show a blue SmartScreen page.
 That page alone does not prove the file is safe, signed, or approved. Verify the
 exact filename, SHA-256, and signature status in the active handoff first.
 ("Active handoff" means the tester packet you were given for this release —
 see `docs/tester/START-HERE.md` if you don't have one.)
+
+This walkthrough explains how to handle that screen and check the actual file
+before running it. The Beta 16 source candidate is unpublished; Beta 15 remains
+the latest published native release.
 
 ---
 
@@ -120,3 +94,34 @@ A valid Authenticode signature does not guarantee that Windows will omit a
 SmartScreen warning. Do not promise that the warning will disappear after a
 particular number of downloads. See [CODE_SIGNING_POLICY.md](../../CODE_SIGNING_POLICY.md)
 for the signing posture, and verify the actual downloaded executable.
+
+## Release context
+
+The current published native installer is `v1.0.0-beta.15`, a signed GitHub
+pre-release, not a production release. Follow the [current User Manual](../USER-MANUAL.md),
+[Windows install guide](../../INSTALL-WINDOWS.md), [Windows release-trust guide](../install/windows-release-trust.md),
+and exact owner-authorized handoff. The Beta 10 details below are historical
+and do not qualify Beta 15 or the unpublished Beta 16 candidate.
+
+### Historical Beta 10 release state (October 2, 2026 snapshot)
+
+`v1.0.0-beta.10` was the current published release when this page was written
+(published 2026-10-02), a
+GitHub **pre-release** (a "Beta Candidate", not a production release) at
+<https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.10>:
+`setup.exe`, `.ccpack` runtime packs, `SHA256SUMS.txt`, and
+`setup.exe.sidecar.json`. `v1.0.0-beta.7` is superseded history (as are beta.5,
+beta.4, and `v1.0.0-beta.3`, the first downloadable release); beta.8 and beta.9
+were never published and their work is inside beta.10.
+`v1.0.0-beta.1` (USB-delivered, no GitHub download) is also superseded.
+`v1.0.0-beta.2` was never published -- it exists
+only as an internal Gate A upgrade-baseline kit. See
+[`docs/releases/release-truth.yaml`](../releases/release-truth.yaml) for the
+authored release-state record.
+
+Beta 10 was a beta candidate: its clean-install automated check
+passed, upgrade paths were not run for it, and the human/station acceptance
+pass is not done (see
+[`docs/releases/v1.0.0-beta.10-verification.md`](../releases/v1.0.0-beta.10-verification.md)).
+A familiar filename or a passing SmartScreen check is not evidence that its
+release checks have passed.

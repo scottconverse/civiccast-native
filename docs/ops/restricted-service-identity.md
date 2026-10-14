@@ -53,4 +53,5 @@ database schema, and created and verified an encrypted PostgreSQL backup.
 Protected installer journals remained restricted to SYSTEM/administrators.
 This used the installed runtime with current source overlaid in a disposable
 guest; it is not a signed-installer or broadcast-load result. The published
-Beta 15 installer and the running host station are unchanged.
+Beta 15 installer and running host station are unchanged; this Beta 16 source
+work is not yet part of a published package.

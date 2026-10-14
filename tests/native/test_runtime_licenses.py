@@ -74,6 +74,10 @@ def test_openh264_and_voaacenc_support_libs_match_their_own_upstream_license() -
     assert classify_shipped_file("bin/vo-aacenc-0.dll") == "Apache-2.0"
 
 
+def test_gstfft_support_library_records_both_compiled_upstream_licenses() -> None:
+    assert classify_shipped_file("bin/gstfft-1.0-0.dll") == ("LGPL-2.0-or-later AND BSD-3-Clause")
+
+
 def test_pygobject_python_files_resolve_via_directory_prefix() -> None:
     # Every file under python/gi/ ships from the gstreamer_python wheel
     # (LGPL-2.1-or-later in its own METADATA), regardless of the individual

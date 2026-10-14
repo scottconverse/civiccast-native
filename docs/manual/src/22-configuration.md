@@ -2,8 +2,6 @@
 
 This chapter is for the person at the city who owns the CivicCast computer. It walks through every place a station is configured: First Setup and the admin account, the Station Profile, channels and their outputs, loudness, the playout engine, captions, AI models, cable commissioning, the Control Room, custom fields, the paywall, certificates and network exposure, storage, and the environment variables that sit behind all of it. Most of it is done once, before the first public meeting, by someone with the `setup_admin` role. A few things (the environment variables, the registry) need Administrator rights on the Windows computer itself.
 
-> **Note:** This chapter describes Beta 15 configuration. Its identity and package checks are in the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md); the release page establishes which packages are available.
-
 ## Before you start
 
 You need:
@@ -15,7 +13,7 @@ You need:
 
 Most screens in this chapter live in the sidebar group **Setup**. Almost all of them can be used only by the `setup_admin` role. The first admin you create has every role (the token scope `admin` expands to all five roles), so on a one-person station you can ignore role names. Roles are described in the appendix on roles ([Roles and what each can do](#app-roles)).
 
-> **Warning:** Times typed on several screens are treated as UTC, not as the station's local time. This chapter says so wherever you type a time or date (for example the paywall's comp-pass expiry, which is the end of that day in UTC). Check each time field's label before you save.
+Scheduling forms use the time zone in **Station Profile**; reports, exports and some dated controls retain their stated UTC basis. Check the label beside each date or time field before saving.
 
 ## Where settings live
 
@@ -30,7 +28,7 @@ Settings are kept in five different places. Knowing which place holds a setting 
 | The Windows credential store ("keyring") | AI provider API keys, control-room device passwords | The AI Models and Control Room Setup screens, or `civiccast model set-provider-key` |
 | Fixed or selected by the installer and network settings | The folder layout under `C:\Program Files\CivicCast (Native)` and `C:\ProgramData\CivicCast`, a loopback-only control-plane address (default `127.0.0.1:8000`), the Ollama address `127.0.0.1:11434` | Choose `127.0.0.1` or `::1` in Network Settings; the application cannot bind directly to a LAN or public address |
 
-The service's `station-state.json` and related profile files live under its configured service profile. The installer sets that profile to `C:\ProgramData\CivicCast\profile`; when migrating a default LocalSystem installation, it copies and verifies the old profile and imports CivicCast Credential Manager entries before changing service identity. See the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md) for migration boundaries. An isolated Windows Sandbox run with the current source overlay verified profile and credential migration, virtual-account startup, and a healthy API with the current schema. This is development-source evidence, not qualification of a rebuilt or signed installer or production cutover.
+The service's `station-state.json` and related profile files live under its configured service profile. The installer sets that profile to `C:\ProgramData\CivicCast\profile`; when migrating a default LocalSystem installation, it copies the old profile and imports CivicCast Credential Manager entries before changing service identity. See the [restricted service identity guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/restricted-service-identity.md) for migration details.
 
 > **Known issue (beta.11):** Back up `station-state.json` and the files beside it as well as `C:\ProgramData\CivicCast`. The admin account, the recovery-code hashes, the saved provider credentials and the commissioning record are in the state files, which in the default layout are not under `ProgramData`. The chapter on backups ([Running it day to day](#ch-operations)) describes what to copy.
 
@@ -58,7 +56,7 @@ What the form does not show you, but the server chooses for you when you click *
 | --- | --- | --- |
 | Number of channels | 3 | The channels `public`, `education` and `government` |
 | Default channel | `government` | Used when the first-run sample content is added |
-| Time zone | `local` | The word `local` means UTC in the running service (see [Station Profile](#configuration-profile)) |
+| Time zone | `local` | Until you set an IANA zone, `local` means UTC in the running service (see [Station Profile](#configuration-profile)) |
 | Operation mode | `test` | Shown as "Test mode" on the First-run defaults card |
 | Sample content | on | A short sample video is added to the library in the background |
 | Starter schedule | on | A starter schedule is created with the sample content |
@@ -88,7 +86,7 @@ Once signed in, the Setup page has four tools:
 - **Storage and viewing estimate** is arithmetic in your browser: hours per meeting times meetings per month times 2 gives gigabytes stored. Nothing is measured.
 - **Provider setup** holds the cloud and archive providers. See [Provider setup and keys](#configuration-providers).
 
-> **Note:** The Setup card's **Verify backup** checks whether CivicCast can write, read and delete a small test file in the selected folder; it does not create or schedule an encrypted station archive. Use **Station backup and restore** to create, verify and schedule `.ccbackup` archives, and review the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md) before relying on them. The Setup destination check runs under the service account, so use a local path or share that account can write to; a drive letter mapped only in your own session is unavailable to the service.
+> **Note:** The Setup card's **Verify backup** checks whether CivicCast can write, read and delete a small test file in the selected folder; it does not create or schedule an encrypted station archive. Use **Station backup and restore** to create, verify and schedule `.ccbackup` archives, and review the [station backup guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/station-backup.md) before relying on them. The destination check runs under the service account, so use a local path or share that account can write to; a drive letter mapped only in your own session is unavailable to the service.
 
 ## Set the Station Profile {#configuration-profile}
 
@@ -97,15 +95,13 @@ The Station Profile shows the station's identity and what this computer actually
 | Field | What it changes | What it does not change |
 | --- | --- | --- |
 | **Station name** (required, up to 120 characters) | The name shown in the console and on the community-board graphic that appears between programs when no channel branding is set | It is not the public site's title; channel and app names are set on Channels |
-| **Timezone (IANA name, or "local")** | The zone used for auto-schedule dayparts (such as "prime time 18:00") and for the end-of-day deadline of retention terms | It does not reformat screens that ask you for UTC times |
+| **Timezone (IANA name, or "local")** | The zone used to enter, recur, preview and display schedules and auto-schedule dayparts, and to set the end-of-day deadline for retention terms | It does not change stored UTC timestamps in reports or exports |
 | **Default channel id** | The channel the first-run sample content uses; unknown ids are healed to `government` when read | It does not change which channel residents see first |
 | **Public base URL (optional)** | Stored and displayed | See the Known issue below: nothing reads it, and it cannot be cleared here |
 | **Media library / Recordings / Backups** folders | The three paths stored in the profile; each Copy path button copies one | See the Known issue below: they do not move or choose where any file is written |
-| **Show live captions on air** | The operator switch for live captions (the live speech-to-text tap on every on-air channel and the CEA-708 caption leg in the video). Turning it off stops recognition and drains queued audio on the next tap-worker scan; turning it on resumes recognition on the next scan. The caption routing in the video changes when each channel next starts | It does not affect captions on published recordings (those are the offline job, see [Captions](#configuration-captions)). Default is off in beta.11 |
+| **Show live captions on air** | The operator switch for live captions (the live speech-to-text tap on every on-air channel and the CEA-708 caption leg in the video). Turning it off stops recognition and drains queued audio on the next tap-worker scan; turning it on resumes recognition on the next scan. The caption routing in the video changes when each channel next starts | It does not affect captions on published recordings (those are the offline job, see [Captions](#configuration-captions)). New station profiles default to off |
 
-The time zone is free text. The suggested values are IANA names such as `America/Denver`. The word `local`, a blank result, and any name the computer cannot find all give UTC. An unknown name is logged as a warning ("... is not a valid IANA zone; using UTC.") and the station keeps running on UTC.
-
-> **Known issue (beta.11):** The default time zone is `local`, and in the running service `local` means UTC. A station that never edits this field schedules its dayparts in UTC. Set the real zone here after First Setup. The auto-schedule compiler reads the zone when the service starts, so restart the service after you change it.
+The time zone is free text. Choose an IANA name such as `America/Denver`. The default `local`, a blank value, or an unknown name falls back to UTC; an unknown name is logged as a warning. Set the station's real zone here before creating schedules. A zone change does not rewrite already-generated occurrences; check the future calendar after saving.
 
 > **Known issue (beta.11):** The three storage-folder fields are shown with a Save button, but the saved paths do not choose where media, recordings or backups are written. Editing them does not move any file. Use Assets to find recordings. The environment variables `CIVICCAST_STATION_MEDIA_LIBRARY`, `CIVICCAST_STATION_RECORDINGS` and `CIVICCAST_STATION_BACKUPS` override the displayed values; they do not move files either.
 
@@ -635,6 +631,10 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 | "The credential store is not available to persist the device secret." / "The OS credential store is unavailable; provider keys cannot be saved here." | The Windows credential store is not available to the service account | Ask support; use `civiccast model set-provider-key` from an account that has it |
 | Control Room readiness is blocked at "TSR control service" | The sidecar is not installed or running, or the variable is not set | See [Set up the Control Room](#configuration-controlroom) |
 | A setting you changed in the registry has no effect | The service was not restarted; the variable is one the service forces; or the name has the wrong number of C's | Restart the service; check the forced list above; check the spelling |
+
+## Package status
+
+These instructions describe the merged Beta 16 source. Use the release page and the Help and verification record that match the package on the station. The [Beta 16 candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package-specific checks.
 
 ## Related
 

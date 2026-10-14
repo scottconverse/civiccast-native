@@ -1,7 +1,9 @@
 # Known Limitations For Early-Adopter Builds
 
 > **Historical Beta 10 limitation record.** This page records evidence and
-> limits for Beta 10 only. For the latest published Beta 15 operating guidance, use the
+> limits for Beta 10 only. Beta 15 remains the latest published release; the
+> current Beta 16 source identity is an unpublished candidate. For Beta 15
+> operating guidance, use the
 > [current User Manual](../USER-MANUAL.md), [Windows install guide](../../INSTALL-WINDOWS.md),
 > [tester start page](START-HERE.md), and [Beta 15 verification
 > record](../releases/v1.0.0-beta.15-verification.md). The Beta 10 results below

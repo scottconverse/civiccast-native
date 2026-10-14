@@ -2,8 +2,6 @@
 
 This chapter explains how a recording goes from your library to the public: the Publish screen, what "published" really means, what each publishing step does, and the Playback policy and Paywall screens. The second half is a tour of the resident portal, the public website that residents use to watch meetings. It is written for the people who publish (normally a publish operator) and for anyone who needs to know what a resident sees.
 
-The signed Beta 15 installer is the current published package. Provider behavior here describes the checked-in source and does not qualify that installer; the [capability matrix](https://github.com/scottconverse/civiccast-native/blob/main/CAPABILITIES.md) states the boundary. Provider selectors default to mocks. The Setup Provider form saves its values for station setup, but those saved values do not configure the publishing adapters; IT must set the service environment described in [Integrations](#ch-integrations).
-
 ## Before you start
 
 - The recording must already be **packaged**, which means it has a ready-to-stream copy. If it is not, CivicCast refuses to publish it. See [After the meeting](#ch-after-meeting).
@@ -40,7 +38,7 @@ At the top of the screen, tiles count your recordings: Total, Draft, Portal live
 When you approve the Portal row, CivicCast does these things in this order:
 
 1. It checks the recording has a streamable copy. If not, it stops with "Publish preflight blocked: this asset has no manifest_url. Run the packager or fix ingest before approving publish."
-2. In the current source branch, it queues recorded-caption work only when the station's recorded-caption setting is enabled, and only for a recording with a stored video file. When captions are disabled, approval can proceed without captions; existing jobs pause, and uncaptioned media is not marked caption-complete. The signed Beta 15 package predates this setting and attempts to queue caption work on approval. See [Recorded-caption settings](#recorded-captions) for the current-source controls. If enabled caption work cannot be queued, publishing stops with "Publish blocked: CivicCast cannot queue this recording's caption job ... Nothing was published." and names the cause.
+2. This edition queues recorded-caption work only when the station's recorded-caption setting is enabled, and only for a recording with a stored video file. When captions are disabled, approval can proceed without captions; existing jobs pause, and uncaptioned media is not marked caption-complete. The Beta 15 package predates this setting and attempts to queue caption work on approval. See [Recorded-caption settings](#recorded-captions) for the controls. If enabled caption work cannot be queued, publishing stops with "Publish blocked: CivicCast cannot queue this recording's caption job ... Nothing was published." and names the cause.
 3. It runs the surfaces you ticked.
 4. It sets the public publish date. If that fails, the Portal row shows "Failed", the message says "The recording remains private", and you can click **Retry this surface**.
 
@@ -59,6 +57,8 @@ Each card has nine rows. Each row shows a status dot, a name, badges (**Required
 | Podcast episode | Marked "Coming in a future release". You cannot tick it. A legacy API branch can return placeholder URLs but does not persist an episode in the public feed. |
 | Subscriber notifications | Marked "Coming in a future release". You cannot tick it. Publishing sends no mail or webhook notification. |
 | Cable file package | Builds a ZIP with the video, captions, details and file fingerprints for the cable headend, in a folder IT has chosen. If no folder is set the row says it is "not set up (optional)". |
+
+Provider selectors default to mocks, which do not send or archive media. The Setup Provider form saves values for station setup but does not configure these publishing adapters; IT must set the service environment described in [Integrations](#ch-integrations). The [capability matrix](https://github.com/scottconverse/civiccast-native/blob/main/CAPABILITIES.md) lists the current support boundary.
 
 A step's status reads **Not run yet**, **Running**, **Succeeded**, **Failed**, **Blocked**, **Overridden** or **Not set up yet**. (The two "coming in a future release" rows show "not built yet" instead.) The recording as a whole shows one of **Draft**, **Preflight blocked**, **Publishing**, **Archive pending**, **Archive verified**, **Reaching fewer places than planned**, **Complete** or **Needs action**.
 
@@ -218,6 +218,8 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 **Errors.** A recording that is not public shows "Recording not found" and "This recording does not exist or is no longer published. Browse the archive for the current recordings." Other failures show "This recording could not be loaded right now. Try again, then contact the station if the problem continues." with **Retry**. If the video cannot play, the player says one of: "Network error while loading the video. Check your connection and try again.", "The video could not be played. The stream may be unavailable." or, for an old browser, "Your browser does not support HLS playback. Please try a recent version of Chrome, Firefox, Safari, or Edge." (HLS is the streaming format the portal uses.) The player has no retry button; reload the page.
 
 > **Note:** The share link uses the address the resident used to reach the portal. If your station is reached by an inside address, a copied link will not work for people outside.
+
+> **Note:** A Beta 15 field run could not confirm that **Copy share link** changed the clipboard: the clipboard still held an earlier Library URL, and the action itself was not verified. This is an unconfirmed observation, not a confirmed defect or a statement about Beta 16. See the [Beta 17 deferred follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 ### What a resident sees when the paywall is on
 

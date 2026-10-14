@@ -2,16 +2,14 @@
 
 This chapter is for the person who looks after the CivicCast station computer: usually the one or two IT staff at a small city. It explains how to identify a problem from a screen, log line or command result and what to do. It is organised by area. Each area is a table with four columns: the **symptom** you see, the **likely cause**, **how to confirm** it, and the **fix**.
 
-> **Package checks:** The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) states the current package's installation observations and limits.
-
 ## Before you start
 
-- **Who can do what.** Reading logs and running the commands below needs an Administrator account on the station computer (the service runs as LocalSystem and its folders are locked down). Console buttons mentioned in the matrix need a role: **Support admin** for the Readiness support bundle; **Setup admin or Support admin** for "Repair GStreamer runtime & restore full egress"; **Setup admin** for settings and emergency-alert feeds; **Meeting operator** to start and stop channels and to retry a recording's finalization; **Publish operator** for the Publish screen. The roles are listed in [Appendix: roles](#app-roles).
+- **Who can do what.** Reading logs and running the commands below needs an Administrator account on the station computer; the service runs as the restricted virtual account `NT SERVICE\CivicCastSupervisor`. Console buttons mentioned in the matrix need a role: **Support admin** for the Readiness support bundle; **Setup admin or Support admin** for "Repair GStreamer runtime & restore full egress"; **Setup admin** for settings and emergency-alert feeds; **Meeting operator** to start and stop channels and to retry a recording's finalization; **Publish operator** for the Publish screen. The roles are listed in [Appendix: roles](#app-roles).
 - **Open PowerShell as Administrator** before running any command in this chapter. Commands are shown for PowerShell.
-- **Log times are local time.** The log line format is the date and time, the level, the logger name and the message: for example `2026-10-01 18:45:59,040 INFO ...`. The times in the logs are the station computer's clock, in its own time zone, with no zone marker. Several console screens, by contrast, treat a time you type as UTC (Coordinated Universal Time): Recording, the Program Guide and the Schedule. If a scheduled item ran at a different hour than you expected, convert before you conclude that something is broken.
-- **Changing an environment variable.** Many settings in this chapter are environment variables. The station's control plane gets the supervisor's own environment plus a few values the supervisor sets itself, and the code comments name the service's `Environment` registry value as the place an operator sets them. We did not find a settings file for them. The steps are in [Running it day to day](#ch-operations), under "Set environment variables for the service": edit that value, then restart the service with `Restart-Service CivicCastSupervisor`. We did not run that sequence on a station, so check the result with the log lines named in each row.
+- **Times.** Log lines use the station computer's clock and have no zone marker. Schedule, Program Guide and new recording entries use the configured station time zone; older weekly recording schedules can retain their UTC timing. See [Before the meeting](#ch-before-meeting) before comparing a log with a planned time.
+- **Changing an environment variable.** Many settings in this chapter are environment variables. Set them in the service's `Environment` registry value as described in [Running it day to day](#ch-operations), then restart the service with `Restart-Service CivicCastSupervisor` between programs and check the log lines named in each row.
 - **Restarting the service interrupts the air.** `Restart-Service CivicCastSupervisor` stops every channel. Do it between programs, or on a channel nobody is watching.
-- **Only the station computer can sign in.** The control plane listens on `127.0.0.1` port 8000 only. Sign-in and first setup refuse requests that do not come from the station itself. See [Signing in](#ch-signing-in).
+- **Local setup, remote staff access.** First setup and first-admin recovery are local-only. Staff can sign in remotely through the configured staff hostname from an approved network. See [Signing in](#ch-signing-in).
 
 ## Where things are logged
 
@@ -71,7 +69,7 @@ Setup returns a number when it fails. Interactive setup shows a dialog with word
 
 > **Known issue (beta.11):** Interactive failure dialogs explain the step but do not show its numeric exit code. Read `install-progress.log` for the code; the installer table in [Chapter 10](#ch-installing) lists the current codes.
 
-> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict Beta 15 startup. Use `/health`, the channel's output and the verification record matching the installed package; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) states its package limits.
+> **Historical Beta 10 observation:** A clean-install run on an earlier package observed the first playout packets more than 60 seconds after the first start, while the channel reported its fallback slate as connected. That timing does not predict startup on later packages. Use `/health`, the channel's output and the verification record matching the installed package.
 
 ## Sign-in
 
@@ -93,7 +91,7 @@ The **First Setup** screen (`#/setup`) is for creating the first administrator a
 
 ## Station will not start
 
-The service is `CivicCastSupervisor` ("CivicCast Native Supervisor"). It runs as LocalSystem, starts automatically, and Windows restarts it after 5, 10 and 30 seconds if it stops. It starts two programs of its own, PostgreSQL and then the control plane (the web server and station engine), plus an optional Ollama AI engine on `127.0.0.1:11434`. The control plane gets 180 seconds to become ready, PostgreSQL gets 60 seconds, and a stop gives each child 15 seconds before it is ended.
+The service is `CivicCastSupervisor` ("CivicCast Native Supervisor"). It runs as the restricted virtual account `NT SERVICE\CivicCastSupervisor`, starts automatically, and Windows restarts it after 5, 10 and 30 seconds if it stops. It starts two programs of its own, PostgreSQL and then the control plane (the web server and station engine), plus an optional Ollama AI engine on `127.0.0.1:11434`. The control plane gets 180 seconds to become ready, PostgreSQL gets 60 seconds, and a stop gives each child 15 seconds before it is ended.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
@@ -117,6 +115,8 @@ channel <id>: egress state -> <STATE> (source=..., pid=..., last_error=...)
 ```
 
 The `last_error` part is the reason. Search the application log for it: `Select-String -Path C:\ProgramData\CivicCast\logs\control_plane-app.log* -Pattern "egress state ->"`.
+
+> **Note:** A Beta 15 field run found that some worker labels and process/PID status did not agree with fresh process evidence. The reason was not established; use both the station logs and Windows process state when investigating, and do not treat this as a confirmed Beta 16 defect. See the [Beta 17 deferred follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 A channel that shows **Showing slate** is on air with the "technical difficulties" picture instead of its program. The station chose that rather than dead air. It is a symptom, not a fault in itself. The `last_error` tells you which of these it is:
 
@@ -150,9 +150,11 @@ A program change is the moment a channel moves from one scheduled item to the ne
 | The channel is pinned at **Changing source** | Reload stall. | `Channel <id>: reload stall -- pinned TRANSITIONING for Ns with nothing in flight ... Re-issuing the rollover now`; if that fails: `reload stall not cleared by the re-issue ... Restarting the channel's egress`. | The watchdog does both steps itself. If it is still stuck afterwards, stop and start the channel. |
 | The worker said the commit did not finish | The reload commit did not complete. | `gst-worker.stderr.log`: `CTRL reload: commit did not finish`. | The daemon falls back. |
 | A single dropped frame at a join between two pieces | A known single-frame drop. | `CTRL mux diagnostic: dropped future-dated video arrival`. | None. It is one frame. |
-| A change aired only the tail of the closing item | The plan was resolved against a short remainder. | `Plan for <channel> resolved to a N.Ns tail of the closing scheduled item`. | Check the schedule's times. Remember that times typed on schedule screens are UTC. |
+| A change aired only the tail of the closing item | The plan was resolved against a short remainder. | `Plan for <channel> resolved to a N.Ns tail of the closing scheduled item`. | Check the schedule's station time zone and the slot's planned start and end. |
 
-> **Historical Beta 15 observation:** The published package showed repeated rollover attempts after a 20-second Welcome clip ended inside a 60-second slot; a separate 20-second slot played and returned to slate. The corrected source carries each schedule row's occurrence ID through preparation. It allows an intentional short program to air, then recognizes a later lookup of that same occurrence at an advanced inpoint as its remainder. A separate scheduled use of the same asset remains a new program. See the Beta 15 verification record for the published-package observation and the corrected candidate's runtime status.
+> **Historical Beta 15 observation:** An initial Beta 15 candidate showed repeated rollover attempts after a 20-second Welcome clip ended inside a 60-second slot. The corrected Beta 15 package passed both the 20-second and 60-second slot checks and returned to slate. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) preserves both results; they do not establish Beta 16 package behavior.
+
+> **Note:** A Beta 15 field run found scheduled speech windows on three channels showing slate with silent audio and header-only captions. The cause was not established, and the observation does not identify Whistle as the cause or establish Beta 16 behavior. This is a Beta 17 follow-up; see the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 > **Historical Beta 10 observation:** An unexplained rebuild appeared during the eight-hour C16 development run. Its cause was not established; that observation is not evidence about the current package. Keep the logs if you see an unexplained rebuild.
 
@@ -208,7 +210,7 @@ Scheduled recording runs inside the station (`CIVICCAST_SCHEDULED_RECORDING`, `i
 | An amber banner "Scheduled recording runtime is unavailable in this deployment." (HTTP 503) | `CIVICCAST_SCHEDULED_RECORDING` is `off`, or the runtime did not start. | The banner. | Set it to `inline` and restart the service. |
 | HTTP 403 on the recording schedule | `CIVICCAST_STATION_ID` does not match (default `civiccast-station`). | The response. | Set the matching value. |
 | A recording finished, but the Live room or assets show a failed finalization | The post-recording worker failed. The failure codes are `recording.never_appeared` (waited 1800 seconds), `recording.not_local`, `probe.failed`, `finalize.invalid_trim`, `package.failed`, `cdn.upload_failed`, `worker.interrupted` and `internal.error`. | `GET /api/staff/live/finalizations` or the Live room. | Press **Retry finalization** in the Live room, or call `POST /api/staff/live/sessions/{id}/finalization/retry`. The worker makes 3 attempts by default (`CIVICCAST_FINALIZATION_MAX_ATTEMPTS`), waiting 30 seconds before the second and doubling the wait after each further failure (`CIVICCAST_FINALIZATION_BACKOFF_SECONDS`). The retry call needs the Meeting operator role and answers 409 if the finalization is running or already complete. |
-| The schedule ran at the wrong hour | The time was typed as UTC. | Compare the time on the job with the computer's clock. | Re-enter the time in UTC. |
+| The schedule ran at the wrong hour | The station time zone or the entry's planned time may be wrong. | Compare the planned time, station zone and computer clock. | Correct the Station Profile zone or schedule entry, then check the next occurrence. |
 | A recording alert, `scheduled-recording-failure` or `scheduled-recording-dropout` | A job failed, or the input dropped out during the job. | **Alerts** screen. | See the rows above. |
 
 > **Known issue (beta.11):** **Stop** is also offered on a recording job that is still in the `scheduled` state (not yet started). The station refuses it with HTTP 409 ("Cannot stop job ... only ['arming', 'finalizing', 'recording'] are stoppable"), and the screen does not show the error, so nothing seems to happen. **Stop** does work on a job that is arming, recording or finalizing. To stop a job that has not started from running, the usual way is to untick **Enabled** on its schedule; we did not confirm that this also cancels a job that already exists.
@@ -236,14 +238,14 @@ The Publish screen records "operator-dashboard" as the operator for every approv
 
 ## The portal does not show video
 
-Residents see the portal at `http://127.0.0.1:8000/`. That address works on the station computer. The code binds to `127.0.0.1`, although setup opens a firewall rule for TCP port 8000. We did not test reaching the portal from a second computer (HELP-102). A public site for residents therefore needs something in front of the station that this manual does not describe. Test from the real network before you promise anything to the public.
+Residents can reach the portal through the configured public Caddy hostname. Staff use the separate hostname restricted to approved CIDRs. The application itself remains bound to loopback at `http://127.0.0.1:8000/`; the installer firewall rule does not make that listener directly reachable from another computer. Follow the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md) and test from both allowed and denied networks.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
 | The live page says offline or "standing by" | `curl.exe http://127.0.0.1:8000/api/public/live/current` reports a state: `offline`, `on_air`, `on_air_no_web_output` or `standing_by`. | Read `state` and `reason` in the answer. The reasons are "no HLS output configured", "HLS output configured but not serving yet" and "fallback slate, no program on air". | The first needs an `hls` output on the channel (see Chapter 15). The second means the web stream has not started: see the HLS relay row. The third is the slate: see "Channels will not start". |
 | The channel is on air, but the web stream is empty | The HLS relay did not start or died. | Application log: `HLS relay up for <channel>`, `HLS relay could not start for <channel> ... ffmpeg is not available`, `HLS relay for <channel> ... restarting the relay child`. The relay's own log is `data\egress\<channel>\logs\hls-relay.<sink label>.stderr.log`. | Restore FFmpeg by running setup again; stop and start the channel. |
 | A recording page has no video | The recording has no `manifest_url`, so it was never packaged, or the web copy failed. | Assets screen status; finalization codes above. | Retry finalization. |
-| Recordings play on the station but are slow or missing for the public | The CDN selector is on and uploading failed (`cdn.upload_failed`). | Failure code in the finalization list. | Check the CDN settings in Chapter 15. The current package checks do not include end-to-end CDN upload; test one recording and verify it at the CDN before relying on that path. |
+| Recordings play on the station but are slow or missing for the public | The CDN selector is on and uploading failed (`cdn.upload_failed`). | Failure code in the finalization list. | Check the CDN settings in Chapter 15. Review the matching package record's scope, then test one recording and verify it at the CDN before relying on that path. |
 | Video is not found at all at `/media/live/<channel>/playlist.m3u8` | The channel has no HLS output, or is not running. | `curl.exe -I http://127.0.0.1:8000/media/live/<channel>/playlist.m3u8` | See above. |
 
 > **Known issue (beta.11):** The `finalization-worker-runbook` in the repository says the local media base address defaults to `http://127.0.0.1:8000`. In the code the default is empty, which means addresses relative to the site. We follow the code.
@@ -290,7 +292,7 @@ The default encoder path is GStreamer. On Windows, a hardware H.264 request is m
 
 > **Upgrade evidence (Beta 12):** One normal upgrade from the pinned Beta 11 baseline exited 0 and recorded a healthy service/API, current schema 0089, a saved preservation marker, and initial HLS audio/video plus Whistle observations on three channels. The post-upgrade recorder failed during its first JSON save; no five-snapshot PASS was recorded. Fresh-install and repair checks remain unrun, and no sustained-operation result is claimed. Take a separate backup of `C:\ProgramData\CivicCast` before an upgrade. See the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
-An upgrade is the same `setup.exe` run over an existing install. The generic **Already Installed** page is suppressed; setup does not uninstall first. In the current installer source, a read-only version preflight rejects an older setup before stopping the service or replacing files. For an accepted upgrade, setup saves a temporary, size-checked snapshot before replacing files, re-verifies packs, and runs the database upgrade. If a later step fails, the engine rolls back its database work and the enclosing installer transaction attempts to restore the prior application and station state. This describes current source behavior; the published Beta 15 verification record identifies only the checks and limits of that signed package. Exit 136 means recovery could not be prepared or completed; keep `install-transaction` and station data intact and let the recovery task or next setup run retry.
+An upgrade is the same `setup.exe` run over an existing install. The generic **Already Installed** page is suppressed; setup does not uninstall first. The installer first checks versions without stopping the service or replacing files. For an accepted upgrade, setup saves a temporary, size-checked snapshot before replacing files, re-verifies packs, and runs the database upgrade. If a later step fails, the engine rolls back its database work and the enclosing installer transaction attempts to restore the prior application and station state. Exit 136 means recovery could not be prepared or completed; keep `install-transaction` and station data intact and let the recovery task or next setup run retry.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
@@ -388,6 +390,10 @@ Child codes seen: 64 arguments, 65 report write, 66 pack missing or untrusted, 6
 ## If it did not work
 
 If nothing here matches, do the following in order. First, run `curl.exe http://127.0.0.1:8000/health` and write down the answer. Second, read the last 200 lines of `control_plane-app.log` and `supervisor.log` and look for lines at WARNING, ERROR or CRITICAL level. Third, if the station is not on air and you are able to restart it, restart the service between programs. Fourth, collect the items in "What to collect before asking for help". Do not delete anything under `C:\ProgramData\CivicCast`; it holds the database and every recording.
+
+## Package status and verification
+
+This chapter describes the merged Beta 16 source. For package-specific results, use the record matching the installed version. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to the corrected signed Beta 15 package.
 
 ## Related
 

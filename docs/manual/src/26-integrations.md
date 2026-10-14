@@ -2,15 +2,13 @@
 
 This chapter is for the IT person who connects CivicCast to the outside world: the cable company's equipment, a content delivery network, other servers on the internet, weather and emergency feeds, and other software that wants to talk to the station. It describes current source behavior and identifies connections that remain **off by default**.
 
-> **Note:** This chapter describes Beta 15 configuration. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) records its package observations and limits. Verify your configured external service or headend during station commissioning.
-
 ## Before you start
 
 - **Who can do what.** Channel and headend settings need **Setup admin**. Publishing needs **Publish operator**. The roles are listed in [Appendix: roles](#app-roles).
-- **The station answers on `127.0.0.1` only.** The control plane (the web server and station engine) listens on `127.0.0.1` port 8000. Setup opens a Windows Firewall rule for TCP 8000, but a program that listens on the loopback address cannot be reached from another computer, with or without a firewall rule. We did not test reaching it from a second computer (HELP-102). Everything in the "HTTP API" section below is therefore reached from the station computer itself, from a session on it, or through something you build in front of it.
+- **The station service stays on loopback.** The control plane listens on `127.0.0.1` port 8000. Remote resident and staff access uses the supported Caddy setup with separate public and CIDR-restricted staff hostnames; do not expose the application listener directly. Everything in the "HTTP API" section below is reached from the station, through an approved remote session, or through those configured paths.
 - **Do not put a same-host reverse proxy in front of the setup routes.** The station decides that a request came from the station itself by looking at the address it came from. The code comments say that if a reverse proxy is ever placed in front of the app, the check "would need to move". A proxy on the same computer connects from the loopback address, so it would make every outside request look local. Do not forward `/api/setup` through a proxy. A proxy on a different computer cannot reach `127.0.0.1:8000` at all.
 - **Environment variables.** Most switches here are environment variables. The code comments name the service's `Environment` registry value as the place to set them, and the station's processes inherit the supervisor's environment; the steps are in [Running it day to day](#ch-operations), under "Set environment variables for the service". Restart the service afterwards with `Restart-Service CivicCastSupervisor` in an Administrator PowerShell. We did not run that on a station. Restarting the service stops every channel; do it between programs.
-- **Times you type.** Several console screens treat a time you type as UTC, not local time (Recording, Program Guide, Schedule). Log lines are in local time. Keep that in mind whenever you compare a schedule with a log.
+- **Times.** Schedule, Program Guide and new recording entries use the station's configured time zone. Log lines use the station computer's clock and have no zone marker; keep that distinction in mind when comparing a schedule with a log.
 - **Beta status of the interfaces.** Nothing in the code or in the repository's documents promises that any interface in this chapter will stay the same from one release to the next. Treat all of them as beta.
 
 ## Remote Contribution controls
@@ -93,6 +91,8 @@ A passing check means the stream is well formed. It does not prove that the cabl
 
 The shipped GStreamer runtime has no HLS writer. So for an output of kind `hls`, the code redirects the encoder's feed to a loopback UDP address `udp://127.0.0.1:<port>`, where the port is 18000 plus a number derived from the output's address (range 18000 to 18499, base set by `CIVICCAST_HLS_RELAY_BASE_PORT`). A supervised FFmpeg process reads that feed and writes the video pieces (`seg%09d.ts`) and `playlist.m3u8`, with a window of about 12 seconds (6 pieces). The playlist is served at `/media/live/<channel>/playlist.m3u8`; recordings are served at `/media/vod/<asset>/...`. The relay's own log is `C:\ProgramData\CivicCast\data\egress\<channel>\logs\hls-relay.<output label>.stderr.log`.
 
+> **Note:** A Beta 15 field run found a synthetic CG playlist listing segment files that returned HTTP 404. The serving cause was not established, and the observation does not establish Beta 16 behavior. This is a Beta 17 follow-up; see the [deferred field report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+
 | Log fragment | Meaning |
 |---|---|
 | `HLS relay up for <channel>` | The web stream is being written. |
@@ -101,7 +101,7 @@ The shipped GStreamer runtime has no HLS writer. So for an output of kind `hls`,
 
 What residents see is decided by `GET /api/public/live/current`. Its `state` is one of `offline`, `on_air`, `on_air_no_web_output` or `standing_by`, and the `reason` can be "no HLS output configured", "HLS output configured but not serving yet" or "fallback slate, no program on air". `/api/public/channels/<channel>/live.m3u8` redirects to the live playlist, and `/api/public/channels/<channel>/captions.vtt` serves the current live captions.
 
-> **Note:** Live captions are off by default in beta.11 and can have gaps under load. See [the captions section of the troubleshooting matrix](#ch-troubleshooting).
+> **Note:** Live captions are off by default in a new station profile and can have gaps under load. See [the captions section of the troubleshooting matrix](#ch-troubleshooting).
 
 ## CDN and provider options
 
@@ -391,6 +391,10 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 - **No emergency alerts appear.** `CIVICCAST_EAS` is `off` by default. Check it first.
 - **A call returns 401 or 403.** Check the token and the role.
 - **A call from another computer cannot connect.** The station answers on `127.0.0.1` only.
+
+## Package status and verification
+
+This chapter describes the merged Beta 16 source. Use the release record matching the package on the station; the [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package checks. Commission each external service and headend for the station's actual configuration.
 
 ## Related
 

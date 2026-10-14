@@ -377,6 +377,9 @@ pub fn register_native_service(install_root: &Path) -> Result<(), String> {
         "CivicCast (Native) service registration",
     )?;
     restore_service_host_site_packages_member(install_root)?;
+    // D3's health gate leaves the upgraded service running. Identity migration
+    // requires STOPPED before its migration-only startup under the old account.
+    stop_native_service()?;
     run_and_check(
         &python_exe,
         &[

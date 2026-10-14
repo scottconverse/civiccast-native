@@ -278,6 +278,14 @@ SUPPORT_LIBRARY_LICENSE: Final[dict[str, str]] = {
     "gsttag-1.0-0.dll": "LGPL-2.1-or-later",
     "gstvideo-1.0-0.dll": "LGPL-2.1-or-later",
     "gstwinrt-1.0-0.dll": "LGPL-2.1-or-later",
+    # gstreamer_libs 1.28.5's pinned wheel contains bin/gstfft-1.0-0.dll
+    # (wheel RECORD; its SHA-256 matches requirements-native-runtime.txt).
+    # The exact 1.28.5 gst-plugins-base fft/meson.build compiles gstfft*.c
+    # sources, whose headers grant LGPL-2.0-or-later, together with the
+    # kiss_fft*.c sources marked BSD-3-Clause. Both source families are in
+    # the DLL, so preserve both notices in its per-file expression.
+    # Upstream: https://github.com/GStreamer/gstreamer/tree/1.28.5/subprojects/gst-plugins-base/gst-libs/gst/fft
+    "gstfft-1.0-0.dll": "LGPL-2.0-or-later AND BSD-3-Clause",
     # --- Orc (Oil Runtime Compiler), a GStreamer subproject: BSD-2-Clause
     # per its own COPYING file.
     "orc-0.4-0.dll": "BSD-2-Clause",

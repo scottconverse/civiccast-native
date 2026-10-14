@@ -1,44 +1,12 @@
 # CivicCast Architecture
 
-> **Current native release: `v1.0.0-beta.15`**, a signed GitHub pre-release,
-> not a production or SLA-backed release. Download its exact package and
-> checksums from the [Beta 15 release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15).
-> The [Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md)
-> identifies the original tested candidate: source
-> `7899ee9234428b0b3c93b369392ae5114d292533`, build `38341135764`, setup SHA-256
-> `877f344d9ac1b2dfe8b24ecb9f91ba936d4b4b87eb26a2427cf4abcedcfbd37d`, with a
-> valid Scott Converse Authenticode signature. That candidate passed one fresh
-> offline Sandbox install. Its execution results do not transfer to the
-> refreshed manual/Help bytes in this release edition; the record states the
-> boundary and limits. No normal cross-version upgrade or extended soak is
-> claimed. Beta 14 and Beta 13 package results remain in their [own records](docs/releases/v1.0.0-beta.14-verification.md)
-> and [Beta 13 record](docs/releases/v1.0.0-beta.13-verification.md). See
-> [BRANCHES.md](BRANCHES.md) for release identity and status.
->
-> **Historical Beta 10 evidence:** the published Beta 10 package passed its
-> Gate A clean-install lane (10 of 10 criteria in Windows Sandbox on
-> 2026-10-02). A separate eight-hour, three-channel lab run used an earlier
-> internal build. These results describe Beta 10 only and do not establish
-> Beta 11 package behavior. Beta 10, Beta 7, and earlier downloadable releases
-> are superseded; Beta 8 and Beta 9 were never published. See the
-> [Beta 10 verification record](docs/releases/v1.0.0-beta.10-verification.md).
->
-> Source behavior and package evidence have different scopes. The current
-> verification record is the authority for the published package; this
-> architecture describes the source tree. Neither the initial upgrade output
-> observations nor historical Beta 10 results establish broad field operation, external
-> provider delivery, app-store acceptance, live hardware, cable-headend,
-> QAM, SDI/DeckLink, EAS, or CEA-708 broadcast acceptance.
+CivicCast Beta 16 combines native Windows playout, local AI captions, station
+backup and staff administration in one installation. This architecture describes
+the Beta 16 candidate source.
 
-> **This repository ships one product line: native Windows.** Earlier
-> revisions of this notice described "two parallel Windows product lines"
-> shipping from this repository -- that described the OLD
-> `scottconverse/civiccast` repository. This repository (`civiccast-native`)
-> was created by copying only the native product out of it with fresh
-> history, and the WSL2 lane was retired outright under the owner's "no
-> linux" decision (2026-08-19). See [BRANCHES.md](BRANCHES.md) for the full
-> explanation and where the retired line's history now lives (private, not
-> archived).
+The current published download remains signed `v1.0.0-beta.15` ([release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15));
+Beta 16 remains an unpublished source candidate.
 
 This document orients engineers and integrators to the current CivicCast
 system. The binding product contract is
@@ -183,7 +151,7 @@ Recorded-media captions use faster-whisper. Needle usage telemetry is disabled,
 and the speech models run locally. Live captions, SDI/NDI hardware paths, and
 cable-headend delivery are described with their evidence boundaries in the
 [User Manual](docs/USER-MANUAL.md) and the current
-[Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md).
+[Beta 16 candidate record](docs/releases/v1.0.0-beta.16-verification.md).
 Historical Beta 13 package observations remain in the [Beta 13 verification
 record](docs/releases/v1.0.0-beta.13-verification.md).
 
@@ -296,8 +264,7 @@ supersedes ADR 0001's NATS JetStream choice).
 
 ## Current Source Contracts
 
-These describe current source behavior and test coverage. Package acceptance
-remains scoped to the [Beta 14 verification record](docs/releases/v1.0.0-beta.14-verification.md):
+These describe current source behavior and test coverage. The [Beta 16 candidate record](docs/releases/v1.0.0-beta.16-verification.md) tracks installed-package results:
 
 - Staff-write stores fail closed without managed durable storage or `DATABASE_URL` unless ephemeral mode
   is explicitly acknowledged for local development.
@@ -314,3 +281,9 @@ remains scoped to the [Beta 14 verification record](docs/releases/v1.0.0-beta.14
 - Windows private-key writes apply local ACL restrictions.
 - Browser gates include a full-stack operator publish-approval cycle against a
   live FastAPI fixture.
+
+## Release evidence and history
+
+Beta 16 is an unpublished candidate. Beta 15 remains the published download.
+Historical package results are retained in the [Beta 15 record](docs/releases/v1.0.0-beta.15-verification.md);
+[Beta 17 follow-up](docs/ops/beta17-deferred.md) records the owner-deferred field findings.

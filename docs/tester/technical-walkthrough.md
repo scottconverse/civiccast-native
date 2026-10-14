@@ -1,12 +1,86 @@
-# Technical Tester Walkthrough
+# Beta 16 Candidate Technical Tester Walkthrough
 
-> **Historical Beta 10 walkthrough.** The procedure below describes Beta 10
-> only. For current Beta 15 guidance, use the [tester start page](START-HERE.md),
-> [Windows install guide](../../INSTALL-WINDOWS.md), and [Beta 15 verification
-> record](../releases/v1.0.0-beta.15-verification.md). The Beta 10 walkthrough
-> below remains historical and does not establish Beta 15 behavior.
+Beta 16 brings station-operation, station-local scheduling, broadcast-output,
+and recorded-caption changes to CivicCast for native Windows. This walkthrough
+covers package acquisition, installation, the candidate feature paths, upgrade,
+and uninstall.
 
-## Release State
+Beta 16 is unpublished. The [candidate verification record](../releases/v1.0.0-beta.16-verification.md)
+tracks its current status; it currently says the signed candidate has not been
+built and installation checks are pending. Do not start until the active
+owner-authorized handoff identifies the exact candidate artifacts. Beta 15
+remains the latest published download; its [verification record](../releases/v1.0.0-beta.15-verification.md)
+does not qualify Beta 16.
+
+For the broader station acceptance path, use the
+[Public Station Implementation Walkthrough](station-implementation-walkthrough.md)
+when the handoff assigns it.
+
+## Package acquisition
+
+1. Acquire the exact candidate kit through the active handoff. Do not assume
+   an unpublished candidate is available from the public release page.
+2. If the handoff names `download_windows_release_artifacts.ps1`, pass its
+   exact `-Tag` and `-Version` values with the requested asset options. Do not
+   rely on a generic latest download or mix packages from different builds.
+3. Verify the installer and pack hashes against the candidate's
+   `SHA256SUMS.txt`, verify the setup signature and publisher, and compare the
+   sidecar and station-model manifest with the handoff.
+4. Do not use repository source ZIPs, tester handoff binaries, or Git LFS-backed
+   files for normal installer acquisition.
+5. Record the candidate version, source SHA, workflow run, artifact names and
+   hashes, Windows edition, and handoff revision.
+
+## Install and service checks
+
+1. On the isolated Windows target named by the handoff, follow the clean-install
+   procedure and capture setup's exit code and install log.
+2. Complete first-admin setup and preserve the recovery kit outside the test
+   station. Confirm the operator console and resident portal load from the
+   installed build.
+3. Confirm `CivicCastSupervisor` runs as the restricted virtual account
+   `NT SERVICE\CivicCastSupervisor`; record the service state and installed
+   runtime manifest.
+4. Check `/health` and the station schema. A responsive endpoint alone does not
+   establish station readiness.
+5. Run the handoff's upgrade path from its named baseline, then its uninstall
+   path. Record the station-data outcome and any recovery artifacts. Do not use
+   a production station.
+
+## Beta 16 feature path
+
+Use a disposable station, short test media, and the current manual for exact
+screen names and settings.
+
+1. Configure and run a scheduled backup, then rehearse restore. Record the
+   included and excluded station data.
+2. Create a station-local schedule and use a short test source to exercise a
+   program change and the configured broadcast output. Keep external delivery
+   disabled unless the handoff assigns a controlled proof.
+3. Test recorded-caption settings with a sample recording. Record whether
+   caption work is queued or paused under the chosen setting and verify the
+   resulting review state.
+4. Confirm the Live Room fails closed with **Source preview unavailable** when
+   no server-side media probe is configured.
+5. Run the private rehearsal and confirm its evidence identifies the exact
+   sample, finalized recording, and resident preview. Keep the recording
+   private until the handoff assigns a publish check.
+6. Generate and download a support bundle, then inspect its redaction. Confirm
+   provider setup cards name required proof and do not expose secrets.
+
+## Optional advanced evidence
+
+Technical testers can collect CLI evidence when useful:
+
+```powershell
+civiccast installer beta-handoff --json
+civiccast doctor --json
+```
+
+Do not share raw environment dumps. Use the support bundle unless a maintainer
+asks for a specific redacted command output.
+
+## Historical Beta 10 release state and evidence
 
 `v1.0.0-beta.10` was the current published release when this walkthrough was
 written (published 2026-10-02); use only the exact release named
@@ -33,61 +107,3 @@ checks do not replace testing the exact installer you downloaded. See
 and
 [Known Limitations](known-limitations.md#historical-beta-10-live-caption-evidence)
 for the current captions evidence boundary.
-
-Use this path if you are validating the installer package, runtime bootstrap,
-and provider setup proofs.
-
-For a full release-owner station pass, use
-[Public Station Implementation Walkthrough](station-implementation-walkthrough.md)
-after the release gates and soak evidence are complete.
-
-## Package Acquisition
-
-1. For a first install, use the complete signed USB/LAN kit named in the
-   handoff, including its `station\` model bundle. For an in-place upgrade,
-   use the exact installer and runtime packs named by the handoff.
-2. For a GitHub download, use the exact `setup.exe`, `SHA256SUMS.txt`, and
-   `setup.exe.sidecar.json` from the published release. For USB/LAN, use its
-   hash-pinned delivery manifest instead; it need not contain the GitHub sidecar.
-3. Verify the SHA-256 and Authenticode publisher against the applicable handoff
-   and manifest.
-4. Do not use repository source ZIPs, tester handoff binaries, or Git LFS-backed
-   files for normal installer acquisition.
-5. Record the CivicCast version or commit SHA in your notes.
-
-## Installer Path
-
-1. Run the Windows setup app on Windows 11.
-2. Confirm CivicCast installs and registers its Windows service through the
-   SCM.
-3. Confirm managed storage and upload folders are created.
-4. Confirm the local API answers `/health`.
-5. Confirm `/operator/` and the resident portal are served from packaged build
-   assets.
-
-## Operator Path
-
-1. Create first admin and save the recovery kit.
-2. Verify backup and run the database restore drill; record its explicit
-   media/configuration/credential limits.
-3. Confirm the Live Room fails closed with **Source preview unavailable** when
-   no server-side media probe is configured.
-4. Create or upload short sample media, run the private rehearsal, and confirm
-   the evidence identifies the exact sample, finalized recording, and resident
-   preview.
-5. Package a validated recording, prove it remains private before approval,
-   publish only to Portal, and verify public HLS playback.
-6. Generate and download a support bundle, then inspect its redaction.
-7. Confirm provider setup cards name required proof and do not expose secrets.
-
-## Optional Advanced Evidence
-
-Technical testers can collect CLI evidence when useful:
-
-```powershell
-civiccast installer beta-handoff --json
-civiccast doctor --json
-```
-
-Do not share raw environment dumps. Use the support bundle unless a maintainer
-asks for a specific redacted command output.

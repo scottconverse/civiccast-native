@@ -1,20 +1,25 @@
-# CivicCast Beta 15 - Field-Test Quick Start
+# CivicCast Beta 16 Candidate - Field-Test Quick Start
 
-This quick start covers CivicCast Beta 15 and its complete kit: signed
-installer, matching runtime packs, and the complete signed station-model
-bundle. See the [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
-for package identity and installation results, and the
-[release-truth manifest](releases/release-truth.yaml) for published releases.
+Beta 16 brings station-operation, station-local scheduling, broadcast-output,
+and recorded-caption changes to the native Windows station. This quick start
+covers the candidate kit, first setup, recovery, and closed field testing.
+Beta 16 is unpublished. The [candidate verification record](releases/v1.0.0-beta.16-verification.md)
+tracks its current build and test state; use this guide only after the active
+owner-authorized handoff names the exact candidate artifacts. Beta 15 remains
+the latest published download; its [verification record](releases/v1.0.0-beta.15-verification.md)
+applies only to that signed package.
 
 ## Before you begin
 
 1. Read the release-specific installation handoff and the Windows release-trust
    instructions.
-2. For a first install or upgrade, use the release-matched helper named by the
-   active handoff, `download_windows_release_artifacts.ps1`, with `-Install`.
-   It downloads and verifies `setup.exe`, all five runtime packs, and the
-   complete station-model bundle, then runs `setup.exe /S`. Do not install
-   `setup.exe` alone or mix files from different releases.
+2. For a first install or upgrade, use only the candidate kit and procedure
+   named by the active handoff. If it names
+   `download_windows_release_artifacts.ps1`, pass the exact `-Tag` and
+   `-Version` from that handoff with `-Install`. The helper verifies
+   `setup.exe`, runtime packs, and the station-model bundle, then runs
+   `setup.exe /S`. Do not install `setup.exe` alone, mix releases, or assume
+   the source-tree default points to a published download.
 3. Before running the helper, compare its SHA-256 with its entry in the
    same-release `SHA256SUMS.txt` using the [Windows release-trust
    instructions](install/windows-release-trust.md). The helper then verifies
@@ -28,9 +33,8 @@ for package identity and installation results, and the
    `-Install`. It stages runtime packs under `packs\`, verifies and extracts
    the station bundle into `station\`, then runs `setup.exe /S`. Keep the
    verified files together; do not substitute a source ZIP, older release or
-   generic latest download. The verification record identifies the exact
-   tested Beta 15 candidate and distinguishes it from the refreshed Help bytes
-   in this release edition.
+   generic latest download. The Beta 16 candidate verification record and
+   handoff identify the exact source, package, and checks to use.
 2. If Windows shows **Windows protected your PC**, choose **More info** and
    confirm the publisher is Scott Converse before continuing. If the publisher,
    filename or hash is wrong, choose **Don't run** and contact your technical
@@ -59,6 +63,21 @@ for package identity and installation results, and the
    kit is safely stored.
 4. Confirm **System Health** is green. This is an installation check, not yet a
    beta release or production-readiness claim.
+
+## Beta 16 candidate features to exercise
+
+Use the current manual and candidate handoff for the exact screen names and
+steps. Keep these checks on the assigned test station:
+
+- Confirm the supervisor runs as `NT SERVICE\CivicCastSupervisor` and that
+  the handoff's installed-runtime checks pass.
+- Configure a scheduled backup, complete a backup, and rehearse restore on the
+  disposable test station. Record what the backup includes and excludes.
+- Exercise station-local scheduling and the configured broadcast output with
+  a short test source; keep external/public delivery off unless the handoff
+  explicitly assigns a controlled proof.
+- Test the recorded-caption setting with a sample recording. Record whether
+  caption work is queued or paused under the selected setting.
 
 ## Field-test boundary
 
@@ -90,13 +109,18 @@ asset to be packaged and explicitly published.
   record that separately. Do not treat the installer exit alone as proof that
   the service or station is ready.
 
-## Installation and station evidence
+## Candidate and published-package evidence
+
+The [Beta 16 candidate verification record](releases/v1.0.0-beta.16-verification.md)
+tracks the exact source, candidate build, and required fresh-install, upgrade,
+uninstall, service-identity, and runtime checks. Use it for the current status;
+do not infer a Beta 16 package result from the Beta 15 record.
 
 The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md)
 records one fresh offline Sandbox installation and scoped package checks for
-the original signed candidate. It does not claim a normal cross-version
-upgrade, Beta 15 soak or automatic late-failure rollback. Historical reports
-retain their original release identity.
+the original signed Beta 15 candidate. It does not claim a normal
+cross-version upgrade, extended soak, or automatic late-failure rollback.
+Historical reports retain their original release identity.
 
 A historical Beta 11 72-hour run across Public, Government and Education
 channels recorded **99.78% live caption-input coverage**. The [72-hour host

@@ -1,20 +1,6 @@
 # About this manual {#about}
 
-This is the **development edition** of the CivicCast User Manual, based on **CivicCast (Native) 1.0.0-beta.15** and the unreleased changes on `main`. CivicCast is a Windows program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
-
-## What state this software is in
-
-**Development edition:** the staff-account, scheduled-backup, network-access,
-restricted-service-account, station-local scheduling, output-processing and
-recorded-caption settings instructions include current unreleased source
-work. Those additions are not features of the published Beta 15 installer. The Beta 15
-release and its installation evidence remain identified separately below.
-
-**Beta 15 is the current published installer; this development manual also describes the unreleased additions listed above.** For instructions matched to the installed Beta 15 package, use its bundled Help or the manual downloaded with that release. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads and publication status, and read the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for the exact package identity, observations, and limits. Start with the complete download helper in [Chapter 10](#ch-installing), then create the station administrator on the station computer. Whistle provides CPU live captioning; Whisper supplies fallback and recorded captions. A historical **Beta 11** 72-hour run across Public, Government, and Education recorded **99.78% live caption-input coverage**. See the [Beta 11 host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and measurement. Earlier history remains in the evidence appendix and dated verification records.
-
-This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
-
-A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked. The label alone does not say whether it remains true now: follow any explicit later-version status in the note, and check the current screen and release record when the behavior affects an on-air decision. Historical host measurements remain distinct from installation checks of the current package.
+CivicCast is a Windows program for a public-access (PEG) station or a small city to schedule, put meetings on the air, record them, and publish them for residents. This manual guides station staff through those tasks and the IT work that supports them.
 
 ## Who Reads What
 
@@ -53,14 +39,20 @@ Earlier releases split this manual into separate guides. Their names are still u
 - **Resident portal** is the public web page where residents watch live programs, browse recordings and read the schedule.
 - **Channel** is one program stream, like a cable channel. A station can run several.
 - **Asset** is one recording or media file stored in CivicCast.
-- Times typed into some screens are **UTC** (universal time), not local time. The chapters say so wherever it matters.
+- Schedule, Program Guide, recording and auto-schedule times use the station's configured time zone. Some reports and exports still use **UTC**; each chapter names the relevant time basis.
 
 ## How this manual was made
 
 The manual was written from the product's own code and from a screen-by-screen inventory of the staff console, the resident portal and the installer, then checked against that code. Screens were photographed on a lab station that holds sample (mock) data only. Where the code could not settle a question, the manual says nothing rather than guessing. The version of the software this manual describes is shown on the cover; if you run a different version, details may differ.
 
+## Edition and package evidence
+
+This edition documents the merged Beta 16 source changes from Sprints 1–4, including staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, bounded worker storage and recovery, completed broadcast outputs, and recorded-caption settings. Package identity and checks belong to the matching release record. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package-specific verification; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to its signed package and does not establish Beta 16 package results.
+
+Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads. For an installed package, use its matching Help and verification record. A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked; the label alone does not say whether it remains true now. Historical host measurements remain distinct from installation checks of any package.
+
 ## Where to get help and report problems
 
-Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) describes the published Beta 15 edition and its package evidence; it does not qualify this development edition. Dated records for earlier packages remain available as release history.
+Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. Dated records for earlier packages remain available as release history.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.12-verification.md; docs/releases/v1.0.0-beta.11-verification.md (historical host evidence); docs/releases/v1.0.0-beta.10-verification.md (historical appendix only); docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->

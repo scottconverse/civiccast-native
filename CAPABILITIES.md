@@ -1,38 +1,22 @@
 # CivicCast — Capability Matrix and Evidence History
 
-> **Current release:** v1.0.0-beta.15, a signed GitHub pre-release, not a
-> production release. Its [verification record](docs/releases/v1.0.0-beta.15-verification.md)
-> identifies the tested candidate source, build and setup hash, and distinguishes
-> that candidate's execution evidence from the refreshed manual/Help bytes in
-> this release edition. A fresh offline Sandbox install passed for the original
-> candidate; no normal cross-version upgrade or extended soak is claimed. See
-> [release-truth.yaml](docs/releases/release-truth.yaml) for release identities.
+CivicCast combines station scheduling, playout, recording, caption review, and
+resident publication in a native Windows product. Current source work adds
+encrypted station backup and restore, staff and network administration,
+local-time scheduling, bounded operational storage, automatic output recovery,
+RTMP output, coordinated HLS retention, and configurable recorded captions.
 
-> **This repository ships one product line: native Windows.** Earlier
-> revisions of this notice described "two parallel Windows product lines"
-> shipping from this repository -- that described the OLD
-> `scottconverse/civiccast` repository. This repository (`civiccast-native`)
-> was created by copying only the native product out of it with fresh
-> history, and the WSL2 lane was retired outright under the owner's "no
-> linux" decision (2026-08-19). See [BRANCHES.md](BRANCHES.md) for the full
-> explanation and where the retired line's history now lives (private, not
-> archived).
+The owner is preparing `v1.0.0-beta.16` as an unpublished candidate from this
+source. The current public package remains signed `v1.0.0-beta.15`; the
+[candidate verification record](docs/releases/v1.0.0-beta.16-verification.md)
+tracks its package status. The source additions described here are not claims
+about the Beta 15 installer.
 
-This matrix distinguishes implemented components, wired workflows, and the
-limits of the evidence available for them. It contains entries from different
-development and release dates; a row naming a beta milestone is evidence only
-for that named scope, not for Beta 15 or the current source tree. Rows not tied
-to a current package or source check should be treated as engineering history
-until revalidated. Do not infer package qualification, station capacity, or
-external-provider acceptance from a component state. Current-source behavior
-described below is not automatically part of the signed Beta 15 installer.
-
-The table began as an internal build-ladder baseline on 2026-06-09 and includes
-work from both the earlier retired WSL2 product line and this native Windows
-repository. Retired-line entries remain history; this repository ships the
-native Windows product described in [BRANCHES.md](BRANCHES.md). A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage**
-across Public, Government, and Education. See the [72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md)
-for the channel totals and measurement.
+This matrix distinguishes implemented components, wired workflows, and
+evidence states. Its entries cover different development and release dates. A
+beta label applies only to its named scope; rows not tied to a current package
+or source check are engineering history. A component state does not establish
+package qualification, station capacity, or external-provider acceptance.
 
 ---
 
@@ -98,3 +82,22 @@ copy stay behind explicit configuration; provider behavior and package scope
 must be checked in the corresponding current source and verification records.
 
 Keep these states distinct when updating this file. A subsystem moving from `real proof` to `supervised component` to a deployed lifecycle is a real promotion that should be reflected here explicitly, not implied by prose elsewhere.
+
+The matrix began as an internal build-ladder baseline and retains entries from the earlier retired WSL2 product line as history. This repository ships the native Windows product described in [BRANCHES.md](BRANCHES.md).
+
+The exact current package identity and scoped installation evidence are in the
+[Beta 15 verification record](docs/releases/v1.0.0-beta.15-verification.md);
+release identities are tracked in
+[release-truth.yaml](docs/releases/release-truth.yaml). Beta 15's later R9
+field evaluation sampled slate during scheduled speech, found a CG playlist
+advertising missing segments, observed that the installed native executable
+was unsigned while the setup executable was signed, and found a
+source-to-packaged caption-range mismatch after trimming. The cause and
+follow-up status are preserved in the [Beta 17 deferred
+backlog](docs/ops/beta17-deferred.md); those observations are not Beta 16
+package results.
+
+The **historical Beta 11** host result remains 72 hours across Public,
+Government, and Education with **99.78% live caption-input coverage**. The
+[72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md)
+defines the measurement. It is not Beta 15 or Beta 16 field evidence.
