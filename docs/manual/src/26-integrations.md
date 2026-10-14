@@ -131,12 +131,16 @@ Separate from the CDN, each publishing destination has a provider setting that i
 | Variable | Destination |
 |---|---|
 | `CIVICCAST_PROVIDER_INTERNET_ARCHIVE` | Internet Archive |
-| `CIVICCAST_PROVIDER_LOCAL_NAS` | A local storage server (rsync or ZFS) |
+| `CIVICCAST_PROVIDER_LOCAL_NAS` | A mounted local folder or UNC path |
 | `CIVICCAST_PROVIDER_YOUTUBE` | YouTube Live and YouTube video upload |
 | `CIVICCAST_PROVIDER_MAIL` | Email |
 | `CIVICCAST_PROVIDER_WEBHOOK` | Webhooks |
 
-All of them default to `mock`. A mock provider does not send anything. Set the variable to `real` only after you have placed the credentials the provider needs.
+All of them default to `mock`. A mock provider does not send anything. The selectors and adapter credentials are read from the service environment. Values saved by the Setup Provider form to `provider-credentials.json` are not copied into that environment and do not enable a real adapter; see [service environment configuration](#configuration-env) for how IT sets values and [Provider setup and keys](#configuration-providers) for the form's separate role.
+
+The real Internet Archive and local archive adapters use a resolved recording file when available. If it cannot resolve, the fallback is an asset/title payload rather than the full media. The local archive adapter writes a canonical copy and dated snapshot to a mounted filesystem path and checks the files by SHA-256 read-back; it does not run rsync or manage a ZFS target. YouTube VOD needs a local recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. YouTube Live creates and binds a YouTube broadcast/stream, but the Publish path does not connect CivicCast's live output to the returned ingest address.
+
+`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and the staff-only subscription dispatch-test route. `CIVICCAST_PROVIDER_WEBHOOK=real` can be exercised through that same dispatch-test route. Neither adapter is called by the Publish screen's subscriber-notifications row, which remains unavailable. Podcast publication is also unavailable: the normal screen excludes it, and a legacy API path can return placeholder URLs without saving an episode to the public feed.
 
 > **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Check the far end after your first real publish.
 

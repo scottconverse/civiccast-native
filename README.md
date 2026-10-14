@@ -8,6 +8,8 @@ Beta 15 passed Windows Sandbox installation, first-admin setup, built-in Help an
 
 **Historical Beta 11 host result: 72 hours, three channels, 99.78% live caption-input coverage.** The host ran Public, Government and Education together without a service restart, with 216 healthy scheduled checkpoints. See the [72-hour host report](docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the recorded measurements.
 
+The Publish screen makes the resident portal public by default; archive and YouTube destinations are separate, opt-in provider workflows. Real external adapters are environment-gated, and the Provider setup form's saved credentials do not enable those adapters. Podcast publication and automatic subscriber notices are unavailable. See the [capability matrix](CAPABILITIES.md) for current-source behavior; it does not qualify the signed Beta 15 package.
+
 The live-caption path automatically retries Whistle while Whisper supplies backup captions. Whistle remains the CPU live-caption primary; supported NVIDIA CUDA applies to Whisper only. The native installer registers a Windows service and supervises the control plane, PostgreSQL, and media workers from the bundled runtime. This repository is the native Windows product line; it has no WSL, Docker, or Linux installation target. See [BRANCHES.md](BRANCHES.md) for project history.
 
 Current release state is recorded in [`docs/releases/release-truth.yaml`](docs/releases/release-truth.yaml). Earlier package and lab evidence remains available in its release records, including the [Beta 11 verification](docs/releases/v1.0.0-beta.11-verification.md) and [Beta 10 verification](docs/releases/v1.0.0-beta.10-verification.md); those records apply only to their named releases.

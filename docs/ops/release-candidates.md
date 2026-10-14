@@ -12,6 +12,8 @@ without the checks below all passing. `scripts/release/publish_beta_candidate.py
 is fail-closed at every step (see its module docstring) -- it refuses rather
 than proceeds past any failed check.
 
+Current published package: [Beta 15](../releases/v1.0.0-beta.15-verification.md). The repository contains later unreleased source and documentation changes. Bind the next candidate to its own source, generated manual/Help, checksums and package results; prior package receipts remain historical. Documentation-only corrections do not require rebuilding an existing signed installer.
+
 ## 1. Build
 
 Dispatch or let `push` trigger `.github/workflows/native-beta-candidate-artifacts.yml`
@@ -35,9 +37,9 @@ on the release branch. It produces, per candidate commit (`<sha>`):
 Confirm the build run's conclusion is `success` and note its run id
 (`--build-run-id` below).
 
-### Beta 11 hosted preparation run (not an installable kit)
+### Hosted preparation mode (not an installable kit)
 
-While the accepted 24-hour station soak and monitor are still running, use
+To prepare a candidate without assembling an installable kit, use
 the manual workflow with `build_target: hosted` and `prepare_only: true`.
 This keeps packaging and signing work off the station desktop. The workflow
 still builds, signs, and verifies the complete candidate and station bundle
@@ -61,7 +63,8 @@ on `windows-latest`, then retains only these short-lived artifacts:
   `prepare_only` produces this small manual artifact too, but still skips kit
   assembly; it does not make a preparation run Gate A eligible.
 
-The Whistle pack payload is 18,422,127 bytes (about 17.6 MiB). It is included
+The Beta 11 preparation measured a Whistle pack payload of 18,422,127 bytes
+(about 17.6 MiB); use the current build report for current sizes. It is included
 in the installer and repeated in both small station artifacts, so budget for
 about 3.5 GB total, plus small indexes and reports; the run will confirm actual
 upload sizes. Each artifact has one-day retention, keeping this below the

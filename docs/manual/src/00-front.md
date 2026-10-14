@@ -1,6 +1,6 @@
 # About this manual {#about}
 
-This is the CivicCast User Manual for **CivicCast (Native) 1.0.0-beta.15**, the Windows version of CivicCast, a program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
+This is the **development edition** of the CivicCast User Manual, based on **CivicCast (Native) 1.0.0-beta.15** and the unreleased changes on `main`. CivicCast is a Windows program that helps a public-access (PEG) station or a small city put its meetings on the air and on the web.
 
 ## What state this software is in
 
@@ -10,7 +10,7 @@ recorded-caption settings instructions include current unreleased source
 work. Those additions are not features of the published Beta 15 installer. The Beta 15
 release and its installation evidence remain identified separately below.
 
-This manual describes **Beta 15**. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads and publication status, and read the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for the exact package identity, observations, and limits. Start with the complete download helper in [Chapter 10](#ch-installing), then create the station administrator on the station computer. Whistle provides CPU live captioning; Whisper supplies fallback and recorded captions. A historical **Beta 11** 72-hour run across Public, Government, and Education recorded **99.78% live caption-input coverage**. See the [Beta 11 host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and measurement. Earlier history remains in the evidence appendix and dated verification records.
+**Beta 15 is the current published installer; this development manual also describes the unreleased additions listed above.** For instructions matched to the installed Beta 15 package, use its bundled Help or the manual downloaded with that release. Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads and publication status, and read the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) for the exact package identity, observations, and limits. Start with the complete download helper in [Chapter 10](#ch-installing), then create the station administrator on the station computer. Whistle provides CPU live captioning; Whisper supplies fallback and recorded captions. A historical **Beta 11** 72-hour run across Public, Government, and Education recorded **99.78% live caption-input coverage**. See the [Beta 11 host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and measurement. Earlier history remains in the evidence appendix and dated verification records.
 
 This manual describes the software; it does not itself establish publication or installation acceptance. The current release status is always on the project's releases page, <https://github.com/scottconverse/civiccast-native/releases>.
 
@@ -61,6 +61,6 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Where to get help and report problems
 
-Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) describes this manual's release edition and its package evidence. Dated records for earlier packages remain available as release history.
+Report problems and read release notes at the project page: <https://github.com/scottconverse/civiccast-native>. Check <https://github.com/scottconverse/civiccast-native/releases> for current downloads and publication status, then read the verification record for the exact package you use. The [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) describes the published Beta 15 edition and its package evidence; it does not qualify this development edition. Dated records for earlier packages remain available as release history.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.12-verification.md; docs/releases/v1.0.0-beta.11-verification.md (historical host evidence); docs/releases/v1.0.0-beta.10-verification.md (historical appendix only); docs/releases/release-truth.yaml; ops/docs-sprint/MANUAL-STYLE.md -->

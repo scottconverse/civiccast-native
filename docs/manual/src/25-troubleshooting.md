@@ -290,16 +290,16 @@ The default encoder path is GStreamer. On Windows, a hardware H.264 request is m
 
 > **Upgrade evidence (Beta 12):** One normal upgrade from the pinned Beta 11 baseline exited 0 and recorded a healthy service/API, current schema 0089, a saved preservation marker, and initial HLS audio/video plus Whistle observations on three channels. The post-upgrade recorder failed during its first JSON save; no five-snapshot PASS was recorded. Fresh-install and repair checks remain unrun, and no sustained-operation result is claimed. Take a separate backup of `C:\ProgramData\CivicCast` before an upgrade. See the [Beta 12 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.12-verification.md).
 
-An upgrade is the same `setup.exe` run over an existing install. The generic **Already Installed** page is suppressed; setup does not uninstall first. It saves a temporary, size-checked recovery copy before replacing files, re-verifies packs, runs the database upgrade and restores the prior application and station state if a later step fails. Setup refuses to put an older version over a newer one. Exit 136 means recovery could not be prepared or completed; keep `install-transaction` and station data intact and let the recovery task or next setup run retry.
+An upgrade is the same `setup.exe` run over an existing install. The generic **Already Installed** page is suppressed; setup does not uninstall first. In the current installer source, a read-only version preflight rejects an older setup before stopping the service or replacing files. For an accepted upgrade, setup saves a temporary, size-checked snapshot before replacing files, re-verifies packs, and runs the database upgrade. If a later step fails, the engine rolls back its database work and the enclosing installer transaction attempts to restore the prior application and station state. This describes current source behavior; the published Beta 15 verification record identifies only the checks and limits of that signed package. Exit 136 means recovery could not be prepared or completed; keep `install-transaction` and station data intact and let the recovery task or next setup run retry.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
-| Setup exit 113 | The upgrade failed and the rollback also failed. | `C:\ProgramData\CivicCast\upgrade\UPGRADE-RECOVERY.md` and `install-progress.log`. | Setup attempts to restore the previous application and station state; if it reports exit 136, keep recovery files and follow the exit-136 instructions. |
+| Setup exit 113 | The engine could not restore its database backup. Setup also attempts to restore the pre-setup application and station snapshot. | `install-progress.log`; when present, failed-run engine logs and journal under `install-transaction\failure-diagnostics`. | If outer restoration succeeds, the prior station state is back. A generated `UPGRADE-RECOVERY.md` may not remain under `upgrade` after that restore. If recovery did not finish, keep the recovery files and station data. |
 | Setup exit 114 | This release has a database change that cannot be rolled back, so the automatic upgrade was refused. | The dialog. | No manual path is written in the dialog (HELP-107). Ask for help before you proceed. |
 | Setup exit 115 | An unexpected fault in the upgrade step. | `install-progress.log`. | Run setup again; collect the logs if it repeats. |
-| Setup exit 124 | The engine rolled back its database work; setup then restores the pre-setup application and station state when automatic recovery succeeds. | `upgrade\upgrade-engine.log` and `install-progress.log`. | Read the reason, fix it, and run setup again. The previous service start mode is restored with the prior installation. |
-| Setup exit 128 | An earlier failed upgrade's journal is still on disk. Setup restores the pre-setup state when automatic recovery succeeds. | `upgrade\upgrade-journal.json` exists. | Move that file aside (do not delete it) and run setup again. |
-| Setup exit 129 | An older setup was run over a newer install. A defensive late refusal restores the pre-setup state when automatic recovery succeeds. | The dialog and `install-progress.log`. | Use the setup matching the newer installed version. If recovery did not complete, keep the recovery files and follow exit 136. |
+| Setup exit 124 | The engine rolled back its database work; setup attempts to restore the pre-setup application and station state. | `install-progress.log` and, when present, the failed-run engine log and journal under `install-transaction\failure-diagnostics`. | Read the reason, fix it, then run setup again. If restoration succeeded, the previous service configuration is restored too; keep recovery records if it did not. |
+| Setup exit 128 | A terminal failure journal from an earlier upgrade remains; when installer restoration succeeds, it returns the pre-setup state and preserves that earlier journal. | `upgrade\upgrade-journal.json` and any retained copy under `install-transaction\failure-diagnostics`. | Inspect and archive or move the prior terminal journal aside (do not delete it), then run setup again. |
+| Setup exit 129 | An older setup was refused. The normal read-only version preflight exits before stopping the service or replacing files; a defensive late check also attempts pre-setup restoration. | The dialog and `install-progress.log`. | Use the setup matching the installed version. If the late recovery did not complete, keep the recovery files and station data. |
 | Setup exit 136 | The installer could not prepare, complete or resume automatic restoration. | `install-transaction\recovery-error.txt` and `install-progress.log`. | Keep station data and recovery files. Restart Windows or retry setup to let automatic recovery run; contact support if it repeats. |
 | After the upgrade `/health` says `schema` is `behind` | The migration did not run. | `curl.exe http://127.0.0.1:8000/health`. | Run setup again; see exit 125. |
 | Uninstall exit 82, 133 or 134 | The service could not be confirmed stopped (82, 133), or teardown is incomplete (134, remove by hand). | The dialog. | Stop the service in `services.msc` or restart Windows, then uninstall again. For 134, remove the leftovers in `services.msc`, Windows Firewall and the registry. |
@@ -331,7 +331,7 @@ Collect these before you ask anyone for help. Together they answer most question
 | 110 | Stage packs | A required pack is missing or untrusted (child code 74), or the optional GPU pack is untrusted (child code 75). |
 | 111 | Verify | The unpacked server tools do not match their signed list. |
 | 112 | Verify | The unpacked program files do not match. |
-| 113 | Upgrade | Upgrade failed and the rollback failed. See `UPGRADE-RECOVERY.md`. |
+| 113 | Upgrade | The engine could not restore its database backup; the installer also attempts full pre-setup restoration. See `install-progress.log` and any retained `install-transaction\failure-diagnostics`. |
 | 114 | Upgrade | The release has a migration that cannot be rolled back; the automatic upgrade was refused. |
 | 115 | Upgrade | An unexpected fault. |
 | 116 | Provision | PostgreSQL could not be provisioned. See `PROVISION-RECOVERY.md`. |
@@ -342,12 +342,12 @@ Collect these before you ask anyone for help. Together they answer most question
 | 121 | Verify | FFmpeg does not match. |
 | 122 | Verify | Ollama does not match. |
 | 123 | Activation | Child codes 64, 65, 66, 67 and 78, or another. |
-| 124 | Upgrade | The engine was rolled back and the old database is intact. See `upgrade-engine.log`. |
+| 124 | Upgrade | The engine rolled back its database work; setup attempts to restore the prior application and station snapshot. |
 | 125 | Service | The service started but the station is not serving (child code 84). |
 | 126 | Service | The service would not start (child code 83). |
 | 127 | Provision | Runtime ownership unknown (child code 85). See `OWNERSHIP-RECOVERY.md`. |
 | 128 | Upgrade | An earlier failed upgrade's journal is still on disk. |
-| 129 | Upgrade | An older setup over a newer install. |
+| 129 | Upgrade | An older setup was refused; the normal version preflight runs before service stop or file replacement. |
 | 130 | Uninstall | You declined the ownership-transfer prompt. |
 | 131 | Uninstall | Ownership transfer failed. |
 | 132 | Uninstall | Blocked: an active runtime together with a WSL product, or unreadable state. |

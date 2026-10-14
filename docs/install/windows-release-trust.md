@@ -38,6 +38,8 @@ upgrade-baseline kit.
 This page explains how an operator should verify a CivicCast Windows setup
 download before running it.
 
+The repository manual and generated Help on `main` are a development edition and include unreleased station-operation, scheduling, output and recorded-caption settings. For the published Beta 15 interface, use the Help installed with Beta 15 or the manual assets from its release page. Merged source changes do not update an installed station.
+
 ## Read The Release Docs First
 
 For a clean-machine proof, read these documents before downloading or running

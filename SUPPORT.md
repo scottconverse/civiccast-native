@@ -43,6 +43,8 @@ there is no commercial support contract or SLA.
    repository). Examples: whether CivicCast is a fit for an HOA,
    public-access station, school board, or nonprofit workflow.
 
+The repository manual and generated Help on `main` are a development edition and include unreleased station-operation, scheduling, output and recorded-caption settings. For the published Beta 15 interface, use the Help installed with Beta 15 or the manual assets from its release page. Merged source changes do not update an installed station.
+
 ## Retired WSL2 Support History
 
 The following paragraph records the old WSL2 product line only. It is not

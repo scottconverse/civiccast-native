@@ -340,14 +340,12 @@ def default_lay_tree(
 ) -> Callable[[str], str]:
     """Lay ``app\\<new>\\`` by copying the (already verified) payload tree in.
 
-    WP-4 Part B produced the BUILD-time half of D2: the audited closure is
-    embedded in the signed bundle, byte-verified against runtime-manifest.json
-    (see ``scripts/build_native_installer.py``). The payload SOURCE here is
-    whatever the NSIS installer unpacked to a staging dir; D2's install-time
-    verification (SHA256SUMS chained to the Authenticode signature) is
-    asserted by the installer BEFORE this runs, so this copy trusts an
-    already-verified staging tree. Wiring that install-time staging path +
-    verification call is WP-5 -- see ``next-cleanup.md``.
+    This versioned-tree helper trusts verification performed by its caller;
+    it does not authenticate a payload itself. The current bootstrap installer
+    uses signed component packs: it stages them with --civiccast-stage-packs
+    and verifies the extracted runtime against native-app-payload.ccpack with
+    --civiccast-verify-pack-tree before invoking the upgrade engine. The former
+    WP-5 staging task is closed; see next-cleanup.md for its disposition.
     """
 
     def _lay(new_version: str) -> str:
