@@ -2594,7 +2594,12 @@ export interface MagicLinkRequest {
 }
 
 export interface MagicLinkResponse {
-  sent?: boolean
+  sent: boolean
+}
+
+export interface MagicLinkVerifyResponse {
+  allowed: boolean
+  email: string
 }
 
 export interface ManagedStorageStatusReport {

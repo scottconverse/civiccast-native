@@ -32,6 +32,7 @@ from civiccast.auth.models import OperatorIdentity
 from civiccast.db import Base
 from civiccast.paywall.router import (
     _RATE_LIMITS,
+    _default_email_sender,
     get_magic_link_email_sender,
     get_paywall_service,
     get_paywall_store,
@@ -671,16 +672,61 @@ class TestPublicAccess:
 
 
 class TestMagicLinkRouter:
-    def test_mint_with_no_config_silently_drops(self) -> None:
-        # Q-9 fix: identical response shape whether configured or not.
-        # An anonymous caller can't probe "is the paywall on?" via the
-        # status code. The mint is silently dropped if there's no config.
+    def test_default_sender_uses_smtp_and_a_portal_link(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sent: list[tuple[str, str]] = []
+        monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://station.example")
+        monkeypatch.setenv("CIVICCAST_SMTP_HOST", "smtp.example")
+        monkeypatch.setenv("CIVICCAST_SMTP_FROM", "station@example.com")
+        monkeypatch.setattr(
+            "civiccast.subscribe.smtp.SmtpMailbox.send_magic_link",
+            lambda self, *, email, verification_url: sent.append((email, verification_url)),
+        )
+        _default_email_sender(
+            email="viewer@example.com", token="abc.def", station_id="station",
+            scope_kind="asset", scope_id="vid-1",
+        )
+        assert sent == [
+            ("viewer@example.com", "https://station.example/#/watch/vid-1?token=abc.def")
+        ]
+
+    def test_sender_failure_is_not_reported_as_sent(self) -> None:
+        def fail_sender(**_kwargs: str) -> None:
+            raise OSError("relay unavailable")
+
+        app, _, _, _ = _build(email_sender=fail_sender)
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload(enabled=True))
+        response = client.post(
+            "/api/public/paywall/magic-link",
+            json={"email": "viewer@example.com", "scope_kind": "asset", "scope_id": "vid-1"},
+        )
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Magic-link delivery is unavailable."}
+
+    def test_default_sender_without_smtp_configuration_fails_closed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        app, _, _, _ = _build()
+        app.dependency_overrides.pop(get_magic_link_email_sender)
+        monkeypatch.delenv("CIVICCAST_SMTP_HOST", raising=False)
+        monkeypatch.delenv("CIVICCAST_SMTP_FROM", raising=False)
+        monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://station.example")
+        client = TestClient(app)
+        client.put("/api/staff/paywall/config", json=_config_payload(enabled=True))
+        response = client.post(
+            "/api/public/paywall/magic-link",
+            json={"email": "viewer@example.com", "scope_kind": "asset", "scope_id": "vid-1"},
+        )
+        assert response.status_code == 503
+        assert response.json() == {"detail": "Magic-link delivery is unavailable."}
+
+    def test_mint_with_no_config_reports_delivery_unavailable(self) -> None:
         r = _client().post(
             "/api/public/paywall/magic-link",
             json={"email": "viewer@example.com", "scope_kind": "asset", "scope_id": "vid-1"},
         )
-        assert r.status_code == 200
-        assert r.json() == {"sent": True}
+        assert r.status_code == 503
+        assert r.json() == {"detail": "Magic-link delivery is unavailable."}
 
     def test_mint_does_not_echo_token(self) -> None:
         app, _, _, captured = _build()
@@ -721,7 +767,7 @@ class TestMagicLinkRouter:
         # Now verify the link.
         r = client.get("/api/public/paywall/verify", params={"token": token})
         assert r.status_code == 200
-        assert r.json() == {"allowed": True, "reason": None}
+        assert r.json() == {"allowed": True, "email": "viewer@example.com"}
         # And the access decision now allows.
         r = client.get(
             "/api/public/paywall/access",
@@ -1358,8 +1404,6 @@ class TestNoPanInLogsOrResponse:
 class TestServiceLevelGuardsViaRouter:
     def test_mint_refused_when_paywall_disabled(self) -> None:
         # E-8 fix: a "configured but disabled" station must not mint.
-        # Q-9 keeps the response shape constant — sent: true is returned
-        # but no token is actually sent.
         app, _, _, captured = _build()
         client = TestClient(app)
         client.put("/api/staff/paywall/config", json=_config_payload(enabled=False))
@@ -1367,7 +1411,8 @@ class TestServiceLevelGuardsViaRouter:
             "/api/public/paywall/magic-link",
             json={"email": "viewer@example.com", "scope_kind": "asset", "scope_id": "vid-1"},
         )
-        assert r.status_code == 200
+        assert r.status_code == 503
+        assert r.json() == {"detail": "Magic-link delivery is unavailable."}
         assert captured == []  # no email triggered
 
     def test_webhook_missing_period_end_on_active_is_400(self) -> None:

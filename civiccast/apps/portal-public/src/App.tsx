@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import { emitAnalyticsEvent } from './analytics'
 import { HlsPlayer } from './HlsPlayer'
+import { MagicLinkVerificationScreen } from './MagicLinkVerificationScreen'
 import { buildRecordingsHash, buildScheduleHash, useHashRoute, type PortalRoute } from './router'
 import { ChannelGuideScreen } from './screens/ChannelGuideScreen'
 import { HomeScreen } from './screens/HomeScreen'
@@ -43,6 +44,7 @@ function analyticsSection(route: PortalRoute, manifestOverride: string | null): 
   if (route.view === 'recordings') return 'recordings_browse'
   if (route.view === 'watch') return 'watch_recording'
   if (route.view === 'schedule') return 'channel_guide'
+  if (route.view === 'magic_link') return 'magic_link_verify'
   return 'portal_home'
 }
 
@@ -159,6 +161,8 @@ function App() {
             <WatchScreen assetId={route.assetId} />
           ) : route.view === 'schedule' ? (
             <ChannelGuideScreen channel={route.channel} />
+          ) : route.view === 'magic_link' ? (
+            <MagicLinkVerificationScreen token={route.token} />
           ) : (
             <HomeScreen />
           )}

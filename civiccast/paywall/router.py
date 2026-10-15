@@ -220,12 +220,7 @@ def _require_service(svc: PaywallService | None) -> PaywallService:
 
 class MagicLinkEmailSender(Protocol):
     """Hook for delivering the magic-link to the viewer's inbox.
-
-    Slice 3 wires a no-op default (the router accepts mint requests and
-    returns ``{"sent": True}`` so the contract is exercised) and leaves
-    the SMTP integration for the same slice that wires the real B5
-    provider. Tests inject a recording stub; production wiring will plug
-    in the SMTP delivery client behind the same protocol.
+    The default uses station SMTP configuration; tests may inject a stub.
     """
 
     def __call__(
@@ -247,16 +242,24 @@ def _default_email_sender(
     scope_kind: str,
     scope_id: str,
 ) -> None:
-    """No-op sender. Production wiring replaces this with an SMTP-backed
-    implementation (slice 5 — same B5 real-provider pattern the contribute
-    + records modules use). Leaving as a no-op here keeps the magic-link
-    endpoint exercised in tests without coupling slice 3 to SMTP."""
+    """Deliver through the station SMTP relay; missing configuration fails closed."""
+    from urllib.parse import quote, urlsplit
+
+    from civiccast.subscribe.smtp import SmtpMailbox, SmtpSettings
+
+    base = os.environ.get("CIVICCAST_PUBLIC_BASE_URL", "").strip().rstrip("/")
+    parsed = urlsplit(base)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("CIVICCAST_PUBLIC_BASE_URL must be a public http(s) URL.")
+    settings = SmtpSettings.from_env()
+    # The fragment keeps the single-use token out of ordinary HTTP requests.
+    route = f"watch/{quote(scope_id, safe='')}" if scope_kind == "asset" else "paywall/verify"
+    verification_url = f"{base}/#/{route}?token={quote(token, safe='')}"
+    SmtpMailbox(settings).send_magic_link(email=email, verification_url=verification_url)
 
 
 def get_magic_link_email_sender() -> MagicLinkEmailSender:
-    """DI seam for the magic-link email sender. The app factory overrides
-    this with an SMTP-backed sender in production; tests inject a stub
-    that records the (email, token) pair so the test can assert on it."""
+    """DI seam; tests may inject a recording sender in place of SMTP."""
     return _default_email_sender
 
 
@@ -621,14 +624,21 @@ class MagicLinkResponse(BaseModel):
     We deliberately do NOT echo the token here — the viewer receives it
     via email; surfacing it on the response would defeat the channel-
     separation that makes magic-links a defense against credential
-    stuffing. Returning the same shape on success + "no config yet" would
-    also surface a tiny configuration probe; we return 409 from the
-    handler in that case so the client gets a distinct status.
+    stuffing. A missing sender or failed relay returns 503, never ``sent=True``.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    sent: bool = True
+    sent: bool
+
+
+class MagicLinkVerifyResponse(BaseModel):
+    """A redeemed link proves possession of the addressed mailbox."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    allowed: bool
+    email: str
 
 
 @public_router.post(
@@ -636,7 +646,7 @@ class MagicLinkResponse(BaseModel):
     response_model=MagicLinkResponse,
     summary="Email a single-use magic-link to the viewer",
     responses={
-        200: {"description": "Magic-link mint accepted (always sent=True for shape-valid input)"},
+        200: {"description": "The SMTP relay accepted the magic-link email"},
         422: {"description": "Public mint requires an asset/series scope_id (no catch-all)"},
         429: {"description": "Rate limit exceeded"},
         503: {"description": _DB_NOT_READY},
@@ -650,17 +660,11 @@ def public_magic_link(
 ) -> MagicLinkResponse:
     """Mint a token + invoke the email sender. The token is never echoed.
 
-    Slice-5 hook: ``sender`` is the SMTP delivery seam. The default
-    sender is a no-op so the contract is exercised in tests without
-    pulling in SMTP. The production wiring plugs in an SMTP-backed
-    sender behind the same protocol.
+    The default sender uses the station SMTP relay. A missing relay or a
+    failed send returns 503; the token is never echoed to the requester.
 
     Q-5 fix: per-IP rate limit (5 / 60s) to prevent the endpoint being
     used as an email-spam relay once SMTP is wired.
-
-    Q-9 fix: the response shape is identical (``{"sent": true}`` 200)
-    whether or not the station has a paywall configured. An anonymous
-    caller cannot probe "is the paywall on?" via the status code.
 
     E-1 BLOCKER fix: the request model rejects ``scope_kind="all"``; we
     additionally route through :meth:`mint_magic_link_for_public` which
@@ -674,15 +678,15 @@ def public_magic_link(
             sid, payload.email, payload.scope_kind, payload.scope_id
         )
     except MagicLinkNotConfiguredError:
-        # Q-9 fix: identical response shape whether configured or not.
-        # The mint is silently dropped on the unconfigured path so the
-        # response status code can't be used to probe "is paywall on?".
         logger.info(
             "paywall.magic_link.mint_no_config station_id=%s scope_kind=%s",
             sid,
             payload.scope_kind,
         )
-        return MagicLinkResponse(sent=True)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Magic-link delivery is unavailable.",
+        ) from None
     except PaywallServiceError as exc:
         # E-1 belt-and-suspenders: a service-level rejection of
         # ``scope_kind="all"`` (or any other validation) becomes a 422
@@ -691,13 +695,20 @@ def public_magic_link(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=str(exc),
         ) from exc
-    sender(
-        email=payload.email,
-        token=token,
-        station_id=sid,
-        scope_kind=payload.scope_kind,
-        scope_id=payload.scope_id,
-    )
+    try:
+        sender(
+            email=payload.email,
+            token=token,
+            station_id=sid,
+            scope_kind=payload.scope_kind,
+            scope_id=payload.scope_id,
+        )
+    except Exception:
+        logger.exception("paywall.magic_link.delivery_failed station_id=%s", sid)
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Magic-link delivery is unavailable.",
+        ) from None
     return MagicLinkResponse(sent=True)
 
 
@@ -706,7 +717,7 @@ _VERIFY_GENERIC_DETAIL = "Magic link could not be verified."
 
 @public_router.get(
     "/paywall/verify",
-    response_model=PublicAccessDecision,
+    response_model=MagicLinkVerifyResponse,
     summary="Redeem a magic-link token (single-use)",
     responses={
         401: {"description": "Token invalid, expired, or already redeemed"},
@@ -718,7 +729,7 @@ def public_verify_magic_link(
     request: Request,
     token: str = Query(..., min_length=8, description="The signed token from the email link."),
     svc: PaywallService | None = Depends(get_paywall_service),
-) -> PublicAccessDecision:
+) -> MagicLinkVerifyResponse:
     """Verify the token + return a decision.
 
     E-3 / Q-7 fix: ALL failure modes (malformed / bad signature /
@@ -737,7 +748,7 @@ def public_verify_magic_link(
     resolved = _require_service(svc)
     sid = _station_id()
     try:
-        resolved.verify_magic_link(token, expected_station_id=sid)
+        grant = resolved.verify_magic_link(token, expected_station_id=sid)
     except MagicLinkVerificationError as exc:
         # E-3/Q-7: log specific cause, return identical detail body.
         logger.info(
@@ -749,7 +760,7 @@ def public_verify_magic_link(
             status.HTTP_401_UNAUTHORIZED,
             detail=_VERIFY_GENERIC_DETAIL,
         ) from exc
-    return PublicAccessDecision(allowed=True)
+    return MagicLinkVerifyResponse(allowed=True, email=grant.email)
 
 
 # --- webhook -----------------------------------------------------------------

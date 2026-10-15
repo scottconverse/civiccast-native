@@ -24,6 +24,7 @@ export type PortalRoute =
     }
   | { view: 'watch'; assetId: string }
   | { view: 'schedule'; channel: string }
+  | { view: 'magic_link'; token: string | null }
 
 export function parseHashRoute(hash: string): PortalRoute {
   const raw = hash.replace(/^#/, '')
@@ -51,6 +52,9 @@ export function parseHashRoute(hash: string): PortalRoute {
   if (segments[0] === 'schedule') {
     const params = new URLSearchParams(queryString)
     return { view: 'schedule', channel: params.get('channel') ?? 'public' }
+  }
+  if (segments[0] === 'paywall' && segments[1] === 'verify') {
+    return { view: 'magic_link', token: new URLSearchParams(queryString).get('token') }
   }
   return { view: 'home' }
 }
