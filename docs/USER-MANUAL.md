@@ -2076,7 +2076,7 @@ Each card has nine rows. Each row shows a status dot, a name, badges (**Required
 | Internet Archive | Mock by default. A real adapter requires the `CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real` service setting and credentials. It uploads the recording when a local file resolves; without one, the adapter receives an asset/title payload rather than the media. |
 | Local NAS rsync, Local NAS ZFS | These two rows share the mock-by-default local archive adapter. A real adapter copies to the configured mounted folder (local path or UNC) and verifies the copies; the names do not mean CivicCast runs rsync or manages ZFS. Without a local recording file the copy is metadata only. |
 | YouTube Live, YouTube VOD | Mock by default. Real VOD upload requires a resolved recording file or the configured `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. The Live adapter provisions and binds a YouTube broadcast and stream, but this Publish path does not send CivicCast's live output to YouTube's ingest address. |
-| Podcast episode | Marked "Coming in a future release". You cannot tick it. A legacy API branch can return placeholder URLs but does not persist an episode in the public feed. |
+| Podcast episode | Optional. Converts the asset's local recording to an MP3, saves it as an episode, and adds an audio enclosure to the channel RSS feed. A missing recording or conversion error appears as a retryable failure. IT must set a public station URL and provide FFmpeg. |
 | Subscriber notifications | Optional. When selected, CivicCast sends notices to confirmed subscribers through configured mail or webhook providers, records each delivery outcome and retries eligible failures. The row shows delivered, queued and failed counts. Mock providers are labeled simulated. |
 | Cable file package | Builds a ZIP with the video, captions, details and file fingerprints for the cable headend, in a folder IT has chosen. If no folder is set the row says it is "not set up (optional)". |
 
@@ -2261,7 +2261,7 @@ If a resident types an address and clicks **Subscribe**, a result box says "Subs
 > - Unless IT has switched on a real mail connection, the confirmation email goes to a placeholder mailbox that never leaves the station computer.
 > - Even with a real mail connection, the confirmation link written into the email is only a path (`/subscribe/confirm?token=...`) with no web address in front of it. The portal confirms a subscription from `/?subscription=confirm&token=...` and we found nothing that serves the path in the email, so we could not confirm that a resident can finish confirming.
 > - In beta.11, a confirmed subscriber did not receive a publish notice. Current source offers the optional **Subscriber notifications** row with recorded delivery outcomes.
-> - The **Channel RSS feed** is a valid but empty feed. The **Podcast RSS feed** lists episodes only if some were created, and the Podcast step on Publish is not available yet.
+> - In beta.11, the **Channel RSS feed** was valid but empty and the Podcast step on Publish was unavailable. Current source can add approved podcast episodes and playable enclosures to the feed.
 >
 > Do not promise residents email alerts or working feeds in beta.11. The result box may also show a link labeled "Test one-click unsubscribe", which is a testing control.
 
@@ -5277,7 +5277,7 @@ Scheduled recording runs inside the station (`CIVICCAST_SCHEDULED_RECORDING`, `i
 
 ### Publishing problems
 
-The Publish screen records "operator-dashboard" as the operator for every approval. Publish targets are the resident portal, Internet Archive, Local NAS (rsync or ZFS), YouTube Live, YouTube VOD, a podcast episode, subscriber notifications and a cable file package. Podcast publication remains unavailable. Subscriber notifications are optional and show delivery outcomes when selected.
+The Publish screen records "operator-dashboard" as the operator for every approval. Publish targets are the resident portal, Internet Archive, Local NAS (rsync or ZFS), YouTube Live, YouTube VOD, a podcast episode, subscriber notifications and a cable file package. Podcast and subscriber notifications are optional and show their outcomes when selected.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
@@ -5601,11 +5601,11 @@ All of them default to `mock`. A mock provider does not send anything. The selec
 
 The real Internet Archive and local archive adapters use a resolved recording file when available. If it cannot resolve, the fallback is an asset/title payload rather than the full media. The local archive adapter writes a canonical copy and dated snapshot to a mounted filesystem path and checks the files by SHA-256 read-back; it does not run rsync or manage a ZFS target. YouTube VOD needs a local recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. YouTube Live creates and binds a YouTube broadcast/stream, but the Publish path does not connect CivicCast's live output to the returned ingest address.
 
-`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and optional notices from the Publish screen. `CIVICCAST_PROVIDER_WEBHOOK=real` enables webhook notices for confirmed subscribers. The staff-only subscription dispatch-test route can exercise either provider. Publishing records notice outcomes and retries eligible failures. Podcast publication is unavailable: the normal screen excludes it, and a legacy API path can return placeholder URLs without saving an episode to the public feed.
+`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and optional notices from the Publish screen. `CIVICCAST_PROVIDER_WEBHOOK=real` enables webhook notices for confirmed subscribers. The staff-only subscription dispatch-test route can exercise either provider. Publishing records notice outcomes and retries eligible failures. Podcast publishing uses local FFmpeg, `CIVICCAST_PUBLIC_BASE_URL`, and the selected asset's managed recording; it does not use an external provider.
 
 > **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Check the far end after your first real publish.
 
-> **Beta.11 history:** The Publish screen then listed subscriber notifications without sending them. Current source can send notices from the selected subscriber surface when its provider is configured. Podcast publication remains unavailable. See [Publishing](#ch-publishing).
+> **Beta.11 history:** The Publish screen then listed subscriber notifications without sending them, and the Podcast surface did not create audio. Current source can send selected notices and create selected podcast episodes when configured. See [Publishing](#ch-publishing).
 
 ### Cable file packages
 
@@ -6064,7 +6064,7 @@ This is the other half of the product. A meeting is captured, becomes a recordin
 | YouTube VOD | reach | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise its configured media-root path must exist. |
 | YouTube Live | reach | Mock by default. The real API adapter creates and binds a YouTube broadcast and stream, but the Publish surface does not connect CivicCast's live output to the returned RTMP ingest address. |
 | Cable package | record | optional; `not_configured` when unset |
-| Podcast | audience | The UI and readiness say unavailable; a stale API branch creates only a deterministic placeholder episode and does not persist it into the public feed. |
+| Podcast | audience | Selected publishing converts a local recording into MP3, stores the episode, and adds its enclosure to the channel RSS feed. Missing media or encoding failure stays visible and retryable. |
 | Subscriber notifications | audience | Optional delivery to confirmed subscribers when selected and configured; outcomes and retries are recorded. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
 | ActivityPub | federation | off by default; when enabled, a note is delivered only after the portal surface succeeded |
 
@@ -6397,7 +6397,7 @@ A technical reviewer should read this list before relying on the design. Each it
 
 - Live captions are off in a new station profile, are English only, and can lose audio under heavy load. Captions embedded in the stream are not proven for CEA-708 broadcast compliance, and a channel whose profile uses HEVC cannot embed captions.
 - Recorded-caption completion follows the station's selected languages and review requirement.
-- The Internet Archive, NAS, YouTube and subscriber-notification surfaces are simulated until their providers are set to real. Podcast publication is not active. ActivityPub is off by default.
+- The Internet Archive, NAS, YouTube and subscriber-notification surfaces are simulated until their providers are set to real. Podcast publication uses local FFmpeg and a configured public station URL. ActivityPub is off by default.
 - Summary citations bind claims to transcript cue identifiers and times; staff review the wording against the source recording before approving it. Signed-record export embeds its timestamp proof in the PDF. Configure `CIVICCAST_TSA_URL` for an RFC 3161 timestamp authority; without a configured authority, the exporter uses its deterministic development timestamp. An embedded timestamp is separate from a PDF document-signing certificate.
 - The public-safety display reads alerts and shows them; it is not an EAS device and does not relay the legally required EAS signal.
 
@@ -8632,7 +8632,7 @@ Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "
 | YouTube VOD | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise the configured media-root path must exist. |
 | YouTube Live | Mock by default. The real adapter creates and binds a YouTube broadcast and stream, but CivicCast does not connect its live output to the returned RTMP ingest address. |
 | Cable package | Optional; `not_configured` when unset. |
-| Podcast | The UI and readiness say unavailable; a stale API branch creates only a deterministic placeholder episode and does not persist it into the public feed. |
+| Podcast | Optional Publish surface. Produces a local MP3 from a local recording, persists the episode, and exposes its enclosure in the channel RSS feed; failures can be retried. |
 | Subscriber notifications | Optional, selected publish surface with delivery receipts and retries; requires confirmed subscribers and configured providers. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
 | ActivityPub | Off by default; when enabled, a note is delivered only after the portal surface succeeds. |
 

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- The optional Podcast surface converts a local recording to MP3, stores an
+  episode in the channel RSS feed, serves its audio enclosure, and reports
+  failures for operator retry. Feed and audio access follow playback policy.
 - Publishing can deliver notices to confirmed subscribers through configured
   mail and webhook providers, retain per-recipient outcomes, retry failures,
   and show delivery status to operators. Public subscription RSS now uses

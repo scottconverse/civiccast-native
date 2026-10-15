@@ -140,11 +140,11 @@ All of them default to `mock`. A mock provider does not send anything. The selec
 
 The real Internet Archive and local archive adapters use a resolved recording file when available. If it cannot resolve, the fallback is an asset/title payload rather than the full media. The local archive adapter writes a canonical copy and dated snapshot to a mounted filesystem path and checks the files by SHA-256 read-back; it does not run rsync or manage a ZFS target. YouTube VOD needs a local recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. YouTube Live creates and binds a YouTube broadcast/stream, but the Publish path does not connect CivicCast's live output to the returned ingest address.
 
-`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and optional notices from the Publish screen. `CIVICCAST_PROVIDER_WEBHOOK=real` enables webhook notices for confirmed subscribers. The staff-only subscription dispatch-test route can exercise either provider. Publishing records notice outcomes and retries eligible failures. Podcast publication is unavailable: the normal screen excludes it, and a legacy API path can return placeholder URLs without saving an episode to the public feed.
+`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and optional notices from the Publish screen. `CIVICCAST_PROVIDER_WEBHOOK=real` enables webhook notices for confirmed subscribers. The staff-only subscription dispatch-test route can exercise either provider. Publishing records notice outcomes and retries eligible failures. Podcast publishing uses local FFmpeg, `CIVICCAST_PUBLIC_BASE_URL`, and the selected asset's managed recording; it does not use an external provider.
 
 > **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Check the far end after your first real publish.
 
-> **Beta.11 history:** The Publish screen then listed subscriber notifications without sending them. Current source can send notices from the selected subscriber surface when its provider is configured. Podcast publication remains unavailable. See [Publishing](#ch-publishing).
+> **Beta.11 history:** The Publish screen then listed subscriber notifications without sending them, and the Podcast surface did not create audio. Current source can send selected notices and create selected podcast episodes when configured. See [Publishing](#ch-publishing).
 
 ## Cable file packages
 

@@ -54,7 +54,7 @@ Each card has nine rows. Each row shows a status dot, a name, badges (**Required
 | Internet Archive | Mock by default. A real adapter requires the `CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real` service setting and credentials. It uploads the recording when a local file resolves; without one, the adapter receives an asset/title payload rather than the media. |
 | Local NAS rsync, Local NAS ZFS | These two rows share the mock-by-default local archive adapter. A real adapter copies to the configured mounted folder (local path or UNC) and verifies the copies; the names do not mean CivicCast runs rsync or manages ZFS. Without a local recording file the copy is metadata only. |
 | YouTube Live, YouTube VOD | Mock by default. Real VOD upload requires a resolved recording file or the configured `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. The Live adapter provisions and binds a YouTube broadcast and stream, but this Publish path does not send CivicCast's live output to YouTube's ingest address. |
-| Podcast episode | Marked "Coming in a future release". You cannot tick it. A legacy API branch can return placeholder URLs but does not persist an episode in the public feed. |
+| Podcast episode | Optional. Converts the asset's local recording to an MP3, saves it as an episode, and adds an audio enclosure to the channel RSS feed. A missing recording or conversion error appears as a retryable failure. IT must set a public station URL and provide FFmpeg. |
 | Subscriber notifications | Optional. When selected, CivicCast sends notices to confirmed subscribers through configured mail or webhook providers, records each delivery outcome and retries eligible failures. The row shows delivered, queued and failed counts. Mock providers are labeled simulated. |
 | Cable file package | Builds a ZIP with the video, captions, details and file fingerprints for the cable headend, in a folder IT has chosen. If no folder is set the row says it is "not set up (optional)". |
 
@@ -239,7 +239,7 @@ If a resident types an address and clicks **Subscribe**, a result box says "Subs
 > - Unless IT has switched on a real mail connection, the confirmation email goes to a placeholder mailbox that never leaves the station computer.
 > - Even with a real mail connection, the confirmation link written into the email is only a path (`/subscribe/confirm?token=...`) with no web address in front of it. The portal confirms a subscription from `/?subscription=confirm&token=...` and we found nothing that serves the path in the email, so we could not confirm that a resident can finish confirming.
 > - In beta.11, a confirmed subscriber did not receive a publish notice. Current source offers the optional **Subscriber notifications** row with recorded delivery outcomes.
-> - The **Channel RSS feed** is a valid but empty feed. The **Podcast RSS feed** lists episodes only if some were created, and the Podcast step on Publish is not available yet.
+> - In beta.11, the **Channel RSS feed** was valid but empty and the Podcast step on Publish was unavailable. Current source can add approved podcast episodes and playable enclosures to the feed.
 >
 > Do not promise residents email alerts or working feeds in beta.11. The result box may also show a link labeled "Test one-click unsubscribe", which is a testing control.
 

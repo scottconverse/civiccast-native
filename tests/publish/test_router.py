@@ -78,7 +78,11 @@ def publish_store() -> InMemoryPublishStore:
 def client(
     store: FakeAssetStore,
     publish_store: InMemoryPublishStore,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[TestClient]:
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS", raising=False)
+    monkeypatch.setenv("CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN", "1")
+    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
     app = create_app()
     app.dependency_overrides[get_postgres_store] = lambda: store
     app.dependency_overrides[get_publish_store] = lambda: publish_store
@@ -151,15 +155,14 @@ def test_preflight_reports_portal_archive_nas_and_youtube_readiness(
     assert checks["local-nas-zfs"]["credential_reference"] == "CIVICCAST_PROVIDER_LOCAL_NAS=mock"
     assert checks["youtube-live"]["credential_reference"] == "CIVICCAST_PROVIDER_YOUTUBE=mock"
     assert checks["youtube-vod"]["credential_reference"] == "CIVICCAST_PROVIDER_YOUTUBE=mock"
-    # Podcast has no provider yet (WP-04 owns the real path); it must never
-    # read as broken (not "error") and must never gate `ready` (not required).
+    # Podcast creates local audio on selection; preflight does not claim an
+    # enclosure was produced before approval.
     assert checks["podcast"]["health"] == "unknown"
     assert checks["podcast"]["required"] is False
-    # Subscriber notifications: real sends are deferred to a future release
-    # (owner decision 2026-09-02) -- always "unknown", never gates `ready`.
-    assert checks["subscriber-notifications"]["health"] == "unknown"
+    # With no confirmed subscribers, no delivery is attempted or claimed.
+    assert checks["subscriber-notifications"]["health"] == "ok"
     assert checks["subscriber-notifications"]["required"] is False
-    assert "coming in a future release" in checks["subscriber-notifications"]["message"].lower()
+    assert "no confirmed subscribers" in checks["subscriber-notifications"]["message"].lower()
 
 
 def test_preflight_and_approve_agree_when_a_selected_real_provider_is_misconfigured(
@@ -217,7 +220,9 @@ def test_preflight_blocks_unpackaged_public_record_with_actionable_next_step(
     assert "Run the packager" in portal["next_step"]
 
 
-def test_approve_and_publish_runs_all_mock_surfaces(client: TestClient) -> None:
+def test_approve_reports_optional_podcast_failure_without_hiding_verified_archive(
+    client: TestClient,
+) -> None:
     # Every surface is named explicitly: an omitted selection now publishes
     # the canonical Portal surface only (F-23 safety default, hostile review
     # B3 of PR #216) -- see test_approve_with_surfaces_omitted_publishes_portal_only.
@@ -242,7 +247,7 @@ def test_approve_and_publish_runs_all_mock_surfaces(client: TestClient) -> None:
     assert response.status_code == 200
 
     body = response.json()
-    assert body["dashboard_state"] == "archive_verified"
+    assert body["dashboard_state"] == "reach_degraded"
     assert body["canonical_public"] is True
     assert body["archive_verified"] is True
     surfaces = {surface["id"]: surface for surface in body["surfaces"]}
@@ -258,7 +263,9 @@ def test_approve_and_publish_runs_all_mock_surfaces(client: TestClient) -> None:
     assert surfaces["local-nas-zfs"]["path"] == "zfs://civiccast/archive@council-2026-05-08"
     assert surfaces["youtube-live"]["url"].startswith("rtmps://youtube.example/live/")
     assert surfaces["youtube-vod"]["url"].startswith("https://youtube.example/watch")
-    assert surfaces["podcast"]["url"] == "https://portal.example/podcast/government.xml"
+    assert surfaces["podcast"]["state"] == "failed"
+    assert surfaces["podcast"]["url"] is None
+    assert "local recording" in surfaces["podcast"]["next_step"]
     # WP-05: this asset has no confirmed subscribers, so the surface reports
     # "not_configured" -- nothing was intended and nothing is claimed. It used
     # to report "succeeded" after merely building a payload that was never
@@ -538,6 +545,9 @@ def test_unpackaged_asset_blocks_approval_with_actionable_409(client: TestClient
 def test_publish_dashboard_503_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DATABASE_URL", raising=False)
     monkeypatch.delenv("CIVICCAST_ALLOW_EPHEMERAL_STORES", raising=False)
+    monkeypatch.delenv("CIVICCAST_STAFF_TOKENS", raising=False)
+    monkeypatch.setenv("CIVICCAST_ALLOW_DETERMINISTIC_STAFF_TOKEN", "1")
+    monkeypatch.setenv("CIVICCAST_STAFF_TOKENS_FALLBACK_WITH_DB", "1")
     client = TestClient(create_app(), headers={"Authorization": "Bearer operator-token-a"})
 
     response = client.get("/api/staff/publish/assets")

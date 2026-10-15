@@ -683,56 +683,32 @@ describe('PublishDashboardScreen state vocabulary', () => {
   })
 })
 
-// WP-11 item 4 (owner decision 2026-09-02). The dashboard listing's own
-// build_initial_surfaces() gives the podcast row state="pending",
-// health="unknown" -- exactly what a normal, selectable, approvable surface
-// looks like. Left alone that renders a checked "Approve this surface" box
-// the operator's "Approve and Publish selected" click would submit, which
-// the backend's real approve_publish() podcast branch currently answers
-// with a fabricated https://portal.example/... "success" URL. The frontend
-// fix is to always special-case this surface into a neutral, non-selectable
-// card, regardless of what state/health this particular listing row
-// happens to carry.
-describe('PublishDashboardScreen podcast future-release card (WP-11 item 4)', () => {
-  it('shows the podcast surface as a neutral future-release card with the API-aligned message', async () => {
+describe('PublishDashboardScreen podcast delivery', () => {
+  it('shows podcast as an optional selectable surface', async () => {
     vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
-    const { findByText } = renderScreen()
-
-    expect(await findByText('Coming in a future release')).toBeTruthy()
-    expect(
-      await findByText('Podcast is not available yet; it is coming in a future release.'),
-    ).toBeTruthy()
-  })
-
-  it('never renders an "Approve this surface" checkbox for podcast', async () => {
-    vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
-    const { findByText, queryAllByLabelText } = renderScreen()
+    const { findByText, queryAllByLabelText, queryByText } = renderScreen()
 
     await findByText('Podcast episode')
-    // Only the Portal surface's checkbox should exist -- podcast never gets
-    // one, so approving the asset can never silently include it.
-    expect(queryAllByLabelText(/Approve this surface/i)).toHaveLength(1)
+    expect(queryAllByLabelText(/Approve this surface/i)).toHaveLength(2)
+    expect(queryByText('Coming in a future release')).toBeNull()
   })
 
-  it('never renders podcast in error red, even if a future backend change reports it as failed/error', async () => {
+  it('shows a failed podcast publication as retryable', async () => {
     vi.mocked(listPublishAssets).mockResolvedValue(
       podcastDashboard({ state: 'failed', health: 'error' }),
     )
-    const { findByText, queryByText } = renderScreen()
+    const { findByRole } = renderScreen()
 
-    // Still the neutral future-release framing, not a red "Failed" state or
-    // a "Retry this surface" button.
-    expect(await findByText('Coming in a future release')).toBeTruthy()
-    expect(
-      await findByText('Podcast is not available yet; it is coming in a future release.'),
-    ).toBeTruthy()
-    expect(queryByText('Retry this surface')).toBeNull()
+    expect(await findByRole('button', { name: 'Retry this surface' })).toBeTruthy()
   })
 
-  it('excludes podcast from the pre-checked/submittable surface set so approval can never report a fake podcast success', async () => {
+  it('sends podcast only when the operator selects it', async () => {
     vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
     vi.mocked(approvePublishAsset).mockResolvedValue({} as never)
-    const { findByRole } = renderScreen()
+    const { findByRole, findAllByLabelText } = renderScreen()
+
+    const checkboxes = await findAllByLabelText(/Approve this surface/i)
+    fireEvent.click(checkboxes[1])
 
     fireEvent.click(await findByRole('button', { name: 'Approve and Publish selected' }))
     fireEvent.click(await findByRole('button', { name: 'Approve and Publish' }))
@@ -740,7 +716,7 @@ describe('PublishDashboardScreen podcast future-release card (WP-11 item 4)', ()
     await waitFor(() =>
       expect(approvePublishAsset).toHaveBeenCalledWith(
         'sample-asset',
-        expect.objectContaining({ approved_surface_ids: ['portal'] }),
+        expect.objectContaining({ approved_surface_ids: ['portal', 'podcast'] }),
       ),
     )
   })
@@ -816,7 +792,7 @@ describe('PublishDashboardScreen publish preflight panel', () => {
     ).toBeTruthy()
   })
 
-  it('shows the podcast surface as "Future release", never "Not ready", even if its check reports error', async () => {
+  it('shows a podcast readiness error instead of masking it as a future release', async () => {
     vi.mocked(listPublishAssets).mockResolvedValue(podcastDashboard())
     vi.mocked(getPublishPreflight).mockResolvedValue(
       preflight([
@@ -835,31 +811,18 @@ describe('PublishDashboardScreen publish preflight panel', () => {
           kind: 'audience',
           required: false,
           health: 'error',
-          message: 'Podcast is not available yet; it is coming in a future release.',
-          next_step: 'No action required.',
+          message: 'Podcast audio is not configured.',
+          next_step: 'Choose a local recording and set the public station URL.',
         },
       ]),
     )
-    const { findByText, findAllByText } = renderScreen()
-
-    // Both the surface card (item 4) and the readiness panel (item 5) show
-    // the same neutral message for podcast -- confirm at least the
-    // readiness panel's copy, scoped to that section.
-    expect(await findByText('Future release')).toBeTruthy()
-    const matches = await findAllByText(
-      'Podcast is not available yet; it is coming in a future release.',
-    )
-    expect(matches.length).toBeGreaterThanOrEqual(1)
-
-    // The readiness panel never labels podcast "Not ready", regardless of
-    // the health value its own check carries.
+    const { findByText } = renderScreen()
+    await findByText('Podcast audio is not configured.')
     const panel = (await findByText('Readiness check')).closest('section')
     expect(panel).toBeTruthy()
-    expect(within(panel as HTMLElement).queryByText('Not ready')).toBeNull()
+    expect(within(panel as HTMLElement).getByText('Not ready')).toBeTruthy()
     expect(
-      within(panel as HTMLElement).getByText(
-        'Podcast is not available yet; it is coming in a future release.',
-      ),
+      within(panel as HTMLElement).getByText('Podcast audio is not configured.'),
     ).toBeTruthy()
   })
 

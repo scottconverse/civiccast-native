@@ -540,6 +540,15 @@ Evaluate playback access and preroll policy.
 - Request body: `PublicPlaybackPolicyEvaluationRequest`
 - Responses: 200 `PlaybackPolicyEvaluation`; 422 `HTTPValidationError`
 
+### `GET /api/public/podcast/audio/{asset_id}.mp3`
+
+Stream a published podcast enclosure.
+
+- Access: public
+- Parameters: `asset_id` (path, required): `string`; `token` (query, optional): `string | null`
+- Request body: none
+- Responses: 200 Successful Response
+
 ### `GET /api/public/podcast/{channel_id}.xml`
 
 Read public podcast RSS feed.
@@ -3845,7 +3854,7 @@ Roll back (undo) a committed airing.
 
 ### `POST /api/staff/podcast/episodes`
 
-Create deterministic v0.8 podcast episode proof.
+Create a podcast episode through Publish approval.
 
 - Access: staff bearer token required; keep loopback or reverse-proxy network protection enabled
 - Parameters: none

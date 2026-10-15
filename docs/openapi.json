@@ -29174,6 +29174,64 @@
         ]
       }
     },
+    "/api/public/podcast/audio/{asset_id}.mp3": {
+      "get": {
+        "tags": [
+          "public",
+          "podcast"
+        ],
+        "summary": "Stream a published podcast enclosure",
+        "operationId": "podcast_audio_api_public_podcast_audio__asset_id__mp3_get",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 5000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/public/podcast/{channel_id}.xml": {
       "get": {
         "tags": [
@@ -29238,7 +29296,7 @@
           "staff",
           "podcast"
         ],
-        "summary": "Create deterministic v0.8 podcast episode proof",
+        "summary": "Create a podcast episode through Publish approval",
         "operationId": "create_episode_api_staff_podcast_episodes_post",
         "requestBody": {
           "content": {

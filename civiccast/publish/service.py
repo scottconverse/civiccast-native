@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +25,8 @@ from civiccast.platform.providers import (
     default_registry,
 )
 from civiccast.podcast.models import PodcastEpisodeCreate
-from civiccast.podcast.service import create_podcast_episode
+from civiccast.podcast.service import PodcastMediaError, create_podcast_episode
+from civiccast.podcast.store import PodcastStore
 from civiccast.publish.models import (
     PublishApprovalRequest,
     PublishAssetStatus,
@@ -57,12 +59,6 @@ from civiccast.subscribe.store import SubscribeStore
 
 PUBLIC_RECORD_POLICIES = {"meeting", "permanent"}
 
-_PODCAST_NOT_YET_AVAILABLE = SurfaceReadiness(
-    healthy=False,
-    reference="not-yet-available",
-    message="Podcast is not available yet; it is coming in a future release.",
-    next_step="No action needed. This surface is not selectable for real delivery yet.",
-)
 
 class PublishConfigurationError(RuntimeError):
     """One or more operator-selected surfaces have invalid provider config.
@@ -292,8 +288,6 @@ def _surface_readiness(
     old hardcoded ``channel/government`` target could never see.
     """
 
-    if surface.id in FUTURE_SURFACE_IDS:
-        return _PODCAST_NOT_YET_AVAILABLE
     return describe_surface_readiness(
         surface.id,
         label=surface.label,
@@ -363,6 +357,19 @@ def build_publish_preflight(
             subscribe_targets=subscribe_targets,
         )
         if readiness is None:
+            if surface.id == "podcast":
+                checks.append(
+                    PublishPreflightCheck(
+                        id=surface.id,
+                        label=surface.label,
+                        kind=surface.kind,
+                        required=False,
+                        health="unknown",
+                        message="Podcast audio is created from the local recording when selected.",
+                        next_step="Make sure this asset has a local recording and a public station URL.",
+                    )
+                )
+                continue
             # No provider dependency for this surface (e.g. the Cable file
             # package, which has its own local configuredness check run only
             # at approval time) -- nothing to report as not-ready here.
@@ -384,7 +391,6 @@ def build_publish_preflight(
                 label=surface.label,
                 kind=surface.kind,
                 required=surface.required,
-                # Podcast remains unavailable and is not a provider failure.
                 health=(
                     "unknown"
                     if surface.id in FUTURE_SURFACE_IDS
@@ -440,9 +446,8 @@ def _provider_failure(
 
 
 # Surfaces approve_publish never pre-checks against the provider registry:
-# Portal is gated on manifest_url (not a provider); Podcast has no provider
-# kind yet and is out of WP-03's scope (WP-04 owns the real podcast path;
-# see civiccast.publish.readiness.FUTURE_SURFACE_IDS); Subscriber
+# Portal is gated on manifest_url (not a provider); Podcast uses local
+# media and has no external provider; Subscriber
 # notifications has real per-channel readiness logic and is checked when
 # selected. The Cable file package has its own local
 # configuredness check (build_cable_file_package_for_asset) that already
@@ -496,6 +501,7 @@ def approve_publish(
     store: PublishStore,
     registry: ProviderRegistry | None = None,
     media_path: Path | None = None,
+    podcast_store: PodcastStore | None = None,
     subscribe_store: SubscribeStore | None = None,
     delivery_store: NotificationDeliveryStore | None = None,
     target_lookup: ChannelAssociationLookup | None = None,
@@ -712,11 +718,6 @@ def approve_publish(
                     }
                 )
         elif surface.id == "podcast":
-            # WP-05 removes the hardcoded "government" channel here: the
-            # episode belongs to the channel the asset actually publishes to,
-            # resolved once for this approval. Everything else about this
-            # branch is unchanged -- WP-04 owns the real podcast path and the
-            # remaining placeholder URLs below.
             podcast_channel_id = next(
                 (
                     target.target_id
@@ -725,30 +726,54 @@ def approve_publish(
                 ),
                 DEFAULT_CHANNEL_ID_FALLBACK,
             )
-            episode = create_podcast_episode(
-                PodcastEpisodeCreate(
-                    asset_id=asset.asset_id,
-                    channel_id=podcast_channel_id,
-                    title=asset.title,
-                    portal_url=asset.manifest_url
-                    or f"https://portal.example/watch/{asset.asset_id}",
-                    source_media_url=asset.manifest_url or f"file:///{asset.asset_id}.mp4",
-                    signed_transcript_url=f"https://portal.example/records/{asset.asset_id}.pdf",
-                    summary=f"Approved audio episode for {asset.title}.",
-                    chapters=[],
+            if media_path is None or podcast_store is None:
+                podcast_error = "A local recording and podcast storage are required."
+            else:
+                try:
+                    episode = create_podcast_episode(
+                        PodcastEpisodeCreate(
+                            asset_id=asset.asset_id,
+                            channel_id=podcast_channel_id,
+                            title=asset.title,
+                            portal_url=asset.manifest_url or "",
+                            source_media_url=str(media_path.resolve()),
+                            summary=f"Audio from {asset.title}.",
+                        )
+                    )
+                    podcast_store.upsert_episode(episode)
+                except (PodcastMediaError, OSError) as exc:
+                    podcast_error = str(exc)
+                except Exception as exc:
+                    podcast_error = (
+                        f"Podcast conversion or storage failed ({type(exc).__name__}). "
+                        "Check station storage and retry."
+                    )
+                else:
+                    podcast_error = ""
+            if podcast_error:
+                updated = surface.model_copy(
+                    update={
+                        "state": "failed",
+                        "approval": "approved",
+                        "health": "warning",
+                        "completed_at": at,
+                        "message": "Podcast audio was not published.",
+                        "next_step": podcast_error,
+                    }
                 )
-            )
-            updated = surface.model_copy(
-                update={
-                    "state": "succeeded",
-                    "approval": "approved",
-                    "health": "ok",
-                    "url": f"https://portal.example/podcast/{episode.channel_id}.xml",
-                    "completed_at": at,
-                    "message": "Podcast episode was generated at -16 LUFS and added to RSS.",
-                    "next_step": "Validate the podcast RSS feed before public announcement.",
-                }
-            )
+            else:
+                base_url = os.environ["CIVICCAST_PUBLIC_BASE_URL"].rstrip("/")
+                updated = surface.model_copy(
+                    update={
+                        "state": "succeeded",
+                        "approval": "approved",
+                        "health": "ok",
+                        "url": f"{base_url}/api/public/podcast/{episode.channel_id}.xml",
+                        "completed_at": at,
+                        "message": "Podcast audio was created and added to the RSS feed.",
+                        "next_step": "Open the feed to check the episode and audio.",
+                    }
+                )
         elif surface.id == "subscriber-notifications":
             # WP-05: this branch used to build a payload, mark the surface
             # "succeeded" and stop -- no subscriber was ever contacted. It now
@@ -860,6 +885,8 @@ def retry_publish_surface(
     request: PublishRetryRequest,
     store: PublishStore,
     registry: ProviderRegistry | None = None,
+    media_path: Path | None = None,
+    podcast_store: PodcastStore | None = None,
     subscribe_store: SubscribeStore | None = None,
     delivery_store: NotificationDeliveryStore | None = None,
     target_lookup: ChannelAssociationLookup | None = None,
@@ -888,6 +915,8 @@ def retry_publish_surface(
         ),
         store=InMemoryPublishStoreProxy(previous),
         registry=registry,
+        media_path=media_path,
+        podcast_store=podcast_store,
         subscribe_store=subscribe_store,
         delivery_store=delivery_store,
         target_lookup=target_lookup,

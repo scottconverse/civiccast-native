@@ -219,7 +219,7 @@ Scheduled recording runs inside the station (`CIVICCAST_SCHEDULED_RECORDING`, `i
 
 ## Publishing problems
 
-The Publish screen records "operator-dashboard" as the operator for every approval. Publish targets are the resident portal, Internet Archive, Local NAS (rsync or ZFS), YouTube Live, YouTube VOD, a podcast episode, subscriber notifications and a cable file package. Podcast publication remains unavailable. Subscriber notifications are optional and show delivery outcomes when selected.
+The Publish screen records "operator-dashboard" as the operator for every approval. Publish targets are the resident portal, Internet Archive, Local NAS (rsync or ZFS), YouTube Live, YouTube VOD, a podcast episode, subscriber notifications and a cable file package. Podcast and subscriber notifications are optional and show their outcomes when selected.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|

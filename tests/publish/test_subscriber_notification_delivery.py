@@ -15,10 +15,14 @@ server on a loopback socket, webhooks to an in-process client.
 from __future__ import annotations
 
 import logging
+import math
 import socket
+import struct
 import threading
+import wave
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from urllib.parse import quote
 
 import pytest
@@ -29,6 +33,8 @@ from civiccast.platform.providers import (
     ProviderRegistry,
     default_registry,
 )
+from civiccast.podcast.models import PodcastEpisode
+from civiccast.podcast.store import InMemoryPodcastStore
 from civiccast.publish.models import PublishApprovalRequest, PublishRetryRequest
 from civiccast.publish.notifications import deliver_publication_notifications
 from civiccast.publish.service import (
@@ -434,7 +440,8 @@ class TestPartialAndQueuedCannotLookSuccessful:
         record = approve_publish(
             asset=asset,
             request=PublishApprovalRequest(
-                operator_id="staff-1", operator_display_name="Avery Operator",
+                operator_id="staff-1",
+                operator_display_name="Avery Operator",
                 approved_surface_ids=["portal", "subscriber-notifications"],
             ),
             store=publish_store,
@@ -635,7 +642,8 @@ class TestHistoricalRowsAreNeverGreenEvidence:
         record = approve_publish(
             asset=asset,
             request=PublishApprovalRequest(
-                operator_id="staff-1", operator_display_name="Avery Operator",
+                operator_id="staff-1",
+                operator_display_name="Avery Operator",
                 approved_surface_ids=["portal", "subscriber-notifications"],
             ),
             store=publish_store,
@@ -1302,8 +1310,24 @@ class TestPreflightAndDeliveryCountTheSameRecipients:
         assert check.credential_reference.count("CIVICCAST_PROVIDER_MAIL") == 1
 
 
-def test_the_podcast_surface_uses_the_resolved_channel_not_a_hardcoded_one() -> None:
-    """M1: the episode belongs to the channel the asset actually publishes to."""
+def test_the_podcast_surface_uses_the_resolved_channel_not_a_hardcoded_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A selected podcast creates audio and persists a feed entry for the actual channel."""
+    source = tmp_path / "meeting.wav"
+    with wave.open(str(source), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(16000)
+        audio.writeframes(
+            b"".join(
+                struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * t / 16000)))
+                for t in range(16000)
+            )
+        )
+    monkeypatch.setenv("CIVICCAST_PODCAST_MEDIA_DIR", str(tmp_path / "podcasts"))
+    monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://station.example")
+    podcast_store = InMemoryPodcastStore()
 
     record = approve_publish(
         asset=_asset(),
@@ -1313,6 +1337,8 @@ def test_the_podcast_surface_uses_the_resolved_channel_not_a_hardcoded_one() -> 
             approved_surface_ids=["podcast"],
         ),
         store=InMemoryPublishStore(),
+        media_path=source,
+        podcast_store=podcast_store,
         subscribe_store=InMemorySubscribeStore(),
         delivery_store=InMemoryNotificationDeliveryStore(),
         target_lookup=StaticChannelAssociationLookup(by_asset_id={"meeting-42": "education"}),
@@ -1320,7 +1346,67 @@ def test_the_podcast_surface_uses_the_resolved_channel_not_a_hardcoded_one() -> 
 
     podcast = next(surface for surface in record.surfaces if surface.id == "podcast")
     assert podcast.url is not None
-    assert "/podcast/education.xml" in podcast.url
+    assert "/api/public/podcast/education.xml" in podcast.url
+    assert podcast.state == "succeeded"
+    assert podcast_store.list_for_channel("education")[0].asset_id == "meeting-42"
+    assert len(list((tmp_path / "podcasts").glob("*.mp3"))) == 1
+
+
+def test_podcast_without_a_local_recording_never_claims_a_feed_entry() -> None:
+    podcast_store = InMemoryPodcastStore()
+    record = approve_publish(
+        asset=_asset(),
+        request=PublishApprovalRequest(
+            operator_id="staff-1",
+            operator_display_name="Avery Operator",
+            approved_surface_ids=["podcast"],
+        ),
+        store=InMemoryPublishStore(),
+        podcast_store=podcast_store,
+    )
+
+    podcast = next(surface for surface in record.surfaces if surface.id == "podcast")
+    assert podcast.state == "failed"
+    assert podcast.url is None
+    assert podcast_store.list_for_channel("government") == []
+
+
+def test_podcast_storage_failure_is_reported_for_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FailingPodcastStore:
+        def upsert_episode(self, episode: PodcastEpisode) -> PodcastEpisode:
+            raise RuntimeError("storage offline")
+
+    monkeypatch.setattr(
+        "civiccast.publish.service.create_podcast_episode",
+        lambda request: PodcastEpisode(
+            episode_id="pod-meeting",
+            asset_id=request.asset_id,
+            channel_id=request.channel_id,
+            title=request.title,
+            audio_url="https://station.example/api/public/podcast/audio/meeting-42.mp3",
+            rss_guid="civiccast:podcast:meeting-42",
+            loudness_lufs=-16,
+            published_at=datetime.now(UTC),
+        ),
+    )
+    record = approve_publish(
+        asset=_asset(),
+        request=PublishApprovalRequest(
+            operator_id="staff-1",
+            operator_display_name="Avery Operator",
+            approved_surface_ids=["podcast"],
+        ),
+        store=InMemoryPublishStore(),
+        media_path=tmp_path / "meeting.wav",
+        podcast_store=FailingPodcastStore(),  # type: ignore[arg-type]
+    )
+
+    podcast = next(surface for surface in record.surfaces if surface.id == "podcast")
+    assert podcast.state == "failed"
+    assert podcast.url is None
+    assert "storage" in podcast.next_step.lower()
 
 
 def test_an_unwritable_receipt_store_shows_the_operator_a_degraded_recording() -> None:
@@ -1337,7 +1423,8 @@ def test_an_unwritable_receipt_store_shows_the_operator_a_degraded_recording() -
     record = approve_publish(
         asset=asset,
         request=PublishApprovalRequest(
-            operator_id="staff-1", operator_display_name="Avery Operator",
+            operator_id="staff-1",
+            operator_display_name="Avery Operator",
             approved_surface_ids=["portal", "subscriber-notifications"],
         ),
         store=InMemoryPublishStore(),

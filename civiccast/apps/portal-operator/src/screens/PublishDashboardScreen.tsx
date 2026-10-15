@@ -38,22 +38,8 @@ const FILTERS: ReadonlyArray<{
   { id: 'complete', label: stateLabel('complete') },
 ]
 
-// WP-11 item 4 (owner decision 2026-09-02): surfaces the backend has no real
-// provider path for yet. Mirrors civiccast/publish/readiness.py's
-// FUTURE_SURFACE_IDS (podcast has no provider kind registered at all --
-// WP-04 owns building the real RSS/enclosure/feed path). These render as a
-// neutral "coming in a future release" card always -- never a red error,
-// never selectable/approvable, regardless of whatever state or health this
-// asset's surface row happens to carry, so approval can never report a fake
-// success for a surface that doesn't really publish anything yet (WP-03
-// already reports podcast preflight as health="unknown"; this keeps the
-// dashboard's own listing from disagreeing with that by defaulting to a
-// selectable "pending" checkbox).
-//
-const FUTURE_SURFACE_IDS: ReadonlySet<string> = new Set(['podcast'])
-const FUTURE_SURFACE_MESSAGE: Readonly<Record<string, string>> = {
-  podcast: 'Podcast is not available yet; it is coming in a future release.',
-}
+const FUTURE_SURFACE_IDS: ReadonlySet<string> = new Set()
+const FUTURE_SURFACE_MESSAGE: Readonly<Record<string, string>> = {}
 
 const STATE_TONE: Record<PublishDashboardState, { bg: string; fg: string }> = {
   draft: { bg: 'var(--cc-info-soft)', fg: 'var(--cc-ink)' },

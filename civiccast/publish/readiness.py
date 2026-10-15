@@ -60,14 +60,8 @@ _SUBSCRIBER_CHANNEL_KIND: dict[str, str] = {
     "webhook": PROVIDER_KIND_WEBHOOK,
 }
 
-# Podcast has no provider kind registered in civiccast.platform.providers at
-# all -- it is being rebuilt as a real artifact/enclosure/feed path in a
-# separate work package (WP-04) and, until that lands, is presented to
-# operators as a "coming soon" surface. It is deliberately NOT handled by
-# this module: callers (build_publish_preflight / approve_publish) special-
-# case it the same way they already special-case Portal, rather than this
-# module inventing a readiness source that does not exist yet.
-FUTURE_SURFACE_IDS = frozenset({"podcast"})
+# Podcast produces a local media artifact; it has no external provider kind.
+FUTURE_SURFACE_IDS: frozenset[str] = frozenset()
 
 # WP-05: readiness used to evaluate one hardcoded ``channel/government``
 # target while delivery fanned out to the asset's REAL resolved targets, so
@@ -242,8 +236,7 @@ def describe_surface_readiness(
     """Return ``surface_id``'s real readiness, or ``None`` if it has none to check.
 
     ``None`` covers surfaces that never route through the provider registry
-    at all: Portal (gated on ``manifest_url``, not a provider), Podcast (see
-    ``FUTURE_SURFACE_IDS`` -- no provider kind exists for it yet), and the
+    at all: Portal (gated on ``manifest_url``, not a provider), Podcast, and the
     Cable file package surface (a local filesystem check owned by
     ``civiccast.cable.package``, out of WP-03's scope). Callers keep those
     surfaces' existing, unrelated readiness logic in

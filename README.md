@@ -178,8 +178,9 @@ See [SUPPORT.md](SUPPORT.md).
 The Publish screen makes the resident portal public by default; archive and
 YouTube destinations are separate, opt-in provider workflows. Real external
 adapters are environment-gated, and credentials saved in Provider setup do not
-enable those adapters. Podcast publication and automatic subscriber notices
-are unavailable. See the [capability matrix](CAPABILITIES.md) for current-source
+enable those adapters. The optional Podcast surface creates an MP3 and RSS
+entry from a local recording; subscriber notices use configured mail or
+webhook providers with delivery receipts. See the [capability matrix](CAPABILITIES.md) for current-source
 behavior and its package boundary.
 
 The Beta 15 package passed scoped Windows Sandbox installation, first-admin
