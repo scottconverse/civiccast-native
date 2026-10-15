@@ -2,10 +2,12 @@
 
 ## [Unreleased]
 
-Candidate `v1.0.0-beta.17` contains the completed Sprint 5 publication and
-underwriting changes below. Remote-guest composition, bulletin-board media,
-station import UI, native viewer completion, and protected paywall media remain
-separate open work.
+Remote-guest composition, bulletin-board media, station import UI, native
+viewer completion, and protected paywall media remain separate open work.
+
+## [1.0.0-beta.17] - 2026-10-15
+
+Beta 17 ships three completed Sprint 5 publication and underwriting workflows:
 
 - The optional Podcast surface converts a local recording to MP3, stores an
   episode in the channel RSS feed, serves its audio enclosure, and reports

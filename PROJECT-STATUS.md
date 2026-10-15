@@ -10,13 +10,12 @@
 > are historical Beta 10 audit records; the linked Beta 11 inventory is a dated
 > source audit, not the current defect list.
 
-## Beta 17 candidate
+## Beta 17 release
 
-Beta 16 is the current published package, with its installation results in the
-[Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md). The unpublished
-Beta 17 source candidate adds subscriber delivery, Podcast publication, SMTP
-paywall links, and underwriting daypart selection. Its package checks belong to
-the [Beta 17 candidate record](docs/releases/v1.0.0-beta.17-verification.md).
+Beta 17 is the current published package, with its scoped installation results
+in the [Beta 17 record](docs/releases/v1.0.0-beta.17-verification.md). It adds
+subscriber delivery, Podcast publication, and underwriting daypart selection.
+Protected paywall media and the remaining Sprint 5 workflows stay open.
 
 The R9 field findings are assigned to [Beta 17](docs/ops/beta17-deferred.md).
 

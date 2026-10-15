@@ -7,19 +7,14 @@
 
 ## Current Release State
 
-`v1.0.0-beta.15` remains the latest signed GitHub pre-release, not a production
-release. The current source identity, `v1.0.0-beta.16`, is an unpublished
-candidate until authorized. Download Beta 15 from the [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15),
-and use its own `SHA256SUMS.txt`, installer signature and station/pack
-manifests to verify the bytes you receive. The [Beta 15 verification
-record](../releases/v1.0.0-beta.15-verification.md) identifies the original
-signed candidate used for the recorded offline installation and distinguishes
-it from the refreshed manual/Help payload in this release edition; candidate
-hashes must not be substituted for checksums published with the release.
-The record documents the exact observations and limits. Beta 14 and Beta 13
-installation results remain in their [own verification records](../releases/v1.0.0-beta.14-verification.md)
-and [Beta 13 record](../releases/v1.0.0-beta.13-verification.md), and do not
-describe Beta 15. [release-truth.yaml](../releases/release-truth.yaml)
+`v1.0.0-beta.17` is the latest signed GitHub pre-release, not a production
+release. Download the complete kit from its [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17),
+and use that release's `SHA256SUMS.txt`, installer signature and station/pack
+manifests to verify the bytes you receive. The [Beta 17 verification
+record](../releases/v1.0.0-beta.17-verification.md) identifies the exact
+signed package and its scoped installation results. Earlier installation
+results remain in their own verification records and do not qualify Beta 17.
+[release-truth.yaml](../releases/release-truth.yaml)
 is the authored release-state record. Watch the official native release page,
 not `scottconverse/civiccast` (the retired, separate WSL2-line repository) and
 not any `v1.0.0-rcNN` tag, which belongs to that other repository.
@@ -39,7 +34,7 @@ upgrade-baseline kit.
 This page explains how an operator should verify a CivicCast Windows setup
 download before running it.
 
-The repository manual and generated Help are a development edition and include unreleased station-operation, scheduling, output and recorded-caption settings. For the published Beta 15 interface, use the Help installed with Beta 15 or the manual assets from its release page. Source changes do not update an installed station.
+For the published Beta 17 interface, use the Help installed with Beta 17 or the manual assets from its release page. Repository manual revisions may contain later editorial corrections; source changes do not update an installed station.
 
 ## Read The Release Docs First
 

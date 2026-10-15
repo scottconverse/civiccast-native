@@ -8,28 +8,17 @@ has no per-minute software fee.
 
 ## Current release
 
-The source also contains the `v1.0.0-beta.17` unpublished candidate with
-subscriber delivery, Podcast publication, and underwriting
-daypart selection. The signed Beta 16 package below remains the current public
-download until that candidate is built, verified, and published.
-
-Signed `v1.0.0-beta.16` is the current [downloadable release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16). It adds encrypted backup and restore, network access
-and staff sessions, a restricted Windows service identity, station-local
-scheduling, bounded operational storage, automatic output recovery, RTMP
-output, complete programme endings, coordinated HLS retention, and configurable
-recorded-caption languages. The [roadmap](docs/ROADMAP.md) links the
-implementation records; the [package verification
-record](docs/releases/v1.0.0-beta.16-verification.md) identifies the tested installer.
+Signed `v1.0.0-beta.17` is the current [downloadable release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17). It adds subscriber delivery outcomes and retries, Podcast MP3/RSS publication, and saved underwriting daypart selection to the Beta 16 station operations and broadcast improvements. The [roadmap](docs/ROADMAP.md) links the implementation records; the [package verification record](docs/releases/v1.0.0-beta.17-verification.md) identifies this signed installer and its scoped checks.
 
 ## Current published package
 
-The signed Beta 16 [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16)
+The signed Beta 17 [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17)
 provides the installer, runtime packs, station-model bundle, manuals, and
-checksums. The [Beta 16 verification record](docs/releases/v1.0.0-beta.16-verification.md)
+checksums. The [Beta 17 verification record](docs/releases/v1.0.0-beta.17-verification.md)
 identifies the exact package and its scoped installation results. For
 installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
-for Beta 16 operation, use the manual bundled on that release page. The
-[source manual](docs/USER-MANUAL.md) describes the Beta 17 candidate.
+for Beta 17 operation, use the manual bundled on that release page. The
+[source manual](docs/USER-MANUAL.md) describes the same edition.
 
 Whistle is the CPU live-caption primary; Whisper supplies per-channel backup
 captions, with supported NVIDIA CUDA applying to Whisper only. The native
@@ -42,12 +31,12 @@ identities are recorded in
 
 ## Install and run
 
-Download the signed Beta 16 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
+Download the signed Beta 17 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
 
 ```powershell
-$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta16.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.16/download_windows_release_artifacts.ps1' -OutFile $installerScript
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta16"
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta17.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.17/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta17"
 ```
 
 Keep the PowerShell window open until it reports **Done**. During silent setup,
@@ -64,7 +53,7 @@ The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs
 Source contributors can inspect the [station operations record](docs/ops/station-operations-goal.md),
 [Sprint 2](docs/ops/sprint2-unattended.md), and
 [Sprint 3](docs/ops/sprint3-output-completion.md) for the implementation scope
-and focused evidence behind Beta 16. Use the published Beta 16
+and focused evidence behind Beta 16. Use the published Beta 17
 release page for installation.
 
 ```bash
@@ -136,7 +125,7 @@ apps. The [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml) is a
 repo-verified, fail-closed manifest that checks each spec item's claimed
 status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
-release. The Beta 16 verification record describes the current package
+release. The Beta 17 verification record describes the current package
 boundary, and the Beta 11 host report is separately scoped historical runtime
 evidence.
 
