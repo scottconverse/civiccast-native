@@ -2162,6 +2162,8 @@ The screen has three cards: **Config** (the **Enable paywall** box, a provider, 
 > - An ordinary save with the **Signing secret** box left blank preserves the stored secret. To remove it, use the explicit clear control. The secret is hidden when the page reloads.
 > - The list of comp grants shows only grants made in the current browser session, and does not provide a history of grants from earlier sessions.
 
+Post-Beta 18 source work connects the sign-in button to a configured SMTP relay and sends a resident-portal link. The button reports a delivery failure when mail is unavailable. This change has not been published as part of Beta 18; the purchase routes and protected video delivery remain separate work.
+
 If you turn the paywall on for testing, the Watch page shows the gate described in the resident tour below. Residents will be blocked.
 
 ### Resident tour: the public portal
@@ -2249,6 +2251,8 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 Only if a setup administrator has turned the paywall on. The video is replaced by a gate. While it checks, a small label says "Checking access…". The gate shows "Subscription required", a reason line, a **Sign in by email** form with **Email me a sign-in link**, a "New here?" block with a plan list and **Subscribe**, and "Already signed in as {email}? Switch email".
 
 In Beta 18 the resident can enter an email and click the link button, which says "Check your inbox for a link." No email arrives. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
+
+In post-Beta 18 source, a configured mail relay sends the sign-in link and the page shows an error if it cannot send. This source change is not in the Beta 18 download.
 
 #### Subscribing to new recordings
 

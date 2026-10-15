@@ -529,7 +529,7 @@ Redeem a magic-link token (single-use).
 - Access: public
 - Parameters: `token` (query, required): `string` -- The signed token from the email link.
 - Request body: none
-- Responses: 200 `PublicAccessDecision`; 401 Token invalid, expired, or already redeemed; 429 Rate limit exceeded; 503 Durable storage is not ready yet.
+- Responses: 200 `MagicLinkVerificationResponse`; 401 Token invalid, expired, or already redeemed; 429 Rate limit exceeded; 503 Durable storage is not ready yet.
 
 ### `POST /api/public/playback-policy/evaluate`
 
@@ -7367,7 +7367,12 @@ rule (S13 §5.1).
 
 ### `MagicLinkResponse`
 
-- `sent` (optional): `boolean`
+- `sent` (required): `boolean`
+
+### `MagicLinkVerificationResponse`
+
+- `allowed` (optional): `boolean`
+- `email` (required): `string`
 
 ### `ManagedStorageStatusReport`
 

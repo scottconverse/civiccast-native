@@ -168,6 +168,26 @@ describe('PaywallGate', () => {
     })
   })
 
+  it('magic-link form: reports a delivery failure instead of claiming mail was sent', async () => {
+    installFetchRouter({
+      '/api/public/paywall/access': () =>
+        jsonResponse({ allowed: false, reason: 'sign_in_required' }),
+      '/api/public/paywall/magic-link': () => jsonResponse({ sent: false }),
+    })
+    const { findByLabelText, findByRole, findByText, queryByText } = render(
+      <PaywallGate assetId="asset-99">
+        <CHILD />
+      </PaywallGate>,
+    )
+    fireEvent.change(await findByLabelText('Sign in by email'), {
+      target: { value: 'viewer@example.com' },
+    })
+    fireEvent.click(await findByRole('button', { name: /sign-in link/i }))
+
+    await findByText(/We could not send a sign-in link right now/i)
+    expect(queryByText(/Check your inbox for a link/i)).toBeNull()
+  })
+
   it('magic-link form: rejects an empty email without calling the API', async () => {
     const magicCalls: number[] = []
     installFetchRouter({

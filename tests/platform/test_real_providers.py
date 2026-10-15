@@ -242,6 +242,31 @@ class _LoopbackSmtpServer:
 
 
 class TestSmtpMailbox:
+    def test_magic_link_delivers_over_smtp(self) -> None:
+        server = _LoopbackSmtpServer()
+        mailbox = SmtpMailbox(
+            SmtpSettings(
+                host="127.0.0.1",
+                port=server.port,
+                from_address="station@example.com",
+                use_starttls=False,
+            )
+        )
+
+        mailbox.send_magic_link(
+            email="viewer@example.com",
+            link_url="https://station.example/portal/#/watch/vid-1?token=example",
+        )
+        server.join()
+
+        assert server.rcpt_to is not None and "viewer@example.com" in server.rcpt_to
+        assert server.data is not None
+        assert "Subject: Your CivicCast sign-in link" in server.data
+        from email import message_from_string
+
+        body = message_from_string(server.data).get_payload(decode=True).decode("utf-8")
+        assert "https://station.example/portal/#/watch/vid-1?token=example" in body
+
     def test_notification_delivers_over_a_real_smtp_conversation(self) -> None:
         server = _LoopbackSmtpServer()
         mailbox = SmtpMailbox(

@@ -118,8 +118,8 @@ export async function requestMagicLink(
   email: string,
   scopeKind: 'asset' | 'series' | 'all',
   scopeId: string,
-): Promise<{ sent: true }> {
-  return postJson<{ sent: true }>('/api/public/paywall/magic-link', {
+): Promise<{ sent: boolean }> {
+  return postJson<{ sent: boolean }>('/api/public/paywall/magic-link', {
     email,
     scope_kind: scopeKind,
     scope_id: scopeId,
@@ -128,10 +128,10 @@ export async function requestMagicLink(
 
 export async function verifyMagicLink(token: string): Promise<{
   allowed: true
-  email?: string
+  email: string
 }> {
   const params = new URLSearchParams({ token })
-  return fetchJson<{ allowed: true; email?: string }>(
+  return fetchJson<{ allowed: true; email: string }>(
     `/api/public/paywall/verify?${params.toString()}`,
   )
 }
