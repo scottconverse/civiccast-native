@@ -5,6 +5,8 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
+import android.widget.EditText
+import androidx.appcompat.app.AlertDialog
 import androidx.leanback.app.BrowseSupportFragment
 import androidx.leanback.widget.ArrayObjectAdapter
 import androidx.leanback.widget.HeaderItem
@@ -26,6 +28,8 @@ class MainBrowseFragment : BrowseSupportFragment() {
 
     private val client = NetworkClient()
     private val rowsAdapter = ArrayObjectAdapter(ListRowPresenter())
+    private var channels: List<Channel> = emptyList()
+    private var replays: List<PublishedAsset> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,7 +41,18 @@ class MainBrowseFragment : BrowseSupportFragment() {
         onItemViewClickedListener = OnItemViewClickedListener { _, item, _, _ ->
             if (item is Channel) {
                 startActivity(PlayerActivity.intent(requireContext(), item))
+            } else if (item is PublishedAsset) {
+                startActivity(PlayerActivity.intent(requireContext(), item))
             }
+        }
+        setOnSearchClickedListener {
+            val input = EditText(requireContext()).apply { hint = "Search channels and replays" }
+            AlertDialog.Builder(requireContext())
+                .setTitle("Search CivicCast")
+                .setView(input)
+                .setPositiveButton("Search") { _, _ -> renderCatalog(input.text.toString()) }
+                .setNegativeButton("Cancel", null)
+                .show()
         }
 
         load()
@@ -48,24 +63,36 @@ class MainBrowseFragment : BrowseSupportFragment() {
             try {
                 val config = client.fetchAppConfig()
                 title = config.stationName
-                renderChannels(config.channels)
+                channels = config.channels
+                replays = runCatching { client.fetchPublishedAssets() }.getOrDefault(emptyList())
+                renderCatalog("")
             } catch (t: Throwable) {
                 renderError(t.message ?: t.javaClass.simpleName)
             }
         }
     }
 
-    private fun renderChannels(channels: List<Channel>) {
+    private fun renderCatalog(query: String) {
         rowsAdapter.clear()
-        if (channels.isEmpty()) {
+        if (channels.isEmpty() && replays.isEmpty()) {
             renderNotice(getString(R.string.empty_channels))
             return
         }
         val cardPresenter = ChannelCardPresenter()
         val rowAdapter = ArrayObjectAdapter(cardPresenter)
-        channels.forEach { rowAdapter.add(it) }
-        val header = HeaderItem(0L, getString(R.string.row_channels))
-        rowsAdapter.add(ListRow(header, rowAdapter))
+        channels.filter { it.branding.displayName.contains(query, ignoreCase = true) }
+            .forEach { rowAdapter.add(it) }
+        if (rowAdapter.size() > 0) {
+            rowsAdapter.add(ListRow(HeaderItem(0L, getString(R.string.row_channels)), rowAdapter))
+        }
+        val replayAdapter = ArrayObjectAdapter(cardPresenter)
+        replays.filter { it.title.contains(query, ignoreCase = true) ||
+            (it.description?.contains(query, ignoreCase = true) == true) }
+            .forEach { replayAdapter.add(it) }
+        if (replayAdapter.size() > 0) {
+            rowsAdapter.add(ListRow(HeaderItem(1L, "Published station replays"), replayAdapter))
+        }
+        if (rowsAdapter.size() == 0) renderNotice("No matching channels or replays")
     }
 
     private fun renderError(message: String) {

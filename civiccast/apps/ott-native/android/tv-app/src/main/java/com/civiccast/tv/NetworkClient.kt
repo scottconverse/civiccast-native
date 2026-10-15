@@ -27,6 +27,14 @@ class NetworkClient(
         get(url, ConfigResponse.serializer())
     }
 
+    suspend fun fetchPublishedAssets(): List<PublishedAsset> = withContext(Dispatchers.IO) {
+        get("${baseUrl.trimEnd('/')}/api/public/assets", kotlinx.serialization.builtins.ListSerializer(PublishedAsset.serializer()))
+    }
+
+    fun mediaUrl(reference: String): String =
+        if (reference.startsWith("https://") || reference.startsWith("http://")) reference
+        else "${baseUrl.trimEnd('/')}/${reference.trimStart('/')}"
+
     /**
      * `liveStateUrl` is a path relative to [baseUrl] (e.g.
      * "/api/public/app/channels/public/live"), not an absolute URL.

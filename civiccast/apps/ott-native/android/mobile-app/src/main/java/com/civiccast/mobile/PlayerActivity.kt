@@ -27,19 +27,20 @@ class PlayerActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         val liveStateUrl = intent.getStringExtra(EXTRA_LIVE_STATE_URL)
-            ?: run { finish(); return }
+        val replayUrl = intent.getStringExtra(EXTRA_REPLAY_URL)
+        if (liveStateUrl == null && replayUrl == null) { finish(); return }
         val title = intent.getStringExtra(EXTRA_TITLE) ?: ""
         title(title)
 
         lifecycleScope.launch {
             try {
-                val live = client.fetchLiveState(liveStateUrl)
-                val hlsUrl = live.playbackUrl
+                val live = liveStateUrl?.let { client.fetchLiveState(it) }
+                val hlsUrl = replayUrl ?: live?.playbackUrl
                 if (hlsUrl == null) {
-                    title("$title — ${live.summary}")
+                    title("$title — ${live?.summary ?: "Replay unavailable"}")
                     return@launch
                 }
-                startPlayback(hlsUrl)
+                startPlayback(client.mediaUrl(hlsUrl))
             } catch (t: Throwable) {
                 title("$title — ${t.message ?: t.javaClass.simpleName}")
             }
@@ -71,12 +72,19 @@ class PlayerActivity : AppCompatActivity() {
 
     companion object {
         private const val EXTRA_LIVE_STATE_URL = "live_state_url"
+        private const val EXTRA_REPLAY_URL = "replay_url"
         private const val EXTRA_TITLE = "title"
 
         fun intent(context: Context, channel: Channel): Intent =
             Intent(context, PlayerActivity::class.java).apply {
                 putExtra(EXTRA_LIVE_STATE_URL, channel.liveStateUrl)
                 putExtra(EXTRA_TITLE, channel.branding.displayName)
+            }
+
+        fun intent(context: Context, replay: PublishedAsset): Intent =
+            Intent(context, PlayerActivity::class.java).apply {
+                putExtra(EXTRA_REPLAY_URL, replay.manifestUrl)
+                putExtra(EXTRA_TITLE, replay.title)
             }
     }
 }

@@ -31,7 +31,8 @@ class PlayerActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val liveStateUrl = intent.getStringExtra(EXTRA_LIVE_STATE_URL)
-            ?: run { finish(); return }
+        val replayUrl = intent.getStringExtra(EXTRA_REPLAY_URL)
+        if (liveStateUrl == null && replayUrl == null) { finish(); return }
 
         val statusView = TextView(this).apply {
             gravity = Gravity.CENTER
@@ -43,13 +44,13 @@ class PlayerActivity : FragmentActivity() {
 
         lifecycleScope.launch {
             try {
-                val live = client.fetchLiveState(liveStateUrl)
-                val hlsUrl = live.playbackUrl
+                val live = liveStateUrl?.let { client.fetchLiveState(it) }
+                val hlsUrl = replayUrl ?: live?.playbackUrl
                 if (hlsUrl == null) {
-                    statusView.text = live.summary
+                    statusView.text = live?.summary ?: "Replay unavailable"
                     return@launch
                 }
-                startPlayback(hlsUrl)
+                startPlayback(client.mediaUrl(hlsUrl))
             } catch (t: Throwable) {
                 statusView.text = t.message ?: t.javaClass.simpleName
             }
@@ -83,12 +84,19 @@ class PlayerActivity : FragmentActivity() {
 
     companion object {
         private const val EXTRA_LIVE_STATE_URL = "live_state_url"
+        private const val EXTRA_REPLAY_URL = "replay_url"
         private const val EXTRA_TITLE = "title"
 
         fun intent(context: Context, channel: Channel): Intent =
             Intent(context, PlayerActivity::class.java).apply {
                 putExtra(EXTRA_LIVE_STATE_URL, channel.liveStateUrl)
                 putExtra(EXTRA_TITLE, channel.branding.displayName)
+            }
+
+        fun intent(context: Context, replay: PublishedAsset): Intent =
+            Intent(context, PlayerActivity::class.java).apply {
+                putExtra(EXTRA_REPLAY_URL, replay.manifestUrl)
+                putExtra(EXTRA_TITLE, replay.title)
             }
     }
 }

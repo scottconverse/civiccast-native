@@ -50,3 +50,12 @@ data class LiveState(
             return "$state: $label"
         }
 }
+
+@Serializable
+data class PublishedAsset(
+    @SerialName("asset_id") val id: String,
+    val title: String,
+    val description: String? = null,
+    val manifestUrl: String,
+    val posterUrl: String? = null
+)

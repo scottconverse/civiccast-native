@@ -22,7 +22,18 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:visibility="gone"
-        app:constraint_referenced_ids="stationName,channelList" />
+        app:constraint_referenced_ids="stationName,searchInput,channelList" />
+
+    <EditText
+        android:id="@+id/searchInput"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:hint="Search channels and replays"
+        android:inputType="text"
+        android:contentDescription="Search channels and replays"
+        app:layout_constraintTop_toBottomOf="@id/stationName"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/channelList"
@@ -30,7 +41,7 @@
         android:layout_height="0dp"
         android:layout_marginTop="16dp"
         android:visibility="gone"
-        app:layout_constraintTop_toBottomOf="@id/stationName"
+        app:layout_constraintTop_toBottomOf="@id/searchInput"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintBottom_toBottomOf="parent" />

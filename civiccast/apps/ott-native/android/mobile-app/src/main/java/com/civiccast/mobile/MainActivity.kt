@@ -6,6 +6,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import android.text.Editable
+import android.text.TextWatcher
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
@@ -22,6 +24,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import coil.load
 
 class MainActivity : AppCompatActivity() {
 
@@ -34,13 +37,23 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        adapter = ChannelAdapter { channel ->
-            startActivity(PlayerActivity.intent(this, channel))
+        adapter = ChannelAdapter { entry ->
+            when (entry) {
+                is Channel -> startActivity(PlayerActivity.intent(this, entry))
+                is PublishedAsset -> startActivity(PlayerActivity.intent(this, entry))
+            }
         }
         binding.channelList.layoutManager = LinearLayoutManager(this)
         binding.channelList.adapter = adapter
 
         binding.retryButton.setOnClickListener { viewModel.load() }
+        binding.searchInput.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                adapter.setQuery(s?.toString().orEmpty())
+            }
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -63,7 +76,7 @@ class MainActivity : AppCompatActivity() {
             }
             is UiState.Loaded -> {
                 binding.stationName.text = state.config.stationName
-                adapter.submit(state.config.channels)
+                adapter.submit(state.config.channels, state.replays)
             }
         }
     }
@@ -72,7 +85,7 @@ class MainActivity : AppCompatActivity() {
 sealed interface UiState {
     object Loading : UiState
     data class Error(val message: String) : UiState
-    data class Loaded(val config: ConfigResponse) : UiState
+    data class Loaded(val config: ConfigResponse, val replays: List<PublishedAsset>) : UiState
 }
 
 class MainViewModel : ViewModel() {
@@ -85,7 +98,8 @@ class MainViewModel : ViewModel() {
         viewModelScope.launch {
             try {
                 val config = client.fetchAppConfig()
-                _state.value = UiState.Loaded(config)
+                val replays = runCatching { client.fetchPublishedAssets() }.getOrDefault(emptyList())
+                _state.value = UiState.Loaded(config, replays)
             } catch (t: Throwable) {
                 _state.value = UiState.Error(t.message ?: t.javaClass.simpleName)
             }
@@ -94,14 +108,31 @@ class MainViewModel : ViewModel() {
 }
 
 class ChannelAdapter(
-    private val onClick: (Channel) -> Unit
+    private val onClick: (Any) -> Unit
 ) : RecyclerView.Adapter<ChannelAdapter.VH>() {
 
-    private val items = mutableListOf<Channel>()
+    private val items = mutableListOf<Any>()
+    private var channels: List<Channel> = emptyList()
+    private var replays: List<PublishedAsset> = emptyList()
+    private var query = ""
+    private val client = NetworkClient()
 
-    fun submit(channels: List<Channel>) {
+    fun submit(channels: List<Channel>, replays: List<PublishedAsset>) {
+        this.channels = channels
+        this.replays = replays
+        refresh()
+    }
+
+    fun setQuery(query: String) {
+        this.query = query
+        refresh()
+    }
+
+    private fun refresh() {
         items.clear()
-        items.addAll(channels)
+        items.addAll(channels.filter { it.branding.displayName.contains(query, ignoreCase = true) })
+        items.addAll(replays.filter { it.title.contains(query, ignoreCase = true) ||
+            (it.description?.contains(query, ignoreCase = true) == true) })
         notifyDataSetChanged()
     }
 
@@ -111,10 +142,20 @@ class ChannelAdapter(
     }
 
     override fun onBindViewHolder(holder: VH, position: Int) {
-        val ch = items[position]
-        holder.binding.channelName.text = ch.branding.displayName
-        holder.binding.channelDescription.text = ch.branding.shortName ?: ch.id
-        holder.itemView.setOnClickListener { onClick(ch) }
+        val entry = items[position]
+        when (entry) {
+            is Channel -> {
+                holder.binding.channelName.text = entry.branding.displayName
+                holder.binding.channelDescription.text = entry.branding.shortName ?: entry.id
+                holder.binding.artwork.load(entry.branding.logoUrl?.let(client::mediaUrl))
+            }
+            is PublishedAsset -> {
+                holder.binding.channelName.text = entry.title
+                holder.binding.channelDescription.text = entry.description ?: "Published replay"
+                holder.binding.artwork.load(entry.posterUrl?.let(client::mediaUrl))
+            }
+        }
+        holder.itemView.setOnClickListener { onClick(entry) }
     }
 
     override fun getItemCount(): Int = items.size
