@@ -123,6 +123,24 @@ def test_resolve_builds_snapshot_from_configured_zones(store: CgBoardStore) -> N
     assert ticker.content == {"text": "Welcome"}
 
 
+def test_resolve_live_video_zone_keeps_selected_source(store: CgBoardStore) -> None:
+    _seed_board(store)
+    store.upsert_zone(
+        _zone(
+            "z_live",
+            "primary",
+            "main",
+            "live_video",
+            live_source_id="chamber-camera",
+        )
+    )
+
+    resolved = resolve_board(store, "public", now=_NOW)
+    assert resolved is not None
+    live = next(zone for zone in resolved.snapshot.zones if zone.zone_id == "z_live")
+    assert live.content == {"live_source_id": "chamber-camera"}
+
+
 def test_resolve_backfills_missing_required_kinds(store: CgBoardStore) -> None:
     _seed_board(store)
     store.upsert_zone(_zone("z_t", "ticker", "lower", "manual", manual_text="Hi"))

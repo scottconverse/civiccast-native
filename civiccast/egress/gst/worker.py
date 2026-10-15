@@ -831,4 +831,15 @@ def main() -> int:
 if __name__ == "__main__":
     code = main()
     sys.stdout.flush()
+    if sys.platform == "win32":
+        # The engine has already moved its pipeline to NULL. ExitProcess can
+        # deadlock in DLL detach when an SRT/GStreamer thread still holds a
+        # loader lock; TerminateProcess skips DLL detach for this worker only.
+        import ctypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.TerminateProcess.argtypes = (ctypes.c_void_p, ctypes.c_uint)
+        kernel32.TerminateProcess.restype = ctypes.c_int
+        kernel32.TerminateProcess(kernel32.GetCurrentProcess(), code)
     os._exit(code)  # never hang at interpreter exit on stuck GStreamer threads

@@ -77,14 +77,19 @@ URL — every client resolves it against its configured base URL before
 fetching. See `civiccast/apps/app-platform-shells/fixtures/
 station-app-config.sample.json` for a full worked example.
 
-## What these are NOT (the documented follow-up)
+## Viewer experience
 
-Starter source trees, NOT store-ready submissions. Each target's own
-README lists its full follow-up checklist; the common items across all six
-are: branded artwork (placeholders are solid-color rectangles/PNGs), image
-loading for posters/logos, search (Roku Channel Store and Google Play TV
-both expect one), caption/audio-track manual-override UI, deep-link
-routing, and accessibility polish.
+Each app browses live channels and published replays, searches its catalog,
+loads station logos and replay posters, and plays the selected HLS stream.
+The source includes CivicCast artwork for launcher icons and TV splash
+screens. iOS/tvOS and Android store a station HTTPS address in the app;
+Roku, Tizen, and webOS offer a station setting as well. Deep links route
+to a channel or published replay. Android supplies an audio/caption track
+picker, Apple uses AVKit media-selection controls, Roku keeps the native
+player options available, and Tizen/webOS expose track selectors.
+
+Store submission, signing identities, and hardware-specific certification
+are handled by each platform's publisher, outside these source trees.
 
 ## CI
 

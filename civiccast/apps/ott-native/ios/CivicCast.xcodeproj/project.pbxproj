@@ -12,6 +12,7 @@
 		A1A1A1A1A1A1A1A1A1A10003 /* PlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A11003 /* PlayerView.swift */; };
 		A1A1A1A1A1A1A1A1A1A10004 /* CivicCastCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A11004 /* CivicCastCore.swift */; };
 		A1A1A1A1A1A1A1A1A1A10005 /* ColorHex.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A11006 /* ColorHex.swift */; };
+		A1A1A1A1A1A1A1A1A1A10007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1A1A1A1A1A1A1A1A1A11007 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -22,6 +23,7 @@
 		A1A1A1A1A1A1A1A1A1A11004 /* CivicCastCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CivicCastCore.swift; path = "../apple-shared/CivicCastCore.swift"; sourceTree = SOURCE_ROOT; };
 		A1A1A1A1A1A1A1A1A1A11005 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A1A1A1A1A1A1A1A1A1A11006 /* ColorHex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ColorHex.swift; path = "../apple-shared/ColorHex.swift"; sourceTree = SOURCE_ROOT; };
+		A1A1A1A1A1A1A1A1A1A11007 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -52,6 +54,7 @@
 				A1A1A1A1A1A1A1A1A1A11004 /* CivicCastCore.swift */,
 				A1A1A1A1A1A1A1A1A1A11006 /* ColorHex.swift */,
 				A1A1A1A1A1A1A1A1A1A11005 /* Info.plist */,
+				A1A1A1A1A1A1A1A1A1A11007 /* Assets.xcassets */,
 			);
 			path = CivicCast;
 			sourceTree = "<group>";
@@ -122,6 +125,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A1A1A1A1A1A1A1A1A1A10007 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -204,6 +208,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;
@@ -230,6 +235,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_PREVIEWS = YES;

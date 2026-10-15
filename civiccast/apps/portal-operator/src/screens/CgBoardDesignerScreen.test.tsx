@@ -5,7 +5,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 afterEach(cleanup)
 
 import type { CgFeedSource, CgZoneConfig, ResolvedBoard } from '../types/api.generated'
-import { BoardCreateForm, BoardPreviewPanel, FeedForm, ZoneForm } from './CgBoardDesignerScreen'
+import type { AssetRow } from '../types/asset'
+import { BoardAudioForm, BoardCreateForm, BoardPreviewPanel, FeedForm, ZoneForm } from './CgBoardDesignerScreen'
 
 const FEED: CgFeedSource = {
   feed_source_id: 'feed_rss',
@@ -28,6 +29,26 @@ describe('BoardCreateForm', () => {
     const { getByText } = render(<BoardCreateForm submitting={false} onSubmit={onSubmit} />)
     fireEvent.click(getByText('Create board'))
     expect(onSubmit).toHaveBeenCalledWith({ template_id: 'standard-community-board' })
+  })
+})
+
+describe('BoardAudioForm', () => {
+  it('selects an audio asset and sends the chosen level', () => {
+    const onSubmit = vi.fn()
+    const assets = [
+      { asset_id: 'music-1', title: 'Station music', file_path: 'music.wav', codec_audio: 'pcm_s16le', duration_seconds: 180 },
+      { asset_id: 'silent-1', title: 'Silent video', file_path: 'video.mp4', codec_audio: null },
+      { asset_id: 'unmeasured-1', title: 'Unmeasured track', file_path: 'track.wav', codec_audio: 'pcm_s16le' },
+    ] as AssetRow[]
+    const { getByLabelText, getByText, queryByText } = render(
+      <BoardAudioForm initial={null} assets={assets} submitting={false} onSubmit={onSubmit} />,
+    )
+    expect(queryByText('Silent video')).toBeNull()
+    expect(queryByText('Unmeasured track')).toBeNull()
+    fireEvent.change(getByLabelText('Board audio track'), { target: { value: 'music-1' } })
+    fireEvent.change(getByLabelText('Board audio level'), { target: { value: '-9' } })
+    fireEvent.click(getByText('Set board audio'))
+    expect(onSubmit).toHaveBeenCalledWith({ asset_ref: 'music-1', gain_db: -9 })
   })
 })
 
@@ -84,16 +105,32 @@ describe('ZoneForm', () => {
     expect(getByText('Save changes')).toBeTruthy()
   })
 
-  it('disables board audio and labels both unfinished CG options as future work', () => {
-    const { getByLabelText, getByText } = render(
+  it('keeps audio out of visual zones and directs operators to board audio control', () => {
+    const { getByLabelText } = render(
       <ZoneForm feeds={[]} submitting={false} onSubmit={vi.fn()} />,
     )
     const zoneKind = getByLabelText('Zone kind') as HTMLSelectElement
     const audio = zoneKind.querySelector('option[value="audio"]') as HTMLOptionElement
     expect(audio.disabled).toBe(true)
-    expect(audio.textContent).toMatch(/coming in a future release/i)
-    expect(getByText(/Live video in a zone/i)).toBeTruthy()
-    expect(getByText(/current renderer does not play it/i)).toBeTruthy()
+    expect(audio.textContent).toMatch(/configured below the Board card/i)
+    expect((getByLabelText('Content source') as HTMLSelectElement).querySelector('option[value="live_video"]')).toBeTruthy()
+  })
+
+  it('requires a configured source for a live-video zone', () => {
+    const onSubmit = vi.fn()
+    const { getByLabelText, getByText } = render(
+      <ZoneForm
+        feeds={[]}
+        liveSources={[{ live_source_id: 'camera-1', channel_id: 'public', name: 'Chamber camera', source_type: 'srt' }]}
+        submitting={false}
+        onSubmit={onSubmit}
+      />,
+    )
+    fireEvent.change(getByLabelText('Content source'), { target: { value: 'live_video' } })
+    expect((getByText('Add zone') as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(getByLabelText('Live video source'), { target: { value: 'camera-1' } })
+    fireEvent.click(getByText('Add zone'))
+    expect(onSubmit.mock.calls[0][0].live_source_id).toBe('camera-1')
   })
 })
 
@@ -170,6 +207,11 @@ vi.mock('../api/client', () => ({
   getStaffIdentity: vi.fn(),
   getAppPlatformConfig: vi.fn(),
   getCgBoard: vi.fn(),
+  getCgBoardAudio: vi.fn(),
+  listStaffAssets: vi.fn(),
+  listLiveSources: vi.fn(),
+  setCgBoardAudio: vi.fn(),
+  deleteCgBoardAudio: vi.fn(),
   previewCgBoard: vi.fn(),
   listCgBoardAudit: vi.fn(),
   createCgBoard: vi.fn(),

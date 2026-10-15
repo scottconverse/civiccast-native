@@ -2054,6 +2054,111 @@ def test_graphics_overlay_composites_station_bug_and_lower_third(tmp_path: Path)
     )
 
 
+def test_board_live_video_is_visible_above_the_board_raster(tmp_path: Path) -> None:
+    """A live zone must survive the opaque board raster in the encoded output."""
+    from shutil import which
+
+    from civiccast.egress.gst.graphics_overlay import write_rgba_png
+
+    if which("ffmpeg") is None:
+        pytest.skip("FFmpeg is required for the local SRT source and pixel check")
+    width, height = 640, 360
+    raster = tmp_path / "board.png"
+    write_rgba_png(raster, width, height, bytes((0, 0, 255, 255)) * (width * height))
+    caps = f"video/x-raw,width={width},height={height},framerate=30/1"
+    with socket.socket(type=socket.SOCK_DGRAM) as port_probe:
+        port_probe.bind(("127.0.0.1", 0))
+        port = port_probe.getsockname()[1]
+    sender_log = (tmp_path / "sender.log").open("wb")
+    sender = subprocess.Popen(
+        [
+            "ffmpeg",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-re",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=red:s={width}x{height}:r=30",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-f",
+            "mpegts",
+            f"srt://127.0.0.1:{port}?mode=listener&latency=100000",
+        ],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=sender_log,
+    )
+    graph = graphmod.PlayoutGraph(
+        sources=(
+            graphmod.PlaylistLeg(
+                label="program",
+                subchains=(
+                    (
+                        _E("videotestsrc", props={"is-live": True, "pattern": 2}),
+                        _E("capsfilter", props={"caps": caps}),
+                    ),
+                ),
+                subchain_kinds=("cg",),
+            ),
+        ),
+        encoder=graphmod.encode_chain_specs(
+            width=width, height=height, fps=30, bitrate_kbps=2000, gop=30
+        ),
+        mux=_E("mpegtsmux", name="mux"),
+        sinks=((_E("queue"), _E("filesink", props={"location": str(tmp_path / "out.ts")})),),
+        graphics_overlay=graphmod.GraphicsOverlayLeg(
+            layers=(
+                graphmod.GraphicsOverlayLayer(name="cg_board_raster", image_path=str(raster)),
+                graphmod.GraphicsOverlayLayer(
+                    name="board_live_camera",
+                    source_chain=(
+                        _E("srtsrc", props={"uri": f"srt://127.0.0.1:{port}?mode=caller"}),
+                        _E("decodebin"),
+                    ),
+                    xpos=100,
+                    ypos=100,
+                    width=160,
+                    height=90,
+                    repeat_after_eos=False,
+                ),
+            ),
+            compositor=_E("compositor", name="graphics_overlay_comp"),
+        ),
+    )
+    out_ts = tmp_path / "out.ts"
+    proc, control, log = _launch_worker(tmp_path, graph, out_ts)
+    try:
+        time.sleep(5.0)
+        sender.terminate()
+        sender.wait(timeout=5)
+        _send(control, "stop")
+        rc = proc.wait(timeout=25)
+    finally:
+        _reap(proc)
+        if sender.poll() is None:
+            sender.terminate()
+        sender_log.close()
+    logtext = log.read_text(encoding="utf-8", errors="replace")
+    assert rc == 0, logtext
+    raw = _ffmpeg_last_frame_rgb24(out_ts, tmp_path / "frame.raw", width=width, height=height)
+    assert raw is not None, logtext
+    stride = width * 3
+
+    def pixel(x: int, y: int) -> tuple[int, int, int]:
+        offset = y * stride + x * 3
+        return tuple(raw[offset : offset + 3])
+
+    outside = pixel(30, 30)
+    inside = pixel(120, 120)
+    assert outside[2] > outside[0] + 80, (outside, logtext)
+    assert inside[0] > inside[2] + 80, (inside, logtext)
+
+
 def _ffmpeg_last_frame_rgb24(ts: Path, out_raw: Path, *, width: int, height: int) -> bytes | None:
     """Decode ALL frames of ``ts`` to raw RGB24 and return the LAST one's bytes.
 

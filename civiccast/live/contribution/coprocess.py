@@ -38,6 +38,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from civiccast.egress.process_identity import verify_and_kill_process
+from civiccast.installer.mediamtx_install import relay_paths, relay_verified
 from civiccast.live.contribution.bridge import VdoDiagnostics
 
 _LOG = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class ContributionCoprocessSettings:
     enabled: bool = False
     vdo_command: tuple[str, ...] | None = None
     coturn_command: tuple[str, ...] | None = None
+    mediamtx_command: tuple[str, ...] | None = None
     turn_host: str = "127.0.0.1"
     turn_port: int = 3478
     poll_seconds: float = 10.0
@@ -77,6 +79,11 @@ class ContributionCoprocessSettings:
         enabled = raw == "on"
         vdo = os.environ.get("CIVICCAST_VDO_COMMAND")
         coturn = os.environ.get("CIVICCAST_COTURN_COMMAND")
+        mediamtx = os.environ.get("CIVICCAST_MEDIAMTX_COMMAND")
+        relay_command: tuple[str, ...] | None = tuple(shlex.split(mediamtx)) if mediamtx else None
+        if relay_command is None and enabled and relay_verified():
+            executable, config = relay_paths()
+            relay_command = (str(executable), str(config))
         try:
             poll = float(os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_POLL", "10"))
         except ValueError as exc:
@@ -89,6 +96,7 @@ class ContributionCoprocessSettings:
             enabled=enabled,
             vdo_command=tuple(shlex.split(vdo)) if vdo else None,
             coturn_command=tuple(shlex.split(coturn)) if coturn else None,
+            mediamtx_command=relay_command,
             turn_host=os.environ.get("CIVICCAST_TURN_HOST", "127.0.0.1"),
             turn_port=turn_port,
             poll_seconds=poll,
@@ -271,10 +279,12 @@ class ContributionCoprocessSupervisor:
         monotonic: Callable[[], float] | None = None,
         turn_probe: Callable[[str, int], bool] | None = None,
         alert_hook: AlertHook | None = None,
+        mix_health_check: Callable[[], None] | None = None,
     ) -> None:
         self._settings = settings
         self._turn_probe = turn_probe or _default_turn_probe
         self._alert_hook = alert_hook
+        self._mix_health_check = mix_health_check
         self._last_turn_reachable: bool | None = None
         self._vdo = _SupervisedCoprocess(
             name="vdo-ninja",
@@ -286,6 +296,13 @@ class ContributionCoprocessSupervisor:
         self._coturn = _SupervisedCoprocess(
             name="coturn",
             command=settings.coturn_command,
+            process_starter=process_starter,
+            monotonic=monotonic,
+            alert_hook=alert_hook,
+        )
+        self._mediamtx = _SupervisedCoprocess(
+            name="mediamtx",
+            command=settings.mediamtx_command,
             process_starter=process_starter,
             monotonic=monotonic,
             alert_hook=alert_hook,
@@ -306,6 +323,8 @@ class ContributionCoprocessSupervisor:
         probed. It's ONLY skipped while a local coturn IS configured but
         hasn't come up yet (nothing to probe against yet)."""
         self._vdo.ensure_running()
+        if self._settings.mediamtx_command is not None:
+            self._mediamtx.ensure_running()
         coturn_status = self._coturn.ensure_running()
         if coturn_status.state == "running" or self._settings.coturn_command is None:
             reachable = self._turn_probe(self._settings.turn_host, self._settings.turn_port)
@@ -317,6 +336,8 @@ class ContributionCoprocessSupervisor:
                     "unreachable; guests behind NAT cannot connect.",
                 )
             self._last_turn_reachable = reachable
+        if self._mix_health_check is not None:
+            self._mix_health_check()
 
     def run_forever(self, *, poll_seconds: float, stop_event: Any) -> None:
         """ThreadSupervisor loop shape — tick until stopped, survive exceptions."""
@@ -341,6 +362,7 @@ class ContributionCoprocessSupervisor:
         # external server's reachability is still the load-bearing signal.
         turn_reachable = bool(self._last_turn_reachable)
         parts = [f"vdo={self._vdo.status.state}"]
+        parts.append(f"relay={self._mediamtx.status.state}")
         parts.append(
             f"coturn={'external (documented)' if external_turn else self._coturn.status.state}"
         )
@@ -359,6 +381,7 @@ class ContributionCoprocessSupervisor:
             turn_port=self._settings.turn_port,
             vdo_process_up=vdo_up,
             coturn_process_up=coturn_up,
+            relay_process_up=self._mediamtx.running,
             ice_summary="; ".join(parts),
             detail="" if healthy else "One or more co-processes are not running.",
         )
@@ -375,6 +398,7 @@ class ContributionCoprocessSupervisor:
 
     def stop(self) -> None:
         self._vdo.stop()
+        self._mediamtx.stop()
         self._coturn.stop()
 
     def _emit_alert(self, kind: str, detail: str) -> None:

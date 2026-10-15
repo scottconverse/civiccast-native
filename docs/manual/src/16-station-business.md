@@ -272,9 +272,9 @@ An empty affidavit shows "No airings recorded for {name} between {from} and {to}
 
 ## Build the resident apps (App Admin)
 
-A resident app lets people watch your station on a phone or a TV box. CivicCast can package a *starter app* for web (a "PWA", a website that installs like an app), Roku, Apple TV, Fire TV, Android TV, Android phones and tablets, and iPhone and iPad. App Admin builds that package on the station computer, keeps a history of builds with download buttons, and gives you a notebook for tracking app-store submissions.
+A resident app lets people watch your station on a phone or a TV box. CivicCast provides native viewer source apps for Roku, Apple, Android/Fire TV, Tizen and webOS, plus a web PWA. They browse live channels and replays, show station artwork, search the catalog, handle deep links and use platform playback controls. **App Admin** packages generic station-branded starter artifacts on the station computer, keeps a history with download buttons, and tracks app-store submissions; it does not build or submit the separate native source apps.
 
-> **Warning:** App Admin does not put any app in any app store. CivicCast never contacts a store. Someone technical still has to sign each package and submit it. The built package is a generic starter. The page says apps read the station's settings when they run, so name and branding update without a rebuild. In testing we could not confirm this in a running app, and store review is separate work.
+> **Warning:** App Admin does not put any app in an app store. Someone technical still has to sign and submit platform packages. The App Admin package is a generic starter; the native source apps are built with their platform toolchains. Apps read station branding from the station API when they run.
 
 ### Make a build
 
@@ -307,7 +307,7 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
-> **Beta 18 status:** Do not use the paywall for paid access. The operator can configure its gate, but resident purchase and account workflows are incomplete: the magic-link sender does not send email, the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
+> **Beta 19 status:** The magic-link button sends through a configured mail provider and reports delivery failure. Paid access remains incomplete: the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
 
 > **For IT staff:** See [Chapter 15](#ch-integrations) before enabling this on a live station.
 

@@ -3,12 +3,12 @@ package com.civiccast.tv
 import android.view.ViewGroup
 import androidx.leanback.widget.ImageCardView
 import androidx.leanback.widget.Presenter
+import coil.load
 
 /**
  * Renders a Channel as a Leanback ImageCardView.
  *
- * Image loading is intentionally omitted — Coil/Glide isn't on the classpath for this starter.
- * The card uses a solid color background when posterUrl is absent.
+ * Channel logos and replay posters load from the selected station.
  */
 class ChannelCardPresenter : Presenter() {
 
@@ -17,17 +17,26 @@ class ChannelCardPresenter : Presenter() {
             isFocusable = true
             isFocusableInTouchMode = true
             setMainImageDimensions(CARD_WIDTH, CARD_HEIGHT)
-            // Solid placeholder until image loading is wired.
-            setMainImage(android.graphics.drawable.ColorDrawable(0xFF1565C0.toInt()))
+            setMainImage(android.graphics.drawable.ColorDrawable(0xFF0D1B30.toInt()))
         }
         return ViewHolder(card)
     }
 
     override fun onBindViewHolder(viewHolder: ViewHolder, item: Any) {
-        val channel = item as Channel
         val card = viewHolder.view as ImageCardView
-        card.titleText = channel.branding.displayName
-        card.contentText = channel.branding.shortName ?: channel.id
+        val client = NetworkClient()
+        when (item) {
+            is Channel -> {
+                card.titleText = item.branding.displayName
+                card.contentText = item.branding.shortName ?: item.id
+                card.mainImageView.load(item.branding.logoUrl?.let(client::mediaUrl))
+            }
+            is PublishedAsset -> {
+                card.titleText = item.title
+                card.contentText = item.description ?: "Replay"
+                card.mainImageView.load(item.posterUrl?.let(client::mediaUrl))
+            }
+        }
     }
 
     override fun onUnbindViewHolder(viewHolder: ViewHolder) {

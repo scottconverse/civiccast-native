@@ -1209,6 +1209,7 @@ def _run_egress_service(
 ) -> EgressServiceReport:
     from civiccast.egress import EgressDaemon, EgressService, SourcePreparer
     from civiccast.egress.bulletin_filler import (
+        build_board_live_video_provider,
         build_board_overlay_provider,
         build_filler_source_provider,
     )
@@ -1241,6 +1242,7 @@ def _run_egress_service(
         cg_overlay_provider=build_board_overlay_provider(
             _build_cli_session_factory(), work_dir=work_dir
         ),
+        board_live_video_provider=build_board_live_video_provider(_build_cli_session_factory()),
         source_preparer=source_preparer_instance.prepare,
         prepared_plan_release=source_preparer_instance.release,
         resolve_secret=lambda ref: os.environ.get(ref),

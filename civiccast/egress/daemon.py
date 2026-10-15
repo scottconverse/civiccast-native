@@ -52,6 +52,7 @@ from civiccast.egress.gst.exit_codes import (
     GST_PREROLL_TIMEOUT_EXIT_CODE,
     GST_RELOAD_COMMIT_TIMEOUT_EXIT_CODE,
 )
+from civiccast.egress.gst.graph import GraphicsOverlayLayer
 from civiccast.egress.gst.reload_policy import should_defer_switch
 from civiccast.egress.health import (
     EgressEncoderMetrics,
@@ -119,6 +120,7 @@ CgOverlayProofProvider = Callable[[str], EgressCgOverlayProof | None]
 #: S15 §5 CG-lite: (channel_id, config) → board raster for the engine overlay.
 #: Takes the config because the raster must match ``canonical_profile`` geometry.
 BoardOverlayProvider = Callable[[str, EgressConfig], Path | None]
+BoardLiveVideoProvider = Callable[[str, EgressConfig], tuple[GraphicsOverlayLayer, ...]]
 SinkHealthProvider = Callable[[str, EgressConfig, EgressEncoderMetrics], dict[str, bool]]
 AlertEvaluatorHook = Callable[[str, EgressState, "float | None", "float | None"], None]
 """(channel_id, state, encoder_fps, encoder_bitrate_kbps) → None. S8 alert hook."""
@@ -771,6 +773,7 @@ class EgressDaemon:
         async_source_preparer: AsyncSourcePreparerFunc | None = None,
         branding_plan_provider: BrandingPlanProvider | None = None,
         cg_overlay_provider: BoardOverlayProvider | None = None,
+        board_live_video_provider: BoardLiveVideoProvider | None = None,
         caption_plan_provider: CaptionPlanProvider | None = None,
         caption_status_provider: CaptionStatusProvider | None = None,
         caption_readiness_provider: CaptionReadinessProvider | None = None,
@@ -851,6 +854,7 @@ class EgressDaemon:
         self._branding_plan_provider = branding_plan_provider
         # S15 §5 CG-lite: per-channel board raster for the engine overlay leg.
         self._cg_overlay_provider = cg_overlay_provider
+        self._board_live_video_provider = board_live_video_provider
         self._caption_plan_provider = caption_plan_provider
         self._caption_status_provider = caption_status_provider
         self._caption_readiness_provider = caption_readiness_provider
@@ -1240,6 +1244,20 @@ class EgressDaemon:
         # key so a NEW boundary's budget starts at zero without anything having
         # to clear the entry (see ``_retry_aborted_boundary_reload``).
         self._reload_retries: dict[str, tuple[datetime | None, int]] = {}
+
+    def _board_live_video_layers(
+        self, channel_id: str, config: EgressConfig
+    ) -> tuple[GraphicsOverlayLayer, ...]:
+        if self._board_live_video_provider is None:
+            return ()
+        try:
+            return self._board_live_video_provider(channel_id, config)
+        except Exception:
+            _LOG.exception(
+                "channel %s: board live-video settings could not be read; keeping the ordinary board",
+                channel_id,
+            )
+            return ()
 
     def enable_async_preparation(self) -> None:
         """Keep media conformance off the shared automation thread."""
@@ -2899,6 +2917,7 @@ class EgressDaemon:
                             if self._cg_overlay_provider is not None
                             else None
                         ),
+                        board_live_video_layers=self._board_live_video_layers(channel_id, config),
                     )
 
                 # Round-4 fix (PR #183 review, BLOCKER reproduced): snapshot
@@ -5913,6 +5932,7 @@ class EgressDaemon:
                 if self._cg_overlay_provider is not None
                 else None
             ),
+            board_live_video_layers=self._board_live_video_layers(channel_id, config),
             captions_allowed=channel_id not in self._caption_reset_failed,
             audio_tap_plan=(
                 build_audio_tap_plan(channel_id)

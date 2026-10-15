@@ -624,6 +624,11 @@ export interface BetaHandoffSummary {
   lanes: Array<BetaHandoffLane>
 }
 
+export interface BoardAudioRequest {
+  asset_ref: string
+  gain_db?: number
+}
+
 export interface BoardCreateRequest {
   template_id: string
 }
@@ -699,6 +704,16 @@ export interface BrokenMediaGateResult {
 export interface BuildRequest {
   app_target: 'web_pwa' | 'roku' | 'tvos' | 'fire_tv' | 'android_tv' | 'android_mobile' | 'ios_ipados' | 'cg' | 'epg'
   build_tier?: 'unbranded' | 'branded' | null
+}
+
+export interface BulletinAudio {
+  audio_id: string
+  scope: 'bulletin' | 'channel'
+  target_id: string
+  asset_ref: string
+  loudness_regime?: string
+  gain_db?: number
+  created_at: string
 }
 
 export interface BulletinCreate {
@@ -990,12 +1005,13 @@ export interface CgZoneConfig {
   board_id: string
   region: 'main' | 'lower' | 'side' | 'bug' | 'background'
   zone_kind: 'primary' | 'ticker' | 'schedule' | 'logo' | 'sponsor' | 'audio' | 'alert'
-  content_source: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock'
+  content_source: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video'
   feed_source_id?: string | null
   refresh_seconds?: number | null
   approval_required?: boolean
   manual_text?: string | null
   image_asset_ref?: string | null
+  live_source_id?: string | null
   allowed_tags?: Array<string>
   created_at: string
 }
@@ -1320,6 +1336,10 @@ export interface ContributionInstallReport {
   vdo_version?: string
   vdo_commit?: string
   vdo_verified?: boolean
+  relay_installed?: boolean
+  relay_verified?: boolean
+  relay_path?: string | null
+  relay_command?: string
   coturn_action?: string
   launch_hint?: string
   detail?: string
@@ -5079,6 +5099,7 @@ export interface VdoDiagnostics {
   turn_port?: number | null
   vdo_process_up?: boolean
   coturn_process_up?: boolean
+  relay_process_up?: boolean
   ice_summary?: string
   detail?: string
 }
@@ -5232,24 +5253,26 @@ export interface YearOverYearPoint {
 export interface ZoneInput {
   region: 'main' | 'lower' | 'side' | 'bug' | 'background'
   zone_kind: 'primary' | 'ticker' | 'schedule' | 'logo' | 'sponsor' | 'audio' | 'alert'
-  content_source: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock'
+  content_source: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video'
   feed_source_id?: string | null
   refresh_seconds?: number | null
   approval_required?: boolean
   manual_text?: string | null
   image_asset_ref?: string | null
+  live_source_id?: string | null
   allowed_tags?: Array<string>
 }
 
 export interface ZoneUpdateInput {
   region?: 'main' | 'lower' | 'side' | 'bug' | 'background' | null
   zone_kind?: 'primary' | 'ticker' | 'schedule' | 'logo' | 'sponsor' | 'audio' | 'alert' | null
-  content_source?: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | null
+  content_source?: 'feed_adapter' | 'manual' | 'schedule' | 'emergency' | 'image' | 'clock' | 'live_video' | null
   feed_source_id?: string | null
   refresh_seconds?: number | null
   approval_required?: boolean | null
   manual_text?: string | null
   image_asset_ref?: string | null
+  live_source_id?: string | null
   allowed_tags?: Array<string> | null
 }
 

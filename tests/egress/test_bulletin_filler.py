@@ -14,6 +14,7 @@ import logging
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -584,3 +585,35 @@ class TestDefaultImageResolver:
         resolve = self._resolver_for(monkeypatch, None)
 
         assert resolve("missing-asset") is None
+
+
+def test_board_audio_resolver_requires_a_measured_track_inside_uploads(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import civiccast.egress.bulletin_filler as bf
+
+    upload_root = tmp_path / "uploads"
+    upload_root.mkdir()
+    audio = upload_root / "music.wav"
+    audio.write_bytes(b"audio")
+    outside = tmp_path / "outside.wav"
+    outside.write_bytes(b"audio")
+    row = SimpleNamespace(file_path=str(audio), codec_audio="pcm_s16le", duration_seconds=180)
+
+    class FakeStore:
+        def __init__(self, _session_factory: object) -> None:
+            pass
+
+        def get_staff_row(self, _ref: str) -> SimpleNamespace:
+            return row
+
+    monkeypatch.setenv("CIVICCAST_UPLOAD_DIR", str(upload_root))
+    monkeypatch.setattr(bf, "PostgresAssetStore", FakeStore)
+    resolve = bf._default_audio_resolver(lambda: None)
+
+    assert resolve("asset-1") == audio.resolve()
+    row.duration_seconds = None
+    assert resolve("asset-1") is None
+    row.duration_seconds = 180
+    row.file_path = str(outside)
+    assert resolve("asset-1") is None

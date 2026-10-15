@@ -94,7 +94,8 @@ def test_required_factory_count_includes_live_audio_processing_factories() -> No
     assert FACTORY_PLUGIN["audioloudnorm"] == "gstrsaudiofx.dll"
     assert "audiochebband" in REQUIRED_FACTORIES
     assert FACTORY_PLUGIN["audiochebband"] == "gstaudiofx.dll"
-    assert len(REQUIRED_FACTORIES) == 54
+    assert FACTORY_PLUGIN["volume"] == "gstvolume.dll"
+    assert len(REQUIRED_FACTORIES) == 55
 
 
 # --------------------------------------------------------------------------

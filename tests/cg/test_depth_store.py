@@ -134,12 +134,14 @@ def test_audio_set_list_delete_and_upsert(depth: CgDepthStore) -> None:
             target_id="public",
             asset_ref="bed_2",
             loudness_regime="duck",
+            gain_db=-9.0,
             created_at=_T0,
         )
     )
     assert [a.audio_id for a in depth.list_audio(scope="bulletin", target_id="b1")] == ["a1"]
     channel_audio = depth.list_audio(scope="channel", target_id="public")
     assert channel_audio[0].loudness_regime == "duck"
+    assert channel_audio[0].gain_db == -9.0
     # set is an upsert — re-setting the same id updates in place (no duplicate).
     depth.set_audio(
         BulletinAudio(
@@ -156,6 +158,7 @@ def test_audio_defaults_to_inherit_loudness() -> None:
         audio_id="a", scope="channel", target_id="public", asset_ref="bed", created_at=_T0
     )
     assert audio.loudness_regime == "inherit"
+    assert audio.model_dump().get("gain_db") == 0.0
 
 
 # ---------------------------------------------------------------------------

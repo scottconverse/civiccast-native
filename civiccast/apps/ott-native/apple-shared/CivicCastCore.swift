@@ -103,6 +103,21 @@ public struct LiveState: Codable, Hashable, Sendable {
     }
 }
 
+public struct PublishedAsset: Codable, Hashable, Identifiable, Sendable {
+    public let id: String
+    public let title: String
+    public let description: String?
+    public let manifestUrl: String
+    public let posterUrl: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "asset_id"
+        case title, description
+        case manifestUrl = "manifest_url"
+        case posterUrl = "poster_url"
+    }
+}
+
 // MARK: - Network client
 
 public enum NetworkError: Error, LocalizedError {
@@ -124,7 +139,7 @@ public enum NetworkError: Error, LocalizedError {
 }
 
 public actor NetworkClient {
-    private let baseURL: URL
+    public nonisolated let baseURL: URL
     private let session: URLSession
 
     public init(baseURL: URL, session: URLSession = .shared) {
@@ -150,6 +165,14 @@ public actor NetworkClient {
     /// path returned in `Channel.liveStateUrl` (relative to `baseURL`).
     public func fetchLiveState(_ liveStateUrl: String) async throws -> LiveState {
         try await getJSON(LiveState.self, relativeTo: liveStateUrl)
+    }
+
+    public func fetchPublishedAssets() async throws -> [PublishedAsset] {
+        try await getJSON([PublishedAsset].self, path: "api/public/assets")
+    }
+
+    public nonisolated func mediaURL(_ reference: String) -> URL? {
+        URL(string: reference, relativeTo: baseURL)?.absoluteURL
     }
 
     /// Convenience used by the entry points: load config, resolve the

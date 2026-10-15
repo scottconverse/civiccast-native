@@ -340,6 +340,7 @@ def _zone_columns(zone: CgZoneConfig) -> dict[str, object]:
         "approval_required": zone.approval_required,
         "manual_text": zone.manual_text,
         "image_asset_ref": zone.image_asset_ref,
+        "live_source_id": zone.live_source_id,
         "allowed_tags": list(zone.allowed_tags),
     }
 
@@ -356,6 +357,7 @@ def _zone_from_row(row: CgZoneConfigDb) -> CgZoneConfig:
         approval_required=row.approval_required,
         manual_text=row.manual_text,
         image_asset_ref=row.image_asset_ref,
+        live_source_id=row.live_source_id,
         allowed_tags=list(row.allowed_tags or []),
         created_at=_coerce(row.created_at),  # type: ignore[arg-type]
     )

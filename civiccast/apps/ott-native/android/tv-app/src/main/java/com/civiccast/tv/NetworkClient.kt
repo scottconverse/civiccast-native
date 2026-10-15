@@ -9,7 +9,7 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 class NetworkClient(
-    private val baseUrl: String = BuildConfig.API_BASE_URL
+    private val baseUrl: String = StationAddress.baseUrl
 ) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -26,6 +26,14 @@ class NetworkClient(
         val url = "${baseUrl.trimEnd('/')}/api/public/app/config"
         get(url, ConfigResponse.serializer())
     }
+
+    suspend fun fetchPublishedAssets(): List<PublishedAsset> = withContext(Dispatchers.IO) {
+        get("${baseUrl.trimEnd('/')}/api/public/assets", kotlinx.serialization.builtins.ListSerializer(PublishedAsset.serializer()))
+    }
+
+    fun mediaUrl(reference: String): String =
+        if (reference.startsWith("https://") || reference.startsWith("http://")) reference
+        else "${baseUrl.trimEnd('/')}/${reference.trimStart('/')}"
 
     /**
      * `liveStateUrl` is a path relative to [baseUrl] (e.g.

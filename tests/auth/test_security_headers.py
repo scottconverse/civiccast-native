@@ -70,6 +70,22 @@ def test_no_cors_headers_without_explicit_allowlist(monkeypatch) -> None:
     assert "Access-Control-Allow-Origin" not in response.headers
 
 
+def test_packaged_tv_origin_can_read_public_app_only(monkeypatch) -> None:
+    monkeypatch.delenv("CIVICCAST_CORS_ALLOWED_ORIGINS", raising=False)
+    client = TestClient(create_app())
+
+    public = client.get("/api/public/app/config", headers={"Origin": "null"})
+    assets = client.get("/api/public/assets", headers={"Origin": "null"})
+    staff = client.get("/api/staff/auth/me", headers={"Origin": "null"})
+    unrelated = client.get("/health", headers={"Origin": "null"})
+
+    assert public.status_code == 200
+    assert public.headers.get("Access-Control-Allow-Origin") == "null"
+    assert assets.headers.get("Access-Control-Allow-Origin") == "null"
+    assert "Access-Control-Allow-Origin" not in staff.headers
+    assert "Access-Control-Allow-Origin" not in unrelated.headers
+
+
 def test_cors_reflects_only_the_configured_origin(monkeypatch) -> None:
     monkeypatch.setenv("CIVICCAST_CORS_ALLOWED_ORIGINS", "https://dash.example.org")
     client = TestClient(create_app())

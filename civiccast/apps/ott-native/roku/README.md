@@ -1,9 +1,9 @@
-# CivicCast Roku channel — starter native source
+# CivicCast Roku channel
 
 Closes the S12 D1 gap for Roku (the "native OTT app source is absent" claim).
 This is a real BrightScript + SceneGraph channel a Roku developer can
-sideload to a device in developer mode and a starting point for store
-submission via Roku Direct Publisher's "Custom Channel" path.
+sideload to a device in developer mode. It browses and plays the station's
+public live channels and published replays.
 
 ## What this ships
 
@@ -15,9 +15,7 @@ roku/
 ├── components/
 │   ├── CivicCastScene.xml         # Root SceneGraph component layout
 │   └── CivicCastScene.brs         # Component behavior (config fetch + UI)
-└── images/                        # Channel icons + splash (placeholder pngs;
-                                   # replace with branded artwork before
-                                   # store submission)
+└── images/                        # CivicCast icons and splash artwork
 ```
 
 What it does:
@@ -31,22 +29,16 @@ What it does:
 - Shows an explicit setup/error message (not fake content) when the API is
   unreachable, returns no channels, or a channel has no live program —
   see `showEmptyState()` / `fetchLiveStateAndPlay()` in `CivicCastScene.brs`.
+- Loads channel logos and replay posters, searches the catalog, accepts
+  Roku content-ID deep links, and retains the native player options for
+  audio and captions.
 
-## What it does NOT yet ship (the documented follow-up)
+## Platform publication
 
-This is starter-grade. To reach a Roku store submission, add:
-
-1. A real `Task`-component config fetcher (replace the inline `urlTransfer`
-   in `CivicCastScene.brs` with `ConfigFetchTask.brs` on its own thread)
-2. Branded icons + splash screen in `images/` (the placeholders are 100x100
-   gray PNGs)
-3. Roku Pay / channel-store metadata
-4. Deep link handling (Roku launches with `args.contentId` for deep-linked
-   playback; the starter passes them through but doesn't route on them yet)
-5. Accessibility (audio descriptions, voice guide narration override)
-6. Captions UI (Roku's caption picker comes for free from the Video node;
-   the starter does NOT yet surface a manual override)
-7. Search interface (Roku Channel Store requires search for VOD channels)
+Store metadata, a Roku developer account, and on-device certification are
+publication steps. The Video node uses Roku's system audio and caption
+preferences and options. The channel itself has no purchase or protected
+viewer-login workflow.
 
 ## Build + sideload
 
@@ -73,15 +65,9 @@ confirm the channel list renders, select a row to start playback.
 
 ## Configuration
 
-The starter ships with `API_BASE_URL = "https://civiccast.example.com"` in
-`components/CivicCastScene.brs`. Before sideloading to a real station's
-device, edit that constant to the station's public API host (e.g.
-`https://api.lpmofficial.tv`).
-
-Production override path: replace the inline constant with a
-Roku-`registry` read so the station administrator can change the base URL
-through a "Settings" screen without re-uploading the channel. That screen
-is part of the documented follow-up.
+Press `*` while browsing, choose **Station address**, and save the station's
+HTTPS public host. The URL persists in Roku's registry. The example default
+in `getApiBaseUrl()` is only a first-launch prompt target.
 
 ## Validation
 
@@ -94,9 +80,8 @@ npm install -g brighterscript     # ~30s, no Roku SDK needed
 bsc --project bsconfig.json       # syntax + linting (TODO: add bsconfig.json)
 ```
 
-The starter does NOT ship a `bsconfig.json` yet — adding it is part of the
-"polish to store-ready" path documented above. Until then, the sideload +
-on-device launch is the smoke test.
+`bsconfig.json` is included. Sideloading is still needed to check the actual
+device's playback and remote behavior.
 
 ## Architecture note (why SceneGraph and not Direct Publisher)
 

@@ -8,16 +8,16 @@ has no per-minute software fee.
 
 ## Current release
 
-Signed `v1.0.0-beta.18` is the current [downloadable release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18). It adds a Setup-admin Cablecast station-import screen to Beta 17's subscriber delivery, Podcast publication, and underwriting daypart workflows. The [roadmap](docs/ROADMAP.md) links the implementation records; the [package verification record](docs/releases/v1.0.0-beta.18-verification.md) identifies this signed installer and its scoped checks.
+`v1.0.0-beta.19` completes Sprint 5. It adds remote guests in channel output, bulletin-board video and audio, and fuller native viewer apps to the publication, import and underwriting features shipped in Beta 17 and 18. The [roadmap](docs/ROADMAP.md) tracks the scope.
 
 ## Current published package
 
-The signed Beta 18 [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18)
+The signed Beta 19 [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19)
 provides the installer, runtime packs, station-model bundle, manuals, and
-checksums. The [Beta 18 verification record](docs/releases/v1.0.0-beta.18-verification.md)
+checksums. The [Beta 19 verification record](docs/releases/v1.0.0-beta.19-verification.md)
 identifies the exact package and its scoped verification results. For
 installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
-for Beta 18 operation, use the manual bundled on that release page. The
+for Beta 19 operation, use the manual bundled on that release page. The
 [source manual](docs/USER-MANUAL.md) describes the same edition.
 
 Whistle is the CPU live-caption primary; Whisper supplies per-channel backup
@@ -31,12 +31,12 @@ identities are recorded in
 
 ## Install and run
 
-Download the signed Beta 18 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
+Download the signed Beta 19 station with the Windows helper. It obtains the installer, runtime packs and required station models, verifies them, and installs without separately installed development tools:
 
 ```powershell
-$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta18.ps1'
-Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.18/download_windows_release_artifacts.ps1' -OutFile $installerScript
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta18"
+$installerScript = Join-Path $env:TEMP 'CivicCast-Install-Beta19.ps1'
+Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.19/download_windows_release_artifacts.ps1' -OutFile $installerScript
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installerScript -Install -Destination "$env:USERPROFILE\Downloads\CivicCast-Beta19"
 ```
 
 Keep the PowerShell window open until it reports **Done**. During silent setup,
@@ -53,7 +53,7 @@ The [User Manual](docs/USER-MANUAL.md) ([PDF](docs/USER-MANUAL.pdf), [Word](docs
 Source contributors can inspect the [station operations record](docs/ops/station-operations-goal.md),
 [Sprint 2](docs/ops/sprint2-unattended.md), and
 [Sprint 3](docs/ops/sprint3-output-completion.md) for the implementation scope
-and focused evidence behind Beta 16. Use the published Beta 18
+and focused evidence behind Beta 16. Use the published Beta 19
 release page for installation.
 
 ```bash
@@ -125,7 +125,7 @@ apps. The [Roadmap Status Manifest](docs/spec/3.0/ROADMAP.status.yaml) is a
 repo-verified, fail-closed manifest that checks each spec item's claimed
 status against evidence that actually exists on disk; treat "Built" there
 as "the code and its tests exist," not as a field-proven claim for this
-release. The Beta 18 verification record describes the current package
+release. The Beta 19 verification record describes the current package
 boundary, and the Beta 11 host report is separately scoped historical runtime
 evidence.
 

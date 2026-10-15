@@ -81,6 +81,7 @@ class CgDepthStore:
                         target_id=audio.target_id,
                         asset_ref=audio.asset_ref,
                         loudness_regime=audio.loudness_regime,
+                        gain_db=audio.gain_db,
                         created_at=audio.created_at,
                     )
                 )
@@ -89,6 +90,7 @@ class CgDepthStore:
                 row.target_id = audio.target_id
                 row.asset_ref = audio.asset_ref
                 row.loudness_regime = audio.loudness_regime
+                row.gain_db = audio.gain_db
             session.commit()
             return audio
 
@@ -165,6 +167,7 @@ def _audio_from_row(row: BulletinAudioDb) -> BulletinAudio:
         target_id=row.target_id,
         asset_ref=row.asset_ref,
         loudness_regime=row.loudness_regime,
+        gain_db=row.gain_db,
         created_at=_coerce(row.created_at),
     )
 

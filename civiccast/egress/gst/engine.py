@@ -969,11 +969,13 @@ class InputSelectorSwap(SwapController):
 
     def __init__(self) -> None:
         self._selector: Gst.Element | None = None
+        self._engine: GstPlayoutEngine | None = None
         self._pads: list[Gst.Pad] = []
         self._audio_selector: Gst.Element | None = None
         self._audio_pads: list[Gst.Pad] = []
 
     def bind(self, engine: GstPlayoutEngine) -> None:
+        self._engine = engine
         self._selector = engine.selector
         self._pads = engine.selector_sink_pads
         self._audio_selector = engine.audio_selector
@@ -990,6 +992,12 @@ class InputSelectorSwap(SwapController):
         if self._audio_selector is not None and index < len(self._audio_pads):
             # swap audio atomically with video (seconds-granularity, same thread)
             self._audio_selector.set_property("active-pad", self._audio_pads[index])
+        if self._engine is not None:
+            self._engine._set_board_output_gain(
+                self._engine._program_output_gain_db if index == 0 else 0.0
+            )
+            self._engine._board_live_program_selected = index == 0
+            self._engine._set_board_live_visibility()
 
 
 class GstPlayoutEngine:
@@ -1030,6 +1038,12 @@ class GstPlayoutEngine:
                 flush=True,
             )
         self.graph = graph
+        self._program_output_gain_db = (
+            graph.sources[0].output_gain_db
+            if graph.sources and isinstance(graph.sources[0], PlaylistLeg)
+            else 0.0
+        )
+        self._board_output_gain_elements: list[Gst.Element] = []
         # Per-branch processing hold is separate from mux-drain observations.
         # Reload/EOS handoff uses this bounded graph-declared delay to avoid
         # committing while audio remains inside a per-output normalizer.
@@ -1265,6 +1279,15 @@ class GstPlayoutEngine:
         self._pending_overlay_swaps: dict[str, dict[str, Any]] = {}
         self._overlay_layer_seq = 0
         self._overlay_gpu = True
+        self._program_video_concat: Gst.Element | None = None
+        self._board_live_concat_kinds: dict[str, dict[str, str]] = {}
+        self._board_live_program_selected = True
+        first_source = graph.sources[0] if graph.sources else None
+        self._board_live_segment = bool(
+            isinstance(first_source, PlaylistLeg)
+            and first_source.subchain_kinds
+            and first_source.subchain_kinds[0] == "cg"
+        )
         self._emergency_payload: dict[str, Any] | None = None
         self._emergency_scroll_source: int | None = None
         # S11 gap 9: language tag events for secondary audio must be pushed AFTER the
@@ -1426,12 +1449,35 @@ class GstPlayoutEngine:
 
         decoder.connect("pad-added", _on_pad_added)
 
+    def _link_rtsp_video(self, source: Gst.Element, decoder: Gst.Element) -> None:
+        """Attach only the RTSP video RTP pad to a zone's decoder."""
+        sink = decoder.get_static_pad("sink")
+
+        def _on_pad_added(_source: Gst.Element, pad: Gst.Pad) -> None:
+            if sink.is_linked():
+                return
+            caps = pad.get_current_caps() or pad.query_caps(None)
+            if caps is None or caps.get_size() == 0:
+                return
+            structure = caps.get_structure(0)
+            if (
+                structure.get_name() != "application/x-rtp"
+                or structure.get_string("media") != "video"
+            ):
+                return
+            if pad.link(sink) != Gst.PadLinkReturn.OK:
+                print("WARN: failed to link RTSP video into board decoder", flush=True)
+
+        source.connect("pad-added", _on_pad_added)
+
     def _build_chain(self, specs: tuple[ElementSpec, ...]) -> tuple[Gst.Element, Gst.Element]:
         """Build a linear chain (decodebin links dynamically). Returns (first, last)."""
         elements = [self._make(spec) for spec in specs]
         for upstream, downstream in pairwise(elements):
             if upstream.get_factory().get_name() in self._DECODERS:
                 self._link_dynamic_video(upstream, downstream)
+            elif upstream.get_factory().get_name() == "rtspsrc":
+                self._link_rtsp_video(upstream, downstream)
             else:
                 self._link(upstream, downstream)
         return elements[0], elements[-1]
@@ -1455,7 +1501,8 @@ class GstPlayoutEngine:
             if leg.audio_tail
             else None
         )
-        for subchain in leg.subchains:
+        pad_kinds: dict[str, str] = {}
+        for index, subchain in enumerate(leg.subchains):
             elements = [self._make(spec) for spec in subchain]
             decoder: Gst.Element | None = None
             for upstream, downstream in pairwise(elements):
@@ -1470,6 +1517,9 @@ class GstPlayoutEngine:
                 or elements[-1].get_static_pad("src").link(vsink) != Gst.PadLinkReturn.OK
             ):
                 raise RuntimeError(f"failed to link video sub-chain into {vconcat.get_name()}")
+            pad_kinds[vsink.get_name()] = (
+                leg.subchain_kinds[index] if leg.subchain_kinds else "program"
+            )
             if aconcat is not None and decoder is not None:
                 atail = [self._make(spec) for spec in leg.audio_tail]
                 for upstream, downstream in pairwise(atail):
@@ -1481,7 +1531,33 @@ class GstPlayoutEngine:
                     or atail[-1].get_static_pad("src").link(asink) != Gst.PadLinkReturn.OK
                 ):
                     raise RuntimeError(f"failed to link audio sub-chain into {aconcat.get_name()}")
+        if leg.label == "program":
+            self._board_live_concat_kinds[vconcat.get_name()] = pad_kinds
+            if hasattr(vconcat, "connect"):
+                vconcat.connect("notify::active-pad", self._on_board_concat_active_notify)
+            if self._program_video_concat is None:
+                self._program_video_concat = vconcat
         return vconcat, aconcat
+
+    def _on_board_concat_active_notify(self, concat: Gst.Element, _pspec: object) -> None:
+        GLib.idle_add(self._apply_board_concat_active, concat)
+
+    def _apply_board_concat_active(self, concat: Gst.Element) -> bool:
+        if concat != self._program_video_concat:
+            return False
+        pad = concat.get_property("active-pad")
+        kind = self._board_live_concat_kinds.get(concat.get_name(), {}).get(
+            pad.get_name() if pad is not None else "", "program"
+        )
+        self._board_live_segment = kind == "cg"
+        self._set_board_live_visibility()
+        return False
+
+    def _set_board_live_visibility(self) -> None:
+        alpha = 1.0 if self._board_live_program_selected and self._board_live_segment else 0.0
+        for name, pad in self._overlay_layer_pads.items():
+            if name.startswith("board_live_"):
+                pad.set_property("alpha", alpha)
 
     def _build_caption_embed(self, leg: CaptionEmbedLeg, video_prev: Gst.Element) -> Gst.Element:
         """S11a: insert the CEA-708 caption embed leg on the output half.
@@ -1774,8 +1850,13 @@ class GstPlayoutEngine:
         self._collecting = collected
         try:
             chain = (
-                ElementSpec("filesrc", props={"location": layer.image_path}),
-                ElementSpec("decodebin"),
+                layer.source_chain
+                if layer.source_chain
+                else (
+                    ElementSpec("filesrc", props={"location": layer.image_path}),
+                    ElementSpec("decodebin"),
+                )
+            ) + (
                 ElementSpec("videoconvert"),
                 ElementSpec(
                     "d3d11upload" if self._overlay_gpu else "videoconvert",
@@ -1799,7 +1880,13 @@ class GstPlayoutEngine:
             layer_pad.set_property("width", layer.width)
         if layer.height:
             layer_pad.set_property("height", layer.height)
-        layer_pad.set_property("alpha", layer.alpha)
+        layer_pad.set_property(
+            "alpha",
+            layer.alpha
+            if not layer.name.startswith("board_live_")
+            or (self._board_live_program_selected and self._board_live_segment)
+            else 0.0,
+        )
         if layer.name == "emergency":
             layer_pad.set_property("zorder", 10000)
         # A still-image filesrc/decodebin chain EOSes its compositor pad after its
@@ -1958,13 +2045,21 @@ class GstPlayoutEngine:
         )
         self._link(self.selector, video_isolation_queue)
         prev = video_isolation_queue
+        encoder_specs = self.graph.encoder
+        if encoder_specs and encoder_specs[0].name == "cg_board_overlay":
+            # The board raster is opaque. Place it below the compositor so a
+            # configured live-video zone remains visible in the final output.
+            board_raster = self._make(encoder_specs[0])
+            self._link(prev, board_raster)
+            prev = board_raster
+            encoder_specs = encoder_specs[1:]
         if self.graph.graphics_overlay is not None:
             # S15 graphics-overlay leg: station bug/logo (+ lower-third banner) burned
             # in on the output half, before encode, so it survives every source
             # swap/reload untouched — same insertion point as the S15 §5 CG-lite
             # full-frame board raster in bridge.graph_from_config.
             prev = self._build_graphics_overlay(self.graph.graphics_overlay, prev)
-        for spec in self.graph.encoder:
+        for spec in encoder_specs:
             element = self._make(spec)
             self._link(prev, element)
             prev = element
@@ -2078,6 +2173,11 @@ class GstPlayoutEngine:
                 audio_tail = audio_source
                 for spec in branch.audio_chain:
                     element = self._make(spec)
+                    if spec.factory == "volume" and any(
+                        item.factory == "audioloudnorm" for item in branch.audio_chain
+                    ):
+                        element.set_property("volume", 10 ** (self._program_output_gain_db / 20))
+                        self._board_output_gain_elements.append(element)
                     self._link(audio_tail, element)
                     audio_tail = element
                 self._link(audio_tail, mux)
@@ -2100,6 +2200,11 @@ class GstPlayoutEngine:
             (mux for spec, mux in muxes if spec.factory == "mpegtsmux"),
             muxes[0][1] if muxes else None,
         )
+
+    def _set_board_output_gain(self, gain_db: float) -> None:
+        """Preserve board-bed level after per-output loudness normalization."""
+        for element in getattr(self, "_board_output_gain_elements", ()):
+            element.set_property("volume", 10 ** (gain_db / 20))
 
     def _instantiate_source_leg(
         self, leg: SourceLeg | PlaylistLeg
@@ -2283,6 +2388,21 @@ class GstPlayoutEngine:
                 )
                 self._abort_pending_overlay_swap(overlay_layer_name, reason="error")
                 return True
+            for layer_name, elements in tuple(getattr(self, "_overlay_layer_elements", {}).items()):
+                if not layer_name.startswith("board_live_"):
+                    continue
+                node = message.src
+                while node is not None and node not in elements:
+                    node = node.get_parent() if hasattr(node, "get_parent") else None
+                if node is not None:
+                    err, _debug = message.parse_error()
+                    print(
+                        f"CTRL board live-video layer {layer_name!r} failed; "
+                        f"keeping the ordinary board on air: {err}",
+                        flush=True,
+                    )
+                    self._remove_overlay_layer(layer_name)
+                    return True
             # Item 3: last attribution before the fatal tail. A leg the engine has
             # ALREADY aborted is not gone until its background retirement finishes,
             # and in that window neither ``_belongs_to_pending_reload`` (slot
@@ -5149,6 +5269,9 @@ class GstPlayoutEngine:
         rebase_new_leg = not source_leg_is_clock_timed(new_leg)
 
         pending: dict[str, Any] = {
+            "new_output_gain_db": new_leg.output_gain_db
+            if isinstance(new_leg, PlaylistLeg)
+            else 0.0,
             # Round-2 finding 5: identifies THIS reload transaction. The boundary
             # probes live on the OUTGOING pads, which are the same pad objects
             # across successive transactions (``selector_sink_pads[0]`` until a
@@ -6557,6 +6680,24 @@ class GstPlayoutEngine:
         if self.audio_sink_pads and pending["new_audio_pad"] is not None:
             self.audio_sink_pads[0] = pending["new_audio_pad"]
         self._source_leg_elements[0] = pending["new_elements"]
+        if hasattr(self, "_board_live_concat_kinds"):
+            old_program_concat = self._program_video_concat
+            self._program_video_concat = next(
+                (
+                    element
+                    for element in pending["new_elements"]
+                    if element.get_name().startswith("vconcat_program_")
+                ),
+                None,
+            )
+            if self._program_video_concat is not None:
+                self._apply_board_concat_active(self._program_video_concat)
+            if old_program_concat is not None:
+                self._board_live_concat_kinds.pop(old_program_concat.get_name(), None)
+            for name in pending.get("board_live_remove", ()):
+                self._remove_overlay_layer(name)
+        self._program_output_gain_db = pending.get("new_output_gain_db", 0.0)
+        self._set_board_output_gain(self._program_output_gain_db)
         # U41: the program is back, so any plan-EOS hold is over -- and the hold has
         # to be re-armed on the pad just published, because the probe from before
         # this commit sits on the pad the line above displaced. Both statements
@@ -8520,6 +8661,9 @@ class GstPlayoutEngine:
             if name == "emergency":
                 continue
             if name not in new_layers_by_name:
+                if name.startswith("board_live_") and self._pending_reload is not None:
+                    self._pending_reload.setdefault("board_live_remove", []).append(name)
+                    continue
                 self._remove_overlay_layer(name)
         # A layer name can be PENDING (a not-yet-committed ADD, i.e. one never in
         # ``_overlay_layer_pads`` because this is its first-ever reload) without the

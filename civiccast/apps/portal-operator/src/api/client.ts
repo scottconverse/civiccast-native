@@ -38,6 +38,7 @@ import type {
   BackupSetupRequest,
   BackupStatus,
   BulletinCreate,
+  BulletinAudio,
   BulletinUpdate,
   CgBulletinQueue,
   CgBulletinSubmission,
@@ -2092,6 +2093,12 @@ export function getRemoteContributionInstallStatus(): Promise<ContributionInstal
   return request<ContributionInstallReport>('/api/staff/installer/remote-contribution')
 }
 
+export function installRemoteContribution(): Promise<ContributionInstallReport> {
+  return request<ContributionInstallReport>('/api/staff/installer/remote-contribution/install', {
+    method: 'POST',
+  })
+}
+
 export function updateControlSurface(
   surfaceId: string,
   payload: ControlSurfaceInput,
@@ -2758,6 +2765,23 @@ export function moderateCgBulletin(
 
 function cgBoardBase(channelId: string): string {
   return `/api/staff/cg/channels/${encodeURIComponent(channelId)}`
+}
+
+export type BoardAudio = BulletinAudio & { scope: 'channel'; gain_db: number }
+
+export function getCgBoardAudio(channelId: string): Promise<BoardAudio | null> {
+  return request<BoardAudio | null>(`${cgBoardBase(channelId)}/board/audio`)
+}
+
+export function setCgBoardAudio(
+  channelId: string,
+  payload: { asset_ref: string; gain_db: number },
+): Promise<BoardAudio> {
+  return request<BoardAudio>(`${cgBoardBase(channelId)}/board/audio`, { method: 'PUT', body: payload })
+}
+
+export function deleteCgBoardAudio(channelId: string): Promise<void> {
+  return request<void>(`${cgBoardBase(channelId)}/board/audio`, { method: 'DELETE' })
 }
 
 /** Resolves null when the channel has no board yet — the server returns 200 +

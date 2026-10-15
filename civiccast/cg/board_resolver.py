@@ -189,6 +189,8 @@ def _render_zone(
         content = {"text": cfg.manual_text or ""}
     elif cfg.content_source == "image":
         content = {"image_asset_ref": cfg.image_asset_ref}
+    elif cfg.content_source == "live_video":
+        content = {"live_source_id": cfg.live_source_id}
     elif cfg.content_source == "schedule":
         # CG depth (DC-CG4): a program-aware "coming up next" interstitial when
         # the caller supplies the channel's upcoming program-log entries.

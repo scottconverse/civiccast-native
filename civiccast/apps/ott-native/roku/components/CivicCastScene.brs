@@ -4,8 +4,7 @@
 ' Behaviour script for the CivicCastScene SceneGraph component.
 '
 ' init() runs once at component construction; we wire up the channel-list
-' onItemSelected handler, kick off the config fetch on a urlTransfer task
-' so the UI thread stays responsive, and observe the video node's state
+' onItemSelected handler, fetch the station catalog, and observe the video node's state
 ' so we can hide it cleanly when playback ends.
 '
 ' Real CivicCast app-platform contract (civiccast/app_platform/models.py):
@@ -23,14 +22,16 @@
 
 ' --- Defaults / config ------------------------------------------------------
 
-' The configured CivicCast public API base. In production this is overridden
-' by Roku's "channel config" — for the starter, we ship a placeholder. See
-' README.md for how the station administrator overrides it.
+' The configured CivicCast public API base, persisted from Station address.
+' The example host is only the initial value before station setup.
 '
 ' A function, not a top-level `const` — plain BrightScript (as opposed to
 ' the BrighterScript superset) does not support top-level const
 ' declarations. This file is shipped as standard .brs and sideloaded as-is.
 function getApiBaseUrl() as String
+    settings = CreateObject("roRegistrySection", "CivicCast")
+    saved = settings.read("apiBaseUrl")
+    if saved <> invalid and saved <> "" then return saved
     return "https://civiccast.example.com"
 end function
 
@@ -38,11 +39,14 @@ end function
 
 sub init()
     m.channels = []
+    m.replays = []
     m.statusLabel = m.top.findNode("statusLabel")
     m.channelList = m.top.findNode("channelList")
+    m.artwork = m.top.findNode("artwork")
     m.video = m.top.findNode("videoPlayer")
 
     m.channelList.observeField("itemSelected", "onChannelSelected")
+    m.channelList.observeField("itemFocused", "onItemFocused")
     m.video.observeField("state", "onVideoStateChanged")
 
     fetchConfig()
@@ -84,10 +88,45 @@ sub fetchConfig()
         end if
         liveStateUrl = entry.live_state_url
         if liveStateUrl = invalid then liveStateUrl = ""
-        m.channels.push({ title: title, live_state_url: liveStateUrl })
+        logoUrl = invalid
+        if entry.branding <> invalid then logoUrl = entry.branding.logo_url
+        m.channels.push({ title: title, channel_id: entry.channel_id, live_state_url: liveStateUrl, poster_url: logoUrl })
     end for
 
+    fetchReplays()
     renderChannels("")
+    openDeepLink()
+end sub
+
+sub openDeepLink()
+    args = m.top.launchArgs
+    if args = invalid or not isAssocArray(args) then return
+    target = args.contentid
+    if target = invalid or target = "" then return
+    for each replay in m.replays
+        if replay.item_id = target then
+            playStream(replay.title, replay.playback_url)
+            return
+        end if
+    end for
+    for each channel in m.channels
+        if channel.channel_id = target then
+            fetchLiveStateAndPlay(channel)
+            return
+        end if
+    end for
+end sub
+
+sub fetchReplays()
+    body = getJson(getApiBaseUrl() + "/api/public/assets")
+    if body = invalid then return
+    assets = parseJson(body)
+    if assets = invalid or not isArray(assets) then return
+    for each asset in assets
+        if asset.asset_id <> invalid and asset.title <> invalid and asset.manifest_url <> invalid then
+            m.replays.push({ title: asset.title, item_id: asset.asset_id, playback_url: asset.manifest_url, poster_url: asset.poster_url })
+        end if
+    end for
 end sub
 
 sub showEmptyState(reason as String)
@@ -97,11 +136,19 @@ end sub
 
 sub renderChannels(statusText as String)
     contentNode = CreateObject("roSGNode", "ContentNode")
+    m.items = []
     for each ch in m.channels
         row = contentNode.CreateChild("ContentNode")
         row.title = ch.title
+        m.items.push(ch)
+    end for
+    for each replay in m.replays
+        row = contentNode.CreateChild("ContentNode")
+        row.title = "Replay: " + replay.title
+        m.items.push(replay)
     end for
     m.channelList.content = contentNode
+    onItemFocused()
 
     if statusText = "" then
         m.statusLabel.visible = false
@@ -113,12 +160,27 @@ sub renderChannels(statusText as String)
     m.channelList.setFocus(true)
 end sub
 
+sub onItemFocused()
+    idx = m.channelList.itemFocused
+    m.artwork.visible = false
+    if idx = invalid then return
+    if idx < 0 or idx >= m.items.count() then return
+    imageUrl = m.items[idx].poster_url
+    if imageUrl = invalid or imageUrl = "" then return
+    m.artwork.uri = resolveUrl(imageUrl)
+    m.artwork.visible = true
+end sub
+
 ' --- Selection / playback ---------------------------------------------------
 
 sub onChannelSelected()
     idx = m.channelList.itemSelected
-    if idx < 0 or idx >= m.channels.count() then return
-    ch = m.channels[idx]
+    if idx < 0 or idx >= m.items.count() then return
+    ch = m.items[idx]
+    if ch.playback_url <> invalid then
+        playStream(ch.title, ch.playback_url)
+        return
+    end if
     if ch.live_state_url = "" then
         m.statusLabel.text = ch.title + ": no live-state URL configured."
         m.statusLabel.visible = true
@@ -159,10 +221,14 @@ sub fetchLiveStateAndPlay(ch as Object)
         return
     end if
 
+    playStream(ch.title, playbackUrl)
+end sub
+
+sub playStream(title as String, playbackUrl as String)
     content = CreateObject("roSGNode", "ContentNode")
-    content.url = playbackUrl
+    content.url = resolveUrl(playbackUrl)
     content.streamFormat = "hls"
-    content.title = ch.title
+    content.title = title
 
     m.statusLabel.visible = false
     m.video.content = content
@@ -182,6 +248,85 @@ sub onVideoStateChanged()
         m.video.visible = false
         m.channelList.setFocus(true)
     end if
+end sub
+
+function onKeyEvent(key as String, press as Boolean) as Boolean
+    ' Keep Roku's native player options (including captions and audio) available.
+    if m.video.visible then return false
+    if press and key = "options" then
+        menu = CreateObject("roSGNode", "Dialog")
+        menu.title = "CivicCast options"
+        menu.buttons = ["Search", "Station address", "Cancel"]
+        menu.observeField("buttonSelected", "onOptionsSelected")
+        m.top.dialog = menu
+        return true
+    end if
+    return false
+end function
+
+sub onOptionsSelected()
+    selected = m.top.dialog.buttonSelected
+    m.top.dialog = invalid
+    if selected = 0 then
+        openKeyboard("Search channels and replays", "search")
+    else if selected = 1 then
+        openKeyboard("Station API address", "station")
+    end if
+end sub
+
+sub openKeyboard(title as String, purpose as String)
+    m.keyboardPurpose = purpose
+    keyboard = CreateObject("roSGNode", "KeyboardDialog")
+    keyboard.title = title
+    keyboard.buttons = ["OK", "Cancel"]
+    if purpose = "station" then keyboard.text = getApiBaseUrl()
+    keyboard.observeField("buttonSelected", "onKeyboardSelected")
+    m.top.dialog = keyboard
+end sub
+
+sub onKeyboardSelected()
+    keyboard = m.top.dialog
+    selected = keyboard.buttonSelected
+    value = keyboard.text
+    m.top.dialog = invalid
+    if selected <> 0 then return
+    if m.keyboardPurpose = "station" then
+        if Left(value, 8) <> "https://" then
+            m.statusLabel.text = "Enter the full HTTPS station address."
+            m.statusLabel.visible = true
+            return
+        end if
+        settings = CreateObject("roRegistrySection", "CivicCast")
+        settings.write("apiBaseUrl", value)
+        settings.flush()
+        fetchConfig()
+    else
+        renderSearch(value)
+    end if
+end sub
+
+sub renderSearch(query as String)
+    contentNode = CreateObject("roSGNode", "ContentNode")
+    m.items = []
+    lowerQuery = LCase(query)
+    for each channel in m.channels
+        if Instr(1, LCase(channel.title), lowerQuery) > 0 then
+            row = contentNode.CreateChild("ContentNode")
+            row.title = channel.title
+            m.items.push(channel)
+        end if
+    end for
+    for each replay in m.replays
+        if Instr(1, LCase(replay.title), lowerQuery) > 0 then
+            row = contentNode.CreateChild("ContentNode")
+            row.title = "Replay: " + replay.title
+            m.items.push(replay)
+        end if
+    end for
+    m.channelList.content = contentNode
+    m.channelList.setFocus(true)
+    m.statusLabel.text = "Search: " + query
+    m.statusLabel.visible = true
 end sub
 
 ' --- Helpers ----------------------------------------------------------------
@@ -217,4 +362,8 @@ end function
 
 function isAssocArray(v as Dynamic) as Boolean
     return type(v) = "roAssociativeArray" or type(v) = "Object"
+end function
+
+function isArray(v as Dynamic) as Boolean
+    return type(v) = "roArray"
 end function

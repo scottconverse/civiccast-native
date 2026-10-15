@@ -41,12 +41,18 @@ from civiccast.egress.gst.bridge import (
     graphics_overlay_leg_from_config,
 )
 from civiccast.egress.gst.encoder_probe import (
-    CG_OVERLAY_ELEMENT,
     decide_encoder,
     probe_element_registered,
     probe_hardware_encoder,
 )
-from civiccast.egress.gst.graph import AudioTapLeg, PlayoutGraph, graph_to_json
+from civiccast.egress.gst.graph import (
+    AudioTapLeg,
+    ElementSpec,
+    GraphicsOverlayLayer,
+    GraphicsOverlayLeg,
+    PlayoutGraph,
+    graph_to_json,
+)
 from civiccast.egress.gst.reload_policy import WORKER_PERSISTENT_ENV, reload_sidecar_suffix
 from civiccast.native.supervisor.replay import (
     ChannelReplay,
@@ -1008,6 +1014,57 @@ class GstPlayoutStrategy:
             compositor=ElementSpec(factory, name="graphics_overlay_comp"),
         )
 
+    def _with_board_live_video(
+        self,
+        leg: GraphicsOverlayLeg | None,
+        request: EncoderStartRequest,
+        channel_dir: Path,
+        *,
+        reserve: bool,
+    ) -> GraphicsOverlayLeg | None:
+        layers = request.board_live_video_layers
+        board_raster = request.cg_overlay_image
+        if not layers and board_raster is None:
+            return leg
+        factory = next(
+            (name for name in ("compositor", "d3d11compositor") if self._element_probe(name)),
+            None,
+        )
+        if factory is None:
+            logger.warning(
+                "channel %s: board output needs a graphics compositor; leaving ordinary program output",
+                request.channel_id,
+            )
+            return leg
+        if not any(segment.kind == "cg" for segment in request.source_plan.segments):
+            layers = ()
+        if board_raster is not None:
+            layers = (
+                GraphicsOverlayLayer(name="cg_board_raster", image_path=str(board_raster)),
+                *layers,
+            )
+        if not layers and reserve and leg is None:
+            from civiccast.egress.gst.graphics_overlay import write_rgba_png
+
+            channel_dir.mkdir(parents=True, exist_ok=True)
+            path = channel_dir / "board-live-reservation.png"
+            write_rgba_png(path, 1, 1, b"\0\0\0\0")
+            layers = (
+                GraphicsOverlayLayer(name="board-live-reservation", image_path=str(path), alpha=0),
+            )
+        if leg is None:
+            if not layers:
+                return None
+            return GraphicsOverlayLeg(
+                layers=layers,
+                compositor=ElementSpec(factory, name="graphics_overlay_comp"),
+            )
+        return replace(
+            leg,
+            layers=(*leg.layers, *layers),
+            compositor=ElementSpec(factory, name="graphics_overlay_comp"),
+        )
+
     def sync_emergency_overlay(self, channel_id: str, config: Any, work_dir: Path) -> bool:
         from civiccast.eas.presentation import presentation_enabled, render_presentation
 
@@ -1202,22 +1259,6 @@ class GstPlayoutStrategy:
         POSIX), so this is Windows-scoped."""
         return bool(encoder_override and "265" in encoder_override and caption_embed is not None)
 
-    def _cg_overlay_image(self, request: EncoderStartRequest, *, warn: bool) -> Path | None:
-        """S15 §5 CG-lite gate: only composite the board raster when the overlay
-        element is actually registered; otherwise air without it and say so."""
-        if request.cg_overlay_image is None:
-            return None
-        if self._element_probe(CG_OVERLAY_ELEMENT):
-            return request.cg_overlay_image
-        if warn:
-            logger.warning(
-                "channel %s: board overlay requested but %s is not registered in this "
-                "GStreamer runtime — airing without the board overlay.",
-                request.channel_id,
-                CG_OVERLAY_ELEMENT,
-            )
-        return None
-
     def start(self, request: EncoderStartRequest) -> EncoderStartResult:
         self._emergency_keys.pop(request.channel_id, None)
         self._emergency_channels.discard(request.channel_id)
@@ -1247,10 +1288,15 @@ class GstPlayoutStrategy:
             caption_embed=caption_embed,
             audio_tracks=self._audio_tracks(request.channel_id),
             encoder_override=encoder_override,
-            cg_overlay_image=self._cg_overlay_image(request, warn=True),
+            cg_overlay_image=None,
             graphics_overlay=self._reserve_emergency_compositor(
-                graphics_overlay_leg_from_config(
-                    request.config, render_dir=channel_dir, sweep_stale=True
+                self._with_board_live_video(
+                    graphics_overlay_leg_from_config(
+                        request.config, render_dir=channel_dir, sweep_stale=True
+                    ),
+                    request,
+                    channel_dir,
+                    reserve=True,
                 ),
                 channel_dir,
             ),
@@ -1513,9 +1559,12 @@ class GstPlayoutStrategy:
             caption_embed=caption_embed,
             audio_tracks=self._audio_tracks(channel_id),
             encoder_override=encoder_override,
-            cg_overlay_image=self._cg_overlay_image(request, warn=False),
-            graphics_overlay=graphics_overlay_leg_from_config(
-                request.config, render_dir=channel_dir
+            cg_overlay_image=None,
+            graphics_overlay=self._with_board_live_video(
+                graphics_overlay_leg_from_config(request.config, render_dir=channel_dir),
+                request,
+                channel_dir,
+                reserve=False,
             ),
         )
         if captions_allowed:

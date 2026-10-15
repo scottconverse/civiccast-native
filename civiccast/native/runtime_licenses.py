@@ -78,6 +78,7 @@ PLUGIN_LICENSE: Final[dict[str, str]] = {
     # 1.28.5 tree: License=LGPL, Source module=gst-plugins-good. The module's
     # upstream COPYING.LIB is LGPL-2.1-or-later.
     "gstaudiofx.dll": "LGPL-2.1-or-later",
+    "gstvolume.dll": "LGPL-2.1-or-later",
     "gstaudioconvert.dll": "LGPL-2.1-or-later",
     "gstaudioparsers.dll": "LGPL-2.1-or-later",
     "gstaudioresample.dll": "LGPL-2.1-or-later",

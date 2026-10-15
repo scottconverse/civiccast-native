@@ -25,6 +25,9 @@
     <feature name="http://tizen.org/feature/screen.size.normal"/>
 
     <tizen:privilege name="http://tizen.org/privilege/internet"/>
+    <!-- The operator selects a station host at first launch. WARP must allow
+         that host before the packaged web app may fetch its public API. -->
+    <access origin="*" subdomains="true"/>
 
     <tizen:setting screen-orientation="landscape"
                     context-menu="disable"

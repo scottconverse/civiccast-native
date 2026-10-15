@@ -1,4 +1,8 @@
-# Beta 18 Technical Tester Walkthrough
+# Beta 18 Technical Tester Walkthrough (historical)
+
+For the current Beta 19 package and feature paths, start with the
+[Beta 19 tester quickstart](START-HERE.md) and its linked manual. This page
+preserves the Beta 18 test scope.
 
 Beta 18 adds guided Cablecast station import to CivicCast for native Windows,
 building on Beta 17's subscriber delivery, Podcast publication, and

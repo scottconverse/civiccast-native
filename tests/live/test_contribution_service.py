@@ -27,6 +27,7 @@ from civiccast.live.contribution.bridge import (
     UrlVdoNinjaBridge,
     VdoBridgeError,
     VdoDiagnostics,
+    guest_stream_id,
 )
 from civiccast.live.contribution.models import (
     INVITE_TOKEN_MIN_LENGTH,
@@ -43,6 +44,7 @@ from civiccast.live.contribution.service import (
     RoomClosedError,
     RoomGuestLimitError,
     RoomNotOpenError,
+    TakeoverHookError,
 )
 from civiccast.live.contribution.store import ContributionStore
 
@@ -139,6 +141,26 @@ def test_url_bridge_mints_deterministic_urls() -> None:
     urls = bridge.guest_urls(room, invite_token="tok123", role="council_member")
     assert "push=tok123" in urls.view_url and "room=vdoabc" in urls.view_url
     assert "view=tok123" in urls.push_url and "solo=1" in urls.push_url
+
+
+def test_mediamtx_url_uses_non_capability_media_path() -> None:
+    bridge = UrlVdoNinjaBridge(
+        "https://vdo.station.example", mediamtx_url="https://media.station.example:8889"
+    )
+    room = ContributionRoom(
+        room_id="r1",
+        channel_id="ch",
+        name="Chamber",
+        vdo_room_name="vdoabc",
+        created_at=_T0,
+        updated_at=_T0,
+    )
+    stream_id = guest_stream_id("private-join-token")
+    urls = bridge.guest_urls(room, invite_token="private-join-token", role="presenter")
+    assert f"push={stream_id}" in urls.view_url
+    assert f"view={stream_id}" in urls.push_url
+    assert "private-join-token" not in urls.view_url + urls.push_url
+    assert "mediamtx=https%3A%2F%2Fmedia.station.example%3A8889" in urls.view_url
 
 
 def test_url_bridge_rejects_empty_base() -> None:
@@ -321,7 +343,7 @@ def _join(svc, room) -> str:
     return svc.resolve_invite(inv.invite_token).session_id
 
 
-def test_on_air_requires_admit_and_records_lifecycle_without_media_takeover(
+def test_on_air_requires_admit_and_invokes_media_takeover(
     store: ContributionStore,
 ) -> None:
     fired: list[tuple[str, str]] = []
@@ -342,7 +364,42 @@ def test_on_air_requires_admit_and_records_lifecycle_without_media_takeover(
     on_air = svc.put_on_air(sid)
     assert on_air.state == "on_air" and on_air.on_air_at is not None
     assert svc.get_room(room.room_id).state == "live"
-    assert fired == []  # channel takeover is a separate confirmed action
+    assert fired == [(sid, room.room_id)]
+
+
+def test_failed_guest_take_preserves_previous_state(store: ContributionStore) -> None:
+    def fail(_guest: RemoteGuestSession, _room: ContributionRoom) -> None:
+        raise RuntimeError("media unavailable")
+
+    svc, _ = _make_service(store, on_air_hook=fail)
+    room = _open_room(svc)
+    sid = _join(svc, room)
+    svc.admit_guest(sid)
+    with pytest.raises(TakeoverHookError):
+        svc.put_on_air(sid)
+    assert svc.get_session(sid).state == "connected"
+    assert svc.get_room(room.room_id).state == "open"
+
+
+def test_guest_audio_and_handback_hooks_follow_session_state(store: ContributionStore) -> None:
+    events: list[str] = []
+    svc, _ = _make_service(
+        store,
+        on_air_hook=lambda guest, _room: events.append(f"take:{guest.session_id}"),
+        off_air_hook=lambda guest, _room: events.append(f"return:{guest.session_id}"),
+        audio_mute_hook=lambda guest, _room, muted: events.append(
+            f"audio:{guest.session_id}:{muted}"
+        ),
+    )
+    room = _open_room(svc)
+    sid = _join(svc, room)
+    svc.admit_guest(sid)
+    svc.put_on_air(sid)
+    assert svc.record_media_control_request(sid, "audio_mute").state == "muted"
+    assert svc.record_media_control_request(sid, "audio_unmute").state == "on_air"
+    svc.take_off_air(sid)
+    assert svc.get_room(room.room_id).state == "open"
+    assert events == [f"take:{sid}", f"audio:{sid}:True", f"audio:{sid}:False", f"return:{sid}"]
 
 
 def test_mute_off_air_and_drop_transitions(store: ContributionStore) -> None:
@@ -377,6 +434,21 @@ def test_close_room_preserves_guest_lifecycle_until_disconnect_is_observed(
     assert [
         guest.session_id for guest in svc.list_sessions(room_id=room.room_id, active_only=True)
     ] == [sid]
+
+
+def test_close_room_returns_on_air_guest_before_closing(store: ContributionStore) -> None:
+    returned: list[str] = []
+    svc, _ = _make_service(
+        store, off_air_hook=lambda guest, _room: returned.append(guest.session_id)
+    )
+    room = _open_room(svc)
+    sid = _join(svc, room)
+    svc.admit_guest(sid)
+    svc.put_on_air(sid)
+    svc.close_room(room.room_id)
+    assert returned == [sid]
+    assert svc.get_room(room.room_id).state == "closed"
+    assert svc.get_session(sid).state == "connected"
 
 
 def test_update_connection_quality_is_advisory(store: ContributionStore) -> None:

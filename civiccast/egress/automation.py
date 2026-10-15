@@ -3178,7 +3178,10 @@ def build_channel_automation(
     """
 
     from civiccast.egress.audio_tracks import AudioTrackStore
-    from civiccast.egress.bulletin_filler import build_filler_source_provider
+    from civiccast.egress.bulletin_filler import (
+        build_board_live_video_provider,
+        build_filler_source_provider,
+    )
     from civiccast.egress.caption_proof import build_caption_status_provider
     from civiccast.egress.hls_relay import HlsRelaySupervisor
     from civiccast.egress.preparer import SourcePreparer
@@ -3297,6 +3300,7 @@ def build_channel_automation(
         fallback_source_provider=build_filler_source_provider(
             session_factory, work_dir=resolved_work_dir
         ),
+        board_live_video_provider=build_board_live_video_provider(session_factory),
         source_preparer=source_preparer_instance.prepare,
         async_source_preparer=lambda plan, config, cancel, protected: (
             source_preparer_instance.prepare(

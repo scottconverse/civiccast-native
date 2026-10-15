@@ -14,9 +14,11 @@ import hashlib
 import logging
 import os
 import textwrap
+import time
 import uuid
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,11 +30,15 @@ from civiccast.cg.feed_fetcher import FeedCache
 from civiccast.cg.models import CgBulletinSubmission
 from civiccast.egress.board_compositor import (
     ImageResolver,
+    _region_box,
+    _safe_area_pixels,
     board_segment_cache_key,
     build_board_preview_args,
     build_board_segment_args,
 )
 from civiccast.egress.errors import SourcePrepareError
+from civiccast.egress.gst.bridge import source_first_element
+from civiccast.egress.gst.graph import ElementSpec, GraphicsOverlayLayer
 from civiccast.egress.models import (
     MAX_PLAYLIST_SUBCHAINS,
     EgressConfig,
@@ -51,9 +57,11 @@ from civiccast.stream._ffmpeg import FfmpegError, FfmpegNotFoundError, run_ffmpe
 
 BulletinsProvider = Callable[[str], Sequence[CgBulletinSubmission]]
 BoardProvider = Callable[[str, datetime], ResolvedBoard | None]
+BoardAudioProvider = Callable[[str], "BoardAudioBed | None"]
 #: (channel_id, config) -> board raster for the S15 engine overlay, or None.
 #: Takes the config because frame geometry lives on ``canonical_profile``.
 BoardOverlayProvider = Callable[[str, "EgressConfig"], Path | None]
+BoardLiveVideoProvider = Callable[[str, "EgressConfig"], tuple[GraphicsOverlayLayer, ...]]
 BrandingProvider = Callable[[str], ChannelBranding | None]
 
 _DEFAULT_BACKGROUND = "0x1a2744"
@@ -61,9 +69,28 @@ _LOG = logging.getLogger(__name__)
 _SLIDE_SECONDS = 10
 _WRAP_WIDTH = 46
 
+
+@dataclass(frozen=True)
+class BoardAudioBed:
+    asset_ref: str
+    path: Path
+    gain_db: float
+    source_version: str
+    duration_seconds: int
+
+
+@dataclass(frozen=True)
+class _BoardAudioPhase:
+    identity: str
+    anchor: datetime
+    plan_start: datetime
+    plan_end: datetime
+
+
 __all__ = [
     "BulletinFillerSourceGenerator",
     "FillerSourceProvider",
+    "build_board_live_video_provider",
     "build_board_overlay_provider",
     "build_bulletin_slide_args",
     "build_filler_source_provider",
@@ -80,6 +107,7 @@ class BulletinFillerSourceGenerator:
         bulletins_provider: BulletinsProvider,
         branding_provider: BrandingProvider | None = None,
         board_provider: BoardProvider | None = None,
+        board_audio_provider: BoardAudioProvider | None = None,
         ffmpeg_runner: FfmpegRunner = run_ffmpeg,
         slate_generator: SlateSourceGenerator | None = None,
         board_image_resolver: ImageResolver | None = None,
@@ -91,6 +119,8 @@ class BulletinFillerSourceGenerator:
         self._bulletins_provider = bulletins_provider
         self._branding_provider = branding_provider
         self._board_provider = board_provider
+        self._board_audio_provider = board_audio_provider
+        self._board_audio_phase: dict[str, _BoardAudioPhase] = {}
         self._ffmpeg_runner = ffmpeg_runner
         self._slate_generator = slate_generator or SlateSourceGenerator(
             work_dir=work_dir, ffmpeg_runner=ffmpeg_runner
@@ -104,6 +134,7 @@ class BulletinFillerSourceGenerator:
         now = self._clock()
         board = self._board_provider(config.channel_id, now) if self._board_provider else None
         if board is None:
+            self._board_audio_phase.pop(config.channel_id, None)
             return self._render_slide_plan(config, now=now)
         return self._render_board_plan(config, board, now=now)
 
@@ -132,6 +163,21 @@ class BulletinFillerSourceGenerator:
             )
         return self._plan_with_cycle(config, segments)
 
+    def _prune_board_audio_cache(
+        self, board_dir: Path, segments: list[EgressSourceSegment]
+    ) -> None:
+        """Bound generated audio segments without touching an active board plan."""
+        protected = {Path(segment.path) for segment in segments}
+        cutoff = time.time() - max(600, self._slide_seconds * len(segments) * 2)
+        for path in board_dir.glob("audio-*.ts"):
+            if path in protected:
+                continue
+            try:
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+            except OSError as exc:
+                _LOG.warning("could not clear stale generated board audio %s: %s", path, exc)
+
     def _render_board_plan(
         self,
         config: EgressConfig,
@@ -141,13 +187,47 @@ class BulletinFillerSourceGenerator:
     ) -> EgressSourcePlan:
         bulletins = airable_bulletins(list(self._bulletins_provider(config.channel_id)), now=now)
         board_bulletins: list[CgBulletinSubmission | None] = list(bulletins) or [None]
+        audio_bed = (
+            self._board_audio_provider(config.channel_id) if self._board_audio_provider else None
+        )
         branding = self._branding(config.channel_id)
         profile = config.canonical_profile
         board_dir = self._work_dir / config.channel_id / "board"
         board_dir.mkdir(parents=True, exist_ok=True)
 
+        if audio_bed is not None:
+            identity = f"{audio_bed.asset_ref}:{audio_bed.source_version}:{audio_bed.gain_db}"
+            previous = self._board_audio_phase.get(config.channel_id)
+            if previous is None or previous.identity != identity or now < previous.anchor:
+                anchor = now
+                plan_start = now
+            else:
+                anchor = previous.anchor
+                plan_start = (
+                    previous.plan_start
+                    if now < previous.plan_start
+                    else max(now, previous.plan_end)
+                )
+            phase_seconds = int((plan_start - anchor).total_seconds()) % audio_bed.duration_seconds
+            slide_count = max(
+                len(board_bulletins),
+                min(MAX_PLAYLIST_SUBCHAINS, -(-self._target_fill_seconds // self._slide_seconds)),
+            )
+            board_bulletins = [
+                board_bulletins[index % len(board_bulletins)] for index in range(slide_count)
+            ]
+        else:
+            self._board_audio_phase.pop(config.channel_id, None)
+            identity = None
+            phase_seconds = 0
+
         segments: list[EgressSourceSegment] = []
-        for bulletin in board_bulletins:
+        for index, bulletin in enumerate(board_bulletins):
+            audio_offset = (
+                (phase_seconds + index * self._slide_seconds) % audio_bed.duration_seconds
+                if audio_bed is not None
+                else 0
+            )
             key = board_segment_cache_key(
                 board=board,
                 bulletin=bulletin,
@@ -158,22 +238,33 @@ class BulletinFillerSourceGenerator:
                 height=profile.height,
                 frame_rate=profile.fps,
                 now=now,
+                audio_asset_ref=audio_bed.asset_ref if audio_bed else None,
+                audio_gain_db=audio_bed.gain_db if audio_bed else 0.0,
+                audio_source_version=audio_bed.source_version if audio_bed else None,
+                audio_offset_seconds=audio_offset,
             )
-            segment_path = board_dir / f"{key}.ts"
+            segment_path = board_dir / f"{'audio-' if audio_bed else ''}{key}.ts"
             if not segment_path.exists():
                 # Render to a temp path and atomically publish: writing ffmpeg
                 # output straight to the cache path lets a concurrent renderer
                 # (or a crash mid-write) leave a partial segment that a later
                 # exists() check happily airs (gate finding: cache TOCTOU).
                 staging = segment_path.with_name(f".{key}.{os.getpid()}.partial.ts")
-                self._render_board_segment(
+                rendered_with_audio = self._render_board_segment(
                     segment_path=staging,
                     config=config,
                     board=board,
                     bulletin=bulletin,
                     branding=branding,
                     now=now,
+                    audio_bed=audio_bed,
+                    audio_offset_seconds=audio_offset,
                 )
+                if audio_bed is not None and not rendered_with_audio:
+                    segment_path = board_dir / f"audio-{key}.silent.ts"
+                    # A broken track should be retried on the next plan, not
+                    # on every remaining slide in this one.
+                    audio_bed = None
                 staging.replace(segment_path)
             segments.append(
                 EgressSourceSegment(
@@ -181,12 +272,23 @@ class BulletinFillerSourceGenerator:
                     path=str(segment_path),
                     duration_seconds=self._slide_seconds,
                     kind="cg",
+                    board_audio_gain_db=audio_bed.gain_db if audio_bed else None,
                     source_ref=(
                         "board-empty" if bulletin is None else f"bulletin-{bulletin.submission_id}"
                     ),
                 )
             )
-        return self._plan_with_cycle(config, segments)
+        plan = self._plan_with_cycle(config, segments)
+        if identity is not None:
+            self._board_audio_phase[config.channel_id] = _BoardAudioPhase(
+                identity=identity,
+                anchor=anchor,
+                plan_start=plan_start,
+                plan_end=plan_start
+                + timedelta(seconds=sum(segment.duration_seconds for segment in plan.segments)),
+            )
+        self._prune_board_audio_cache(board_dir, segments)
+        return plan
 
     def _plan_with_cycle(
         self, config: EgressConfig, segments: list[EgressSourceSegment]
@@ -264,34 +366,12 @@ class BulletinFillerSourceGenerator:
         bulletin: CgBulletinSubmission | None,
         branding: ChannelBranding | None,
         now: datetime,
-    ) -> None:
+        audio_bed: BoardAudioBed | None,
+        audio_offset_seconds: float = 0.0,
+    ) -> bool:
         profile = config.canonical_profile
-        args = build_board_segment_args(
-            board=board,
-            bulletin=bulletin,
-            width=profile.width,
-            height=profile.height,
-            frame_rate=profile.fps,
-            background_color=self._background(branding),
-            station_short_name=(branding.short_name if branding else ""),
-            segment_seconds=self._slide_seconds,
-            out_path=segment_path,
-            include_text=True,
-            now=now,
-            image_resolver=self._board_image_resolver or (lambda _: None),
-            codec_args=self._board_codec_args(profile),
-        )
-        result = self._run_ffmpeg_or_fail_open(
-            args, what=f"board segment for channel {config.channel_id}"
-        )
-        if result.returncode != 0:
-            # Mirror the slide-path posture on missing font support: retry with all
-            # text disabled so the board can still air as an image-only fallback.
-            _LOG.warning(
-                "channel %s: board text render failed; retrying image-only. The board "
-                "will air WITHOUT its text zones until the host's fonts are fixed.",
-                config.channel_id,
-            )
+
+        def attempt(include_text: bool, bed: BoardAudioBed | None) -> bool:
             args = build_board_segment_args(
                 board=board,
                 bulletin=bulletin,
@@ -302,20 +382,54 @@ class BulletinFillerSourceGenerator:
                 station_short_name=(branding.short_name if branding else ""),
                 segment_seconds=self._slide_seconds,
                 out_path=segment_path,
-                include_text=False,
+                include_text=include_text,
                 now=now,
                 image_resolver=self._board_image_resolver or (lambda _: None),
                 codec_args=self._board_codec_args(profile),
+                audio_path=bed.path if bed else None,
+                audio_offset_seconds=audio_offset_seconds if bed else 0.0,
+                audio_gain_db=bed.gain_db if bed else 0.0,
+                audio_sample_rate=profile.audio_sample_rate,
+                audio_channels=profile.audio_channels,
+                audio_codec=profile.audio_codec,
+                audio_bitrate_kbps=profile.audio_bitrate_kbps,
             )
-            result = self._run_ffmpeg_or_fail_open(
-                args, what=f"board segment for channel {config.channel_id}"
+            try:
+                result = self._run_ffmpeg_or_fail_open(
+                    args, what=f"board segment for channel {config.channel_id}"
+                )
+            except SourcePrepareError as exc:
+                if isinstance(exc.__cause__, FfmpegError):
+                    return False
+                raise
+            return bool(result.returncode == 0)
+
+        if attempt(True, audio_bed):
+            return audio_bed is not None
+        if audio_bed is not None:
+            _LOG.warning(
+                "channel %s: board render failed with audio; retrying without text",
+                config.channel_id,
             )
-        if result.returncode != 0:
-            ref = "empty" if bulletin is None else bulletin.submission_id
-            raise SourcePrepareError(
-                f"Could not render board segment for bulletin {ref!r}; "
-                "inspect FFmpeg output before retrying."
+            if attempt(False, audio_bed):
+                return True
+            _LOG.warning(
+                "channel %s: configured board audio could not be rendered; airing the board silently",
+                config.channel_id,
             )
+            if attempt(True, None):
+                return False
+        _LOG.warning(
+            "channel %s: board text render failed; retrying image-only",
+            config.channel_id,
+        )
+        if attempt(False, None):
+            return False
+        ref = "empty" if bulletin is None else bulletin.submission_id
+        raise SourcePrepareError(
+            f"Could not render board segment for bulletin {ref!r}; "
+            "inspect FFmpeg output before retrying."
+        )
 
     def _run_ffmpeg_or_fail_open(self, args: list[str], *, what: str) -> Any:
         """Run ffmpeg, converting an absent/failed binary into the daemon's contract.
@@ -461,14 +575,14 @@ def _default_image_resolver(session_factory: Any) -> ImageResolver:
         path = Path(row.file_path).expanduser().resolve()
         # Defense-in-depth confinement (gate finding F-4): file_path is a
         # staff-set DB column, not community-controlled, so this isn't
-        # exploitable today -- but a board/bulletin image zone should never
+        # exploitable today -- but board image and audio assets should never
         # be able to resolve to an arbitrary filesystem path outside
         # CivicCast's own upload storage. Fail closed (render without the
         # image, same as an unresolvable ref) rather than serve it.
         upload_root = _upload_confinement_root()
         if upload_root is None or not path.is_relative_to(upload_root):
             _LOG.warning(
-                "image zone ref %r resolved to %s, which is outside the "
+                "CG asset ref %r resolved to %s, which is outside the "
                 "configured CivicCast upload root (%s); refusing to render "
                 "it into the board/bulletin.",
                 ref,
@@ -477,6 +591,24 @@ def _default_image_resolver(session_factory: Any) -> ImageResolver:
             )
             return None
         return path if path.is_file() else None
+
+    return resolve
+
+
+def _default_audio_resolver(session_factory: Any) -> ImageResolver:
+    asset_store = PostgresAssetStore(session_factory)
+    confined_path = _default_image_resolver(session_factory)
+
+    def resolve(ref: str) -> Path | None:
+        row = asset_store.get_staff_row(ref)
+        if (
+            row is None
+            or not row.codec_audio
+            or not row.duration_seconds
+            or row.duration_seconds <= 0
+        ):
+            return None
+        return confined_path(ref)
 
     return resolve
 
@@ -490,10 +622,15 @@ def build_filler_source_provider(
 
     from civiccast.cable.channel import default_channel_profiles
     from civiccast.cg.bulletin_store import PostgresCgBulletinStore
+    from civiccast.cg.depth_store import CgDepthStore
 
     bulletin_store = PostgresCgBulletinStore(session_factory)
     board_store = CgBoardStore(session_factory)
+    audio_store = CgDepthStore(session_factory)
+    asset_store = PostgresAssetStore(session_factory)
     feed_cache = FeedCache()
+    asset_resolver = _default_image_resolver(session_factory)
+    audio_resolver = _default_audio_resolver(session_factory)
 
     def board_resolver(channel_id: str, now: datetime) -> ResolvedBoard | None:
         return build_board_snapshot_from_store(
@@ -509,6 +646,42 @@ def build_filler_source_provider(
                 return profile.branding
         return None
 
+    def _board_audio(channel_id: str) -> BoardAudioBed | None:
+        configured = audio_store.list_audio(scope="channel", target_id=channel_id)
+        if not configured:
+            return None
+        audio = configured[-1]
+        asset = asset_store.get_staff_row(audio.asset_ref)
+        path = audio_resolver(audio.asset_ref)
+        if (
+            path is None
+            or asset is None
+            or not asset.duration_seconds
+            or asset.duration_seconds <= 0
+        ):
+            _LOG.warning(
+                "channel %s: configured board audio asset %s is unavailable; airing silence",
+                channel_id,
+                audio.asset_ref,
+            )
+            return None
+        try:
+            stat = path.stat()
+        except OSError:
+            _LOG.warning(
+                "channel %s: board audio asset %s disappeared before rendering; airing silence",
+                channel_id,
+                audio.asset_ref,
+            )
+            return None
+        return BoardAudioBed(
+            asset_ref=audio.asset_ref,
+            path=path,
+            gain_db=audio.gain_db,
+            source_version=f"{stat.st_size}:{stat.st_mtime_ns}",
+            duration_seconds=asset.duration_seconds,
+        )
+
     slate_generator = SlateSourceGenerator(work_dir=work_dir)
     return FillerSourceProvider(
         bulletin_generator=BulletinFillerSourceGenerator(
@@ -516,12 +689,95 @@ def build_filler_source_provider(
             bulletins_provider=bulletin_store.list_approved,
             branding_provider=_branding,
             board_provider=board_resolver,
-            board_image_resolver=_default_image_resolver(session_factory),
+            board_audio_provider=_board_audio,
+            board_image_resolver=asset_resolver,
             ffmpeg_runner=run_ffmpeg,
             slate_generator=slate_generator,
         ),
         slate_generator=slate_generator,
     )
+
+
+def build_board_live_video_provider(session_factory: Any) -> BoardLiveVideoProvider:
+    """Resolve configured board live sources to real-time compositor layers.
+
+    Source ids are resolved against the channel's own live-source inventory;
+    the board never stores an arbitrary URL or a credential in its zone row.
+    A removed or unsupported source leaves that zone on the ordinary board.
+    """
+    from civiccast.live.store import LiveSourceStore
+
+    board_store = CgBoardStore(session_factory)
+    source_store = LiveSourceStore(session_factory)
+
+    def resolve(channel_id: str, config: EgressConfig) -> tuple[GraphicsOverlayLayer, ...]:
+        board = build_board_snapshot_from_store(board_store, channel_id, now=datetime.now(UTC))
+        if board is None:
+            return ()
+        profile = config.canonical_profile
+        zones_by_kind = {zone.kind: zone for zone in board.snapshot.zones}
+        safe = _safe_area_pixels(profile.width, profile.height)
+        layers: list[GraphicsOverlayLayer] = []
+        for region in sorted(board.snapshot.template.regions, key=lambda item: item.order):
+            zone = zones_by_kind.get(region.zone_kind)
+            if zone is None or zone.source != "live_video":
+                continue
+            source_id = zone.content.get("live_source_id")
+            if not isinstance(source_id, str):
+                continue
+            source = source_store.get(source_id)
+            if source is None or source.channel_id != channel_id:
+                _LOG.warning(
+                    "channel %s: board live-video source %s is unavailable; leaving the board visible",
+                    channel_id,
+                    source_id,
+                )
+                continue
+            if source.source_type == "ndi":
+                _LOG.warning(
+                    "channel %s: NDI board source %s has no native playout path",
+                    channel_id,
+                    source_id,
+                )
+                continue
+            try:
+                first = source_first_element(
+                    EgressSourceSegment(
+                        label=source.name,
+                        path=source.endpoint_url,
+                        duration_seconds=3600,
+                        kind="live",
+                        source_ref=source.live_source_id,
+                        secret_ref=source.credentials_handle,
+                    )
+                )
+            except ValueError:
+                _LOG.warning(
+                    "channel %s: board live-video source %s has no supported playout path",
+                    channel_id,
+                    source_id,
+                )
+                continue
+            x, y, width, height = _region_box(
+                region.region,
+                width=profile.width,
+                height=profile.height,
+                safe_area_pixels=safe,
+            )
+            layers.append(
+                GraphicsOverlayLayer(
+                    name=f"board_live_{zone.zone_id}",
+                    source_chain=(first, ElementSpec("decodebin")),
+                    xpos=x,
+                    ypos=y,
+                    width=width,
+                    height=height,
+                    repeat_after_eos=False,
+                )
+            )
+        return tuple(layers)
+
+    return resolve
 
 
 def build_board_overlay_provider(

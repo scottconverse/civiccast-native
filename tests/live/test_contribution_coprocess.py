@@ -80,10 +80,12 @@ def test_settings_typo_does_not_silently_enable(monkeypatch) -> None:
 def test_settings_parses_commands_and_turn(monkeypatch) -> None:
     monkeypatch.setenv("CIVICCAST_REMOTE_CONTRIBUTION", "on")
     monkeypatch.setenv("CIVICCAST_VDO_COMMAND", "node server.js --port 8443")
+    monkeypatch.setenv("CIVICCAST_MEDIAMTX_COMMAND", "mediamtx relay.yml")
     monkeypatch.setenv("CIVICCAST_TURN_PORT", "3479")
     s = ContributionCoprocessSettings.from_env()
     assert s.enabled is True
     assert s.vdo_command == ("node", "server.js", "--port", "8443")
+    assert s.mediamtx_command == ("mediamtx", "relay.yml")
     assert s.turn_port == 3479
 
 
@@ -108,6 +110,20 @@ def test_starts_and_reports_running() -> None:
     assert diag.vdo_process_up and diag.coturn_process_up
     assert diag.turn_reachable is True
     assert len(starter.started) == 2  # vdo + coturn
+
+
+def test_configured_media_relay_is_supervised() -> None:
+    starter = _Starter()
+    sup = ContributionCoprocessSupervisor(
+        _settings(mediamtx_command=("mediamtx", "relay.yml")),
+        process_starter=starter,
+        turn_probe=lambda _host, _port: True,
+    )
+    sup.ensure_running()
+    assert sup.diagnostics().relay_process_up
+    assert len(starter.started) == 3
+    sup.stop()
+    assert not sup.diagnostics().relay_process_up
 
 
 def test_death_triggers_backoff_then_restart_and_alert() -> None:

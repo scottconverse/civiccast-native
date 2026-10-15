@@ -20,6 +20,11 @@
     <string>0.1.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>CFBundleURLTypes</key>
+    <array><dict>
+        <key>CFBundleURLName</key><string>org.civiccast.viewer</string>
+        <key>CFBundleURLSchemes</key><array><string>civiccast</string></array>
+    </dict></array>
     <key>UIRequiredDeviceCapabilities</key>
     <array>
         <string>arm64</string>

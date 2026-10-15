@@ -13,9 +13,34 @@ This chapter is for the IT person who connects CivicCast to the outside world: t
 
 ## Remote Contribution controls
 
-Remote Contribution creates rooms only for configured, enabled egress channels. The server rejects missing or disabled channels even if a caller bypasses the menu. It embeds the self-hosted VDO.Ninja director and can send targeted guest audio, camera and hangup commands from the browser. The director iframe does not acknowledge command completion. CivicCast records the latest browser-reported command as **sent, not verified**; the guest's connection record remains active until an operator checks the director and marks the guest left.
+Remote Contribution creates rooms only for configured, enabled egress channels. A guest publishes from VDO.Ninja into MediaMTX over WHIP. CivicCast reads each admitted guest from the relay over RTSP, uses its bundled FFmpeg to tile the guest pictures and mix their audio, publishes the combined feed back to the relay over SRT, then takes that feed through its existing live-source and channel egress path. **Put on air** and **Off air** control this route; the last guest off air returns the channel to scheduled output. The channel handoff is confirmed against the egress on-air proof before the action reports success.
 
-The audio controls act on the director's audio path; they do not establish that channel output is muted. Camera and hangup commands are sent to the targeted guest, but CivicCast does not receive an authoritative result. Guest media composition into the channel is not implemented. **Take channel live** is a separate confirmed action that switches to the channel's configured live source; it does not route a remote guest into that source. Closing a room stops new invitations but leaves any unverified guest sessions visible for inspection or retry.
+The director iframe also sends targeted guest camera and hangup requests. VDO.Ninja does not acknowledge these commands, so CivicCast records them as **sent, not verified**. The channel audio-mute control changes CivicCast's own mix as well as sending a director request. Verify connection and camera state in the director. Closing a room removes its on-air guests and stops new invitations; a guest's connection record remains until an operator verifies that they have left.
+
+Commission the media relay and service environment before inviting guests:
+
+In **Remote Contribution → Diagnostics**, a Support admin can select
+**Install VDO and media relay**. The service account needs Git for Windows on its PATH to fetch the pinned VDO.Ninja checkout. CivicCast verifies that checkout's commit before activating it, then verifies the pinned MediaMTX Windows binary and MIT license before activating the relay. The
+relay starts under CivicCast supervision when Remote Contribution is enabled;
+its RTSP and SRT listeners bind to loopback. The VDO source still needs its
+HTTPS site and signalling service, and the relay's WHIP listener needs an
+HTTPS reverse proxy. Configure WebRTC candidates for the public host and
+allow the media UDP port through the station firewall. Keep the public WHIP
+route restricted to your intended guest use; the installed relay config
+accepts publisher-created stream paths.
+
+| Setting | Purpose |
+| --- | --- |
+| `CIVICCAST_REMOTE_CONTRIBUTION=on` | Enables remote-contribution supervision and broadcast routing. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL` | Browser-accessible HTTPS base URL of the self-hosted VDO.Ninja instance. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL` | Browser-accessible HTTPS base URL of MediaMTX's WHIP listener. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_RTSP_URL` | Optional RTSP override; managed relay default is `rtsp://127.0.0.1:8554`. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_SRT_URL` | Optional SRT override; managed relay default is `srt://127.0.0.1:8890`. |
+| `CIVICCAST_MEDIAMTX_COMMAND` | Optional relay command override. If omitted, CivicCast starts the verified managed MediaMTX install. |
+| `CIVICCAST_VDO_COMMAND` | VDO.Ninja server command when CivicCast supervises that separate process. |
+| `CIVICCAST_TURN_HOST`, `CIVICCAST_TURN_PORT` | Reachable TURN service used by guests behind firewalls. |
+
+The managed MediaMTX configuration allows WHIP publishing and local RTSP and SRT access to publisher-created paths. Keep the RTSP and SRT listeners local to the station. The browser-facing WHIP listener needs the station's HTTPS reverse proxy and network routing. Test one guest on the station's output before a public meeting. If the relay is absent or the mix fails to produce video and audio, **Put on air** returns an error instead of marking the guest live.
 
 ## Cable headend: UDP transport streams
 
@@ -263,7 +288,7 @@ The **Alerts** screen can hold destinations of three kinds: email, text message 
 
 `POST /api/webhooks/stripe` accepts a payment provider's notification. It requires a `Stripe-Signature` header, rejects a body over 1 MiB, and answers 401 for a bad signature. It is not reachable from the internet unless you build a path to it.
 
-> **Beta 18 status:** The public portal asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), sign-in link emails are not sent, and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
+> **Beta 19 status:** A configured mail provider sends sign-in links and reports delivery failures. The public portal still asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
 
 ## Station import from Cablecast {#station-import-cablecast}
 
@@ -402,7 +427,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 
 ## Package status and verification
 
-This chapter describes the Beta 18 source. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its package checks. Commission each external service and headend for the station's actual configuration.
+This chapter describes the Beta 19 edition. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Commission each external service and headend for the station's actual configuration.
 
 ## Related
 

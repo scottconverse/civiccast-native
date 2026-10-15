@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import tempfile
 from datetime import UTC, datetime
@@ -48,6 +49,8 @@ from civiccast.cg.board_service import (
     ZoneNotFoundError,
     ZoneUpdateInput,
 )
+from civiccast.cg.depth_models import BulletinAudio
+from civiccast.cg.depth_store import CgDepthStore
 from civiccast.cg.models import CgFeedItem
 from civiccast.egress.board_compositor import ImageResolver, build_board_preview_args
 from civiccast.egress.runtime import FfmpegRunner
@@ -81,6 +84,14 @@ def get_cg_board_service() -> Any:
     """
 
 
+def get_cg_depth_store() -> CgDepthStore | None:
+    """Durable channel audio configuration, wired by the application factory."""
+
+
+def get_cg_audio_asset_resolver() -> ImageResolver | None:
+    """Resolve an uploaded asset with an audio stream inside the upload root."""
+
+
 class BoardCreateRequest(BaseModel):
     """Body for ``POST /channels/{channel_id}/board``."""
 
@@ -96,6 +107,13 @@ class BoardUpdateRequest(BaseModel):
 
     template_id: str | None = Field(default=None, min_length=1, max_length=120)
     active: bool | None = None
+
+
+class BoardAudioRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    asset_ref: str = Field(..., min_length=1, max_length=120)
+    gain_db: float = Field(default=0.0, ge=-36.0, le=0.0, allow_inf_nan=False)
 
 
 def _service_or_503(service: Any) -> CgBoardService:
@@ -305,6 +323,76 @@ def update_board(
         )
     except BoardNotFoundError as exc:
         raise _not_found(exc) from exc
+
+
+def _audio_store_or_503(store: CgDepthStore | None) -> CgDepthStore:
+    if store is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=_DB_NOT_READY_DETAIL)
+    return store
+
+
+@board_staff_router.get(
+    "/channels/{channel_id}/board/audio",
+    response_model=BulletinAudio | None,
+    dependencies=[Depends(require_any_role(*_READ_ROLES))],
+)
+def get_board_audio(
+    channel_id: str, store: CgDepthStore | None = Depends(get_cg_depth_store)
+) -> BulletinAudio | None:
+    audio = _audio_store_or_503(store).list_audio(scope="channel", target_id=channel_id)
+    return audio[-1] if audio else None
+
+
+@board_staff_router.put(
+    "/channels/{channel_id}/board/audio",
+    response_model=BulletinAudio,
+    dependencies=[Depends(require_any_role(*_WRITE_ROLES))],
+)
+def set_board_audio(
+    channel_id: str,
+    body: BoardAudioRequest,
+    store: CgDepthStore | None = Depends(get_cg_depth_store),
+    audio_resolver: ImageResolver | None = Depends(get_cg_audio_asset_resolver),
+) -> BulletinAudio:
+    resolved = _audio_store_or_503(store)
+    if audio_resolver is None or audio_resolver(body.asset_ref) is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Choose an uploaded CivicCast asset with an audio track and measured duration.",
+        )
+    audio_id = "channel-board-" + hashlib.sha256(channel_id.encode("utf-8")).hexdigest()[:24]
+    existing = resolved.list_audio(scope="channel", target_id=channel_id)
+    saved = resolved.set_audio(
+        BulletinAudio(
+            audio_id=audio_id,
+            scope="channel",
+            target_id=channel_id,
+            asset_ref=body.asset_ref,
+            gain_db=body.gain_db,
+            created_at=next(
+                (item.created_at for item in existing if item.audio_id == audio_id),
+                datetime.now(UTC),
+            ),
+        )
+    )
+    for item in existing:
+        if item.audio_id != audio_id:
+            resolved.delete_audio(item.audio_id)
+    return saved
+
+
+@board_staff_router.delete(
+    "/channels/{channel_id}/board/audio",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_any_role(*_WRITE_ROLES))],
+)
+def delete_board_audio(
+    channel_id: str, store: CgDepthStore | None = Depends(get_cg_depth_store)
+) -> Response:
+    resolved = _audio_store_or_503(store)
+    for item in resolved.list_audio(scope="channel", target_id=channel_id):
+        resolved.delete_audio(item.audio_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------

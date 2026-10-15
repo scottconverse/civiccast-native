@@ -1,4 +1,4 @@
-# CivicCast — tvOS starter app
+# CivicCast — tvOS app
 
 Apple TV SwiftUI app for CivicCast. Runs on tvOS 17+ (Apple TV HD and Apple TV 4K).
 
@@ -10,12 +10,15 @@ Apple TV SwiftUI app for CivicCast. Runs on tvOS 17+ (Apple TV HD and Apple TV 4
 
 ## What this app does
 
-1. Reads `APIBaseURL` from `Info.plist` (default `https://civiccast.example.com`).
-2. Calls `GET <APIBaseURL>/api/public/app/config`.
-3. Renders the station name and a focusable list of channel cards.
-4. On Siri Remote select, pushes a `VideoPlayer` that plays the channel's HLS URL.
+1. Stores the station HTTPS address in the app; `APIBaseURL` in `Info.plist`
+   supplies its initial value.
+2. Browses and searches live channels and published station replays, with
+   station logos and replay posters.
+3. Plays HLS through the tvOS player and its native transport and caption
+   controls.
+4. Opens `civiccast://channel/<id>` and `civiccast://replay/<id>` links.
 
-That is the entire feature surface. See the [parent README](../README.md) for the project-wide rationale.
+See the [parent README](../README.md) for the shared API contract.
 
 ## Focus engine — how this app handles it
 
@@ -26,7 +29,8 @@ tvOS navigation is driven by the focus engine: every UI element opts in by being
 - The "Retry" button uses `.buttonStyle(.borderedProminent)` + `.focusable()`. `.borderedProminent` already gets the focus ring on tvOS; the explicit `.focusable()` is belt-and-suspenders.
 - `.focusEffectDisabled(false)` (the default) is called out in a comment in `ContentView.swift` so a grep for "focus" finds the relevant code path immediately.
 
-There is **no** custom `FocusState` or `@FocusedValue` in this starter — the focus engine handles linear navigation through the list. Custom focus management (skip-rails, modal traps, focus debugging overlays) is the documented follow-up.
+There is no custom `FocusState` or `@FocusedValue`; the focus engine handles
+linear navigation through the list and station setting.
 
 ## Build
 
@@ -120,20 +124,13 @@ tvos/
 3. From the Organizer, `Distribute App > Development` or `Ad Hoc`.
 4. The Apple TV must be paired and in developer mode. Use Xcode's `Window > Devices and Simulators > Apple TV > Install App` to drag the `.ipa`, or `xcrun devicectl device install app --device <UDID> <path-to-app>`.
 
-## What this starter intentionally does NOT do
+## Platform publication
 
-These are the documented follow-ups to take the app from starter to App Store (Apple TV App Store) submittable:
-
-- App icon (`tvOS App Icon` — layered front/middle/back, requires Asset Catalog) and top-shelf images (1920×720 / 4640×1440 marketing).
-- Privacy Manifest (`PrivacyInfo.xcprivacy`) — required for App Store submission.
-- Parental gate — required if any of the channels include content that could trigger age-rating. Apple's tvOS HIG mandates a numeric or button-tap challenge before any external purchase / external sign-in.
-- TV-specific accessibility: VoiceOver-on-Siri-Remote labels, Reduce Motion respect, focus-engine debugging in `LLDB > po UIFocusDebugger`.
-- DRM (FairPlay) — non-trivial setup for protected streams.
-- AirPlay / Multi-User (per-Apple-ID profile state).
-- Sign-in / account binding — tvOS uses TVUIKit's `TVTopShelf` and TVAuthenticationController patterns, neither wired here.
-- Localized strings — English only.
-- Universal Links / deep linking into specific channels.
-- VOD / catch-up — only live HLS is wired.
+The app includes CivicCast icon artwork. Store signing, top-shelf marketing
+art, privacy declarations, localization, protected channels, and device-specific
+accessibility review belong to the platform publication process. The viewer
+consumes the public station catalog; it does not log viewers in to protected
+channels.
 
 ## Backend contract
 

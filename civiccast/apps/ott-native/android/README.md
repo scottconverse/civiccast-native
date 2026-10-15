@@ -55,10 +55,14 @@ cd civiccast/apps/ott-native/android
 CI builds all three variants on `ubuntu-latest` — see
 `.github/workflows/ci-ott-apps.yml`.
 
-## What this does NOT yet ship
+## Viewer experience
 
-Starter-grade, not store-ready. Branded artwork (the placeholder banners/
-icons are solid-color rectangles), image loading for channel posters,
-search (Google Play TV recommends one), deep-link routing, and accessibility
-polish are the documented follow-up — see the top-level
-`civiccast/apps/ott-native/README.md`.
+All three variants include CivicCast launcher artwork, load station logos
+and replay posters, search channels and published replays, and play HLS
+through Media3. The in-app Station address control persists an HTTPS station
+URL; `-PapiBaseUrl` sets the first-launch default. Links shaped
+`civiccast://channel/<id>` and `civiccast://replay/<id>` open the matching
+item. In the player, Audio / captions opens the available track picker.
+
+Store signing and physical-device certification are separate publication
+steps. These source apps consume the public station catalog.

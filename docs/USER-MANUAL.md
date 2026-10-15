@@ -1,6 +1,6 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.18 (native Windows line)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.19 (native Windows line)
 author: The CivicCast Authors
 date: 2026-10-15
 urlcolor: blue
@@ -56,7 +56,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Edition and package evidence
 
-This edition documents Beta 18, including guided Cablecast station import, Beta 17's publication and underwriting work, and the station-operation changes from Sprints 1–4. Setup admins can preview, apply and roll back imported show and schedule metadata. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. Package identity and checks belong to the matching [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md); earlier records remain historical.
+This Beta 19 edition covers: remote guests in channel output, bulletin-board live video and audio, native viewer improvements, and the publication, import and underwriting work shipped in Beta 17 and 18. The manual also covers staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, worker recovery, broadcast outputs and recorded captions. The [Beta 18 package record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) remains historical; Use the Beta 19 verification record for claims about its installed package.
 
 Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads. For an installed package, use its matching Help and verification record. A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked; the label alone does not say whether it remains true now. Historical host measurements remain distinct from installation checks of any package.
 
@@ -194,9 +194,9 @@ These are the words used most in Part I. Each is explained again where it first 
 | **Test mode** | The mode a new station starts in. The First-run defaults card on First Setup shows a **Mode** heading with "Test mode" under it. |
 | **Headend** | The cable company's equipment that receives a channel's signal. |
 
-### Beta 18 source and release evidence
+### Source edition and release evidence
 
-This manual describes the Beta 18 source. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that edition's package checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies to its signed package only. Keep each historical result with its named release.
+This manual describes the Beta 19 source. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Keep each historical result with its named release.
 
 **Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This is a Beta 11 host measurement, not a Beta 16 measurement. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
@@ -1185,7 +1185,9 @@ The most important idea in this chapter: CivicCast has several separate controls
 | **Channels** > **Start**, **Stop**, **Restart feed**, **Finish current item, then stop** | Sends a command to the channel's feed program. This is what starts and stops the channel's actual video. |
 | **Channels** > **Take live** | Switches the channel from its schedule to a camera or encoder source right now. |
 | **Channels** > **Approve & put on air** | Approves one scheduled program so it plays at its scheduled time. It does not play it at the moment you click. |
-| **Remote Contribution** > **Take channel live** | Switches the channel to its configured live source after confirmation. It does not route a contribution guest into that source. |
+| **Remote Contribution** > **Take channel live** | Switches to the channel's ordinary configured live source, such as a camera. |
+| **Remote Contribution** > **Put on air** | Composes admitted guest video and audio and takes the resulting live source onto the selected channel after egress proof. |
+| **Remote Contribution** > **Off air** | Removes a guest from the mix; the last guest returns the channel to its schedule. |
 | **Control Room** > **Fire cue** | Sends a command to your production gear (OBS, vMix, a camera, a router). It does not put anything on a channel. |
 
 #### A few words used here
@@ -1559,17 +1561,19 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 4. To add a zone, click **Add zone**, fill in **Region**, **Zone kind** and **Content source**, then click **Add zone** again. To delete a zone, click **Delete**, then **Confirm delete?**.
 5. To bring in an outside source such as a news feed or a calendar, click **Add feed**, fill in **Feed kind**, **Trust tier**, **Feed label**, **Source URL** and **Refresh (minutes)**, and click **Register feed**.
 6. To vet individual feed items, click **Review items** on a feed and click **Approve** on each item you want to allow.
-7. Check the **Live preview** and read **Board history** to see who changed what.
+7. Use **Board background audio** to choose an uploaded track with a measured duration and reduce its level if needed. The track plays across board slides while the board fills a gap between programs. **Delete** removes the selection. The visual preview does not play sound.
+8. To place a configured camera or other live feed in a board zone, choose **Live video** as the zone's **Content source**, then choose a live source belonging to this channel. The video appears in that zone while the board is on air. The preview shows the layout without playing the live feed. Configure the source under **Live Sources** first; NDI sources are not offered for board zones.
+9. Check the **Live preview** and read **Board history** to see who changed what.
 
 > **Warning:** the board is what viewers see between programs. Changing the **Board template** menu takes effect **immediately, with no confirmation**. Deleting a zone asks only "Confirm delete?".
 
-> **Known issue (beta.11):** if you only have the Support admin role, you can open this screen but every Add, Edit and Delete button is missing, and nothing says why. Changing the template does not tell you what happens to existing zones, and we could not confirm that. You cannot switch a board off from here. The zone form lists some options as "coming in a future release" (live video in a zone and board background audio). Do not plan around them. Labels such as **Region**, **Zone kind**, **Trust tier** and **feed adapter** are not explained on screen. Ask whoever set up your board.
+> **Package note:** Board audio and live-video zones are part of the Beta 19, not the published Beta 18 package. Support admins can view the designer but cannot edit it.
 
 ### Bring in remote guests (Remote Contribution)
 
-**Remote Contribution** lets remote council members, presenters and public commenters join from a web browser, with nothing for them to install. CivicCast manages the *rooms*, the invite links and the guest list. The video mixing is done by separate software on your station (VDO.Ninja, a web video tool, and a *compositor*, a program that combines video sources into one picture). Those must be set up first.
+**Remote Contribution** lets remote council members, presenters and public commenters join from a web browser, with nothing for them to install. CivicCast manages rooms, invites and guest admission, combines admitted guests into one picture and audio mix, and routes that mix to the selected channel when you put a guest on air.
 
-> **For IT staff:** guest video needs a self-hosted VDO.Ninja service, a compositor, and a TURN relay (a server that helps guests behind firewalls connect). See [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations).
+> **For IT staff:** use **Diagnostics → Install VDO and media relay**, then commission the self-hosted VDO.Ninja HTTPS site, a public HTTPS WHIP route to the relay, and a reachable TURN service before the meeting. CivicCast uses its bundled FFmpeg for composition and its existing live-source path for channel output. See [Cable headend, streaming, CDN, federation, emergency alerts, and the API](#ch-integrations).
 
 You see this item in the menu only with the Meeting operator, Setup admin or Support admin role.
 
@@ -1583,34 +1587,35 @@ You see this item in the menu only with the Meeting operator, Setup admin or Sup
 
 > **Note:** each guest link works for one guest, once, and expires after 4 hours. The screen says "single-use" but does not mention the 4 hours. Guests who join as **Public comment** must first accept terms before they can join. "Sent invites" lists each link as **Used** or **Pending**. A room holds up to 6 guests by default.
 
-> **Current limitation:** the channel menu shows only configured, enabled egress channels. If none are available, ask a Setup admin to configure and enable a channel first; unknown or disabled channel ids cannot be used to create a room or take a channel live. Room-list and detail reads currently require Meeting operator or Support admin access. A Setup admin working alone cannot manage a room they created. Guest media composition into the channel is not connected in CivicCast; commissioning VDO.Ninja alone does not put a guest on air.
+The channel menu shows configured, enabled egress channels. If none are available, ask a Setup admin to enable a channel. Each channel can have one remote-guest room on air at a time.
 
 #### Admit and control a guest
 
 1. When a guest opens their link, they appear under **Guests** with the tag **In waiting room**.
-2. Click **Admit** to mark them admitted in CivicCast. This does not put their media into the broadcast.
-3. Keep the embedded VDO.Ninja director open. **Mute guest audio** and **Restore guest audio** send targeted audio requests for that guest; **Mute guest camera** and **Restore guest camera** send camera requests to the same guest.
-4. **Disconnect guest** asks for confirmation, then sends VDO.Ninja's targeted hangup command.
-5. **Off air** asks for confirmation, then sends separate requests to mute that guest's audio and camera. It leaves the guest connected and does not return the channel to its schedule.
+2. Click **Admit**. Admission keeps the guest in the waiting room; it does not air their media.
+3. Click **Put on air**. CivicCast adds the guest to the live picture and audio mix, takes the channel to that source, and waits for an on-air handoff record. An error leaves the guest in the room without claiming the action succeeded.
+4. Keep the embedded VDO.Ninja director open. **Mute guest audio** and **Restore guest audio** change CivicCast's live audio mix and send a targeted VDO.Ninja request. **Mute guest camera** and **Restore guest camera** send camera requests to that guest.
+5. **Off air** removes the guest from CivicCast's live mix. If they were the last on-air guest, CivicCast returns the channel to its scheduled output. The guest stays connected in the room.
+6. **Disconnect guest** asks for confirmation, then sends VDO.Ninja's targeted hangup command.
 
-> **Important:** VDO.Ninja's director iframe does not confirm whether an audio, camera or hangup request succeeded. CivicCast records the latest browser-reported request as **sent, not verified** and keeps the guest's connection status unchanged. The audio control targets the guest's audio; it does not control the director's own audio. Check the director and compositor before relying on a media change, and verify in the director before treating a guest as disconnected. Off air does not disconnect the guest or return the channel to its schedule.
+> **Important:** VDO.Ninja's director iframe does not confirm whether camera or hangup requests succeeded. CivicCast records those browser commands as **sent, not verified**. Verify guest connection and camera state in the director. CivicCast's on-air, off-air and audio-mix actions are separate channel operations; watch the channel output during a live meeting.
 
 #### Take the channel live
 
-**Take channel live** is a separate, confirmed action. It switches the channel to its configured live source and can override the schedule. It does not route a contribution guest into the channel. To resume the schedule, use **Return to schedule** on **Channels**.
+**Take channel live** is a separate action for the channel's ordinary configured live source, such as a camera. Use **Put on air** on an admitted guest to route remote guests. Use **Off air** on the last guest to return to schedule.
 
 After checking in the director that a guest has left, click **Mark left after checking** and confirm. This changes only the CivicCast session record; it does not send a provider command.
 
 #### Close the room
 
 1. Select the room and click **Close room**.
-2. Confirm to send hangup requests for active guest sessions and close the CivicCast room record. The provider does not acknowledge those requests; active guests remain visible so you can inspect or retry controls. Mark each guest left only after verifying the director shows they have disconnected. Closing the room stops new invites; it does not return the channel to its schedule.
+2. Confirm to send hangup requests, remove any on-air guests from the channel and close the room record. VDO.Ninja does not acknowledge hangup requests; verify in the director before marking each guest left. The final on-air guest's removal returns the channel to its schedule.
 
 You can reopen the room and send new invites afterwards.
 
 #### Test guest connections (Support admins)
 
-A Support admin sees a box **Diagnostics** with tags for "TURN reachable", "VDO up" and "coturn up" (or the opposite). Click **Test TURN connectivity** to probe the relay now.
+A Support admin sees **Diagnostics** with TURN, VDO, relay and coturn status. Use **Install VDO and media relay** to fetch the verified local components, and **Test TURN connectivity** to probe the configured TURN server now.
 
 ### The meeting-night checklist
 
@@ -1637,7 +1642,7 @@ Print this page or copy it. The screens named here are covered earlier in the ch
 
 12. Keep **Live** and the Control Room page open in their own tabs. Do not refresh them.
 13. If you use an On-Air Control Room session, open a new one before 30 minutes have passed.
-14. Admit remote guests one at a time. Keep the VDO.Ninja director open and verify each guest there. Guest controls do not compose them into the broadcast; use **Take channel live** separately only for the channel's configured live source.
+14. Admit remote guests one at a time, then click **Put on air** for each guest you want in the live mix. Keep the VDO.Ninja director open and verify the channel output.
 15. Watch the channel's own output, not the screen's tags. After **Stop**, **Restart feed** or **Return to schedule**, the tag can take up to 30 seconds to change.
 
 **At the end**
@@ -2152,16 +2157,16 @@ Some stations may want some recordings behind a paid subscription. The **Paywall
 
 The screen has three cards: **Config** (the **Enable paywall** box, a provider, a signing secret), **Tiers** (plans that map to prices you create yourself in Stripe, a payment company) and **Comp access grants** (free passes you give to an email address).
 
-> **Beta 18 status:** Treat the Paywall as a test-only screen, not protected paid access. In the current code:
+> **Beta 19 status:** Treat the Paywall as a test-only screen, not protected paid access. In the current code:
 >
 > - Turning it on does not select particular recordings. The Watch page asks every resident for a pass on every recording.
 > - The video file itself is not protected. The gate is a screen shown in front of the player.
-> - The "Email me a sign-in link" button reports "Check your inbox for a link.", but no email is ever sent, so a resident cannot finish signing in.
+> - The "Email me a sign-in link" button sends through the configured mail provider and reports a delivery failure when that provider is unavailable.
 > - The pages the portal uses to list plans and start payment do not exist on the server, so a resident cannot subscribe.
 > - An ordinary save with the **Signing secret** box left blank preserves the stored secret. To remove it, use the explicit clear control. The secret is hidden when the page reloads.
 > - The list of comp grants shows only grants made in the current browser session, and does not provide a history of grants from earlier sessions.
 
-Post-Beta 18 source work connects the sign-in button to a configured SMTP relay and sends a resident-portal link. The button reports a delivery failure when mail is unavailable. This change has not been published as part of Beta 18; the purchase routes and protected video delivery remain separate work.
+The Beta 19 sends the sign-in link through a configured mail provider and reports delivery failure when mail is unavailable. The published Beta 18 package predates this change; purchase routes and protected video delivery remain separate work.
 
 If you turn the paywall on for testing, the Watch page shows the gate described in the resident tour below. Residents will be blocked.
 
@@ -2249,9 +2254,9 @@ A resident opens a recording by clicking **Watch recording**. The page shows **B
 
 Only if a setup administrator has turned the paywall on. The video is replaced by a gate. While it checks, a small label says "Checking access…". The gate shows "Subscription required", a reason line, a **Sign in by email** form with **Email me a sign-in link**, a "New here?" block with a plan list and **Subscribe**, and "Already signed in as {email}? Switch email".
 
-In Beta 18 the resident can enter an email and click the link button, which says "Check your inbox for a link." No email arrives. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
+In the Beta 19, a resident can enter an email and request a sign-in link. A configured mail provider delivers it; the page reports an error if delivery fails. The plan list reads "Tier selection isn't configured yet on this station. Contact them for subscription details." With an email typed in, clicking **Subscribe** shows "This station hasn't finished setting up subscriptions yet. Please contact them." (With no email typed it says "Enter your email above before subscribing.") The agenda beside the video stays visible. See the Paywall status above.
 
-In post-Beta 18 source, a configured mail relay sends the sign-in link and the page shows an error if it cannot send. This source change is not in the Beta 18 download.
+The Beta 19 sends the link through a configured mail provider and shows an error if delivery fails. The published Beta 18 package predates this change.
 
 #### Subscribing to new recordings
 
@@ -2556,9 +2561,9 @@ An empty affidavit shows "No airings recorded for {name} between {from} and {to}
 
 ### Build the resident apps (App Admin)
 
-A resident app lets people watch your station on a phone or a TV box. CivicCast can package a *starter app* for web (a "PWA", a website that installs like an app), Roku, Apple TV, Fire TV, Android TV, Android phones and tablets, and iPhone and iPad. App Admin builds that package on the station computer, keeps a history of builds with download buttons, and gives you a notebook for tracking app-store submissions.
+A resident app lets people watch your station on a phone or a TV box. CivicCast provides native viewer source apps for Roku, Apple, Android/Fire TV, Tizen and webOS, plus a web PWA. They browse live channels and replays, show station artwork, search the catalog, handle deep links and use platform playback controls. **App Admin** packages generic station-branded starter artifacts on the station computer, keeps a history with download buttons, and tracks app-store submissions; it does not build or submit the separate native source apps.
 
-> **Warning:** App Admin does not put any app in any app store. CivicCast never contacts a store. Someone technical still has to sign each package and submit it. The built package is a generic starter. The page says apps read the station's settings when they run, so name and branding update without a rebuild. In testing we could not confirm this in a running app, and store review is separate work.
+> **Warning:** App Admin does not put any app in an app store. Someone technical still has to sign and submit platform packages. The App Admin package is a generic starter; the native source apps are built with their platform toolchains. Apps read station branding from the station API when they run.
 
 #### Make a build
 
@@ -2591,7 +2596,7 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
-> **Beta 18 status:** Do not use the paywall for paid access. The operator can configure its gate, but resident purchase and account workflows are incomplete: the magic-link sender does not send email, the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
+> **Beta 19 status:** The magic-link button sends through a configured mail provider and reports delivery failure. Paid access remains incomplete: the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
 
 > **For IT staff:** See [Chapter 15](#ch-integrations) before enabling this on a live station.
 
@@ -3188,7 +3193,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 #### What is on the release page
 
-This manual describes the Beta 18 source edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks package-specific results.
+This manual describes the Beta 19 edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for published packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's results.
 
 The complete offline kit contains 19 required files, including the signed station index and model packs. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
@@ -3679,7 +3684,7 @@ Because the database password is deleted from the registry, the surviving databa
 
 ### Package status and verification
 
-This chapter describes the Beta 18 source. Use only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks package-specific checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; the intended signing boundary is recorded as a Beta 17 follow-up. That observation does not establish the status of another package.
+This chapter describes the Beta 19 edition. Install only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package's checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; that observation does not establish another package's status.
 
 ### Related
 
@@ -4113,7 +4118,7 @@ Custom Fields (Setup group; `setup_admin`) are your own labels for programs, suc
 
 The paywall (Setup group; `setup_admin`) is optional paid access to recordings through Stripe-hosted checkout, plus free "comp" passes. It is **off** by default; when off, every asset is public.
 
-> **Beta 18 status:** Do not rely on the paywall for paid access. The screen says tier-based gating is active when the box is ticked, but the magic-link email sender is a no-op, the public site's calls for tiers and checkout (`/api/public/paywall/tiers`, `/api/public/paywall/checkout`) have no matching server routes, and the public VOD media route does not enforce grants. The access check trusts the email address passed to it; the code does not prove the caller owns it.
+> **Beta 19 status:** Do not rely on the paywall for paid access. A configured mail provider sends magic links and reports delivery failure, but the public site's calls for tiers and checkout (`/api/public/paywall/tiers`, `/api/public/paywall/checkout`) have no matching server routes, and the public VOD media route does not enforce grants. The access check trusts the email address passed to it; the code does not prove the caller owns it.
 
 > **Signing secret:** The server never returns the saved value, so the field stays blank after you open or reload this page. If a secret is saved, leave the field blank to keep it during an ordinary **Save**. To replace it, enter a new secret of at least 32 characters or generate one. Confirm the exact value currently in the field, then **Save**; editing the value clears confirmation, so confirm again. **Cancel** discards the pending replacement. To remove the saved secret, choose **Clear saved secret**, confirm, then **Save**. Clearing stops magic-link signing and Stripe webhook verification until you save a new one.
 
@@ -4330,7 +4335,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 ### Package status
 
-These instructions describe the Beta 18 source. Use the release page and the Help and verification record that match the package on the station. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its package-specific checks.
+These instructions describe the Beta 19 edition. Use the release page and the Help and verification record that match the package on the station. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks.
 
 ### Related
 
@@ -4728,7 +4733,7 @@ Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning
 
 ### Package status and verification
 
-This chapter describes the Beta 18 source. For package results, use the matching release record: the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its checks, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
+This chapter describes the Beta 19 edition. For package results, use the matching release record: the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
 
 ### Related
 
@@ -5027,7 +5032,7 @@ The entries below summarize the whole-repository audit dated 2026-10-02 (`audit-
 
 ### Package status and verification
 
-This chapter describes the Beta 18 source. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its package verification. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed. The intended signing boundary is recorded as a Beta 17 follow-up; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+This chapter describes the Beta 19 edition. Use the matching release record for package checks; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its earlier package. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 #### Report a security problem
 
@@ -5455,7 +5460,7 @@ If nothing here matches, do the following in order. First, run `curl.exe http://
 
 ### Package status and verification
 
-This chapter describes the Beta 18 source. For package-specific results, use the record matching the installed version. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its package checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to the corrected signed Beta 15 package.
+This chapter describes the Beta 19 edition. For package-specific results, use the record matching the installed version. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks the earlier package; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to the corrected signed Beta 15 package.
 
 ### Related
 
@@ -5486,9 +5491,11 @@ This chapter is for the IT person who connects CivicCast to the outside world: t
 
 ### Remote Contribution controls
 
-Remote Contribution creates rooms only for configured, enabled egress channels. The server rejects missing or disabled channels even if a caller bypasses the menu. It embeds the self-hosted VDO.Ninja director and can send targeted guest audio, camera and hangup commands from the browser. The director iframe does not acknowledge command completion. CivicCast records the latest browser-reported command as **sent, not verified**; the guest's connection record remains active until an operator checks the director and marks the guest left.
+Remote Contribution creates rooms only for configured, enabled egress channels. Guests publish from VDO.Ninja into MediaMTX over WHIP. CivicCast reads each admitted guest through local RTSP, uses bundled FFmpeg to tile guest pictures and mix audio, publishes the mix through SRT, then takes it through the live-source and egress path. **Put on air** and **Off air** control that route; the last guest off air returns the channel to scheduled output. CivicCast waits for on-air proof before reporting a successful handoff.
 
-The audio controls act on the director's audio path; they do not establish that channel output is muted. Camera and hangup commands are sent to the targeted guest, but CivicCast does not receive an authoritative result. Guest media composition into the channel is not implemented. **Take channel live** is a separate confirmed action that switches to the channel's configured live source; it does not route a remote guest into that source. Closing a room stops new invitations but leaves any unverified guest sessions visible for inspection or retry.
+The director iframe sends targeted camera and hangup requests but does not acknowledge completion, so those requests remain **sent, not verified**. CivicCast's audio mute changes its own mix as well. Closing a room removes its on-air guests and stops new invitations; check the director before marking a guest disconnected.
+
+In **Remote Contribution → Diagnostics**, a Support admin can choose **Install VDO and media relay**. The service account needs Git for Windows on its PATH to fetch the pinned VDO.Ninja checkout. The action verifies that commit and the pinned Windows MediaMTX binary and MIT license before activating each component. A self-hosted VDO HTTPS site, public HTTPS WHIP route and reachable TURN service still need commissioning. Set `CIVICCAST_REMOTE_CONTRIBUTION=on`, `CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL` and `CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL` in the station service environment. The managed relay starts automatically; its RTSP and SRT defaults are loopback ports 8554 and 8890. The public WHIP route needs WebRTC candidate and firewall configuration. Test a guest on station output before a public meeting.
 
 ### Cable headend: UDP transport streams
 
@@ -5728,7 +5735,7 @@ The **Alerts** screen can hold destinations of three kinds: email, text message 
 
 `POST /api/webhooks/stripe` accepts a payment provider's notification. It requires a `Stripe-Signature` header, rejects a body over 1 MiB, and answers 401 for a bad signature. It is not reachable from the internet unless you build a path to it.
 
-> **Beta 18 status:** The public portal asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), sign-in link emails are not sent, and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
+> **Beta 19 status:** A configured mail provider sends sign-in links and reports delivery failures. The public portal still asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
 
 ### Station import from Cablecast {#station-import-cablecast}
 
@@ -5867,7 +5874,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 
 ### Package status and verification
 
-This chapter describes the Beta 18 source. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its package checks. Commission each external service and headend for the station's actual configuration.
+This chapter describes the Beta 19 edition. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's checks. Commission each external service and headend for the station's actual configuration.
 
 ### Related
 
@@ -5908,7 +5915,7 @@ Figure 16-1 shows what talks to CivicCast. CivicCast runs on one Windows compute
 
 ![Figure 16-1. System context. Solid arrows are the normal flows. Dashed arrows are optional or occur only at install time.](manual/diagrams/6efd0747f615.png){width=100%}
 
-**What this shows.** Staff open the operator console in a browser at `/operator/` on the station. Residents open the resident portal at `/`. Both are served by the same CivicCast web server. The station can record from capture cards and network streams, pick up files from watch folders, and accept uploads. It plays out channels as a continuous video stream to downstream equipment, and it can publish finished recordings to the Internet Archive, a network storage location, YouTube and a federated social network (ActivityPub). Those outside publish surfaces run in a simulated mode until an administrator sets the provider to real and supplies its credentials, ActivityPub is off until it is enabled with a public address and a key, and subscriber-notification and podcast surfaces are not active in beta.11 (see [Chapter 15](#ch-integrations)). A content delivery network (CDN) is off by default; when a station turns one on, finished recordings are copied to it so that residents' video requests go there instead of to the station. Emergency and weather feeds are read and shown on screen; CivicCast is not an EAS device and does not relay the legally required Emergency Alert System signal (see [Chapter 15](#ch-integrations)). Most of the time the station needs no internet connection. The first-run window is a separate model-and-caption acquisition flow; it cannot replace the signed station resources required for activation. Whistle and the required Medium Whisper model are in the station bundle. The acquisition plan includes selected optional models and required components; leaving Large Whisper unchecked omits that optional download. The web server does not serve its own API documentation pages on a station because those pages would need the internet.
+**What this shows.** Staff open the operator console at `/operator/`; residents use the portal at `/`. The station takes camera and network sources, uploaded programmes and watch-folder media, then plays channels to configured outputs. A published recording can feed the resident portal, podcast RSS, subscriber notices, and configured archive or distribution services. Remote guests enter through a separately hosted VDO.Ninja site and MediaMTX relay before CivicCast composes them into a channel. A content delivery network is optional. Emergency and weather feeds appear on screen; CivicCast is not an EAS device. The Windows station runs with its bundled Whistle and Medium Whisper resources, while the wizard can acquire optional components.
 
 The application listener remains loopback-only (default `127.0.0.1:8000`, configurable to `127.0.0.1` or `::1`). Remote HTTPS uses Caddy with separate resident and CIDR-restricted staff hostnames; first setup stays local-only. See the [network access guide](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/network-access.md).
 
@@ -6357,7 +6364,7 @@ This is about how the files you download came to exist, and what checks stand be
 - **A software bill of materials** and a licence list are generated for the runtime and the application payload. The build refuses to produce them if any file has an unknown licence, and it rejects GPL-licensed GStreamer components.
 - **Gate A** is one Windows Sandbox acceptance protocol. The current publisher also accepts physical-host verification receipts through a separate path; it then creates a draft release, checks the asset names and sizes, publishes it and records the result.
 
-**Package and runtime evidence.** Use the release verification record matching the package for its installation checks and limits. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks package-specific results for this source edition; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that signed package. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement. An isolated Windows Sandbox source-overlay run verified restricted-service startup, profile and credential migration, and a healthy API; it is source evidence, not a signed-installer or production-cutover check.
+**Package and runtime evidence.** Use the release verification record matching the package for its installation checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; Use the Beta 19 verification record for its package checks. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement.
 
 ### Two example stations {#arch-topology}
 
@@ -6399,7 +6406,7 @@ A technical reviewer should read this list before relying on the design. Each it
 **Playout.**
 
 - Freeze and audio/video recovery retain their three-restarts-per-hour budget, then use fallback and cooldown before a bounded retry. An intentional operator stop or drain suppresses automatic starts for that service session.
-- RTMP, per-output normalization and configured SRT/RTMP alert-tone filtering are included in the Beta 18 source edition. Use the package's matching verification record for output-check status.
+- RTMP, per-output normalization and configured SRT/RTMP alert-tone filtering are included in this source edition. Use the package's matching verification record for output-check status.
 - Hardware encoding is used only if a channel asks for it by name. The default encoder is a software encoder.
 - A first-time program takes time to prepare, and a program change can wait on that preparation (the lead time is 11.5 minutes by default). There was an unexplained rebuild of a long cached program in an earlier internal run, and eleven daemon and automation unit tests fail the same way on the installed tree and the candidate tree; neither is explained.
 - A single frame of video was dropped at one join in the lab run, and two program changes aborted and recovered by themselves.
@@ -7465,6 +7472,9 @@ Staff routes (`/api/staff/*`) require a bearer token and a role; public routes d
 | GET | `/api/staff/cg/channels/{channel_id}/board` | Read the active CG board for a channel (board + zones + feeds) |  | 200, 401, 422, 429, 503 |
 | PATCH | `/api/staff/cg/channels/{channel_id}/board` | Update the active CG board (template / active) | application/json | 200, 401, 404, 422, 429, 503 |
 | POST | `/api/staff/cg/channels/{channel_id}/board` | Create (and activate) a CG board for a channel | application/json | 201, 401, 422, 429, 503 |
+| GET | `/api/staff/cg/channels/{channel_id}/board/audio` | Read the channel board's background-audio selection |  | 200, 401, 422, 429, 503 |
+| PUT | `/api/staff/cg/channels/{channel_id}/board/audio` | Select an uploaded audio asset and set its level | application/json | 200, 401, 422, 429, 503 |
+| DELETE | `/api/staff/cg/channels/{channel_id}/board/audio` | Remove the board background-audio selection |  | 204, 401, 422, 429, 503 |
 | GET | `/api/staff/cg/channels/{channel_id}/board/audit` | List board-lifecycle audit events (newest first) |  | 200, 401, 422, 429, 503 |
 | GET | `/api/staff/cg/channels/{channel_id}/bulletins` | Read operator community bulletin submission queue |  | 200, 401, 422, 429 |
 | POST | `/api/staff/cg/channels/{channel_id}/bulletins` | Add a community bulletin submission to the channel board | application/json | 200, 401, 422, 429, 503 |
@@ -8585,7 +8595,7 @@ There is **no** CivicCast listener on any non-loopback address in the supervisor
 | Alert destinations | email, text-message or webhook address you set | Alerts, when destinations are connected. |
 | Hosted AI services | HTTPS | Only if you switch an AI job to a hosted model on AI Models. The Ollama engine itself is started with cloud use switched off. |
 
-VDO.Ninja and coturn, which Remote Contribution needs, are **not** installed by CivicCast; whoever sets them up chooses their ports.
+Remote Contribution's install action fetches pinned VDO.Ninja source and a verified Windows MediaMTX relay. IT still commissions the VDO HTTPS service, public WHIP route and a reachable TURN server; those services' public ports depend on the station network.
 
 <!-- SOURCES: inventory/screens/installer-install-layout.md (sections 1-6, 9); civiccast/native/supervisor/install_layout.py:160-300; civiccast/native/supervisor/config.py:37-75,92-115 (names, pipe, mutex, backoff, storm, 15 s); civiccast/native/supervisor/core.py:393-394 (127.0.0.1:8000); civiccast/native/supervisor/children.py:272-300,520-551,680-684 and :100-150 (Ollama 11434, env); civiccast/native/provision/port_select.py:140 (5432,5433,5434,5435,5544); civiccast/native/supervisor/service.py:34,192-219,342-376,483,2064-2069 (logs, DB port from URL); civiccast/egress/hls_relay.py:251-256,328-347; civiccast/egress/ts_relay.py:52-54,117,190-230 (17800, +1000); civiccast/egress/relay_reclaim.py:12-40; civiccast/apps/installer/src-tauri/src/main.rs:29-36 (127.0.0.1:38474, URLs); civiccast/apps/installer/src-tauri/src/native_service_registration.rs:160-170,279-290 (auto start; restart/5000/10000/30000; firewall rule name); civiccast/installer/router.py:1211-1230 (control plane binds 127.0.0.1 only); civiccast/installer/station_state.py:599-610,1154-1175 (station-state.json and default folders under LOCALAPPDATA); civiccast/native/supervisor/children.py:272-300 (SYSTEM profile LOCALAPPDATA comment); civiccast/live/preflight.py and inventory/screens/live.md (network probe 1.1.1.1/8.8.8.8:443, 50 GiB) -->
 
@@ -8789,7 +8799,7 @@ Code 123 hides a second number from the activation step: 66 (pack or index missi
 | API, HTTP 503 | `{"error": "maintenance"}` | The station is in maintenance mode, normally because an upgrade is running. Reads still work; changes resume when the hold is released. |
 | Live | LiveSession already exists: council-live-room | The Live screen uses one fixed session id, so a second session cannot be created until IT resets it. |
 | Live | Go on air blocked: a fresh source-bound server-side pre-flight did not pass. No broadcast was started. Correct the failed checks and run pre-flight again. | Fix the red pre-flight items. |
-| Remote Contribution | Remote contribution is not configured (no self-hosted VDO.Ninja URL). A compositor + VDO.Ninja + coturn must be commissioned before guests can join. | Those services are not set up. |
+| Remote Contribution | Remote contribution is not configured (no self-hosted VDO.Ninja URL). VDO.Ninja, a MediaMTX relay and reachable TURN service must be commissioned before guests can join. | Those services are not set up. |
 | Remote Contribution | A guest-control notice says **sent, not verified**. | The director iframe does not report command completion. Check the guest in the director and mark them left only after verifying they disconnected. |
 | Emergency Alerts | A forced full-screen slate must be confirmed by an operator... | Tick the confirmation box before choosing a forced slate. |
 | Control Room | On-Air Mode expired before this cue could fire. Open a new On-Air session to continue. | The On-Air session lasts 30 minutes; open a new one. |
@@ -9142,7 +9152,7 @@ Checklist:
 
 ## Appendix H: Measured evidence and known limits {#app-evidence}
 
-This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity, checks and limits. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks this source edition; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that signed package. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity and checks. The [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package; the Beta 19 edition needs its own package record. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
 
 ### Historical Beta 11: three channels, 72 hours, 99.78% live caption-input coverage
 
@@ -9204,7 +9214,7 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 ### H.6 How to use this evidence
 
-Read sections H.1 through H.5 as historical evidence for their named builds and runs. For the Beta 18 source edition, use its verification record and the current operating chapters; keep each measured result associated with its recorded source and run.
+Read sections H.1 through H.5 as historical evidence for their named builds and runs. For Beta 19, use the current operating chapters and its matching package record; keep each measured result associated with its recorded source and run.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; ops/beta10-oversight/OVERSIGHT-LOG.md entries 2026-10-01 14:12 and 14:22; ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md -->
 
@@ -9869,11 +9879,12 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual covers the Beta 18 source edition. Its [verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks package identity and checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies to that signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual covers the Beta 19 edition. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) applies to that earlier signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **Beta 18 source edition** | — | Manual source edition; use its verification record for package identity and checks | Includes Sprints 1–4, Beta 17 publication and underwriting work, and the Cablecast station-import interface. |
+| **v1.0.0-beta.19** | — | Edition covered by this manual; see its matching package record | Completes Sprint 5 remote-guest output, bulletin-board video/audio and native viewer source apps. |
+| **v1.0.0-beta.18** | 2026-10-15 | Published package; historical record | Guided Cablecast station import; see its verification record. |
 | **v1.0.0-beta.15** | — | Published package; historical record | Package observations and limits are in the Beta 15 verification record; no extended soak or normal cross-version upgrade is claimed. |
 | **v1.0.0-beta.14** | 2026-10-12 | See release page | Field fixes for installer/model selection, caption timing and recovery, recording, playback, resource protection and documentation. Exact checks are in the Beta 14 verification record. |
 | v1.0.0-beta.13 | 2026-10-11 | Published GitHub pre-release | Automatic Whistle recovery and bounded diagnostics. Fresh installation, normal Beta 11 upgrade and one interrupted-install repair passed their recorded three-channel observations. |

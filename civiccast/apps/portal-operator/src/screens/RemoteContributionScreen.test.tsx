@@ -22,6 +22,7 @@ vi.mock('../api/client', () => ({
   dropContributionGuest: vi.fn(),
   getContributionRoom: vi.fn(),
   getRemoteContributionInstallStatus: vi.fn(),
+  installRemoteContribution: vi.fn(),
   getStaffIdentity: vi.fn(),
   listEgressChannels: vi.fn(),
   listContributionRooms: vi.fn(),
@@ -42,7 +43,6 @@ import {
   getStaffIdentity,
   listEgressChannels,
   listContributionRooms,
-  openContributionRoom,
   putContributionGuestOnAir,
   recordContributionMediaControlRequest,
   takeContributionGuestOffAir,
@@ -98,7 +98,7 @@ describe('GuestTray', () => {
   it('holds an un-admitted guest and disables provider controls until the director is loaded', () => {
     const onAdmit = vi.fn()
     const { getByText } = render(
-      <GuestTray sessions={[guest()]} canOperate directorReady={false} pending={false} onAdmit={onAdmit} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={vi.fn()} />,
+      <GuestTray sessions={[guest()]} canOperate directorReady={false} pending={false} onAdmit={onAdmit} onAir={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={vi.fn()} />,
     )
     expect(getByText('In waiting room')).toBeTruthy()
     expect(getByText('Admit')).toBeTruthy()
@@ -111,7 +111,7 @@ describe('GuestTray', () => {
     const onControl = vi.fn()
     const admitted = guest({ admitted_at: '2026-01-01T00:01:00Z' })
     const { getByText, queryByText } = render(
-      <GuestTray sessions={[admitted]} canOperate directorReady pending={false} onAdmit={vi.fn()} onControl={onControl} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={vi.fn()} />,
+      <GuestTray sessions={[admitted]} canOperate directorReady pending={false} onAdmit={vi.fn()} onAir={vi.fn()} onControl={onControl} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={vi.fn()} />,
     )
     expect(queryByText('Admit')).toBeNull() // already admitted
     fireEvent.click(getByText('Mute guest camera'))
@@ -121,107 +121,42 @@ describe('GuestTray', () => {
   })
 })
 
-describe('RemoteContributionScreen: Off air requests', () => {
-  it('confirms Off air and sends both targeted requests to the same guest without changing lifecycle or channel state', async () => {
+describe('RemoteContributionScreen: guest broadcast routing', () => {
+  it('puts an admitted guest on air through CivicCast', async () => {
     vi.clearAllMocks()
-    vi.mocked(getStaffIdentity).mockResolvedValue({
-      operator_id: 'op_1', operator_display_name: 'Op', token_id: 'tok_1',
-      scopes: [], roles: ['meeting_operator'],
-    })
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity({ roles: ['meeting_operator'] }))
     vi.mocked(listContributionRooms).mockResolvedValue([ROOM])
     vi.mocked(getContributionRoom).mockResolvedValue(roomDetail({
-      invites: [{
-        invite_id: 'inv_1', room_id: 'room_1', guest_display_name: 'Jane',
-        role: 'council_member', invite_token: 'invite-stream-1',
-        expires_at: '2026-01-01T01:00:00Z', created_at: '2026-01-01T00:00:00Z',
-      }],
-      sessions: [guest({ state: 'on_air', admitted_at: '2026-01-01T00:01:00Z' })],
+      sessions: [guest({ admitted_at: '2026-01-01T00:01:00Z' })],
     }))
-    vi.mocked(openContributionRoom).mockResolvedValue({ room: ROOM, director_url: 'https://vdo.example/room' })
-    vi.mocked(recordContributionMediaControlRequest).mockResolvedValue(guest())
-
+    vi.mocked(putContributionGuestOnAir).mockResolvedValue(guest({ state: 'on_air' }))
     const view = renderScreen()
     fireEvent.click(await view.findByText('Chamber'))
-    fireEvent.click(await view.findByRole('button', { name: 'Open room' }))
-    const iframe = await view.findByTitle('VDO.Ninja guest director') as HTMLIFrameElement
-    fireEvent.load(iframe)
-    const postMessage = vi.spyOn(iframe.contentWindow!, 'postMessage')
-
-    expect(view.queryByRole('button', { name: 'Off air' })).toBeTruthy()
-    fireEvent.click(view.getByRole('button', { name: 'Off air' }))
-    const dialog = await view.findByRole('alertdialog')
-    expect(dialog.textContent).toMatch(/mute Jane's audio and camera/i)
-    expect(dialog.textContent).toMatch(/stays connected/i)
-    expect(dialog.textContent).toMatch(/does not return the channel to its schedule/i)
-    expect(postMessage).not.toHaveBeenCalled()
-    expect(recordContributionMediaControlRequest).not.toHaveBeenCalled()
-
-    fireEvent.click(view.getByRole('button', { name: 'Send off-air requests' }))
-
-    await waitFor(() => expect(recordContributionMediaControlRequest).toHaveBeenCalledTimes(2))
-    expect(postMessage.mock.calls).toEqual([
-      [{ function: 'targetGuest', target: 'invite-stream-1', action: 'audio', value: false }, 'https://vdo.example'],
-      [{ function: 'targetGuest', target: 'invite-stream-1', action: 'video', value: false }, 'https://vdo.example'],
-    ])
-    expect(recordContributionMediaControlRequest).toHaveBeenNthCalledWith(1, 'gs_1', 'audio_mute')
-    expect(recordContributionMediaControlRequest).toHaveBeenNthCalledWith(2, 'gs_1', 'video_mute')
-    expect(view.getByText('On air')).toBeTruthy()
-    expect(putContributionGuestOnAir).not.toHaveBeenCalled()
-    expect(takeContributionGuestOffAir).not.toHaveBeenCalled()
+    fireEvent.click(await view.findByRole('button', { name: 'Put on air' }))
+    await waitFor(() => expect(putContributionGuestOnAir).toHaveBeenCalledWith('gs_1'))
     expect(beginTakeover).not.toHaveBeenCalled()
-    expect(view.getByRole('status').textContent).toMatch(/did not acknowledge either request/i)
-    expect(view.getByRole('status').textContent).toMatch(/latest recorded request/i)
   })
 
-  it('reports a partial Off air result when the second request cannot be recorded', async () => {
+  it('takes an on-air guest off air without requiring the VDO director', async () => {
     vi.clearAllMocks()
-    vi.mocked(getStaffIdentity).mockResolvedValue({
-      operator_id: 'op_1', operator_display_name: 'Op', token_id: 'tok_1',
-      scopes: [], roles: ['meeting_operator'],
-    })
+    vi.mocked(getStaffIdentity).mockResolvedValue(identity({ roles: ['meeting_operator'] }))
     vi.mocked(listContributionRooms).mockResolvedValue([ROOM])
     vi.mocked(getContributionRoom).mockResolvedValue(roomDetail({
-      invites: [{
-        invite_id: 'inv_1', room_id: 'room_1', guest_display_name: 'Jane',
-        role: 'council_member', invite_token: 'invite-stream-1',
-        expires_at: '2026-01-01T01:00:00Z', created_at: '2026-01-01T00:00:00Z',
-      }],
-      sessions: [guest()],
+      sessions: [guest({ state: 'on_air', admitted_at: '2026-01-01T00:01:00Z' })],
     }))
-    vi.mocked(openContributionRoom).mockResolvedValue({ room: ROOM, director_url: 'https://vdo.example/room' })
-    vi.mocked(recordContributionMediaControlRequest)
-      .mockResolvedValueOnce(guest())
-      .mockRejectedValueOnce(new Error('record unavailable'))
-
+    vi.mocked(takeContributionGuestOffAir).mockResolvedValue(guest())
     const view = renderScreen()
     fireEvent.click(await view.findByText('Chamber'))
-    fireEvent.click(await view.findByRole('button', { name: 'Open room' }))
-    const iframe = await view.findByTitle('VDO.Ninja guest director') as HTMLIFrameElement
-    fireEvent.load(iframe)
-
-    expect(view.queryByRole('button', { name: 'Off air' })).toBeTruthy()
-    fireEvent.click(view.getByRole('button', { name: 'Off air' }))
-    fireEvent.click(view.getByRole('button', { name: 'Send off-air requests' }))
-
-    const notice = await view.findByRole('status')
-    expect(notice.textContent).toMatch(/partial/i)
-    expect(notice.textContent).toMatch(/audio mute.*recorded as sent, not verified/i)
-    expect(notice.textContent).toMatch(/camera mute request was sent.*could not be recorded/i)
-    expect(notice.textContent).toMatch(/did not acknowledge either request/i)
-    expect(notice.textContent).toMatch(/remains connected/i)
-    expect(notice.textContent).toMatch(/does not return the channel to its schedule/i)
-    expect(recordContributionMediaControlRequest).toHaveBeenNthCalledWith(1, 'gs_1', 'audio_mute')
-    expect(recordContributionMediaControlRequest).toHaveBeenNthCalledWith(2, 'gs_1', 'video_mute')
-    expect(view.getByText('In waiting room')).toBeTruthy()
-    expect(takeContributionGuestOffAir).not.toHaveBeenCalled()
-    expect(beginTakeover).not.toHaveBeenCalled()
+    fireEvent.click(await view.findByRole('button', { name: 'Off air' }))
+    await waitFor(() => expect(takeContributionGuestOffAir).toHaveBeenCalledWith('gs_1'))
+    expect(recordContributionMediaControlRequest).not.toHaveBeenCalled()
   })
 })
 
 describe('GuestTray: remaining states and confirmation', () => {
   it('hides controls when the operator cannot operate', () => {
     const { queryByText, getByText } = render(
-      <GuestTray sessions={[guest()]} canOperate={false} directorReady pending={false} onAdmit={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={vi.fn()} />,
+      <GuestTray sessions={[guest()]} canOperate={false} directorReady pending={false} onAdmit={vi.fn()} onAir={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={vi.fn()} />,
     )
     expect(getByText('Jane')).toBeTruthy()
     expect(queryByText('Admit')).toBeNull()
@@ -232,7 +167,7 @@ describe('GuestTray: remaining states and confirmation', () => {
     const { getByText } = render(
       <GuestTray
         sessions={[guest({ session_id: 'gs_x', state: 'dropped' }), guest({ guest_display_name: 'Ann' })]}
-        canOperate directorReady pending={false} onAdmit={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={vi.fn()}
+        canOperate directorReady pending={false} onAdmit={vi.fn()} onAir={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={vi.fn()}
       />,
     )
     expect(getByText('Guests (1)')).toBeTruthy()
@@ -243,7 +178,7 @@ describe('GuestTray: remaining states and confirmation', () => {
     it('does not send the hangup command until the operator confirms, naming the guest', () => {
       const onDisconnect = vi.fn()
       const { getByText, getByRole } = render(
-        <GuestTray sessions={[guest()]} canOperate directorReady pending={false} onAdmit={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={onDisconnect} onMarkLeft={vi.fn()} />,
+        <GuestTray sessions={[guest()]} canOperate directorReady pending={false} onAdmit={vi.fn()} onAir={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={onDisconnect} onMarkLeft={vi.fn()} />,
       )
       fireEvent.click(getByText('Disconnect guest'))
 
@@ -259,7 +194,7 @@ describe('GuestTray: remaining states and confirmation', () => {
     it('cancels without sending a provider command', () => {
       const onDisconnect = vi.fn()
       const { getByText, getByRole } = render(
-        <GuestTray sessions={[guest()]} canOperate directorReady pending={false} onAdmit={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={onDisconnect} onMarkLeft={vi.fn()} />,
+        <GuestTray sessions={[guest()]} canOperate directorReady pending={false} onAdmit={vi.fn()} onAir={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={onDisconnect} onMarkLeft={vi.fn()} />,
       )
       fireEvent.click(getByText('Disconnect guest'))
       fireEvent.click(getByText('Cancel'))
@@ -270,7 +205,7 @@ describe('GuestTray: remaining states and confirmation', () => {
     it('records a guest as left only after explicit confirmation that they were checked', () => {
       const onMarkLeft = vi.fn()
       const { getByText, getByRole } = render(
-        <GuestTray sessions={[guest()]} canOperate directorReady pending={false} onAdmit={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={onMarkLeft} />,
+        <GuestTray sessions={[guest()]} canOperate directorReady pending={false} onAdmit={vi.fn()} onAir={vi.fn()} onControl={vi.fn()} onOffAir={vi.fn()} onDisconnect={vi.fn()} onMarkLeft={onMarkLeft} />,
       )
       fireEvent.click(getByText('Mark left after checking'))
       expect(getByRole('alertdialog').textContent).toContain('after you verify in the director')
@@ -472,8 +407,8 @@ describe('RemoteContributionScreen: Close room requires confirmation (round-3 au
 
     const dialog = await findByRole('alertdialog')
     expect(dialog.textContent).toContain('Close "Chamber"?')
-    expect(dialog.textContent).toMatch(/director API does not acknowledge those requests/i)
-    expect(dialog.textContent).toMatch(/does not return the channel to its schedule/i)
+    expect(dialog.textContent).toMatch(/does not acknowledge disconnect requests/i)
+    expect(dialog.textContent).toMatch(/returns on-air guests to the channel schedule/i)
     expect(closeContributionRoom).not.toHaveBeenCalled()
 
     fireEvent.click(getByRole('button', { name: 'Close room now' }))

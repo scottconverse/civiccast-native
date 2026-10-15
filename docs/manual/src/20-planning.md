@@ -186,7 +186,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 ### What is on the release page
 
-This manual describes the Beta 18 source edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks package-specific results.
+This manual describes the Beta 19 edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for published packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 18 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks that earlier package's results.
 
 The complete offline kit contains 19 required files, including the signed station index and model packs. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
