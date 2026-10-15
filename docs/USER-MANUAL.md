@@ -2533,7 +2533,7 @@ The spot appears in the **Spots** list with "FCC 73.503 attested." or "NOT attes
 4. Set **Start date** and **End date**. The window includes both days.
 5. In **Channels**, type at least one channel id, separated by commas, such as `pub-1, gov-1`. The box has no "required" mark, but the server refuses a flight with no channel.
 6. Leave **Frequency cap (per day, optional)** empty, or type a whole number from 1 to 1440.
-7. Leave **Daypart block ID (optional)** empty unless your scheduling team gave you an id.
+7. In **Daypart (optional)**, leave **Any time** or choose a saved daypart by name, channel and hours. Use **Manage dayparts** to create or edit them in Auto Schedule. If an older flight refers to a deleted daypart, choose another or **Any time** before saving.
 8. Click **Create flight**.
 
 To delete a spot or flight, click **Delete**, then **Confirm delete**. Deleting a spot also deletes every flight and placement that used it. This cannot be undone.

@@ -42,6 +42,7 @@ import {
   getStaffIdentity,
   getUnderwriterAffidavit,
   listSpotFlights,
+  listScheduleBlocks,
   listSpotPlacements,
   listUnderwritingSpots,
   patchSpotFlight,
@@ -51,6 +52,7 @@ import type {
   SpotFlight,
   SpotFlightInput,
   SpotFlightUpdate,
+  ScheduleBlock,
   SpotPlacement,
   StaffIdentityResponse,
   UnderwriterAffidavit,
@@ -502,6 +504,9 @@ function FlightForm({
   pending,
   spots,
   spotsLoading,
+  dayparts,
+  daypartsLoading,
+  daypartsError,
 }: {
   form: FlightFormState
   onChange: (next: FlightFormState) => void
@@ -510,6 +515,9 @@ function FlightForm({
   pending: boolean
   spots: UnderwritingSpot[]
   spotsLoading: boolean
+  dayparts: ScheduleBlock[]
+  daypartsLoading: boolean
+  daypartsError: string | null
 }) {
   const idFlight = useId()
   const idSpot = useId()
@@ -520,6 +528,10 @@ function FlightForm({
   const idCh = useId()
   const editing = form.editingFlightId != null
   const freqParsed = parseFreqCap(form.frequency_cap_per_day)
+  const selectedDaypart = dayparts.find((block) => block.block_id === form.daypart_block_id)
+  const unresolvedDaypart = form.daypart_block_id !== '' && !selectedDaypart
+  const missingDaypart = unresolvedDaypart && !daypartsLoading && !daypartsError
+  const disabledDaypart = selectedDaypart?.enabled === false
   const rangeOk =
     form.start_date.length === 10 &&
     form.end_date.length === 10 &&
@@ -529,6 +541,8 @@ function FlightForm({
     form.spot_id.trim().length > 0 &&
     rangeOk &&
     freqParsed.ok &&
+    !unresolvedDaypart &&
+    !disabledDaypart &&
     !pending
 
   return (
@@ -631,21 +645,34 @@ function FlightForm({
       </label>
 
       <label htmlFor={idDp} className="grid gap-1 text-xs">
-        <span style={{ color: 'var(--cc-ink-3)' }}>Daypart block ID (optional)</span>
-        <input
+        <span style={{ color: 'var(--cc-ink-3)' }}>Daypart (optional)</span>
+        <select
           id={idDp}
-          aria-label="Daypart block ID"
-          type="text"
+          aria-label="Daypart"
           value={form.daypart_block_id}
-          placeholder="prime-evening"
           onChange={(e) => onChange({ ...form, daypart_block_id: e.target.value })}
           className="rounded-md px-2 py-1.5"
           style={INPUT_STYLE}
-        />
+        >
+          <option value="">Any time</option>
+          {unresolvedDaypart && (
+            <option value={form.daypart_block_id}>
+              {daypartsLoading ? 'Loading' : 'Missing'} daypart: {form.daypart_block_id}
+            </option>
+          )}
+          {dayparts.map((block) => (
+            <option key={block.block_id} value={block.block_id} disabled={block.enabled === false}>
+              {block.name} ({block.channel_id}, {String(Math.floor(block.start_minute / 60)).padStart(2, '0')}:{String(block.start_minute % 60).padStart(2, '0')}–{String(Math.floor(block.end_minute / 60)).padStart(2, '0')}:{String(block.end_minute % 60).padStart(2, '0')}){block.enabled === false ? ' — disabled' : ''}
+            </option>
+          ))}
+        </select>
         <span className="text-xs" style={{ color: 'var(--cc-ink-3)' }}>
-          Daypart block management is coming in a future release. For now, type the block ID
-          you got from your scheduling team.
+          {daypartsLoading ? 'Loading dayparts… ' : ''}
+          <a href="#/auto-schedule" style={{ color: 'var(--cc-brand-2)', textDecoration: 'underline' }}>Manage dayparts</a> in Auto Schedule.
         </span>
+        {daypartsError && <span role="alert" className="text-xs" style={{ color: 'var(--cc-warn)' }}>{daypartsError}</span>}
+        {missingDaypart && <span role="alert" className="text-xs" style={{ color: 'var(--cc-warn)' }}>This daypart no longer exists. Choose another daypart or Any time before saving.</span>}
+        {disabledDaypart && <span role="alert" className="text-xs" style={{ color: 'var(--cc-warn)' }}>This daypart is disabled. Choose another daypart or Any time before saving.</span>}
       </label>
 
       <label htmlFor={idCh} className="grid gap-1 text-xs">
@@ -1272,6 +1299,11 @@ function UnderwritingBody({ identity }: { identity: StaffIdentityResponse }) {
     queryFn: () => listSpotFlights(),
     enabled: canManage,
   })
+  const daypartsQuery = useQuery({
+    queryKey: ['schedule-blocks'],
+    queryFn: () => listScheduleBlocks(),
+    enabled: canManage,
+  })
 
   const invalidateFlights = () => qc.invalidateQueries({ queryKey: ['underwriting-flights'] })
 
@@ -1528,6 +1560,9 @@ function UnderwritingBody({ identity }: { identity: StaffIdentityResponse }) {
                 pending={createFlightMut.isPending || patchFlightMut.isPending}
                 spots={sortedSpots}
                 spotsLoading={spotsQuery.isLoading}
+                dayparts={daypartsQuery.data ?? []}
+                daypartsLoading={daypartsQuery.isLoading}
+                daypartsError={daypartsQuery.isError ? apiMessage(daypartsQuery.error, 'Could not load dayparts.') : null}
               />
               {createFlightMut.isError && (
                 <Banner tone="warn">
