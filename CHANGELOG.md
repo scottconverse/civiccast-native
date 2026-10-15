@@ -2,8 +2,13 @@
 
 ## [Unreleased]
 
-Remote-guest composition, bulletin-board media, station import UI, native
-viewer completion, and protected paywall media remain separate open work.
+The operator console now provides a Setup-admin Cablecast import workflow:
+source connection, read-only preview with conflicts and skipped rows, explicit
+apply, batch results, and confirmed rollback. The existing importer handles
+show and schedule metadata; media files are not copied.
+
+Remote-guest composition, bulletin-board media, native viewer completion,
+and protected paywall media remain separate open work.
 
 ## [1.0.0-beta.17] - 2026-10-15
 

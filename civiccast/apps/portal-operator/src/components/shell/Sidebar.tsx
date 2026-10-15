@@ -45,6 +45,7 @@ export type RouteId =
   | 'ai-models'
   | 'station-profile'
   | 'backups'
+  | 'stationimport'
   | 'network'
   | 'commissioning'
   | 'custom-fields'
@@ -103,6 +104,7 @@ const NAV_SECTIONS: NavSection[] = [
       { id: 'setup', label: 'First Setup' },
       { id: 'staffaccounts', label: 'Staff accounts', requiredRoles: ['setup_admin'] },
       { id: 'backups', label: 'Backup and restore', requiredRoles: ['setup_admin', 'support_admin'] },
+      { id: 'stationimport', label: 'Import station', requiredRoles: ['setup_admin'] },
       { id: 'network', label: 'Network access', requiredRoles: ['setup_admin', 'support_admin'] },
       { id: 'controlroomsetup', label: 'Control Room Setup', requiredRoles: ['setup_admin'] },
       {
