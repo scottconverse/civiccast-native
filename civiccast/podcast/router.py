@@ -83,10 +83,7 @@ def podcast_audio(
             status_code=status.HTTP_404_NOT_FOUND, detail="Podcast audio not found."
         )
     _require_channel_access(episode.channel_id, token, playback_store, asset_id=asset_id)
-    private = (
-        playback_store.effective_policy(asset_id, episode.channel_id).access_tier
-        != "public"
-    )
+    private = playback_store.effective_policy(asset_id, episode.channel_id).access_tier != "public"
     filename = f"{hashlib.sha256(asset_id.encode('utf-8')).hexdigest()[:32]}.mp3"
     audio_path = podcast_media_dir() / filename
     if not audio_path.is_file():
