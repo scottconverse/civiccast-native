@@ -2056,8 +2056,12 @@ def test_graphics_overlay_composites_station_bug_and_lower_third(tmp_path: Path)
 
 def test_board_live_video_is_visible_above_the_board_raster(tmp_path: Path) -> None:
     """A live zone must survive the opaque board raster in the encoded output."""
+    from shutil import which
+
     from civiccast.egress.gst.graphics_overlay import write_rgba_png
 
+    if which("ffmpeg") is None:
+        pytest.skip("FFmpeg is required for the local SRT source and pixel check")
     width, height = 640, 360
     raster = tmp_path / "board.png"
     write_rgba_png(raster, width, height, bytes((0, 0, 255, 255)) * (width * height))
