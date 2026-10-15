@@ -44,7 +44,12 @@ def upgrade() -> None:
 def downgrade() -> None:
     # Restore the old check only after changing new-source rows to an old,
     # truthful empty/manual state. Downgrade never silently leaves an invalid row.
-    table = sa.table("cg_zone_configs", sa.column("content_source", sa.String()))
+    table = sa.Table(
+        "cg_zone_configs",
+        sa.MetaData(),
+        sa.Column("content_source", sa.String()),
+        schema=_schema(),
+    )
     op.execute(
         table.update().where(table.c.content_source == "live_video").values(content_source="manual")
     )
