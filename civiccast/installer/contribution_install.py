@@ -36,6 +36,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import TypedDict
 
 from pydantic import BaseModel, ConfigDict
 
@@ -89,6 +90,13 @@ class ContributionInstallReport(BaseModel):
 
 class ContributionInstallError(RuntimeError):
     """Raised when the pinned VDO.Ninja clone cannot be verified."""
+
+
+class RelayFields(TypedDict):
+    relay_installed: bool
+    relay_verified: bool
+    relay_path: str | None
+    relay_command: str
 
 
 def _default_git_runner(args: list[str], cwd: Path | None = None) -> str:
@@ -161,7 +169,7 @@ def install_remote_contribution(
     target = dest or (managed_contribution_dir() / "vdo.ninja")
     coturn = _coturn_action()
 
-    def relay_fields() -> dict[str, bool | str | None]:
+    def relay_fields() -> RelayFields:
         relay_home = target.parent / "mediamtx"
         if include_relay and os.name == "nt":
             try:
