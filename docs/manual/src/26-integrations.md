@@ -140,7 +140,7 @@ All of them default to `mock`. A mock provider does not send anything. The selec
 
 The real Internet Archive and local archive adapters use a resolved recording file when available. If it cannot resolve, the fallback is an asset/title payload rather than the full media. The local archive adapter writes a canonical copy and dated snapshot to a mounted filesystem path and checks the files by SHA-256 read-back; it does not run rsync or manage a ZFS target. YouTube VOD needs a local recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. YouTube Live creates and binds a YouTube broadcast/stream, but the Publish path does not connect CivicCast's live output to the returned ingest address.
 
-`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and optional notices from the Publish screen. `CIVICCAST_PROVIDER_WEBHOOK=real` enables webhook notices for confirmed subscribers. The staff-only subscription dispatch-test route can exercise either provider. Publishing records notice outcomes and retries eligible failures. Podcast publishing uses local FFmpeg, `CIVICCAST_PUBLIC_BASE_URL`, and the selected asset's managed recording; it does not use an external provider.
+`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation, optional notices from the Publish screen, and Beta 19 resident sign-in links. Sign-in links also need a configured `CIVICCAST_RESIDENT_PORTAL_URL` or `CIVICCAST_PUBLIC_BASE_URL` so the message points to the public portal. `CIVICCAST_PROVIDER_WEBHOOK=real` enables webhook notices for confirmed subscribers. The staff-only subscription dispatch-test route can exercise either provider. Publishing records notice outcomes and retries eligible failures. Podcast publishing uses local FFmpeg, `CIVICCAST_PUBLIC_BASE_URL`, and the selected asset's managed recording; it does not use an external provider.
 
 > **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Check the far end after your first real publish.
 
@@ -263,7 +263,7 @@ The **Alerts** screen can hold destinations of three kinds: email, text message 
 
 `POST /api/webhooks/stripe` accepts a payment provider's notification. It requires a `Stripe-Signature` header, rejects a body over 1 MiB, and answers 401 for a bad signature. It is not reachable from the internet unless you build a path to it.
 
-> **Beta 18 status:** The public portal asks for paywall tiers and a checkout, but the server has no routes for them (the API list shows only `access`, `magic-link` and `verify`), sign-in link emails are not sent, and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
+> **Beta 19 status:** Configured SMTP delivers resident sign-in links, and the public portal redeems them. The public portal still asks for paywall tiers and checkout that the server does not provide, and public VOD media is not grant-protected. See [Publishing](#ch-publishing).
 
 ## Station import from Cablecast {#station-import-cablecast}
 
@@ -402,7 +402,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 
 ## Package status and verification
 
-This chapter describes the Beta 18 source. Use the release record matching the package on the station; the [Beta 18 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.18-verification.md) tracks its package checks. Commission each external service and headend for the station's actual configuration.
+This chapter describes the Beta 19 source. Use the release record matching the package on the station; the [Beta 19 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.19-verification.md) tracks its package checks. Commission each external service and headend for the station's actual configuration.
 
 ## Related
 

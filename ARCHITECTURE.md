@@ -2,10 +2,10 @@
 
 CivicCast combines native Windows playout, local AI captions, station backup,
 staff administration, and resident publication in one installation. This
-architecture describes the current Beta 17 source.
+architecture describes the Beta 19 candidate source.
 
-The current published download is signed `v1.0.0-beta.17` ([release
-page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.17)).
+The current published download is signed `v1.0.0-beta.18` ([release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18)).
 
 This document orients engineers and integrators to the current CivicCast
 system. The binding product contract is
@@ -150,7 +150,7 @@ Recorded-media captions use faster-whisper. Needle usage telemetry is disabled,
 and the speech models run locally. Live captions, SDI/NDI hardware paths, and
 cable-headend delivery are described with their evidence boundaries in the
 [User Manual](docs/USER-MANUAL.md) and the current
-[Beta 17 candidate record](docs/releases/v1.0.0-beta.17-verification.md).
+[Beta 18 package record](docs/releases/v1.0.0-beta.18-verification.md).
 Historical Beta 13 package observations remain in the [Beta 13 verification
 record](docs/releases/v1.0.0-beta.13-verification.md).
 
@@ -263,7 +263,7 @@ supersedes ADR 0001's NATS JetStream choice).
 
 ## Current Source Contracts
 
-These describe current source behavior and test coverage. The [Beta 17 candidate record](docs/releases/v1.0.0-beta.17-verification.md) will track installed-package results:
+These describe current source behavior and test coverage. The [Beta 19 candidate record](docs/releases/v1.0.0-beta.19-verification.md) tracks package results for this source edition:
 
 - Staff-write stores fail closed without managed durable storage or `DATABASE_URL` unless ephemeral mode
   is explicitly acknowledged for local development.
@@ -283,7 +283,8 @@ These describe current source behavior and test coverage. The [Beta 17 candidate
 
 ## Release evidence and history
 
-Beta 17 is the published download. Its package-specific checks are in the
-[Beta 17 record](docs/releases/v1.0.0-beta.17-verification.md).
-Historical package results are retained in the [Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md);
-[Beta 17 follow-up](docs/ops/beta17-deferred.md) records the owner-deferred field findings.
+Beta 18 is the published download. Its package-specific checks are in the
+[Beta 18 record](docs/releases/v1.0.0-beta.18-verification.md). Beta 19 is an
+unpublished source candidate. Historical package results remain in earlier
+records; [Beta 17 follow-up](docs/ops/beta17-deferred.md) records the
+owner-deferred field findings.

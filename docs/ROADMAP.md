@@ -3,6 +3,14 @@
 CivicCast brings station scheduling, channel playout, meeting recording,
 caption review, and resident publication into one native Windows system.
 
+## Beta 19 release
+
+Beta 19 adds configured SMTP delivery and public-portal redemption for resident
+sign-in links. Failed delivery is reported accurately. This completes the
+magic-link delivery slice of the optional Paywall work; paid checkout and
+grant-protected media remain separate. The [Beta 19 package record](releases/v1.0.0-beta.19-verification.md)
+identifies its signed candidate and checks.
+
 ## Beta 18 release
 
 The [Beta 18 release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18) adds the Setup-admin Cablecast station-import workflow: connect, preview proposed show and schedule metadata with conflicts and skips, explicitly apply, inspect the batch, and confirm rollback. The [package record](releases/v1.0.0-beta.18-verification.md) identifies the signed candidate and its checks. Remote-guest output, bulletin-board media, protected paywall access, and native viewer completion remain separate open work.
@@ -45,8 +53,8 @@ is not a Beta 15 field result or Beta 16 package qualification.
 
 ## Roadmap ownership and evidence
 
-The owner sets implementation and release scope. The [Beta 18 verification
-record](releases/v1.0.0-beta.18-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
+The owner sets implementation and release scope. The [Beta 19 verification
+record](releases/v1.0.0-beta.19-verification.md) documents the current package. The [Beta 15 verification record](releases/v1.0.0-beta.15-verification.md) documents that older package's exact
 identity and installation observations. The [Beta 17 deferred
 backlog](ops/beta17-deferred.md) cites the separate Beta 15 R9 field report and
 describes what that host evaluation did and did not establish. No release date

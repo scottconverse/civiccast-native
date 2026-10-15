@@ -4,6 +4,8 @@ CivicCast brings station scheduling, broadcast, recording, caption review, and
 resident publication into one native Windows system. Support is
 community-driven; there is no commercial support contract or SLA.
 
+The current published download is signed [v1.0.0-beta.18](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18). Beta 19 is an unpublished source candidate; use the manual bundled with the version installed on your station.
+
 ## How To Get Help
 
 1. **Read the early-adopter docs first.** Start with
@@ -60,13 +62,13 @@ enabled throwaway development.
 ## Native Windows Beta
 
 The native Windows runtime ([ADR 0021](docs/adr/0021-native-windows-runtime.md))
-is a public beta. The current published package is `v1.0.0-beta.18`, available
-from its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18).
-Its [package verification record](docs/releases/v1.0.0-beta.18-verification.md)
+is a public beta. The current published package is `v1.0.0-beta.19`, available
+from its [GitHub Release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.19).
+Its [package verification record](docs/releases/v1.0.0-beta.19-verification.md)
 identifies the signed installer and scoped results.
 Package and installation claims must name the exact published version; source
 changes do not update an installed station. The
-[Beta 18 verification record](docs/releases/v1.0.0-beta.18-verification.md)
+[Beta 19 verification record](docs/releases/v1.0.0-beta.19-verification.md)
 contains package-specific results and boundaries. There is no dedicated,
 SLA-backed support intake for the native beta.
 
