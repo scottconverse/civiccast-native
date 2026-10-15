@@ -1004,7 +1004,7 @@ def remote_contribution_install() -> ContributionInstallReport:
     # coturn stays operator-assisted (a system service). Runs in the threadpool
     # (sync def) so the clone never blocks the event loop.
     try:
-        return install_remote_contribution()
+        return install_remote_contribution(include_relay=True)
     except ContributionInstallError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

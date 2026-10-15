@@ -6088,6 +6088,10 @@ Read CivicCast local federation metadata.
 - `coturn_action` (optional): `string`
 - `detail` (optional): `string`
 - `launch_hint` (optional): `string`
+- `relay_command` (optional): `string`
+- `relay_installed` (optional): `boolean`
+- `relay_path` (optional): `string | null`
+- `relay_verified` (optional): `boolean`
 - `vdo_commit` (optional): `string`
 - `vdo_installed` (required): `boolean`
 - `vdo_path` (optional): `string | null`

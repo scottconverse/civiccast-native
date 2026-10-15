@@ -9,7 +9,7 @@ import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 class NetworkClient(
-    private val baseUrl: String = BuildConfig.API_BASE_URL
+    private val baseUrl: String = StationAddress.baseUrl
 ) {
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)

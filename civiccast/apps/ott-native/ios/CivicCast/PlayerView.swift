@@ -1,6 +1,6 @@
 // PlayerView.swift
 //
-// AVPlayer-backed HLS playback. AVPlayer has native HLS support so
+// AVPlayerViewController-backed HLS playback. AVPlayer has native HLS support so
 // no third-party player is needed; the same code works on tvOS.
 //
 // Fetches the channel's LiveState (`GET <live_state_url>`) to resolve
@@ -8,6 +8,23 @@
 
 import SwiftUI
 import AVKit
+
+/// AVKit exposes the platform's audio-language, caption, AirPlay and PiP controls.
+private struct SystemPlayerView: UIViewControllerRepresentable {
+    let player: AVPlayer
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.showsPlaybackControls = true
+        controller.allowsPictureInPicturePlayback = true
+        return controller
+    }
+
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        controller.player = player
+    }
+}
 
 struct PlayerView: View {
     let channel: Channel?
@@ -30,7 +47,7 @@ struct PlayerView: View {
     var body: some View {
         Group {
             if let player {
-                VideoPlayer(player: player)
+                SystemPlayerView(player: player)
                     .ignoresSafeArea(edges: .bottom)
                     .onAppear { player.play() }
                     .onDisappear { player.pause() }

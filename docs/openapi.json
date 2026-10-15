@@ -41263,6 +41263,32 @@
             "title": "Vdo Verified",
             "default": false
           },
+          "relay_installed": {
+            "type": "boolean",
+            "title": "Relay Installed",
+            "default": false
+          },
+          "relay_verified": {
+            "type": "boolean",
+            "title": "Relay Verified",
+            "default": false
+          },
+          "relay_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Relay Path"
+          },
+          "relay_command": {
+            "type": "string",
+            "title": "Relay Command",
+            "default": ""
+          },
           "coturn_action": {
             "type": "string",
             "title": "Coturn Action",

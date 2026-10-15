@@ -6,6 +6,8 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import android.widget.EditText
+import androidx.appcompat.app.AlertDialog
 import android.text.Editable
 import android.text.TextWatcher
 import androidx.activity.viewModels
@@ -31,9 +33,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private val viewModel: MainViewModel by viewModels()
     private lateinit var adapter: ChannelAdapter
+    private var pendingLink: android.net.Uri? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        StationAddress.load(this)
+        pendingLink = intent?.data
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
@@ -47,6 +52,7 @@ class MainActivity : AppCompatActivity() {
         binding.channelList.adapter = adapter
 
         binding.retryButton.setOnClickListener { viewModel.load() }
+        binding.stationButton.setOnClickListener { showStationAddress() }
         binding.searchInput.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
@@ -64,6 +70,45 @@ class MainActivity : AppCompatActivity() {
         viewModel.load()
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        pendingLink = intent.data
+        (viewModel.state.value as? UiState.Loaded)?.let(::openPendingLink)
+    }
+
+    private fun openPendingLink(state: UiState.Loaded) {
+        val link = pendingLink ?: return
+        if (link.scheme != "civiccast" || link.pathSegments.size != 1) return
+        val id = link.pathSegments[0]
+        val playback = when (link.host) {
+            "channel" -> state.config.channels.firstOrNull { it.id == id }?.let { PlayerActivity.intent(this, it) }
+            "replay" -> state.replays.firstOrNull { it.id == id }?.let { PlayerActivity.intent(this, it) }
+            else -> null
+        } ?: return
+        pendingLink = null
+        startActivity(playback)
+    }
+
+    private fun showStationAddress() {
+        val input = EditText(this).apply {
+            hint = "https://station.example.org"
+            setText(StationAddress.baseUrl)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Station HTTPS address")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                if (StationAddress.save(this, input.text.toString())) {
+                    viewModel.load()
+                } else {
+                    AlertDialog.Builder(this).setMessage("Enter a full HTTPS station address without a path.")
+                        .setPositiveButton("OK", null).show()
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun render(state: UiState) {
         binding.loading.visibility = if (state is UiState.Loading) View.VISIBLE else View.GONE
         binding.errorGroup.visibility = if (state is UiState.Error) View.VISIBLE else View.GONE
@@ -77,6 +122,7 @@ class MainActivity : AppCompatActivity() {
             is UiState.Loaded -> {
                 binding.stationName.text = state.config.stationName
                 adapter.submit(state.config.channels, state.replays)
+                openPendingLink(state)
             }
         }
     }
@@ -89,7 +135,6 @@ sealed interface UiState {
 }
 
 class MainViewModel : ViewModel() {
-    private val client = NetworkClient()
     private val _state = MutableStateFlow<UiState>(UiState.Loading)
     val state: StateFlow<UiState> = _state.asStateFlow()
 
@@ -97,6 +142,7 @@ class MainViewModel : ViewModel() {
         _state.value = UiState.Loading
         viewModelScope.launch {
             try {
+                val client = NetworkClient()
                 val config = client.fetchAppConfig()
                 val replays = runCatching { client.fetchPublishedAssets() }.getOrDefault(emptyList())
                 _state.value = UiState.Loaded(config, replays)
@@ -115,7 +161,6 @@ class ChannelAdapter(
     private var channels: List<Channel> = emptyList()
     private var replays: List<PublishedAsset> = emptyList()
     private var query = ""
-    private val client = NetworkClient()
 
     fun submit(channels: List<Channel>, replays: List<PublishedAsset>) {
         this.channels = channels
@@ -143,6 +188,7 @@ class ChannelAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val entry = items[position]
+        val client = NetworkClient()
         when (entry) {
             is Channel -> {
                 holder.binding.channelName.text = entry.branding.displayName

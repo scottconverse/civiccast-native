@@ -8,25 +8,23 @@ import coil.load
 /**
  * Renders a Channel as a Leanback ImageCardView.
  *
- * Image loading is intentionally omitted — Coil/Glide isn't on the classpath for this starter.
- * The card uses a solid color background when posterUrl is absent.
+ * Channel logos and replay posters load from the selected station.
  */
 class ChannelCardPresenter : Presenter() {
-    private val client = NetworkClient()
 
     override fun onCreateViewHolder(parent: ViewGroup): ViewHolder {
         val card = ImageCardView(parent.context).apply {
             isFocusable = true
             isFocusableInTouchMode = true
             setMainImageDimensions(CARD_WIDTH, CARD_HEIGHT)
-            // Solid placeholder until image loading is wired.
-            setMainImage(android.graphics.drawable.ColorDrawable(0xFF1565C0.toInt()))
+            setMainImage(android.graphics.drawable.ColorDrawable(0xFF0D1B30.toInt()))
         }
         return ViewHolder(card)
     }
 
     override fun onBindViewHolder(viewHolder: ViewHolder, item: Any) {
         val card = viewHolder.view as ImageCardView
+        val client = NetworkClient()
         when (item) {
             is Channel -> {
                 card.titleText = item.branding.displayName

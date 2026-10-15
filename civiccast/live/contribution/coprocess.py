@@ -38,6 +38,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from civiccast.egress.process_identity import verify_and_kill_process
+from civiccast.installer.mediamtx_install import relay_paths, relay_verified
 from civiccast.live.contribution.bridge import VdoDiagnostics
 
 _LOG = logging.getLogger(__name__)
@@ -79,6 +80,10 @@ class ContributionCoprocessSettings:
         vdo = os.environ.get("CIVICCAST_VDO_COMMAND")
         coturn = os.environ.get("CIVICCAST_COTURN_COMMAND")
         mediamtx = os.environ.get("CIVICCAST_MEDIAMTX_COMMAND")
+        relay_command: tuple[str, ...] | None = tuple(shlex.split(mediamtx)) if mediamtx else None
+        if relay_command is None and enabled and relay_verified():
+            executable, config = relay_paths()
+            relay_command = (str(executable), str(config))
         try:
             poll = float(os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_POLL", "10"))
         except ValueError as exc:
@@ -91,7 +96,7 @@ class ContributionCoprocessSettings:
             enabled=enabled,
             vdo_command=tuple(shlex.split(vdo)) if vdo else None,
             coturn_command=tuple(shlex.split(coturn)) if coturn else None,
-            mediamtx_command=tuple(shlex.split(mediamtx)) if mediamtx else None,
+            mediamtx_command=relay_command,
             turn_host=os.environ.get("CIVICCAST_TURN_HOST", "127.0.0.1"),
             turn_port=turn_port,
             poll_seconds=poll,

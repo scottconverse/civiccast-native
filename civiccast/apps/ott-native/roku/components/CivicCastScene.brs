@@ -4,8 +4,7 @@
 ' Behaviour script for the CivicCastScene SceneGraph component.
 '
 ' init() runs once at component construction; we wire up the channel-list
-' onItemSelected handler, kick off the config fetch on a urlTransfer task
-' so the UI thread stays responsive, and observe the video node's state
+' onItemSelected handler, fetch the station catalog, and observe the video node's state
 ' so we can hide it cleanly when playback ends.
 '
 ' Real CivicCast app-platform contract (civiccast/app_platform/models.py):
@@ -23,9 +22,8 @@
 
 ' --- Defaults / config ------------------------------------------------------
 
-' The configured CivicCast public API base. In production this is overridden
-' by Roku's "channel config" — for the starter, we ship a placeholder. See
-' README.md for how the station administrator overrides it.
+' The configured CivicCast public API base, persisted from Station address.
+' The example host is only the initial value before station setup.
 '
 ' A function, not a top-level `const` — plain BrightScript (as opposed to
 ' the BrighterScript superset) does not support top-level const
@@ -44,9 +42,11 @@ sub init()
     m.replays = []
     m.statusLabel = m.top.findNode("statusLabel")
     m.channelList = m.top.findNode("channelList")
+    m.artwork = m.top.findNode("artwork")
     m.video = m.top.findNode("videoPlayer")
 
     m.channelList.observeField("itemSelected", "onChannelSelected")
+    m.channelList.observeField("itemFocused", "onItemFocused")
     m.video.observeField("state", "onVideoStateChanged")
 
     fetchConfig()
@@ -88,7 +88,9 @@ sub fetchConfig()
         end if
         liveStateUrl = entry.live_state_url
         if liveStateUrl = invalid then liveStateUrl = ""
-        m.channels.push({ title: title, channel_id: entry.channel_id, live_state_url: liveStateUrl })
+        logoUrl = invalid
+        if entry.branding <> invalid then logoUrl = entry.branding.logo_url
+        m.channels.push({ title: title, channel_id: entry.channel_id, live_state_url: liveStateUrl, poster_url: logoUrl })
     end for
 
     fetchReplays()
@@ -146,6 +148,7 @@ sub renderChannels(statusText as String)
         m.items.push(replay)
     end for
     m.channelList.content = contentNode
+    onItemFocused()
 
     if statusText = "" then
         m.statusLabel.visible = false
@@ -155,6 +158,17 @@ sub renderChannels(statusText as String)
     end if
 
     m.channelList.setFocus(true)
+end sub
+
+sub onItemFocused()
+    idx = m.channelList.itemFocused
+    m.artwork.visible = false
+    if idx = invalid then return
+    if idx < 0 or idx >= m.items.count() then return
+    imageUrl = m.items[idx].poster_url
+    if imageUrl = invalid or imageUrl = "" then return
+    m.artwork.uri = resolveUrl(imageUrl)
+    m.artwork.visible = true
 end sub
 
 ' --- Selection / playback ---------------------------------------------------
@@ -237,6 +251,8 @@ sub onVideoStateChanged()
 end sub
 
 function onKeyEvent(key as String, press as Boolean) as Boolean
+    ' Keep Roku's native player options (including captions and audio) available.
+    if m.video.visible then return false
     if press and key = "options" then
         menu = CreateObject("roSGNode", "Dialog")
         menu.title = "CivicCast options"
@@ -275,8 +291,8 @@ sub onKeyboardSelected()
     m.top.dialog = invalid
     if selected <> 0 then return
     if m.keyboardPurpose = "station" then
-        if Left(value, 8) <> "https://" and Left(value, 7) <> "http://" then
-            m.statusLabel.text = "Enter the full http:// or https:// station address."
+        if Left(value, 8) <> "https://" then
+            m.statusLabel.text = "Enter the full HTTPS station address."
             m.statusLabel.visible = true
             return
         end if

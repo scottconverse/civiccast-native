@@ -22,6 +22,7 @@ import {
   dropContributionGuest,
   getContributionRoom,
   getRemoteContributionInstallStatus,
+  installRemoteContribution,
   getStaffIdentity,
   listEgressChannels,
   listContributionRooms,
@@ -200,6 +201,11 @@ export function RemoteContributionScreen() {
     enabled: canDiag,
   })
 
+  const installMutation = useMutation({
+    mutationFn: installRemoteContribution,
+    onSuccess: (report) => qc.setQueryData(['contribution-install-status'], report),
+  })
+
   const turnTestMutation = useMutation({
     mutationFn: testTurnConnectivity,
     onSuccess: (diag) => {
@@ -245,8 +251,9 @@ export function RemoteContributionScreen() {
         try {
           for (const session of active) {
             const invite = detail?.invites.find((item) => item.invite_id === session.invite_id)
-            if (!invite?.invite_token) throw new Error(`Could not resolve the director stream for ${session.guest_display_name}.`)
-            sendVdoDirectorControl(director, targetOrigin, invite.invite_token, 'disconnect')
+            const streamId = invite?.view_url && new URL(invite.view_url).searchParams.get('push')
+            if (!streamId) throw new Error(`Could not resolve the director stream for ${session.guest_display_name}.`)
+            sendVdoDirectorControl(director, targetOrigin, streamId, 'disconnect')
             disconnectRequestsSent += 1
             await recordContributionMediaControlRequest(session.session_id, 'disconnect')
           }
@@ -655,6 +662,9 @@ export function RemoteContributionScreen() {
             <DiagnosticsView
               diag={diagnosticsQuery.data}
               installReport={installStatusQuery.data}
+              onInstall={() => installMutation.mutate()}
+              installing={installMutation.isPending}
+              installError={installMutation.error}
               onTestConnectivity={() => turnTestMutation.mutate()}
               testing={turnTestMutation.isPending}
               testError={turnTestMutation.error}
@@ -1035,18 +1045,25 @@ function GuestButton({
 export function DiagnosticsView({
   diag,
   installReport,
+  onInstall,
+  installing,
+  installError,
   onTestConnectivity,
   testing,
   testError,
 }: {
   diag: VdoDiagnostics
   installReport?: ContributionInstallReport
+  onInstall?: () => void
+  installing?: boolean
+  installError?: unknown
   onTestConnectivity?: () => void
   testing?: boolean
   testError?: unknown
 }) {
   const turnReachable = diag.turn_reachable ?? false
   const vdoUp = diag.vdo_process_up ?? false
+  const relayUp = diag.relay_process_up ?? false
   const coturnUp = diag.coturn_process_up ?? false
   // On the documented-external-TURN posture, a local coturn process is not
   // required; use TURN reachability as the guest-connectivity signal.
@@ -1058,6 +1075,7 @@ export function DiagnosticsView({
       <div className="flex flex-wrap gap-2">
         <Pill label={`TURN ${turnReachable ? 'reachable' : 'unreachable'}`} tone={turnReachable ? 'ok' : 'warn'} />
         <Pill label={`VDO ${vdoUp ? 'up' : 'down'}`} tone={vdoUp ? 'ok' : 'warn'} />
+        <Pill label={`Relay ${relayUp ? 'up' : 'down'}`} tone={relayUp ? 'ok' : 'warn'} />
         <Pill label={`coturn ${coturnUp ? 'up' : 'down'}`} tone={turnCommissioned ? 'ok' : 'warn'} />
       </div>
       {(diag.turn_host || diag.turn_port != null) && (
@@ -1072,6 +1090,24 @@ export function DiagnosticsView({
         </p>
       )}
       {diag.ice_summary && <p>ICE: {diag.ice_summary}</p>}
+      {installReport && (
+        <p>VDO source: {installReport.vdo_verified ? 'verified' : 'not installed'};
+          MediaMTX relay: {installReport.relay_verified ? 'verified' : 'not installed'}.</p>
+      )}
+      {onInstall && (
+        <button type="button" onClick={onInstall} disabled={installing}
+          className="w-fit rounded-md px-2 py-1 text-xs font-semibold disabled:opacity-50"
+          style={{ background: 'var(--cc-brand)', color: 'var(--cc-brand-ink)' }}>
+          {installing ? 'Installing…' : 'Install VDO and media relay'}
+        </button>
+      )}
+      {Boolean(installError) && <p role="alert" style={{ color: 'var(--cc-err)' }}>
+        {apiMessage(installError, 'Remote guest components could not be installed.')}
+      </p>}
+      {installReport?.relay_command && (
+        <p>Managed relay launch: <code>{installReport.relay_command}</code></p>
+      )}
+      {installReport?.launch_hint && <p>{installReport.launch_hint}</p>}
       {guestConnectivityUnavailable && (
         <p role="status" style={{ color: 'var(--cc-warn)' }}>
           Browser guest connectivity needs self-hosted VDO.Ninja and a reachable TURN

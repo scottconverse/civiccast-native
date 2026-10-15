@@ -143,6 +143,13 @@ export async function bootPlayer({ platformLabel, configUrl = DEFAULT_CONFIG_URL
 
   elements.search.addEventListener('input', () => {
     const query = elements.search.value.trim().toLocaleLowerCase()
+    renderChannelList(
+      elements.channelList,
+      config.channels.filter((channel) => channel.branding.display_name.toLocaleLowerCase().includes(query)),
+      selectedChannel?.channel_id,
+      (channel) => { void selectChannel(channel) },
+      resolvedConfigUrl,
+    )
     renderCatalog(
       elements.catalogList,
       catalogItems.filter((item) => [item.title, item.description, item.series]
@@ -276,8 +283,8 @@ function renderShell(root, platformLabel) {
 
   const search = document.createElement('input')
   search.type = 'search'
-  search.placeholder = 'Search replay programmes'
-  search.setAttribute('aria-label', 'Search replay programmes')
+  search.placeholder = 'Search channels and replays'
+  search.setAttribute('aria-label', 'Search channels and replays')
   search.dataset.role = 'catalog-search'
   const catalogStatus = document.createElement('p')
   catalogStatus.setAttribute('role', 'status')

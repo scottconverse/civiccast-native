@@ -19,18 +19,29 @@ The director iframe also sends targeted guest camera and hangup requests. VDO.Ni
 
 Commission the media relay and service environment before inviting guests:
 
+In **Remote Contribution → Diagnostics**, a Support admin can select
+**Install VDO and media relay**. CivicCast verifies the pinned VDO.Ninja
+source and a pinned MediaMTX Windows binary and its MIT license before activating either. The
+relay starts under CivicCast supervision when Remote Contribution is enabled;
+its RTSP and SRT listeners bind to loopback. The VDO source still needs its
+HTTPS site and signalling service, and the relay's WHIP listener needs an
+HTTPS reverse proxy. Configure WebRTC candidates for the public host and
+allow the media UDP port through the station firewall. Keep the public WHIP
+route restricted to your intended guest use; the installed relay config
+accepts publisher-created stream paths.
+
 | Setting | Purpose |
 | --- | --- |
 | `CIVICCAST_REMOTE_CONTRIBUTION=on` | Enables remote-contribution supervision and broadcast routing. |
 | `CIVICCAST_REMOTE_CONTRIBUTION_VDO_URL` | Browser-accessible HTTPS base URL of the self-hosted VDO.Ninja instance. |
 | `CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL` | Browser-accessible HTTPS base URL of MediaMTX's WHIP listener. |
-| `CIVICCAST_REMOTE_CONTRIBUTION_RTSP_URL` | Station-local RTSP base, for example `rtsp://127.0.0.1:8554`. |
-| `CIVICCAST_REMOTE_CONTRIBUTION_SRT_URL` | Station-local SRT base, for example `srt://127.0.0.1:8890`. |
-| `CIVICCAST_MEDIAMTX_COMMAND` | Optional MediaMTX executable and config-file command for CivicCast to supervise; omit when another service manages the relay. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_RTSP_URL` | Optional RTSP override; managed relay default is `rtsp://127.0.0.1:8554`. |
+| `CIVICCAST_REMOTE_CONTRIBUTION_SRT_URL` | Optional SRT override; managed relay default is `srt://127.0.0.1:8890`. |
+| `CIVICCAST_MEDIAMTX_COMMAND` | Optional relay command override. If omitted, CivicCast starts the verified managed MediaMTX install. |
 | `CIVICCAST_VDO_COMMAND` | VDO.Ninja server command when CivicCast supervises that separate process. |
 | `CIVICCAST_TURN_HOST`, `CIVICCAST_TURN_PORT` | Reachable TURN service used by guests behind firewalls. |
 
-The MediaMTX configuration must allow WHIP publishing and local RTSP and SRT access to publisher-created paths. Keep the RTSP and SRT listeners local to the station. The browser-facing WHIP listener needs the station's HTTPS reverse proxy and network routing. Test one guest on the station's output before a public meeting. If the relay is absent or the mix fails to produce video and audio, **Put on air** returns an error instead of marking the guest live.
+The managed MediaMTX configuration allows WHIP publishing and local RTSP and SRT access to publisher-created paths. Keep the RTSP and SRT listeners local to the station. The browser-facing WHIP listener needs the station's HTTPS reverse proxy and network routing. Test one guest on the station's output before a public meeting. If the relay is absent or the mix fails to produce video and audio, **Put on air** returns an error instead of marking the guest live.
 
 ## Cable headend: UDP transport streams
 

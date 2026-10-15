@@ -3,10 +3,14 @@ package com.civiccast.mobile
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.C
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.exoplayer.ExoPlayer
 import com.civiccast.mobile.databinding.ActivityPlayerBinding
 import kotlinx.coroutines.launch
@@ -19,12 +23,19 @@ class PlayerActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityPlayerBinding
     private var player: ExoPlayer? = null
-    private val client = NetworkClient()
+    private val client by lazy { NetworkClient() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        StationAddress.load(this)
         binding = ActivityPlayerBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        binding.tracksButton.setOnClickListener {
+            AlertDialog.Builder(this).setTitle("Playback tracks")
+                .setItems(arrayOf("Audio", "Captions")) { _, choice ->
+                    showTracks(if (choice == 0) C.TRACK_TYPE_AUDIO else C.TRACK_TYPE_TEXT)
+                }.show()
+        }
 
         val liveStateUrl = intent.getStringExtra(EXTRA_LIVE_STATE_URL)
         val replayUrl = intent.getStringExtra(EXTRA_REPLAY_URL)
@@ -62,6 +73,34 @@ class PlayerActivity : AppCompatActivity() {
         exo.prepare()
         exo.playWhenReady = true
         player = exo
+    }
+
+    private data class TrackChoice(val group: Tracks.Group, val index: Int)
+
+    private fun showTracks(type: Int) {
+        val exo = player ?: return
+        val choices = mutableListOf<TrackChoice>()
+        val labels = mutableListOf(if (type == C.TRACK_TYPE_TEXT) "Captions off" else "Automatic audio")
+        for (group in exo.currentTracks.groups.filter { it.type == type }) {
+            for (index in 0 until group.length) {
+                if (!group.isTrackSupported(index)) continue
+                val format = group.getTrackFormat(index)
+                choices.add(TrackChoice(group, index))
+                labels.add(format.label ?: format.language ?: "Track ${choices.size}")
+            }
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (type == C.TRACK_TYPE_TEXT) "Captions" else "Audio")
+            .setItems(labels.toTypedArray()) { _, selected ->
+                val builder = exo.trackSelectionParameters.buildUpon()
+                    .clearOverridesOfType(type)
+                    .setTrackTypeDisabled(type, selected == 0 && type == C.TRACK_TYPE_TEXT)
+                if (selected > 0) {
+                    val choice = choices[selected - 1]
+                    builder.setOverrideForType(TrackSelectionOverride(choice.group.mediaTrackGroup, choice.index))
+                }
+                exo.trackSelectionParameters = builder.build()
+            }.show()
     }
 
     override fun onStop() {

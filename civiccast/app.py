@@ -3273,11 +3273,15 @@ def _wire_durable_stores(app: FastAPI) -> None:
             if existing is not None:
                 return cast(GuestProgramRouter, existing)
             public_url = os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_MEDIAMTX_URL")
-            rtsp_url = os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_RTSP_URL")
-            srt_url = os.environ.get("CIVICCAST_REMOTE_CONTRIBUTION_SRT_URL")
-            if not public_url or not rtsp_url or not srt_url:
+            rtsp_url = os.environ.get(
+                "CIVICCAST_REMOTE_CONTRIBUTION_RTSP_URL", "rtsp://127.0.0.1:8554"
+            )
+            srt_url = os.environ.get(
+                "CIVICCAST_REMOTE_CONTRIBUTION_SRT_URL", "srt://127.0.0.1:8890"
+            )
+            if not public_url:
                 raise RuntimeError(
-                    "Remote guest broadcast needs MediaMTX public, RTSP and SRT URLs"
+                    "Remote guest broadcast needs a browser-accessible MediaMTX HTTPS URL"
                 )
             egress_store = PostgresEgressStore(_session_factory)
             router = GuestProgramRouter(

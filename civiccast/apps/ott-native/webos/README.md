@@ -1,4 +1,4 @@
-# CivicCast LG webOS TV app — starter native source
+# CivicCast LG webOS TV app
 
 Closes the S12 gap for LG webOS (previously: no source existed at all for
 this platform — see the S12 spec gap note in `docs/spec/3.0/sections/
@@ -12,8 +12,8 @@ for webOS TV), built on Codebase 4 of the S12 platform build matrix — see
 webos/
 ├── appinfo.json    # webOS app manifest (id, main, icon, resolution)
 ├── index.html       # App shell — imports civiccast-player.js
-├── icon.png          # 80x80 placeholder icon (solid color; replace before submission)
-└── largeIcon.png     # 130x130 placeholder icon
+├── icon.png          # CivicCast launcher artwork
+└── largeIcon.png     # CivicCast large launcher artwork
 ```
 
 `civiccast-player.js` — the actual playback client (config fetch, channel
@@ -59,9 +59,10 @@ ares-package .
 
 producing a `.ipk`. No emulator/device is used — packaging only.
 
-## What this does NOT yet ship (the documented follow-up)
+## Viewer experience and publication
 
-Starter-grade. To reach LG Content Store submission: branded icons (the
-placeholders are solid-color PNGs), a real signing/developer-mode setup,
-remote-control D-pad focus styling beyond the generic CSS `:focus` outline,
-captions/audio-track UI, search, and deep-link handling.
+The shared player browses and searches live channels and published replays,
+loads station artwork, plays HLS, and exposes audio and caption track
+selectors. The station address can be changed on the device, and launch
+parameters can open a channel or replay. LG store signing and physical
+device certification remain publisher steps.

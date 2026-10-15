@@ -22,6 +22,7 @@ vi.mock('../api/client', () => ({
   dropContributionGuest: vi.fn(),
   getContributionRoom: vi.fn(),
   getRemoteContributionInstallStatus: vi.fn(),
+  installRemoteContribution: vi.fn(),
   getStaffIdentity: vi.fn(),
   listEgressChannels: vi.fn(),
   listContributionRooms: vi.fn(),

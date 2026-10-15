@@ -1,4 +1,4 @@
-# CivicCast — iOS starter app
+# CivicCast — iOS app
 
 iPhone + iPad SwiftUI app for CivicCast. Runs on iOS 17+.
 
@@ -11,12 +11,15 @@ iPhone + iPad SwiftUI app for CivicCast. Runs on iOS 17+.
 
 ## What this app does
 
-1. Reads `APIBaseURL` from `Info.plist` (default `https://civiccast.example.com`).
-2. Calls `GET <APIBaseURL>/api/public/app/config`.
-3. Renders the station name and a list of channels.
-4. On tap, pushes an AVPlayer view that plays the channel's HLS URL.
+1. Stores the station HTTPS address in the app; `APIBaseURL` in `Info.plist`
+   supplies its initial value.
+2. Browses and searches live channels and published station replays, with
+   station logos and replay posters.
+3. Plays HLS in AVKit with native audio-language, caption, AirPlay and
+   picture-in-picture controls.
+4. Opens `civiccast://channel/<id>` and `civiccast://replay/<id>` links.
 
-That is the entire feature surface. See the [parent README](../README.md) for the project-wide rationale.
+See the [parent README](../README.md) for the shared API contract.
 
 ## Build
 
@@ -129,21 +132,13 @@ iOS touch layout are legitimately different, not duplicated code.
 3. From the Organizer, `Distribute App > Ad Hoc` (or `Development`).
 4. Export the `.ipa`; install with `xcrun devicectl device install app` or with Apple Configurator 2.
 
-## What this starter intentionally does NOT do
+## Platform publication
 
-These are the documented follow-ups to take the app from starter to App Store submittable:
-
-- App icon / launch image (Asset Catalog) — the project compiles without one but the springboard tile will be the default white square.
-- Privacy Manifest (`PrivacyInfo.xcprivacy`) — required for App Store submission in 2024+.
-- Accessibility audit (VoiceOver labels, Dynamic Type review, contrast).
-- Localized strings — English only.
-- Push notifications / EAS alert integration.
-- DRM (FairPlay), offline downloads, AirPlay, picture-in-picture, background audio.
-- Sign-in (account binding, parental controls / age gates).
-- Crash reporting + analytics.
-- Universal Links / deep linking into specific channels.
-- VOD / catch-up — only live HLS is wired.
-- Auth-protected channels — `/api/public/app/config` is the public projection only.
+The app includes a branded App Icon asset and uses system text sizing and
+media controls. Store signing, privacy declarations, localization, protected
+channels, and device-specific accessibility review belong to the platform
+publication process. The viewer consumes the public station catalog; it does
+not log viewers in to protected channels.
 
 ## Backend contract
 

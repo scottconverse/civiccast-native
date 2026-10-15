@@ -2093,6 +2093,12 @@ export function getRemoteContributionInstallStatus(): Promise<ContributionInstal
   return request<ContributionInstallReport>('/api/staff/installer/remote-contribution')
 }
 
+export function installRemoteContribution(): Promise<ContributionInstallReport> {
+  return request<ContributionInstallReport>('/api/staff/installer/remote-contribution/install', {
+    method: 'POST',
+  })
+}
+
 export function updateControlSurface(
   surfaceId: string,
   payload: ControlSurfaceInput,

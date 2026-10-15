@@ -435,7 +435,7 @@ To send a bulletin back, click **Request changes**, type a note and click **Send
 
 **Remote Contribution** lets remote council members, presenters and public commenters join from a web browser, with nothing for them to install. CivicCast manages rooms, invites and guest admission, combines admitted guests into one picture and audio mix, and routes that mix to the selected channel when you put a guest on air.
 
-> **For IT staff:** commission self-hosted VDO.Ninja, a MediaMTX relay and a reachable TURN service before the meeting. CivicCast uses its bundled FFmpeg for composition and its existing live-source path for channel output. See [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations).
+> **For IT staff:** use **Diagnostics → Install VDO and media relay**, then commission the self-hosted VDO.Ninja HTTPS site, a public HTTPS WHIP route to the relay, and a reachable TURN service before the meeting. CivicCast uses its bundled FFmpeg for composition and its existing live-source path for channel output. See [Cable headend, streaming, CDN, federation, emergency alerts, and the API](#ch-integrations).
 
 You see this item in the menu only with the Meeting operator, Setup admin or Support admin role.
 
@@ -477,7 +477,7 @@ You can reopen the room and send new invites afterwards.
 
 ### Test guest connections (Support admins)
 
-A Support admin sees a box **Diagnostics** with tags for "TURN reachable", "VDO up" and "coturn up" (or the opposite). Click **Test TURN connectivity** to probe the relay now.
+A Support admin sees **Diagnostics** with TURN, VDO, relay and coturn status. Use **Install VDO and media relay** to fetch the verified local components, and **Test TURN connectivity** to probe the configured TURN server now.
 
 ## The meeting-night checklist
 

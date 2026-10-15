@@ -1336,6 +1336,10 @@ export interface ContributionInstallReport {
   vdo_version?: string
   vdo_commit?: string
   vdo_verified?: boolean
+  relay_installed?: boolean
+  relay_verified?: boolean
+  relay_path?: string | null
+  relay_command?: string
   coturn_action?: string
   launch_hint?: string
   detail?: string
