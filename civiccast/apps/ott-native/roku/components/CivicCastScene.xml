@@ -33,7 +33,7 @@
           color="0xFFFFFFFF" />
       <Label
           id="taglineLabel"
-          text="Public, Education, and Government broadcasting"
+          text="Public, Education, and Government broadcasting — press * for search and station settings"
           width="1760"
           font="font:MediumSystemFont"
           color="0xAAAAAAFF"

@@ -2349,7 +2349,7 @@ def create_app() -> FastAPI:
         ):
             response.headers["Access-Control-Allow-Origin"] = "null"
             response.headers["Vary"] = "Origin"
-        return response
+        return cast(Response, response)
 
     allowed_origins = cors_allowed_origins()
     if allowed_origins:

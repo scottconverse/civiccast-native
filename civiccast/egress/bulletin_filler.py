@@ -402,7 +402,7 @@ class BulletinFillerSourceGenerator:
                 if isinstance(exc.__cause__, FfmpegError):
                     return False
                 raise
-            return result.returncode == 0
+            return bool(result.returncode == 0)
 
         if attempt(True, audio_bed):
             return audio_bed is not None
