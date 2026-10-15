@@ -21,7 +21,7 @@ schema_version: 1
 repository: scottconverse/civiccast-native
 
 # The tag that public surfaces may present as the current install target.
-current: v1.0.0-beta.17
+current: v1.0.0-beta.18
 # Live tags matching these regexes predate this manifest and are exempt from
 # per-entry listing (they remain visible on GitHub as history). Anything else
 # unlisted is drift.
@@ -37,8 +37,13 @@ historical_unlisted_patterns:
   - '^v4\.0\.0-rc\.'
 
 entries:
-  - tag: v1.0.0-beta.17
+  - tag: v1.0.0-beta.18
     status: current
+    notes: >-
+      Published October 15, 2026; signed artifact source 24c91a2ef7f9bd42bfa3ad9b7119e0c9f9e44168, build 38739455545, setup SHA-256 47d49e99d584d0907e66480709d364c26d93053831eb2fb5e15f7bc4b5aa85f5, merge/tag target af5228eef99f242fef798cc27f0d192d776d1eb8. All 26 public assets matched prepared SHA-256 digests. The focused Sandbox attempt logged off without an install result; see the exact verification record.
+  - tag: v1.0.0-beta.17
+    status: superseded
+    superseded_by: v1.0.0-beta.18
     notes: >-
       Published October 15, 2026; signed artifact source 597b97fd21ad1e9e5fd52bb399f81214ffdb88f0, build 38723457194, setup SHA-256 985cb617d020065d56f100c7587480d4726e2d5b89e806deca00658536c0d968, merge/tag target 4a5804608c38774bc04b4c2a5c6f34f56ebdea26. Windows Sandbox fresh install and service checks passed; product-engine TSDuck probe timed out; see exact verification record.
   - tag: v1.0.0-beta.16

@@ -15,7 +15,7 @@ Signed `v1.0.0-beta.18` is the current [downloadable release](https://github.com
 The signed Beta 18 [release page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.18)
 provides the installer, runtime packs, station-model bundle, manuals, and
 checksums. The [Beta 18 verification record](docs/releases/v1.0.0-beta.18-verification.md)
-identifies the exact package and its scoped installation results. For
+identifies the exact package and its scoped verification results. For
 installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
 for Beta 18 operation, use the manual bundled on that release page. The
 [source manual](docs/USER-MANUAL.md) describes the same edition.
