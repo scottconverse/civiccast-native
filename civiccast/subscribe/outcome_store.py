@@ -155,6 +155,15 @@ class NotificationDeliveryStore(Protocol):
 
     def list_attempts(self, delivery_key: str) -> list[NotificationDeliveryAttemptRecord]: ...
 
+    def record_webhook_retry_result(
+        self,
+        *,
+        retry_id: str,
+        outcome: NotificationDeliveryOutcomeValue,
+        detail: str,
+        now: datetime | None = None,
+    ) -> NotificationDeliveryOutcomeRecord | None: ...
+
 
 def _new_record(
     *,
@@ -205,7 +214,9 @@ def _may_take_over(
         return False
     if record.outcome == "pending":
         return _lease_is_free(record, now=now)
-    return allow_reattempt
+    # The background worker owns queued webhooks. A surface retry must not
+    # send the same notice while that durable job is still pending.
+    return allow_reattempt and record.outcome == "failed"
 
 
 def _applied(
@@ -349,6 +360,25 @@ class InMemoryNotificationDeliveryStore:
         return sorted(
             self._attempts.get(delivery_key, []), key=lambda attempt: attempt.attempt_number
         )
+
+    def record_webhook_retry_result(
+        self,
+        *,
+        retry_id: str,
+        outcome: NotificationDeliveryOutcomeValue,
+        detail: str,
+        now: datetime | None = None,
+    ) -> NotificationDeliveryOutcomeRecord | None:
+        for record in self._records.values():
+            if record.retry_id == retry_id and record.outcome == "queued":
+                return self.record_attempt(
+                    delivery_key=record.delivery_key,
+                    outcome=outcome,
+                    detail=detail,
+                    retry_id=retry_id if outcome == "queued" else None,
+                    now=now,
+                )
+        return None
 
 
 class PostgresNotificationDeliveryStore:
@@ -552,6 +582,58 @@ class PostgresNotificationDeliveryStore:
                 )
                 for row in rows
             ]
+
+    def record_webhook_retry_result(
+        self,
+        *,
+        retry_id: str,
+        outcome: NotificationDeliveryOutcomeValue,
+        detail: str,
+        now: datetime | None = None,
+    ) -> NotificationDeliveryOutcomeRecord | None:
+        """Apply a worker result only to the still-queued matching delivery."""
+        resolved_now = now or datetime.now(UTC)
+        with self._session_factory() as session:
+            row = session.scalars(
+                select(NotificationDeliveryOutcome)
+                .where(
+                    NotificationDeliveryOutcome.retry_id == retry_id,
+                    NotificationDeliveryOutcome.outcome == "queued",
+                )
+                .with_for_update()
+            ).one_or_none()
+            if row is None:
+                return None
+            updated = _applied(
+                _to_record(row),
+                outcome=outcome,
+                error_code=None,
+                detail=detail,
+                retry_id=retry_id if outcome == "queued" else None,
+                now=resolved_now,
+            )
+            row.outcome = updated.outcome
+            row.attempts = updated.attempts
+            row.error_code = updated.error_code
+            row.detail = updated.detail
+            row.retry_id = updated.retry_id
+            row.lease_expires_at = updated.lease_expires_at
+            row.first_attempted_at = updated.first_attempted_at
+            row.last_attempted_at = updated.last_attempted_at
+            row.succeeded_at = updated.succeeded_at
+            row.updated_at = updated.updated_at
+            session.add(
+                NotificationDeliveryAttempt(
+                    delivery_key=updated.delivery_key,
+                    attempt_number=updated.attempts,
+                    attempted_at=resolved_now,
+                    outcome=outcome,
+                    detail=detail,
+                    retry_id=retry_id if outcome == "queued" else None,
+                )
+            )
+            session.commit()
+            return updated
 
 
 def _aware(value: datetime) -> datetime:

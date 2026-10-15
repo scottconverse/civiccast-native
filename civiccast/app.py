@@ -1282,6 +1282,8 @@ def _wire_stage_f_workers(app: FastAPI, session_factory: Any) -> None:
         default_registry().resolve(PROVIDER_KIND_WEBHOOK),
         load_subscription_secrets(),
         settings=webhook_retry_settings,
+        delivery_store=PostgresNotificationDeliveryStore(session_factory),
+        publish_store=PostgresPublishStore(session_factory),
     )
     app.state.background_supervisors = [
         ThreadSupervisor(

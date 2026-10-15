@@ -370,7 +370,7 @@ class TestDoubleSendRace:
         assert retry.granted is True
         assert retry.created is False
 
-    def test_a_queued_row_is_reattempted_only_by_an_explicit_retry(
+    def test_a_queued_row_remains_owned_by_the_worker_during_explicit_retry(
         self, store: PostgresNotificationDeliveryStore
     ) -> None:
         claimed = store.claim(**_CLAIM)
@@ -379,7 +379,7 @@ class TestDoubleSendRace:
         )
 
         assert store.claim(**_CLAIM).granted is False
-        assert store.claim(**_CLAIM, allow_reattempt=True).granted is True
+        assert store.claim(**_CLAIM, allow_reattempt=True).granted is False
 
     def test_a_sent_row_is_never_reattempted_even_by_an_explicit_retry(
         self, store: PostgresNotificationDeliveryStore

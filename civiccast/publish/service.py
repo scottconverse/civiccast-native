@@ -780,6 +780,18 @@ def approve_publish(
                     }
                 )
         elif surface.id == "subscriber-notifications":
+            if asset.published_at is None:
+                updated = surface.model_copy(
+                    update={
+                        "state": "pending",
+                        "approval": "approved",
+                        "health": "warning",
+                        "message": "Subscriber notices are waiting for the recording to become public.",
+                        "next_step": "Publish the recording to Portal; notices will send after visibility is confirmed.",
+                    }
+                )
+                surfaces.append(updated)
+                continue
             # WP-05: this branch used to build a payload, mark the surface
             # "succeeded" and stop -- no subscriber was ever contacted. It now
             # runs the real fan-out through the existing SMTP/webhook adapters
@@ -881,6 +893,55 @@ def approve_publish(
         audit_events=events,
     )
     return store.upsert_run(record)
+
+
+def send_pending_notifications_after_publication(
+    *,
+    asset: StaffAssetRow,
+    record: PublishRunRecord,
+    store: PublishStore,
+    subscribe_store: SubscribeStore,
+    delivery_store: NotificationDeliveryStore | None,
+    registry: ProviderRegistry,
+    target_lookup: ChannelAssociationLookup | None,
+) -> PublishRunRecord:
+    """Send approved notices only after the canonical public write succeeds."""
+    if asset.published_at is None:
+        return record
+    waiting = next((s for s in record.surfaces if s.id == "subscriber-notifications"), None)
+    if (
+        waiting is None
+        or waiting.approval != "approved"
+        or waiting.state != "pending"
+        or waiting.notification_summary is not None
+    ):
+        return record
+    outcome = deliver_publication_notifications(
+        asset_id=asset.asset_id,
+        title=asset.title,
+        published_at=asset.published_at,
+        targets=resolve_publication_targets(asset, lookup=target_lookup),
+        manifest_url=asset.manifest_url,
+        subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        registry=registry,
+    )
+    finished = waiting.model_copy(
+        update={
+            "state": outcome.state,
+            "health": outcome.health,
+            "completed_at": datetime.now(UTC),
+            "message": outcome.message,
+            "next_step": outcome.next_step,
+            "simulated": outcome.simulated,
+            "notification_summary": outcome.summary,
+        }
+    )
+    return store.upsert_run(
+        record.model_copy(
+            update={"surfaces": [finished if s.id == finished.id else s for s in record.surfaces]}
+        )
+    )
 
 
 def retry_publish_surface(

@@ -46,6 +46,7 @@ from civiccast.publish.models import (
     PublishNotificationSummary,
     PublishSurfaceStateValue,
 )
+from civiccast.publish.store import PublishStore
 from civiccast.publish.targets import (
     PublicationTarget,
     publication_id_for_asset,
@@ -77,6 +78,7 @@ __all__ = [
     "NotificationSurfaceOutcome",
     "build_notification_payload",
     "deliver_publication_notifications",
+    "refresh_notification_surface",
     "summarize_outcomes",
     "watch_url_for_asset",
 ]
@@ -320,6 +322,49 @@ def _state_for(summary: PublishNotificationSummary) -> PublishSurfaceStateValue:
     if summary.queued > 0 or summary.pending > 0:
         return "pending"
     return "failed"
+
+
+def refresh_notification_surface(
+    *,
+    asset_id: str,
+    delivery_store: NotificationDeliveryStore,
+    publish_store: PublishStore,
+) -> None:
+    """Refresh the saved dashboard snapshot after a background webhook retry."""
+    run = publish_store.get_run(asset_id)
+    if run is None:
+        return
+    previous = next((s for s in run.surfaces if s.id == "subscriber-notifications"), None)
+    if previous is None or previous.notification_summary is None:
+        return
+    summary = summarize_outcomes(
+        delivery_store.list_for_publication(previous.notification_summary.publication_id),
+        publication_id=previous.notification_summary.publication_id,
+    ).model_copy(update={"targets": previous.notification_summary.targets})
+    state = _state_for(summary)
+    health, message_template, next_step = _STATE_COPY[state]
+    if previous.simulated:
+        health = "warning"
+    refreshed = previous.model_copy(
+        update={
+            "state": state,
+            "health": health,
+            "message": message_template.format(
+                sent=summary.sent,
+                intended=summary.intended,
+                queued=summary.queued,
+                failed=summary.failed,
+                pending=summary.pending,
+            ),
+            "next_step": next_step,
+            "notification_summary": summary,
+        }
+    )
+    publish_store.upsert_run(
+        run.model_copy(
+            update={"surfaces": [refreshed if s.id == refreshed.id else s for s in run.surfaces]}
+        )
+    )
 
 
 _STATE_COPY: dict[str, tuple[str, str, str]] = {

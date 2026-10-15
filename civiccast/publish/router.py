@@ -42,6 +42,7 @@ from civiccast.publish.service import (
     build_publish_dashboard,
     build_publish_preflight,
     retry_publish_surface,
+    send_pending_notifications_after_publication,
 )
 from civiccast.publish.store import PublishStore
 from civiccast.publish.targets import ChannelAssociationLookup
@@ -551,6 +552,15 @@ def approve_publish_asset(
         staff_asset=staff_asset,
         record=record,
     )
+    record = send_pending_notifications_after_publication(
+        asset=staff_asset,
+        record=record,
+        store=publish_store,
+        subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        registry=provider_registry,
+        target_lookup=target_lookup,
+    )
     status_response = build_publish_asset_status(staff_asset, record)
     broker_client.publish(build_publish_approved_event(status_response))
     activitypub_config = http_request.app.state.activitypub_config
@@ -649,6 +659,15 @@ def retry_publish_asset_surface(
         asset_id=asset_id,
         staff_asset=staff_asset,
         record=record,
+    )
+    record = send_pending_notifications_after_publication(
+        asset=staff_asset,
+        record=record,
+        store=publish_store,
+        subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        registry=provider_registry,
+        target_lookup=target_lookup,
     )
     # Only a Portal retry can be what makes the recording public when the
     # first approval failed, so only a Portal retry starts the caption

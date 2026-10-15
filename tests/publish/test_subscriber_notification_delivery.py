@@ -21,7 +21,7 @@ import struct
 import threading
 import wave
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -194,6 +194,7 @@ def _asset(asset_id: str = "meeting-42", *, meeting_body: str | None = None) -> 
         state="validated",
         manifest_url=f"https://cdn.example/{asset_id}/playlist.m3u8",
         retention_policy="meeting",
+        published_at=datetime(2026, 6, 10, tzinfo=UTC),
     )
 
 
@@ -258,10 +259,10 @@ def _approve(
     mailbox: object | None = None,
     webhook_client: object | None = None,
 ):  # type: ignore[no-untyped-def]
-    """Approve only the subscriber-notifications surface, with test adapters."""
+    """Approve notices for an already-public asset, with test adapters."""
 
     return approve_publish(
-        asset=asset,
+        asset=asset.model_copy(update={"published_at": datetime(2026, 6, 10, tzinfo=UTC)}),
         request=PublishApprovalRequest(
             operator_id="staff-1",
             operator_display_name="Avery Operator",
@@ -280,6 +281,26 @@ def _surface(record):  # type: ignore[no-untyped-def]
 
 
 class TestRealDeliveryHappens:
+    def test_unpublished_asset_does_not_send_subscriber_notice(self) -> None:
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_email(subscribe_store, RESIDENT_EMAIL)
+        mailbox = LocalMailbox()
+        record = approve_publish(
+            asset=_asset().model_copy(update={"published_at": None}),
+            request=PublishApprovalRequest(
+                operator_id="staff-1",
+                operator_display_name="Avery Operator",
+                approved_surface_ids=["subscriber-notifications"],
+            ),
+            store=InMemoryPublishStore(),
+            subscribe_store=subscribe_store,
+            delivery_store=InMemoryNotificationDeliveryStore(),
+            registry=_registry(mailbox=mailbox),
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+        assert mailbox.messages == []
+        assert _surface(record).state == "pending"
+
     def test_a_real_smtp_sink_observes_the_notice(self, smtp_server: _LoopbackSmtpServer) -> None:
         subscribe_store = InMemorySubscribeStore()
         _confirmed_email(subscribe_store, RESIDENT_EMAIL)
@@ -425,6 +446,58 @@ class TestPartialAndQueuedCannotLookSuccessful:
         queued = next(row for row in summary.deliveries if row.outcome == "queued")
         assert queued.retry_id is not None
         assert subscribe_store.get_webhook_retry(queued.retry_id) is not None
+
+    def test_worker_success_updates_receipt_and_publish_snapshot_without_resend(self) -> None:
+        from civiccast.subscribe.retry_worker import WebhookRetrySettings, WebhookRetryWorker
+
+        subscribe_store = InMemorySubscribeStore()
+        _confirmed_webhook(subscribe_store, WEBHOOK_URL)
+        delivery_store = InMemoryNotificationDeliveryStore()
+        publish_store = InMemoryPublishStore()
+        sends: list[str] = []
+
+        class _Webhooks:
+            def post(self, *, url: str, payload: NotificationPayload, secret: str) -> str:
+                sends.append(url)
+                if len(sends) == 1:
+                    raise RuntimeError("temporary outage")
+                return "sig"
+
+        client = _Webhooks()
+        asset = _asset()
+        first = _approve(
+            asset,
+            subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            publish_store=publish_store,
+            webhook_client=client,
+        )
+        assert _surface(first).notification_summary.queued == 1  # type: ignore[union-attr]
+        WebhookRetryWorker(
+            subscribe_store,
+            client,
+            load_subscription_secrets(),
+            settings=WebhookRetrySettings(),
+            delivery_store=delivery_store,
+            publish_store=publish_store,
+        ).run_once(now=datetime.now(UTC) + timedelta(minutes=5))
+        current = publish_store.get_run(asset.asset_id)
+        assert current is not None
+        assert _surface(current).state == "succeeded"
+        assert _surface(current).notification_summary.sent == 1  # type: ignore[union-attr]
+        retry_publish_surface(
+            asset=asset,
+            surface_id="subscriber-notifications",
+            request=PublishRetryRequest(
+                operator_id="staff-1", operator_display_name="Avery Operator"
+            ),
+            store=publish_store,
+            subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            registry=_registry(webhook_client=client),
+            target_lookup=StaticChannelAssociationLookup(),
+        )
+        assert len(sends) == 2
 
     def test_a_partial_surface_is_not_reported_as_complete_on_the_dashboard(self) -> None:
         subscribe_store = InMemorySubscribeStore()
@@ -1393,7 +1466,7 @@ def test_podcast_cannot_expose_an_unpublished_asset(
     monkeypatch.setattr("civiccast.publish.service.create_podcast_episode", fake_episode)
     podcast_store = InMemoryPodcastStore()
     record = approve_publish(
-        asset=_asset(),
+        asset=_asset().model_copy(update={"published_at": None}),
         request=PublishApprovalRequest(
             operator_id="staff-1",
             operator_display_name="Avery Operator",
