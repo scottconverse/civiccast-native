@@ -1,12 +1,12 @@
 # CivicCast Architecture
 
-CivicCast Beta 16 combines native Windows playout, local AI captions, station
-backup and staff administration in one installation. This architecture describes
-the Beta 16 candidate source.
+CivicCast combines native Windows playout, local AI captions, station backup,
+staff administration, and resident publication in one installation. This
+architecture describes the current Beta 17 candidate source.
 
-The current published download remains signed `v1.0.0-beta.15` ([release
-page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.15));
-Beta 16 remains an unpublished source candidate.
+The current published download remains signed `v1.0.0-beta.16` ([release
+page](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16));
+Beta 17 is an unpublished candidate.
 
 This document orients engineers and integrators to the current CivicCast
 system. The binding product contract is
@@ -151,7 +151,7 @@ Recorded-media captions use faster-whisper. Needle usage telemetry is disabled,
 and the speech models run locally. Live captions, SDI/NDI hardware paths, and
 cable-headend delivery are described with their evidence boundaries in the
 [User Manual](docs/USER-MANUAL.md) and the current
-[Beta 16 candidate record](docs/releases/v1.0.0-beta.16-verification.md).
+[Beta 17 candidate record](docs/releases/v1.0.0-beta.17-verification.md).
 Historical Beta 13 package observations remain in the [Beta 13 verification
 record](docs/releases/v1.0.0-beta.13-verification.md).
 
@@ -264,7 +264,7 @@ supersedes ADR 0001's NATS JetStream choice).
 
 ## Current Source Contracts
 
-These describe current source behavior and test coverage. The [Beta 16 candidate record](docs/releases/v1.0.0-beta.16-verification.md) tracks installed-package results:
+These describe current source behavior and test coverage. The [Beta 17 candidate record](docs/releases/v1.0.0-beta.17-verification.md) will track installed-package results:
 
 - Staff-write stores fail closed without managed durable storage or `DATABASE_URL` unless ephemeral mode
   is explicitly acknowledged for local development.
@@ -284,6 +284,6 @@ These describe current source behavior and test coverage. The [Beta 16 candidate
 
 ## Release evidence and history
 
-Beta 16 is an unpublished candidate. Beta 15 remains the published download.
-Historical package results are retained in the [Beta 15 record](docs/releases/v1.0.0-beta.15-verification.md);
+Beta 17 is an unpublished candidate. Beta 16 remains the published download.
+Historical package results are retained in the [Beta 16 record](docs/releases/v1.0.0-beta.16-verification.md);
 [Beta 17 follow-up](docs/ops/beta17-deferred.md) records the owner-deferred field findings.

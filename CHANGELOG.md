@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+Candidate `v1.0.0-beta.17` contains the completed Sprint 5 publication and
+underwriting changes below. Remote-guest composition, bulletin-board media,
+station import UI, native viewer completion, and protected paywall media remain
+separate open work.
+
+- The optional Podcast surface converts a local recording to MP3, stores an
+  episode in the channel RSS feed, serves its audio enclosure, and reports
+  failures for operator retry. Feed and audio access follow playback policy.
+- Publishing can deliver notices to confirmed subscribers through configured
+  mail and webhook providers, retain per-recipient outcomes, retry failures,
+  and show delivery status to operators. Public subscription RSS now uses
+  published records.
+- Underwriting flights select an existing scheduling daypart instead of
+  requiring operators to type a block ID.
+
 ## [1.0.0-beta.16] - 2026-10-14
 
 ### Station operations and broadcast reliability

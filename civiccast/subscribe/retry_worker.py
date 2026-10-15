@@ -26,7 +26,9 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from civiccast.publish.store import PublishStore
 from civiccast.subscribe.models import NotificationPayload, WebhookRetryRecord
+from civiccast.subscribe.outcome_store import NotificationDeliveryStore
 from civiccast.subscribe.secrets import SubscriptionSecrets
 from civiccast.subscribe.store import SubscribeStore
 
@@ -150,11 +152,38 @@ class WebhookRetryWorker:
         subscription_secrets: SubscriptionSecrets,
         *,
         settings: WebhookRetrySettings,
+        delivery_store: NotificationDeliveryStore | None = None,
+        publish_store: PublishStore | None = None,
     ) -> None:
         self._store = store
         self._client = webhook_client
         self._secrets = subscription_secrets
         self._settings = settings
+        self._delivery_store = delivery_store
+        self._publish_store = publish_store
+
+    def _record_result(self, row: WebhookRetryRecord, *, now: datetime) -> None:
+        if self._delivery_store is None:
+            return
+        outcome = {"delivered": "sent", "dead_letter": "failed"}.get(row.state, "queued")
+        recorded = self._delivery_store.record_webhook_retry_result(
+            retry_id=row.retry_id,
+            outcome=outcome,  # type: ignore[arg-type]
+            detail=(
+                "Webhook accepted the HMAC-signed notice after retry."
+                if outcome == "sent"
+                else row.last_error
+            ),
+            now=now,
+        )
+        if recorded is not None and self._publish_store is not None:
+            from civiccast.publish.notifications import refresh_notification_surface
+
+            refresh_notification_surface(
+                asset_id=recorded.asset_id,
+                delivery_store=self._delivery_store,
+                publish_store=self._publish_store,
+            )
 
     def run_forever(
         self,
@@ -204,7 +233,9 @@ class WebhookRetryWorker:
                 row.retry_id,
                 row.subscription_id,
             )
-            return self._store.save_webhook_retry(updated)
+            saved = self._store.save_webhook_retry(updated)
+            self._record_result(saved, now=now)
+            return saved
 
         box = self._secrets.secret_box
         url = box.open(subscription.encrypted_subscriber_handle, aad=subscription.subscription_id)
@@ -212,7 +243,21 @@ class WebhookRetryWorker:
             subscription.encrypted_webhook_secret,
             aad=f"{subscription.subscription_id}:secret",
         )
-        payload = NotificationPayload.model_validate(row.payload)
+        # The queued payload deliberately holds no unsubscribe link (a durable
+        # queue row should not store a capability token it can rebuild), so the
+        # retried notice re-attaches this subscription's own one here. A retry
+        # that dropped the unsubscribe link would deliver a notice a resident
+        # cannot opt out of.
+        from civiccast.publish.targets import resolve_public_base_url
+        from civiccast.subscribe.service import unsubscribe_url_for
+
+        payload = NotificationPayload.model_validate(row.payload).model_copy(
+            update={
+                "unsubscribe_url": unsubscribe_url_for(
+                    subscription, base_url=resolve_public_base_url()
+                )
+            }
+        )
         try:
             self._client.post(url=url, payload=payload, secret=secret)
             status_code = 200
@@ -237,7 +282,9 @@ class WebhookRetryWorker:
                 row.subscription_id,
                 attempts,
             )
-            return self._store.save_webhook_retry(updated)
+            saved = self._store.save_webhook_retry(updated)
+            self._record_result(saved, now=now)
+            return saved
         if attempts >= self._settings.max_attempts:
             updated = row.model_copy(
                 update={
@@ -255,7 +302,9 @@ class WebhookRetryWorker:
                 attempts,
                 status_code,
             )
-            return self._store.save_webhook_retry(updated)
+            saved = self._store.save_webhook_retry(updated)
+            self._record_result(saved, now=now)
+            return saved
         delay = self._settings.backoff_seconds * (2 ** max(attempts - 1, 0))
         updated = row.model_copy(
             update={
@@ -274,4 +323,6 @@ class WebhookRetryWorker:
             self._settings.max_attempts,
             delay,
         )
-        return self._store.save_webhook_retry(updated)
+        saved = self._store.save_webhook_retry(updated)
+        self._record_result(saved, now=now)
+        return saved

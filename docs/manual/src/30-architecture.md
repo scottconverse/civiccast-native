@@ -304,8 +304,8 @@ sequenceDiagram
 | YouTube VOD | reach | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise its configured media-root path must exist. |
 | YouTube Live | reach | Mock by default. The real API adapter creates and binds a YouTube broadcast and stream, but the Publish surface does not connect CivicCast's live output to the returned RTMP ingest address. |
 | Cable package | record | optional; `not_configured` when unset |
-| Podcast | audience | The UI and readiness say unavailable; a stale API branch creates only a deterministic placeholder episode and does not persist it into the public feed. |
-| Subscriber notifications | audience | `coming_soon`: publishing sends nothing. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
+| Podcast | audience | Selected publishing converts a local recording into MP3, stores the episode, and adds its enclosure to the channel RSS feed. Missing media or encoding failure stays visible and retryable. |
+| Subscriber notifications | audience | Optional delivery to confirmed subscribers when selected and configured; outcomes and retries are recorded. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
 | ActivityPub | federation | off by default; when enabled, a note is delivered only after the portal surface succeeded |
 
 Provider selectors default to `mock`, which writes or sends nothing. **Setup > Provider setup** saves fields to `provider-credentials.json`; the Publish registry reads `CIVICCAST_PROVIDER_*` selectors and adapter credentials from the service environment, so saving that file alone does not enable real delivery. A provider result marked `simulated` is not a real external write. Keep public webhooks set to mock: the resident-supplied URL and identifier-derived secret make real webhook selection unsafe.
@@ -781,7 +781,7 @@ flowchart LR
 - **A software bill of materials** and a licence list are generated for the runtime and the application payload. The build refuses to produce them if any file has an unknown licence, and it rejects GPL-licensed GStreamer components.
 - **Gate A** is one Windows Sandbox acceptance protocol. The current publisher also accepts physical-host verification receipts through a separate path; it then creates a draft release, checks the asset names and sizes, publishes it and records the result.
 
-**Package and runtime evidence.** Use the release verification record matching the package for its installation checks and limits. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package-specific results for this source edition; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that signed package. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement. An isolated Windows Sandbox source-overlay run verified restricted-service startup, profile and credential migration, and a healthy API; it is source evidence, not a signed-installer or production-cutover check.
+**Package and runtime evidence.** Use the release verification record matching the package for its installation checks and limits. The [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks package-specific results for this source edition; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that signed package. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement. An isolated Windows Sandbox source-overlay run verified restricted-service startup, profile and credential migration, and a healthy API; it is source evidence, not a signed-installer or production-cutover check.
 
 ## Two example stations {#arch-topology}
 
@@ -844,7 +844,7 @@ A technical reviewer should read this list before relying on the design. Each it
 **Playout.**
 
 - Freeze and audio/video recovery retain their three-restarts-per-hour budget, then use fallback and cooldown before a bounded retry. An intentional operator stop or drain suppresses automatic starts for that service session.
-- RTMP, per-output normalization and configured SRT/RTMP alert-tone filtering are included in the Beta 16 source edition. Use the package's matching verification record for output-check status.
+- RTMP, per-output normalization and configured SRT/RTMP alert-tone filtering are included in the Beta 17 source edition. Use the package's matching verification record for output-check status.
 - Hardware encoding is used only if a channel asks for it by name. The default encoder is a software encoder.
 - A first-time program takes time to prepare, and a program change can wait on that preparation (the lead time is 11.5 minutes by default). There was an unexplained rebuild of a long cached program in an earlier internal run, and eleven daemon and automation unit tests fail the same way on the installed tree and the candidate tree; neither is explained.
 - A single frame of video was dropped at one join in the lab run, and two program changes aborted and recovered by themselves.
@@ -854,7 +854,7 @@ A technical reviewer should read this list before relying on the design. Each it
 
 - Live captions are off in a new station profile, are English only, and can lose audio under heavy load. Captions embedded in the stream are not proven for CEA-708 broadcast compliance, and a channel whose profile uses HEVC cannot embed captions.
 - Recorded-caption completion follows the station's selected languages and review requirement.
-- The Internet Archive, NAS and YouTube surfaces are simulated until a provider is set to real. Subscriber notifications and podcasts are not active. ActivityPub is off by default.
+- The Internet Archive, NAS, YouTube and subscriber-notification surfaces are simulated until their providers are set to real. Podcast publication uses local FFmpeg and a configured public station URL. ActivityPub is off by default.
 - Summary citations bind claims to transcript cue identifiers and times; staff review the wording against the source recording before approving it. Signed-record export embeds its timestamp proof in the PDF. Configure `CIVICCAST_TSA_URL` for an RFC 3161 timestamp authority; without a configured authority, the exporter uses its deterministic development timestamp. An embedded timestamp is separate from a PDF document-signing certificate.
 - The public-safety display reads alerts and shows them; it is not an EAS device and does not relay the legally required EAS signal.
 

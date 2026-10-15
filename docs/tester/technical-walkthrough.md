@@ -1,16 +1,15 @@
-# Beta 16 Candidate Technical Tester Walkthrough
+# Beta 17 Candidate Technical Tester Walkthrough
 
-Beta 16 brings station-operation, station-local scheduling, broadcast-output,
-and recorded-caption changes to CivicCast for native Windows. This walkthrough
+Beta 17 adds subscriber delivery, Podcast publication, and
+underwriting daypart selection to CivicCast for native Windows. This walkthrough
 covers package acquisition, installation, the candidate feature paths, upgrade,
 and uninstall.
 
-Beta 16 is unpublished. The [candidate verification record](../releases/v1.0.0-beta.16-verification.md)
-tracks its current status; it currently says the signed candidate has not been
-built and installation checks are pending. Do not start until the active
-owner-authorized handoff identifies the exact candidate artifacts. Beta 15
-remains the latest published download; its [verification record](../releases/v1.0.0-beta.15-verification.md)
-does not qualify Beta 16.
+Beta 17 is unpublished. The [candidate verification record](../releases/v1.0.0-beta.17-verification.md)
+tracks its current status. Do not start until the active owner-authorized
+handoff identifies the exact candidate artifacts. Beta 16 remains the latest
+published download; its [verification record](../releases/v1.0.0-beta.16-verification.md)
+does not qualify Beta 17.
 
 For the broader station acceptance path, use the
 [Public Station Implementation Walkthrough](station-implementation-walkthrough.md)
@@ -47,26 +46,19 @@ when the handoff assigns it.
    path. Record the station-data outcome and any recovery artifacts. Do not use
    a production station.
 
-## Beta 16 feature path
+## Beta 17 feature path
 
 Use a disposable station, short test media, and the current manual for exact
 screen names and settings.
 
-1. Configure and run a scheduled backup, then rehearse restore. Record the
-   included and excluded station data.
-2. Create a station-local schedule and use a short test source to exercise a
-   program change and the configured broadcast output. Keep external delivery
-   disabled unless the handoff assigns a controlled proof.
-3. Test recorded-caption settings with a sample recording. Record whether
-   caption work is queued or paused under the chosen setting and verify the
-   resulting review state.
-4. Confirm the Live Room fails closed with **Source preview unavailable** when
-   no server-side media probe is configured.
-5. Run the private rehearsal and confirm its evidence identifies the exact
-   sample, finalized recording, and resident preview. Keep the recording
-   private until the handoff assigns a publish check.
-6. Generate and download a support bundle, then inspect its redaction. Confirm
-   provider setup cards name required proof and do not expose secrets.
+1. Publish a packaged local recording to Portal, then use Podcast and verify
+   its channel RSS entry, audio enclosure, and retryable failure status.
+2. Confirm a resident subscription, publish a recording, and inspect the
+   delivery receipts and retry status. Exercise unsubscribe before another send.
+3. Select a saved scheduling daypart in an underwriting flight and verify that
+   its channel and window appear correctly in the operator console.
+4. Keep external delivery limited to the assigned test configuration and
+   record the exact candidate version and package identity.
 
 ## Optional advanced evidence
 

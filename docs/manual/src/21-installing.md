@@ -433,7 +433,7 @@ Because the database password is deleted from the registry, the surviving databa
 
 ## Package status and verification
 
-This chapter describes the merged Beta 16 source. Use only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package-specific checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; the intended signing boundary is recorded as a Beta 17 follow-up. That observation does not establish the status of another package.
+This chapter describes the Beta 17 candidate source. Use only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks package-specific checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; the intended signing boundary is recorded as a Beta 17 follow-up. That observation does not establish the status of another package.
 
 ## Related
 

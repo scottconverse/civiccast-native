@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,7 +25,8 @@ from civiccast.platform.providers import (
     default_registry,
 )
 from civiccast.podcast.models import PodcastEpisodeCreate
-from civiccast.podcast.service import create_podcast_episode
+from civiccast.podcast.service import PodcastMediaError, create_podcast_episode
+from civiccast.podcast.store import PodcastStore
 from civiccast.publish.models import (
     PublishApprovalRequest,
     PublishAssetStatus,
@@ -39,54 +41,23 @@ from civiccast.publish.models import (
     PublishSurfaceKindValue,
     PublishSurfaceStatus,
 )
+from civiccast.publish.notifications import deliver_publication_notifications
 from civiccast.publish.readiness import (
     FUTURE_SURFACE_IDS,
-    SUBSCRIBER_TARGET_ID,
-    SUBSCRIBER_TARGET_TYPE,
     SurfaceReadiness,
     describe_surface_readiness,
 )
 from civiccast.publish.store import PublishStore
+from civiccast.publish.targets import (
+    DEFAULT_CHANNEL_ID_FALLBACK,
+    ChannelAssociationLookup,
+    resolve_publication_targets,
+)
 from civiccast.schedule.models import StaffAssetRow
+from civiccast.subscribe.outcome_store import NotificationDeliveryStore
 from civiccast.subscribe.store import SubscribeStore
 
 PUBLIC_RECORD_POLICIES = {"meeting", "permanent"}
-
-_PODCAST_NOT_YET_AVAILABLE = SurfaceReadiness(
-    healthy=False,
-    reference="not-yet-available",
-    message="Podcast is not available yet; it is coming in a future release.",
-    next_step="No action needed. This surface is not selectable for real delivery yet.",
-)
-
-# Owner decision 2026-09-02: real subscriber notification sends (mail/webhook
-# fan-out on publish) are deferred to a future release -- the implementation
-# is parked on feat/publish-real-subscriber-delivery, not merged. Until that
-# lands, this surface must never claim readiness or delivery it cannot back
-# up. This intentionally bypasses civiccast.publish.readiness.describe_surface_readiness's
-# real per-provider subscriber check (still directly unit-tested in
-# tests/publish/test_provider_readiness.py -- it stays correct and ready for
-# the parked branch to wire back in) so preflight, approval, and the
-# dashboard always agree: coming soon, nothing sent, never blocking.
-_SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE = SurfaceReadiness(
-    healthy=False,
-    reference="not-yet-available",
-    message=(
-        "Subscriber notifications are coming in a future release. No emails or "
-        "webhooks are sent yet."
-    ),
-    next_step="No action needed. This surface is not selectable for real delivery yet.",
-)
-
-# Surfaces service.py answers with a fixed "coming soon" readiness verdict
-# instead of consulting civiccast.publish.readiness at all (see
-# _SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE above). Distinct from
-# civiccast.publish.readiness.FUTURE_SURFACE_IDS (podcast only, which has no
-# provider kind registered anywhere) -- subscriber-notifications DOES have a
-# real, tested readiness path in that module; this set only controls what
-# service.py currently surfaces to operators while the real-send feature is
-# parked.
-_SERVICE_LEVEL_FUTURE_SURFACE_IDS = frozenset({"subscriber-notifications"})
 
 
 class PublishConfigurationError(RuntimeError):
@@ -278,8 +249,8 @@ def build_initial_surfaces(asset: StaffAssetRow) -> list[PublishSurfaceStatus]:
             label="Subscriber notifications",
             kind="audience",
             required=False,
-            message=_SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE.message,
-            next_step=_SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE.next_step,
+            message="Confirmed subscribers receive notices after publish; failures do not block archive.",
+            next_step="Approve notification dispatch after the public portal link is ready.",
         ),
         _pending_surface(
             surface_id=CABLE_PACKAGE_SURFACE_ID,
@@ -303,25 +274,37 @@ def _surface_readiness(
     *,
     registry: ProviderRegistry,
     subscribe_store: SubscribeStore | None,
+    subscribe_targets: Sequence[tuple[str, str]],
 ) -> SurfaceReadiness | None:
     """Real readiness for one surface, or ``None`` for a non-provider surface.
 
     The single readiness source shared by :func:`build_publish_preflight` and
     :func:`approve_publish` (WP-03 plan item 8: preflight and approval read
     the same current registry configuration so they cannot disagree).
+
+    WP-05 extends that agreement to the RECIPIENT set: ``subscribe_targets``
+    is the asset's resolved publication targets, so readiness counts exactly
+    the subscribers delivery would contact -- including meeting-body ones the
+    old hardcoded ``channel/government`` target could never see.
     """
 
-    if surface.id in FUTURE_SURFACE_IDS:
-        return _PODCAST_NOT_YET_AVAILABLE
-    if surface.id in _SERVICE_LEVEL_FUTURE_SURFACE_IDS:
-        return _SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE
     return describe_surface_readiness(
         surface.id,
         label=surface.label,
         registry=registry,
         subscribe_store=subscribe_store,
-        subscribe_target_type=SUBSCRIBER_TARGET_TYPE,
-        subscribe_target_id=SUBSCRIBER_TARGET_ID,
+        subscribe_targets=subscribe_targets,
+    )
+
+
+def _target_pairs(
+    asset: StaffAssetRow, lookup: ChannelAssociationLookup | None
+) -> tuple[tuple[str, str], ...]:
+    """The asset's resolved publication targets as ``(type, id)`` pairs."""
+
+    return tuple(
+        (target.target_type, target.target_id)
+        for target in resolve_publication_targets(asset, lookup=lookup)
     )
 
 
@@ -330,6 +313,7 @@ def build_publish_preflight(
     *,
     registry: ProviderRegistry | None = None,
     subscribe_store: SubscribeStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
 ) -> PublishPreflightResponse:
     """Return approval readiness for every v0.7 publish surface.
 
@@ -341,6 +325,7 @@ def build_publish_preflight(
     never raises.
     """
     resolved_registry = registry if registry is not None else default_registry()
+    subscribe_targets = _target_pairs(asset, target_lookup)
     checks: list[PublishPreflightCheck] = []
     for surface in build_initial_surfaces(asset):
         if surface.id == "portal":
@@ -366,9 +351,25 @@ def build_publish_preflight(
             )
             continue
         readiness = _surface_readiness(
-            surface, registry=resolved_registry, subscribe_store=subscribe_store
+            surface,
+            registry=resolved_registry,
+            subscribe_store=subscribe_store,
+            subscribe_targets=subscribe_targets,
         )
         if readiness is None:
+            if surface.id == "podcast":
+                checks.append(
+                    PublishPreflightCheck(
+                        id=surface.id,
+                        label=surface.label,
+                        kind=surface.kind,
+                        required=False,
+                        health="unknown",
+                        message="Podcast audio is created from the local recording when selected.",
+                        next_step="Make sure this asset has a local recording and a public station URL.",
+                    )
+                )
+                continue
             # No provider dependency for this surface (e.g. the Cable file
             # package, which has its own local configuredness check run only
             # at approval time) -- nothing to report as not-ready here.
@@ -390,14 +391,9 @@ def build_publish_preflight(
                 label=surface.label,
                 kind=surface.kind,
                 required=surface.required,
-                # Podcast and subscriber-notifications are real, not-yet-
-                # available surfaces -- "unknown" (not "error") so neither
-                # reads as broken; both are also never required, so this
-                # cannot affect `ready` below either way.
                 health=(
                     "unknown"
                     if surface.id in FUTURE_SURFACE_IDS
-                    or surface.id in _SERVICE_LEVEL_FUTURE_SURFACE_IDS
                     else ("ok" if readiness.healthy else "error")
                 ),
                 credential_reference=readiness.reference,
@@ -450,21 +446,16 @@ def _provider_failure(
 
 
 # Surfaces approve_publish never pre-checks against the provider registry:
-# Portal is gated on manifest_url (not a provider); Podcast has no provider
-# kind yet and is out of WP-03's scope (WP-04 owns the real podcast path;
-# see civiccast.publish.readiness.FUTURE_SURFACE_IDS); Subscriber
-# notifications has real per-channel readiness logic but its send is
-# deferred to a future release (owner decision 2026-09-02, see
-# _SERVICE_LEVEL_FUTURE_SURFACE_IDS above) -- a misconfigured mail/webhook
-# provider must not block an otherwise-ready publish for a surface that
-# never sends anything yet; the Cable file package has its own local
+# Portal is gated on manifest_url (not a provider); Podcast uses local
+# media and has no external provider; Subscriber
+# notifications has real per-channel readiness logic and is checked when
+# selected. The Cable file package has its own local
 # configuredness check (build_cable_file_package_for_asset) that already
 # reports "not_configured" without failing the approval (candidate #17).
 _PROVIDER_PRECHECK_EXCLUDED_SURFACE_IDS = {
     "portal",
     CABLE_PACKAGE_SURFACE_ID,
     *FUTURE_SURFACE_IDS,
-    *_SERVICE_LEVEL_FUTURE_SURFACE_IDS,
 }
 
 
@@ -475,6 +466,7 @@ def _blocked_selected_surfaces(
     overrides: dict[str, str],
     registry: ProviderRegistry,
     subscribe_store: SubscribeStore | None,
+    subscribe_targets: Sequence[tuple[str, str]],
 ) -> dict[str, SurfaceReadiness]:
     """Readiness failures among the surfaces the operator actually selected.
 
@@ -495,8 +487,7 @@ def _blocked_selected_surfaces(
             label=surface.label,
             registry=registry,
             subscribe_store=subscribe_store,
-            subscribe_target_type=SUBSCRIBER_TARGET_TYPE,
-            subscribe_target_id=SUBSCRIBER_TARGET_ID,
+            subscribe_targets=subscribe_targets,
         )
         if readiness is not None and not readiness.healthy:
             blocked[surface.id] = readiness
@@ -510,7 +501,11 @@ def approve_publish(
     store: PublishStore,
     registry: ProviderRegistry | None = None,
     media_path: Path | None = None,
+    podcast_store: PodcastStore | None = None,
     subscribe_store: SubscribeStore | None = None,
+    delivery_store: NotificationDeliveryStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
+    notification_retry_only: bool = False,
 ) -> PublishRunRecord:
     """Approve and execute the publish surfaces.
 
@@ -533,6 +528,12 @@ def approve_publish(
     correctly-configured provider marks only that surface ``failed``
     (retryable via the existing per-surface retry) instead of failing the
     whole approval.
+
+    WP-05: ``delivery_store`` keeps the durable per-recipient notification
+    receipts, ``target_lookup`` resolves the asset's channel from the
+    schedule/live association, and ``notification_retry_only`` is set by
+    :func:`retry_publish_surface` so an explicit retry re-attempts only
+    deliveries that already exist and are not yet observed sent.
     """
     at = datetime.now(UTC)
     payload = f"{asset.asset_id}:{asset.title}".encode()
@@ -546,12 +547,18 @@ def approve_publish(
         else default_approved_surface_ids(asset)
     )
     resolved_registry = registry if registry is not None else default_registry()
+    # One resolution per approval, shared by the readiness pre-check, the
+    # podcast channel, and the subscriber fan-out, so all three agree.
+    publication_targets = resolve_publication_targets(asset, lookup=target_lookup)
     blocked = _blocked_selected_surfaces(
         asset,
         approved_ids=approved_ids,
         overrides=overrides,
         registry=resolved_registry,
         subscribe_store=subscribe_store,
+        subscribe_targets=[
+            (target.target_type, target.target_id) for target in publication_targets
+        ],
     )
     if blocked:
         raise PublishConfigurationError(blocked)
@@ -711,48 +718,108 @@ def approve_publish(
                     }
                 )
         elif surface.id == "podcast":
-            episode = create_podcast_episode(
-                PodcastEpisodeCreate(
-                    asset_id=asset.asset_id,
-                    channel_id="government",
-                    title=asset.title,
-                    portal_url=asset.manifest_url
-                    or f"https://portal.example/watch/{asset.asset_id}",
-                    source_media_url=asset.manifest_url or f"file:///{asset.asset_id}.mp4",
-                    signed_transcript_url=f"https://portal.example/records/{asset.asset_id}.pdf",
-                    summary=f"Approved audio episode for {asset.title}.",
-                    chapters=[],
+            podcast_channel_id = next(
+                (
+                    target.target_id
+                    for target in publication_targets
+                    if target.target_type == "channel"
+                ),
+                DEFAULT_CHANNEL_ID_FALLBACK,
+            )
+            if asset.published_at is None:
+                podcast_error = (
+                    "Publish this recording to Portal first, then retry Podcast "
+                    "after the public record is confirmed."
                 )
-            )
-            updated = surface.model_copy(
-                update={
-                    "state": "succeeded",
-                    "approval": "approved",
-                    "health": "ok",
-                    "url": f"https://portal.example/podcast/{episode.channel_id}.xml",
-                    "completed_at": at,
-                    "message": "Podcast episode was generated at -16 LUFS and added to RSS.",
-                    "next_step": "Validate the podcast RSS feed before public announcement.",
-                }
-            )
+            elif media_path is None or podcast_store is None:
+                podcast_error = "A local recording and podcast storage are required."
+            else:
+                try:
+                    episode = create_podcast_episode(
+                        PodcastEpisodeCreate(
+                            asset_id=asset.asset_id,
+                            channel_id=podcast_channel_id,
+                            title=asset.title,
+                            portal_url=asset.manifest_url or "",
+                            source_media_url=str(media_path.resolve()),
+                            summary=f"Audio from {asset.title}.",
+                        )
+                    )
+                    podcast_store.upsert_episode(episode)
+                except (PodcastMediaError, OSError) as exc:
+                    podcast_error = str(exc)
+                except Exception as exc:
+                    podcast_error = (
+                        f"Podcast conversion or storage failed ({type(exc).__name__}). "
+                        "Check station storage and retry."
+                    )
+                else:
+                    podcast_error = ""
+            if podcast_error:
+                updated = surface.model_copy(
+                    update={
+                        "state": "failed",
+                        "approval": "approved",
+                        "health": "warning",
+                        "completed_at": at,
+                        "message": "Podcast audio was not published.",
+                        "next_step": podcast_error,
+                    }
+                )
+            else:
+                base_url = os.environ["CIVICCAST_PUBLIC_BASE_URL"].rstrip("/")
+                updated = surface.model_copy(
+                    update={
+                        "state": "succeeded",
+                        "approval": "approved",
+                        "health": "ok",
+                        "url": f"{base_url}/api/public/podcast/{episode.channel_id}.xml",
+                        "completed_at": at,
+                        "message": "Podcast audio was created and added to the RSS feed.",
+                        "next_step": "Open the feed to check the episode and audio.",
+                    }
+                )
         elif surface.id == "subscriber-notifications":
-            # Owner decision 2026-09-02: real subscriber notification sends
-            # (mail/webhook fan-out on publish) are deferred to a future
-            # release -- the implementation is parked on
-            # feat/publish-real-subscriber-delivery, not merged here. This
-            # surface used to build a NotificationPayload and mark itself
-            # "succeeded" without ever dispatching it (no send call existed),
-            # so an operator saw a green "sent" state for a notification that
-            # never went out. It must never claim delivery it did not
-            # perform: no payload is built and nothing is sent.
+            if asset.published_at is None:
+                updated = surface.model_copy(
+                    update={
+                        "state": "pending",
+                        "approval": "approved",
+                        "health": "warning",
+                        "message": "Subscriber notices are waiting for the recording to become public.",
+                        "next_step": "Publish the recording to Portal; notices will send after visibility is confirmed.",
+                    }
+                )
+                surfaces.append(updated)
+                continue
+            # WP-05: this branch used to build a payload, mark the surface
+            # "succeeded" and stop -- no subscriber was ever contacted. It now
+            # runs the real fan-out through the existing SMTP/webhook adapters
+            # and reports the state its durable delivery receipts show.
+            outcome = deliver_publication_notifications(
+                asset_id=asset.asset_id,
+                title=asset.title,
+                published_at=at,
+                targets=publication_targets,
+                manifest_url=asset.manifest_url,
+                subscribe_store=subscribe_store,
+                delivery_store=delivery_store,
+                registry=resolved_registry,
+                retry_only=notification_retry_only,
+            )
             updated = surface.model_copy(
                 update={
-                    "state": "coming_soon",
+                    "state": outcome.state,
                     "approval": "approved",
-                    "health": "unknown",
+                    "health": outcome.health,
                     "completed_at": at,
-                    "message": _SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE.message,
-                    "next_step": _SUBSCRIBER_NOTIFICATIONS_NOT_YET_AVAILABLE.next_step,
+                    "message": outcome.message,
+                    "next_step": outcome.next_step,
+                    # Badged exactly like a simulated Internet Archive or
+                    # YouTube surface: a mock adapter accepted the notice and
+                    # nobody received it (GauntletGate TW-1).
+                    "simulated": outcome.simulated,
+                    "notification_summary": outcome.summary,
                 }
             )
         elif surface.id == CABLE_PACKAGE_SURFACE_ID:
@@ -828,6 +895,55 @@ def approve_publish(
     return store.upsert_run(record)
 
 
+def send_pending_notifications_after_publication(
+    *,
+    asset: StaffAssetRow,
+    record: PublishRunRecord,
+    store: PublishStore,
+    subscribe_store: SubscribeStore,
+    delivery_store: NotificationDeliveryStore | None,
+    registry: ProviderRegistry,
+    target_lookup: ChannelAssociationLookup | None,
+) -> PublishRunRecord:
+    """Send approved notices only after the canonical public write succeeds."""
+    if asset.published_at is None:
+        return record
+    waiting = next((s for s in record.surfaces if s.id == "subscriber-notifications"), None)
+    if (
+        waiting is None
+        or waiting.approval != "approved"
+        or waiting.state != "pending"
+        or waiting.notification_summary is not None
+    ):
+        return record
+    outcome = deliver_publication_notifications(
+        asset_id=asset.asset_id,
+        title=asset.title,
+        published_at=asset.published_at,
+        targets=resolve_publication_targets(asset, lookup=target_lookup),
+        manifest_url=asset.manifest_url,
+        subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        registry=registry,
+    )
+    finished = waiting.model_copy(
+        update={
+            "state": outcome.state,
+            "health": outcome.health,
+            "completed_at": datetime.now(UTC),
+            "message": outcome.message,
+            "next_step": outcome.next_step,
+            "simulated": outcome.simulated,
+            "notification_summary": outcome.summary,
+        }
+    )
+    return store.upsert_run(
+        record.model_copy(
+            update={"surfaces": [finished if s.id == finished.id else s for s in record.surfaces]}
+        )
+    )
+
+
 def retry_publish_surface(
     *,
     asset: StaffAssetRow,
@@ -835,7 +951,11 @@ def retry_publish_surface(
     request: PublishRetryRequest,
     store: PublishStore,
     registry: ProviderRegistry | None = None,
+    media_path: Path | None = None,
+    podcast_store: PodcastStore | None = None,
     subscribe_store: SubscribeStore | None = None,
+    delivery_store: NotificationDeliveryStore | None = None,
+    target_lookup: ChannelAssociationLookup | None = None,
 ) -> PublishRunRecord:
     """Retry one surface while preserving the rest of the publish run.
 
@@ -861,7 +981,17 @@ def retry_publish_surface(
         ),
         store=InMemoryPublishStoreProxy(previous),
         registry=registry,
+        media_path=media_path,
+        podcast_store=podcast_store,
         subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        target_lookup=target_lookup,
+        # WP-05 plan item 6: an explicit retry re-attempts only deliveries that
+        # already exist and are failed or stale pending. Queued webhooks stay
+        # with the background worker. It never contacts a
+        # recipient already observed sent, and never starts a delivery the
+        # original run did not intend.
+        notification_retry_only=True,
     )
     updated_surface = next(surface for surface in retried.surfaces if surface.id == surface_id)
     old_retry_count = previous_by_id.get(surface_id, updated_surface).retry_count
@@ -920,6 +1050,41 @@ class InMemoryPublishStoreProxy:
         return record
 
 
+#: Reach/audience states that mean "this did not fully reach its audience".
+_DEGRADED_REACH_STATES = frozenset({"failed", "partial", "unverified"})
+
+
+def _normalized_notification_surface(surface: PublishSurfaceStatus) -> PublishSurfaceStatus:
+    """Downgrade a receipt-less historical ``succeeded`` notice row to ``unverified``.
+
+    Every ``subscriber-notifications`` row written before WP-05 says
+    ``succeeded`` because the old code marked it so after merely building a
+    payload -- no notice was sent and no receipt exists. Those rows are real
+    history, so they are not rewritten in the database; they are *presented*
+    as ``unverified`` (plan item 10) so a green pill can never stand in for
+    delivery that cannot be shown to have happened.
+    """
+
+    if surface.id != "subscriber-notifications":
+        return surface
+    if surface.state != "succeeded" or surface.notification_summary is not None:
+        return surface
+    return surface.model_copy(
+        update={
+            "state": "unverified",
+            "health": "warning",
+            "message": (
+                "This publish run recorded subscriber notices as sent, but it kept no "
+                "delivery receipt, so the station cannot show that anyone was notified."
+            ),
+            "next_step": (
+                "Retry the subscriber notifications surface to send and record real "
+                "deliveries for this recording."
+            ),
+        }
+    )
+
+
 def _dashboard_state(
     *,
     surfaces: list[PublishSurfaceStatus],
@@ -935,7 +1100,10 @@ def _dashboard_state(
     archive_verified = bool(archive) and all(
         surface.state in {"succeeded", "overridden"} for surface in archive
     )
-    reach_failed = any(surface.state == "failed" for surface in reach)
+    # WP-05: a fan-out surface that only partly delivered, or whose success has
+    # no receipt behind it, is degraded reach -- not "Complete". Rolling either
+    # into the green path is precisely the lie this work package removes.
+    reach_failed = any(surface.state in _DEGRADED_REACH_STATES for surface in reach)
 
     if portal.state == "blocked":
         return "preflight_blocked", "Preflight blocked"
@@ -959,7 +1127,10 @@ def build_publish_asset_status(
     record: PublishRunRecord | None = None,
 ) -> PublishAssetStatus:
     public_record_required = _is_public_record(asset)
-    surfaces = record.surfaces if record is not None else build_initial_surfaces(asset)
+    surfaces = [
+        _normalized_notification_surface(surface)
+        for surface in (record.surfaces if record is not None else build_initial_surfaces(asset))
+    ]
     dashboard_state, dashboard_label = _dashboard_state(
         surfaces=surfaces,
         public_record_required=public_record_required,
@@ -974,7 +1145,8 @@ def build_publish_asset_status(
         surface.state in {"succeeded", "overridden"} for surface in archive_surfaces
     )
     reach_degraded = canonical_public and any(
-        surface.kind == "reach" and surface.state == "failed" for surface in surfaces
+        surface.kind in {"reach", "audience"} and surface.state in _DEGRADED_REACH_STATES
+        for surface in surfaces
     )
     needs_operator_action = any(
         surface.required and surface.state in {"blocked", "failed"} for surface in surfaces

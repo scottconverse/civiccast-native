@@ -24,6 +24,8 @@ from civiccast.live.router import get_live_finalization_worker
 from civiccast.platform.broker import BrokerClient, get_broker_client
 from civiccast.platform.providers import ProviderRegistry, default_registry
 from civiccast.platform.stores import resolve_app_store
+from civiccast.podcast.router import get_podcast_store
+from civiccast.podcast.store import PodcastStore
 from civiccast.publish.models import (
     PublishApprovalRequest,
     PublishAssetStatus,
@@ -40,12 +42,19 @@ from civiccast.publish.service import (
     build_publish_dashboard,
     build_publish_preflight,
     retry_publish_surface,
+    send_pending_notifications_after_publication,
 )
 from civiccast.publish.store import PublishStore
+from civiccast.publish.targets import ChannelAssociationLookup
 from civiccast.schedule.models import StaffAssetRow
 from civiccast.schedule.paths import resolve_vod_package_dir
 from civiccast.schedule.router import get_postgres_store
-from civiccast.subscribe.router import get_subscribe_store
+from civiccast.subscribe.outcome_store import NotificationDeliveryStore
+from civiccast.subscribe.router import (
+    get_notification_delivery_store,
+    get_publication_target_lookup,
+    get_subscribe_store,
+)
 from civiccast.subscribe.store import SubscribeStore
 
 _LOG = logging.getLogger(__name__)
@@ -75,6 +84,17 @@ def _resolve_local_recording(finalization_worker: Any, asset_id: str) -> Path | 
     if path is None or not path.exists():
         return None
     return path
+
+
+def _resolve_publish_media(finalization_worker: Any, asset: StaffAssetRow) -> Path | None:
+    live_recording = _resolve_local_recording(finalization_worker, asset.asset_id)
+    if live_recording is not None:
+        return live_recording
+    if asset.file_path:
+        candidate = Path(asset.file_path)
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 _DB_NOT_READY_DESCRIPTION = "Durable storage not ready -- run Setup storage or set DATABASE_URL"
@@ -399,6 +419,7 @@ def get_publish_preflight(
     postgres_store: Any = Depends(get_postgres_store),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
+    target_lookup: ChannelAssociationLookup | None = Depends(get_publication_target_lookup),
 ) -> PublishPreflightResponse:
     """Return portal, Internet Archive, NAS, YouTube, and subscriber readiness.
 
@@ -417,6 +438,7 @@ def get_publish_preflight(
         cast(StaffAssetRow, asset),
         registry=provider_registry,
         subscribe_store=subscribe_store,
+        target_lookup=target_lookup,
     )
 
 
@@ -437,6 +459,7 @@ def approve_publish_asset(
     http_request: Request,
     postgres_store: Any = Depends(get_postgres_store),
     publish_store: PublishStore = Depends(get_publish_store),
+    podcast_store: PodcastStore = Depends(get_podcast_store),
     activitypub_store: ActivityPubStore = Depends(get_activitypub_store),
     activitypub_delivery_client: ActivityPubDeliveryClient = Depends(
         get_activitypub_delivery_client
@@ -447,6 +470,8 @@ def approve_publish_asset(
     caption_settings: RecordedCaptionSettings = Depends(get_recorded_caption_settings),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
+    delivery_store: NotificationDeliveryStore | None = Depends(get_notification_delivery_store),
+    target_lookup: ChannelAssociationLookup | None = Depends(get_publication_target_lookup),
 ) -> PublishAssetStatus:
     """Approve per-surface publication through the configured providers."""
     asset_store = _require_asset_store(postgres_store)
@@ -493,9 +518,12 @@ def approve_publish_asset(
             asset=staff_asset,
             request=request,
             store=publish_store,
-            media_path=_resolve_local_recording(finalization_worker, asset_id),
+            media_path=_resolve_publish_media(finalization_worker, staff_asset),
+            podcast_store=podcast_store,
             registry=provider_registry,
             subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            target_lookup=target_lookup,
         )
     except PublishConfigurationError as exc:
         # WP-03: a selected surface's real-provider config is missing/invalid
@@ -523,6 +551,15 @@ def approve_publish_asset(
         asset_id=asset_id,
         staff_asset=staff_asset,
         record=record,
+    )
+    record = send_pending_notifications_after_publication(
+        asset=staff_asset,
+        record=record,
+        store=publish_store,
+        subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        registry=provider_registry,
+        target_lookup=target_lookup,
     )
     status_response = build_publish_asset_status(staff_asset, record)
     broker_client.publish(build_publish_approved_event(status_response))
@@ -561,10 +598,13 @@ def retry_publish_asset_surface(
     request: PublishRetryRequest,
     postgres_store: Any = Depends(get_postgres_store),
     publish_store: PublishStore = Depends(get_publish_store),
+    podcast_store: PodcastStore = Depends(get_podcast_store),
     caption_job_store: OfflineCaptionJobStore | None = Depends(get_caption_job_store),
     caption_settings: RecordedCaptionSettings = Depends(get_recorded_caption_settings),
     provider_registry: ProviderRegistry = Depends(get_provider_registry),
     subscribe_store: SubscribeStore = Depends(get_subscribe_store),
+    delivery_store: NotificationDeliveryStore | None = Depends(get_notification_delivery_store),
+    target_lookup: ChannelAssociationLookup | None = Depends(get_publication_target_lookup),
     # Same seam the approve route uses: a portal retry that makes a
     # LIVE-finalized recording public has to resolve its package directory
     # from the finalization job, not from the upload convention.
@@ -593,8 +633,12 @@ def retry_publish_asset_surface(
             surface_id=surface_id,
             request=request,
             store=publish_store,
+            media_path=_resolve_publish_media(finalization_worker, staff_asset),
+            podcast_store=podcast_store,
             registry=provider_registry,
             subscribe_store=subscribe_store,
+            delivery_store=delivery_store,
+            target_lookup=target_lookup,
         )
     except ValueError as exc:
         raise HTTPException(
@@ -615,6 +659,15 @@ def retry_publish_asset_surface(
         asset_id=asset_id,
         staff_asset=staff_asset,
         record=record,
+    )
+    record = send_pending_notifications_after_publication(
+        asset=staff_asset,
+        record=record,
+        store=publish_store,
+        subscribe_store=subscribe_store,
+        delivery_store=delivery_store,
+        registry=provider_registry,
+        target_lookup=target_lookup,
     )
     # Only a Portal retry can be what makes the recording public when the
     # first approval failed, so only a Portal retry starts the caption

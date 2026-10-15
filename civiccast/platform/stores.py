@@ -39,6 +39,16 @@ class AppStoreBundle:
     #: keep a job across a multi-minute CPU generation (field evidence
     #: 2026-08-29 -- see civiccast/summary/job.py).
     summary_job_store: StoreFactory = _missing_optional_store
+    #: Durable per-recipient subscriber-notification receipts (WP-05). Optional
+    #: for the same reason as the job queues: an app instance with no durable
+    #: storage has nowhere to keep a delivery receipt, and the publish path
+    #: falls back to a process-local guard rather than claiming a receipt it
+    #: cannot keep.
+    notification_delivery_store: StoreFactory = _missing_optional_store
+    #: Schedule/live-finalization channel association used by the canonical
+    #: publication-target resolver (WP-05). Optional: without it an asset
+    #: resolves to the station's default channel rather than failing.
+    publication_target_lookup: StoreFactory = _missing_optional_store
 
 
 def resolve_app_store(request: Request, name: str, *, surface: str) -> Any:

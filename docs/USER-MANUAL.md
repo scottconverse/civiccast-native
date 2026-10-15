@@ -1,6 +1,6 @@
 ---
 title: CivicCast User Manual
-subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.16 (native Windows line)
+subtitle: For station staff, volunteers and city IT staff - v1.0.0-beta.17 (native Windows line)
 author: The CivicCast Authors
 date: 2026-10-14
 urlcolor: blue
@@ -56,7 +56,7 @@ The manual was written from the product's own code and from a screen-by-screen i
 
 ## Edition and package evidence
 
-This edition documents the merged Beta 16 source changes from Sprints 1–4, including staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, bounded worker storage and recovery, completed broadcast outputs, and recorded-caption settings. Package identity and checks belong to the matching release record. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package-specific verification; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to its signed package and does not establish Beta 16 package results.
+This edition documents the Beta 17 candidate source changes from Sprints 1–4 and the completed Sprint 5 publication and underwriting work, including staff accounts, station backup and restore, network access, the restricted service account, station-local scheduling, bounded worker storage and recovery, completed broadcast outputs, and recorded-caption settings. Package identity and checks belong to the matching release record. The [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks package-specific verification; the [Beta 16 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) applies to the current published package and does not establish Beta 17 package results.
 
 Check the [releases page](https://github.com/scottconverse/civiccast-native/releases) for available downloads. For an installed package, use its matching Help and verification record. A **historical observation** describes behavior or evidence from the named earlier release. A **Known issue (version)** names the version in which the behavior was checked; the label alone does not say whether it remains true now. Historical host measurements remain distinct from installation checks of any package.
 
@@ -194,9 +194,9 @@ These are the words used most in Part I. Each is explained again where it first 
 | **Test mode** | The mode a new station starts in. The First-run defaults card on First Setup shows a **Mode** heading with "Test mode" under it. |
 | **Headend** | The cable company's equipment that receives a channel's signal. |
 
-### Beta 16 source and release evidence
+### Beta 17 source and release evidence
 
-This manual describes the merged Beta 16 source. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its matching verification record. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks that edition's package checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies to its signed package only. Keep each historical result with its named release.
+This manual describes the Beta 17 candidate source. Use the download and installation instructions in [Chapter 10](#ch-installing) with a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its matching verification record. The [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks that edition's package checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies to its signed package only. Keep each historical result with its named release.
 
 **Historical Beta 11 operating result:** one CivicCast host ran Public, Government, and Education channels together for 72 hours and recorded **99.78% live caption-input coverage**. This is a Beta 11 host measurement, not a Beta 16 measurement. See the [72-hour host performance report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) for the channel totals and method.
 
@@ -2076,8 +2076,8 @@ Each card has nine rows. Each row shows a status dot, a name, badges (**Required
 | Internet Archive | Mock by default. A real adapter requires the `CIVICCAST_PROVIDER_INTERNET_ARCHIVE=real` service setting and credentials. It uploads the recording when a local file resolves; without one, the adapter receives an asset/title payload rather than the media. |
 | Local NAS rsync, Local NAS ZFS | These two rows share the mock-by-default local archive adapter. A real adapter copies to the configured mounted folder (local path or UNC) and verifies the copies; the names do not mean CivicCast runs rsync or manages ZFS. Without a local recording file the copy is metadata only. |
 | YouTube Live, YouTube VOD | Mock by default. Real VOD upload requires a resolved recording file or the configured `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. The Live adapter provisions and binds a YouTube broadcast and stream, but this Publish path does not send CivicCast's live output to YouTube's ingest address. |
-| Podcast episode | Marked "Coming in a future release". You cannot tick it. A legacy API branch can return placeholder URLs but does not persist an episode in the public feed. |
-| Subscriber notifications | Marked "Coming in a future release". You cannot tick it. Publishing sends no mail or webhook notification. |
+| Podcast episode | Optional. Converts the asset's local recording to an MP3, saves it as an episode, and adds an audio enclosure to the channel RSS feed. Publish a new recording to Portal first, then select or retry Podcast. A missing recording or conversion error appears as a retryable failure. IT must set a public station URL and provide FFmpeg. |
+| Subscriber notifications | Optional. When selected, CivicCast sends notices to confirmed subscribers through configured mail or webhook providers, records each delivery outcome and retries eligible failures. The row shows delivered, queued and failed counts. Mock providers are labeled simulated. |
 | Cable file package | Builds a ZIP with the video, captions, details and file fingerprints for the cable headend, in a folder IT has chosen. If no folder is set the row says it is "not set up (optional)". |
 
 Provider selectors default to mocks, which do not send or archive media. The Setup Provider form saves values for station setup but does not configure these publishing adapters; IT must set the service environment described in [Integrations](#ch-integrations). The [capability matrix](https://github.com/scottconverse/civiccast-native/blob/main/CAPABILITIES.md) lists the current support boundary.
@@ -2260,8 +2260,8 @@ If a resident types an address and clicks **Subscribe**, a result box says "Subs
 > - The signup is always for a channel named `government`, and both feed links point at that name. A station with no channel by that name gets feeds for nothing.
 > - Unless IT has switched on a real mail connection, the confirmation email goes to a placeholder mailbox that never leaves the station computer.
 > - Even with a real mail connection, the confirmation link written into the email is only a path (`/subscribe/confirm?token=...`) with no web address in front of it. The portal confirms a subscription from `/?subscription=confirm&token=...` and we found nothing that serves the path in the email, so we could not confirm that a resident can finish confirming.
-> - Even when a subscriber confirms, nothing sends them a notice when a recording is published. The Publish screen's **Subscriber notifications** row is marked "Coming in a future release".
-> - The **Channel RSS feed** is a valid but empty feed. The **Podcast RSS feed** lists episodes only if some were created, and the Podcast step on Publish is not available yet.
+> - In beta.11, a confirmed subscriber did not receive a publish notice. Current source offers the optional **Subscriber notifications** row with recorded delivery outcomes.
+> - In beta.11, the **Channel RSS feed** was valid but empty and the Podcast step on Publish was unavailable. Current source can add approved podcast episodes and playable enclosures to the feed.
 >
 > Do not promise residents email alerts or working feeds in beta.11. The result box may also show a link labeled "Test one-click unsubscribe", which is a testing control.
 
@@ -2331,7 +2331,7 @@ Under the panels, the page shows:
 - A **view** is one time someone starts playing a recording. The same person watching twice counts twice. The PDF report says this itself: "Viewer Count is a play count, not unique humans."
 - The numbers cover **streaming only**: the resident website and apps. They do not include people watching on cable.
 - Live "concurrent" numbers (how many people watch at the same moment) are estimates.
-- **Podcast downloads** is expected to show 0. The Publish screen describes podcasts as coming in a future release.
+- **Podcast downloads** counts analytics events named `podcast_download`. Publishing an episode now creates playable audio and an RSS enclosure; the audio route does not itself emit that analytics event, so this tile can remain at 0 while downloads occur.
 
 #### What is collected, and what is not
 
@@ -2533,7 +2533,7 @@ The spot appears in the **Spots** list with "FCC 73.503 attested." or "NOT attes
 4. Set **Start date** and **End date**. The window includes both days.
 5. In **Channels**, type at least one channel id, separated by commas, such as `pub-1, gov-1`. The box has no "required" mark, but the server refuses a flight with no channel.
 6. Leave **Frequency cap (per day, optional)** empty, or type a whole number from 1 to 1440.
-7. Leave **Daypart block ID (optional)** empty unless your scheduling team gave you an id.
+7. In **Daypart (optional)**, leave **Any time** or choose a saved daypart by name, channel and hours. Use **Manage dayparts** to create or edit them in Auto Schedule. If an older flight refers to a deleted daypart, choose another or **Any time** before saving.
 8. Click **Create flight**.
 
 To delete a spot or flight, click **Delete**, then **Confirm delete**. Deleting a spot also deletes every flight and placement that used it. This cannot be undone.
@@ -3184,7 +3184,7 @@ Windows accounts matter in one more place: the first-run window remembers that i
 
 #### What is on the release page
 
-This manual describes the merged Beta 16 source edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 16 candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package-specific results.
+This manual describes the Beta 17 candidate source edition. Use the [releases page](https://github.com/scottconverse/civiccast-native/releases) for packages and run the release-matched helper to obtain the installer, runtime packs and signed station-model resources together. The [Beta 17 candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks package-specific results.
 
 The complete offline kit contains 19 required files, including the signed station index and model packs. The release helper uses `station-models.json` and every matching `station-models.zip.*` part, verifies the set and prepares the folders before setup. Raw model downloads or unsigned substitutes are not activation packs.
 
@@ -3244,7 +3244,7 @@ Windows may show a blue **Windows protected your PC** screen. That screen is abo
 
 ### Historical measurements and package evidence
 
-These host measurements belong to Beta 11 and are not Beta 16 capacity results. The 72-hour run covered Public, Government and Education without a service restart and recorded **99.78% live caption-input coverage**; the earlier 48-hour window recorded **99.88% rounded coverage**. See the [Beta 11 72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) and [Beta 11 48-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the methods and run identities. Package checks belong to the verification record for the matching release; the [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package results.
+These host measurements belong to Beta 11 and are not Beta 16 capacity results. The 72-hour run covered Public, Government and Education without a service restart and recorded **99.78% live caption-input coverage**; the earlier 48-hour window recorded **99.88% rounded coverage**. See the [Beta 11 72-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) and [Beta 11 48-hour host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-48-hour-2026-10-10.md) for the methods and run identities. Package checks belong to the verification record for the matching release; the [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks its package results.
 
 ### Related
 
@@ -3675,7 +3675,7 @@ Because the database password is deleted from the registry, the surviving databa
 
 ### Package status and verification
 
-This chapter describes the merged Beta 16 source. Use only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package-specific checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; the intended signing boundary is recorded as a Beta 17 follow-up. That observation does not establish the status of another package.
+This chapter describes the Beta 17 candidate source. Use only a package on the [releases page](https://github.com/scottconverse/civiccast-native/releases), and follow its bundled Help and matching verification record. The [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks package-specific checks. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed; the intended signing boundary is recorded as a Beta 17 follow-up. That observation does not establish the status of another package.
 
 ### Related
 
@@ -4326,7 +4326,7 @@ For all other variables, the appendix of settings ([Appendix: settings](#app-set
 
 ### Package status
 
-These instructions describe the merged Beta 16 source. Use the release page and the Help and verification record that match the package on the station. The [Beta 16 candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package-specific checks.
+These instructions describe the Beta 17 candidate source. Use the release page and the Help and verification record that match the package on the station. The [Beta 17 candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks its package-specific checks.
 
 ### Related
 
@@ -4724,7 +4724,7 @@ Hardware sizing (CPU, memory, number of channels) is in [Chapter 9](#ch-planning
 
 ### Package status and verification
 
-This chapter describes the merged Beta 16 source. For package results, use the matching release record: the [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its checks, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
+This chapter describes the Beta 17 candidate source. For package results, use the matching release record: the [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks its checks, while the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that package. Historical host measurements retain their Beta 11 or C16 run identity.
 
 ### Related
 
@@ -5023,7 +5023,7 @@ The entries below summarize the whole-repository audit dated 2026-10-02 (`audit-
 
 ### Package status and verification
 
-This chapter describes the merged Beta 16 source. Use the matching release record for package checks; the [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package verification. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed. The intended signing boundary is recorded as a Beta 17 follow-up; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
+This chapter describes the Beta 17 candidate source. Use the matching release record for package checks; the [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks its package verification. A historical Beta 15 field report found the installed `CivicCast Native.exe` unsigned while the outer setup was signed. The intended signing boundary is recorded as a Beta 17 follow-up; this does not establish the status of another package. See the [deferred field follow-up](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta17-deferred.md).
 
 #### Report a security problem
 
@@ -5277,7 +5277,7 @@ Scheduled recording runs inside the station (`CIVICCAST_SCHEDULED_RECORDING`, `i
 
 ### Publishing problems
 
-The Publish screen records "operator-dashboard" as the operator for every approval. Publish targets are the resident portal, Internet Archive, Local NAS (rsync or ZFS), YouTube Live, YouTube VOD, a podcast episode, subscriber notifications and a cable file package. The podcast and subscriber targets are "future": nothing is mailed or posted on publish (the owner parked real sends on 2026-09-02).
+The Publish screen records "operator-dashboard" as the operator for every approval. Publish targets are the resident portal, Internet Archive, Local NAS (rsync or ZFS), YouTube Live, YouTube VOD, a podcast episode, subscriber notifications and a cable file package. Podcast and subscriber notifications are optional and show their outcomes when selected.
 
 | Symptom | Likely cause | How to confirm | Fix |
 |---|---|---|---|
@@ -5286,7 +5286,7 @@ The Publish screen records "operator-dashboard" as the operator for every approv
 | A target shows a success message but nothing arrived at YouTube or the archive | Providers default to **mock**. Each of `CIVICCAST_PROVIDER_INTERNET_ARCHIVE`, `_LOCAL_NAS`, `_YOUTUBE`, `_MAIL` and `_WEBHOOK` is `mock` unless set to `real`. | Check the environment variables. | Set the variable to `real` and add the credentials listed in [Cable headend, streaming, CDN, federation, emergency alerts, the API](#ch-integrations). |
 | A target you did not tick was reset on a second approval | Approving again rebuilds the whole run and resets unticked targets. | The Publish screen. | Tick every target in one approval. |
 | The cable file package row says "not set up (optional)" | `CIVICCAST_CABLE_PACKAGE_OUTPUT_DIR` is not set. | The row. | Set it (see Chapter 15) and approve again. |
-| A mailing list or fediverse follower did not hear about a new recording | Automatic subscriber notifications are not connected to publishing, and federation is off by default. | Nothing is sent by design. | None automatically in beta.11. |
+| A subscriber did not receive a new-recording notice | The subscriber is not confirmed, the optional surface was not selected, or its provider is mock or failed. | Check the subscriber-notification row and its delivery list. | Confirm the subscription, configure the provider, then retry eligible deliveries. Federation is a separate feature and is off by default. |
 
 > **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but the card's headline can still read "Archive verified" (HELP-02), and a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Before you rely on a publish target, send one test and look at the far end.
 
@@ -5451,7 +5451,7 @@ If nothing here matches, do the following in order. First, run `curl.exe http://
 
 ### Package status and verification
 
-This chapter describes the merged Beta 16 source. For package-specific results, use the record matching the installed version. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to the corrected signed Beta 15 package.
+This chapter describes the Beta 17 candidate source. For package-specific results, use the record matching the installed version. The [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks its package checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to the corrected signed Beta 15 package.
 
 ### Related
 
@@ -5601,11 +5601,11 @@ All of them default to `mock`. A mock provider does not send anything. The selec
 
 The real Internet Archive and local archive adapters use a resolved recording file when available. If it cannot resolve, the fallback is an asset/title payload rather than the full media. The local archive adapter writes a canonical copy and dated snapshot to a mounted filesystem path and checks the files by SHA-256 read-back; it does not run rsync or manage a ZFS target. YouTube VOD needs a local recording file or `CIVICCAST_YOUTUBE_MEDIA_ROOT/<asset_id>.mp4`. YouTube Live creates and binds a YouTube broadcast/stream, but the Publish path does not connect CivicCast's live output to the returned ingest address.
 
-`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and the staff-only subscription dispatch-test route. `CIVICCAST_PROVIDER_WEBHOOK=real` can be exercised through that same dispatch-test route. Neither adapter is called by the Publish screen's subscriber-notifications row, which remains unavailable. Podcast publication is also unavailable: the normal screen excludes it, and a legacy API path can return placeholder URLs without saving an episode to the public feed.
+`CIVICCAST_PROVIDER_MAIL=real` is used by email signup/confirmation and optional notices from the Publish screen. `CIVICCAST_PROVIDER_WEBHOOK=real` enables webhook notices for confirmed subscribers. The staff-only subscription dispatch-test route can exercise either provider. Publishing records notice outcomes and retries eligible failures. Podcast publishing uses local FFmpeg, `CIVICCAST_PUBLIC_BASE_URL`, and the selected asset's managed recording; it does not use an external provider.
 
 > **Known issue (beta.11):** The Publish screen does not always say when a mock provider did the work. An Internet Archive or Local NAS row carries a "Simulated" note, but a YouTube row from the mock provider shows a success message with no simulated note (HELP-03). Check the far end after your first real publish.
 
-> **Known issue (beta.11):** The Publish screen has targets for a podcast episode and for subscriber notifications, but real sends were parked by an owner decision on 2026-09-02. Nothing is mailed or posted when you publish. See [Publishing](#ch-publishing).
+> **Beta.11 history:** The Publish screen then listed subscriber notifications without sending them, and the Podcast surface did not create audio. Current source can send selected notices and create selected podcast episodes when configured. See [Publishing](#ch-publishing).
 
 ### Cable file packages
 
@@ -5710,7 +5710,7 @@ Residents can sign up on the public portal with `POST /api/public/subscribe/emai
 
 When a subscriber webhook is delivered, the station sends a JSON body with `asset_id`, `title`, `portal_url`, `podcast_url`, `summary` and `published_at`, and two headers: `x-civiccast-signature: sha256=<hex>` (an HMAC-SHA256 of the body written with sorted keys and compact separators) and `x-civiccast-asset-id`. The timeout is `CIVICCAST_WEBHOOK_TIMEOUT_SECONDS` (default 30), with retries set by the `CIVICCAST_WEBHOOK_RETRY_*` variables.
 
-> **Known issue (beta.11):** Nothing is delivered automatically when a recording is published; only the staff test dispatch sends. Subscriber notifications are parked (see above).
+> **Beta.11 history:** Only staff test dispatch could send subscriber notices. Current source can send them when the optional Publish surface is selected.
 
 > **Known issue (beta.11):** The signing secret for a subscriber webhook is calculated from the subscription's own identifier, not chosen at random, and it is never shown to the subscriber. A receiver therefore cannot check the signature. Webhook "confirmation" does not prove that the person owns the address: the confirmation token is returned in the sign-up response, and any `http` or `https` address is accepted. If `CIVICCAST_PROVIDER_WEBHOOK` is set to `real`, this can be used to make the station send requests to addresses of an attacker's choosing (audit findings E-001 and B-002). Leave the webhook provider on `mock` until this is fixed.
 
@@ -5855,7 +5855,7 @@ Other things worth reading with a token: `GET /api/staff/runtime-safe-to-air`, `
 
 ### Package status and verification
 
-This chapter describes the merged Beta 16 source. Use the release record matching the package on the station; the [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks its package checks. Commission each external service and headend for the station's actual configuration.
+This chapter describes the Beta 17 candidate source. Use the release record matching the package on the station; the [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks its package checks. Commission each external service and headend for the station's actual configuration.
 
 ### Related
 
@@ -6064,8 +6064,8 @@ This is the other half of the product. A meeting is captured, becomes a recordin
 | YouTube VOD | reach | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise its configured media-root path must exist. |
 | YouTube Live | reach | Mock by default. The real API adapter creates and binds a YouTube broadcast and stream, but the Publish surface does not connect CivicCast's live output to the returned RTMP ingest address. |
 | Cable package | record | optional; `not_configured` when unset |
-| Podcast | audience | The UI and readiness say unavailable; a stale API branch creates only a deterministic placeholder episode and does not persist it into the public feed. |
-| Subscriber notifications | audience | `coming_soon`: publishing sends nothing. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
+| Podcast | audience | Selected publishing converts a local recording into MP3, stores the episode, and adds its enclosure to the channel RSS feed. Missing media or encoding failure stays visible and retryable. |
+| Subscriber notifications | audience | Optional delivery to confirmed subscribers when selected and configured; outcomes and retries are recorded. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
 | ActivityPub | federation | off by default; when enabled, a note is delivered only after the portal surface succeeded |
 
 Provider selectors default to `mock`, which writes or sends nothing. **Setup > Provider setup** saves fields to `provider-credentials.json`; the Publish registry reads `CIVICCAST_PROVIDER_*` selectors and adapter credentials from the service environment, so saving that file alone does not enable real delivery. A provider result marked `simulated` is not a real external write. Keep public webhooks set to mock: the resident-supplied URL and identifier-derived secret make real webhook selection unsafe.
@@ -6345,7 +6345,7 @@ This is about how the files you download came to exist, and what checks stand be
 - **A software bill of materials** and a licence list are generated for the runtime and the application payload. The build refuses to produce them if any file has an unknown licence, and it rejects GPL-licensed GStreamer components.
 - **Gate A** is one Windows Sandbox acceptance protocol. The current publisher also accepts physical-host verification receipts through a separate path; it then creates a draft release, checks the asset names and sizes, publishes it and records the result.
 
-**Package and runtime evidence.** Use the release verification record matching the package for its installation checks and limits. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package-specific results for this source edition; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that signed package. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement. An isolated Windows Sandbox source-overlay run verified restricted-service startup, profile and credential migration, and a healthy API; it is source evidence, not a signed-installer or production-cutover check.
+**Package and runtime evidence.** Use the release verification record matching the package for its installation checks and limits. The [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks package-specific results for this source edition; the [Beta 15 record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that signed package. A historical Beta 11 three-channel, 72-hour host run recorded 99.78% live caption-input coverage; its [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md) preserves the original measurement. An isolated Windows Sandbox source-overlay run verified restricted-service startup, profile and credential migration, and a healthy API; it is source evidence, not a signed-installer or production-cutover check.
 
 ### Two example stations {#arch-topology}
 
@@ -6387,7 +6387,7 @@ A technical reviewer should read this list before relying on the design. Each it
 **Playout.**
 
 - Freeze and audio/video recovery retain their three-restarts-per-hour budget, then use fallback and cooldown before a bounded retry. An intentional operator stop or drain suppresses automatic starts for that service session.
-- RTMP, per-output normalization and configured SRT/RTMP alert-tone filtering are included in the Beta 16 source edition. Use the package's matching verification record for output-check status.
+- RTMP, per-output normalization and configured SRT/RTMP alert-tone filtering are included in the Beta 17 source edition. Use the package's matching verification record for output-check status.
 - Hardware encoding is used only if a channel asks for it by name. The default encoder is a software encoder.
 - A first-time program takes time to prepare, and a program change can wait on that preparation (the lead time is 11.5 minutes by default). There was an unexplained rebuild of a long cached program in an earlier internal run, and eleven daemon and automation unit tests fail the same way on the installed tree and the candidate tree; neither is explained.
 - A single frame of video was dropped at one join in the lab run, and two program changes aborted and recovered by themselves.
@@ -6397,7 +6397,7 @@ A technical reviewer should read this list before relying on the design. Each it
 
 - Live captions are off in a new station profile, are English only, and can lose audio under heavy load. Captions embedded in the stream are not proven for CEA-708 broadcast compliance, and a channel whose profile uses HEVC cannot embed captions.
 - Recorded-caption completion follows the station's selected languages and review requirement.
-- The Internet Archive, NAS and YouTube surfaces are simulated until a provider is set to real. Subscriber notifications and podcasts are not active. ActivityPub is off by default.
+- The Internet Archive, NAS, YouTube and subscriber-notification surfaces are simulated until their providers are set to real. Podcast publication uses local FFmpeg and a configured public station URL. ActivityPub is off by default.
 - Summary citations bind claims to transcript cue identifiers and times; staff review the wording against the source recording before approving it. Signed-record export embeds its timestamp proof in the PDF. Configure `CIVICCAST_TSA_URL` for an RFC 3161 timestamp authority; without a configured authority, the exporter uses its deterministic development timestamp. An embedded timestamp is separate from a PDF document-signing certificate.
 - The public-safety display reads alerts and shows them; it is not an EAS device and does not relay the legally required EAS signal.
 
@@ -7025,7 +7025,7 @@ Other protocol and utility routes include `/health`, federation discovery and Ac
 6. **Read versus write.** In beta.11 almost every `/api/staff/` route that changes something requires a role. The staff routes with no role requirement are all reads (lists, status, thumbnails) plus `POST /api/staff/auth/sign-out`; for those any valid token is enough. In the console this shows up as screens a role can open but cannot use ([Appendix F](#app-roles)).
 7. **Maintenance mode.** While the service holds the station in maintenance mode (the installer does this during an upgrade, and during a hand-over between CivicCast editions), every request that changes data (POST, PUT, PATCH, DELETE) is refused with HTTP 503 and the body `{"error": "maintenance"}`. Reads still work.
 
-> **Note:** A Beta 11 console limitation was the lack of a screen for creating operators or assigning roles. The merged Beta 16 source includes **Staff accounts** for creating staff users and assigning roles; see [Security and privacy](#ch-security).
+> **Note:** A Beta 11 console limitation was the lack of a screen for creating operators or assigning roles. The Beta 17 candidate source includes **Staff accounts** for creating staff users and assigning roles; see [Security and privacy](#ch-security).
 
 ### Getting the OpenAPI document
 
@@ -8632,8 +8632,8 @@ Each surface has its own state: Blocked, Not set up yet, Coming soon (shown as "
 | YouTube VOD | Mock by default. The real adapter uploads the recording when its local source path resolves; otherwise the configured media-root path must exist. |
 | YouTube Live | Mock by default. The real adapter creates and binds a YouTube broadcast and stream, but CivicCast does not connect its live output to the returned RTMP ingest address. |
 | Cable package | Optional; `not_configured` when unset. |
-| Podcast | The UI and readiness say unavailable; a stale API branch creates only a deterministic placeholder episode and does not persist it into the public feed. |
-| Subscriber notifications | `coming_soon`; publishing sends nothing. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
+| Podcast | Optional Publish surface. Produces a local MP3 from a local recording, persists the episode, and exposes its enclosure in the channel RSS feed; failures can be retried. |
+| Subscriber notifications | Optional, selected publish surface with delivery receipts and retries; requires confirmed subscribers and configured providers. Signup confirmation and `/api/staff/subscribe/dispatch-test` are separate. |
 | ActivityPub | Off by default; when enabled, a note is delivered only after the portal surface succeeds. |
 
 **Provider setup note:** **Setup > Provider setup** saves fields to `provider-credentials.json`, while the Publish registry reads `CIVICCAST_PROVIDER_*` selectors and adapter credentials from the service environment. Saving that file alone does not enable real delivery. Keep public webhooks set to mock: the resident-supplied URL and identifier-derived secret make real webhook selection unsafe.
@@ -9130,7 +9130,7 @@ Checklist:
 
 ## Appendix H: Measured evidence and known limits {#app-evidence}
 
-This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity, checks and limits. The [Beta 16 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks this source edition; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that signed package. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
+This appendix preserves historical evidence and its build identity. Use the verification record matching the package for its identity, checks and limits. The [Beta 17 candidate record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks this source edition; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies only to that signed package. The older beta.10 record is `docs/releases/v1.0.0-beta.10-verification.md`, with evidence under `ops/beta10-oversight/` in the repository.
 
 ### Historical Beta 11: three channels, 72 hours, 99.78% live caption-input coverage
 
@@ -9192,7 +9192,7 @@ After a planned run ended on 2026-09-29, the lab station was left running. The s
 
 ### H.6 How to use this evidence
 
-Read sections H.1 through H.5 as historical evidence for their named builds and runs. For the Beta 16 source edition, use its candidate/release verification record and the current operating chapters; keep each measured result associated with its recorded source and run.
+Read sections H.1 through H.5 as historical evidence for their named builds and runs. For the Beta 17 source edition, use its candidate/release verification record and the current operating chapters; keep each measured result associated with its recorded source and run.
 
 <!-- SOURCES: docs/releases/v1.0.0-beta.10-verification.md; ops/beta10-oversight/OVERSIGHT-LOG.md entries 2026-10-01 14:12 and 14:22; ops/beta10-oversight/verdicts/rung-8h-c16-20261001-163004--VERDICT-NOTE.md -->
 
@@ -9857,11 +9857,11 @@ The installer is signed with an Authenticode signature (publisher Scott Converse
 
 The native Windows release history and the source edition covered by this manual, newest first. The project's release-truth file and GitHub release page establish package publication state. "Superseded" means a newer release replaced it; it does not mean it was bad.
 
-> **Note:** This manual covers the merged Beta 16 source edition. Its [candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.16-verification.md) tracks package identity and checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies to that signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
+> **Note:** This manual covers the Beta 17 candidate source edition. Its [candidate verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.17-verification.md) tracks package identity and checks; the [Beta 15 verification record](https://github.com/scottconverse/civiccast-native/blob/main/docs/releases/v1.0.0-beta.15-verification.md) applies to that signed package. A 72-hour Beta 11 host run recorded **99.78% live caption-input coverage** across three channels; see the [host report](https://github.com/scottconverse/civiccast-native/blob/main/docs/ops/beta11-host-caption-performance-72-hour-2026-10-11.md). The earlier 48-hour window remains in its dated report.
 
 | Release | Date | Status | What it was |
 | --- | --- | --- | --- |
-| **Beta 16 source edition** | — | Manual source edition; use its candidate/release record for package identity and checks | Includes the source work from Sprints 1–4. |
+| **Beta 17 source edition** | — | Manual source edition; use its candidate/release record for package identity and checks | Includes Sprints 1–4 and the completed Sprint 5 publication and underwriting work. |
 | **v1.0.0-beta.15** | — | Published package; historical record | Package observations and limits are in the Beta 15 verification record; no extended soak or normal cross-version upgrade is claimed. |
 | **v1.0.0-beta.14** | 2026-10-12 | See release page | Field fixes for installer/model selection, caption timing and recovery, recording, playback, resource protection and documentation. Exact checks are in the Beta 14 verification record. |
 | v1.0.0-beta.13 | 2026-10-11 | Published GitHub pre-release | Automatic Whistle recovery and bounded diagnostics. Fresh installation, normal Beta 11 upgrade and one interrupted-install repair passed their recorded three-channel observations. |

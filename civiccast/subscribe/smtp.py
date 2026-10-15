@@ -20,12 +20,59 @@ import os
 import smtplib
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from email.headerregistry import HeaderRegistry
 from email.message import EmailMessage
+from email.policy import SMTP, Policy
 from email.utils import make_msgid
+from typing import Any
 
+from civiccast.subscribe.delivery import notification_body
 from civiccast.subscribe.models import NotificationPayload
 
 __all__ = ["SmtpMailbox", "SmtpSettings"]
+
+
+class _VerbatimHeader:
+    """A header whose value is emitted exactly as given.
+
+    ``EmailMessage``'s default policy treats any header it does not recognise
+    as unstructured display text, so a long ``List-Unsubscribe`` URL comes out
+    RFC 2047 q-encoded and line-folded:
+    ``List-Unsubscribe: =?utf-8?q?=3Chttps=3A//...``. That is not a valid
+    RFC 2369 header value -- no mail client will parse it, and the one-click
+    Unsubscribe control silently never appears. Caught by
+    ``tests/publish/test_subscriber_notification_delivery.py``'s wire-level
+    assertion; the header only *looked* set.
+
+    These values are generated ASCII URLs and tokens, never user text, so
+    emitting them verbatim is safe.
+    """
+
+    max_count = 1
+
+    @classmethod
+    def parse(cls, value: object, kwds: dict[str, object]) -> None:
+        kwds["parse_tree"] = None
+        kwds["decoded"] = str(value)
+        kwds["defects"] = []
+
+    def fold(self, *, policy: Policy[Any]) -> str:
+        # ``name`` and ``__str__`` come from ``BaseHeader``, which the registry
+        # mixes in when it builds the concrete header class.
+        return f"{self.name}: {self}{policy.linesep}"  # type: ignore[attr-defined]
+
+
+def _mail_policy() -> Policy[Any]:
+    registry = HeaderRegistry()
+    for header in ("List-Unsubscribe", "List-Unsubscribe-Post"):
+        # The registry mixes this class with BaseHeader at map time, which is
+        # exactly the documented extension point; the stub only admits an
+        # already-complete BaseHeader subclass.
+        registry.map_to_type(header, _VerbatimHeader)  # type: ignore[arg-type]
+    return SMTP.clone(header_factory=registry)
+
+
+_MAIL_POLICY = _mail_policy()
 
 SmtpFactory = Callable[[str, int], smtplib.SMTP]
 
@@ -115,18 +162,26 @@ class SmtpMailbox:
         return self._send(
             to=email,
             subject=f"New CivicCast recording: {payload.title}",
-            body=(
-                f"{payload.title}\nWatch: {payload.portal_url}\n"
-                f"Podcast: {payload.podcast_url or 'Not posted'}"
-            ),
+            body=notification_body(payload),
+            unsubscribe_url=payload.unsubscribe_url,
         )
 
-    def _send(self, *, to: str, subject: str, body: str) -> str:
-        message = EmailMessage()
+    def _send(self, *, to: str, subject: str, body: str, unsubscribe_url: str | None = None) -> str:
+        message = EmailMessage(policy=_MAIL_POLICY)
         message["From"] = self._settings.from_address
         message["To"] = to
         message["Subject"] = subject
         message["Message-ID"] = make_msgid(domain=None)
+        if unsubscribe_url:
+            # RFC 2369 / RFC 8058. Mail clients render the header as a
+            # one-click "Unsubscribe" control, and mailbox providers weigh its
+            # presence when deciding whether a bulk sender is legitimate -- so
+            # this is deliverability as well as consent. The one-click POST
+            # variant is advertised because
+            # ``POST /api/public/subscribe/unsubscribe`` exists for exactly
+            # this purpose; the same URL also answers GET for a human click.
+            message["List-Unsubscribe"] = f"<{unsubscribe_url}>"
+            message["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click"
         message.set_content(body)
         with self._connect() as smtp:
             smtp.ehlo()

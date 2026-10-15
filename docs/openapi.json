@@ -3,7 +3,7 @@
   "info": {
     "title": "CivicCast",
     "description": "Open-source, self-hostable civic broadcast platform. This is the umbrella API surface; per-module routers mount under it. Error contract (audit QA-005): the `detail` field's SHAPE varies by error class - a string for domain errors (404/409/503), an object for structured conflicts (409 with version fields), and an array of field errors for validation failures (422, FastAPI standard). Integrators should branch on status code first, then on the type of `detail`.",
-    "version": "1.0.0-beta.16"
+    "version": "1.0.0-beta.17"
   },
   "paths": {
     "/health": {
@@ -28951,7 +28951,51 @@
           "subscribe"
         ],
         "summary": "Unsubscribe using a signed one-click link",
+        "description": "A resident clicking the unsubscribe link in a notice.",
         "operationId": "unsubscribe_link_api_public_subscribe_unsubscribe_get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionConfirmResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "public",
+          "subscribe"
+        ],
+        "summary": "One-click unsubscribe (RFC 8058)",
+        "description": "The mail client acting on the reader's behalf.\n\nRFC 8058 requires a POST for the ``List-Unsubscribe-Post`` header the\nnotice advertises: mail clients will not show a one-click Unsubscribe\ncontrol without it, and a GET-only endpoint risks link-prefetchers\nunsubscribing residents who never asked. Same signed token, same effect.",
+        "operationId": "unsubscribe_one_click_api_public_subscribe_unsubscribe_post",
         "parameters": [
           {
             "name": "token",
@@ -28995,6 +29039,7 @@
           "subscribe"
         ],
         "summary": "Read a public no-PII subscription RSS feed",
+        "description": "Render this target's real published recordings as RSS.\n\nItems are the station's actual published, packaged recordings for this\nchannel or meeting body, newest first, capped at\n:data:`RSS_FEED_MAX_ITEMS`. Links are built from the station's configured\npublic base URL and the portal's ``#/watch/{asset_id}`` route. A station\nwith nothing published yet gets a valid, configured, empty feed.\n\nWhen no public base URL is configured, this request's own origin is used\nonly if its Host is one the station recognises; an unrecognised Host gets\na 503 telling the operator to set the public web address, because a public\nfeed must never echo a caller-supplied hostname into its links.",
         "operationId": "rss_feed_api_public_subscribe_rss__target_type___target_id__xml_get",
         "parameters": [
           {
@@ -29044,26 +29089,31 @@
           "staff",
           "subscribe"
         ],
-        "summary": "Dispatch deterministic local v0.8 subscription notifications",
+        "summary": "Dispatch a simulated subscription notification for local proof",
+        "description": "Fan out a notice to one target's confirmed subscribers, mocks only.\n\nTwo WP-05 changes. First, ``target_type``/``target_id`` are required: the\nold ``channel``/``government`` defaults meant a mistyped call silently\ntested a target the caller never named. Second, this route refuses with 409\nonce a real mail or webhook provider is configured -- a route named\n\"dispatch-test\" must not put a message in a resident's inbox, and it writes\nno delivery receipt, so a real send here would also be invisible to the\nPublish dashboard's idempotency guard. Real fan-out belongs to publish\napproval, which does both.",
         "operationId": "dispatch_test_api_staff_subscribe_dispatch_test_post",
         "parameters": [
           {
             "name": "target_type",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
+              "enum": [
+                "channel",
+                "meeting_body"
+              ],
               "type": "string",
-              "default": "channel",
               "title": "Target Type"
             }
           },
           {
             "name": "target_id",
             "in": "query",
-            "required": false,
+            "required": true,
             "schema": {
               "type": "string",
-              "default": "government",
+              "minLength": 1,
+              "maxLength": 120,
               "title": "Target Id"
             }
           }
@@ -29088,6 +29138,9 @@
                 }
               }
             }
+          },
+          "409": {
+            "description": "A real mail or webhook provider is configured"
           },
           "422": {
             "description": "Validation Error",
@@ -29119,6 +29172,64 @@
             "CivicCastStaffBearer": []
           }
         ]
+      }
+    },
+    "/api/public/podcast/audio/{asset_id}.mp3": {
+      "get": {
+        "tags": [
+          "public",
+          "podcast"
+        ],
+        "summary": "Stream a published podcast enclosure",
+        "operationId": "podcast_audio_api_public_podcast_audio__asset_id__mp3_get",
+        "parameters": [
+          {
+            "name": "asset_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Asset Id"
+            }
+          },
+          {
+            "name": "token",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 5000
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/public/podcast/{channel_id}.xml": {
@@ -29185,7 +29296,7 @@
           "staff",
           "podcast"
         ],
-        "summary": "Create deterministic v0.8 podcast episode proof",
+        "summary": "Create a podcast episode through Publish approval",
         "operationId": "create_episode_api_staff_podcast_episodes_post",
         "requestBody": {
           "content": {
@@ -50407,6 +50518,11 @@
             "type": "integer",
             "title": "Failed"
           },
+          "skipped": {
+            "type": "integer",
+            "title": "Skipped",
+            "default": 0
+          },
           "deliveries": {
             "items": {
               "$ref": "#/components/schemas/NotificationDelivery"
@@ -50466,6 +50582,17 @@
             "type": "string",
             "format": "date-time",
             "title": "Published At"
+          },
+          "unsubscribe_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unsubscribe Url"
           }
         },
         "additionalProperties": false,
@@ -54634,6 +54761,170 @@
         "title": "PublishDashboardSummary",
         "description": "Aggregate counters for the publish dashboard header."
       },
+      "PublishNotificationDeliveryRow": {
+        "properties": {
+          "subscription_id": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Subscription Id"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "email",
+              "webhook"
+            ],
+            "title": "Channel"
+          },
+          "target_type": {
+            "type": "string",
+            "enum": [
+              "channel",
+              "meeting_body"
+            ],
+            "title": "Target Type"
+          },
+          "target_id": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Target Id"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent",
+              "failed",
+              "queued"
+            ],
+            "title": "Outcome"
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attempts"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail",
+            "default": ""
+          },
+          "retry_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retry Id"
+          },
+          "last_attempted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Attempted At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "subscription_id",
+          "channel",
+          "target_type",
+          "target_id",
+          "outcome",
+          "attempts"
+        ],
+        "title": "PublishNotificationDeliveryRow",
+        "description": "One logical subscriber delivery, safe for the dashboard and the API.\n\nDeliberately carries no subscriber handle: ``subscription_id`` is the\nsalted digest the subscription store already exposes, and ``detail`` is\nredacted at the point of failure\n(:func:`civiccast.subscribe.delivery.redact_delivery_detail`). No email\naddress, webhook URL, secret or signature reaches this model."
+      },
+      "PublishNotificationSummary": {
+        "properties": {
+          "publication_id": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Publication Id"
+          },
+          "intended": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Intended"
+          },
+          "sent": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Sent"
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Failed"
+          },
+          "queued": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Queued"
+          },
+          "pending": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Pending"
+          },
+          "targets": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Targets"
+          },
+          "deliveries_truncated": {
+            "type": "boolean",
+            "title": "Deliveries Truncated",
+            "default": false
+          },
+          "deliveries": {
+            "items": {
+              "$ref": "#/components/schemas/PublishNotificationDeliveryRow"
+            },
+            "type": "array",
+            "title": "Deliveries"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "publication_id",
+          "intended",
+          "sent",
+          "failed",
+          "queued",
+          "pending"
+        ],
+        "title": "PublishNotificationSummary",
+        "description": "Per-delivery summary persisted on the publish run (WP-05 plan item 9).\n\nThe aggregate surface state is *derived* from these rows, so the dashboard\ncan always explain why a surface is ``partial`` instead of asking the\noperator to trust a single word."
+      },
       "PublishPreflightCheck": {
         "properties": {
           "id": {
@@ -54821,6 +55112,8 @@
               "pending",
               "running",
               "succeeded",
+              "partial",
+              "unverified",
               "failed",
               "overridden"
             ],
@@ -54941,6 +55234,16 @@
             "type": "boolean",
             "title": "Simulated",
             "default": false
+          },
+          "notification_summary": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PublishNotificationSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,

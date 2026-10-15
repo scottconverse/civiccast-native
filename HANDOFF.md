@@ -1,5 +1,21 @@
 # Current handoff: Beta 16 published (2026-10-14)
 
+## Beta 17 source candidate (2026-10-15)
+
+Current branch: `codex/sprint5-podcast`. Candidate preparation commit:
+`8848f1ef`. Draft [PR #251](https://github.com/scottconverse/civiccast-native/pull/251)
+targets `main`. Beta 16 remains the published package and tag; Beta 17 has
+no signed or installed candidate yet.
+
+Completed Sprint 5 source work covers subscriber notices with receipts and
+retries, Podcast MP3 enclosures and RSS, SMTP paywall magic links, and saved
+underwriting daypart selection. Sprint 5 remote-guest composition,
+bulletin-board media, station-import UI, and native viewer completion remain
+open. The Beta 17 candidate version, manual, Help, API reference and front-door
+candidate notices are prepared in source. Focused checks passed; PR CI and
+package verification still govern merge and publication. Historical Beta 16
+results below belong only to Beta 16.
+
 The current source brings together station operations, unattended scheduling,
 broadcast output, programme transitions, HLS retention, and recorded-caption
 work. Signed `v1.0.0-beta.16` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16); the

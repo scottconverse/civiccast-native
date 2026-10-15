@@ -856,9 +856,9 @@ class TestMigration0056AndMerge:
         # 0087_retention_terms added asset retention terms, 0088 added the
         # caption-health alert defaults, and 0089 records unverified remote
         # guest media-control requests. 0090 indexes consumed egress commands
-        # for bounded history pruning and is the current head.
-        assert list(heads) == ["0091_programlog_local_anchor"], (
-            f"Expected single head 0091_programlog_local_anchor, got {heads!r}"
+        # for bounded history pruning; later delivery-outcome migrations follow it.
+        assert list(heads) == ["0092_notification_delivery_outcomes"], (
+            f"Expected single head 0092_notification_delivery_outcomes, got {heads!r}"
         )
 
     def test_0056_down_revision_is_0055(self, tmp_path: Path) -> None:

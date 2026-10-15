@@ -51,7 +51,7 @@ Under the panels, the page shows:
 - A **view** is one time someone starts playing a recording. The same person watching twice counts twice. The PDF report says this itself: "Viewer Count is a play count, not unique humans."
 - The numbers cover **streaming only**: the resident website and apps. They do not include people watching on cable.
 - Live "concurrent" numbers (how many people watch at the same moment) are estimates.
-- **Podcast downloads** is expected to show 0. The Publish screen describes podcasts as coming in a future release.
+- **Podcast downloads** counts analytics events named `podcast_download`. Publishing an episode now creates playable audio and an RSS enclosure; the audio route does not itself emit that analytics event, so this tile can remain at 0 while downloads occur.
 
 ### What is collected, and what is not
 
@@ -253,7 +253,7 @@ The spot appears in the **Spots** list with "FCC 73.503 attested." or "NOT attes
 4. Set **Start date** and **End date**. The window includes both days.
 5. In **Channels**, type at least one channel id, separated by commas, such as `pub-1, gov-1`. The box has no "required" mark, but the server refuses a flight with no channel.
 6. Leave **Frequency cap (per day, optional)** empty, or type a whole number from 1 to 1440.
-7. Leave **Daypart block ID (optional)** empty unless your scheduling team gave you an id.
+7. In **Daypart (optional)**, leave **Any time** or choose a saved daypart by name, channel and hours. Use **Manage dayparts** to create or edit them in Auto Schedule. If an older flight refers to a deleted daypart, choose another or **Any time** before saving.
 8. Click **Create flight**.
 
 To delete a spot or flight, click **Delete**, then **Confirm delete**. Deleting a spot also deletes every flight and placement that used it. This cannot be undone.
@@ -307,7 +307,7 @@ The **Paywall** screen, in the **Setup** section, lets a station hold some recor
 
 A *tier* is a price level, for example "Basic monthly", linked to a price you made in Stripe. CivicCast never creates prices and never stores card numbers.
 
-> **Warning:** Do not use the paywall for live paid access in Beta.12. The operator can configure its gate, but resident purchase and account workflows are incomplete: the magic-link sender does not send email, the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The Beta.12 screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
+> **Beta 17 status:** Do not use the paywall for paid access. The operator can configure its gate, but resident purchase and account workflows are incomplete: the magic-link sender does not send email, the portal's tier-list and checkout routes are unavailable, and the gate covers the player rather than protecting the video file itself. The **Recently issued grants** list shows grants from the current browser session only. The screen preserves a saved signing secret when an ordinary save leaves the secret box blank; clearing it requires the explicit clear control.
 
 > **For IT staff:** See [Chapter 15](#ch-integrations) before enabling this on a live station.
 

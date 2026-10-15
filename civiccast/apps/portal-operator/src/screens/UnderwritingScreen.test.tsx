@@ -7,6 +7,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type {
   SpotFlight,
   SpotPlacement,
+  ScheduleBlock,
   StaffIdentityResponse,
   UnderwriterAffidavit,
   UnderwritingSpot,
@@ -30,6 +31,7 @@ vi.mock('../api/client', () => ({
   patchUnderwritingSpot: vi.fn(),
   deleteUnderwritingSpot: vi.fn(),
   listSpotFlights: vi.fn(),
+  listScheduleBlocks: vi.fn(),
   createSpotFlight: vi.fn(),
   patchSpotFlight: vi.fn(),
   deleteSpotFlight: vi.fn(),
@@ -45,8 +47,10 @@ import {
   getStaffIdentity,
   getUnderwriterAffidavit,
   listSpotFlights,
+  listScheduleBlocks,
   listSpotPlacements,
   listUnderwritingSpots,
+  patchSpotFlight,
 } from '../api/client'
 import { UnderwritingScreen } from './UnderwritingScreen'
 
@@ -75,6 +79,19 @@ function flight(overrides: Partial<SpotFlight> = {}): SpotFlight {
     frequency_cap_per_day: 6,
     daypart_block_id: 'prime-evening',
     channels: ['gov-1', 'pub-1'],
+    ...overrides,
+  }
+}
+
+function daypart(overrides: Partial<ScheduleBlock> = {}): ScheduleBlock {
+  return {
+    block_id: 'prime-evening',
+    channel_id: 'pub-1',
+    name: 'Evening',
+    start_minute: 1080,
+    end_minute: 1320,
+    created_at: '2026-07-01T00:00:00Z',
+    updated_at: '2026-07-01T00:00:00Z',
     ...overrides,
   }
 }
@@ -128,6 +145,7 @@ beforeEach(() => {
   )
   vi.mocked(listUnderwritingSpots).mockResolvedValue([spot()])
   vi.mocked(listSpotFlights).mockResolvedValue([flight()])
+  vi.mocked(listScheduleBlocks).mockResolvedValue([daypart()])
   vi.mocked(listSpotPlacements).mockResolvedValue([placement()])
   vi.mocked(getUnderwriterAffidavit).mockResolvedValue(affidavit())
   vi.mocked(createUnderwritingSpot).mockResolvedValue(spot())
@@ -139,6 +157,47 @@ beforeEach(() => {
     sp.set('to', p.to)
     sp.set('format', p.format)
     return `http://api/affidavit/export?${sp.toString()}`
+  })
+})
+
+describe('UnderwritingScreen — dayparts', () => {
+  it('offers saved dayparts and the existing management screen', async () => {
+    const { findByRole, findByLabelText } = renderScreen()
+    fireEvent.click(await findByRole('tab', { name: 'Flights' }))
+    const selector = (await findByLabelText('Daypart')) as HTMLSelectElement
+    await waitFor(() => expect(selector.querySelector('option[value="prime-evening"]')).toBeTruthy())
+    expect(selector.textContent).toContain('Evening (pub-1, 18:00–22:00)')
+    const link = await findByRole('link', { name: 'Manage dayparts' })
+    expect(link.getAttribute('href')).toBe('#/auto-schedule')
+  })
+
+  it('requires a new choice when an edited flight points at a deleted daypart', async () => {
+    vi.mocked(listScheduleBlocks).mockResolvedValue([])
+    const { findByRole, findByText, findByLabelText } = renderScreen()
+    fireEvent.click(await findByRole('tab', { name: 'Flights' }))
+    fireEvent.click(await findByRole('button', { name: 'Edit acme-q3' }))
+    expect(await findByText(/This daypart no longer exists/)).toBeTruthy()
+    expect((await findByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.change(await findByLabelText('Daypart'), { target: { value: '' } })
+    expect((await findByRole('button', { name: 'Save changes' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('sends the selected daypart ID when saving a flight', async () => {
+    vi.mocked(listScheduleBlocks).mockResolvedValue([
+      daypart(),
+      daypart({ block_id: 'overnight', name: 'Overnight', start_minute: 0, end_minute: 360 }),
+    ])
+    vi.mocked(patchSpotFlight).mockResolvedValue(flight({ daypart_block_id: 'overnight' }))
+    const { findByRole, findByLabelText } = renderScreen()
+    fireEvent.click(await findByRole('tab', { name: 'Flights' }))
+    fireEvent.click(await findByRole('button', { name: 'Edit acme-q3' }))
+    const selector = await findByLabelText('Daypart')
+    await waitFor(() => expect(selector.querySelector('option[value="overnight"]')).toBeTruthy())
+    fireEvent.change(selector, { target: { value: 'overnight' } })
+    fireEvent.click(await findByRole('button', { name: 'Save changes' }))
+    await waitFor(() => expect(vi.mocked(patchSpotFlight)).toHaveBeenCalledWith(
+      'acme-q3', expect.objectContaining({ daypart_block_id: 'overnight' }),
+    ))
   })
 })
 

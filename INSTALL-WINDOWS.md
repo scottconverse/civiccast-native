@@ -2,7 +2,7 @@
 
 CivicCast Beta 16 is a complete native Windows station. It includes Python, PostgreSQL, FFmpeg, GStreamer and local AI runtimes. You do not need Git, Python, Docker, WSL, Ollama or GitHub CLI installed separately.
 
-[User manual](docs/USER-MANUAL.md) · [Beta 16 package verification](docs/releases/v1.0.0-beta.16-verification.md)
+[Beta 16 manual PDF](https://github.com/scottconverse/civiccast-native/releases/download/v1.0.0-beta.16/USER-MANUAL.pdf) · [Beta 16 package verification](docs/releases/v1.0.0-beta.16-verification.md) · [Beta 17 source manual](docs/USER-MANUAL.md)
 
 `v1.0.0-beta.16` is the current [published release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16). Run its `setup.exe` with the adjacent `packs` and `station` folders intact, or use the download command below.
 

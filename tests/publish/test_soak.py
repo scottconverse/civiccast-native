@@ -24,18 +24,16 @@ def test_publish_soak_runs_every_three_tier_surface() -> None:
         "reach": ["youtube-live", "youtube-vod"],
         "audience": ["podcast", "subscriber-notifications"],
     }
-    # Owner decision 2026-09-02: real subscriber notification sends are
-    # deferred to a future release, so "subscriber-notifications" never
-    # reaches state="succeeded" (and emits no "succeeded" audit event) even
-    # though the soak run approves every surface, including it.
+    # This simulated run has no local recording for Podcast and no confirmed
+    # subscriber recipients. Neither optional surface can claim delivery.
     expected_succeeded_surface_ids = [
         surface_id
         for surface_id in EXPECTED_SURFACE_IDS
-        if surface_id != "subscriber-notifications"
+        if surface_id not in {"podcast", "subscriber-notifications"}
     ]
     for iteration in result.iterations:
         assert iteration.ready is True
-        assert iteration.dashboard_state == "archive_verified"
+        assert iteration.dashboard_state == "reach_degraded"
         assert iteration.canonical_public is True
         assert iteration.archive_verified is True
         assert iteration.succeeded_surface_ids == expected_succeeded_surface_ids

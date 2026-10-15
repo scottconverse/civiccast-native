@@ -7,7 +7,7 @@ exact filename, SHA-256, and signature status in the active handoff first.
 see `docs/tester/START-HERE.md` if you don't have one.)
 
 This walkthrough explains how to handle that screen and check the actual file
-before running it. The Beta 16 source candidate is unpublished; Beta 15 remains
+before running it. The Beta 17 source candidate is unpublished; Beta 16 remains
 the latest published native release.
 
 ---
@@ -101,7 +101,7 @@ The current published native installer is `v1.0.0-beta.15`, a signed GitHub
 pre-release, not a production release. Follow the [current User Manual](../USER-MANUAL.md),
 [Windows install guide](../../INSTALL-WINDOWS.md), [Windows release-trust guide](../install/windows-release-trust.md),
 and exact owner-authorized handoff. The Beta 10 details below are historical
-and do not qualify Beta 15 or the unpublished Beta 16 candidate.
+and do not qualify Beta 16 or the unpublished Beta 17 candidate.
 
 ### Historical Beta 10 release state (October 2, 2026 snapshot)
 

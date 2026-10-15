@@ -8,6 +8,11 @@ has no per-minute software fee.
 
 ## Current release
 
+The source also contains the `v1.0.0-beta.17` unpublished candidate with
+subscriber delivery, Podcast publication, and underwriting
+daypart selection. The signed Beta 16 package below remains the current public
+download until that candidate is built, verified, and published.
+
 Signed `v1.0.0-beta.16` is the current [downloadable release](https://github.com/scottconverse/civiccast-native/releases/tag/v1.0.0-beta.16). It adds encrypted backup and restore, network access
 and staff sessions, a restricted Windows service identity, station-local
 scheduling, bounded operational storage, automatic output recovery, RTMP
@@ -23,7 +28,8 @@ provides the installer, runtime packs, station-model bundle, manuals, and
 checksums. The [Beta 16 verification record](docs/releases/v1.0.0-beta.16-verification.md)
 identifies the exact package and its scoped installation results. For
 installation, begin with [Install CivicCast on Windows](INSTALL-WINDOWS.md);
-for operation, use the [User Manual](docs/USER-MANUAL.md) or [FAQ](FAQ.md).
+for Beta 16 operation, use the manual bundled on that release page. The
+[source manual](docs/USER-MANUAL.md) describes the Beta 17 candidate.
 
 Whistle is the CPU live-caption primary; Whisper supplies per-channel backup
 captions, with supported NVIDIA CUDA applying to Whisper only. The native
@@ -178,8 +184,9 @@ See [SUPPORT.md](SUPPORT.md).
 The Publish screen makes the resident portal public by default; archive and
 YouTube destinations are separate, opt-in provider workflows. Real external
 adapters are environment-gated, and credentials saved in Provider setup do not
-enable those adapters. Podcast publication and automatic subscriber notices
-are unavailable. See the [capability matrix](CAPABILITIES.md) for current-source
+enable those adapters. The optional Podcast surface creates an MP3 and RSS
+entry from a local recording; subscriber notices use configured mail or
+webhook providers with delivery receipts. See the [capability matrix](CAPABILITIES.md) for current-source
 behavior and its package boundary.
 
 The Beta 15 package passed scoped Windows Sandbox installation, first-admin

@@ -285,25 +285,9 @@ def test_unselected_broken_provider_never_blocks_portal_only_publishing(
 # ---------------------------------------------------------------------------
 # Subscriber channels (mail/webhook)
 #
-# Owner decision 2026-09-02: real subscriber notification sends (mail/
-# webhook fan-out on publish) are deferred to a future release -- the
-# implementation is parked on feat/publish-real-subscriber-delivery, not
-# merged. Before this decision, civiccast.publish.service routed
-# "subscriber-notifications" through civiccast.publish.readiness's real
-# per-channel provider check (below) for BOTH preflight display and
-# approval gating, and approve_publish's own execution branch always marked
-# the surface "succeeded" after building (but never dispatching) a
-# NotificationPayload -- an operator could see a green "sent" state, or a
-# blocked 409, for a notification that was never delivered.
-#
-# civiccast.publish.readiness.describe_surface_readiness's real logic is
-# still correct and still directly exercised here (unchanged), so it stays
-# ready for the parked branch to wire back into service.py. The tests below
-# split accordingly: the direct readiness-module tests keep proving
-# describe_surface_readiness's per-provider verdicts; the
-# service.py-level tests prove the surface now reads honestly as
-# "coming soon" everywhere an operator or the API can see it, regardless of
-# what the real readiness check would have said.
+# Subscriber readiness uses the same target set and provider configuration as
+# delivery. These checks cover missing configuration, simulated providers,
+# and the requirement for durable outcomes before claiming a send.
 # ---------------------------------------------------------------------------
 
 
@@ -334,6 +318,7 @@ def test_readiness_module_reports_missing_real_mail_config(
         label="Subscriber notifications",
         registry=registry,
         subscribe_store=_RecordingSubscribeStore([_confirmed("email")]),
+        subscribe_targets=[("channel", "government")],
     )
     assert readiness is not None
     assert readiness.healthy is False
@@ -357,6 +342,7 @@ def test_readiness_module_real_webhook_needs_no_station_wide_secret(
         label="Subscriber notifications",
         registry=registry,
         subscribe_store=_RecordingSubscribeStore([_confirmed("webhook")]),
+        subscribe_targets=[("channel", "government")],
     )
     assert readiness is not None
     assert readiness.healthy is True
@@ -370,6 +356,7 @@ def test_readiness_module_explicit_mock_is_usable_and_simulated() -> None:
         label="Subscriber notifications",
         registry=registry,
         subscribe_store=_RecordingSubscribeStore([_confirmed("email"), _confirmed("webhook")]),
+        subscribe_targets=[("channel", "government")],
     )
     assert readiness is not None
     assert readiness.healthy is True
@@ -378,53 +365,41 @@ def test_readiness_module_explicit_mock_is_usable_and_simulated() -> None:
     assert "CIVICCAST_PROVIDER_WEBHOOK=mock" in readiness.reference
 
 
-def test_subscriber_notifications_preflight_reads_coming_soon_regardless_of_config(
+def test_subscriber_notifications_preflight_exposes_missing_real_mail_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """service.py's build_publish_preflight no longer consults the real
-    per-channel readiness above for this surface -- it always reads
-    "coming soon", even for a real-provider misconfiguration that would
-    otherwise report health="error"."""
+    """A selected real mail provider must report missing configuration."""
     monkeypatch.setenv("CIVICCAST_PROVIDER_MAIL", "real")
     store = _RecordingSubscribeStore([_confirmed("email")])
     asset = _asset()
 
     preflight = build_publish_preflight(asset, subscribe_store=store)
     check = next(c for c in preflight.checks if c.id == "subscriber-notifications")
-    assert check.health == "unknown"
+    assert check.health == "error"
     assert check.required is False
-    assert "coming in a future release" in check.message.lower()
+    assert "email" in check.message.lower()
     assert preflight.ready is True
 
 
-def test_subscriber_notifications_approval_never_blocks_on_broken_real_mail_config(
+def test_subscriber_notifications_approval_blocks_on_broken_real_mail_config(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A misconfigured CIVICCAST_PROVIDER_MAIL=real used to raise
-    PublishConfigurationError (409) on approval for this surface. Since
-    nothing is ever sent yet, a broken mail config must not block an
-    otherwise-ready publish."""
+    """A selected real mail surface cannot claim delivery without SMTP."""
     monkeypatch.setenv("CIVICCAST_PROVIDER_MAIL", "real")
     store = _RecordingSubscribeStore([_confirmed("email")])
     asset = _asset()
 
-    record = approve_publish(
-        asset=asset,
-        request=_request("subscriber-notifications"),
-        store=InMemoryPublishStore(),
-        subscribe_store=store,
-    )
-    surface = next(s for s in record.surfaces if s.id == "subscriber-notifications")
-    assert surface.state == "coming_soon"
+    with pytest.raises(PublishConfigurationError):
+        approve_publish(
+            asset=asset,
+            request=_request("subscriber-notifications"),
+            store=InMemoryPublishStore(),
+            subscribe_store=store,
+        )
 
 
-def test_subscriber_notifications_approval_with_confirmed_subscribers_sends_nothing_and_reports_coming_soon() -> (
-    None
-):
-    """The regression this whole fix exists for: approving with real
-    confirmed email/webhook subscribers must never mark the surface
-    "succeeded" -- civiccast.publish.service no longer builds or dispatches
-    a NotificationPayload for it at all."""
+def test_subscriber_notifications_with_no_receipt_store_never_claims_delivery() -> None:
+    """A missing durable receipt store must not be reported as a sent notice."""
     store = _RecordingSubscribeStore([_confirmed("email"), _confirmed("webhook")])
     asset = _asset()
 
@@ -435,11 +410,8 @@ def test_subscriber_notifications_approval_with_confirmed_subscribers_sends_noth
         subscribe_store=store,
     )
     surface = next(s for s in record.surfaces if s.id == "subscriber-notifications")
-    assert surface.state == "coming_soon"
     assert surface.state != "succeeded"
-    assert surface.health == "unknown"
-    assert "coming in a future release" in surface.message.lower()
-    assert "no emails or webhooks are sent yet" in surface.message.lower()
+    assert surface.health != "ok"
     # No "succeeded" audit event was emitted for a surface that never ran.
     assert not any(
         event.surface_id == "subscriber-notifications" and event.action == "succeeded"
@@ -448,17 +420,17 @@ def test_subscriber_notifications_approval_with_confirmed_subscribers_sends_noth
 
 
 # ---------------------------------------------------------------------------
-# Podcast: explicitly not-yet-available (WP-04 owns the real path)
+# Podcast uses the local recording and has no external provider.
 # ---------------------------------------------------------------------------
 
 
-def test_podcast_preflight_reads_not_yet_available_and_never_blocks_ready() -> None:
+def test_podcast_preflight_describes_local_audio_without_blocking_portal() -> None:
     asset = _asset()
     preflight = build_publish_preflight(asset)
     check = next(c for c in preflight.checks if c.id == "podcast")
     assert check.health == "unknown"
     assert check.required is False
-    assert "not available yet" in check.message.lower()
+    assert "local recording" in check.message.lower()
     assert preflight.ready is True
 
 
