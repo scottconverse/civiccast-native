@@ -2328,6 +2328,28 @@ def create_app() -> FastAPI:
     # registration order matters) so it is OUTERMOST and refuses a mutating
     # request in maintenance mode before staff-auth/rate-limit bookkeeping runs.
     app.middleware("http")(_maintenance_guard_middleware)
+    @app.middleware("http")
+    async def _packaged_tv_public_app_cors(request: Request, call_next: Any) -> Response:
+        """Permit packaged TV shells to read only the public app contract.
+
+        Tizen/webOS package pages have the opaque ``null`` origin. Their GET
+        requests carry only the safelisted Accept header, so no preflight or
+        credentialed cross-origin request is needed. Staff routes keep the
+        ordinary explicit-origin policy below.
+        """
+        response = await call_next(request)
+        if (
+            request.method == "GET"
+            and request.headers.get("origin") == "null"
+            and (
+                request.url.path.startswith("/api/public/app/")
+                or request.url.path == "/api/public/assets"
+            )
+        ):
+            response.headers["Access-Control-Allow-Origin"] = "null"
+            response.headers["Vary"] = "Origin"
+        return response
+
     allowed_origins = cors_allowed_origins()
     if allowed_origins:
         # No cross-origin browser use case ships by default (audit item #27);
