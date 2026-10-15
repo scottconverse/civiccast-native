@@ -83,13 +83,21 @@ def podcast_audio(
             status_code=status.HTTP_404_NOT_FOUND, detail="Podcast audio not found."
         )
     _require_channel_access(episode.channel_id, token, playback_store, asset_id=asset_id)
+    private = (
+        playback_store.effective_policy(asset_id, episode.channel_id).access_tier
+        != "public"
+    )
     filename = f"{hashlib.sha256(asset_id.encode('utf-8')).hexdigest()[:32]}.mp3"
     audio_path = podcast_media_dir() / filename
     if not audio_path.is_file():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Podcast audio not found."
         )
-    return FileResponse(audio_path, media_type="audio/mpeg")
+    return FileResponse(
+        audio_path,
+        media_type="audio/mpeg",
+        headers={"Cache-Control": "private, no-store"} if private else None,
+    )
 
 
 @staff_router.post(
@@ -148,4 +156,8 @@ def podcast_feed(
         enclosure_bytes=enclosure_bytes,
         feed_url=f"{public_base}/api/public/podcast/{quote(channel_id, safe='')}.xml",
     )
-    return Response(content=xml, media_type="application/rss+xml")
+    return Response(
+        content=xml,
+        media_type="application/rss+xml",
+        headers={"Cache-Control": "private, no-store"} if token else None,
+    )

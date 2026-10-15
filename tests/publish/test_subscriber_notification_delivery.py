@@ -1330,7 +1330,7 @@ def test_the_podcast_surface_uses_the_resolved_channel_not_a_hardcoded_one(
     podcast_store = InMemoryPodcastStore()
 
     record = approve_publish(
-        asset=_asset(),
+        asset=_asset().model_copy(update={"published_at": datetime.now(UTC)}),
         request=PublishApprovalRequest(
             operator_id="staff-1",
             operator_display_name="Avery Operator",
@@ -1355,7 +1355,7 @@ def test_the_podcast_surface_uses_the_resolved_channel_not_a_hardcoded_one(
 def test_podcast_without_a_local_recording_never_claims_a_feed_entry() -> None:
     podcast_store = InMemoryPodcastStore()
     record = approve_publish(
-        asset=_asset(),
+        asset=_asset().model_copy(update={"published_at": datetime.now(UTC)}),
         request=PublishApprovalRequest(
             operator_id="staff-1",
             operator_display_name="Avery Operator",
@@ -1368,6 +1368,45 @@ def test_podcast_without_a_local_recording_never_claims_a_feed_entry() -> None:
     podcast = next(surface for surface in record.surfaces if surface.id == "podcast")
     assert podcast.state == "failed"
     assert podcast.url is None
+    assert podcast_store.list_for_channel("government") == []
+
+
+def test_podcast_cannot_expose_an_unpublished_asset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called = False
+
+    def fake_episode(request) -> PodcastEpisode:
+        nonlocal called
+        called = True
+        return PodcastEpisode(
+            episode_id="pod-meeting",
+            asset_id=request.asset_id,
+            channel_id=request.channel_id,
+            title=request.title,
+            audio_url="https://station.example/api/public/podcast/audio/meeting-42.mp3",
+            rss_guid="civiccast:podcast:meeting-42",
+            loudness_lufs=-16,
+            published_at=datetime.now(UTC),
+        )
+
+    monkeypatch.setattr("civiccast.publish.service.create_podcast_episode", fake_episode)
+    podcast_store = InMemoryPodcastStore()
+    record = approve_publish(
+        asset=_asset(),
+        request=PublishApprovalRequest(
+            operator_id="staff-1",
+            operator_display_name="Avery Operator",
+            approved_surface_ids=["podcast"],
+        ),
+        store=InMemoryPublishStore(),
+        media_path=tmp_path / "meeting.wav",
+        podcast_store=podcast_store,
+    )
+
+    podcast = next(surface for surface in record.surfaces if surface.id == "podcast")
+    assert called is False
+    assert podcast.state == "failed"
     assert podcast_store.list_for_channel("government") == []
 
 
@@ -1392,7 +1431,7 @@ def test_podcast_storage_failure_is_reported_for_retry(
         ),
     )
     record = approve_publish(
-        asset=_asset(),
+        asset=_asset().model_copy(update={"published_at": datetime.now(UTC)}),
         request=PublishApprovalRequest(
             operator_id="staff-1",
             operator_display_name="Avery Operator",

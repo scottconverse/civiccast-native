@@ -672,7 +672,9 @@ class TestPublicAccess:
 
 
 class TestMagicLinkRouter:
-    def test_default_sender_uses_smtp_and_a_portal_link(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_default_sender_uses_smtp_and_a_portal_link(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         sent: list[tuple[str, str]] = []
         monkeypatch.setenv("CIVICCAST_PUBLIC_BASE_URL", "https://station.example")
         monkeypatch.setenv("CIVICCAST_SMTP_HOST", "smtp.example")
@@ -682,8 +684,11 @@ class TestMagicLinkRouter:
             lambda self, *, email, verification_url: sent.append((email, verification_url)),
         )
         _default_email_sender(
-            email="viewer@example.com", token="abc.def", station_id="station",
-            scope_kind="asset", scope_id="vid-1",
+            email="viewer@example.com",
+            token="abc.def",
+            station_id="station",
+            scope_kind="asset",
+            scope_id="vid-1",
         )
         assert sent == [
             ("viewer@example.com", "https://station.example/#/watch/vid-1?token=abc.def")

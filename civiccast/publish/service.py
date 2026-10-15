@@ -726,7 +726,12 @@ def approve_publish(
                 ),
                 DEFAULT_CHANNEL_ID_FALLBACK,
             )
-            if media_path is None or podcast_store is None:
+            if asset.published_at is None:
+                podcast_error = (
+                    "Publish this recording to Portal first, then retry Podcast "
+                    "after the public record is confirmed."
+                )
+            elif media_path is None or podcast_store is None:
                 podcast_error = "A local recording and podcast storage are required."
             else:
                 try:

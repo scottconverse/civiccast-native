@@ -123,8 +123,10 @@ def test_asset_restricted_podcast_audio_requires_a_viewer_token(
     assert authorized_feed.status_code == 200
     assert "Private meeting" in authorized_feed.text
     assert f"?token={token}" in authorized_feed.text
+    assert authorized_feed.headers["cache-control"] == "private, no-store"
     assert authorized_audio.status_code == 200
     assert authorized_audio.content == b"ID3private"
+    assert authorized_audio.headers["cache-control"] == "private, no-store"
 
 
 def test_direct_episode_creation_rejects_caller_selected_media_path(client: TestClient) -> None:
