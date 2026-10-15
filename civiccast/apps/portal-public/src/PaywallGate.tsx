@@ -35,7 +35,7 @@ import {
   type PaywallTier,
 } from './api'
 
-export const EMAIL_STORAGE_KEY = 'civiccast.paywall.email'
+const EMAIL_STORAGE_KEY = 'civiccast.paywall.email'
 
 interface PaywallGateProps {
   assetId: string

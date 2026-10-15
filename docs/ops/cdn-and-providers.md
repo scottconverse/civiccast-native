@@ -196,8 +196,6 @@ options. A mock is never a silent fallback.
 | `webhook` | No credentials (each subscription carries its own sealed signing secret). Optional `CIVICCAST_WEBHOOK_TIMEOUT_SECONDS` (30 default). Delivery: POST of the canonical JSON payload with `X-CivicCast-Signature: sha256=<hmac>`; failures queue durably and the webhook retry worker re-delivers with backoff (`CIVICCAST_WEBHOOK_RETRY_WORKER=inline\|off`, `CIVICCAST_WEBHOOK_RETRY_POLL_SECONDS` 60, `CIVICCAST_WEBHOOK_RETRY_BACKOFF_SECONDS` 120, `CIVICCAST_WEBHOOK_RETRY_MAX_ATTEMPTS` 8; see `docs/ops/background-workers.md`). |
 | `local_nas` | `CIVICCAST_NAS_ARCHIVE_PATH` — the mounted archive directory (local mount or UNC path; the OS mount is the transport, covering SMB/NFS appliances). No credentials. Each publish approval writes `archive/{asset_id}` (canonical, overwritten on republish) plus `snapshots/{asset_id}/{timestamp}` (write-once per run); each copy is fsynced and independently sha256 read-back verified — no proof is minted on a mismatch. |
 
-Optional paywall magic links use the same SMTP variables, plus `CIVICCAST_PUBLIC_BASE_URL` for the resident-facing link. This send path requires real SMTP even when the subscription mail provider remains local; missing settings or a failed relay return a delivery error to the resident instead of a success message.
-
 Full-media publishing: when the publish approval can resolve the asset's
 local recording file (live recordings via the finalization job), the real
 Internet Archive and YouTube adapters receive the actual media

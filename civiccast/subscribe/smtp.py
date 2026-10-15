@@ -102,7 +102,7 @@ class SmtpSettings:
         ]
         if missing:
             raise ValueError(
-                "SMTP delivery requires "
+                "CIVICCAST_PROVIDER_MAIL=real requires "
                 f"{', '.join(missing)} to be set (see docs/ops/cdn-and-providers.md)."
             )
         port_raw = os.environ.get("CIVICCAST_SMTP_PORT", "").strip()
@@ -164,13 +164,6 @@ class SmtpMailbox:
             subject=f"New CivicCast recording: {payload.title}",
             body=notification_body(payload),
             unsubscribe_url=payload.unsubscribe_url,
-        )
-
-    def send_magic_link(self, *, email: str, verification_url: str) -> str:
-        return self._send(
-            to=email,
-            subject="Your CivicCast access link",
-            body=f"Open this link to access CivicCast content:\n{verification_url}\n",
         )
 
     def _send(self, *, to: str, subject: str, body: str, unsubscribe_url: str | None = None) -> str:
